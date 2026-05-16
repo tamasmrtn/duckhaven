@@ -1,0 +1,63 @@
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: duckhaven
+      POSTGRES_USER: duckhaven
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U duckhaven"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  unity-catalog:
+    image: unitycatalog/unitycatalog:0.4.0
+    restart: unless-stopped
+    environment:
+      UC_SERVER_PORT: "8080"
+    volumes:
+      - uc_data:/etc/unitycatalog
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/api/2.1/unity-catalog/catalogs || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    image: duckhaven-api:latest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      unity-catalog:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://duckhaven:${POSTGRES_PASSWORD}@postgres:5432/duckhaven
+      UC_BASE_URL: http://unity-catalog:8080
+      SECRET_KEY: ${SECRET_KEY}
+    volumes:
+      - api_data:/var/duckhaven
+
+volumes:
+  caddy_data:
+  caddy_config:
+  postgres_data:
+  uc_data:
+  api_data:

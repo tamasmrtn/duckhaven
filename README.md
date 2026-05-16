@@ -2,8 +2,6 @@
 
 A self-hosted SQL workspace and federation control plane over Delta Lake tables governed by Unity Catalog.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
-
 ## Quick start
 
 ```sh

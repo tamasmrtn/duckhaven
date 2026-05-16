@@ -1,14 +1,13 @@
 import asyncio
 from logging.config import fileConfig
 
-from sqlalchemy import pool
-from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import async_engine_from_config
-
+import api.models  # noqa: F401 — registers all models with Base
 from alembic import context
 from api.config import settings
 from api.db.base import Base
-import api.models  # noqa: F401 — registers all models with Base
+from sqlalchemy import pool
+from sqlalchemy.engine import Connection
+from sqlalchemy.ext.asyncio import async_engine_from_config
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)

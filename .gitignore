@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.pyo
+
+# Node / frontend
+web/node_modules/
+web/dist/
+web/.cache/
+*.tsbuildinfo
+web/coverage/
+
+# DuckDB
+*.duckdb
+*.duckdb.wal
+
+# Secrets
+.env
+.env.*
+!.env.example
+!deploy/.env.example
+
+# Docker
+docker-compose.override.yml
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+
+# Agent runtime results (not source)
+agent/results/
+
+ARCHITECTURE.md
+CLAUDE.md

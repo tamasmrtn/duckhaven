@@ -1,0 +1,59 @@
+name: Security Scan
+
+on:
+  schedule:
+    - cron: '0 8 * * 1'
+  workflow_dispatch:
+
+jobs:
+  trivy-api:
+    name: Scan duckhaven-api
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: api/Dockerfile
+          push: false
+          load: true
+          tags: duckhaven-api:scan
+      - uses: aquasecurity/trivy-action@0.31.0
+        with:
+          image-ref: duckhaven-api:scan
+          format: sarif
+          output: trivy-api.sarif
+          severity: CRITICAL,HIGH
+          exit-code: '0'
+      - uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-api.sarif
+          category: trivy-api
+
+  trivy-agent:
+    name: Scan duckhaven-agent
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: agent/Dockerfile
+          push: false
+          load: true
+          tags: duckhaven-agent:scan
+      - uses: aquasecurity/trivy-action@0.31.0
+        with:
+          image-ref: duckhaven-agent:scan
+          format: sarif
+          output: trivy-agent.sarif
+          severity: CRITICAL,HIGH
+          exit-code: '0'
+      - uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-agent.sarif
+          category: trivy-agent

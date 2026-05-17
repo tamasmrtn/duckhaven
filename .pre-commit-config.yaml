@@ -13,10 +13,9 @@ repos:
         args: [--maxkb=500]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.10
+    rev: v0.15.13
     hooks:
-      - id: ruff
-        args: [--fix]
+      - id: ruff-check
       - id: ruff-format
 
   - repo: local
@@ -24,9 +23,9 @@ repos:
       - id: prettier
         name: Prettier
         language: system
-        entry: bash -c 'cd web && npx prettier --write'
+        entry: bash -c 'cd web && npx prettier --write src/'
         files: ^web/src/.*\.(ts|tsx|css)$
-        pass_filenames: true
+        pass_filenames: false
 
       - id: eslint
         name: ESLint

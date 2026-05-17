@@ -1,0 +1,94 @@
+@import "./styles/tokens.css";
+
+/* Self-hosted fonts */
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/inter/700.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
+@import "@fontsource/jetbrains-mono/700.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    border-color: var(--border-subtle);
+  }
+
+  body {
+    background-color: var(--bg-canvas);
+    color: var(--text-primary);
+    font-family: Inter, system-ui, sans-serif;
+    font-size: 13px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Tabular numbers for all data cells */
+  [data-tabular-nums] {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Focus ring */
+  :focus-visible {
+    outline: 2px solid var(--brand-slate-blue);
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  .font-tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Pulse animation for Run button dispatch */
+  @keyframes run-pulse {
+    0% {
+      box-shadow: 0 0 0 0 rgba(255, 241, 0, 0.6);
+    }
+    70% {
+      box-shadow: 0 0 0 8px rgba(255, 241, 0, 0);
+    }
+    100% {
+      box-shadow: 0 0 0 0 rgba(255, 241, 0, 0);
+    }
+  }
+
+  .animate-run-pulse {
+    animation: run-pulse 240ms ease-out 1;
+  }
+
+  /* Skeleton shimmer */
+  @keyframes shimmer {
+    0% {
+      background-position: -200% 0;
+    }
+    100% {
+      background-position: 200% 0;
+    }
+  }
+
+  .animate-shimmer {
+    background: linear-gradient(
+      90deg,
+      var(--bg-surface) 25%,
+      var(--border-subtle) 50%,
+      var(--bg-surface) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1400ms linear infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .animate-shimmer {
+      animation: none;
+      background: var(--bg-surface);
+    }
+    .animate-run-pulse {
+      animation: none;
+    }
+  }
+}

@@ -12,8 +12,8 @@ jobs:
     permissions:
       security-events: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/build-push-action@v6
+      - uses: actions/checkout@v6
+      - uses: docker/build-push-action@v7
         with:
           context: .
           file: api/Dockerfile
@@ -27,7 +27,7 @@ jobs:
           output: trivy-api.sarif
           severity: CRITICAL,HIGH
           exit-code: '0'
-      - uses: github/codeql-action/upload-sarif@v3
+      - uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-api.sarif
           category: trivy-api
@@ -38,8 +38,8 @@ jobs:
     permissions:
       security-events: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/build-push-action@v6
+      - uses: actions/checkout@v6
+      - uses: docker/build-push-action@v7
         with:
           context: .
           file: agent/Dockerfile
@@ -53,7 +53,7 @@ jobs:
           output: trivy-agent.sarif
           severity: CRITICAL,HIGH
           exit-code: '0'
-      - uses: github/codeql-action/upload-sarif@v3
+      - uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-agent.sarif
           category: trivy-agent

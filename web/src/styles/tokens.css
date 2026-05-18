@@ -1,0 +1,113 @@
+/* DuckHaven design tokens — light mode defaults */
+:root {
+  /* Brand (from duckdb.org/design/manual/) */
+  --brand-yellow: #fff100;
+  --brand-orange: #ff6900;
+  --brand-slate-blue: #7d66ff;
+  --brand-maya-blue: #2eafff;
+
+  /* Backgrounds */
+  --bg-canvas: #ffffff;
+  --bg-surface: #f8fafc;
+  --bg-elevated: #ffffff;
+  --bg-code: #0b0f19;
+
+  /* Borders */
+  --border-subtle: #e2e8f0;
+  --border-strong: #cbd5e1;
+
+  /* Text */
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-tertiary: #94a3b8;
+
+  /* Semantic status */
+  --status-queued: #94a3b8;
+  --status-running: #ff6900;
+  --status-success: #16a34a;
+  --status-failed: #dc2626;
+  --status-cancelled: #475569;
+
+  /* Radius */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-full: 9999px;
+  --radius: 6px;
+
+  /* Elevation (light mode: shadow + border) */
+  --shadow-e1: 0 1px 2px rgb(15 23 42 / 0.04);
+  --shadow-e2: 0 4px 12px rgb(15 23 42 / 0.08);
+  --shadow-e3: 0 12px 32px rgb(15 23 42 / 0.12);
+
+  /* shadcn/ui semantic tokens (hsl) */
+  --background: 0 0% 100%;
+  --foreground: 222.2 84% 4.9%;
+  --card: 0 0% 100%;
+  --card-foreground: 222.2 84% 4.9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222.2 84% 4.9%;
+  --primary: 222.2 47.4% 11.2%;
+  --primary-foreground: 210 40% 98%;
+  --secondary: 210 40% 96.1%;
+  --secondary-foreground: 222.2 47.4% 11.2%;
+  --muted: 210 40% 96.1%;
+  --muted-foreground: 215.4 16.3% 46.9%;
+  --accent: 210 40% 96.1%;
+  --accent-foreground: 222.2 47.4% 11.2%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 214.3 31.8% 91.4%;
+  --input: 214.3 31.8% 91.4%;
+  --ring: 252 100% 70%;
+}
+
+/* Dark mode overrides */
+.dark {
+  --brand-orange: #ff8a33;
+  --brand-slate-blue: #9c8aff;
+  --brand-maya-blue: #5bc0ff;
+
+  --bg-canvas: #0b0f19;
+  --bg-surface: #111827;
+  --bg-elevated: #1f2937;
+  --bg-code: #0b0f19;
+
+  --border-subtle: #1f2937;
+  --border-strong: #374151;
+
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-tertiary: #64748b;
+
+  --status-queued: #64748b;
+  --status-running: #ff8a33;
+  --status-success: #22c55e;
+  --status-failed: #ef4444;
+  --status-cancelled: #94a3b8;
+
+  --shadow-e1: 0 1px 0 rgb(0 0 0 / 0.4);
+  --shadow-e2: 0 4px 12px rgb(0 0 0 / 0.6);
+  --shadow-e3: 0 16px 40px rgb(0 0 0 / 0.7);
+
+  /* shadcn/ui dark tokens */
+  --background: 222.2 84% 4.9%;
+  --foreground: 210 40% 98%;
+  --card: 222.2 84% 4.9%;
+  --card-foreground: 210 40% 98%;
+  --popover: 222.2 47.4% 11.2%;
+  --popover-foreground: 210 40% 98%;
+  --primary: 210 40% 98%;
+  --primary-foreground: 222.2 47.4% 11.2%;
+  --secondary: 217.2 32.6% 17.5%;
+  --secondary-foreground: 210 40% 98%;
+  --muted: 217.2 32.6% 17.5%;
+  --muted-foreground: 215 20.2% 65.1%;
+  --accent: 217.2 32.6% 17.5%;
+  --accent-foreground: 210 40% 98%;
+  --destructive: 0 62.8% 30.6%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 217.2 32.6% 17.5%;
+  --input: 217.2 32.6% 17.5%;
+  --ring: 252 100% 70%;
+}

@@ -1,0 +1,182 @@
+import {
+  useReactTable,
+  getCoreRowModel,
+  flexRender,
+  type ColumnDef,
+} from "@tanstack/react-table";
+import { Download, Copy } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import type { QueryRow } from "@/types/query";
+import { cn } from "@/utils";
+
+interface ResultsTableProps {
+  columns: string[];
+  rows: QueryRow[];
+  total: number;
+  isLoading?: boolean;
+}
+
+function cellDisplay(value: unknown): string {
+  if (value === null || value === undefined) return "NULL";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function copyValue(value: string) {
+  void navigator.clipboard.writeText(value);
+}
+
+function downloadCsv(columns: string[], rows: QueryRow[]) {
+  const header = columns.join(",");
+  const body = rows
+    .map((row) => columns.map((c) => JSON.stringify(row[c] ?? "")).join(","))
+    .join("\n");
+  const csv = `${header}\n${body}`;
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "results.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export function ResultsTable({
+  columns,
+  rows,
+  total,
+  isLoading,
+}: ResultsTableProps) {
+  const colDefs: ColumnDef<QueryRow>[] = columns.map((col) => ({
+    accessorKey: col,
+    header: col,
+    cell: ({ getValue }) => {
+      const raw = getValue();
+      const display = cellDisplay(raw);
+      const isNull = raw === null || raw === undefined;
+      return (
+        <button
+          type="button"
+          onClick={() => copyValue(display)}
+          className={cn(
+            "block w-full truncate text-left font-mono text-xs font-tabular",
+            isNull ? "text-text-tertiary italic" : "text-text-primary",
+          )}
+          title={display}
+          aria-label={`Copy ${display}`}
+        >
+          {display}
+        </button>
+      );
+    },
+  }));
+
+  // eslint-disable-next-line react-hooks/incompatible-library
+  const table = useReactTable({
+    data: rows,
+    columns: colDefs,
+    getCoreRowModel: getCoreRowModel(),
+  });
+
+  if (isLoading) {
+    return (
+      <div className="flex h-full flex-col">
+        <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border-subtle)]">
+          <Skeleton className="h-4 w-40 animate-shimmer rounded" />
+        </div>
+        <div className="flex-1 p-3 space-y-2">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} className="h-5 w-full animate-shimmer rounded" />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (columns.length === 0) {
+    return (
+      <div className="flex h-full items-center justify-center text-sm text-text-tertiary">
+        No results yet.
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full flex-col">
+      {/* Header bar */}
+      <div className="flex items-center justify-between border-b border-[var(--border-subtle)] px-3 py-2 shrink-0">
+        <span className="text-xs text-text-secondary font-tabular">
+          {rows.length} / {total} rows
+        </span>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1 text-xs"
+            onClick={() =>
+              void navigator.clipboard.writeText(
+                [
+                  columns.join("\t"),
+                  ...rows.map((r) => columns.map((c) => r[c] ?? "").join("\t")),
+                ].join("\n"),
+              )
+            }
+          >
+            <Copy className="size-3" />
+            Copy
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1 text-xs"
+            onClick={() => downloadCsv(columns, rows)}
+          >
+            <Download className="size-3" />
+            Download CSV
+          </Button>
+        </div>
+      </div>
+
+      {/* Table */}
+      <div className="flex-1 overflow-auto">
+        <table className="w-full text-sm">
+          <thead className="sticky top-0 bg-[var(--bg-surface)] z-10">
+            {table.getHeaderGroups().map((hg) => (
+              <tr
+                key={hg.id}
+                className="border-b border-[var(--border-subtle)]"
+              >
+                {hg.headers.map((h) => (
+                  <th
+                    key={h.id}
+                    className="whitespace-nowrap px-3 py-1.5 text-left text-xs font-medium text-text-secondary"
+                  >
+                    {flexRender(h.column.columnDef.header, h.getContext())}
+                  </th>
+                ))}
+              </tr>
+            ))}
+          </thead>
+          <tbody>
+            {table.getRowModel().rows.map((row, i) => (
+              <tr
+                key={row.id}
+                className={cn(
+                  "border-b border-[var(--border-subtle)] hover:bg-accent/50",
+                  i % 2 === 0 ? "bg-transparent" : "bg-[var(--bg-surface)]/50",
+                )}
+              >
+                {row.getVisibleCells().map((cell) => (
+                  <td key={cell.id} className="px-3 py-1 max-w-[200px]">
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}

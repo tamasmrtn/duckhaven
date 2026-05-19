@@ -7,7 +7,10 @@ dev = [
     "mypy>=2.1.0",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
+    "pytest-cov>=6.0",
     "httpx>=0.28.1",
+    "aiosqlite>=0.20",
+    "httpx-ws>=0.9.0",
 ]
 
 [tool.ruff]
@@ -17,10 +20,35 @@ target-version = "py314"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
 
+[tool.ruff.lint.per-file-ignores]
+# SQLAlchemy cross-model forward references are resolved via the mapper registry
+"api/src/api/models/*.py" = ["F821"]
+
 [tool.mypy]
 python_version = "3.14"
 strict = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["api/tests", "agent/tests"]
+testpaths = ["api/tests/unit", "agent/tests/unit"]
+
+[tool.coverage.run]
+branch = true
+omit = [
+    "*/main.py",
+    "*/config.py",
+    "api/src/api/db/session.py",
+    "api/src/api/db/base.py",
+    "api/alembic/*",
+    "*/tests/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+precision = 1
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]

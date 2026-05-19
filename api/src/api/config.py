@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     uc_base_url: str = "http://localhost:8080"
     secret_key: str = "change-me-in-production"
     session_max_age_seconds: int = 86400 * 7
+    cors_origins: list[str] = ["http://localhost:5173"]
+    cookie_secure: bool = True
 
 
 settings = Settings()

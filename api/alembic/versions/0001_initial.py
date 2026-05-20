@@ -37,6 +37,24 @@ def upgrade() -> None:
     )
 
     op.create_table(
+        "agents",
+        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("name", sa.String(255), nullable=False),
+        sa.Column("status", sa.String(50), nullable=False, server_default="unavailable"),
+        sa.Column("capabilities", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("result_host", sa.String(255), nullable=True),
+        sa.Column("result_port", sa.Integer(), nullable=True),
+        sa.Column("last_ping_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.PrimaryKeyConstraint("id"),
+    )
+
+    op.create_table(
         "credentials",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("user_id", postgresql.UUID(as_uuid=True), nullable=True),
@@ -54,24 +72,6 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["agent_id"], ["agents.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("token"),
-    )
-
-    op.create_table(
-        "agents",
-        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column("name", sa.String(255), nullable=False),
-        sa.Column("status", sa.String(50), nullable=False, server_default="unavailable"),
-        sa.Column("capabilities", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-        sa.Column("result_host", sa.String(255), nullable=True),
-        sa.Column("result_port", sa.Integer(), nullable=True),
-        sa.Column("last_ping_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column(
-            "created_at",
-            sa.DateTime(timezone=True),
-            nullable=False,
-            server_default=sa.func.now(),
-        ),
-        sa.PrimaryKeyConstraint("id"),
     )
 
     op.create_table(
@@ -179,6 +179,6 @@ def downgrade() -> None:
     op.drop_table("workspace_members")
     op.drop_table("workspaces")
     op.drop_table("storage_backends")
-    op.drop_table("agents")
     op.drop_table("credentials")
+    op.drop_table("agents")
     op.drop_table("users")

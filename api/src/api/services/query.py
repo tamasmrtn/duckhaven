@@ -3,12 +3,12 @@ from datetime import UTC, datetime
 
 import httpx
 import sqlalchemy as sa
-from duckhaven_shared.protocol import Frame, FrameType
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.models.agent import Agent
 from api.models.query import Query
 from api.services.agent_registry import registry
+from duckhaven_shared.protocol import Frame, FrameType
 
 
 async def dispatch_query(

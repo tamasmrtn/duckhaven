@@ -1,13 +1,14 @@
 import uuid
 
 import pytest_asyncio
+from httpx import AsyncClient
+
 from api.models.agent import Agent
 from api.models.storage_backend import StorageBackend
 from api.models.user import User
 from api.models.workspace import Workspace, WorkspaceMember
 from api.services.agent_registry import registry
 from api.services.auth import hash_password
-from httpx import AsyncClient
 
 
 class MockWebSocket:

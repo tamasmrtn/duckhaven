@@ -1,6 +1,7 @@
 import pytest_asyncio
-from agent.results.server import make_results_app
 from httpx import ASGITransport, AsyncClient
+
+from agent.results.server import make_results_app
 
 
 @pytest_asyncio.fixture

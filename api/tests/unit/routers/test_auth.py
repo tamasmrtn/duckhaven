@@ -1,7 +1,8 @@
 import pytest
+from httpx import AsyncClient
+
 from api.models.user import User
 from api.services.auth import hash_password
-from httpx import AsyncClient
 
 
 @pytest.fixture

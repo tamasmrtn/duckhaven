@@ -2,6 +2,7 @@ import asyncio
 import uuid
 
 import websockets
+
 from duckhaven_shared.protocol import Frame, FrameType
 
 

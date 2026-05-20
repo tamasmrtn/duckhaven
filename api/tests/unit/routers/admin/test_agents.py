@@ -1,10 +1,11 @@
 import uuid
 
 import pytest
+from httpx import AsyncClient
+
 from api.models.agent import Agent
 from api.models.user import Credential, User
 from api.services.auth import hash_password
-from httpx import AsyncClient
 
 
 @pytest.fixture

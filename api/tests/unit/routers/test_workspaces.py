@@ -1,8 +1,9 @@
 import pytest
+from httpx import AsyncClient
+
 from api.models.storage_backend import StorageBackend
 from api.models.user import User
 from api.services.auth import hash_password
-from httpx import AsyncClient
 
 
 @pytest.fixture

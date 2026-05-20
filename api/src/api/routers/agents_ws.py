@@ -4,7 +4,6 @@ import uuid
 from datetime import UTC, datetime
 
 import sqlalchemy as sa
-from duckhaven_shared.protocol import Frame, FrameType
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +12,7 @@ from api.deps import get_db
 from api.models.agent import Agent
 from api.models.user import Credential
 from api.services.agent_registry import registry
+from duckhaven_shared.protocol import Frame, FrameType
 
 router = APIRouter()
 

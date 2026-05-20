@@ -1,10 +1,11 @@
 import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
 from api.config import settings
 from api.db.base import Base
 from api.deps import get_db
 from api.main import app
-from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 # Disable secure cookies in tests (plain HTTP transport)
 settings.cookie_secure = False

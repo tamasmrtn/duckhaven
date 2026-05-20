@@ -5,11 +5,12 @@ import uuid
 from pathlib import Path
 
 import websockets
+from websockets.exceptions import ConnectionClosed
+
 from agent.config import settings
 from agent.executor.supervisor import run_query
 from duckhaven_shared.protocol import Frame, FrameType
 from duckhaven_shared.schemas import AgentCapabilities
-from websockets.exceptions import ConnectionClosed
 
 logger = logging.getLogger(__name__)
 

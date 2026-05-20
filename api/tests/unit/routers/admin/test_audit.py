@@ -1,13 +1,14 @@
 from datetime import datetime
 
 import pytest
+from httpx import AsyncClient
+
 from api.models.agent import Agent
 from api.models.query import Query
 from api.models.storage_backend import StorageBackend
 from api.models.user import User
 from api.models.workspace import Workspace
 from api.services.auth import hash_password
-from httpx import AsyncClient
 
 
 @pytest.fixture

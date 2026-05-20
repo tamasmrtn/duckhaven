@@ -2,10 +2,11 @@ import json
 from datetime import UTC
 
 import pytest
+from httpx import AsyncClient
+
 from api.models.agent import Agent
 from api.models.user import User
 from api.services.auth import hash_password
-from httpx import AsyncClient
 
 
 @pytest.fixture
@@ -97,10 +98,11 @@ async def test_ws_valid_bootstrap_exchange(ws_client, db_engine):
     import asyncio
     from datetime import datetime, timedelta
 
-    from api.models.user import Credential
     from httpx import AsyncClient
     from httpx_ws import aconnect_ws
     from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.models.user import Credential
 
     factory = async_sessionmaker(db_engine, expire_on_commit=False)
     token = "dh_boot_wstest456"

@@ -7,27 +7,50 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.models.agent import Agent
 from api.models.query import Query
+from api.models.storage_backend import StorageBackend
+from api.models.workspace import Workspace
 from api.services.agent_registry import registry
+from api.services.uc_credentials import CredCache, vend_workspace_creds
+from api.services.unity_catalog import UCClient
 from duckhaven_shared.protocol import Frame, FrameType
 
 
 async def dispatch_query(
     db: AsyncSession,
     query: Query,
+    *,
+    uc: UCClient,
+    cred_cache: CredCache,
     memory_limit_gb: float = 6.0,
     timeout_s: float = 600.0,
 ) -> None:
     if query.agent_id is None or registry.get(query.agent_id) is None:
         raise ValueError("Agent not connected")
-    frame = Frame(
-        type=FrameType.DISPATCH_QUERY,
-        payload={
-            "query_id": str(query.id),
-            "sql": query.sql,
-            "memory_limit_gb": memory_limit_gb,
-            "timeout_s": timeout_s,
-        },
+
+    workspace = await db.get(Workspace, query.workspace_id)
+    if workspace is None:
+        raise ValueError("Workspace missing for query")
+    backend = await db.get(StorageBackend, workspace.storage_backend_id)
+    if backend is None:
+        raise ValueError("Storage backend missing for workspace")
+
+    creds = await cred_cache.get_or_fetch(
+        f"{query.agent_id}:{workspace.slug}",
+        lambda: vend_workspace_creds(uc, workspace.slug, backend.kind),
     )
+
+    payload: dict[str, object] = {
+        "query_id": str(query.id),
+        "sql": query.sql,
+        "memory_limit_gb": memory_limit_gb,
+        "timeout_s": timeout_s,
+        "workspace": {"slug": workspace.slug},
+        "backend": {"kind": backend.kind, "root_uri": backend.root_uri},
+    }
+    if creds is not None:
+        payload["storage_credentials"] = creds.to_payload()
+
+    frame = Frame(type=FrameType.DISPATCH_QUERY, payload=payload)
     await registry.send(query.agent_id, frame.model_dump_json())
     query.status = "running"
     await db.commit()

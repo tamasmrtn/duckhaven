@@ -9,6 +9,7 @@ from api.routers import agents, agents_ws, auth, queries, schemas, workspaces
 from api.routers.admin import agents as admin_agents
 from api.routers.admin import audit as admin_audit
 from api.routers.admin import storage as admin_storage
+from api.services.uc_credentials import CredCache
 from api.services.unity_catalog import UCClient
 
 
@@ -19,6 +20,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         token=settings.uc_token,
         timeout_s=settings.uc_http_timeout_s,
     )
+    app.state.cred_cache = CredCache(safety_window_s=settings.cred_safety_window_s)
     try:
         yield
     finally:

@@ -119,6 +119,80 @@ async def test_create_query_dispatches(
     frame = json.loads(mock_ws.sent[0])
     assert frame["type"] == FrameType.DISPATCH_QUERY
     assert frame["payload"]["sql"] == "SELECT 42"
+    # M3: dispatch payload now carries the workspace backend descriptor; local
+    # backends don't get vended creds.
+    assert frame["payload"]["backend"] == {"kind": "local_fs", "root_uri": "/tmp/test"}
+    assert frame["payload"]["workspace"] == {"slug": "test-ws"}
+    assert "storage_credentials" not in frame["payload"]
+
+
+async def test_dispatch_payload_embeds_s3_storage_credentials(
+    authed_client: AsyncClient, db_session, user: User, connected_agent
+):
+    """For cloud backends with at least one table in the UC catalog, the
+    dispatch frame must carry short-lived `storage_credentials`."""
+    import json
+
+    from sqlalchemy import select
+
+    from api.deps import get_uc_client
+    from api.main import app
+    from api.models.storage_backend import StorageBackend
+    from api.models.workspace import Workspace, WorkspaceMember
+
+    agent, mock_ws = connected_agent
+
+    sb = StorageBackend(
+        kind="s3", name="s3-store", root_uri="s3://bucket/prefix", created_by=user.id
+    )
+    db_session.add(sb)
+    await db_session.flush()
+    ws = Workspace(slug="s3-ws", name="S3 WS", storage_backend_id=sb.id)
+    db_session.add(ws)
+    await db_session.flush()
+    db_session.add(WorkspaceMember(workspace_id=ws.id, user_id=user.id, role="owner"))
+    await db_session.commit()
+
+    # Seed the FakeUC with a catalog, schema, and one anchor table so that
+    # vend_workspace_creds picks it up. The override returns the test's
+    # FakeUC instance.
+    fake_uc = await app.dependency_overrides[get_uc_client]()
+    await fake_uc.create_catalog("s3-ws")
+    await fake_uc.create_schema("s3-ws", "main")
+    await fake_uc.create_table(
+        catalog="s3-ws",
+        schema="main",
+        name="events",
+        columns=[
+            {
+                "name": "id",
+                "type_text": "int",
+                "type_name": "INT",
+                "type_json": "",
+                "position": 0,
+                "nullable": False,
+            }
+        ],
+        storage_location="s3://bucket/prefix/main/events/",
+    )
+
+    resp = await authed_client.post(
+        "/workspaces/s3-ws/queries",
+        json={"sql": "SELECT 1", "agent_id": str(agent.id)},
+    )
+    assert resp.status_code == 202, resp.text
+
+    frame = json.loads(mock_ws.sent[-1])
+    assert frame["payload"]["backend"] == {
+        "kind": "s3",
+        "root_uri": "s3://bucket/prefix",
+    }
+    creds = frame["payload"]["storage_credentials"]
+    assert creds["kind"] == "s3"
+    assert creds["fields"]["access_key_id"] == "fake-key"
+    assert "expires_at" in creds
+    # Suppress unused symbol
+    _ = (select, WorkspaceMember)
 
 
 # --- query status ---

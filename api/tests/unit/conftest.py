@@ -13,8 +13,9 @@ from fake_uc import FakeUC  # noqa: E402
 
 from api.config import settings  # noqa: E402
 from api.db.base import Base  # noqa: E402
-from api.deps import get_db, get_uc_client  # noqa: E402
+from api.deps import get_cred_cache, get_db, get_uc_client  # noqa: E402
 from api.main import app  # noqa: E402
+from api.services.uc_credentials import CredCache  # noqa: E402
 
 # Disable secure cookies in tests (plain HTTP transport)
 settings.cookie_secure = False
@@ -46,8 +47,14 @@ def fake_uc() -> FakeUC:
     return FakeUC()
 
 
+@pytest.fixture
+def cred_cache() -> CredCache:
+    """Test-scoped CredCache (no UC traffic in unit tests by default)."""
+    return CredCache(safety_window_s=300)
+
+
 @pytest_asyncio.fixture(scope="function")
-async def client(db_engine, fake_uc: FakeUC):
+async def client(db_engine, fake_uc: FakeUC, cred_cache: CredCache):
     factory = async_sessionmaker(db_engine, expire_on_commit=False)
 
     async def override_get_db():
@@ -57,8 +64,12 @@ async def client(db_engine, fake_uc: FakeUC):
     async def override_get_uc_client():
         return fake_uc
 
+    async def override_get_cred_cache():
+        return cred_cache
+
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_uc_client] = override_get_uc_client
+    app.dependency_overrides[get_cred_cache] = override_get_cred_cache
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c

@@ -49,16 +49,21 @@ jobs:
       - name: Run migrations
         run: uv run alembic upgrade head
         working-directory: api
-      - name: Run tests
+      - name: Run API tests
         run: |
-          uv run pytest \
-            --cov=api/src --cov=agent/src \
+          uv run --package duckhaven-api pytest api/tests/unit/ \
+            --cov=api/src \
+            --cov-config=pyproject.toml \
+            --cov-report=
+      - name: Run agent tests
+        run: |
+          uv run --package duckhaven-agent pytest agent/tests/unit/ \
+            --cov=agent/src --cov-append \
             --cov-config=pyproject.toml \
             --cov-report=xml:coverage.xml \
             --cov-report=term-missing
       - name: Coverage comment
         uses: MishaKav/pytest-coverage-comment@main
-        if: always()
         with:
           pytest-xml-coverage-path: coverage.xml
           title: Python Coverage

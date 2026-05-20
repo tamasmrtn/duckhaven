@@ -29,6 +29,9 @@ known-first-party = ["api", "agent", "duckhaven_shared"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["api/tests/unit", "agent/tests/unit"]
+markers = [
+    "integration: integration tests requiring external services (UC, Postgres). Opt-in via `make test-integration`.",
+]
 
 [tool.coverage.run]
 branch = true

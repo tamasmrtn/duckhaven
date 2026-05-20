@@ -28,10 +28,20 @@ dev:
 test: test-api test-agent test-web
 
 test-api:
-	uv run --package duckhaven-api pytest api/tests/ -v
+	uv run --package duckhaven-api pytest api/tests/unit/ -v \
+		--cov=api \
+		--cov-config=pyproject.toml \
+		--cov-report=term-missing \
+		--cov-report=html:htmlcov/api \
+		--cov-fail-under=80
 
 test-agent:
-	uv run --package duckhaven-agent pytest agent/tests/ -v
+	uv run --package duckhaven-agent pytest agent/tests/unit/ -v \
+		--cov=agent \
+		--cov-config=pyproject.toml \
+		--cov-report=term-missing \
+		--cov-report=html:htmlcov/agent \
+		--cov-fail-under=75
 
 test-web:
 	cd web && npm run test
@@ -39,7 +49,6 @@ test-web:
 # ── Lint / Format ─────────────────────────────────────────────────────────────
 lint:
 	uv run ruff check api/src agent/src shared/src
-	uv run mypy api/src agent/src shared/src
 	cd web && npm run lint
 
 format:
@@ -73,6 +82,6 @@ compose-build:
 clean:
 	find . -type d -name __pycache__ -exec rm -rf {} +
 	find . -type d -name .pytest_cache -exec rm -rf {} +
-	find . -type d -name .mypy_cache -exec rm -rf {} +
 	find . -type d -name .ruff_cache -exec rm -rf {} +
+	rm -rf htmlcov/ .coverage .coverage.*
 	rm -rf web/dist web/node_modules

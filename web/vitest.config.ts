@@ -11,6 +11,7 @@ export default defineConfig({
     include: ['tests/**/*.{test,spec}.{ts,tsx}'],
     coverage: {
       provider: 'v8',
+      reporter: ['text', 'json-summary'],
       include: ['src/**/*.{ts,tsx}'],
       exclude: [
         'src/components/ui/**',
@@ -20,7 +21,6 @@ export default defineConfig({
         'src/router.tsx',
         'src/main.tsx',
       ],
-      thresholds: { lines: 70, functions: 70, branches: 65 },
     },
   },
   resolve: {

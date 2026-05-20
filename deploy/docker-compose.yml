@@ -46,8 +46,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      unity-catalog:
-        condition: service_healthy
     environment:
       DATABASE_URL: postgresql+asyncpg://duckhaven:${POSTGRES_PASSWORD}@postgres:5432/duckhaven
       UC_BASE_URL: http://unity-catalog:8080

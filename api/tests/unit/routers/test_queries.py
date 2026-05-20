@@ -91,6 +91,21 @@ async def test_create_query_agent_not_connected(
     assert resp.status_code == 503
 
 
+async def test_create_query_rejects_disallowed_sql(
+    authed_client: AsyncClient, workspace: Workspace, connected_agent
+):
+    agent, mock_ws = connected_agent
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "DROP TABLE events", "agent_id": str(agent.id)},
+    )
+    assert resp.status_code == 422
+    body = resp.json()
+    assert body["detail"]["error"] == "sql_not_allowed"
+    # No frame was sent to the agent.
+    assert mock_ws.sent == []
+
+
 async def test_create_query_agent_not_found(authed_client: AsyncClient, workspace: Workspace):
     resp = await authed_client.post(
         f"/workspaces/{workspace.slug}/queries",

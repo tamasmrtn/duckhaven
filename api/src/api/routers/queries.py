@@ -12,6 +12,7 @@ from api.models.user import User
 from api.schemas.query import QueryCreate, QueryOut, SavedQueryCreate, SavedQueryOut
 from api.services import query as query_service
 from api.services.agent_registry import registry
+from api.services.sql_guard import SQLNotAllowed, assert_allowed
 from api.services.uc_credentials import CredCache
 from api.services.unity_catalog import UCClient
 from api.services.workspace import assert_workspace_member, get_workspace
@@ -32,6 +33,14 @@ async def create_query(
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
     await assert_workspace_member(db, workspace.id, user.id)
+
+    try:
+        assert_allowed(body.sql)
+    except SQLNotAllowed as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": "sql_not_allowed", "detail": str(exc)},
+        ) from exc
 
     result = await db.execute(select(Agent).where(Agent.id == body.agent_id))
     agent = result.scalar_one_or_none()

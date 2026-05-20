@@ -18,6 +18,7 @@ class QueryOut(BaseModel):
     id: uuid.UUID
     workspace_id: uuid.UUID
     agent_id: uuid.UUID | None
+    user_id: uuid.UUID | None = None
     sql: str
     status: str
     row_count: int | None

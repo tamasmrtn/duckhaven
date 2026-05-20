@@ -115,7 +115,7 @@ async def test_create_query_agent_not_found(authed_client: AsyncClient, workspac
 
 
 async def test_create_query_dispatches(
-    authed_client: AsyncClient, workspace: Workspace, connected_agent
+    authed_client: AsyncClient, workspace: Workspace, connected_agent, user: User
 ):
     agent, mock_ws = connected_agent
     resp = await authed_client.post(
@@ -126,6 +126,8 @@ async def test_create_query_dispatches(
     data = resp.json()
     assert data["status"] == "running"
     assert data["sql"] == "SELECT 42"
+    # Dispatch records the authenticated user_id on the query (G-D11-a).
+    assert data["user_id"] == str(user.id)
     assert len(mock_ws.sent) == 1
     import json
 

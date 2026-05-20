@@ -51,7 +51,12 @@ async def create_query(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Agent not connected"
         )
 
-    query = Query(workspace_id=workspace.id, agent_id=body.agent_id, sql=body.sql)
+    query = Query(
+        workspace_id=workspace.id,
+        agent_id=body.agent_id,
+        user_id=user.id,
+        sql=body.sql,
+    )
     db.add(query)
     await db.flush()
     await query_service.dispatch_query(

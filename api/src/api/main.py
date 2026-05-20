@@ -1,3 +1,6 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -6,8 +9,23 @@ from api.routers import agents, agents_ws, auth, queries, workspaces
 from api.routers.admin import agents as admin_agents
 from api.routers.admin import audit as admin_audit
 from api.routers.admin import storage as admin_storage
+from api.services.unity_catalog import UCClient
 
-app = FastAPI(title="duckhaven-api")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    app.state.uc_client = UCClient(
+        base_url=settings.uc_base_url,
+        token=settings.uc_token,
+        timeout_s=settings.uc_http_timeout_s,
+    )
+    try:
+        yield
+    finally:
+        await app.state.uc_client.aclose()
+
+
+app = FastAPI(title="duckhaven-api", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

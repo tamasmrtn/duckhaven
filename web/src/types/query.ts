@@ -9,6 +9,7 @@ export interface Query {
   id: string;
   workspace_id: string;
   agent_id: string;
+  user_id?: string | null;
   sql: string;
   status: QueryStatus;
   row_count: number | null;

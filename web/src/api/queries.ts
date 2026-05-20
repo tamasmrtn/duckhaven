@@ -32,5 +32,10 @@ export const queriesApi = {
     data: { name: string; sql: string; default_agent_id?: string },
   ) => post<SavedQuery>(`/workspaces/${ws}/saved-queries`, data),
 
-  auditAll: () => get<Query[]>("/admin/audit"),
+  auditAll: (filters?: { user_id?: string }) => {
+    const params = new URLSearchParams();
+    if (filters?.user_id) params.set("user_id", filters.user_id);
+    const qs = params.toString();
+    return get<Query[]>(`/admin/audit${qs ? `?${qs}` : ""}`);
+  },
 };

@@ -72,9 +72,9 @@ export function useSaveQuery(ws: string) {
   });
 }
 
-export function useAuditLog() {
+export function useAuditLog(filters?: { user_id?: string }) {
   return useQuery({
-    queryKey: ["admin", "audit"],
-    queryFn: queriesApi.auditAll,
+    queryKey: ["admin", "audit", filters?.user_id ?? ""],
+    queryFn: () => queriesApi.auditAll(filters),
   });
 }

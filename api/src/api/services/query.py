@@ -5,6 +5,7 @@ import httpx
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.config import settings
 from api.models.agent import Agent
 from api.models.query import Query
 from api.models.storage_backend import StorageBackend
@@ -46,6 +47,7 @@ async def dispatch_query(
         "timeout_s": timeout_s,
         "workspace": {"slug": workspace.slug},
         "backend": {"kind": backend.kind, "root_uri": backend.root_uri},
+        "unity_catalog": {"endpoint": settings.uc_base_url},
     }
     if creds is not None:
         payload["storage_credentials"] = creds.to_payload()

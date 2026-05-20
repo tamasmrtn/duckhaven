@@ -87,7 +87,7 @@ async def test_dispatch_sends_done_frame(tmp_path, monkeypatch):
     query_id = str(uuid.uuid4())
     done_frames: list[Frame] = []
 
-    async def mock_run_query(sql, result_path, memory_limit_gb, timeout_s):
+    async def mock_run_query(sql, result_path, memory_limit_gb, timeout_s, **kwargs):
         result_path.write_bytes(b"PAR1fake")
         return {"row_count": 1, "duration_ms": 10}
 
@@ -210,7 +210,7 @@ async def test_dispatch_error_sends_failed_frame(tmp_path, monkeypatch):
     query_id = str(uuid.uuid4())
     done_frames: list[Frame] = []
 
-    async def failing_run_query(sql, result_path, memory_limit_gb, timeout_s):
+    async def failing_run_query(sql, result_path, memory_limit_gb, timeout_s, **kwargs):
         raise RuntimeError("intentional-error")
 
     # Patch the name as imported into channel.py, not the supervisor module
@@ -270,7 +270,7 @@ async def test_cancel_query_cancels_in_flight_task(tmp_path, monkeypatch):
     query_id = str(uuid.uuid4())
     progress_received = asyncio.Event()
 
-    async def slow_run_query(sql, result_path, memory_limit_gb, timeout_s):
+    async def slow_run_query(sql, result_path, memory_limit_gb, timeout_s, **kwargs):
         await asyncio.sleep(30)
         return {"row_count": 0, "duration_ms": 0}
 

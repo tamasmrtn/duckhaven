@@ -35,7 +35,7 @@ def test_memory_limit_applied(tmp_path):
 async def test_timeout_raises(tmp_path, monkeypatch):
     import agent.executor.supervisor as sup_module
 
-    def slow_runner(sql: str, result_path, memory_limit_gb: float) -> dict:
+    def slow_runner(sql, result_path, memory_limit_gb, **kwargs):
         time.sleep(0.5)
         return {"row_count": 0, "duration_ms": 500}
 

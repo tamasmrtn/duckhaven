@@ -22,6 +22,8 @@ jobs:
   python-test:
     name: Python tests
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
     services:
       postgres:
         image: postgres:16-alpine
@@ -48,7 +50,24 @@ jobs:
         run: uv run alembic upgrade head
         working-directory: api
       - name: Run tests
-        run: uv run pytest
+        run: |
+          uv run pytest \
+            --cov=api/src --cov=agent/src \
+            --cov-config=pyproject.toml \
+            --cov-report=xml:coverage.xml \
+            --cov-report=term-missing
+      - name: Coverage comment
+        uses: MishaKav/pytest-coverage-comment@main
+        if: always()
+        with:
+          pytest-xml-coverage-path: coverage.xml
+          title: Python Coverage
+          badge-title: Python Cov
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: python-coverage
+          path: coverage.xml
 
   frontend-check:
     name: Frontend lint & typecheck
@@ -68,6 +87,8 @@ jobs:
   frontend-test:
     name: Frontend tests
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
@@ -75,8 +96,19 @@ jobs:
           node-version: '22'
       - run: npm install
         working-directory: web
-      - run: npm test
+      - name: Run tests with coverage
+        run: npm run test -- --coverage
         working-directory: web
+      - name: Coverage comment
+        uses: davelosert/vitest-coverage-report-action@v2
+        if: always()
+        with:
+          working-directory: web
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frontend-coverage
+          path: web/coverage/
 
   compose-validate:
     name: Validate compose file

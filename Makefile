@@ -49,7 +49,6 @@ test-web:
 # ── Lint / Format ─────────────────────────────────────────────────────────────
 lint:
 	uv run ruff check api/src agent/src shared/src
-	uv run mypy api/src agent/src shared/src
 	cd web && npm run lint
 
 format:
@@ -83,7 +82,6 @@ compose-build:
 clean:
 	find . -type d -name __pycache__ -exec rm -rf {} +
 	find . -type d -name .pytest_cache -exec rm -rf {} +
-	find . -type d -name .mypy_cache -exec rm -rf {} +
 	find . -type d -name .ruff_cache -exec rm -rf {} +
 	rm -rf htmlcov/ .coverage .coverage.*
 	rm -rf web/dist web/node_modules

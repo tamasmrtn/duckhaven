@@ -43,7 +43,9 @@ async def test_list_workspaces_empty(auth_client: AsyncClient):
     assert resp.json() == []
 
 
-async def test_create_and_list_workspace(auth_client: AsyncClient, backend: StorageBackend):
+async def test_create_and_list_workspace(
+    auth_client: AsyncClient, backend: StorageBackend, fake_uc
+):
     resp = await auth_client.post(
         "/workspaces",
         json={"slug": "myws", "name": "My WS", "storage_backend_id": str(backend.id)},
@@ -54,6 +56,31 @@ async def test_create_and_list_workspace(auth_client: AsyncClient, backend: Stor
 
     list_resp = await auth_client.get("/workspaces")
     assert len(list_resp.json()) == 1
+    # Eager UC provisioning ran: catalog + default `main` schema both exist.
+    assert "myws" in fake_uc.catalogs
+    assert ("myws", "main") in fake_uc.schemas
+
+
+async def test_create_workspace_rolls_back_on_uc_failure(
+    auth_client: AsyncClient, backend: StorageBackend, fake_uc, db_session
+):
+    """If UC is unhealthy when the workspace is created, both the pg row
+    and the owner membership are rolled back so the caller can retry."""
+    from sqlalchemy import select
+
+    from api.models.workspace import Workspace, WorkspaceMember
+
+    fake_uc.fail_create_catalog = True
+    resp = await auth_client.post(
+        "/workspaces",
+        json={"slug": "broken", "name": "Broken", "storage_backend_id": str(backend.id)},
+    )
+    assert resp.status_code == 502
+    # Neither the workspace nor any membership for it lingers in pg.
+    ws_rows = (await db_session.execute(select(Workspace).where(Workspace.slug == "broken"))).all()
+    assert ws_rows == []
+    mem_rows = (await db_session.execute(select(WorkspaceMember))).all()
+    assert mem_rows == []
 
 
 async def test_create_duplicate_slug(auth_client: AsyncClient, backend: StorageBackend):

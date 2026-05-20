@@ -1,12 +1,17 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user, get_db
+from api.deps import get_current_user, get_db, get_uc_client
 from api.models.user import User
 from api.models.workspace import Workspace, WorkspaceMember
 from api.schemas.workspace import AddMemberRequest, MemberOut, WorkspaceCreate, WorkspaceOut
-from api.services.workspace import assert_workspace_member, get_workspace
+from api.services.unity_catalog import UCClient, UCError
+from api.services.workspace import assert_workspace_member, ensure_uc_catalog, get_workspace
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/workspaces")
 
@@ -29,6 +34,7 @@ async def create_workspace(
     body: WorkspaceCreate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    uc: UCClient = Depends(get_uc_client),
 ) -> Workspace:
     existing = await db.execute(select(Workspace).where(Workspace.slug == body.slug))
     if existing.scalar_one_or_none():
@@ -44,6 +50,22 @@ async def create_workspace(
     db.add(member)
     await db.commit()
     await db.refresh(ws)
+
+    # Eagerly provision the workspace's UC catalog and default schema. If UC
+    # is unreachable or otherwise fails, the pg row is rolled back so the
+    # caller can retry once UC is healthy (D7).
+    try:
+        await ensure_uc_catalog(uc, ws.slug)
+    except UCError as exc:
+        logger.warning("UC provisioning failed for ws=%s; rolling back: %s", ws.slug, exc)
+        await db.delete(member)
+        await db.delete(ws)
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unity Catalog provisioning failed: {exc}",
+        ) from exc
+
     return ws
 
 

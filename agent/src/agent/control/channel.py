@@ -7,6 +7,7 @@ from pathlib import Path
 import websockets
 from websockets.exceptions import ConnectionClosed
 
+from agent.auth import TokenHolder
 from agent.config import settings
 from agent.executor.supervisor import run_query
 from duckhaven_shared.protocol import Frame, FrameType
@@ -90,7 +91,10 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path) -> None:
     await ws.send(done.model_dump_json())
 
 
-async def run_control_channel(results_dir: Path | None = None) -> None:
+async def run_control_channel(
+    results_dir: Path | None = None,
+    token_holder: TokenHolder | None = None,
+) -> None:
     if results_dir is None:
         results_dir = Path(settings.results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -111,6 +115,8 @@ async def run_control_channel(results_dir: Path | None = None) -> None:
                     return
 
                 logger.info("Authenticated as agent %s", frame.payload["agent_id"])
+                if token_holder is not None:
+                    token_holder.value = frame.payload.get("session_token", "")
 
                 caps = Frame(type=FrameType.AGENT_STATUS, payload=_get_capabilities().model_dump())
                 await ws.send(caps.model_dump_json())

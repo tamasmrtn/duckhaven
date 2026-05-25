@@ -31,7 +31,9 @@ class FakeUC:
         self.fail_create_catalog: bool = False
         self.fail_create_schema: bool = False
         self.fail_create_table: bool = False
+        self.fail_update_permissions: bool = False
         self.created_table_bodies: list[dict[str, Any]] = []
+        self.permission_changes: list[dict[str, Any]] = []
 
     # --- Catalogs ---
 
@@ -131,6 +133,29 @@ class FakeUC:
 
     async def delete_table(self, catalog: str, schema: str, name: str) -> None:
         self.tables.pop((catalog, schema, name), None)
+
+    # --- Permissions ---
+
+    async def update_permissions(
+        self,
+        securable_type: str,
+        full_name: str,
+        *,
+        principal: str,
+        add: list[str] | None = None,
+        remove: list[str] | None = None,
+    ) -> None:
+        if self.fail_update_permissions:
+            raise UCError("simulated update_permissions failure")
+        self.permission_changes.append(
+            {
+                "securable_type": securable_type,
+                "full_name": full_name,
+                "principal": principal,
+                "add": add,
+                "remove": remove,
+            }
+        )
 
     # --- Creds ---
 

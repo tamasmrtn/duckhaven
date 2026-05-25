@@ -267,3 +267,16 @@ async def test_token_header_sent_when_configured() -> None:
 async def test_aclose_idempotent() -> None:
     client = UCClient(base_url=BASE)
     await client.aclose()
+
+
+@respx.mock
+async def test_update_permissions_happy(uc: UCClient) -> None:
+    import json as _json
+
+    route = respx.patch(f"{BASE}/api/2.1/unity-catalog/permissions/catalog/ws_alpha").mock(
+        return_value=httpx.Response(200, json={})
+    )
+    await uc.update_permissions("catalog", "ws_alpha", principal="user@x", add=["SELECT", "MODIFY"])
+    assert route.called
+    body = _json.loads(route.calls.last.request.content)
+    assert body == {"changes": [{"principal": "user@x", "add": ["SELECT", "MODIFY"]}]}

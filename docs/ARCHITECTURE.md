@@ -320,8 +320,12 @@ all writes; conflicting writers receive a conflict error and retry.
 `api/src/api/routers/schemas.py` always sets
 `delta.feature.catalogManaged=supported` and `format=DELTA`, and always
 points `storage_location` at the workspace backend's `root_uri +
-/{schema}/{table}/`. Verified end-to-end on local-fs by
-`agent/tests/integration/test_create_table.py` (S3 spike).
+/{schema}/{table}/`. End-to-end agent INSERT against UC-tracked
+catalogManaged Delta tables is **not yet verified on UC OSS 0.4.0** —
+spike S3 found that UC OSS 0.4.0 lacks the `/delta/preview/commits`
+endpoint DuckDB's `unity_catalog` extension uses for catalogManaged
+writes. The property is recorded in UC; runtime enforcement re-opens
+once UC OSS ships coordinated-commits.
 
 ---
 
@@ -753,7 +757,7 @@ for current vs target coverage.
 | R3 | UC credential vending becomes the bottleneck on hot dispatch | M | M | Cache vended creds per (agent, workspace) for ~½ TTL | Implemented in `services/uc_credentials.py` (half-TTL refresh) |
 | R4 | DuckHaven ↔ UC grant drift | M | M | v1.1 reconciliation cron | Not yet exercised — gated by G-D10-a (M4) |
 | R5 | Agent crash mid-query loses materialized results | M | L | Re-runnable from saved SQL; D5 marks queries failed cleanly | Unchanged |
-| R6 | DuckDB UC extension write path has rough edges on cloud backends | M | H | Spikes S3/S5 cover write paths | Local-fs validated by `agent/tests/integration/test_create_table.py`; S3/ADLS gated by env |
+| R6 | DuckDB UC extension write path has rough edges on cloud backends | M | H | Spikes S3/S5 cover write paths | Confirmed rough: UC OSS 0.4.0 missing `/delta/preview/commits`; S3 local-fs spike currently skipped, cloud variants env-gated |
 | R7 | INSERT against a non-CC table corrupts data | M | H | DuckHaven refuses INSERT against non-CC tables (D9) | Enforced — every DuckHaven-created table sets `delta.feature.catalogManaged=supported`; SQL allowlist rejects DDL outside `POST /tables` |
 | R8 | Operator misconfigures a workspace backend | M | M | UC `external_locations` validated at workspace-create | Eager UC catalog create on `POST /workspaces` rolls back the pg row on UC failure |
 | R9 | Tailscale outage = total platform outage | L | H | Document static-IP fallback in runbook | Unchanged |
@@ -769,9 +773,9 @@ for current vs target coverage.
 |---|---|---|
 | **S1** | Agent control protocol (WS + range reads, cancel, disconnect→requeue) | ✓ Passed — covered by `agent/tests/unit/control/test_channel.py` + `api/tests/unit/test_queries.py` |
 | **S2** | UC OSS + DuckDB attach (local FS) | ✓ Passed — `api/tests/integration/test_uc_smoke.py` |
-| **S3** | UC Create-Managed-Delta from Python on each backend | ✓ Passed (local-fs) — `agent/tests/integration/test_create_table.py`; S3/ADLS variants skip cleanly when env unset |
+| **S3** | UC Create-Managed-Delta from Python on each backend | ◐ Blocked on UC OSS upstream — `agent/tests/integration/test_create_table.py::test_create_table_local_fs` is skipped because UC OSS 0.4.0 does not implement `/api/2.1/unity-catalog/delta/preview/commits` (required by DuckDB's `unity_catalog` extension v0202409) and does not bootstrap the table's `_delta_log`. Cloud variants stay env-gated; re-enable when UC OSS ships coordinated-commits |
 | **S4** | Memory cap + supervisor on the agent (OOM + wall-clock) | ◐ Partial — wall-clock passes; OOM / DuckDB interrupt not yet stress-tested (G-D2-a) |
-| **S5** | UC credential vending end-to-end | ✓ Passed — `api/tests/integration/test_cred_vending.py` |
+| **S5** | UC credential vending end-to-end | ✓ Passed (local-fs/no-cred path) — `api/tests/integration/test_cred_vending.py`; S3/ADLS variants stay env-gated |
 
 ---
 

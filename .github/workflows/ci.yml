@@ -97,7 +97,7 @@ jobs:
         env:
           UC_SERVER_PORT: "8080"
         options: >-
-          --health-cmd "curl -sf http://localhost:8080/api/2.1/unity-catalog/catalogs || exit 1"
+          --health-cmd "wget -q --spider http://localhost:8080/api/2.1/unity-catalog/catalogs || exit 1"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 20

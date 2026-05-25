@@ -35,7 +35,7 @@ services:
     volumes:
       - uc_data:/etc/unitycatalog
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/api/2.1/unity-catalog/catalogs || exit 1"]
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/api/2.1/unity-catalog/catalogs || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10

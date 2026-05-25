@@ -132,7 +132,10 @@ class FakeUC:
         return table
 
     async def delete_table(self, catalog: str, schema: str, name: str) -> None:
-        self.tables.pop((catalog, schema, name), None)
+        key = (catalog, schema, name)
+        if key not in self.tables:
+            raise UCNotFoundError(f"{catalog}.{schema}.{name}")
+        self.tables.pop(key, None)
 
     # --- Permissions ---
 

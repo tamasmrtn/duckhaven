@@ -6,13 +6,16 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Route
 
+from agent.auth import TokenHolder
+
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 
-def make_results_app(results_dir: Path, session_token: str) -> Starlette:
+def make_results_app(results_dir: Path, token_holder: TokenHolder) -> Starlette:
     async def get_result(request: Request) -> Response:
+        expected = token_holder.value
         auth = request.headers.get("Authorization", "")
-        if auth != f"Bearer {session_token}":
+        if not expected or auth != f"Bearer {expected}":
             return JSONResponse({"detail": "Unauthorized"}, status_code=401)
 
         filename = request.path_params["filename"]

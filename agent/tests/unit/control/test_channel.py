@@ -79,6 +79,36 @@ async def test_bootstrap_exchange(tmp_path, monkeypatch):
     assert received_caps[0].type == FrameType.AGENT_STATUS
 
 
+async def test_auth_ok_populates_token_holder(tmp_path, monkeypatch):
+    """The session token from auth_ok lands in the shared TokenHolder so the
+    result server can authenticate control-plane range reads."""
+    import agent.control.channel as ch_module
+    from agent.auth import TokenHolder
+
+    holder = TokenHolder()
+
+    async def handler(ws):
+        await _complete_auth(ws, session_token="tok-holder")
+        await asyncio.sleep(0.1)
+
+    async with websockets.serve(handler, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        monkeypatch.setattr(ch_module.settings, "control_plane_url", f"ws://127.0.0.1:{port}")
+        monkeypatch.setattr(ch_module.settings, "bootstrap_token", "tok-boot")
+
+        task = asyncio.create_task(
+            ch_module.run_control_channel(results_dir=tmp_path, token_holder=holder)
+        )
+        await asyncio.sleep(0.2)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError, Exception:
+            pass
+
+    assert holder.value == "tok-holder"
+
+
 async def test_dispatch_sends_done_frame(tmp_path, monkeypatch):
     """Dispatch query frame triggers runner and agent sends QUERY_DONE back."""
     import agent.control.channel as ch_module

@@ -313,6 +313,88 @@ async def test_get_query_rows_agent_no_result_host(
     assert resp.status_code == 503
 
 
+async def test_get_query_rows_resolves_agent_bearer(
+    authed_client: AsyncClient, workspace: Workspace, agent: Agent, db_session, monkeypatch
+):
+    """The rows handler resolves the agent's session token and passes it to the
+    proxy so upstream range reads are authenticated (G-D16-a)."""
+    from datetime import UTC, datetime
+
+    import httpx
+
+    from api.models.query import Query
+    from api.models.user import Credential
+    from api.services import query as query_service
+
+    agent.result_host = "127.0.0.1"
+    agent.result_port = 8001
+    db_session.add(agent)
+
+    session_token = "agent-session-tok"
+    db_session.add(
+        Credential(user_id=None, agent_id=agent.id, kind="agent_session", token=session_token)
+    )
+
+    query = Query(
+        workspace_id=workspace.id,
+        agent_id=agent.id,
+        sql="SELECT 1",
+        status="done",
+        result_path="/var/duckhaven-agent/results/x.parquet",
+        started_at=datetime.now(UTC),
+    )
+    db_session.add(query)
+    await db_session.commit()
+    await db_session.refresh(query)
+
+    captured: dict[str, object] = {}
+
+    async def fake_proxy(agent_arg, query_arg, range_header=None, *, token=None):
+        captured["token"] = token
+        return httpx.Response(206, content=b"rangebytes")
+
+    monkeypatch.setattr(query_service, "proxy_rows", fake_proxy)
+
+    resp = await authed_client.get(f"/queries/{query.id}/rows")
+    assert resp.status_code == 206
+    assert captured["token"] == session_token
+
+
+async def test_proxy_rows_sets_bearer_header(monkeypatch):
+    """proxy_rows attaches the agent bearer and forwards the Range header."""
+    from datetime import UTC, datetime
+
+    import httpx
+
+    from api.models.agent import Agent
+    from api.models.query import Query
+    from api.services import query as query_service
+
+    seen: dict[str, str | None] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["auth"] = request.headers.get("Authorization")
+        seen["range"] = request.headers.get("Range")
+        return httpx.Response(206, content=b"x")
+
+    transport = httpx.MockTransport(handler)
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        query_service.httpx, "AsyncClient", lambda *a, **kw: real_client(transport=transport)
+    )
+
+    agent = Agent(name="a", status="healthy", result_host="127.0.0.1", result_port=8001)
+    query = Query(
+        workspace_id=uuid.uuid4(), sql="SELECT 1", status="done", started_at=datetime.now(UTC)
+    )
+    query.id = uuid.uuid4()
+
+    resp = await query_service.proxy_rows(agent, query, "bytes=0-10", token="abc")
+    assert resp.status_code == 206
+    assert seen["auth"] == "Bearer abc"
+    assert seen["range"] == "bytes=0-10"
+
+
 async def test_cancel_query_agent_not_connected(
     authed_client: AsyncClient, workspace: Workspace, agent: Agent, db_session
 ):

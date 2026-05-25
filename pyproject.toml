@@ -10,6 +10,7 @@ dev = [
     "httpx>=0.28.1",
     "aiosqlite>=0.20",
     "httpx-ws>=0.9.0",
+    "respx>=0.23.1",
 ]
 
 [tool.ruff]
@@ -29,6 +30,9 @@ known-first-party = ["api", "agent", "duckhaven_shared"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["api/tests/unit", "agent/tests/unit"]
+markers = [
+    "integration: integration tests requiring external services (UC, Postgres). Opt-in via `make test-integration`.",
+]
 
 [tool.coverage.run]
 branch = true

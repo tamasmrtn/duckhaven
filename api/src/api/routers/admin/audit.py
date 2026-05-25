@@ -17,6 +17,7 @@ router = APIRouter()
 async def list_audit(
     workspace_id: uuid.UUID | None = Query(default=None),
     agent_id: uuid.UUID | None = Query(default=None),
+    user_id: uuid.UUID | None = Query(default=None),
     since: datetime | None = Query(default=None),
     until: datetime | None = Query(default=None),
     limit: int = Query(default=100, le=1000),
@@ -28,6 +29,8 @@ async def list_audit(
         stmt = stmt.where(QueryModel.workspace_id == workspace_id)
     if agent_id:
         stmt = stmt.where(QueryModel.agent_id == agent_id)
+    if user_id:
+        stmt = stmt.where(QueryModel.user_id == user_id)
     if since:
         stmt = stmt.where(QueryModel.started_at >= since)
     if until:

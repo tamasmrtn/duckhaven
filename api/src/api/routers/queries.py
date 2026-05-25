@@ -5,13 +5,16 @@ from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user, get_db
+from api.deps import get_cred_cache, get_current_user, get_db, get_uc_client
 from api.models.agent import Agent
 from api.models.query import Query, SavedQuery
 from api.models.user import User
 from api.schemas.query import QueryCreate, QueryOut, SavedQueryCreate, SavedQueryOut
 from api.services import query as query_service
 from api.services.agent_registry import registry
+from api.services.sql_guard import SQLNotAllowed, assert_allowed
+from api.services.uc_credentials import CredCache
+from api.services.unity_catalog import UCClient
 from api.services.workspace import assert_workspace_member, get_workspace
 
 router = APIRouter()
@@ -23,11 +26,21 @@ async def create_query(
     body: QueryCreate,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    uc: UCClient = Depends(get_uc_client),
+    cred_cache: CredCache = Depends(get_cred_cache),
 ) -> Query:
     workspace = await get_workspace(db, ws)
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
     await assert_workspace_member(db, workspace.id, user.id)
+
+    try:
+        assert_allowed(body.sql)
+    except SQLNotAllowed as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": "sql_not_allowed", "detail": str(exc)},
+        ) from exc
 
     result = await db.execute(select(Agent).where(Agent.id == body.agent_id))
     agent = result.scalar_one_or_none()
@@ -38,10 +51,22 @@ async def create_query(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Agent not connected"
         )
 
-    query = Query(workspace_id=workspace.id, agent_id=body.agent_id, sql=body.sql)
+    query = Query(
+        workspace_id=workspace.id,
+        agent_id=body.agent_id,
+        user_id=user.id,
+        sql=body.sql,
+    )
     db.add(query)
     await db.flush()
-    await query_service.dispatch_query(db, query, body.memory_limit_gb, body.timeout_s)
+    await query_service.dispatch_query(
+        db,
+        query,
+        uc=uc,
+        cred_cache=cred_cache,
+        memory_limit_gb=body.memory_limit_gb,
+        timeout_s=body.timeout_s,
+    )
     return query
 
 

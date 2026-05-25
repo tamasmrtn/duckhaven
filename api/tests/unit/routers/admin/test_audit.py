@@ -65,10 +65,14 @@ async def workspace(db_session, admin: User) -> Workspace:
     return ws
 
 
-async def _make_query(db_session, workspace: Workspace, *, agent_id=None, started_at=None) -> Query:
+async def _make_query(
+    db_session, workspace: Workspace, *, agent_id=None, user_id=None, started_at=None
+) -> Query:
     kwargs: dict = {"workspace_id": workspace.id, "sql": "SELECT 1", "status": "done"}
     if agent_id is not None:
         kwargs["agent_id"] = agent_id
+    if user_id is not None:
+        kwargs["user_id"] = user_id
     if started_at is not None:
         kwargs["started_at"] = started_at
     q = Query(**kwargs)
@@ -164,3 +168,22 @@ async def test_audit_limit_param(admin_client: AsyncClient, workspace: Workspace
 async def test_audit_non_admin_forbidden(user_client: AsyncClient):
     resp = await user_client.get("/admin/audit")
     assert resp.status_code == 403
+
+
+async def test_audit_filter_by_user_id(
+    admin_client: AsyncClient,
+    workspace: Workspace,
+    db_session,
+    admin: User,
+    regular_user: User,
+):
+    await _make_query(db_session, workspace, user_id=admin.id)
+    await _make_query(db_session, workspace, user_id=regular_user.id)
+    await _make_query(db_session, workspace, user_id=regular_user.id)
+
+    resp = await admin_client.get(f"/admin/audit?user_id={regular_user.id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 2
+    for row in data:
+        assert row["user_id"] == str(regular_user.id)

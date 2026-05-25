@@ -1,5 +1,7 @@
+import { useState } from "react";
 import { ClipboardList } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Input } from "@/components/ui/input";
 import { StatusPill } from "@/components/app/StatusPill";
 import { useAuditLog } from "@/queries/queries";
 import { cn } from "@/utils";
@@ -11,14 +13,25 @@ function formatDuration(ms: number | null) {
 }
 
 export function AuditPage() {
-  const { data: queries = [], isLoading } = useAuditLog();
+  const [userFilter, setUserFilter] = useState("");
+  const trimmed = userFilter.trim();
+  const { data: queries = [], isLoading } = useAuditLog(
+    trimmed ? { user_id: trimmed } : undefined,
+  );
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="border-b border-[var(--border-subtle)] px-6 py-3 shrink-0">
+      <div className="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] px-6 py-3 shrink-0">
         <p className="text-xs text-text-secondary font-tabular">
           {queries.length} entries
         </p>
+        <Input
+          aria-label="filter by user id"
+          placeholder="filter by user id"
+          value={userFilter}
+          onChange={(e) => setUserFilter(e.target.value)}
+          className="h-7 w-64 text-xs"
+        />
       </div>
 
       <div className="flex-1 overflow-auto">

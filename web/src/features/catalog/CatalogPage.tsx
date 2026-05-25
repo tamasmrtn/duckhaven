@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useParams, Link } from "@tanstack/react-router";
-import { ChevronRight, Pencil, ExternalLink } from "lucide-react";
+import { ChevronRight, Pencil, ExternalLink, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -12,6 +12,8 @@ import {
 import { ResultsTable } from "@/features/worksheet/ResultsTable";
 import { StorageIcon } from "@/components/app/StorageIcon";
 import { useWorkspace } from "@/queries/workspaces";
+import { CreateSchemaDialog } from "@/features/catalog/CreateSchemaDialog";
+import { CreateTableDialog } from "@/features/catalog/CreateTableDialog";
 import { cn } from "@/utils";
 
 function formatBytes(n: number | null) {
@@ -31,14 +33,33 @@ function SchemaList({ ws }: { ws: string }) {
   const { data: workspace } = useWorkspace(ws);
   const [selectedSchema, setSelectedSchema] = useState<string | null>(null);
   const { data: tables = [] } = useTables(ws, selectedSchema ?? "");
+  const [schemaDialogOpen, setSchemaDialogOpen] = useState(false);
+  const [tableDialogOpen, setTableDialogOpen] = useState(false);
 
   return (
     <div className="flex h-full gap-0">
       {/* Schema list */}
       <div className="w-56 shrink-0 border-r border-[var(--border-subtle)] bg-[var(--bg-surface)] p-2">
-        <p className="mb-2 px-2 text-xs font-semibold text-text-secondary uppercase tracking-wide">
-          {workspace?.name ?? ws}
-        </p>
+        <div className="mb-2 flex items-center justify-between px-2">
+          <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
+            {workspace?.name ?? ws}
+          </p>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            aria-label="new schema"
+            className="h-5 w-5 p-0"
+            onClick={() => setSchemaDialogOpen(true)}
+          >
+            <Plus className="size-3" />
+          </Button>
+        </div>
+        <CreateSchemaDialog
+          ws={ws}
+          open={schemaDialogOpen}
+          onOpenChange={setSchemaDialogOpen}
+        />
         {isLoading ? (
           <div className="space-y-1">
             {Array.from({ length: 3 }).map((_, i) => (
@@ -73,9 +94,27 @@ function SchemaList({ ws }: { ws: string }) {
       {/* Table list */}
       {selectedSchema && (
         <div className="w-56 shrink-0 border-r border-[var(--border-subtle)] bg-[var(--bg-surface)] p-2">
-          <p className="mb-2 px-2 text-xs font-semibold text-text-secondary uppercase tracking-wide">
-            {selectedSchema}
-          </p>
+          <div className="mb-2 flex items-center justify-between px-2">
+            <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
+              {selectedSchema}
+            </p>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-label="new table"
+              className="h-5 w-5 p-0"
+              onClick={() => setTableDialogOpen(true)}
+            >
+              <Plus className="size-3" />
+            </Button>
+          </div>
+          <CreateTableDialog
+            ws={ws}
+            schema={selectedSchema}
+            open={tableDialogOpen}
+            onOpenChange={setTableDialogOpen}
+          />
           {tables.map((t) => (
             <Link
               key={t.name}

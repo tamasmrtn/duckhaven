@@ -136,7 +136,12 @@ export const queryHandlers = [
   ),
 
   // Audit
-  http.get("/api/admin/audit", () => {
-    return HttpResponse.json(QUERY_HISTORY);
+  http.get("/api/admin/audit", ({ request }) => {
+    const url = new URL(request.url);
+    const userId = url.searchParams.get("user_id");
+    const rows = userId
+      ? QUERY_HISTORY.filter((q) => q.user_id === userId)
+      : QUERY_HISTORY;
+    return HttpResponse.json(rows);
   }),
 ];

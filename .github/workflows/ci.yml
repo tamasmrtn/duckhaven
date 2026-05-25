@@ -74,6 +74,50 @@ jobs:
           name: python-coverage
           path: coverage.xml
 
+  integration:
+    name: Integration tests (UC + Postgres)
+    runs-on: ubuntu-latest
+    needs: [python-test]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: testdb
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      unity-catalog:
+        image: unitycatalog/unitycatalog:v0.4.0
+        env:
+          UC_SERVER_PORT: "8080"
+        options: >-
+          --health-cmd "wget -q --spider http://localhost:8080/api/2.1/unity-catalog/catalogs || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
+        ports:
+          - 8080:8080
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:testpassword@localhost:5432/testdb
+      UC_BASE_URL: http://localhost:8080
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --dev
+      - name: Run migrations
+        run: uv run alembic upgrade head
+        working-directory: api
+      - name: Integration tests
+        run: make test-integration
+
   frontend-check:
     name: Frontend lint & typecheck
     runs-on: ubuntu-latest

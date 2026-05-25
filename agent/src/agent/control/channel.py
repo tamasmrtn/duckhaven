@@ -43,13 +43,27 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path) -> None:
     sql = payload["sql"]
     memory_limit_gb = float(payload.get("memory_limit_gb", 6.0))
     timeout_s = float(payload.get("timeout_s", 600.0))
+    backend = payload.get("backend")
+    storage_credentials = payload.get("storage_credentials")
+    workspace = payload.get("workspace") or {}
+    workspace_slug = workspace.get("slug") if isinstance(workspace, dict) else None
+    uc_endpoint = (payload.get("unity_catalog") or {}).get("endpoint")
     result_path = results_dir / f"{query_id}.parquet"
 
     progress = Frame(type=FrameType.QUERY_PROGRESS, payload={"query_id": query_id})
     await ws.send(progress.model_dump_json())
 
     try:
-        stats = await run_query(sql, result_path, memory_limit_gb, timeout_s)
+        stats = await run_query(
+            sql,
+            result_path,
+            memory_limit_gb,
+            timeout_s,
+            backend=backend,
+            storage_credentials=storage_credentials,
+            workspace_slug=workspace_slug,
+            uc_endpoint=uc_endpoint,
+        )
         done = Frame(
             type=FrameType.QUERY_DONE,
             payload={

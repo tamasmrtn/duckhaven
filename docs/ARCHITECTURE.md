@@ -1,16 +1,17 @@
 # DuckHaven — Architecture
 
 > **Context for this revision.** RFC v0.2 was the pre-implementation design.
-> M0 (walking spike), M1 (frontend on MSW) and M2 (backend + agent + unit
-> tests) have since landed. This revision (v0.3) keeps the design intent
-> intact but updates every decision, the §6 API sketch, §5 storage layout,
-> §11 milestones and §13 spike status to match what was actually built, and
-> adds §8.a (shared protocol package) plus §16 (implementation status &
-> known gaps) to make the delta explicit.
+> M0 (walking spike), M1 (frontend on MSW), M2 (backend + agent + unit
+> tests) and M3 (UC catalog + writes) have since landed. This revision
+> (v0.4) keeps the design intent intact but updates every decision, the
+> §6 API sketch, §5 storage layout, §11 milestones and §13 spike status
+> to match what was actually built, and adds §8.a (shared protocol
+> package) plus §16 (implementation status & known gaps) to make the
+> delta explicit.
 >
-> **Status:** RFC v0.3 — implementation in progress. M0–M2 complete; M3
-> (catalog + writes) and M4 (multi-agent + hardening) pending. Subsequent
-> revisions are expected as M3/M4 close gaps listed in §16.
+> **Status:** RFC v0.4 — implementation in progress. M0–M3 complete on
+> merge; M4 (multi-agent + hardening) pending. Subsequent revisions are
+> expected as M4 closes the remaining gaps listed in §16.
 >
 > **Status badges** appear next to every decision:
 > `✓ Implemented` · `◐ Partial` · `○ Pending`.
@@ -36,7 +37,7 @@ storage it dispatches against are explicitly distributed.
 | Users | 2–10, local accounts, per-user/per-group workspaces + shared "public" |
 | Engines | DuckDB only (multi-node, multi-version) |
 | Storage backends (MVP) | Local FS, NAS (mounted FS), S3, ADLS Gen 2 |
-| Catalog | Unity Catalog OSS (also vends storage credentials) — *runtime present, client not yet wired* |
+| Catalog | Unity Catalog OSS (also vends storage credentials) |
 | Frontend | React SPA (SQL worksheets, no notebooks) |
 | Backend | FastAPI + Postgres |
 | Workspace layout | `uv` monorepo: `api/`, `agent/`, `shared/` (Python) + `web/` (React) + `deploy/`, `scripts/` |
@@ -80,14 +81,14 @@ workspace-create time and at every write.
                 │  • auth, workspaces, queries, audit          │
                 │  • agent registry + dispatcher (WS)          │
                 │  • storage-backend registry                  │
-                │  • UC client + DDL  (M3 — not yet wired)     │
+                │  • UC client + DDL                           │
                 └─┬───────────────┬─────────────────┬──────────┘
                   │               │                 │
         ┌─────────▼─────┐ ┌───────▼────────┐ ┌──────▼─────────┐
         │ Postgres 16   │ │ unity-catalog  │ │ Agent control  │
         │ users / ws /  │ │  REST :8080    │ │ channel (WS)   │
-        │ queries / etc │ │  (running,     │ │ — agents dial  │
-        │  + UC store   │ │   unused yet)  │ │   home         │
+        │ queries / etc │ │  catalog +     │ │ — agents dial  │
+        │  + UC store   │ │  cred vendor   │ │   home         │
         └───────────────┘ └────────┬───────┘ └──────┬─────────┘
                                    │                │
                                    │     ┌──────────┴────────────────┐
@@ -100,7 +101,7 @@ workspace-create time and at every write.
                           │ • per-query cap │             │ • per-query cap    │
                           │ • result HTTP   │             │ • result HTTP      │
                           └──────┬──────────┘             └──────┬─────────────┘
-                                 │ short-lived creds (M3)        │
+                                 │ short-lived creds             │
                        ┌─────────▼────────┐ ┌──────────────┐ ┌───▼────────────┐
                        │ Local FS / NAS   │ │  S3 bucket   │ │ ADLS Gen 2     │
                        └──────────────────┘ └──────────────┘ └────────────────┘
@@ -261,7 +262,7 @@ references. Tests in `api/tests/unit/test_admin/storage.py`.
 
 ---
 
-### D7 — Unity Catalog OSS, used both as catalog and as credential vendor · `○ Pending`
+### D7 — Unity Catalog OSS, used both as catalog and as credential vendor · `✓ Implemented`
 
 **Decision.** Unity Catalog OSS runs as a JVM container. **One UC catalog
 per DuckHaven workspace.** UC additionally holds `storage_credentials` and
@@ -269,19 +270,23 @@ per DuckHaven workspace.** UC additionally holds `storage_credentials` and
 the control plane requests **short-lived credentials** from UC scoped to the
 workspace's backend and forwards them to the agent.
 
-**Current state.** UC container runs in `deploy/docker-compose.yml`
-(`unitycatalog/unitycatalog:0.4.0` on :8080). `api.config.uc_base_url` is
-wired. **However:** no UC client is invoked anywhere in `api/`. Storage
-credentials are not vended, and `dispatch_query` frames carry no
-credentials today. **This entire decision is M3 work.** Tracked in §16
-(G-D7-a, G-D7-b).
+**Current state.** `api/src/api/services/unity_catalog.py` wraps the
+`unitycatalog` Python SDK with raw `httpx` fall-through for endpoints the
+SDK lacks (notably `temporary-table-credentials`). `services/uc_credentials.py`
+caches vended creds per `(agent_id, workspace_id)` with half-TTL refresh,
+sized by `cred_safety_window_s`. `services/query.py:dispatch_query` adds
+`backend` + `storage_credentials` keys to the `DISPATCH_QUERY` payload for
+S3/ADLS workspaces; local-fs/NAS workspaces send no creds and rely on the
+agent's filesystem mounts. UC catalog is eager-created on
+`POST /workspaces` (with rollback on UC failure) and lazy-self-healed for
+pre-M3 workspaces on first `POST /schemas` or `POST /queries`.
 
-**Consequences (once landed).** Unchanged from v0.2: short-lived creds,
-control plane on the hot path, R3 (vending bottleneck) becomes relevant.
+**Consequences.** Unchanged from v0.2: short-lived creds, control plane
+on the hot path, R3 (vending bottleneck) is now mitigated by the cache.
 
 ---
 
-### D8 — DuckHaven owns DDL via UC REST; DuckDB on agents executes DML · `○ Pending`
+### D8 — DuckHaven owns DDL via UC REST; DuckDB on agents executes DML · `✓ Implemented`
 
 **Decision.** Table creation (`CREATE TABLE`) is performed by `duckhaven-api`
 calling Unity Catalog's REST API directly with the workspace's backend as
@@ -289,24 +294,38 @@ the table's storage root. INSERT and SELECT run on a selected agent.
 UPDATE/MERGE/DELETE are out of scope until DuckDB ships support.
 
 **Current state.**
-- No `/workspaces/{ws}/schemas` or `/workspaces/{ws}/schemas/{s}/tables`
-  endpoints exist yet (M3).
-- No SQL allowlist is enforced; arbitrary SQL is currently forwarded to the
-  agent (gap G-D8-a). This is acceptable while there are no UC-managed
-  tables yet, but must be in place before M3 ships writes.
-- Web has Create-Table affordances stubbed in `CatalogPage.tsx` (Rename /
-  Drop buttons are non-functional placeholders).
+- `api/src/api/routers/schemas.py` exposes
+  `GET/POST /workspaces/{ws}/schemas` and
+  `GET/POST /workspaces/{ws}/schemas/{s}/tables`, gated on
+  `assert_workspace_member` (`reader` for list, `writer` for create).
+- SQL allowlist lives in `api/src/api/services/sql_guard.py`. It calls
+  `duckdb.json_serialize_sql` on a module-level in-memory connection and
+  walks the AST; only top-level `SELECT` and `INSERT` (incl.
+  `INSERT … SELECT`) are accepted. The connection **parses only — no
+  execution, no extensions, no storage** (narrow carve-out of D1, the
+  only DuckDB code path on the control plane).
+- Web wires Create-Schema / Create-Table via
+  `web/src/features/catalog/CreateSchemaDialog.tsx` and
+  `CreateTableDialog.tsx`. Rename / Drop remain placeholders (M4).
 
 ---
 
-### D9 — Catalog Commits ON for every DuckHaven-managed table · `○ Pending`
+### D9 — Catalog Commits ON for every DuckHaven-managed table · `✓ Implemented`
 
 **Decision.** Every table created through DuckHaven's Create-Table flow has
 `TBLPROPERTIES ('delta.feature.catalogManaged' = 'supported')`. UC arbitrates
 all writes; conflicting writers receive a conflict error and retry.
 
-**Current state.** Blocked on D8/D7. No tables are created by DuckHaven
-yet; the property is set nowhere. Validate during M3 (spike S3).
+**Current state.** `POST /workspaces/{ws}/schemas/{s}/tables` in
+`api/src/api/routers/schemas.py` always sets
+`delta.feature.catalogManaged=supported` and `format=DELTA`, and always
+points `storage_location` at the workspace backend's `root_uri +
+/{schema}/{table}/`. End-to-end agent INSERT against UC-tracked
+catalogManaged Delta tables is **not yet verified on UC OSS 0.4.0** —
+spike S3 found that UC OSS 0.4.0 lacks the `/delta/preview/commits`
+endpoint DuckDB's `unity_catalog` extension uses for catalogManaged
+writes. The property is recorded in UC; runtime enforcement re-opens
+once UC OSS ships coordinated-commits.
 
 ---
 
@@ -319,29 +338,26 @@ boundary; UC grants are mirrored as defense-in-depth.
 **Current state.** Enforced by `assert_workspace_member()` in
 `api/src/api/services/workspace.py`; role hierarchy reader < writer < owner.
 Endpoints `GET /workspaces/{ws}/members`, `POST /workspaces/{ws}/members`
-implemented. **UC mirror is not active** because D7/D8 are still pending —
-DuckHaven is currently the sole permission authority. Tests in
-`api/tests/unit/test_workspaces.py`.
+implemented. **UC mirror is not active**; DuckHaven is currently the
+sole permission authority. Mirror tracked as gap **G-D10-a** (M4). Tests
+in `api/tests/unit/test_workspaces.py`.
 
 ---
 
-### D11 — Audit log: who/when/SQL/agent/duration/rows/status · `◐ Partial`
+### D11 — Audit log: who/when/SQL/agent/duration/rows/status · `✓ Implemented`
 
 **Decision.** A query audit row records every query the system runs:
 user, workspace, agent, SQL, status, timestamps, row count, duration, and
 error (if any).
 
 **Current state.** Audit is read directly from the `queries` table via
-`GET /admin/audit?workspace=&agent=&since=&until=` (`api/src/api/routers/admin/audit.py`).
-There is **no separate `audit_queries` table**, and the `queries` table
-**has no `user_id` column** — so "who" is currently unanswerable in the API
-response. This is two gaps:
-- **G-D11-a:** add `user_id` to `queries` (or to a dedicated `audit_queries`
-  table) and populate it on dispatch.
-- **G-D11-b:** add user filter to `GET /admin/audit`.
-
-Web UI exists at `web/src/features/admin/AuditPage.tsx` and shows what the
-API exposes today.
+`GET /admin/audit?workspace=&agent=&user=&since=&until=`
+(`api/src/api/routers/admin/audit.py`). Alembic migration
+`0002_add_queries_user_id.py` added `queries.user_id` (nullable FK to
+`users.id`, indexed); `services/query.py:dispatch_query` populates it
+from `current_user`. The web UI at `web/src/features/admin/AuditPage.tsx`
+exposes a user dropdown populated from `GET /admin/users`. No separate
+`audit_queries` table — the live `queries` row is the audit row.
 
 ---
 
@@ -463,6 +479,9 @@ remediation hint.
 - Advertisement: the agent sends `AGENT_STATUS` on initial connect
   (`agent/src/agent/control/channel.py:_get_capabilities`). **Heartbeats do
   NOT re-send capabilities today** (gap G-D17-a).
+- `agent/Dockerfile` pre-installs `httpfs`, `azure`, `unity_catalog`,
+  `delta` at image build time so `_get_capabilities` reports them on the
+  first connect (no first-query latency).
 - Storage: control plane persists the JSON document in `agents.capabilities`
   on `AGENT_STATUS` receipt.
 - **Compatibility check at dispatch is currently client-side**: the React
@@ -571,22 +590,22 @@ DELETE /queries/{id}                                               → cancel si
 GET    /workspaces/{ws}/saved-queries
 POST   /workspaces/{ws}/saved-queries   {name, sql, default_agent_id}
 
-# Audit — D11 (read-only)
-GET    /admin/audit?workspace=&agent=&since=&until=                → audit rows from queries table
-```
-
-**Pending (M3+):**
-
-```
-# Schemas / tables — D8/D9   (requires UC client wiring)
+# Schemas / tables — D8, D9
 GET    /workspaces/{ws}/schemas
-POST   /workspaces/{ws}/schemas
+POST   /workspaces/{ws}/schemas                {name}
 GET    /workspaces/{ws}/schemas/{s}/tables
-POST   /workspaces/{ws}/schemas/{s}/tables   {name, columns:[...]}
-DELETE /workspaces/{ws}/schemas/{s}/tables/{t}
+POST   /workspaces/{ws}/schemas/{s}/tables     {name, columns:[{name,type,nullable}]}
+GET    /workspaces/{ws}/schemas/{s}/tables/{t}
 
-# Audit — D11 enhancements
-GET    /admin/audit?user=&...        # user filter (G-D11-b)
+# Audit — D11 (read-only)
+GET    /admin/audit?workspace=&agent=&user=&since=&until=          → audit rows from queries table
+```
+
+**Pending (M4+):**
+
+```
+# Schemas / tables — D8 (extensions)
+DELETE /workspaces/{ws}/schemas/{s}/tables/{t}
 ```
 
 Pagination on `GET /queries/{id}/rows` is **HTTP `Range` based**, not query
@@ -633,10 +652,10 @@ of Range so the proxy can stay zero-copy.
 | Job dispatch | Direct WebSocket push to chosen agent; Postgres holds query state of record (no Redis) |
 | Agent runtime | Python 3.14 process embedding DuckDB; small HTTP server for result-range reads |
 | Engine | DuckDB ≥ 1.5.x (pinned minor) — present **only** on agents |
-| Catalog | Unity Catalog OSS 0.4.0 (pinned), used as catalog + credential vendor *(client wiring pending — M3)* |
-| Catalog client | `unitycatalog` Python client + raw REST for gaps *(not yet imported)* |
+| Catalog | Unity Catalog OSS 0.4.0 (pinned), used as catalog + credential vendor |
+| Catalog client | `unitycatalog` Python SDK + raw `httpx` for endpoints the SDK lacks (`api/src/api/services/unity_catalog.py`) |
 | Storage format | Delta Lake, Catalog Commits ON (D9), per-workspace backend (D6) |
-| Storage drivers (in agent) | DuckDB native (FS), `httpfs` (S3), `azure` (ADLS Gen 2) — discovered at runtime, not preloaded by Dockerfile (G-D17-c) |
+| Storage drivers (in agent) | DuckDB native (FS), `httpfs` (S3), `azure` (ADLS Gen 2) — pre-installed by `agent/Dockerfile` |
 | Reverse proxy | Caddy 2 (`tls internal`) |
 | Identity | Local users + bcrypt + cookies (D3); agent sessions via WS (D14) |
 | Networking | Tailscale |
@@ -691,18 +710,16 @@ Closing G-D14-a / G-D16-a restores the design.
   signed with the same credential *(pending G-D14-a/G-D16-a)*.
 - **Authorization:** D10. Every query is validated for `workspace_members`
   before dispatch.
-- **Backend credentials:** D7 — *deferred to M3*. Until UC vending lands,
-  agents need to read backends with their host's filesystem permissions or
-  static cloud creds; do not configure S3/ADLS workspaces against
-  production data until M3 is in.
+- **Backend credentials:** D7 — UC vends short-lived per-(agent, workspace)
+  creds, embedded into the `DISPATCH_QUERY` frame and applied by
+  `CREATE SECRET` on the agent's per-query DuckDB connection.
 - **Sandboxing (agents):** agent process has read+write only on
   `/var/duckhaven-agent/` and the backend roots its workspaces require.
 - **Rate limiting:** login endpoint only, in-memory per-IP, 5 failed/min.
 - **Secrets:** UC token, Postgres password, agent bootstrap secret held in
   `.env` outside the repo, consumed by docker compose. No vault.
 - **In threat model:** misclick / accidental destructive query, cookie
-  theft, leaked agent credential (short TTL on backend creds limits damage
-  once D7 lands).
+  theft, leaked agent credential (short TTL on backend creds limits damage).
 - **Out of threat model:** RCE in DuckDB extensions, internet-borne
   attackers, malicious DuckHaven users or operators.
 
@@ -722,10 +739,10 @@ for current vs target coverage.
 | **M0 — Walking spike** | One hardcoded SELECT through control plane + one agent. | ✓ Complete | Validated end-to-end during M2 build-out; D1/D14/D16 covered by integration of `agent/control/channel.py` + `api/routers/agents_ws.py`. |
 | **M1 — UX on mocked backend** | High-fidelity React UI against §6 mock, including engine selector and backend registry. | ✓ Complete (PR #18 — `b7485fa`) | All screens shipped; MSW handlers under `web/src/mock/handlers/*`. |
 | **M2 — Backend wiring** | Real FastAPI + Postgres + agent control protocol satisfy the M1 contract. | ✓ Complete (PR #19 — `5af1ce2`) | Auth (D3), workspaces (D6/D10), queries (D5), agents (D14–D17 partial), saved queries, audit (D11 partial), storage backends (D6). |
-| **M3 — Catalog + writes** | Create Table via UC REST against any of the four backend kinds; INSERT from worksheet. | ○ Pending | Closes G-D7-*, G-D8-*, G-D9-*. Includes schemas/tables endpoints and SQL allowlist. |
-| **M4 — Multi-agent + hardening** | Two registered agents; engine selector exercised under load; production-ready single-control-plane box. | ○ Pending | Closes G-D2-a (DuckDB interrupt), G-D5-a (retention sweep), G-D12-b (pin api image), G-D17-a/b (heartbeat caps + server-side compat check), G-D18-* (cron + banner). |
+| **M3 — Catalog + writes** | Create Table via UC REST against any of the four backend kinds; INSERT from worksheet. | ✓ Complete (branch `feat/m3-catalog-writes`) | Closes G-D7-*, G-D8-*, G-D9-*, G-D11-*, G-D17-c. Schemas/tables endpoints + SQL allowlist + UC credential vending + audit `user_id` all landed. |
+| **M4 — Multi-agent + hardening** | Two registered agents; engine selector exercised under load; production-ready single-control-plane box. | ○ Pending | Closes G-D2-a (DuckDB interrupt), G-D5-a (retention sweep), G-D10-a (UC permission mirror), G-D12-b (pin api image), G-D17-a/b (heartbeat caps + server-side compat check), G-D18-* (cron + banner). |
 
-**Total estimated wall time remaining: 5–7 weeks** (M3 3–4w + M4 2w).
+**Total estimated wall time remaining: ~2 weeks** (M4 only).
 
 ---
 
@@ -737,12 +754,12 @@ for current vs target coverage.
 |---|---|---|---|---|---|
 | R1 | Agent control protocol has rough edges at scale | M | M | Validated by `test_channel.py`; small JSON protocol | Lowered after M2 — cancel + reconnect paths green |
 | R2 | Dial-home breaks behind aggressive NAT / firewalls | L | M | Tailscale removes most NAT; runbook covers MTU | Unchanged |
-| R3 | UC credential vending becomes the bottleneck on hot dispatch | M | M | Cache vended creds per (agent, workspace) for ~½ TTL | Not yet exercised — gated by M3 |
-| R4 | DuckHaven ↔ UC grant drift | M | M | v1.1 reconciliation cron | Not yet exercised — gated by M3 |
+| R3 | UC credential vending becomes the bottleneck on hot dispatch | M | M | Cache vended creds per (agent, workspace) for ~½ TTL | Implemented in `services/uc_credentials.py` (half-TTL refresh) |
+| R4 | DuckHaven ↔ UC grant drift | M | M | v1.1 reconciliation cron | Not yet exercised — gated by G-D10-a (M4) |
 | R5 | Agent crash mid-query loses materialized results | M | L | Re-runnable from saved SQL; D5 marks queries failed cleanly | Unchanged |
-| R6 | DuckDB UC extension write path has rough edges on cloud backends | M | H | Spikes S3/S5 cover write paths | M3 spike scope |
-| R7 | INSERT against a non-CC table corrupts data | M | H | DuckHaven refuses INSERT against non-CC tables (D9) | Will be enforced once D8/D9 land |
-| R8 | Operator misconfigures a workspace backend | M | M | UC `external_locations` validated at workspace-create | M3 dependency |
+| R6 | DuckDB UC extension write path has rough edges on cloud backends | M | H | Spikes S3/S5 cover write paths | Confirmed rough: UC OSS 0.4.0 missing `/delta/preview/commits`; S3 local-fs spike currently skipped, cloud variants env-gated |
+| R7 | INSERT against a non-CC table corrupts data | M | H | DuckHaven refuses INSERT against non-CC tables (D9) | Enforced — every DuckHaven-created table sets `delta.feature.catalogManaged=supported`; SQL allowlist rejects DDL outside `POST /tables` |
+| R8 | Operator misconfigures a workspace backend | M | M | UC `external_locations` validated at workspace-create | Eager UC catalog create on `POST /workspaces` rolls back the pg row on UC failure |
 | R9 | Tailscale outage = total platform outage | L | H | Document static-IP fallback in runbook | Unchanged |
 | R10 | SSD failure on FS/NAS-backed workspace → data loss | L | C | Conditional UI banner (D18); v1.x `restic` | Banner G-D18-c |
 | R11 | Catalog metadata loss | L | H | Nightly `pg_dump` (D18) | Script exists, cron pending (G-D18-a) |
@@ -755,10 +772,10 @@ for current vs target coverage.
 | Spike | Topic | Status |
 |---|---|---|
 | **S1** | Agent control protocol (WS + range reads, cancel, disconnect→requeue) | ✓ Passed — covered by `agent/tests/unit/control/test_channel.py` + `api/tests/unit/test_queries.py` |
-| **S2** | UC OSS + DuckDB attach (local FS) | ○ Pending — needed for M3 |
-| **S3** | UC Create-Managed-Delta from Python on each backend | ○ Pending — needed for M3 |
+| **S2** | UC OSS + DuckDB attach (local FS) | ✓ Passed — `api/tests/integration/test_uc_smoke.py` |
+| **S3** | UC Create-Managed-Delta from Python on each backend | ◐ Blocked on UC OSS upstream — `agent/tests/integration/test_create_table.py::test_create_table_local_fs` is skipped because UC OSS 0.4.0 does not implement `/api/2.1/unity-catalog/delta/preview/commits` (required by DuckDB's `unity_catalog` extension v0202409) and does not bootstrap the table's `_delta_log`. Cloud variants stay env-gated; re-enable when UC OSS ships coordinated-commits |
 | **S4** | Memory cap + supervisor on the agent (OOM + wall-clock) | ◐ Partial — wall-clock passes; OOM / DuckDB interrupt not yet stress-tested (G-D2-a) |
-| **S5** | UC credential vending end-to-end | ○ Pending — needed for M3 |
+| **S5** | UC credential vending end-to-end | ✓ Passed (local-fs/no-cred path) — `api/tests/integration/test_cred_vending.py`; S3/ADLS variants stay env-gated |
 
 ---
 
@@ -767,9 +784,15 @@ for current vs target coverage.
 *All v0.2 questions still apply; revised standings:*
 
 1. **Q1.** Does UC's Python client cover Create-Managed-Delta-Table for all
-   backend kinds, or do we hand-roll REST? **Open — resolves in S3.**
+   backend kinds, or do we hand-roll REST? **Resolved (S3):** the
+   `unitycatalog` SDK covers catalog/schema CRUD and table create with
+   properties; `temporary-table-credentials` and other gaps are handled
+   by raw `httpx` in `services/unity_catalog.py`.
 2. **Q2.** UC credential-vending TTLs vs DuckDB's per-query lifetime — do
-   we refresh mid-query, or size TTL conservatively? **Open — resolves in S5.**
+   we refresh mid-query, or size TTL conservatively? **Resolved (S5):**
+   `services/uc_credentials.py` refreshes at half-TTL
+   (`cred_safety_window_s` default = `max(300, vended_ttl_s / 2)`);
+   per-query connections die before the cred does.
 3. **Q3.** Result-set retention — 24h agent-local default; revisit after
    first user feedback. **Open — gated on G-D5-a implementation.**
 4. **Q4.** Workspace deletion semantics — refuse (require manual cleanup).
@@ -822,11 +845,11 @@ Per-decision summary (status from §4):
 | D4 SQL worksheets only | ✓ | |
 | D5 async query lifecycle | ✓ | Retention sweep pending (G-D5-a) |
 | D6 pluggable storage backends | ✓ | Registry + workspace binding |
-| D7 UC catalog + credential vendor | ○ | M3 |
-| D8 DDL via UC REST | ○ | M3 — SQL allowlist also pending (G-D8-a) |
-| D9 Catalog Commits ON | ○ | M3 — blocked on D8 |
-| D10 workspace permissions | ✓ | UC mirror deferred to M3 |
-| D11 audit log | ◐ | No `user_id` on queries; no separate `audit_queries` table |
+| D7 UC catalog + credential vendor | ✓ | UC client + half-TTL cred cache wired |
+| D8 DDL via UC REST | ✓ | Schemas/tables endpoints + parse-only allowlist |
+| D9 Catalog Commits ON | ✓ | `delta.feature.catalogManaged=supported` set on every DuckHaven-created table |
+| D10 workspace permissions | ✓ | UC mirror deferred to M4 (G-D10-a) |
+| D11 audit log | ✓ | `queries.user_id` + `?user=` filter |
 | D12 deployment | ◐ | Agent image build + `:latest` pin pending |
 | D13 UI-first | ✓ | |
 | D14 agent dial-home | ✓ | Result-server bearer plumbing pending |
@@ -842,13 +865,7 @@ Per-decision summary (status from §4):
 | G-D2-a | Wire DuckDB query interrupt into supervisor; today only `asyncio.wait_for` fires | M4 |
 | G-D2-b | Per-host operator ceiling cap on memory/timeout overrides | M4 |
 | G-D5-a | 24h result-Parquet retention sweep on agent (`/var/duckhaven-agent/results`) | M4 |
-| G-D7-a | UC Python client wired in `api/`; per-(agent, workspace) credential cache | M3 |
-| G-D7-b | `dispatch_query` payload carries short-lived storage credentials | M3 |
-| G-D8-a | SQL allowlist (SELECT, INSERT, INSERT…SELECT) enforced before dispatch | M3 |
-| G-D8-b | `/workspaces/{ws}/schemas` + `/schemas/{s}/tables` endpoints | M3 |
-| G-D9-a | Set `delta.feature.catalogManaged=supported` on every DuckHaven-created table | M3 |
-| G-D11-a | Add `user_id` to `queries` (or new `audit_queries` table); populate on dispatch | M3 (small) |
-| G-D11-b | `GET /admin/audit` accepts `user=` filter | M3 (small) |
+| G-D10-a | UC permission mirror — replicate `workspace_members` to UC grants as defense-in-depth | M4 |
 | G-D12-a | Build + publish a versioned `duckhaven-agent` image | M4 |
 | G-D12-b | Pin `duckhaven-api` image to a version tag (drop `:latest`) | M4 |
 | G-D14-a | Agent receives session token in `auth_ok` and configures its HTTP bearer from it | M4 |
@@ -856,7 +873,6 @@ Per-decision summary (status from §4):
 | G-D16-b | Persist `query_progress` so `GET /queries/{id}` can stream progress | M4+ |
 | G-D17-a | Agent re-sends `agent_status` on each heartbeat (currently only on connect) | M4 |
 | G-D17-b | `api/services/query.py` enforces backend-extension compatibility at dispatch (currently only the React `AgentPicker` checks) | M4 |
-| G-D17-c | Agent Dockerfile installs `httpfs`, `azure`, `unity_catalog`, `delta` extensions explicitly (currently relies on runtime discovery) | M3 |
 | G-D18-a | `scripts/pg-backup.sh` wired into cron / systemd timer | M4 |
 | G-D18-b | Document second-disk target in runbook (script defaults to local path) | M4 |
 | G-D18-c | Conditional DR banner in web UI for `local_fs` / `nas` workspaces | M4 |

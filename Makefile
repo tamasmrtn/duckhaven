@@ -1,5 +1,6 @@
 .PHONY: install install-web dev dev-api dev-web \
         test test-api test-agent test-web \
+        test-integration test-integration-api test-integration-agent \
         lint format \
         migrate migrate-new migrate-down \
         compose-up compose-down compose-logs compose-build \
@@ -45,6 +46,19 @@ test-agent:
 
 test-web:
 	cd web && npm run test
+
+# ── Integration tests (opt-in; require UC + Postgres) ─────────────────────────
+# Exit code 5 ("no tests ran") is tolerated so the targets are safe to run
+# before the first integration test lands on a branch.
+test-integration: test-integration-api test-integration-agent
+
+test-integration-api:
+	@uv run --package duckhaven-api pytest api/tests/integration/ -v -m integration; \
+	  rc=$$?; if [ $$rc -ne 0 ] && [ $$rc -ne 5 ]; then exit $$rc; fi
+
+test-integration-agent:
+	@uv run --package duckhaven-agent pytest agent/tests/integration/ -v -m integration; \
+	  rc=$$?; if [ $$rc -ne 0 ] && [ $$rc -ne 5 ]; then exit $$rc; fi
 
 # ── Lint / Format ─────────────────────────────────────────────────────────────
 lint:

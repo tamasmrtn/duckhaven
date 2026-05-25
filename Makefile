@@ -2,7 +2,7 @@
         test test-api test-agent test-web \
         test-integration test-integration-api test-integration-agent \
         lint format \
-        migrate migrate-new migrate-down \
+        migrate migrate-new migrate-down seed \
         compose-up compose-down compose-logs compose-build \
         clean
 
@@ -78,6 +78,9 @@ migrate-new:
 
 migrate-down:
 	uv run --package duckhaven-api alembic -c api/alembic.ini downgrade -1
+
+seed:
+	uv run --package duckhaven-api python scripts/seed-admin.py --email "$(email)" --password "$(password)"
 
 # ── Docker / deployment ───────────────────────────────────────────────────────
 compose-up:

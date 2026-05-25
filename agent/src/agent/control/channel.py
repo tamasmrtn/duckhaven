@@ -41,8 +41,8 @@ def _get_capabilities() -> AgentCapabilities:
 async def _handle_dispatch(ws, payload: dict, results_dir: Path) -> None:
     query_id = payload["query_id"]
     sql = payload["sql"]
-    memory_limit_gb = float(payload.get("memory_limit_gb", 6.0))
-    timeout_s = float(payload.get("timeout_s", 600.0))
+    memory_limit_gb = min(float(payload.get("memory_limit_gb", 6.0)), settings.max_memory_limit_gb)
+    timeout_s = min(float(payload.get("timeout_s", 600.0)), settings.max_timeout_s)
     backend = payload.get("backend")
     storage_credentials = payload.get("storage_credentials")
     workspace = payload.get("workspace") or {}

@@ -41,7 +41,10 @@ services:
       retries: 10
 
   api:
-    image: duckhaven-api:latest
+    # Pinned, not :latest (G-D12-b). Override DUCKHAVEN_API_IMAGE to point at
+    # the CI-published GHCR image, e.g.
+    # ghcr.io/<owner>/duckhaven-api:0.1.0 (see .github/workflows/build.yml).
+    image: ${DUCKHAVEN_API_IMAGE:-duckhaven-api:0.1.0}
     restart: unless-stopped
     depends_on:
       postgres:

@@ -2,6 +2,8 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+import duckdb
+
 from agent.executor.runner import run_query_sync
 
 
@@ -17,6 +19,7 @@ async def run_query(
     uc_endpoint: str | None = None,
 ) -> dict[str, int]:
     loop = asyncio.get_running_loop()
+    conn_box: dict[str, duckdb.DuckDBPyConnection] = {}
 
     def _run() -> dict[str, int]:
         return run_query_sync(
@@ -27,9 +30,23 @@ async def run_query(
             storage_credentials=storage_credentials,
             workspace_slug=workspace_slug,
             uc_endpoint=uc_endpoint,
+            on_connect=lambda c: conn_box.__setitem__("conn", c),
         )
 
-    return await asyncio.wait_for(
-        loop.run_in_executor(None, _run),
-        timeout=timeout_s,
-    )
+    def _interrupt() -> None:
+        # Called from the event-loop thread; DuckDB's interrupt is thread-safe
+        # and stops the in-flight query running on the executor thread.
+        conn = conn_box.get("conn")
+        if conn is not None:
+            conn.interrupt()
+
+    handle = loop.call_later(timeout_s, _interrupt)
+    try:
+        return await loop.run_in_executor(None, _run)
+    except duckdb.InterruptException as exc:
+        raise TimeoutError("query exceeded statement timeout") from exc
+    except asyncio.CancelledError:
+        _interrupt()
+        raise
+    finally:
+        handle.cancel()

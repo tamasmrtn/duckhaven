@@ -19,6 +19,46 @@ async def _complete_auth(ws, *, session_token: str = "tok-test") -> None:
     await ws.recv()  # consume AGENT_STATUS
 
 
+async def test_dispatch_clamps_to_operator_ceilings(tmp_path, monkeypatch):
+    """Per-query memory/timeout overrides are clamped to the agent's operator
+    ceilings before execution (G-D2-b)."""
+    import agent.control.channel as ch_module
+
+    captured: dict[str, float] = {}
+
+    async def fake_run_query(sql, result_path, memory_limit_gb, timeout_s, **kwargs):
+        captured["memory_limit_gb"] = memory_limit_gb
+        captured["timeout_s"] = timeout_s
+        result_path.write_bytes(b"PAR1fake")
+        return {"row_count": 0, "duration_ms": 0}
+
+    monkeypatch.setattr(ch_module, "run_query", fake_run_query)
+    monkeypatch.setattr(ch_module.settings, "max_memory_limit_gb", 4.0)
+    monkeypatch.setattr(ch_module.settings, "max_timeout_s", 60.0)
+
+    class FakeWS:
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+
+        async def send(self, msg: str) -> None:
+            self.sent.append(msg)
+
+    ws = FakeWS()
+    await ch_module._handle_dispatch(
+        ws,
+        {
+            "query_id": str(uuid.uuid4()),
+            "sql": "SELECT 1",
+            "memory_limit_gb": 100.0,
+            "timeout_s": 99999.0,
+        },
+        tmp_path,
+    )
+
+    assert captured["memory_limit_gb"] == 4.0
+    assert captured["timeout_s"] == 60.0
+
+
 async def _serve_bootstrap_exchange(websocket, session_token: str = "tok-abc"):
     """Mock control-plane: accept auth, send auth_ok, then accept one more frame."""
     raw = await websocket.recv()

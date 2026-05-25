@@ -28,6 +28,15 @@ async def dispatch_query(
     if query.agent_id is None or registry.get(query.agent_id) is None:
         raise ValueError("Agent not connected")
 
+    # Clamp the requested memory to the agent's advertised ceiling so the
+    # picker's numbers and the dispatched cap agree (the agent enforces its
+    # own hard ceiling regardless; this is fast feedback). G-D2-b.
+    agent = await db.get(Agent, query.agent_id)
+    if agent is not None and agent.capabilities:
+        cap = agent.capabilities.get("memory_limit_gb")
+        if cap:
+            memory_limit_gb = min(memory_limit_gb, float(cap))
+
     workspace = await db.get(Workspace, query.workspace_id)
     if workspace is None:
         raise ValueError("Workspace missing for query")

@@ -273,6 +273,38 @@ async def test_heartbeat_echo(tmp_path, monkeypatch):
     assert heartbeat_received.is_set()
 
 
+async def test_heartbeat_readvertises_capabilities(tmp_path, monkeypatch):
+    """On each heartbeat the agent re-sends its capabilities (G-D17-a)."""
+    import agent.control.channel as ch_module
+
+    got_status = asyncio.Event()
+
+    async def handler(ws):
+        await _complete_auth(ws)  # consumes the connect-time AGENT_STATUS
+        await ws.send(Frame(type=FrameType.HEARTBEAT).model_dump_json())
+        for _ in range(3):
+            raw = await asyncio.wait_for(ws.recv(), timeout=2.0)
+            if Frame.model_validate_json(raw).type == FrameType.AGENT_STATUS:
+                got_status.set()
+                break
+        await asyncio.sleep(0.05)
+
+    async with websockets.serve(handler, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        monkeypatch.setattr(ch_module.settings, "control_plane_url", f"ws://127.0.0.1:{port}")
+        monkeypatch.setattr(ch_module.settings, "bootstrap_token", "tok")
+
+        task = asyncio.create_task(ch_module.run_control_channel(results_dir=tmp_path))
+        await got_status.wait()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError, Exception:
+            pass
+
+    assert got_status.is_set()
+
+
 async def test_dispatch_error_sends_failed_frame(tmp_path, monkeypatch):
     """When run_query raises, the channel sends QUERY_DONE with status=failed."""
     import agent.control.channel as ch_module

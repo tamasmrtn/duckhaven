@@ -126,6 +126,12 @@ async def run_control_channel(
 
                     if msg.type == FrameType.HEARTBEAT:
                         await ws.send(Frame(type=FrameType.HEARTBEAT).model_dump_json())
+                        # Re-advertise capabilities so the control plane's stored
+                        # doc + last_ping_at stay fresh (G-D17-a).
+                        caps = Frame(
+                            type=FrameType.AGENT_STATUS, payload=_get_capabilities().model_dump()
+                        )
+                        await ws.send(caps.model_dump_json())
 
                     elif msg.type == FrameType.DISPATCH_QUERY:
                         query_id = msg.payload.get("query_id", str(uuid.uuid4()))

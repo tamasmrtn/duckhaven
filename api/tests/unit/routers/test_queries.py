@@ -179,6 +179,8 @@ async def test_dispatch_payload_embeds_s3_storage_credentials(
     from api.models.workspace import Workspace, WorkspaceMember
 
     agent, mock_ws = connected_agent
+    agent.capabilities = {"extensions": ["httpfs"]}  # required for s3 (G-D17-b)
+    db_session.add(agent)
 
     sb = StorageBackend(
         kind="s3", name="s3-store", root_uri="s3://bucket/prefix", created_by=user.id
@@ -231,6 +233,38 @@ async def test_dispatch_payload_embeds_s3_storage_credentials(
     assert "expires_at" in creds
     # Suppress unused symbol
     _ = (select, WorkspaceMember)
+
+
+async def test_dispatch_rejects_agent_missing_extension(
+    authed_client: AsyncClient, db_session, user: User, connected_agent
+):
+    """A cloud-backed workspace cannot dispatch to an agent that lacks the
+    required DuckDB extension; the query is never created or sent (G-D17-b)."""
+    from api.models.storage_backend import StorageBackend
+    from api.models.workspace import Workspace, WorkspaceMember
+
+    agent, mock_ws = connected_agent
+    agent.capabilities = {"extensions": ["httpfs", "delta"]}  # no azure
+    db_session.add(agent)
+
+    sb = StorageBackend(
+        kind="adls_gen2", name="adls", root_uri="abfss://c@acct/", created_by=user.id
+    )
+    db_session.add(sb)
+    await db_session.flush()
+    ws = Workspace(slug="adls-ws", name="ADLS WS", storage_backend_id=sb.id)
+    db_session.add(ws)
+    await db_session.flush()
+    db_session.add(WorkspaceMember(workspace_id=ws.id, user_id=user.id, role="owner"))
+    await db_session.commit()
+
+    resp = await authed_client.post(
+        "/workspaces/adls-ws/queries",
+        json={"sql": "SELECT 1", "agent_id": str(agent.id)},
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["error"] == "agent_incompatible"
+    assert mock_ws.sent == []
 
 
 # --- query status ---

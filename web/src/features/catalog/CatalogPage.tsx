@@ -1,14 +1,29 @@
 import { useState } from "react";
-import { useParams, Link } from "@tanstack/react-router";
+import { useParams, Link, useNavigate } from "@tanstack/react-router";
 import { ChevronRight, Pencil, ExternalLink, Plus } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   useSchemas,
   useTable,
   useTableSample,
   useTables,
 } from "@/queries/schemas";
+import { useDeleteTable } from "@/queries/schemas.mutations";
 import { ResultsTable } from "@/features/worksheet/ResultsTable";
 import { StorageIcon } from "@/components/app/StorageIcon";
 import { useWorkspace } from "@/queries/workspaces";
@@ -159,6 +174,16 @@ function TableDetail({
     table,
   );
   const { data: workspace } = useWorkspace(ws);
+  const navigate = useNavigate();
+  const deleteTable = useDeleteTable(ws, schema);
+  const [dropOpen, setDropOpen] = useState(false);
+
+  async function handleDrop() {
+    await deleteTable.mutateAsync(table);
+    toast.success(`Dropped ${schema}.${table}`);
+    setDropOpen(false);
+    navigate({ to: "/$ws/catalog", params: { ws } });
+  }
 
   if (isLoading) {
     return (
@@ -210,7 +235,12 @@ function TableDetail({
             )}
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1.5 text-xs"
+              onClick={() => setDropOpen(true)}
+            >
               <Pencil className="size-3" />
               Rename / Drop
             </Button>
@@ -288,6 +318,59 @@ function TableDetail({
           </div>
         </div>
       </div>
+
+      <Dialog open={dropOpen} onOpenChange={setDropOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Manage {table}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled
+                      className="text-xs"
+                    >
+                      Rename
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Not supported by the DuckDB UC extension yet.
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            <p className="text-text-secondary">
+              Dropping permanently removes{" "}
+              <span className="font-mono">
+                {schema}.{table}
+              </span>{" "}
+              from Unity Catalog. This cannot be undone.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setDropOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={handleDrop}
+              disabled={deleteTable.isPending}
+            >
+              {deleteTable.isPending ? "Dropping…" : "Drop table"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

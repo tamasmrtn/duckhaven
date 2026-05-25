@@ -28,6 +28,15 @@ async def dispatch_query(
     if query.agent_id is None or registry.get(query.agent_id) is None:
         raise ValueError("Agent not connected")
 
+    # Clamp the requested memory to the agent's advertised ceiling so the
+    # picker's numbers and the dispatched cap agree (the agent enforces its
+    # own hard ceiling regardless; this is fast feedback). G-D2-b.
+    agent = await db.get(Agent, query.agent_id)
+    if agent is not None and agent.capabilities:
+        cap = agent.capabilities.get("memory_limit_gb")
+        if cap:
+            memory_limit_gb = min(memory_limit_gb, float(cap))
+
     workspace = await db.get(Workspace, query.workspace_id)
     if workspace is None:
         raise ValueError("Workspace missing for query")
@@ -60,6 +69,15 @@ async def dispatch_query(
 
 async def handle_agent_frame(db: AsyncSession, frame: Frame) -> None:
     query_id = uuid.UUID(frame.payload["query_id"])
+    if frame.type == FrameType.QUERY_PROGRESS:
+        progress = {k: v for k, v in frame.payload.items() if k != "query_id"}
+        await db.execute(
+            sa.update(Query)
+            .where(Query.id == query_id)
+            .values(status="running", progress=progress or None)
+        )
+        await db.commit()
+        return
     if frame.type == FrameType.QUERY_DONE:
         await db.execute(
             sa.update(Query)
@@ -88,9 +106,17 @@ async def cancel_query(db: AsyncSession, query: Query) -> None:
     await db.commit()
 
 
-async def proxy_rows(agent: Agent, query: Query, range_header: str | None = None) -> httpx.Response:
+async def proxy_rows(
+    agent: Agent,
+    query: Query,
+    range_header: str | None = None,
+    *,
+    token: str | None = None,
+) -> httpx.Response:
     url = f"http://{agent.result_host}:{agent.result_port}/results/{query.id}.parquet"
     headers: dict[str, str] = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     if range_header:
         headers["Range"] = range_header
     async with httpx.AsyncClient() as client:

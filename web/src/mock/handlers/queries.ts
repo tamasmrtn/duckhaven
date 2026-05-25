@@ -33,6 +33,7 @@ export const queryHandlers = [
       row_count: null,
       duration_ms: null,
       error: null,
+      progress: null,
       started_at: new Date().toISOString(),
       finished_at: null,
     };
@@ -40,13 +41,17 @@ export const queryHandlers = [
 
     // Simulate queued → running → done
     setTimeout(() => {
-      if (liveQueries[id]) liveQueries[id].status = "running";
+      if (liveQueries[id]) {
+        liveQueries[id].status = "running";
+        liveQueries[id].progress = { stage: "scanning" };
+      }
     }, 200);
     setTimeout(() => {
       if (liveQueries[id]) {
         liveQueries[id].status = "done";
         liveQueries[id].row_count = 30;
         liveQueries[id].duration_ms = 1400;
+        liveQueries[id].progress = null;
         liveQueries[id].finished_at = new Date().toISOString();
       }
     }, 1800);

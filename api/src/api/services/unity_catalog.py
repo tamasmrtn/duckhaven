@@ -248,6 +248,29 @@ class UCClient:
         resp = await self._http.delete(f"{self.BASE_PATH}/tables/{full}")
         self._raise_for_status(resp)
 
+    # --- Permissions ---
+
+    async def update_permissions(
+        self,
+        securable_type: str,
+        full_name: str,
+        *,
+        principal: str,
+        add: list[str] | None = None,
+        remove: list[str] | None = None,
+    ) -> None:
+        """PATCH a securable's permissions for one principal (D10 mirror)."""
+        change: dict[str, Any] = {"principal": principal}
+        if add:
+            change["add"] = add
+        if remove:
+            change["remove"] = remove
+        resp = await self._http.patch(
+            f"{self.BASE_PATH}/permissions/{securable_type}/{full_name}",
+            json={"changes": [change]},
+        )
+        self._raise_for_status(resp)
+
     # --- Temporary table credentials ---
 
     async def gen_temp_creds(

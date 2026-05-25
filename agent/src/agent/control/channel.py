@@ -7,6 +7,7 @@ from pathlib import Path
 import websockets
 from websockets.exceptions import ConnectionClosed
 
+from agent.auth import TokenHolder
 from agent.config import settings
 from agent.executor.supervisor import run_query
 from duckhaven_shared.protocol import Frame, FrameType
@@ -41,8 +42,8 @@ def _get_capabilities() -> AgentCapabilities:
 async def _handle_dispatch(ws, payload: dict, results_dir: Path) -> None:
     query_id = payload["query_id"]
     sql = payload["sql"]
-    memory_limit_gb = float(payload.get("memory_limit_gb", 6.0))
-    timeout_s = float(payload.get("timeout_s", 600.0))
+    memory_limit_gb = min(float(payload.get("memory_limit_gb", 6.0)), settings.max_memory_limit_gb)
+    timeout_s = min(float(payload.get("timeout_s", 600.0)), settings.max_timeout_s)
     backend = payload.get("backend")
     storage_credentials = payload.get("storage_credentials")
     workspace = payload.get("workspace") or {}
@@ -90,7 +91,10 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path) -> None:
     await ws.send(done.model_dump_json())
 
 
-async def run_control_channel(results_dir: Path | None = None) -> None:
+async def run_control_channel(
+    results_dir: Path | None = None,
+    token_holder: TokenHolder | None = None,
+) -> None:
     if results_dir is None:
         results_dir = Path(settings.results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -111,6 +115,8 @@ async def run_control_channel(results_dir: Path | None = None) -> None:
                     return
 
                 logger.info("Authenticated as agent %s", frame.payload["agent_id"])
+                if token_holder is not None:
+                    token_holder.value = frame.payload.get("session_token", "")
 
                 caps = Frame(type=FrameType.AGENT_STATUS, payload=_get_capabilities().model_dump())
                 await ws.send(caps.model_dump_json())
@@ -120,6 +126,12 @@ async def run_control_channel(results_dir: Path | None = None) -> None:
 
                     if msg.type == FrameType.HEARTBEAT:
                         await ws.send(Frame(type=FrameType.HEARTBEAT).model_dump_json())
+                        # Re-advertise capabilities so the control plane's stored
+                        # doc + last_ping_at stay fresh (G-D17-a).
+                        caps = Frame(
+                            type=FrameType.AGENT_STATUS, payload=_get_capabilities().model_dump()
+                        )
+                        await ws.send(caps.model_dump_json())
 
                     elif msg.type == FrameType.DISPATCH_QUERY:
                         query_id = msg.payload.get("query_id", str(uuid.uuid4()))

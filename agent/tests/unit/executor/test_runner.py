@@ -1,4 +1,3 @@
-import asyncio
 import time
 
 import pytest
@@ -32,18 +31,21 @@ def test_memory_limit_applied(tmp_path):
     assert setting is not None
 
 
-async def test_timeout_raises(tmp_path, monkeypatch):
-    import agent.executor.supervisor as sup_module
-
-    def slow_runner(sql, result_path, memory_limit_gb, **kwargs):
-        time.sleep(0.5)
-        return {"row_count": 0, "duration_ms": 500}
-
-    monkeypatch.setattr(sup_module, "run_query_sync", slow_runner)
-
+async def test_timeout_interrupts_running_query(tmp_path):
+    """A wall-clock timeout interrupts the in-flight DuckDB query (G-D2-a):
+    the call raises TimeoutError far sooner than the query would complete on
+    its own, proving the interrupt stopped real work rather than just the
+    awaiting coroutine."""
     result_path = tmp_path / "out.parquet"
-    with pytest.raises(asyncio.TimeoutError):
-        await run_query("SELECT 1", result_path, memory_limit_gb=1.0, timeout_s=0.05)
+    # A 10^12-row cross join with a per-row computation: minutes of work if it
+    # ran to completion, so finishing under the budget can only mean interrupt.
+    sql = "SELECT sum(t1.range + t2.range) FROM range(1000000) t1, range(1000000) t2"
+
+    start = time.monotonic()
+    with pytest.raises(TimeoutError):
+        await run_query(sql, result_path, memory_limit_gb=2.0, timeout_s=0.5)
+    elapsed = time.monotonic() - start
+    assert elapsed < 10, f"interrupt did not stop the query promptly ({elapsed:.1f}s)"
 
 
 def test_invalid_sql_raises(tmp_path):

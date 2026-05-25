@@ -234,3 +234,47 @@ async def test_create_table_requires_writer(
         json={"name": "events", "columns": [{"name": "id", "type": "BIGINT"}]},
     )
     assert resp.status_code == 403
+
+
+# --- drop table ---
+
+
+async def test_drop_table_writer(
+    auth_client: AsyncClient, backend: StorageBackend, fake_uc: FakeUC
+):
+    slug = await _make_workspace(auth_client, backend, "alpha")
+    await auth_client.post(
+        f"/workspaces/{slug}/schemas/main/tables",
+        json={"name": "events", "columns": [{"name": "id", "type": "BIGINT"}]},
+    )
+    assert (slug, "main", "events") in fake_uc.tables
+
+    resp = await auth_client.delete(f"/workspaces/{slug}/schemas/main/tables/events")
+    assert resp.status_code == 204
+    assert (slug, "main", "events") not in fake_uc.tables
+
+
+async def test_drop_table_missing_is_404(auth_client: AsyncClient, backend: StorageBackend):
+    slug = await _make_workspace(auth_client, backend, "alpha")
+    resp = await auth_client.delete(f"/workspaces/{slug}/schemas/main/tables/ghost")
+    assert resp.status_code == 404
+
+
+async def test_drop_table_requires_writer(
+    auth_client: AsyncClient, backend: StorageBackend, db_session
+):
+    slug = "readonly3"
+    ws = Workspace(slug=slug, name="RO3", storage_backend_id=backend.id)
+    db_session.add(ws)
+    await db_session.commit()
+    await db_session.refresh(ws)
+    from sqlalchemy import select
+
+    user = (
+        await db_session.execute(select(User).where(User.email == "owner@test.local"))
+    ).scalar_one()
+    db_session.add(WorkspaceMember(workspace_id=ws.id, user_id=user.id, role="reader"))
+    await db_session.commit()
+
+    resp = await auth_client.delete(f"/workspaces/{slug}/schemas/main/tables/events")
+    assert resp.status_code == 403

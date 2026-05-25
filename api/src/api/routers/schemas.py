@@ -203,3 +203,19 @@ async def create_table(
     except UCConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return _table_to_out(t)
+
+
+@router.delete("/{schema}/tables/{table}", status_code=status.HTTP_204_NO_CONTENT)
+async def drop_table(
+    ws: str,
+    schema: str,
+    table: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    uc: UCClient = Depends(get_uc_client),
+) -> None:
+    workspace = await _resolve_workspace(ws, user, db, min_role="writer")
+    try:
+        await uc.delete_table(workspace.slug, schema, table)
+    except UCNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc

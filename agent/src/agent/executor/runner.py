@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -95,6 +96,7 @@ def run_query_sync(
     storage_credentials: dict[str, Any] | None = None,
     workspace_slug: str | None = None,
     uc_endpoint: str | None = None,
+    on_connect: Callable[[duckdb.DuckDBPyConnection], None] | None = None,
 ) -> dict[str, int]:
     """Run a query through DuckDB and materialize the result to Parquet.
 
@@ -104,8 +106,12 @@ def run_query_sync(
     - `workspace_slug`: used as the UC catalog name and the secret name.
     - `uc_endpoint`: when set, ATTACH the workspace's UC catalog before
       running the user SQL.
+    - `on_connect`: called with the freshly-opened connection so the
+      supervisor can `interrupt()` it on timeout/cancel (G-D2-a).
     """
     conn = duckdb.connect()
+    if on_connect is not None:
+        on_connect(conn)
     try:
         conn.execute(f"SET memory_limit='{memory_limit_gb}GB'")
 

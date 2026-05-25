@@ -15,6 +15,7 @@ export interface Query {
   row_count: number | null;
   duration_ms: number | null;
   error: string | null;
+  progress?: Record<string, unknown> | null;
   started_at: string;
   finished_at: string | null;
 }

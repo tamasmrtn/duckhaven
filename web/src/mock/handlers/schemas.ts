@@ -91,6 +91,22 @@ export const schemaHandlers = [
     },
   ),
 
+  http.delete(
+    "/api/workspaces/:ws/schemas/:schema/tables/:table",
+    ({ params }) => {
+      const ws = findWorkspace(params.ws as string);
+      if (!ws) return new HttpResponse(null, { status: 404 });
+      const schema = (SCHEMAS[ws.id] ?? []).find(
+        (s) => s.name === params.schema,
+      );
+      if (!schema) return new HttpResponse(null, { status: 404 });
+      const idx = schema.tables.findIndex((t) => t.name === params.table);
+      if (idx === -1) return new HttpResponse(null, { status: 404 });
+      schema.tables.splice(idx, 1);
+      return new HttpResponse(null, { status: 204 });
+    },
+  ),
+
   http.get(
     "/api/workspaces/:ws/schemas/:schema/tables/:table/sample",
     ({ params }) => {

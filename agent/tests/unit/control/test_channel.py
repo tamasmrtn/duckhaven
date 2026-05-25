@@ -19,6 +19,46 @@ async def _complete_auth(ws, *, session_token: str = "tok-test") -> None:
     await ws.recv()  # consume AGENT_STATUS
 
 
+async def test_dispatch_clamps_to_operator_ceilings(tmp_path, monkeypatch):
+    """Per-query memory/timeout overrides are clamped to the agent's operator
+    ceilings before execution (G-D2-b)."""
+    import agent.control.channel as ch_module
+
+    captured: dict[str, float] = {}
+
+    async def fake_run_query(sql, result_path, memory_limit_gb, timeout_s, **kwargs):
+        captured["memory_limit_gb"] = memory_limit_gb
+        captured["timeout_s"] = timeout_s
+        result_path.write_bytes(b"PAR1fake")
+        return {"row_count": 0, "duration_ms": 0}
+
+    monkeypatch.setattr(ch_module, "run_query", fake_run_query)
+    monkeypatch.setattr(ch_module.settings, "max_memory_limit_gb", 4.0)
+    monkeypatch.setattr(ch_module.settings, "max_timeout_s", 60.0)
+
+    class FakeWS:
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+
+        async def send(self, msg: str) -> None:
+            self.sent.append(msg)
+
+    ws = FakeWS()
+    await ch_module._handle_dispatch(
+        ws,
+        {
+            "query_id": str(uuid.uuid4()),
+            "sql": "SELECT 1",
+            "memory_limit_gb": 100.0,
+            "timeout_s": 99999.0,
+        },
+        tmp_path,
+    )
+
+    assert captured["memory_limit_gb"] == 4.0
+    assert captured["timeout_s"] == 60.0
+
+
 async def _serve_bootstrap_exchange(websocket, session_token: str = "tok-abc"):
     """Mock control-plane: accept auth, send auth_ok, then accept one more frame."""
     raw = await websocket.recv()
@@ -77,6 +117,36 @@ async def test_bootstrap_exchange(tmp_path, monkeypatch):
 
     assert len(received_caps) == 1
     assert received_caps[0].type == FrameType.AGENT_STATUS
+
+
+async def test_auth_ok_populates_token_holder(tmp_path, monkeypatch):
+    """The session token from auth_ok lands in the shared TokenHolder so the
+    result server can authenticate control-plane range reads."""
+    import agent.control.channel as ch_module
+    from agent.auth import TokenHolder
+
+    holder = TokenHolder()
+
+    async def handler(ws):
+        await _complete_auth(ws, session_token="tok-holder")
+        await asyncio.sleep(0.1)
+
+    async with websockets.serve(handler, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        monkeypatch.setattr(ch_module.settings, "control_plane_url", f"ws://127.0.0.1:{port}")
+        monkeypatch.setattr(ch_module.settings, "bootstrap_token", "tok-boot")
+
+        task = asyncio.create_task(
+            ch_module.run_control_channel(results_dir=tmp_path, token_holder=holder)
+        )
+        await asyncio.sleep(0.2)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError, Exception:
+            pass
+
+    assert holder.value == "tok-holder"
 
 
 async def test_dispatch_sends_done_frame(tmp_path, monkeypatch):
@@ -201,6 +271,38 @@ async def test_heartbeat_echo(tmp_path, monkeypatch):
             pass
 
     assert heartbeat_received.is_set()
+
+
+async def test_heartbeat_readvertises_capabilities(tmp_path, monkeypatch):
+    """On each heartbeat the agent re-sends its capabilities (G-D17-a)."""
+    import agent.control.channel as ch_module
+
+    got_status = asyncio.Event()
+
+    async def handler(ws):
+        await _complete_auth(ws)  # consumes the connect-time AGENT_STATUS
+        await ws.send(Frame(type=FrameType.HEARTBEAT).model_dump_json())
+        for _ in range(3):
+            raw = await asyncio.wait_for(ws.recv(), timeout=2.0)
+            if Frame.model_validate_json(raw).type == FrameType.AGENT_STATUS:
+                got_status.set()
+                break
+        await asyncio.sleep(0.05)
+
+    async with websockets.serve(handler, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        monkeypatch.setattr(ch_module.settings, "control_plane_url", f"ws://127.0.0.1:{port}")
+        monkeypatch.setattr(ch_module.settings, "bootstrap_token", "tok")
+
+        task = asyncio.create_task(ch_module.run_control_channel(results_dir=tmp_path))
+        await got_status.wait()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError, Exception:
+            pass
+
+    assert got_status.is_set()
 
 
 async def test_dispatch_error_sends_failed_frame(tmp_path, monkeypatch):

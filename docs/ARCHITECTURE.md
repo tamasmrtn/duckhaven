@@ -370,10 +370,12 @@ host).
 **Current state.**
 - `deploy/docker-compose.yml` runs `caddy:2-alpine`, `postgres:16-alpine`,
   `unitycatalog/unitycatalog:0.4.0`, `duckhaven-api:latest`.
-- `agent/Dockerfile` exists, but the agent image is **not built or pushed**
-  by any tooling in the repo today — operators build locally. Gap G-D12-a.
-- `duckhaven-api:latest` violates D12's "no `:latest`" rule and must be
-  pinned before M4. Gap G-D12-b.
+- `agent/Dockerfile` exists and **is built + pushed** to
+  `ghcr.io/<owner>/duckhaven-agent` (and `duckhaven-api`) by
+  `.github/workflows/build.yml` on every `v*.*.*` tag. G-D12-a closed.
+- `duckhaven-api` is no longer `:latest`: `deploy/docker-compose.yml` pins
+  it via `${DUCKHAVEN_API_IMAGE:-duckhaven-api:0.1.0}`, overridable to the
+  GHCR image. G-D12-b closed.
 - Postgres + Alembic migrations run via `make migrate`
   (`uv run --package duckhaven-api alembic upgrade head`); they are not yet
   wired into container start.
@@ -866,8 +868,8 @@ Per-decision summary (status from §4):
 | G-D2-b | Per-host operator ceiling cap on memory/timeout overrides | M4 |
 | G-D5-a | 24h result-Parquet retention sweep on agent (`/var/duckhaven-agent/results`) | M4 |
 | G-D10-a | UC permission mirror — replicate `workspace_members` to UC grants as defense-in-depth | M4 |
-| G-D12-a | Build + publish a versioned `duckhaven-agent` image | M4 |
-| G-D12-b | Pin `duckhaven-api` image to a version tag (drop `:latest`) | M4 |
+| G-D12-a | Build + publish a versioned `duckhaven-agent` image | ✓ Done — `.github/workflows/build.yml` builds + pushes both images on `v*.*.*` tags |
+| G-D12-b | Pin `duckhaven-api` image to a version tag (drop `:latest`) | ✓ Done (M4) — compose pins `${DUCKHAVEN_API_IMAGE:-duckhaven-api:0.1.0}` |
 | G-D14-a | Agent receives session token in `auth_ok` and configures its HTTP bearer from it | M4 |
 | G-D16-a | Control-plane row-read proxy signs upstream requests with the agent bearer | M4 |
 | G-D16-b | Persist `query_progress` so `GET /queries/{id}` can stream progress | M4+ |

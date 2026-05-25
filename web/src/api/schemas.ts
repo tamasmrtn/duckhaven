@@ -1,4 +1,4 @@
-import { get, post } from "./client";
+import { del, get, post } from "./client";
 import type { CatalogSchema, CatalogTable } from "@/types/catalog";
 import type { QueryRowsPage } from "@/types/query";
 
@@ -49,4 +49,7 @@ export const schemasApi = {
     schema: string,
     body: { name: string; columns: ColumnSpec[] },
   ) => post<CatalogTable>(`/workspaces/${ws}/schemas/${schema}/tables`, body),
+
+  deleteTable: (ws: string, schema: string, table: string) =>
+    del(`/workspaces/${ws}/schemas/${schema}/tables/${table}`),
 };

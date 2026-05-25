@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { renderWithProviders } from '@tests/utils'
 
@@ -41,5 +41,20 @@ describe('CatalogPage', () => {
     await waitFor(() => {
       expect(screen.getByText('pageviews')).toBeInTheDocument()
     })
+  })
+
+  it('drops a table from the detail view and returns to the catalog', async () => {
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: '/acme-analytics/catalog/raw/events' })
+
+    await user.click(
+      await screen.findByRole('button', { name: /rename \/ drop/i }),
+    )
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: /drop table/i }))
+
+    expect(
+      await screen.findByRole('heading', { name: 'Catalog' }),
+    ).toBeInTheDocument()
   })
 })

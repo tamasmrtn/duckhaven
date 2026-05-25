@@ -24,3 +24,16 @@ export function useCreateTable(ws: string, schema: string) {
     },
   });
 }
+
+export function useDeleteTable(ws: string, schema: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (table: string) => schemasApi.deleteTable(ws, schema, table),
+    onSuccess: () => {
+      qc.invalidateQueries({
+        queryKey: ["workspace", ws, "schema", schema, "tables"],
+      });
+      qc.invalidateQueries({ queryKey: ["workspace", ws, "schemas"] });
+    },
+  });
+}

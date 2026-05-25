@@ -165,3 +165,69 @@ async def test_add_member(auth_client: AsyncClient, backend: StorageBackend, db_
     )
     assert resp.status_code == 201
     assert resp.json()["role"] == "reader"
+
+
+async def test_add_member_mirrors_uc_grant(
+    auth_client: AsyncClient, backend: StorageBackend, db_session, fake_uc
+):
+    """Adding a member mirrors a best-effort catalog grant to UC (G-D10-a)."""
+    from api.models.user import User
+    from api.services.auth import hash_password
+
+    target = User(
+        email="grantee@test.local",
+        password_hash=hash_password("pw"),
+        name="Grantee",
+        role="user",
+    )
+    db_session.add(target)
+    await db_session.commit()
+    await db_session.refresh(target)
+
+    create = await auth_client.post(
+        "/workspaces",
+        json={"slug": "grant-ws", "name": "Grant WS", "storage_backend_id": str(backend.id)},
+    )
+    ws_slug = create.json()["slug"]
+    resp = await auth_client.post(
+        f"/workspaces/{ws_slug}/members",
+        json={"user_id": str(target.id), "role": "writer"},
+    )
+    assert resp.status_code == 201
+
+    grants = [c for c in fake_uc.permission_changes if c["principal"] == "grantee@test.local"]
+    assert len(grants) == 1
+    assert grants[0]["securable_type"] == "catalog"
+    assert grants[0]["full_name"] == "grant-ws"
+    assert grants[0]["add"] == ["SELECT", "MODIFY"]
+
+
+async def test_add_member_survives_uc_grant_failure(
+    auth_client: AsyncClient, backend: StorageBackend, db_session, fake_uc
+):
+    """A UC grant failure never blocks the membership change (best-effort)."""
+    from api.models.user import User
+    from api.services.auth import hash_password
+
+    target = User(
+        email="grantee2@test.local",
+        password_hash=hash_password("pw"),
+        name="G2",
+        role="user",
+    )
+    db_session.add(target)
+    await db_session.commit()
+    await db_session.refresh(target)
+
+    create = await auth_client.post(
+        "/workspaces",
+        json={"slug": "grant-ws2", "name": "Grant WS2", "storage_backend_id": str(backend.id)},
+    )
+    ws_slug = create.json()["slug"]
+    fake_uc.fail_update_permissions = True
+
+    resp = await auth_client.post(
+        f"/workspaces/{ws_slug}/members",
+        json={"user_id": str(target.id), "role": "reader"},
+    )
+    assert resp.status_code == 201

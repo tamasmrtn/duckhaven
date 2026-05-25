@@ -9,7 +9,12 @@ from api.models.user import User
 from api.models.workspace import Workspace, WorkspaceMember
 from api.schemas.workspace import AddMemberRequest, MemberOut, WorkspaceCreate, WorkspaceOut
 from api.services.unity_catalog import UCClient, UCError
-from api.services.workspace import assert_workspace_member, ensure_uc_catalog, get_workspace
+from api.services.workspace import (
+    assert_workspace_member,
+    ensure_uc_catalog,
+    get_workspace,
+    mirror_member_grant,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +109,7 @@ async def add_member(
     body: AddMemberRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    uc: UCClient = Depends(get_uc_client),
 ) -> WorkspaceMember:
     workspace = await get_workspace(db, ws)
     if workspace is None:
@@ -113,4 +119,10 @@ async def add_member(
     db.add(member)
     await db.commit()
     await db.refresh(member)
+
+    # Defense-in-depth: mirror the grant to UC (best-effort, never blocks).
+    target = await db.get(User, body.user_id)
+    if target is not None:
+        await mirror_member_grant(uc, workspace.slug, target.email, body.role)
+
     return member

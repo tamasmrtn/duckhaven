@@ -12,6 +12,25 @@ logger = logging.getLogger(__name__)
 
 ROLE_ORDER = {"reader": 0, "writer": 1, "owner": 2}
 
+# Workspace role → UC catalog privileges. DuckHaven is the sole permission
+# authority (D10); these grants are defense-in-depth only.
+ROLE_PRIVILEGES = {
+    "reader": ["SELECT"],
+    "writer": ["SELECT", "MODIFY"],
+    "owner": ["ALL PRIVILEGES"],
+}
+
+
+async def mirror_member_grant(uc: UCClient, catalog: str, principal: str, role: str) -> None:
+    """Best-effort mirror of a workspace membership to a UC catalog grant
+    (G-D10-a). Any UC failure is logged and swallowed so a membership change
+    is never blocked by UC availability or missing grant support."""
+    privileges = ROLE_PRIVILEGES.get(role, ["SELECT"])
+    try:
+        await uc.update_permissions("catalog", catalog, principal=principal, add=privileges)
+    except Exception as exc:  # noqa: BLE001 - best-effort; never blocks the change
+        logger.warning("UC grant mirror failed for %s on %s: %s", principal, catalog, exc)
+
 
 async def assert_workspace_member(
     db: AsyncSession,

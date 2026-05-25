@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, ShieldAlert } from "lucide-react";
+import { Banner } from "@/components/ui/banner";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -207,6 +208,10 @@ export function StorageBackendsPage() {
   const deleteBackend = useDeleteStorageBackend();
   const [wizardOpen, setWizardOpen] = useState(false);
 
+  const hasLocalBackend = backends.some(
+    (b) => b.kind === "local_fs" || b.kind === "nas",
+  );
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="flex items-center justify-between border-b border-[var(--border-subtle)] px-6 py-3 shrink-0">
@@ -222,6 +227,16 @@ export function StorageBackendsPage() {
           Register backend
         </Button>
       </div>
+
+      {hasLocalBackend && (
+        <Banner className="mx-6 mt-3">
+          <ShieldAlert className="size-3.5 text-[var(--brand-orange)]" />
+          <span>
+            Local FS / NAS backends have no off-box disaster recovery — data DR
+            is delegated to that disk. Ensure off-box backups (see the runbook).
+          </span>
+        </Banner>
+      )}
 
       <div className="flex-1 overflow-auto">
         {isLoading ? (

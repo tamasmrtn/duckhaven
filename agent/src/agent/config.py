@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     # Operator-set, non-overridable ceilings: per-query overrides clamp to these.
     max_memory_limit_gb: float = 6.0
     max_timeout_s: float = 600.0
+    result_retention_hours: float = 24.0
+    retention_sweep_interval_s: float = 3600.0
 
 
 settings = Settings()

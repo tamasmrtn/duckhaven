@@ -24,6 +24,7 @@ class QueryOut(BaseModel):
     row_count: int | None
     duration_ms: int | None
     error: str | None
+    progress: dict[str, Any] | None = None
     started_at: datetime
     finished_at: datetime | None
 

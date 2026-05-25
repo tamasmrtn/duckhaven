@@ -290,6 +290,42 @@ async def test_get_query_not_found(authed_client: AsyncClient):
     assert resp.status_code == 404
 
 
+async def test_query_progress_persisted_and_exposed(
+    authed_client: AsyncClient, workspace: Workspace, agent: Agent, db_session
+):
+    """A QUERY_PROGRESS frame persists progress, exposed by GET /queries/{id} (G-D16-b)."""
+    from datetime import UTC, datetime
+
+    from api.models.query import Query
+    from api.services import query as query_service
+    from duckhaven_shared.protocol import Frame, FrameType
+
+    query = Query(
+        workspace_id=workspace.id,
+        agent_id=agent.id,
+        sql="SELECT 1",
+        status="running",
+        started_at=datetime.now(UTC),
+    )
+    db_session.add(query)
+    await db_session.commit()
+    await db_session.refresh(query)
+
+    await query_service.handle_agent_frame(
+        db_session,
+        Frame(
+            type=FrameType.QUERY_PROGRESS,
+            payload={"query_id": str(query.id), "stage": "scanning", "pct": 42},
+        ),
+    )
+
+    resp = await authed_client.get(f"/queries/{query.id}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "running"
+    assert body["progress"] == {"stage": "scanning", "pct": 42}
+
+
 # --- cancel ---
 
 

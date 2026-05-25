@@ -69,6 +69,15 @@ async def dispatch_query(
 
 async def handle_agent_frame(db: AsyncSession, frame: Frame) -> None:
     query_id = uuid.UUID(frame.payload["query_id"])
+    if frame.type == FrameType.QUERY_PROGRESS:
+        progress = {k: v for k, v in frame.payload.items() if k != "query_id"}
+        await db.execute(
+            sa.update(Query)
+            .where(Query.id == query_id)
+            .values(status="running", progress=progress or None)
+        )
+        await db.commit()
+        return
     if frame.type == FrameType.QUERY_DONE:
         await db.execute(
             sa.update(Query)

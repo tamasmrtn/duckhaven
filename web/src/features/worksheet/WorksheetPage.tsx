@@ -398,6 +398,12 @@ export function WorksheetPage() {
                       {queryData.error}
                     </span>
                   )}
+                  {queryData.status === "running" &&
+                    typeof queryData.progress?.stage === "string" && (
+                      <span className="text-xs text-text-secondary">
+                        {queryData.progress.stage}
+                      </span>
+                    )}
                 </>
               )}
             </div>

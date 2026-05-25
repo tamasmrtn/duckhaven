@@ -25,18 +25,22 @@ import pytest
 pytestmark = pytest.mark.integration
 
 
-async def _create_managed_delta_table(
+async def _create_delta_table(
     uc_http: httpx.AsyncClient,
     catalog: str,
     schema: str,
     name: str,
     storage_location: str,
 ) -> dict:
+    # UC OSS 0.4.0 disables MANAGED tables by default and only fully
+    # supports EXTERNAL Delta tables on local-fs roots; EXTERNAL is what
+    # the spike actually needs to register the table_id for the
+    # temporary-table-credentials probe below.
     body = {
         "name": name,
         "catalog_name": catalog,
         "schema_name": schema,
-        "table_type": "MANAGED",
+        "table_type": "EXTERNAL",
         "data_source_format": "DELTA",
         "storage_location": storage_location,
         "columns": [
@@ -84,7 +88,7 @@ async def test_local_fs_vending_is_refused_or_empty(
     await _create_schema(uc_http, unique_catalog, "main")
     table_root = tmp_path / "local_table"
     table_root.mkdir()
-    table = await _create_managed_delta_table(
+    table = await _create_delta_table(
         uc_http, unique_catalog, "main", "events", table_root.as_uri()
     )
 
@@ -95,14 +99,14 @@ async def test_local_fs_vending_is_refused_or_empty(
 
     # Either UC refuses entirely (4xx) or vends an empty/local-fs creds
     # response. Both are acceptable; the api will treat both as "no
-    # creds needed" for local backends.
+    # creds needed" for local backends. UC OSS 0.4.0 in practice returns
+    # the cred-key shape with every value set to null.
     if resp.status_code >= 400:
         return
     body = resp.json()
     cloud_keys = {"aws_temp_credentials", "azure_user_delegation_sas", "gcp_oauth_token"}
-    assert not (cloud_keys & body.keys()), (
-        f"UC unexpectedly vended cloud creds for a file:// table: {body}"
-    )
+    vended = {k: v for k, v in body.items() if k in cloud_keys and v}
+    assert not vended, f"UC unexpectedly vended cloud creds for a file:// table: {vended}"
 
 
 @pytest.mark.skipif(
@@ -119,7 +123,7 @@ async def test_s3_vending_returns_aws_creds_with_expiry(
     await _create_schema(uc_http, unique_catalog, "main")
     bucket = os.environ["M3_S3_BUCKET"]
     storage_location = f"s3://{bucket}/duckhaven-spike/{unique_catalog}/main/events_s3/"
-    table = await _create_managed_delta_table(
+    table = await _create_delta_table(
         uc_http, unique_catalog, "main", "events_s3", storage_location
     )
 
@@ -157,7 +161,7 @@ async def test_adls_vending_returns_sas(uc_http: httpx.AsyncClient, unique_catal
         f"abfss://{container}@{account}.dfs.core.windows.net/"
         f"duckhaven-spike/{unique_catalog}/main/events_adls/"
     )
-    table = await _create_managed_delta_table(
+    table = await _create_delta_table(
         uc_http, unique_catalog, "main", "events_adls", storage_location
     )
 

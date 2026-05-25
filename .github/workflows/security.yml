@@ -20,7 +20,7 @@ jobs:
           push: false
           load: true
           tags: duckhaven-api:scan
-      - uses: aquasecurity/trivy-action@0.31.0
+      - uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: duckhaven-api:scan
           format: sarif
@@ -46,7 +46,7 @@ jobs:
           push: false
           load: true
           tags: duckhaven-agent:scan
-      - uses: aquasecurity/trivy-action@0.31.0
+      - uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: duckhaven-agent:scan
           format: sarif

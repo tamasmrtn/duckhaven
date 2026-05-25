@@ -88,9 +88,17 @@ async def cancel_query(db: AsyncSession, query: Query) -> None:
     await db.commit()
 
 
-async def proxy_rows(agent: Agent, query: Query, range_header: str | None = None) -> httpx.Response:
+async def proxy_rows(
+    agent: Agent,
+    query: Query,
+    range_header: str | None = None,
+    *,
+    token: str | None = None,
+) -> httpx.Response:
     url = f"http://{agent.result_host}:{agent.result_port}/results/{query.id}.parquet"
     headers: dict[str, str] = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     if range_header:
         headers["Range"] = range_header
     async with httpx.AsyncClient() as client:

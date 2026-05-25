@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.deps import get_cred_cache, get_current_user, get_db, get_uc_client
 from api.models.agent import Agent
 from api.models.query import Query, SavedQuery
-from api.models.user import User
+from api.models.user import Credential, User
 from api.schemas.query import QueryCreate, QueryOut, SavedQueryCreate, SavedQueryOut
 from api.services import query as query_service
 from api.services.agent_registry import registry
@@ -123,7 +123,18 @@ async def get_query_rows(
             detail="Agent result endpoint unavailable",
         )
 
-    upstream = await query_service.proxy_rows(agent, query, request.headers.get("Range"))
+    cred_result = await db.execute(
+        select(Credential).where(
+            Credential.agent_id == query.agent_id,
+            Credential.kind == "agent_session",
+        )
+    )
+    cred = cred_result.scalar_one_or_none()
+    token = cred.token if cred is not None else None
+
+    upstream = await query_service.proxy_rows(
+        agent, query, request.headers.get("Range"), token=token
+    )
     return Response(
         content=upstream.content,
         status_code=upstream.status_code,

@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { http, HttpResponse } from 'msw'
 import { renderWithProviders } from '@tests/utils'
+import { server } from '@tests/mock/server'
 
 const WS_ROUTE = '/acme-analytics/worksheets'
 
@@ -49,6 +51,36 @@ describe('WorksheetPage run', () => {
     await waitFor(() => {
       expect(screen.getByRole('status')).toBeInTheDocument()
     })
+  })
+
+  it('shows the running progress stage in the results header', async () => {
+    server.use(
+      http.post('/api/workspaces/:ws/queries', () =>
+        HttpResponse.json({ id: 'q-prog', status: 'queued' }, { status: 202 }),
+      ),
+      http.get('/api/queries/:id', () =>
+        HttpResponse.json({
+          id: 'q-prog',
+          workspace_id: 'ws',
+          agent_id: 'a',
+          sql: 'SELECT 1',
+          status: 'running',
+          row_count: null,
+          duration_ms: null,
+          error: null,
+          progress: { stage: 'scanning' },
+          started_at: new Date().toISOString(),
+          finished_at: null,
+        }),
+      ),
+    )
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: WS_ROUTE })
+    const runBtn = await screen.findByRole('button', { name: /run query/i })
+
+    await user.click(runBtn)
+
+    expect(await screen.findByText('scanning')).toBeInTheDocument()
   })
 })
 

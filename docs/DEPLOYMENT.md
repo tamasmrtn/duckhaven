@@ -23,6 +23,7 @@ Edit `deploy/.env`:
 ```bash
 POSTGRES_PASSWORD=<strong-random-password>
 SECRET_KEY=<strong-random-secret>
+COOKIE_SECURE=false
 ```
 
 `SECRET_KEY` is used for session cookie signing. Generate one with:
@@ -31,14 +32,18 @@ SECRET_KEY=<strong-random-secret>
 openssl rand -hex 32
 ```
 
+Keep `COOKIE_SECURE=false` for the default plain-HTTP deployment — the browser
+drops `Secure` cookies over HTTP, which breaks login. Set it to `true` only when
+the API is fronted by a TLS terminator (see [Networking](#networking)).
+
 ### 2. Start the stack
 
 ```bash
 make compose-up
 ```
 
-This starts Postgres, Unity Catalog OSS, and the FastAPI app. The API is
-published directly on port 8000.
+This starts Postgres, Unity Catalog OSS, and the FastAPI app. The app serves
+both the REST API (under `/api`) and the web UI on port 8000.
 
 ### 3. Run migrations
 
@@ -56,7 +61,8 @@ This creates the first admin account. Run it once against a fresh database.
 
 ### 5. Access the app
 
-Open `http://<control-plane-host>:8000` (or `http://localhost:5173` if running the Vite dev server alongside).
+Open `http://<control-plane-host>:8000` — the web UI is served by the API at that
+address. (`http://localhost:5173` is the Vite dev server, for local development only.)
 
 ## Agent Deployment
 
@@ -176,4 +182,5 @@ docker restart duckhaven-agent
 | Query fails with `missing extension` | Agent lacks backend extension | Rebuild agent image or pick a different agent |
 | UC connection errors | Unity Catalog not ready | Wait for UC healthcheck (`docker compose ps`), check `UC_BASE_URL` |
 | Login fails | Wrong password or session expired | Reset admin password via `scripts/seed-admin.py` |
+| Login succeeds but immediately logs out | `COOKIE_SECURE=true` over plain HTTP | Set `COOKIE_SECURE=false` (or front the API with TLS) |
 | Results not loading | Agent result server unreachable | Verify agent is running, check `RESULTS_HTTP_PORT` firewall rules |

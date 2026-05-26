@@ -44,7 +44,7 @@ Create a file named `agent.env`:
 
 ```bash
 # Required
-CONTROL_PLANE_URL=wss://duckhaven.example.com/agents/connect
+CONTROL_PLANE_URL=ws://duckhaven.example.com:8000/agents/connect
 BOOTSTRAP_TOKEN=dh_boot_xxxxxxxxxxxxxxxx
 
 # Optional (defaults shown)
@@ -111,7 +111,7 @@ cd agent
 uv sync
 
 # Set environment variables
-export CONTROL_PLANE_URL=wss://...
+export CONTROL_PLANE_URL=ws://...:8000
 export BOOTSTRAP_TOKEN=dh_boot_...
 
 # Run

@@ -37,7 +37,8 @@ openssl rand -hex 32
 make compose-up
 ```
 
-This starts Caddy, Postgres, Unity Catalog OSS, and the FastAPI app.
+This starts Postgres, Unity Catalog OSS, and the FastAPI app. The API is
+published directly on port 8000.
 
 ### 3. Run migrations
 
@@ -55,7 +56,7 @@ This creates the first admin account. Run it once against a fresh database.
 
 ### 5. Access the app
 
-Open `https://<control-plane-host>` (or `http://localhost:5173` if running the Vite dev server alongside).
+Open `http://<control-plane-host>:8000` (or `http://localhost:5173` if running the Vite dev server alongside).
 
 ## Agent Deployment
 
@@ -83,7 +84,7 @@ scripts/gen-token.sh
 Create an `.env` file for the agent:
 
 ```bash
-CONTROL_PLANE_URL=wss://<control-plane-host>/agents/connect
+CONTROL_PLANE_URL=ws://<control-plane-host>:8000/agents/connect
 BOOTSTRAP_TOKEN=<token-from-step-2>
 RESULTS_DIR=/var/duckhaven-agent/results
 RESULTS_HTTP_PORT=8001
@@ -125,13 +126,13 @@ Register backends in the admin UI (Admin → Storage Backends) before creating w
 DuckHaven is designed for private networks. The recommended setup is:
 
 - Control plane and all agents on the same Tailscale tailnet.
-- Caddy serves HTTPS with `tls internal` (no public certificate needed).
+- The API is published directly on port 8000 over plain HTTP; the Tailscale/WireGuard tunnel provides transport encryption (no edge certificate needed).
 - Agents dial the control plane outbound on WebSocket — no inbound ports required on agent hosts.
 
 If not using Tailscale, ensure:
 - Agents can reach `CONTROL_PLANE_URL` over WebSocket.
-- The control plane can reach each agent's `RESULTS_HTTP_PORT` for result reads (or proxy through Caddy).
-- All traffic is over HTTPS/WSS in production.
+- The control plane can reach each agent's `RESULTS_HTTP_PORT` for result reads.
+- The stack no longer terminates TLS itself — front it with your own reverse proxy (e.g. Caddy, nginx, Traefik) for HTTPS/WSS in production.
 
 ## Backup and DR
 

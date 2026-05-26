@@ -1,17 +1,4 @@
 services:
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    ports:
-      - "443:443"
-      - "80:80"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - api
-
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -46,6 +33,8 @@ services:
     # ghcr.io/<owner>/duckhaven-api:0.1.0 (see .github/workflows/build.yml).
     image: ${DUCKHAVEN_API_IMAGE:-duckhaven-api:0.1.0}
     restart: unless-stopped
+    ports:
+      - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -57,8 +46,6 @@ services:
       - api_data:/var/duckhaven
 
 volumes:
-  caddy_data:
-  caddy_config:
   postgres_data:
   uc_data:
   api_data:

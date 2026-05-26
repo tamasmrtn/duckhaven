@@ -8,7 +8,8 @@ Companion to `ARCHITECTURE.md` (§5 storage layout, §12 deployment, D14/D18).
 ## 1. Bring up the control plane
 
 The control plane is one `docker compose` stack (`deploy/docker-compose.yml`:
-`caddy`, `postgres`, `unity-catalog`, `api`).
+`postgres`, `unity-catalog`, `api`). The `api` service publishes port `8000`
+directly on the host.
 
 1. Create `deploy/.env` with at least:
    ```sh
@@ -23,8 +24,8 @@ The control plane is one `docker compose` stack (`deploy/docker-compose.yml`:
 3. Apply migrations: `make migrate` (runs `alembic upgrade head`).
 4. Seed the first admin: `uv run python scripts/seed-admin.py --email you@host
    --password <pw> --name "You"`.
-5. Caddy serves TLS (`tls internal`) on the Tailscale address only. There is no
-   public ingress.
+5. The API listens on port `8000` on the Tailscale address only. There is no
+   public ingress; the Tailscale/WireGuard tunnel encrypts the wire.
 
 ---
 
@@ -40,7 +41,7 @@ For **each** agent host:
    (single-use, 24 h).
 2. On the agent host, build/pull the agent image and set its `.env`:
    ```sh
-   CONTROL_PLANE_URL=wss://<control-plane-tailscale>/agents/connect
+   CONTROL_PLANE_URL=ws://<control-plane-tailscale>:8000/agents/connect
    BOOTSTRAP_TOKEN=<token-from-step-1>
    # Operator ceilings (non-overridable by per-query requests, G-D2-b):
    MAX_MEMORY_LIMIT_GB=6

@@ -2,21 +2,32 @@
 
 > A self-hosted collaborative SQL workspace for DuckDB teams.
 
-[![CI](https://github.com/tmrtn/duckhaven/actions/workflows/ci.yml/badge.svg)](https://github.com/tmrtn/duckhaven/actions)
-[![Python](https://img.shields.io/badge/python-3.14%2B-blue)](https://www.python.org/)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
-
 ![Worksheet UI](docs/images/worksheet-light.png)
 
-## Why DuckHaven
+Your team loves DuckDB, but sharing `.duckdb` files across Slack is chaos. You want the worksheet experience of Databricks or Snowflake without the enterprise gravity, and MotherDuck-style collaboration without the cloud lock-in.
 
-Your team loves DuckDB, but sharing `.duckdb` files across Slack is chaos. You want the worksheet experience of Databricks or Snowflake without the enterprise gravity. You want MotherDuck collaboration without the cloud lock-in.
+DuckHaven is a self-hosted analytics workspace that lets teams write, share, and govern SQL queries over DuckDB. It combines browser-based worksheets with Unity Catalog governance — lightweight enough for a homelab, serious enough for a team. No cloud warehouse lock-in, no Kubernetes, no opaque billing, no platform team required.
 
-DuckHaven is a self-hosted analytics workspace that lets teams write, share, and govern SQL queries over DuckDB. It combines browser-based worksheets with Unity Catalog governance — lightweight enough for a homelab, serious enough for a team.
+## Alternatives
 
-**Analytics without enterprise gravity.** No cloud warehouse lock-in. No Kubernetes. No opaque billing. No platform team required. Just DuckDB, for teams.
+DuckHaven is not the only way to run SQL over DuckDB. Pick the tool that fits your constraints:
 
-## What You Get
+- **[MotherDuck](https://motherduck.com/)** is managed DuckDB in the cloud, with collaboration and sharing built in. Use it when you want zero operational overhead and are comfortable with a SaaS holding your data.
+- **[Databricks](https://www.databricks.com/)** is the enterprise lakehouse — Spark, notebooks, and Unity Catalog Enterprise. Use it when you have a platform team, a Kubernetes budget, and workloads that outgrow a single box.
+- **Ad hoc DuckDB** is a `.duckdb` file and a CLI. Use it for solo, throwaway analysis where collaboration, query history, and governance don't matter.
+
+| | DuckHaven | MotherDuck | Databricks | Ad hoc DuckDB |
+|---|---|---|---|---|
+| **Hosting** | Self-hosted | Cloud SaaS | Cloud/Enterprise | Local only |
+| **Engine** | DuckDB | DuckDB | Spark/JVM | DuckDB |
+| **Collaboration** | Worksheets + catalog + audit | Worksheets + sharing | Worksheets + notebooks | None |
+| **Governance** | Unity Catalog OSS | Proprietary | Unity Catalog Enterprise | None |
+| **Complexity** | Docker Compose | Zero setup | Kubernetes + platform team | Scripts |
+| **Cost model** | Free (self-hosted) | Per-seat SaaS | Enterprise contract | Free |
+
+**Use DuckHaven instead when** you run a homelab or a small team and want collaborative, governed SQL over DuckDB on your own infrastructure — browser worksheets, a shared catalog, per-workspace permissions, and a full audit trail — with data sovereignty, network privacy, and no SaaS lock-in.
+
+## Features
 
 - **Browser-Based Worksheets** — Monaco SQL editor with tabs, results grid, and CSV export. Write queries together without emailing SQL snippets.
 - **Shared Catalog** — Browse schemas and tables with sample rows. Every table is Delta-native with Catalog Commits ON.
@@ -24,27 +35,6 @@ DuckHaven is a self-hosted analytics workspace that lets teams write, share, and
 - **Transparent Compute** — You pick the DuckDB agent per query. No opaque optimizer, no surprise costs, no hidden resource allocation.
 - **Self-Hosted** — Docker Compose on your network. Your data never leaves your infrastructure.
 - **Short-Lived Credentials** — Unity Catalog vends temporary storage credentials per query. No long-lived secrets on agents.
-
-## Quickstart
-
-Get DuckHaven running in five minutes:
-
-```bash
-git clone https://github.com/tmrtn/duckhaven.git
-cd duckhaven
-cp deploy/.env.example deploy/.env
-# Edit deploy/.env — set POSTGRES_PASSWORD and SECRET_KEY
-
-make install
-make compose-up
-make migrate
-make seed email=you@example.com password=changeme
-make dev-web
-```
-
-Then open [http://localhost:5173](http://localhost:5173) and log in with the credentials you just seeded.
-
-See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for production deployment and [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for local development setup.
 
 ## Screenshots
 
@@ -72,8 +62,7 @@ DuckHaven separates control from compute. The control plane manages users, works
 
 ```mermaid
 flowchart TB
-    Browser["Browser"] --> Caddy["Caddy (reverse proxy)"]
-    Caddy --> API["duckhaven-api (FastAPI)"]
+    Browser["Browser (Tailscale)"] --> API["duckhaven-api (FastAPI)"]
     API --> Postgres["Postgres (app state)"]
     API --> UC["Unity Catalog OSS (governance)"]
     API --> WS["WebSocket (agent control)"]
@@ -90,56 +79,68 @@ flowchart TB
 - Every workspace is bound to exactly one storage backend: local FS, NAS, S3, or Azure.
 - Unity Catalog OSS provides table governance and vends short-lived storage credentials per query.
 - SQL is allowlisted to `SELECT` and `INSERT` only. DDL runs through UC REST.
+- The API is exposed directly on port 8000 over a private network (Tailscale recommended); there is no public ingress.
 
 For the full architecture, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For the UI design system, see [docs/UI-DESIGN.md](docs/UI-DESIGN.md).
 
-## DuckHaven vs. Alternatives
+## Tech Stack
 
-| | DuckHaven | MotherDuck | Databricks | Ad hoc DuckDB |
-|---|---|---|---|---|
-| **Hosting** | Self-hosted | Cloud SaaS | Cloud/Enterprise | Local only |
-| **Engine** | DuckDB | DuckDB | Spark/JVM | DuckDB |
-| **Collaboration** | Worksheets + catalog + audit | Worksheets + sharing | Worksheets + notebooks | None |
-| **Governance** | Unity Catalog OSS | Proprietary | Unity Catalog Enterprise | None |
-| **Complexity** | Docker Compose | Zero setup | Kubernetes + platform team | Scripts |
-| **Cost model** | Free (self-hosted) | Per-seat SaaS | Enterprise contract | Free |
+| Layer | Choice |
+|---|---|
+| Frontend | React 19 + TypeScript + Vite, Monaco SQL editor, TanStack Router/Query/Table, Radix UI + shadcn/ui + Tailwind |
+| API / control plane | FastAPI (Python 3.14), async; `websockets` for the agent channel |
+| Database | PostgreSQL 16, SQLAlchemy 2.x (async) + Alembic migrations |
+| Agent | Python 3.14 embedding DuckDB; small HTTP server for result-range reads |
+| Engine | DuckDB ≥ 1.5 — present **only** on agents |
+| Catalog | Unity Catalog OSS — catalog + short-lived credential vendor |
+| Storage format | Delta Lake, Catalog Commits ON, one backend per workspace |
+| Storage backends | Local FS, NAS, S3 (`httpfs`), ADLS Gen 2 (`azure`) |
+| Package management | uv (Python workspace), npm (web) |
+| Containerisation | Docker Compose (control plane); single container per agent |
+| Tests | pytest + pytest-asyncio (api, agent); Vitest + React Testing Library + MSW (web) |
 
-**When to choose DuckHaven:**
+## Getting Started
 
-- **Over MotherDuck** — when you need data sovereignty, network privacy, or want to avoid SaaS lock-in.
-- **Over Databricks** — when you want collaborative SQL analytics without the megacluster mentality.
-- **Over ad hoc DuckDB** — when your team needs query history, saved worksheets, shared catalogs, and permission controls.
+### Prerequisites
 
-## Deployment
+- Docker Engine 24+ and Docker Compose v2
+- A Linux host for the control plane (8 GB RAM minimum)
+- One or more Linux hosts/VMs for agents (8 GB RAM each)
+- (Recommended) Tailscale for a private network mesh
 
-The control plane runs as a single Docker Compose stack: Caddy, Postgres, Unity Catalog OSS, and the FastAPI app. Agents are deployed separately — one container per host/VM — and dial home to the control plane over WebSocket.
-
-**Control plane:**
+### Control plane
 
 ```bash
+git clone https://github.com/tmrtn/duckhaven.git
+cd duckhaven
 cp deploy/.env.example deploy/.env
-# Set POSTGRES_PASSWORD and SECRET_KEY
+# Edit deploy/.env — set POSTGRES_PASSWORD and SECRET_KEY
+
+make install
 make compose-up
 make migrate
+make seed email=you@example.com password=changeme
 ```
 
-**Agent:**
+This brings up Postgres, Unity Catalog OSS, and the FastAPI API on port 8000. To explore the UI locally, run `make dev-web` and open [http://localhost:5173](http://localhost:5173); log in with the credentials you just seeded. In a deployment, the API is reachable directly at `http://<control-plane-host>:8000`.
 
-Generate a bootstrap token in the admin UI, then run the agent container with the token and control-plane URL. See [docs/AGENTS.md](docs/AGENTS.md) for full agent setup.
+### Agent
 
-Tailscale is recommended for network privacy, but any network that lets agents reach the control plane works.
+Agents run DuckDB and are deployed separately — one container per host/VM. Generate a bootstrap token in the admin UI (Admin → Agents), then run the agent container with the token and the control-plane URL. See [docs/AGENTS.md](docs/AGENTS.md) for full agent setup.
 
-## Repository Structure
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for production deployment and [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for local development.
 
-| Directory | Contents |
-|---|---|
-| `web/` | React + TypeScript + Vite frontend |
-| `api/` | FastAPI control plane |
-| `agent/` | DuckDB compute agent |
-| `shared/` | Python types shared by api and agent |
-| `deploy/` | Docker Compose stack, Caddyfile, env template |
-| `scripts/` | Operator helper scripts |
-| `docs/` | Architecture, design, deployment, and development docs |
+## Environment Variables
+
+The control-plane stack reads these from `deploy/.env` (copy `deploy/.env.example` to start):
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `POSTGRES_PASSWORD` | yes | `changeme` | Password for the bundled Postgres (DuckHaven app state + UC metastore). |
+| `SECRET_KEY` | yes | `changeme-use-a-long-random-value` | Session-cookie signing key. Generate one with `openssl rand -hex 32`. |
+| `DUCKHAVEN_API_IMAGE` | no | `duckhaven-api:0.1.0` | Override to pin a published image, e.g. `ghcr.io/<owner>/duckhaven-api:0.1.0`. |
+
+Agent-side variables (`CONTROL_PLANE_URL`, `BOOTSTRAP_TOKEN`, `RESULTS_DIR`, …) are documented in [docs/AGENTS.md](docs/AGENTS.md).
 
 ## Roadmap
 
@@ -155,6 +156,33 @@ Conventional commits, branch prefixes (`feat/`, `fix/`, `chore/`, `docs/`, `refa
 
 - Frontend: Vitest + React Testing Library + MSW
 - Backend: pytest + pytest-asyncio (API ≥80% coverage, agent ≥75% coverage)
+
+### Development Setup
+
+```bash
+make install      # uv sync --all-packages + npm install in web/
+make dev-api       # FastAPI with hot reload on :8000
+make dev-web       # Vite dev server on :5173 (MSW mocks if the API is down)
+make test          # API + agent + web tests
+make lint          # Ruff + ESLint
+make format        # Ruff + Prettier
+```
+
+Repository layout:
+
+| Directory | Contents |
+|---|---|
+| `web/` | React + TypeScript + Vite frontend |
+| `api/` | FastAPI control plane |
+| `agent/` | DuckDB compute agent |
+| `shared/` | Python types shared by api and agent |
+| `deploy/` | Docker Compose stack, env template |
+| `scripts/` | Operator helper scripts |
+| `docs/` | Architecture, design, deployment, and development docs |
+
+## Inspiration
+
+DuckHaven's worksheet experience draws on MotherDuck and Databricks; it stands on [DuckDB](https://duckdb.org/) for compute and [Unity Catalog OSS](https://www.unitycatalog.io/) for governance and credential vending.
 
 ## License
 

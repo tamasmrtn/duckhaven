@@ -7,6 +7,7 @@ import {
 import { LoadingScreen } from "@/components/app/LoadingScreen";
 import { AppShell } from "@/components/app/AppShell";
 import { LoginPage } from "@/features/auth/LoginPage";
+import { WelcomePage } from "@/features/auth/WelcomePage";
 import { WorksheetPage } from "@/features/worksheet/WorksheetPage";
 import { CatalogPage } from "@/features/catalog/CatalogPage";
 import { SavedQueriesPage } from "@/features/saved-queries/SavedQueriesPage";
@@ -31,6 +32,12 @@ const indexRoute = createRoute({
   beforeLoad: () => {
     throw redirect({ to: "/login" });
   },
+});
+
+const welcomeRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/welcome",
+  component: WelcomePage,
 });
 
 const wsRoute = createRoute({
@@ -110,6 +117,7 @@ const auditRoute = createRoute({
 export const routeTree = rootRoute.addChildren([
   indexRoute,
   loginRoute,
+  welcomeRoute,
   wsRoute.addChildren([
     worksheetsRoute,
     catalogRoute,

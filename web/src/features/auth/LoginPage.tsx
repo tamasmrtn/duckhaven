@@ -27,9 +27,11 @@ export function LoginPage() {
         queryFn: workspacesApi.list,
       });
       const first = workspaces[0];
-      if (first) {
-        void navigate({ to: "/$ws/worksheets", params: { ws: first.slug } });
-      }
+      void navigate(
+        first
+          ? { to: "/$ws/worksheets", params: { ws: first.slug } }
+          : { to: "/welcome" },
+      );
     } catch {
       setError("Invalid credentials. Try any email and password.");
     }

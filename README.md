@@ -1,4 +1,4 @@
-# duckhaven
+# DuckHaven
 
 > A self-hosted collaborative SQL workspace for DuckDB teams.
 
@@ -6,17 +6,17 @@
 
 Your team loves DuckDB, but sharing `.duckdb` files across Slack is chaos. You want the worksheet experience of Databricks or Snowflake without the enterprise gravity, and MotherDuck-style collaboration without the cloud lock-in.
 
-duckhaven is a self-hosted analytics workspace that lets teams write, share, and govern SQL queries over DuckDB. It combines browser-based worksheets with Unity Catalog governance — lightweight enough for a homelab, serious enough for a team. No cloud warehouse lock-in, no Kubernetes, no opaque billing, no platform team required.
+DuckHaven is a self-hosted analytics workspace that lets teams write, share, and govern SQL queries over DuckDB. It combines browser-based worksheets with Unity Catalog governance — lightweight enough for a homelab, serious enough for a team. No cloud warehouse lock-in, no Kubernetes, no opaque billing, no platform team required.
 
 ## Alternatives
 
-duckhaven is not the only way to run SQL over DuckDB. Pick the tool that fits your constraints:
+DuckHaven is not the only way to run SQL over DuckDB. Pick the tool that fits your constraints:
 
 - **[MotherDuck](https://motherduck.com/)** is managed DuckDB in the cloud, with collaboration and sharing built in. Use it when you want zero operational overhead and are comfortable with a SaaS holding your data.
 - **[Databricks](https://www.databricks.com/)** is the enterprise lakehouse — Spark, notebooks, and Unity Catalog Enterprise. Use it when you have a platform team, a Kubernetes budget, and workloads that outgrow a single box.
 - **Ad hoc DuckDB** is a `.duckdb` file and a CLI. Use it for solo, throwaway analysis where collaboration, query history, and governance don't matter.
 
-| | duckhaven | MotherDuck | Databricks | Ad hoc DuckDB |
+| | DuckHaven | MotherDuck | Databricks | Ad hoc DuckDB |
 |---|---|---|---|---|
 | **Hosting** | Self-hosted | Cloud SaaS | Cloud/Enterprise | Local only |
 | **Engine** | DuckDB | DuckDB | Spark/JVM | DuckDB |
@@ -25,7 +25,7 @@ duckhaven is not the only way to run SQL over DuckDB. Pick the tool that fits yo
 | **Complexity** | Docker Compose | Zero setup | Kubernetes + platform team | Scripts |
 | **Cost model** | Free (self-hosted) | Per-seat SaaS | Enterprise contract | Free |
 
-**Use duckhaven instead when** you run a homelab or a small team and want collaborative, governed SQL over DuckDB on your own infrastructure — browser worksheets, a shared catalog, per-workspace permissions, and a full audit trail — with data sovereignty, network privacy, and no SaaS lock-in.
+**Use DuckHaven instead when** you run a homelab or a small team and want collaborative, governed SQL over DuckDB on your own infrastructure — browser worksheets, a shared catalog, per-workspace permissions, and a full audit trail — with data sovereignty, network privacy, and no SaaS lock-in.
 
 ## Features
 
@@ -58,7 +58,7 @@ Register agents, view capabilities, and generate bootstrap tokens from the admin
 
 ## Architecture
 
-duckhaven separates control from compute. The control plane manages users, workspaces, and queries. DuckDB agents connect via WebSocket to execute SQL and return results.
+DuckHaven separates control from compute. The control plane manages users, workspaces, and queries. DuckDB agents connect via WebSocket to execute SQL and return results.
 
 ```mermaid
 flowchart TB
@@ -136,7 +136,7 @@ The control-plane stack reads these from `deploy/.env` (copy `deploy/.env.exampl
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `POSTGRES_PASSWORD` | yes | `changeme` | Password for the bundled Postgres (duckhaven app state + UC metastore). |
+| `POSTGRES_PASSWORD` | yes | `changeme` | Password for the bundled Postgres (DuckHaven app state + UC metastore). |
 | `SECRET_KEY` | yes | `changeme-use-a-long-random-value` | Session-cookie signing key. Generate one with `openssl rand -hex 32`. |
 | `DUCKHAVEN_API_IMAGE` | no | `duckhaven-api:0.1.0` | Override to pin a published image, e.g. `ghcr.io/<owner>/duckhaven-api:0.1.0`. |
 
@@ -182,7 +182,7 @@ Repository layout:
 
 ## Inspiration
 
-duckhaven's worksheet experience draws on MotherDuck and Databricks; it stands on [DuckDB](https://duckdb.org/) for compute and [Unity Catalog OSS](https://www.unitycatalog.io/) for governance and credential vending.
+DuckHaven's worksheet experience draws on MotherDuck and Databricks; it stands on [DuckDB](https://duckdb.org/) for compute and [Unity Catalog OSS](https://www.unitycatalog.io/) for governance and credential vending.
 
 ## License
 

@@ -81,7 +81,7 @@ docker build -f agent/Dockerfile -t duckhaven-agent:latest .
 
 ### 2. Generate a bootstrap token
 
-In the duckhaven admin UI (Admin → Agents → Generate Bootstrap), create a one-time token. It expires in 24 hours.
+In the DuckHaven admin UI (Admin → Agents → Generate Bootstrap), create a one-time token. It expires in 24 hours.
 
 Or via script:
 
@@ -134,7 +134,7 @@ Register backends in the admin UI (Admin → Storage Backends) before creating w
 
 ## Networking
 
-duckhaven is designed for private networks. The recommended setup is:
+DuckHaven is designed for private networks. The recommended setup is:
 
 - Control plane and all agents on the same Tailscale tailnet.
 - The API is published directly on port 8000 over plain HTTP; the Tailscale/WireGuard tunnel provides transport encryption (no edge certificate needed).
@@ -159,7 +159,7 @@ Schedule this via cron or systemd timer. Point the backup directory at a second 
 
 ### Data
 
-Data lives on your storage backends, not in duckhaven. Back up backend roots according to their kind:
+Data lives on your storage backends, not in DuckHaven. Back up backend roots according to their kind:
 - **Local FS / NAS** — use `restic`, `rsnapshot`, or your existing backup tool.
 - **S3 / ADLS** — use object-store lifecycle policies and cross-region replication.
 

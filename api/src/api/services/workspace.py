@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 ROLE_ORDER = {"reader": 0, "writer": 1, "owner": 2}
 
-# Workspace role → UC catalog privileges. duckhaven is the sole permission
+# Workspace role → UC catalog privileges. DuckHaven is the sole permission
 # authority (D10); these grants are defense-in-depth only.
 ROLE_PRIVILEGES = {
     "reader": ["SELECT"],

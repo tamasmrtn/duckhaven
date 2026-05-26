@@ -6,12 +6,12 @@ export function LoadingScreen() {
     <div className="flex h-screen items-center justify-center bg-[var(--bg-canvas)]">
       <img
         src={logoLight}
-        alt="duckhaven"
+        alt="DuckHaven"
         className="w-44 h-auto block dark:hidden"
       />
       <img
         src={logoDark}
-        alt="duckhaven"
+        alt="DuckHaven"
         className="w-44 h-auto hidden dark:block"
       />
     </div>

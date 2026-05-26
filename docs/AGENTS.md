@@ -2,7 +2,7 @@
 
 ## What Is an Agent?
 
-A duckhaven agent is a Python process that embeds DuckDB and connects to the control plane via WebSocket. It executes SQL queries dispatched by users and serves result Parquet files over HTTP.
+A DuckHaven agent is a Python process that embeds DuckDB and connects to the control plane via WebSocket. It executes SQL queries dispatched by users and serves result Parquet files over HTTP.
 
 Agents are the only component that runs DuckDB. The control plane does not.
 
@@ -17,7 +17,7 @@ Agents are the only component that runs DuckDB. The control plane does not.
 
 ### 1. Generate a bootstrap token
 
-In the duckhaven admin UI:
+In the DuckHaven admin UI:
 
 1. Navigate to **Admin → Agents**.
 2. Click **Generate Bootstrap Token**.

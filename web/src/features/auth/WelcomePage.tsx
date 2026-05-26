@@ -20,12 +20,12 @@ export function WelcomePage() {
         <div className="flex flex-col items-center gap-2">
           <img
             src={logoLight}
-            alt="duckhaven"
+            alt="DuckHaven"
             className="w-40 h-auto block dark:hidden"
           />
           <img
             src={logoDark}
-            alt="duckhaven"
+            alt="DuckHaven"
             className="w-40 h-auto hidden dark:block"
           />
         </div>

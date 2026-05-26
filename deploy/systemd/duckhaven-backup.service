@@ -1,9 +1,9 @@
-# duckhaven nightly Postgres backup (G-D18-a).
+# DuckHaven nightly Postgres backup (G-D18-a).
 # Install:  cp deploy/systemd/duckhaven-backup.* /etc/systemd/system/
 #           systemctl enable --now duckhaven-backup.timer
 # Edit WorkingDirectory / DUCKHAVEN_BACKUP_DIR for your install.
 [Unit]
-Description=duckhaven Postgres backup
+Description=DuckHaven Postgres backup
 After=docker.service
 Requires=docker.service
 

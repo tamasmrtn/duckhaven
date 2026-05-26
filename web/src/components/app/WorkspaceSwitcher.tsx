@@ -101,7 +101,7 @@ export function WorkspaceSwitcher({
                 value="__create"
                 onSelect={() => {
                   onClose();
-                  // Navigate to workspace create flow
+                  void navigate({ to: "/welcome" });
                 }}
                 className="gap-2 text-text-secondary"
               >

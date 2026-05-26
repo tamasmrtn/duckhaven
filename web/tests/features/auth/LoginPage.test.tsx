@@ -28,6 +28,18 @@ describe('LoginPage', () => {
     })
   })
 
+  it('navigates to /welcome when the user has no workspaces', async () => {
+    server.use(http.get('/api/workspaces', () => HttpResponse.json([])))
+    const user = userEvent.setup()
+    const { router } = renderWithProviders({ initialRoute: '/login' })
+
+    await user.type(await screen.findByLabelText(/email/i), 'test@example.com')
+    await user.type(screen.getByLabelText(/password/i), 'password')
+    await user.click(screen.getByRole('button', { name: /sign in/i }))
+
+    await waitFor(() => expect(router.state.location.pathname).toBe('/welcome'))
+  })
+
   it('shows error message on 401 response', async () => {
     server.use(
       http.post('/api/auth/login', () => new HttpResponse(null, { status: 401 })),

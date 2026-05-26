@@ -174,7 +174,7 @@ async def test_dispatch_payload_embeds_s3_storage_credentials(
     from sqlalchemy import select
 
     from api.deps import get_uc_client
-    from api.main import app
+    from api.main import api_app
     from api.models.storage_backend import StorageBackend
     from api.models.workspace import Workspace, WorkspaceMember
 
@@ -196,7 +196,7 @@ async def test_dispatch_payload_embeds_s3_storage_credentials(
     # Seed the FakeUC with a catalog, schema, and one anchor table so that
     # vend_workspace_creds picks it up. The override returns the test's
     # FakeUC instance.
-    fake_uc = await app.dependency_overrides[get_uc_client]()
+    fake_uc = await api_app.dependency_overrides[get_uc_client]()
     await fake_uc.create_catalog("s3-ws")
     await fake_uc.create_schema("s3-ws", "main")
     await fake_uc.create_table(

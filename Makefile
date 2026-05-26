@@ -4,6 +4,7 @@
         lint format \
         migrate migrate-new migrate-down seed \
         compose-up compose-down compose-logs compose-build \
+        compose-migrate compose-seed \
         clean
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
@@ -94,6 +95,14 @@ compose-logs:
 
 compose-build:
 	docker compose -f deploy/docker-compose.yml build
+
+# Migrate / seed the deployed stack by running inside the api container, which
+# already has DATABASE_URL pointing at the postgres service.
+compose-migrate:
+	docker compose -f deploy/docker-compose.yml exec api alembic -c alembic.ini upgrade head
+
+compose-seed:
+	docker compose -f deploy/docker-compose.yml exec api python scripts/seed-admin.py --email "$(email)" --password "$(password)"
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 clean:

@@ -14,7 +14,7 @@ from fake_uc import FakeUC  # noqa: E402
 from api.config import settings  # noqa: E402
 from api.db.base import Base  # noqa: E402
 from api.deps import get_cred_cache, get_db, get_uc_client  # noqa: E402
-from api.main import app  # noqa: E402
+from api.main import api_app, app  # noqa: E402
 from api.services.uc_credentials import CredCache  # noqa: E402
 
 # Disable secure cookies in tests (plain HTTP transport)
@@ -67,14 +67,16 @@ async def client(db_engine, fake_uc: FakeUC, cred_cache: CredCache):
     async def override_get_cred_cache():
         return cred_cache
 
-    app.dependency_overrides[get_db] = override_get_db
-    app.dependency_overrides[get_uc_client] = override_get_uc_client
-    app.dependency_overrides[get_cred_cache] = override_get_cred_cache
+    # The REST routers live on api_app (mounted at /api on the outer app);
+    # target it directly so test paths stay unprefixed.
+    api_app.dependency_overrides[get_db] = override_get_db
+    api_app.dependency_overrides[get_uc_client] = override_get_uc_client
+    api_app.dependency_overrides[get_cred_cache] = override_get_cred_cache
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+    async with AsyncClient(transport=ASGITransport(app=api_app), base_url="http://test") as c:
         yield c
 
-    app.dependency_overrides.clear()
+    api_app.dependency_overrides.clear()
 
 
 @pytest_asyncio.fixture(scope="function")

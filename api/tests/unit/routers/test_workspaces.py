@@ -53,9 +53,17 @@ async def test_create_and_list_workspace(
     assert resp.status_code == 201
     data = resp.json()
     assert data["slug"] == "myws"
+    # WorkspaceOut surfaces the backend kind (the web UI renders it).
+    assert data["storage_backend_kind"] == "local_fs"
 
     list_resp = await auth_client.get("/workspaces")
-    assert len(list_resp.json()) == 1
+    listed = list_resp.json()
+    assert len(listed) == 1
+    assert listed[0]["storage_backend_kind"] == "local_fs"
+
+    detail_resp = await auth_client.get("/workspaces/myws")
+    assert detail_resp.status_code == 200
+    assert detail_resp.json()["storage_backend_kind"] == "local_fs"
     # Eager UC provisioning ran: catalog + default `main` schema both exist.
     assert "myws" in fake_uc.catalogs
     assert ("myws", "main") in fake_uc.schemas

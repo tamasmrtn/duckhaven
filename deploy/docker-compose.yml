@@ -28,10 +28,12 @@ services:
       retries: 10
 
   api:
-    # Pinned, not :latest (G-D12-b). Override DUCKHAVEN_API_IMAGE to point at
-    # the CI-published GHCR image, e.g.
-    # ghcr.io/<owner>/duckhaven-api:0.1.0 (see .github/workflows/build.yml).
-    image: ${DUCKHAVEN_API_IMAGE:-duckhaven-api:0.1.0}
+    # Built from the repo root so the Dockerfile can bundle the web UI
+    # (web/) and shared/ alongside the API. Image is tagged for reuse.
+    build:
+      context: ..
+      dockerfile: api/Dockerfile
+    image: duckhaven-api:0.1.0
     restart: unless-stopped
     ports:
       - "8000:8000"
@@ -42,6 +44,9 @@ services:
       DATABASE_URL: postgresql+asyncpg://duckhaven:${POSTGRES_PASSWORD}@postgres:5432/duckhaven
       UC_BASE_URL: http://unity-catalog:8080
       SECRET_KEY: ${SECRET_KEY}
+      # Plain-HTTP deployment by default; the browser drops Secure cookies over
+      # HTTP, which would break login. Set true only behind a TLS terminator.
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
     volumes:
       - api_data:/var/duckhaven
 

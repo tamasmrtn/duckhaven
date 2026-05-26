@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,6 +17,8 @@ class Settings(BaseSettings):
     session_max_age_seconds: int = 86400 * 7
     cors_origins: list[str] = ["http://localhost:5173"]
     cookie_secure: bool = True
+    # Directory of the built SPA, served at / when present (baked into the image).
+    static_dir: Path = Path("/app/static")
 
 
 settings = Settings()

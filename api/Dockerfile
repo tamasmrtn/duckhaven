@@ -1,3 +1,16 @@
+# ── UI builder ─────────────────────────────────────────────────────────────
+FROM node:24-alpine AS ui-builder
+
+WORKDIR /web
+
+# Install deps first so this layer caches as long as the manifests are unchanged.
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+
+COPY web/ .
+RUN npm run build
+# Output lives in /web/dist (MSW is dev-only, excluded from the production build).
+
 # ── Builder ──────────────────────────────────────────────────────────────────
 FROM python:3.14-slim AS builder
 
@@ -36,6 +49,16 @@ WORKDIR /app
 
 # Only the populated virtualenv is needed at runtime.
 COPY --from=builder /app/.venv /app/.venv
+
+# The built SPA, served by FastAPI at / (see api.main, settings.static_dir).
+COPY --from=ui-builder /web/dist /app/static
+
+# Migration assets and the admin-seed script, run in-container against the DB
+# (see `make compose-migrate` / `make compose-seed`). The DB URL is read from
+# the container's DATABASE_URL via api.config.settings.
+COPY api/alembic.ini /app/alembic.ini
+COPY api/alembic /app/alembic
+COPY scripts/seed-admin.py /app/scripts/seed-admin.py
 
 # Hardening: drop pip, patch the base image, run as a dedicated non-root user.
 # /var/duckhaven is the api_data mount point (see deploy/docker-compose.yml).

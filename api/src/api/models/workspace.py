@@ -28,6 +28,12 @@ class Workspace(Base):
     queries: Mapped[list[Query]] = relationship(back_populates="workspace")
     saved_queries: Mapped[list[SavedQuery]] = relationship(back_populates="workspace")
 
+    @property
+    def storage_backend_kind(self) -> str:
+        """Backend kind surfaced in WorkspaceOut. Requires `storage_backend`
+        to be eager-loaded by the caller (see workspaces router/service)."""
+        return self.storage_backend.kind
+
 
 class WorkspaceMember(Base):
     __tablename__ = "workspace_members"

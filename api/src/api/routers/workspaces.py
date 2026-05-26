@@ -3,6 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from api.deps import get_current_user, get_db, get_uc_client
 from api.models.user import User
@@ -30,6 +31,7 @@ async def list_workspaces(
         select(Workspace)
         .join(WorkspaceMember, WorkspaceMember.workspace_id == Workspace.id)
         .where(WorkspaceMember.user_id == user.id)
+        .options(selectinload(Workspace.storage_backend))
     )
     return list(result.scalars().all())
 
@@ -71,7 +73,13 @@ async def create_workspace(
             detail=f"Unity Catalog provisioning failed: {exc}",
         ) from exc
 
-    return ws
+    # Reload with the storage backend so WorkspaceOut can expose its kind.
+    result = await db.execute(
+        select(Workspace)
+        .options(selectinload(Workspace.storage_backend))
+        .where(Workspace.id == ws.id)
+    )
+    return result.scalar_one()
 
 
 @router.get("/{ws}", response_model=WorkspaceOut)

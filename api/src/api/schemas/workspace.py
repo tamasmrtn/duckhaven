@@ -17,6 +17,7 @@ class WorkspaceOut(BaseModel):
     slug: str
     name: str
     storage_backend_id: uuid.UUID
+    storage_backend_kind: str
     created_at: datetime
 
 

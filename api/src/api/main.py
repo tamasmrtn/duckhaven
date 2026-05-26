@@ -3,6 +3,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.responses import Response
+from starlette.staticfiles import StaticFiles
+from starlette.types import Scope
 
 from api.config import settings
 from api.routers import agents, agents_ws, auth, queries, schemas, workspaces
@@ -27,9 +30,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await app.state.uc_client.aclose()
 
 
-app = FastAPI(title="duckhaven-api", lifespan=lifespan)
+# The browser-facing REST API. Mounted under /api on the outer app so it shares
+# an origin with the SPA; owns the lifespan-managed UCClient/CredCache state.
+api_app = FastAPI(title="duckhaven-api", lifespan=lifespan)
 
-app.add_middleware(
+api_app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,
@@ -37,13 +42,39 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(auth.router, prefix="/auth", tags=["auth"])
-app.include_router(auth.me_router, tags=["auth"])
-app.include_router(workspaces.router, tags=["workspaces"])
-app.include_router(schemas.router, tags=["catalog"])
-app.include_router(queries.router, tags=["queries"])
-app.include_router(agents.router, tags=["agents"])
+api_app.include_router(auth.router, prefix="/auth", tags=["auth"])
+api_app.include_router(auth.me_router, tags=["auth"])
+api_app.include_router(workspaces.router, tags=["workspaces"])
+api_app.include_router(schemas.router, tags=["catalog"])
+api_app.include_router(queries.router, tags=["queries"])
+api_app.include_router(agents.router, tags=["agents"])
+api_app.include_router(admin_agents.router, prefix="/admin", tags=["admin"])
+api_app.include_router(admin_storage.router, prefix="/admin", tags=["admin"])
+api_app.include_router(admin_audit.router, prefix="/admin", tags=["admin"])
+
+
+class SPAStaticFiles(StaticFiles):
+    """Serve index.html for any path that isn't a real static file, so the
+    client-side router handles deep links and refreshes."""
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        try:
+            return await super().get_response(path, scope)
+        except Exception:
+            return await super().get_response("index.html", scope)
+
+
+@asynccontextmanager
+async def _outer_lifespan(_: FastAPI) -> AsyncIterator[None]:
+    # Starlette does not run a mounted sub-app's lifespan, so drive it here.
+    async with api_app.router.lifespan_context(api_app):
+        yield
+
+
+# Outer ASGI app: agent WebSocket at root (agents dial /agents/connect), the
+# REST API under /api, and the built SPA at / (only present in the image).
+app = FastAPI(lifespan=_outer_lifespan)
 app.include_router(agents_ws.router, tags=["agents"])
-app.include_router(admin_agents.router, prefix="/admin", tags=["admin"])
-app.include_router(admin_storage.router, prefix="/admin", tags=["admin"])
-app.include_router(admin_audit.router, prefix="/admin", tags=["admin"])
+app.mount("/api", api_app)
+if settings.static_dir.is_dir():
+    app.mount("/", SPAStaticFiles(directory=settings.static_dir, html=True), name="ui")

@@ -1,4 +1,4 @@
-# DuckHaven — Operator Runbook
+# duckhaven — Operator Runbook
 
 Operational procedures for the single control-plane box plus its agents.
 Companion to `ARCHITECTURE.md` (§5 storage layout, §12 deployment, D14/D18).
@@ -80,7 +80,7 @@ Repeat so at least two agents are registered (e.g. one S3-capable, one local).
 
 ### Schedule nightly Postgres backups (G-D18-a)
 
-`scripts/pg-backup.sh` dumps the DuckHaven app state + UC metastore.
+`scripts/pg-backup.sh` dumps the duckhaven app state + UC metastore.
 
 ```sh
 # Point backups at a SECOND disk / NAS mount, not the data disk (G-D18-b):

@@ -44,12 +44,12 @@ export function LoginPage() {
         <div className="flex flex-col items-center gap-2">
           <img
             src={logoLight}
-            alt="DuckHaven"
+            alt="duckhaven"
             className="w-40 h-auto block dark:hidden"
           />
           <img
             src={logoDark}
-            alt="DuckHaven"
+            alt="duckhaven"
             className="w-40 h-auto hidden dark:block"
           />
           <p className="text-sm text-text-secondary">

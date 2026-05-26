@@ -56,12 +56,12 @@ export function TopBar({
       >
         <img
           src={logoLight}
-          alt="DuckHaven"
+          alt="duckhaven"
           className="h-6 w-auto block dark:hidden"
         />
         <img
           src={logoDark}
-          alt="DuckHaven"
+          alt="duckhaven"
           className="h-6 w-auto hidden dark:block"
         />
         {workspace && (

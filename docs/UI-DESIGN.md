@@ -1,7 +1,7 @@
-# DuckHaven — UI Design
+# duckhaven — UI Design
 
 > Companion to `ARCHITECTURE.md`. Defines the visual language, information
-> architecture, and key screens for the DuckHaven control plane SPA
+> architecture, and key screens for the duckhaven control plane SPA
 > (`duckhaven-api` is the contract; this document covers the React frontend
 > described in §4 D4, D13 and §8 of the architecture).
 >
@@ -16,7 +16,7 @@
 
 Three forces shape every decision:
 
-1. **DuckDB-first.** DuckHaven is for people who already love DuckDB. The
+1. **DuckDB-first.** duckhaven is for people who already love DuckDB. The
    visual identity borrows directly from `duckdb.org/design/manual/`: lemon
    yellow as the brand anchor, the "railroad diagram" motif (curved
    connectors, junction points, rounded rectangles, 2–3px strokes) as a
@@ -158,7 +158,7 @@ Body line-height 1.5. Code line-height 1.6. Tabular figures (`font-variant-numer
 Standard surface paddings: card body `space-4`, modal body `space-6`,
 panel header `space-3 space-4`. Section gap inside a panel: `space-6`.
 
-Component sizes (touch-target floor 32×32 on desktop — DuckHaven has no
+Component sizes (touch-target floor 32×32 on desktop — duckhaven has no
 mobile/tablet target):
 
 | | Height | Padding-x |
@@ -202,9 +202,9 @@ disappear on `#0B0F19`).
   body text.
 - **Never emoji**, anywhere — including empty states and toasts.
 - Two custom SVGs we maintain in-repo:
-  - **DuckHaven mark** — a duck silhouette nested inside a rounded
+  - **duckhaven mark** — a duck silhouette nested inside a rounded
     junction-point shape (a nod to DuckDB's railroad-diagram motif and to
-    DuckHaven being a "haven" — a port of call for a duck).
+    duckhaven being a "haven" — a port of call for a duck).
   - **Storage backend glyphs** — local FS (disk), NAS (server stack), S3
     (object cube), ADLS (cloud), each 20 px, single-color, currentColor.
 
@@ -473,9 +473,9 @@ Notes:
 ## 5. Component Inventory
 
 The components below have first-class shadcn/ui implementations and small
-DuckHaven-specific wrappers. Built on Radix primitives.
+duckhaven-specific wrappers. Built on Radix primitives.
 
-| Component | shadcn primitive | DuckHaven wrapper notes |
+| Component | shadcn primitive | duckhaven wrapper notes |
 |---|---|---|
 | Button | `button` | Adds `intent="run"` (yellow) + loading-spinner-while-async |
 | Tabs (worksheet) | `tabs` | Closable, dirty-dot, drag-to-reorder |
@@ -492,7 +492,7 @@ DuckHaven-specific wrappers. Built on Radix primitives.
 
 ### Monaco configuration
 
-- Theme: a custom **DuckHaven Dark** (used regardless of UI theme — code
+- Theme: a custom **duckhaven Dark** (used regardless of UI theme — code
   is always dark, mirroring DuckDB's terminal aesthetic).
 - Token colors map to DuckDB's syntax-highlight conventions: keywords =
   `--brand-yellow`, strings = `--brand-orange`, functions = `#7DD3FC`,

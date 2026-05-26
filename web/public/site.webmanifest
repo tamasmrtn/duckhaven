@@ -1,1 +1,1 @@
-{"name":"DuckHaven","short_name":"DuckHaven","icons":[{"src":"/android-chrome-192x192.png","sizes":"192x192","type":"image/png"},{"src":"/android-chrome-512x512.png","sizes":"512x512","type":"image/png"}],"theme_color":"#FFF100","background_color":"#0B0F19","display":"standalone"}
+{"name":"duckhaven","short_name":"duckhaven","icons":[{"src":"/android-chrome-192x192.png","sizes":"192x192","type":"image/png"},{"src":"/android-chrome-512x512.png","sizes":"512x512","type":"image/png"}],"theme_color":"#FFF100","background_color":"#0B0F19","display":"standalone"}

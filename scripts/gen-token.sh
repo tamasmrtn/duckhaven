@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generate a bootstrap token for a new agent via the DuckHaven API.
+# Generate a bootstrap token for a new agent via the duckhaven API.
 # Usage: SESSION_COOKIE=<value> ./scripts/gen-token.sh
 set -euo pipefail
 

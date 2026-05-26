@@ -1,6 +1,6 @@
 # Runs the backup nightly (G-D18-a). Pairs with duckhaven-backup.service.
 [Unit]
-Description=Run DuckHaven Postgres backup nightly
+Description=Run duckhaven Postgres backup nightly
 
 [Timer]
 OnCalendar=*-*-* 02:30:00

@@ -1,4 +1,4 @@
-# DuckHaven — Architecture
+# duckhaven — Architecture
 
 > **Context for this revision.** RFC v0.2 was the pre-implementation design.
 > M0 (walking spike), M1 (frontend on MSW), M2 (backend + agent + unit
@@ -16,14 +16,14 @@
 > **Status badges** appear next to every decision:
 > `✓ Implemented` · `◐ Partial` · `○ Pending`.
 >
-> **Audience:** the engineer(s) implementing DuckHaven.
+> **Audience:** the engineer(s) implementing duckhaven.
 
 ---
 
-## 1. What DuckHaven Is
+## 1. What duckhaven Is
 
 A self-hosted, browser-based SQL workspace and **federation control plane**
-over Delta Lake tables governed by Unity Catalog. DuckHaven's control plane
+over Delta Lake tables governed by Unity Catalog. duckhaven's control plane
 runs on a single homelab-class box on a Tailscale network; the compute and
 storage it dispatches against are explicitly distributed.
 
@@ -43,8 +43,8 @@ storage it dispatches against are explicitly distributed.
 | Workspace layout | `uv` monorepo: `api/`, `agent/`, `shared/` (Python) + `web/` (React) + `deploy/`, `scripts/` |
 
 Two facts shape every decision below: (a) **the user picks the engine per
-worksheet** — DuckHaven is dispatcher, not optimizer; (b) **each workspace is
-bound to exactly one storage backend** — DuckHaven enforces this at
+worksheet** — duckhaven is dispatcher, not optimizer; (b) **each workspace is
+bound to exactly one storage backend** — duckhaven enforces this at
 workspace-create time and at every write.
 
 ---
@@ -265,7 +265,7 @@ references. Tests in `api/tests/unit/test_admin/storage.py`.
 ### D7 — Unity Catalog OSS, used both as catalog and as credential vendor · `✓ Implemented`
 
 **Decision.** Unity Catalog OSS runs as a JVM container. **One UC catalog
-per DuckHaven workspace.** UC additionally holds `storage_credentials` and
+per duckhaven workspace.** UC additionally holds `storage_credentials` and
 `external_locations` for every workspace backend. At query dispatch time,
 the control plane requests **short-lived credentials** from UC scoped to the
 workspace's backend and forwards them to the agent.
@@ -286,7 +286,7 @@ on the hot path, R3 (vending bottleneck) is now mitigated by the cache.
 
 ---
 
-### D8 — DuckHaven owns DDL via UC REST; DuckDB on agents executes DML · `✓ Implemented`
+### D8 — duckhaven owns DDL via UC REST; DuckDB on agents executes DML · `✓ Implemented`
 
 **Decision.** Table creation (`CREATE TABLE`) is performed by `duckhaven-api`
 calling Unity Catalog's REST API directly with the workspace's backend as
@@ -310,9 +310,9 @@ UPDATE/MERGE/DELETE are out of scope until DuckDB ships support.
 
 ---
 
-### D9 — Catalog Commits ON for every DuckHaven-managed table · `✓ Implemented`
+### D9 — Catalog Commits ON for every duckhaven-managed table · `✓ Implemented`
 
-**Decision.** Every table created through DuckHaven's Create-Table flow has
+**Decision.** Every table created through duckhaven's Create-Table flow has
 `TBLPROPERTIES ('delta.feature.catalogManaged' = 'supported')`. UC arbitrates
 all writes; conflicting writers receive a conflict error and retry.
 
@@ -332,13 +332,13 @@ once UC OSS ships coordinated-commits.
 ### D10 — Workspace-level permissions; permissions and storage co-pinned · `✓ Implemented`
 
 **Decision.** Permissions are workspace-scoped: `workspace_members(workspace_id,
-user_id, role[owner|writer|reader])`. DuckHaven enforces this at the API
+user_id, role[owner|writer|reader])`. duckhaven enforces this at the API
 boundary; UC grants are mirrored as defense-in-depth.
 
 **Current state.** Enforced by `assert_workspace_member()` in
 `api/src/api/services/workspace.py`; role hierarchy reader < writer < owner.
 Endpoints `GET /workspaces/{ws}/members`, `POST /workspaces/{ws}/members`
-implemented. **UC mirror is not active**; DuckHaven is currently the
+implemented. **UC mirror is not active**; duckhaven is currently the
 sole permission authority. Mirror tracked as gap **G-D10-a** (M4). Tests
 in `api/tests/unit/test_workspaces.py`.
 
@@ -401,7 +401,7 @@ the real API automatically.
 
 ### D14 — Agents dial home with a one-time bootstrap token; control plane never initiates connections · `✓ Implemented`
 
-**Decision.** Operator generates a bootstrap token in the DuckHaven admin
+**Decision.** Operator generates a bootstrap token in the duckhaven admin
 UI (or via `scripts/gen-token.sh`). Token is single-use, scoped to a
 label-free agent identity, valid for 24h. The agent starts with the token +
 the control-plane URL, opens an outbound WebSocket to `/agents/connect`,
@@ -498,7 +498,7 @@ remediation hint.
 
 ### D18 — DR: nightly `pg_dump`; data DR is delegated to backend · `◐ Partial`
 
-**Decision.** Control-plane Postgres (DuckHaven app state + UC metastore)
+**Decision.** Control-plane Postgres (duckhaven app state + UC metastore)
 is `pg_dump`'d nightly to a second disk. Data DR depends on backend kind.
 
 **Current state.**
@@ -520,7 +520,7 @@ is `pg_dump`'d nightly to a second disk. Data DR depends on backend kind.
 
 | Path / Volume | Owner | Purpose |
 |---|---|---|
-| `postgres_data` | postgres | DuckHaven app state + UC metastore |
+| `postgres_data` | postgres | duckhaven app state + UC metastore |
 | `uc_data` | unity-catalog | UC's other state |
 | `api_data` | api | `/var/duckhaven` inside the api container (reserved) |
 
@@ -623,7 +623,7 @@ of Range so the proxy can stay zero-copy.
 | Component | Resident | Notes |
 |---|---|---|
 | Linux + page cache | ~1.0 GB | |
-| Postgres 16 | ~600 MB | DuckHaven app + UC metastore |
+| Postgres 16 | ~600 MB | duckhaven app + UC metastore |
 | Unity Catalog OSS (JVM) | ~2.0 GB | Dictates the 8 GB floor |
 | `duckhaven-api` (FastAPI) | ~500 MB | Includes WebSocket fan-out |
 | **Baseline committed** | **~4.2 GB** | |
@@ -722,7 +722,7 @@ Closing G-D14-a / G-D16-a restores the design.
 - **In threat model:** misclick / accidental destructive query, cookie
   theft, leaked agent credential (short TTL on backend creds limits damage).
 - **Out of threat model:** RCE in DuckDB extensions, internet-borne
-  attackers, malicious DuckHaven users or operators.
+  attackers, malicious duckhaven users or operators.
 
 ---
 
@@ -756,10 +756,10 @@ for current vs target coverage.
 | R1 | Agent control protocol has rough edges at scale | M | M | Validated by `test_channel.py`; small JSON protocol | Lowered after M2 — cancel + reconnect paths green |
 | R2 | Dial-home breaks behind aggressive NAT / firewalls | L | M | Tailscale removes most NAT; runbook covers MTU | Unchanged |
 | R3 | UC credential vending becomes the bottleneck on hot dispatch | M | M | Cache vended creds per (agent, workspace) for ~½ TTL | Implemented in `services/uc_credentials.py` (half-TTL refresh) |
-| R4 | DuckHaven ↔ UC grant drift | M | M | v1.1 reconciliation cron | Not yet exercised — gated by G-D10-a (M4) |
+| R4 | duckhaven ↔ UC grant drift | M | M | v1.1 reconciliation cron | Not yet exercised — gated by G-D10-a (M4) |
 | R5 | Agent crash mid-query loses materialized results | M | L | Re-runnable from saved SQL; D5 marks queries failed cleanly | Unchanged |
 | R6 | DuckDB UC extension write path has rough edges on cloud backends | M | H | Spikes S3/S5 cover write paths | Confirmed rough: UC OSS 0.4.0 missing `/delta/preview/commits`; S3 local-fs spike currently skipped, cloud variants env-gated |
-| R7 | INSERT against a non-CC table corrupts data | M | H | DuckHaven refuses INSERT against non-CC tables (D9) | Enforced — every DuckHaven-created table sets `delta.feature.catalogManaged=supported`; SQL allowlist rejects DDL outside `POST /tables` |
+| R7 | INSERT against a non-CC table corrupts data | M | H | duckhaven refuses INSERT against non-CC tables (D9) | Enforced — every duckhaven-created table sets `delta.feature.catalogManaged=supported`; SQL allowlist rejects DDL outside `POST /tables` |
 | R8 | Operator misconfigures a workspace backend | M | M | UC `external_locations` validated at workspace-create | Eager UC catalog create on `POST /workspaces` rolls back the pg row on UC failure |
 | R9 | Tailscale outage = total platform outage | L | H | Document static-IP fallback in runbook | Unchanged |
 | R10 | SSD failure on FS/NAS-backed workspace → data loss | L | C | Conditional UI banner (D18); v1.x `restic` | Banner G-D18-c |
@@ -848,7 +848,7 @@ Per-decision summary (status from §4):
 | D6 pluggable storage backends | ✓ | Registry + workspace binding |
 | D7 UC catalog + credential vendor | ✓ | UC client + half-TTL cred cache wired |
 | D8 DDL via UC REST | ✓ | Schemas/tables endpoints + parse-only allowlist |
-| D9 Catalog Commits ON | ✓ | `delta.feature.catalogManaged=supported` set on every DuckHaven-created table |
+| D9 Catalog Commits ON | ✓ | `delta.feature.catalogManaged=supported` set on every duckhaven-created table |
 | D10 workspace permissions | ✓ | UC mirror deferred to M4 (G-D10-a) |
 | D11 audit log | ✓ | `queries.user_id` + `?user=` filter |
 | D12 deployment | ◐ | Agent image build + `:latest` pin pending |

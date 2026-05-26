@@ -72,10 +72,8 @@ workspace-create time and at every write.
 ## 3. System Diagram
 
 ```
-                ┌──────────────────────────────────────────────┐
-   Browser ─────┤   Caddy (TLS internal)                       │
-   (Tailscale)  └─────────────────┬────────────────────────────┘
-                                  │  HTTPS  (/api/* → api:8000)
+   Browser ───────────────────────┐
+   (Tailscale)                    │  HTTP  (direct → api:8000)
                 ┌─────────────────▼────────────────────────────┐
                 │  duckhaven-api  (FastAPI)  — control plane   │
                 │  • auth, workspaces, queries, audit          │
@@ -109,8 +107,10 @@ workspace-create time and at every write.
 ```
 
 Implementation note: in the current `deploy/docker-compose.yml`, the control
-plane services are `caddy`, `postgres`, `unity-catalog`, and `api`. Agents
-are deployed separately (per D12) and are **not** part of the compose stack.
+plane services are `postgres`, `unity-catalog`, and `api`. The `api` service
+publishes port `8000` directly on the host (private Tailscale network — no
+edge TLS terminator). Agents are deployed separately (per D12) and are **not**
+part of the compose stack.
 
 ---
 
@@ -368,8 +368,8 @@ pinned image tags. Agents are deployed separately (one container image per
 host).
 
 **Current state.**
-- `deploy/docker-compose.yml` runs `caddy:2-alpine`, `postgres:16-alpine`,
-  `unitycatalog/unitycatalog:0.4.0`, `duckhaven-api:latest`.
+- `deploy/docker-compose.yml` runs `postgres:16-alpine`,
+  `unitycatalog/unitycatalog:0.4.0`, `duckhaven-api` (publishing `:8000`).
 - `agent/Dockerfile` exists and **is built + pushed** to
   `ghcr.io/<owner>/duckhaven-agent` (and `duckhaven-api`) by
   `.github/workflows/build.yml` on every `v*.*.*` tag. G-D12-a closed.
@@ -379,7 +379,8 @@ host).
 - Postgres + Alembic migrations run via `make migrate`
   (`uv run --package duckhaven-api alembic upgrade head`); they are not yet
   wired into container start.
-- Caddy + Tailscale-only ingress per design.
+- Tailscale-only ingress per design; the `api` service is exposed directly
+  on `:8000` (no edge reverse proxy or TLS terminator).
 
 ---
 
@@ -519,12 +520,9 @@ is `pg_dump`'d nightly to a second disk. Data DR depends on backend kind.
 
 | Path / Volume | Owner | Purpose |
 |---|---|---|
-| `caddy_data` | caddy | TLS material |
-| `caddy_config` | caddy | runtime config |
 | `postgres_data` | postgres | DuckHaven app state + UC metastore |
 | `uc_data` | unity-catalog | UC's other state |
 | `api_data` | api | `/var/duckhaven` inside the api container (reserved) |
-| host `./Caddyfile` | (bind ro) | reverse-proxy config |
 
 `pg-backup.sh` writes to `/var/duckhaven/backups/duckhaven_<ts>.sql.gz` on
 the host (default — operator should redirect to a second disk).
@@ -625,7 +623,6 @@ of Range so the proxy can stay zero-copy.
 | Component | Resident | Notes |
 |---|---|---|
 | Linux + page cache | ~1.0 GB | |
-| Caddy | ~50 MB | |
 | Postgres 16 | ~600 MB | DuckHaven app + UC metastore |
 | Unity Catalog OSS (JVM) | ~2.0 GB | Dictates the 8 GB floor |
 | `duckhaven-api` (FastAPI) | ~500 MB | Includes WebSocket fan-out |
@@ -658,7 +655,7 @@ of Range so the proxy can stay zero-copy.
 | Catalog client | `unitycatalog` Python SDK + raw `httpx` for endpoints the SDK lacks (`api/src/api/services/unity_catalog.py`) |
 | Storage format | Delta Lake, Catalog Commits ON (D9), per-workspace backend (D6) |
 | Storage drivers (in agent) | DuckDB native (FS), `httpfs` (S3), `azure` (ADLS Gen 2) — pre-installed by `agent/Dockerfile` |
-| Reverse proxy | Caddy 2 (`tls internal`) |
+| Ingress | `api` published directly on `:8000` over the private network (no edge TLS terminator) |
 | Identity | Local users + bcrypt + cookies (D3); agent sessions via WS (D14) |
 | Networking | Tailscale |
 | Container | docker compose v2 (control plane); single container for agents (image build operator-driven) |
@@ -705,7 +702,9 @@ agent's result HTTP server currently accepts the bearer header but the
 control-plane proxy and the agent itself both treat the token as empty.
 Closing G-D14-a / G-D16-a restores the design.
 
-- **Network perimeter:** Tailscale. No public ingress. Caddy `tls internal`.
+- **Network perimeter:** Tailscale. No public ingress. The `api` service is
+  exposed directly on `:8000` over the private network (plain HTTP); transport
+  encryption is provided by the Tailscale/WireGuard tunnel.
 - **Authentication (users):** D3.
 - **Authentication (agents):** D14 — bootstrap token → long-lived agent
   credential; WebSocket bound to that credential; HTTP result endpoint
@@ -831,7 +830,7 @@ for current vs target coverage.
 - **v2 per-table backend override** if users need hot/cold tiering inside
   a single workspace.
 - **v3 control-plane HA** if a single box is outgrown — Postgres replica,
-  UC HA, multiple FastAPI instances behind Caddy.
+  UC HA, multiple FastAPI instances behind a load balancer.
 
 ---
 

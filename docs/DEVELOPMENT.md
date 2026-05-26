@@ -111,7 +111,7 @@ web/          React SPA frontend (Vite + React 19 + TypeScript)
 api/          FastAPI control plane (Python 3.14)
 agent/        DuckDB compute agent (Python 3.14)
 shared/       Pydantic types shared by api and agent
-deploy/       Docker Compose stack and Caddy config
+deploy/       Docker Compose stack and env template
 scripts/      Operator helper scripts
 docs/         Architecture, design, and deployment docs
 ```

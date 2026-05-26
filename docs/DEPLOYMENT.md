@@ -48,16 +48,21 @@ both the REST API (under `/api`) and the web UI on port 8000.
 ### 3. Run migrations
 
 ```bash
-make migrate
+make compose-migrate
 ```
+
+This runs Alembic inside the `api` container, which already reaches Postgres
+on the compose network. (`make migrate` runs against a local dev database and
+is not used for the compose deployment.)
 
 ### 4. Seed the admin user
 
 ```bash
-make seed email=admin@example.com password=<strong-password>
+make compose-seed email=admin@example.com password=<strong-password>
 ```
 
-This creates the first admin account. Run it once against a fresh database.
+This creates the first admin account, also from inside the `api` container.
+Run it once against a fresh database.
 
 ### 5. Access the app
 

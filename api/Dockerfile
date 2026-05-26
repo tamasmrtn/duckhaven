@@ -53,6 +53,13 @@ COPY --from=builder /app/.venv /app/.venv
 # The built SPA, served by FastAPI at / (see api.main, settings.static_dir).
 COPY --from=ui-builder /web/dist /app/static
 
+# Migration assets and the admin-seed script, run in-container against the DB
+# (see `make compose-migrate` / `make compose-seed`). The DB URL is read from
+# the container's DATABASE_URL via api.config.settings.
+COPY api/alembic.ini /app/alembic.ini
+COPY api/alembic /app/alembic
+COPY scripts/seed-admin.py /app/scripts/seed-admin.py
+
 # Hardening: drop pip, patch the base image, run as a dedicated non-root user.
 # /var/duckhaven is the api_data mount point (see deploy/docker-compose.yml).
 RUN pip uninstall -y pip 2>/dev/null || true; \

@@ -407,15 +407,28 @@ async def test_get_query_rows_agent_no_result_host(
 async def test_get_query_rows_resolves_agent_bearer(
     authed_client: AsyncClient, workspace: Workspace, agent: Agent, db_session, monkeypatch
 ):
-    """The rows handler resolves the agent's session token and passes it to the
-    proxy so upstream range reads are authenticated (G-D16-a)."""
+    """The rows handler resolves the agent's session token, passes it to the
+    proxy, and decodes the Parquet result into JSON RowsPageOut (G-D16-a)."""
+    import os
+    import tempfile
     from datetime import UTC, datetime
 
+    import duckdb
     import httpx
 
     from api.models.query import Query
     from api.models.user import Credential
     from api.services import query as query_service
+
+    def _parquet_bytes() -> bytes:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as fh:
+            path = fh.name
+        try:
+            duckdb.connect().execute(f"COPY (SELECT 1 AS a, 'x' AS b) TO '{path}' (FORMAT PARQUET)")
+            with open(path, "rb") as f:
+                return f.read()
+        finally:
+            os.unlink(path)
 
     agent.result_host = "127.0.0.1"
     agent.result_port = 8001
@@ -431,6 +444,7 @@ async def test_get_query_rows_resolves_agent_bearer(
         agent_id=agent.id,
         sql="SELECT 1",
         status="done",
+        row_count=1,
         result_path="/var/duckhaven-agent/results/x.parquet",
         started_at=datetime.now(UTC),
     )
@@ -442,13 +456,18 @@ async def test_get_query_rows_resolves_agent_bearer(
 
     async def fake_proxy(agent_arg, query_arg, range_header=None, *, token=None):
         captured["token"] = token
-        return httpx.Response(206, content=b"rangebytes")
+        return httpx.Response(200, content=_parquet_bytes())
 
     monkeypatch.setattr(query_service, "proxy_rows", fake_proxy)
 
     resp = await authed_client.get(f"/queries/{query.id}/rows")
-    assert resp.status_code == 206
+    assert resp.status_code == 200
     assert captured["token"] == session_token
+    body = resp.json()
+    assert body["columns"] == ["a", "b"]
+    assert body["rows"] == [{"a": 1, "b": "x"}]
+    assert body["total"] == 1
+    assert body["cursor"] is None
 
 
 async def test_proxy_rows_sets_bearer_header(monkeypatch):

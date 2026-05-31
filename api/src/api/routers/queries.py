@@ -1,7 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import Response
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,8 +8,8 @@ from api.deps import get_cred_cache, get_current_user, get_db, get_uc_client
 from api.models.agent import Agent
 from api.models.query import Query, SavedQuery
 from api.models.storage_backend import StorageBackend
-from api.models.user import Credential, User
-from api.schemas.query import QueryCreate, QueryOut, SavedQueryCreate, SavedQueryOut
+from api.models.user import User
+from api.schemas.query import QueryCreate, QueryOut, RowsPageOut, SavedQueryCreate, SavedQueryOut
 from api.services import query as query_service
 from api.services.agent_capabilities import agent_supports_backend, required_extension
 from api.services.agent_registry import registry
@@ -114,13 +113,14 @@ async def cancel_query(
     await query_service.cancel_query(db, query)
 
 
-@router.get("/queries/{query_id}/rows", response_class=Response)
+@router.get("/queries/{query_id}/rows", response_model=RowsPageOut)
 async def get_query_rows(
     query_id: uuid.UUID,
-    request: Request,
+    limit: int = 100,
+    cursor: str | None = None,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> Response:
+) -> RowsPageOut:
     result = await db.execute(select(Query).where(Query.id == query_id))
     query = result.scalar_one_or_none()
     if query is None:
@@ -139,23 +139,19 @@ async def get_query_rows(
             detail="Agent result endpoint unavailable",
         )
 
-    cred_result = await db.execute(
-        select(Credential).where(
-            Credential.agent_id == query.agent_id,
-            Credential.kind == "agent_session",
-        )
-    )
-    cred = cred_result.scalar_one_or_none()
-    token = cred.token if cred is not None else None
+    token = await query_service.agent_session_token(db, query.agent_id)
 
-    upstream = await query_service.proxy_rows(
-        agent, query, request.headers.get("Range"), token=token
-    )
-    return Response(
-        content=upstream.content,
-        status_code=upstream.status_code,
-        media_type="application/octet-stream",
-    )
+    offset = int(cursor) if cursor and cursor.isdigit() else 0
+    upstream = await query_service.proxy_rows(agent, query, token=token)
+    if upstream.status_code != 200:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to fetch results from agent"
+        )
+    rows, columns = query_service.decode_parquet_page(upstream.content, limit, offset)
+    total = query.row_count or 0
+    next_offset = offset + limit
+    next_cursor = str(next_offset) if next_offset < total else None
+    return RowsPageOut(rows=rows, columns=columns, cursor=next_cursor, total=total)
 
 
 @router.get("/workspaces/{ws}/saved-queries", response_model=list[SavedQueryOut])

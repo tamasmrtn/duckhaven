@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_admin_user, get_db
@@ -24,7 +24,13 @@ async def list_audit(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_admin_user),
 ) -> list[QueryModel]:
-    stmt = select(QueryModel).order_by(QueryModel.started_at.desc()).limit(limit)
+    stmt = (
+        select(QueryModel)
+        # Exclude internal queries (e.g. table-sample previews) from the audit log.
+        .where(or_(QueryModel.origin.is_(None), QueryModel.origin != "sample"))
+        .order_by(QueryModel.started_at.desc())
+        .limit(limit)
+    )
     if workspace_id:
         stmt = stmt.where(QueryModel.workspace_id == workspace_id)
     if agent_id:

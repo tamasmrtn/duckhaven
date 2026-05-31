@@ -1,13 +1,6 @@
 @import "./styles/tokens.css";
 
-/* Self-hosted fonts */
-@import "@fontsource/inter/400.css";
-@import "@fontsource/inter/500.css";
-@import "@fontsource/inter/600.css";
-@import "@fontsource/inter/700.css";
-@import "@fontsource/jetbrains-mono/400.css";
-@import "@fontsource/jetbrains-mono/500.css";
-@import "@fontsource/jetbrains-mono/700.css";
+/* Self-hosted fonts are imported from src/main.tsx so Vite bundles the files. */
 
 @import "tailwindcss";
 @config "../tailwind.config.js";

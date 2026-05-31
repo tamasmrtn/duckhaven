@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 from starlette.staticfiles import StaticFiles
 from starlette.types import Scope
@@ -56,14 +57,19 @@ api_app.include_router(admin_audit.router, prefix="/admin", tags=["admin"])
 
 
 class SPAStaticFiles(StaticFiles):
-    """Serve index.html for any path that isn't a real static file, so the
-    client-side router handles deep links and refreshes."""
+    """Serve index.html for client-side routes, so the router handles deep links
+    and refreshes. Missing files that look like assets (anything with a file
+    extension) return a real 404 instead of HTML, so broken asset URLs surface
+    as errors rather than being masked as an HTTP 200 index.html."""
 
     async def get_response(self, path: str, scope: Scope) -> Response:
         try:
             return await super().get_response(path, scope)
-        except Exception:
-            return await super().get_response("index.html", scope)
+        except StarletteHTTPException as exc:
+            last_segment = path.rsplit("/", 1)[-1]
+            if exc.status_code == 404 and "." not in last_segment:
+                return await super().get_response("index.html", scope)
+            raise
 
 
 @asynccontextmanager

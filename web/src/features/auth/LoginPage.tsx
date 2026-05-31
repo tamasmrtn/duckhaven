@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import logoLight from "@/assets/logo-light.svg";
 import logoDark from "@/assets/logo-dark.svg";
 import { useNavigate } from "@tanstack/react-router";
@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useLogin } from "@/queries/auth";
+import { useSetupStatus } from "@/queries/setup";
 import { useQueryClient } from "@tanstack/react-query";
 import { workspacesApi } from "@/api/workspaces";
 
@@ -16,6 +17,15 @@ export function LoginPage() {
   const login = useLogin();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const setupStatus = useSetupStatus();
+
+  // Brand-new install lands here from the index route; bounce to /setup so the
+  // operator creates the first admin before any login attempt.
+  useEffect(() => {
+    if (setupStatus.data?.needs_admin) {
+      void navigate({ to: "/setup" });
+    }
+  }, [setupStatus.data, navigate]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

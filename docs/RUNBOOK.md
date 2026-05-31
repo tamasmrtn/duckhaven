@@ -11,19 +11,21 @@ The control plane is one `docker compose` stack (`deploy/docker-compose.yml`:
 `postgres`, `unity-catalog`, `api`). The `api` service publishes port `8000`
 directly on the host.
 
-1. Create `deploy/.env` with at least:
+1. (Optional) create `deploy/.env`. Defaults work — `POSTGRES_PASSWORD` and
+   `SECRET_KEY` are generated on first boot and persisted to the `secrets`
+   docker volume. Set values in `.env` only if you need to override them
+   (e.g. pinning a release tag):
    ```sh
-   POSTGRES_PASSWORD=<strong-password>
-   SECRET_KEY=<random-32+ bytes>
-   # Pin the API image (drops :latest, G-D12-b). For the CI-published image:
-   DUCKHAVEN_API_IMAGE=ghcr.io/<owner>/duckhaven-api:0.1.0
+   DUCKHAVEN_IMAGE_TAG=v1.2.3
    ```
-   Images are published to GHCR by `.github/workflows/build.yml` on each
-   `v*.*.*` git tag (both `duckhaven-api` and `duckhaven-agent`).
-2. Start the stack: `make compose-up`.
-3. Apply migrations: `make migrate` (runs `alembic upgrade head`).
-4. Seed the first admin: `uv run python scripts/seed-admin.py --email you@host
-   --password <pw> --name "You"`.
+   Images are published to `ghcr.io/tamasmrtn/duckhaven-{api,agent}` by
+   `.github/workflows/build.yml`: `:latest` on every main push, `:v1.2.3` /
+   `:v1.2` / `:v1` on git tags. Built for `linux/amd64` and `linux/arm64`.
+2. Start the stack: `make compose-up`. Migrations apply automatically.
+3. Read the one-shot setup token:
+   `docker compose -f deploy/docker-compose.yml exec api cat /var/duckhaven/secrets/setup_token`.
+4. Open `http://<host>:8000` and create the first admin from the setup
+   screen using the token.
 5. The API listens on port `8000` on the Tailscale address only. There is no
    public ingress; the Tailscale/WireGuard tunnel encrypts the wire.
 

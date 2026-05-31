@@ -27,13 +27,14 @@ This runs `uv sync --all-packages` for Python and `npm install` in `web/`.
 ### Option A: Full stack with Docker Compose
 
 ```bash
-cp deploy/.env.example deploy/.env
-# Edit deploy/.env
 make compose-up
-make migrate
-make seed email=you@example.com password=changeme
 make dev-web
 ```
+
+The first time you visit `http://localhost:8000` (or the Vite dev server at
+`http://localhost:5173`), you'll land on the setup screen. Read the one-shot
+token with `docker compose -f deploy/docker-compose.yml exec api cat /var/duckhaven/secrets/setup_token`
+and paste it into the form to create the first admin.
 
 The frontend dev server runs on `http://localhost:5173` and proxies API calls to `http://localhost:8000`.
 
@@ -129,7 +130,7 @@ docs/         Architecture, design, and deployment docs
 | `make migrate` | Run Alembic migrations |
 | `make compose-up` | Start Docker Compose stack |
 | `make compose-logs` | Tail control plane logs |
-| `make compose-build` | Rebuild Docker images |
+| `make compose-pull` | Pull the latest published images |
 | `make clean` | Remove caches, coverage, dist, node_modules |
 
 ## Writing Tests

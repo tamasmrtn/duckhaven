@@ -14,6 +14,13 @@ describe('LoginPage', () => {
     expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument()
   })
 
+  it('uses a descriptive password placeholder, not bullets (Bug #7)', async () => {
+    renderWithProviders({ initialRoute: '/login' })
+    const password = await screen.findByLabelText(/password/i)
+    expect(password).toHaveAttribute('placeholder')
+    expect(password.getAttribute('placeholder')).not.toMatch(/•/)
+  })
+
   it('navigates to first workspace worksheets on successful login', async () => {
     const user = userEvent.setup()
     renderWithProviders({ initialRoute: '/login' })

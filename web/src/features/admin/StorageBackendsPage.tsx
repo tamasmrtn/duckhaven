@@ -25,7 +25,7 @@ import {
 } from "@/queries/storage-backends";
 import { StorageIcon } from "@/components/app/StorageIcon";
 import type { BackendKind } from "@/types/storage-backend";
-import { cn } from "@/utils";
+import { cn, plural } from "@/utils";
 
 const KIND_LABELS: Record<BackendKind, string> = {
   local_fs: "Local FS",
@@ -216,7 +216,7 @@ export function StorageBackendsPage() {
     <div className="flex h-full flex-col overflow-hidden">
       <div className="flex items-center justify-between border-b border-[var(--border-subtle)] px-6 py-3 shrink-0">
         <p className="text-xs text-text-secondary font-tabular">
-          {backends.length} backends
+          {plural(backends.length, "backend")}
         </p>
         <Button
           size="sm"

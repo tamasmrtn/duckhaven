@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { http, HttpResponse } from 'msw'
+import { server } from '@tests/mock/server'
 import { renderWithProviders } from '@tests/utils'
 
 const CATALOG_ROUTE = '/acme-analytics/catalog'
@@ -41,6 +43,22 @@ describe('CatalogPage', () => {
     await waitFor(() => {
       expect(screen.getByText('pageviews')).toBeInTheDocument()
     })
+  })
+
+  it('shows an empty state when a schema has no tables (Bug #10)', async () => {
+    server.use(
+      http.get('/api/workspaces/:ws/schemas/:schema/tables', () =>
+        HttpResponse.json([]),
+      ),
+    )
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: CATALOG_ROUTE })
+
+    await user.click(await screen.findByRole('button', { name: /raw/i }))
+
+    expect(
+      await screen.findByText(/no tables in this schema/i),
+    ).toBeInTheDocument()
   })
 
   it('drops a table from the detail view and returns to the catalog', async () => {

@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { useParams, Link, useNavigate } from "@tanstack/react-router";
-import { ChevronRight, Pencil, ExternalLink, Plus } from "lucide-react";
+import { ChevronRight, Pencil, ExternalLink, Plus, Table2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/app/EmptyState";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
@@ -130,21 +131,25 @@ function SchemaList({ ws }: { ws: string }) {
             open={tableDialogOpen}
             onOpenChange={setTableDialogOpen}
           />
-          {tables.map((t) => (
-            <Link
-              key={t.name}
-              to="/$ws/catalog/$schema/$table"
-              params={{ ws, schema: selectedSchema, table: t.name }}
-              className="flex w-full items-center justify-between rounded px-2 py-1.5 text-sm text-text-secondary hover:bg-accent/50 hover:text-text-primary"
-            >
-              {t.name}
-              <span className="font-mono text-2xs text-text-tertiary font-tabular">
-                {t.row_count != null
-                  ? (t.row_count / 1_000_000).toFixed(1) + "M"
-                  : ""}
-              </span>
-            </Link>
-          ))}
+          {tables.length === 0 ? (
+            <EmptyState icon={Table2} title="No tables in this schema" />
+          ) : (
+            tables.map((t) => (
+              <Link
+                key={t.name}
+                to="/$ws/catalog/$schema/$table"
+                params={{ ws, schema: selectedSchema, table: t.name }}
+                className="flex w-full items-center justify-between rounded px-2 py-1.5 text-sm text-text-secondary hover:bg-accent/50 hover:text-text-primary"
+              >
+                {t.name}
+                <span className="font-mono text-2xs text-text-tertiary font-tabular">
+                  {t.row_count != null
+                    ? (t.row_count / 1_000_000).toFixed(1) + "M"
+                    : ""}
+                </span>
+              </Link>
+            ))
+          )}
         </div>
       )}
 

@@ -51,7 +51,7 @@ export function SavedQueriesPage() {
                     <ExternalLink className="size-3" />
                   </Button>
                 </div>
-                <pre className="flex-1 truncate whitespace-pre-wrap font-mono text-xs text-text-secondary bg-[var(--bg-code)] rounded px-2 py-1.5 max-h-16 overflow-hidden">
+                <pre className="flex-1 truncate whitespace-pre-wrap font-mono text-xs text-[var(--text-code)] bg-[var(--bg-code)] rounded px-2 py-1.5 max-h-16 overflow-hidden">
                   {q.sql}
                 </pre>
                 {q.last_run_at && (

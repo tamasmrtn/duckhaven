@@ -3,7 +3,10 @@ import { beforeAll, afterEach, afterAll, vi } from 'vitest'
 import { server } from './mock/server'
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }))
-afterEach(() => server.resetHandlers())
+afterEach(() => {
+  server.resetHandlers()
+  window.localStorage.clear()
+})
 afterAll(() => server.close())
 
 // Monaco doesn't work in jsdom; stub it out globally

@@ -1,6 +1,13 @@
-import { useState, useCallback, useRef } from "react";
-import { useParams } from "@tanstack/react-router";
-import { Play, Square, Save, Settings2 } from "lucide-react";
+import { useState, useCallback, useRef, useEffect } from "react";
+import { useParams, Link } from "@tanstack/react-router";
+import {
+  Play,
+  Square,
+  Save,
+  Settings2,
+  AlertCircle,
+  PanelLeft,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -8,6 +15,14 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import {
@@ -49,21 +64,66 @@ WHERE event_time >= '2026-05-01'
 GROUP BY 1
 ORDER BY 1;`;
 
+// The landing/showcase workspace keeps example worksheets; every other
+// workspace (including freshly created ones) starts blank — worksheets are
+// scoped per workspace rather than shared (Bug #9).
+const DEMO_WORKSPACE_SLUG = "acme-analytics";
+
+const tabsStorageKey = (ws: string) => `dh-worksheets-${ws}`;
+
+function seededTabs(ws: string): Tab[] {
+  if (ws === DEMO_WORKSPACE_SLUG) {
+    return [
+      { id: "tab-1", title: "events.sql", sql: DEFAULT_SQL, dirty: false },
+      {
+        id: "tab-2",
+        title: "funnel-draft",
+        sql: "SELECT step, users, pct FROM analytics.funnel ORDER BY users DESC",
+        dirty: true,
+      },
+    ];
+  }
+  return [{ id: "tab-1", title: "untitled", sql: "", dirty: false }];
+}
+
+function loadTabs(ws: string): Tab[] {
+  try {
+    const raw = localStorage.getItem(tabsStorageKey(ws));
+    if (raw) {
+      const parsed = JSON.parse(raw) as Tab[];
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch {
+    // ignore malformed/unavailable storage
+  }
+  return seededTabs(ws);
+}
+
 export function WorksheetPage() {
   const { ws } = useParams({ from: "/$ws/worksheets" });
   const { data: workspace } = useWorkspace(ws);
   const { data: agents = [] } = useAgents();
 
-  const [tabs, setTabs] = useState<Tab[]>([
-    { id: "tab-1", title: "events.sql", sql: DEFAULT_SQL, dirty: false },
-    {
-      id: "tab-2",
-      title: "funnel-draft",
-      sql: "SELECT step, users, pct FROM analytics.funnel ORDER BY users DESC",
-      dirty: true,
-    },
-  ]);
+  const [tabs, setTabs] = useState<Tab[]>(() => loadTabs(ws));
   const [activeTab, setActiveTab] = useState("tab-1");
+
+  // Switching workspaces reuses this component; reload that workspace's tabs.
+  const [loadedWs, setLoadedWs] = useState(ws);
+  if (loadedWs !== ws) {
+    const loaded = loadTabs(ws);
+    setLoadedWs(ws);
+    setTabs(loaded);
+    setActiveTab(loaded[0].id);
+  }
+
+  // Persist tabs per workspace so they survive reloads and stay isolated.
+  useEffect(() => {
+    try {
+      localStorage.setItem(tabsStorageKey(ws), JSON.stringify(tabs));
+    } catch {
+      // ignore unavailable storage
+    }
+  }, [ws, tabs]);
   const [agentId, setAgentId] = useState<string>(() => agents[0]?.id ?? "");
   const [memoryLimit, setMemoryLimit] = useState(6);
   const [timeout, setTimeout_] = useState(10);
@@ -72,6 +132,8 @@ export function WorksheetPage() {
   const [saveName, setSaveName] = useState("");
   const [leftWidth, setLeftWidth] = useState(280);
   const [editorHeight, setEditorHeight] = useState(55); // percent
+  const isMobile = useMediaQuery("(max-width: 767px)");
+  const [catalogOpen, setCatalogOpen] = useState(false);
 
   const isDraggingVert = useRef(false);
   const isDraggingHoriz = useRef(false);
@@ -89,6 +151,9 @@ export function WorksheetPage() {
   const firstHealthyAgent = agents.find((a) => a.status === "healthy");
   const resolvedAgentId = agentId || firstHealthyAgent?.id || "";
   const resolvedAgent = agents.find((a) => a.id === resolvedAgentId);
+  // Run requires an agent. When none is available (e.g. a LOCAL_FS workspace
+  // with no connected agents) explain how to enable it instead of dead-ending.
+  const needsAgent = !resolvedAgentId;
 
   function updateTabSql(sql: string) {
     setTabs((prev) =>
@@ -251,31 +316,64 @@ export function WorksheetPage() {
 
       {/* Three-pane layout */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Catalog pane */}
-        <div
-          className="shrink-0 overflow-hidden border-r border-[var(--border-subtle)] bg-[var(--bg-surface)]"
-          style={{ width: leftWidth }}
-        >
-          <div className="h-full">
-            <CatalogTree
-              ws={ws}
-              workspaceName={workspace?.name ?? ws}
-              onTableClick={insertTableSnippet}
-            />
-          </div>
-        </div>
+        {/* Catalog pane — inline on desktop, a drawer on mobile (Bug #6) */}
+        {!isMobile && (
+          <>
+            <div
+              className="shrink-0 overflow-hidden border-r border-[var(--border-subtle)] bg-[var(--bg-surface)]"
+              style={{ width: leftWidth }}
+            >
+              <div className="h-full">
+                <CatalogTree
+                  ws={ws}
+                  workspaceName={workspace?.name ?? ws}
+                  onTableClick={insertTableSnippet}
+                />
+              </div>
+            </div>
 
-        {/* Horizontal drag handle */}
-        <div
-          onMouseDown={onHorizMouseDown}
-          className="w-1 cursor-col-resize bg-transparent hover:bg-[var(--border-strong)] transition-colors shrink-0"
-          aria-hidden
-        />
+            {/* Horizontal drag handle */}
+            <div
+              onMouseDown={onHorizMouseDown}
+              className="w-1 cursor-col-resize bg-transparent hover:bg-[var(--border-strong)] transition-colors shrink-0"
+              aria-hidden
+            />
+          </>
+        )}
 
         {/* Editor + results */}
-        <div className="editor-results-container flex flex-1 flex-col overflow-hidden">
+        <div className="editor-results-container flex min-w-0 flex-1 flex-col overflow-hidden">
           {/* Editor toolbar */}
-          <div className="flex items-center gap-2 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-1.5 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-1.5 shrink-0">
+            {isMobile && (
+              <Sheet open={catalogOpen} onOpenChange={setCatalogOpen}>
+                <SheetTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-8 shrink-0"
+                    aria-label="Show tables"
+                  >
+                    <PanelLeft className="size-4" />
+                  </Button>
+                </SheetTrigger>
+                <SheetContent side="left" className="w-80 p-0">
+                  <SheetHeader className="border-b border-[var(--border-subtle)] px-4 py-3">
+                    <SheetTitle className="text-sm">Tables</SheetTitle>
+                  </SheetHeader>
+                  <div className="h-[calc(100%-3.25rem)] overflow-auto">
+                    <CatalogTree
+                      ws={ws}
+                      workspaceName={workspace?.name ?? ws}
+                      onTableClick={(schema, table) => {
+                        insertTableSnippet(schema, table);
+                        setCatalogOpen(false);
+                      }}
+                    />
+                  </div>
+                </SheetContent>
+              </Sheet>
+            )}
             <AgentPicker
               value={resolvedAgentId}
               onChange={setAgentId}
@@ -354,6 +452,20 @@ export function WorksheetPage() {
               </Button>
             </div>
           </div>
+
+          {needsAgent && (
+            <div className="flex items-center gap-2 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2 text-xs text-text-secondary shrink-0">
+              <AlertCircle className="size-3.5 text-[var(--status-running)] shrink-0" />
+              <span>No agents connected — connect one to run queries.</span>
+              <Link
+                to="/$ws/admin/agents"
+                params={{ ws }}
+                className="font-medium text-[var(--brand-slate-blue)] hover:underline"
+              >
+                Add an agent
+              </Link>
+            </div>
+          )}
 
           {/* Editor */}
           <div

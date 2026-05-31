@@ -51,7 +51,7 @@ export function TopBar({
       <button
         type="button"
         onClick={onWorkspaceSwitcher}
-        className="flex items-center gap-2 rounded-md px-2 py-1 text-sm font-semibold hover:bg-accent focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+        className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1 text-sm font-semibold hover:bg-accent focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
         aria-label="Switch workspace"
       >
         <img
@@ -66,21 +66,21 @@ export function TopBar({
         />
         {workspace && (
           <>
-            <span className="font-medium">{workspace.name}</span>
+            <span className="truncate font-medium">{workspace.name}</span>
             <StorageIcon
               kind={workspace.storage_backend_kind}
-              className="size-3.5 text-text-secondary"
+              className="size-3.5 shrink-0 text-text-secondary"
             />
           </>
         )}
-        <ChevronDown className="size-3.5 text-text-secondary" />
+        <ChevronDown className="size-3.5 shrink-0 text-text-secondary" />
       </button>
 
       {/* Command palette trigger */}
       <button
         type="button"
         onClick={onCommandPalette}
-        className="ml-2 flex h-8 w-56 items-center gap-2 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 text-sm text-text-tertiary hover:border-[var(--border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+        className="ml-2 hidden h-8 w-56 items-center gap-2 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 text-sm text-text-tertiary hover:border-[var(--border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)] md:flex"
         aria-label="Open command palette"
       >
         <Search className="size-3.5" />
@@ -134,7 +134,7 @@ export function TopBar({
               className="h-8 gap-2 px-2 text-sm"
             >
               <User className="size-4" />
-              {me?.name ?? "Account"}
+              <span className="hidden sm:inline">{me?.name ?? "Account"}</span>
               <ChevronDown className="size-3 text-text-secondary" />
             </Button>
           </DropdownMenuTrigger>

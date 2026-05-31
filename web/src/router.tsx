@@ -3,8 +3,13 @@ import {
   createRoute,
   createRootRoute,
   redirect,
+  notFound,
 } from "@tanstack/react-router";
+import { ApiError } from "@/api/client";
+import { authApi } from "@/api/auth";
+import { workspacesApi } from "@/api/workspaces";
 import { LoadingScreen } from "@/components/app/LoadingScreen";
+import { NotFoundPage } from "@/features/app/NotFoundPage";
 import { AppShell } from "@/components/app/AppShell";
 import { LoginPage } from "@/features/auth/LoginPage";
 import { SetupPage } from "@/features/auth/SetupPage";
@@ -51,6 +56,28 @@ const wsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/$ws",
   component: AppShell,
+  notFoundComponent: NotFoundPage,
+  // Centralized guard for every workspace route: require a session, then a
+  // real workspace. Logged-out deep links redirect to /login (Bug #3); unknown
+  // workspace slugs render the not-found page instead of a blank shell (Bug #5).
+  beforeLoad: async ({ params }) => {
+    try {
+      await authApi.me();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        throw redirect({ to: "/login" });
+      }
+      throw err;
+    }
+    try {
+      await workspacesApi.get(params.ws);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        throw notFound();
+      }
+      throw err;
+    }
+  },
 });
 
 const worksheetsRoute = createRoute({

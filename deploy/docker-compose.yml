@@ -11,6 +11,7 @@ services:
       SECRET_KEY: ${SECRET_KEY:-}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
     volumes:
+      - api_data:/var/duckhaven
       - secrets:/var/duckhaven/secrets
     restart: "no"
 

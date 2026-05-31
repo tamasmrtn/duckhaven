@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -30,6 +31,7 @@ class CatalogSchemaCreate(BaseModel):
 class CatalogSchemaOut(BaseModel):
     name: str
     catalog_name: str
+    workspace_id: str
 
 
 class ColumnSpec(BaseModel):
@@ -47,6 +49,8 @@ class TableColumnOut(BaseModel):
     name: str
     type_text: str
     type_name: str
+    # Simple display type the UI renders (web/src/types/catalog.ts TableColumn.type).
+    type: str
     position: int
     nullable: bool
 
@@ -55,9 +59,20 @@ class TableOut(BaseModel):
     name: str
     schema_name: str
     catalog_name: str
+    workspace_id: str
     table_type: str
     data_source_format: str
+    # Alias the UI consumes (web/src/types/catalog.ts CatalogTable.format).
+    format: str
     storage_location: str | None = None
     columns: list[TableColumnOut] = Field(default_factory=list)
     properties: dict[str, str] = Field(default_factory=dict)
     table_id: str | None = None
+    # Control-plane metadata (TableMetadata); null until first tracked event.
+    catalog_commits: bool = False
+    row_count: int | None = None
+    size_bytes: int | None = None
+    owner: str | None = None
+    last_write_at: datetime | None = None
+    last_write_by: str | None = None
+    last_write_agent: str | None = None

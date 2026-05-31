@@ -19,6 +19,9 @@ class Query(Base):
     user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     sql: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="queued")
+    # Distinguishes user-initiated queries (null) from internal ones (e.g. "sample"),
+    # so synthetic preview queries can be excluded from history/audit.
+    origin: Mapped[str | None] = mapped_column(String(50), nullable=True)
     row_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)

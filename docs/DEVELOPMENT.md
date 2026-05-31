@@ -27,11 +27,9 @@ This runs `uv sync --all-packages` for Python and `npm install` in `web/`.
 ### Option A: Full stack with Docker Compose
 
 ```bash
-cp deploy/.env.example deploy/.env
-# Edit deploy/.env
 make compose-up
-make migrate
-make seed email=you@example.com password=changeme
+make compose-migrate
+make compose-seed email=you@example.com password=changeme
 make dev-web
 ```
 

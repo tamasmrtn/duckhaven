@@ -12,25 +12,18 @@
 
 The control plane is a single `docker compose` stack. It never runs DuckDB itself.
 
-### 1. Configure environment
+### 1. Configure environment (optional)
 
-```bash
-cp deploy/.env.example deploy/.env
-```
+No `.env` is required. On first boot the `init-secrets` compose service
+generates random values for `POSTGRES_PASSWORD` and `SECRET_KEY`, writes
+them to the `secrets` named volume, and the api + postgres services pick
+them up from there. Both survive `docker compose restart`; both are wiped
+by `docker compose down -v`.
 
-Edit `deploy/.env`:
-
-```bash
-POSTGRES_PASSWORD=<strong-random-password>
-SECRET_KEY=<strong-random-secret>
-COOKIE_SECURE=false
-```
-
-`SECRET_KEY` is used for session cookie signing. Generate one with:
-
-```bash
-openssl rand -hex 32
-```
+To override either (e.g. to share a value across hosts), copy
+`deploy/.env.example` to `deploy/.env` and set the variable. The value is
+captured on first boot only — subsequent changes are ignored until the
+secrets volume is wiped.
 
 Keep `COOKIE_SECURE=false` for the default plain-HTTP deployment — the browser
 drops `Secure` cookies over HTTP, which breaks login. Set it to `true` only when

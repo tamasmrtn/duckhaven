@@ -33,7 +33,7 @@ def _run(script: Path, env: dict[str, str], *args: str) -> subprocess.CompletedP
 
 
 def test_init_secrets_generates_both_files(tmp_path: Path) -> None:
-    result = _run(INIT_SCRIPT, {"SECRETS_DIR": str(tmp_path)})
+    result = _run(INIT_SCRIPT, {"SECRETS_DIR": str(tmp_path), "DATA_DIR": str(tmp_path)})
     assert result.returncode == 0, result.stderr
 
     secret_key = tmp_path / "secret_key"
@@ -48,9 +48,10 @@ def test_init_secrets_generates_both_files(tmp_path: Path) -> None:
 
 
 def test_init_secrets_is_idempotent(tmp_path: Path) -> None:
-    _run(INIT_SCRIPT, {"SECRETS_DIR": str(tmp_path)})
+    env = {"SECRETS_DIR": str(tmp_path), "DATA_DIR": str(tmp_path)}
+    _run(INIT_SCRIPT, env)
     first = (tmp_path / "secret_key").read_text()
-    _run(INIT_SCRIPT, {"SECRETS_DIR": str(tmp_path)})
+    _run(INIT_SCRIPT, env)
     second = (tmp_path / "secret_key").read_text()
     assert first == second, "second run must not regenerate existing secrets"
 
@@ -60,6 +61,7 @@ def test_init_secrets_honours_env_overrides_on_first_boot(tmp_path: Path) -> Non
         INIT_SCRIPT,
         {
             "SECRETS_DIR": str(tmp_path),
+            "DATA_DIR": str(tmp_path),
             "SECRET_KEY": "operator-supplied-key",
             "POSTGRES_PASSWORD": "operator-supplied-pw",
         },
@@ -70,25 +72,32 @@ def test_init_secrets_honours_env_overrides_on_first_boot(tmp_path: Path) -> Non
 
 
 def test_init_secrets_env_override_ignored_after_first_boot(tmp_path: Path) -> None:
-    _run(INIT_SCRIPT, {"SECRETS_DIR": str(tmp_path), "SECRET_KEY": "first"})
-    _run(INIT_SCRIPT, {"SECRETS_DIR": str(tmp_path), "SECRET_KEY": "second"})
+    _run(
+        INIT_SCRIPT,
+        {"SECRETS_DIR": str(tmp_path), "DATA_DIR": str(tmp_path), "SECRET_KEY": "first"},
+    )
+    _run(
+        INIT_SCRIPT,
+        {"SECRETS_DIR": str(tmp_path), "DATA_DIR": str(tmp_path), "SECRET_KEY": "second"},
+    )
     assert (tmp_path / "secret_key").read_text() == "first"
 
 
 def test_init_secrets_generates_setup_token_on_first_boot(tmp_path: Path) -> None:
-    _run(INIT_SCRIPT, {"SECRETS_DIR": str(tmp_path)})
+    _run(INIT_SCRIPT, {"SECRETS_DIR": str(tmp_path), "DATA_DIR": str(tmp_path)})
     setup_token = tmp_path / "setup_token"
     assert setup_token.is_file() and setup_token.read_text()
 
 
 def test_init_secrets_does_not_regenerate_setup_token_after_consumed(tmp_path: Path) -> None:
+    env = {"SECRETS_DIR": str(tmp_path), "DATA_DIR": str(tmp_path)}
     # First boot: token generated.
-    _run(INIT_SCRIPT, {"SECRETS_DIR": str(tmp_path)})
+    _run(INIT_SCRIPT, env)
     # API consumed the token after first-admin creation.
     (tmp_path / "setup_token").unlink()
     # Subsequent boot must NOT mint a new one — otherwise a stranger reading
     # the volume could create a second admin.
-    _run(INIT_SCRIPT, {"SECRETS_DIR": str(tmp_path)})
+    _run(INIT_SCRIPT, env)
     assert not (tmp_path / "setup_token").exists()
 
 

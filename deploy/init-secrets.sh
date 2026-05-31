@@ -6,6 +6,7 @@
 set -eu
 
 SECRETS_DIR="${SECRETS_DIR:-/var/duckhaven/secrets}"
+DATA_DIR="${DATA_DIR:-/var/duckhaven}"
 mkdir -p "$SECRETS_DIR"
 
 write_if_absent() {
@@ -38,5 +39,11 @@ write_if_absent secret_key "${SECRET_KEY:-}"
 write_if_absent postgres_password "${POSTGRES_PASSWORD:-}"
 
 if [ "$FIRST_BOOT" = 1 ]; then
-    write_if_absent setup_token ""
+    # Written to DATA_DIR (api_data volume), not SECRETS_DIR, so the api
+    # container can delete it after first-admin creation (secrets is :ro there).
+    TOKEN_PATH="$DATA_DIR/setup_token"
+    if [ ! -s "$TOKEN_PATH" ]; then
+        head -c 32 /dev/urandom | base64 | tr -d '\n' > "$TOKEN_PATH"
+        chmod 644 "$TOKEN_PATH"
+    fi
 fi

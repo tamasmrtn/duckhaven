@@ -370,12 +370,13 @@ host).
 **Current state.**
 - `deploy/docker-compose.yml` runs `postgres:16-alpine`,
   `unitycatalog/unitycatalog:0.4.0`, `duckhaven-api` (publishing `:8000`).
-- `agent/Dockerfile` exists and **is built + pushed** to
-  `ghcr.io/<owner>/duckhaven-agent` (and `duckhaven-api`) by
-  `.github/workflows/build.yml` on every `v*.*.*` tag. G-D12-a closed.
-- `duckhaven-api` is no longer `:latest`: `deploy/docker-compose.yml` pins
-  it via `${DUCKHAVEN_API_IMAGE:-duckhaven-api:0.1.0}`, overridable to the
-  GHCR image. G-D12-b closed.
+- `duckhaven-api` and `duckhaven-agent` are built + pushed to
+  `ghcr.io/tmrtn/duckhaven-{api,agent}` by `.github/workflows/build.yml`
+  on every main push (`:latest`) and on `v*.*.*` tags (`:vX.Y.Z`, `:vX.Y`,
+  `:vX`). Built multi-arch (`linux/amd64,linux/arm64`).
+- `deploy/docker-compose.yml` pulls the api image as
+  `ghcr.io/tmrtn/duckhaven-api:${DUCKHAVEN_IMAGE_TAG:-latest}`; pin to a
+  release tag for predictable upgrades.
 - Postgres + Alembic migrations run via `make migrate`
   (`uv run --package duckhaven-api alembic upgrade head`); they are not yet
   wired into container start.

@@ -138,7 +138,7 @@ The control-plane stack reads these from `deploy/.env` (copy `deploy/.env.exampl
 |---|---|---|---|
 | `POSTGRES_PASSWORD` | yes | `changeme` | Password for the bundled Postgres (DuckHaven app state + UC metastore). |
 | `SECRET_KEY` | yes | `changeme-use-a-long-random-value` | Session-cookie signing key. Generate one with `openssl rand -hex 32`. |
-| `DUCKHAVEN_API_IMAGE` | no | `duckhaven-api:0.1.0` | Override to pin a published image, e.g. `ghcr.io/<owner>/duckhaven-api:0.1.0`. |
+| `DUCKHAVEN_IMAGE_TAG` | no | `latest` | Image tag pulled from `ghcr.io/tmrtn/duckhaven-api`. Pin to a release tag (e.g. `v1.2.3`) for predictable upgrades. |
 
 Agent-side variables (`CONTROL_PLANE_URL`, `BOOTSTRAP_TOKEN`, `RESULTS_DIR`, …) are documented in [docs/AGENTS.md](docs/AGENTS.md).
 

@@ -166,16 +166,13 @@ Data lives on your storage backends, not in DuckHaven. Back up backend roots acc
 ## Updating
 
 ```bash
-# Pull latest code
-git pull origin main
-
-# Rebuild and restart
-make compose-build
+# Pull the latest published images and restart the stack
+make compose-pull
 make compose-up
-make migrate
+make compose-migrate
 
 # Restart agents with new image
-docker pull duckhaven-agent:latest
+docker pull ghcr.io/tmrtn/duckhaven-agent:latest
 docker restart duckhaven-agent
 ```
 

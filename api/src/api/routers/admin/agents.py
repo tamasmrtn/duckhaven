@@ -3,10 +3,11 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.config import settings
 from api.deps import get_admin_user, get_db
 from api.models.agent import Agent
 from api.models.user import Credential, User
@@ -47,8 +48,27 @@ async def list_agents(
     return out
 
 
+def _agent_dial_url(request: Request) -> str:
+    """WebSocket URL the new agent should dial.
+
+    Prefers X-Forwarded-* headers so it Just Works behind a TLS reverse proxy;
+    falls back to the request's own scheme + Host header for direct deployments.
+    """
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    forwarded_host = request.headers.get("x-forwarded-host")
+    scheme = (forwarded_proto or request.url.scheme).split(",", 1)[0].strip()
+    host = (
+        (forwarded_host or request.headers.get("host") or request.url.netloc)
+        .split(",", 1)[0]
+        .strip()
+    )
+    ws_scheme = "wss" if scheme == "https" else "ws"
+    return f"{ws_scheme}://{host}/agents/connect"
+
+
 @router.post("/bootstrap", response_model=BootstrapTokenOut)
 async def bootstrap(
+    request: Request,
     admin: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ) -> BootstrapTokenOut:
@@ -63,7 +83,12 @@ async def bootstrap(
     )
     db.add(cred)
     await db.commit()
-    return BootstrapTokenOut(token=token, expires_at=expires_at)
+    return BootstrapTokenOut(
+        token=token,
+        expires_at=expires_at,
+        control_plane_url=_agent_dial_url(request),
+        agent_image=settings.agent_image,
+    )
 
 
 @router.delete("/{agent_id}/credential", status_code=status.HTTP_204_NO_CONTENT)

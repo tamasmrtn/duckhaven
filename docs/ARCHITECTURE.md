@@ -186,8 +186,11 @@ bootstrap/session credentials (D14).
 
 **Current state.** Implemented in `api/src/api/services/auth.py` (bcrypt
 rounds=12) + `api/src/api/routers/auth.py` (`POST /auth/login`,
-`POST /auth/logout`, `GET /me`). Session TTL is 7 days (configurable). Admin
-seeding via `scripts/seed-admin.py`. Tests in `api/tests/unit/test_auth.py`.
+`POST /auth/logout`, `GET /me`). Session TTL is 7 days (configurable). The
+first admin is created via the browser-driven onboarding flow
+(`POST /api/setup/admin`, gated by a one-shot token written to the secrets
+volume by `deploy/init-secrets.sh`). Tests in `api/tests/unit/test_auth.py`
+and `api/tests/unit/routers/test_setup.py`.
 
 **Consequences.** Unchanged from v0.2.
 
@@ -370,15 +373,17 @@ host).
 **Current state.**
 - `deploy/docker-compose.yml` runs `postgres:16-alpine`,
   `unitycatalog/unitycatalog:0.4.0`, `duckhaven-api` (publishing `:8000`).
-- `agent/Dockerfile` exists and **is built + pushed** to
-  `ghcr.io/<owner>/duckhaven-agent` (and `duckhaven-api`) by
-  `.github/workflows/build.yml` on every `v*.*.*` tag. G-D12-a closed.
-- `duckhaven-api` is no longer `:latest`: `deploy/docker-compose.yml` pins
-  it via `${DUCKHAVEN_API_IMAGE:-duckhaven-api:0.1.0}`, overridable to the
-  GHCR image. G-D12-b closed.
-- Postgres + Alembic migrations run via `make migrate`
-  (`uv run --package duckhaven-api alembic upgrade head`); they are not yet
-  wired into container start.
+- `duckhaven-api` and `duckhaven-agent` are built + pushed to
+  `ghcr.io/tamasmrtn/duckhaven-{api,agent}` by `.github/workflows/build.yml`
+  on every main push (`:latest`) and on `v*.*.*` tags (`:vX.Y.Z`, `:vX.Y`,
+  `:vX`). Built multi-arch (`linux/amd64,linux/arm64`).
+- `deploy/docker-compose.yml` pulls the api image as
+  `ghcr.io/tamasmrtn/duckhaven-api:${DUCKHAVEN_IMAGE_TAG:-latest}`; pin to a
+  release tag for predictable upgrades.
+- Alembic migrations are applied automatically by `deploy/api-entrypoint.sh`
+  when the `api` container starts (no separate `make migrate` step in
+  production). `make migrate` remains for local dev against a host-side
+  Postgres.
 - Tailscale-only ingress per design; the `api` service is exposed directly
   on `:8000` (no edge reverse proxy or TLS terminator).
 

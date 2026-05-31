@@ -1,84 +1,17 @@
-# Agent Setup Guide
+# Agent reference
 
-## What Is an Agent?
+> **Installing an agent?** See
+> [docs/self-hosting/add-agent.md](self-hosting/add-agent.md) for the
+> task-oriented walkthrough (generate snippet → paste → `docker compose up -d`).
+> This page is the technical reference: configuration, extensions,
+> multi-agent layouts, and troubleshooting.
 
-A DuckHaven agent is a Python process that embeds DuckDB and connects to the control plane via WebSocket. It executes SQL queries dispatched by users and serves result Parquet files over HTTP.
+A DuckHaven agent is a Python process that embeds DuckDB, connects to the
+control plane via WebSocket, executes SQL queries dispatched by users, and
+serves result Parquet files over HTTP. Agents are the only component that
+runs DuckDB.
 
-Agents are the only component that runs DuckDB. The control plane does not.
-
-## Prerequisites
-
-- Linux host/VM (8 GB RAM minimum)
-- Docker (recommended) or Python 3.14+ with `uv`
-- Network reachability to the control plane's `/agents/connect` WebSocket endpoint
-- (Optional) Mounted storage paths for local FS or NAS backends
-
-## Quick Start
-
-### 1. Generate a bootstrap token
-
-In the DuckHaven admin UI:
-
-1. Navigate to **Admin → Agents**.
-2. Click **Generate Bootstrap Token**.
-3. Copy the token (it looks like `dh_boot_...`).
-
-This token is single-use and expires in 24 hours.
-
-### 2. Build or pull the agent image
-
-```bash
-# From the repo root
-docker build -f agent/Dockerfile -t duckhaven-agent:latest .
-```
-
-Or pull a published image (once available):
-
-```bash
-docker pull ghcr.io/tmrtn/duckhaven-agent:latest
-```
-
-### 3. Create agent configuration
-
-Create a file named `agent.env`:
-
-```bash
-# Required
-CONTROL_PLANE_URL=ws://duckhaven.example.com:8000/agents/connect
-BOOTSTRAP_TOKEN=dh_boot_xxxxxxxxxxxxxxxx
-
-# Optional (defaults shown)
-RESULTS_DIR=/var/duckhaven-agent/results
-RESULTS_HTTP_PORT=8001
-MEMORY_LIMIT_BYTES=6442450944
-```
-
-### 4. Run the agent
-
-```bash
-docker run -d \
-  --name duckhaven-agent \
-  -v /var/duckhaven-agent:/var/duckhaven-agent \
-  -v /mnt/data:/mnt/data:ro \
-  --env-file agent.env \
-  --restart unless-stopped \
-  duckhaven-agent:latest
-```
-
-Mount any directories your workspaces need:
-- `/var/duckhaven-agent` — for query results (read/write)
-- `/mnt/data` or similar — for local FS / NAS backend roots (read)
-
-### 5. Verify in the UI
-
-Go to **Admin → Agents**. Your agent should appear with:
-- Status: `healthy`
-- DuckDB version
-- Loaded extensions
-- Memory limit
-- Hostname
-
-## Configuration Reference
+## Configuration reference
 
 | Variable | Required | Default | Description |
 |---|---|---|---|

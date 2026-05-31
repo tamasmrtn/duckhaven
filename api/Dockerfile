@@ -53,22 +53,30 @@ COPY --from=builder /app/.venv /app/.venv
 # The built SPA, served by FastAPI at / (see api.main, settings.static_dir).
 COPY --from=ui-builder /web/dist /app/static
 
-# Migration assets and the admin-seed script, run in-container against the DB
-# (see `make compose-migrate` / `make compose-seed`). The DB URL is read from
-# the container's DATABASE_URL via api.config.settings.
+# Alembic migrations applied at container start by api-entrypoint.sh.
 COPY api/alembic.ini /app/alembic.ini
 COPY api/alembic /app/alembic
-COPY scripts/seed-admin.py /app/scripts/seed-admin.py
+
+# Entrypoint + init script. The init-secrets compose service runs init-secrets.sh
+# once on first boot; the api service uses api-entrypoint.sh to read the
+# generated secrets and construct DATABASE_URL / SECRET_KEY at runtime.
+COPY deploy/api-entrypoint.sh /usr/local/bin/api-entrypoint.sh
+COPY deploy/init-secrets.sh /usr/local/bin/init-secrets.sh
 
 # Hardening: drop pip, patch the base image, run as a dedicated non-root user.
-# /var/duckhaven is the api_data mount point (see deploy/docker-compose.yml).
+# /var/duckhaven is the api_data mount point and /var/duckhaven/secrets is the
+# secrets named-volume mount (see deploy/docker-compose.yml). Pre-creating the
+# secrets dir owned by duckhaven lets the empty-volume init copy inherit
+# the correct ownership.
 RUN pip uninstall -y pip 2>/dev/null || true; \
     apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*; \
     useradd --system --create-home --home-dir /home/duckhaven duckhaven; \
-    mkdir -p /var/duckhaven && chown duckhaven:duckhaven /var/duckhaven
+    mkdir -p /var/duckhaven/secrets && chown -R duckhaven:duckhaven /var/duckhaven; \
+    chmod +x /usr/local/bin/api-entrypoint.sh /usr/local/bin/init-secrets.sh
 
 USER duckhaven
 
 EXPOSE 8000
 
+ENTRYPOINT ["/usr/local/bin/api-entrypoint.sh"]
 CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]

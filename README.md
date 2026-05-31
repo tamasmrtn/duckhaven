@@ -99,48 +99,29 @@ For the full architecture, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For
 | Containerisation | Docker Compose (control plane); single container per agent |
 | Tests | pytest + pytest-asyncio (api, agent); Vitest + React Testing Library + MSW (web) |
 
-## Getting Started
-
-### Prerequisites
-
-- Docker Engine 24+ and Docker Compose v2
-- A Linux host for the control plane (8 GB RAM minimum)
-- One or more Linux hosts/VMs for agents (8 GB RAM each)
-- (Recommended) Tailscale for a private network mesh
-
-### Control plane
+## Quickstart
 
 ```bash
-git clone https://github.com/tmrtn/duckhaven.git
-cd duckhaven
-cp deploy/.env.example deploy/.env
-# Edit deploy/.env — set POSTGRES_PASSWORD and SECRET_KEY
-
-make install
-make compose-up
-make migrate
-make seed email=you@example.com password=changeme
+curl -O https://raw.githubusercontent.com/tamasmrtn/duckhaven/main/deploy/docker-compose.yml
+docker compose up -d
+docker compose exec api cat /var/duckhaven/secrets/setup_token
+# open http://<host>:8000 and paste the token into the setup screen
 ```
 
-This brings up Postgres, Unity Catalog OSS, and the FastAPI API on port 8000. To explore the UI locally, run `make dev-web` and open [http://localhost:5173](http://localhost:5173); log in with the credentials you just seeded. In a deployment, the API is reachable directly at `http://<control-plane-host>:8000`.
+That is the whole install — no `git clone`, no `.env` editing, no
+`make` on the host. Secrets generate on first boot, migrations apply
+inside the api container, the first admin is created from the browser.
 
-### Agent
+## Self-hosting docs
 
-Agents run DuckDB and are deployed separately — one container per host/VM. Generate a bootstrap token in the admin UI (Admin → Agents), then run the agent container with the token and the control-plane URL. See [docs/AGENTS.md](docs/AGENTS.md) for full agent setup.
+- [Install](docs/self-hosting/install.md)
+- [Update](docs/self-hosting/update.md)
+- [Reverse proxy + TLS (Caddy)](docs/self-hosting/reverse-proxy.md)
+- [Backup & restore](docs/self-hosting/backup-restore.md)
+- [Add an agent](docs/self-hosting/add-agent.md)
 
-See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for production deployment and [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for local development.
-
-## Environment Variables
-
-The control-plane stack reads these from `deploy/.env` (copy `deploy/.env.example` to start):
-
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `POSTGRES_PASSWORD` | yes | `changeme` | Password for the bundled Postgres (DuckHaven app state + UC metastore). |
-| `SECRET_KEY` | yes | `changeme-use-a-long-random-value` | Session-cookie signing key. Generate one with `openssl rand -hex 32`. |
-| `DUCKHAVEN_API_IMAGE` | no | `duckhaven-api:0.1.0` | Override to pin a published image, e.g. `ghcr.io/<owner>/duckhaven-api:0.1.0`. |
-
-Agent-side variables (`CONTROL_PLANE_URL`, `BOOTSTRAP_TOKEN`, `RESULTS_DIR`, …) are documented in [docs/AGENTS.md](docs/AGENTS.md).
+For local development (running the API and Vite dev server against a
+compose-managed Postgres) see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Roadmap
 

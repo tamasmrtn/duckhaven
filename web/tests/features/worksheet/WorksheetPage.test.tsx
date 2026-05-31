@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
@@ -38,6 +38,27 @@ describe('WorksheetPage tabs', () => {
     expect(screen.queryByText('events.sql')).not.toBeInTheDocument()
     expect(screen.getByText('funnel-draft')).toBeInTheDocument()
   })
+
+  it('opens a freshly created workspace with a single empty tab (Bug #9)', async () => {
+    // The route guard requires the workspace to exist.
+    server.use(
+      http.get('/api/workspaces/qa-test-workspace', () =>
+        HttpResponse.json({
+          id: 'ws-new',
+          slug: 'qa-test-workspace',
+          name: 'QA Test Workspace',
+          storage_backend_id: 'sb-1',
+          storage_backend_kind: 'local_fs',
+          created_at: new Date().toISOString(),
+        }),
+      ),
+    )
+    renderWithProviders({ initialRoute: '/qa-test-workspace/worksheets' })
+
+    expect(await screen.findByText('untitled')).toBeInTheDocument()
+    expect(screen.queryByText('events.sql')).not.toBeInTheDocument()
+    expect(screen.queryByText('funnel-draft')).not.toBeInTheDocument()
+  })
 })
 
 describe('WorksheetPage run', () => {
@@ -51,6 +72,18 @@ describe('WorksheetPage run', () => {
     await waitFor(() => {
       expect(screen.getByRole('status')).toBeInTheDocument()
     })
+  })
+
+  it('disables Run and shows guidance when no agents are connected (Bug #4)', async () => {
+    server.use(http.get('/api/agents', () => HttpResponse.json([])))
+    renderWithProviders({ initialRoute: WS_ROUTE })
+
+    const runBtn = await screen.findByRole('button', { name: /run query/i })
+    expect(runBtn).toBeDisabled()
+
+    expect(await screen.findByText(/no agents connected/i)).toBeInTheDocument()
+    const link = screen.getByRole('link', { name: /add an agent/i })
+    expect(link).toHaveAttribute('href', '/acme-analytics/admin/agents')
   })
 
   it('shows the running progress stage in the results header', async () => {
@@ -81,6 +114,43 @@ describe('WorksheetPage run', () => {
     await user.click(runBtn)
 
     expect(await screen.findByText('scanning')).toBeInTheDocument()
+  })
+})
+
+describe('WorksheetPage responsive (Bug #6)', () => {
+  const originalMatchMedia = window.matchMedia
+  afterEach(() => {
+    window.matchMedia = originalMatchMedia
+  })
+
+  function mockViewport(isMobile: boolean) {
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: isMobile,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })) as unknown as typeof window.matchMedia
+  }
+
+  it('shows a catalog drawer trigger on narrow screens', async () => {
+    mockViewport(true)
+    renderWithProviders({ initialRoute: WS_ROUTE })
+    expect(
+      await screen.findByRole('button', { name: /show tables/i }),
+    ).toBeInTheDocument()
+  })
+
+  it('renders the inline catalog without a drawer trigger on wide screens', async () => {
+    mockViewport(false)
+    renderWithProviders({ initialRoute: WS_ROUTE })
+    await screen.findByText('events.sql')
+    expect(
+      screen.queryByRole('button', { name: /show tables/i }),
+    ).not.toBeInTheDocument()
   })
 })
 

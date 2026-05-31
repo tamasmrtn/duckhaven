@@ -108,7 +108,7 @@ flowchart TB
     API -- REST --> UC
     A1 -. "outbound WebSocket<br/>(agent dials home)" .-> API
     A2 -. "outbound WebSocket" .-> API
-    API -- "HTTP Range read<br/>(result rows)" --> A1
+    API -- "HTTP read<br/>(result Parquet → JSON)" --> A1
     A1 -- "short-lived creds" --> S
     A2 --> S
 ```
@@ -116,8 +116,8 @@ flowchart TB
 The defining structural fact: **the only long-lived connection between the
 control plane and an agent is initiated *by the agent*** (the WebSocket
 control channel). The control plane reaches back to an agent in exactly one
-place — a ranged HTTP `GET` to fetch result rows. Everything else flows over
-the agent-initiated socket.
+place — an HTTP `GET` to fetch the result Parquet, which the API decodes to
+JSON rows. Everything else flows over the agent-initiated socket.
 
 ---
 
@@ -130,9 +130,11 @@ the agent-initiated socket.
    URL and a bootstrap token. It registers itself, advertises its
    capabilities, and holds one socket open. The control plane keeps no
    static inventory of agent addresses.
-3. **Unity Catalog is the source of truth for catalog metadata.** Schemas,
-   tables, and table properties live in UC, not in Postgres. DuckHaven never
-   shadows catalog state in its own database.
+3. **Unity Catalog is the source of truth for catalog structure.** Schemas,
+   tables, columns, and table properties live in UC, not in Postgres. DuckHaven
+   never shadows catalog *structure* in its own database — it only keeps a
+   supplementary `table_metadata` sidecar for facts UC does not track
+   (ownership, last-write provenance, row/size stats).
 4. **Postgres is the single state-of-record for everything DuckHaven owns**
    (users, workspaces, queries, agents). There is no Redis or separate queue
    — query dispatch is a direct push over the agent socket.
@@ -210,7 +212,7 @@ surface:
 
 | Directory | Responsibility |
 |---|---|
-| `routers/` | HTTP/WS endpoints. One module per resource: `auth`, `workspaces`, `schemas` (catalog DDL), `queries`, `agents`, `health`, `setup`, plus `agents_ws` (the agent WebSocket) and `admin/` (`agents`, `storage`, `audit`). |
+| `routers/` | HTTP/WS endpoints. One module per resource: `auth`, `workspaces`, `schemas` (catalog DDL + table sample), `queries`, `agents`, `health`, `setup`, plus `agents_ws` (the agent WebSocket) and `admin/` (`agents`, `storage`, `audit`). |
 | `services/` | Business logic, framework-free. The interesting code lives here (see below). |
 | `models/` | SQLAlchemy ORM models = the Postgres schema. |
 | `schemas/` | Pydantic request/response DTOs (distinct from ORM models). |
@@ -223,7 +225,7 @@ surface:
 
 | Service | What it does | Interacts with |
 |---|---|---|
-| `services/query.py` | Dispatches a query to an agent over the registry socket; handles `query_progress`/`query_done` frames coming back; proxies result-row reads. **The heart of the system.** | `agent_registry`, `uc_credentials`, `unity_catalog`, the `Query` model |
+| `services/query.py` | Dispatches a query to an agent over the registry socket; handles `query_progress`/`query_done` frames coming back; fetches the result Parquet from the agent and decodes it to JSON rows (`decode_parquet_page`); also drives the synchronous table-sample preview and persists agent-reported table stats. **The heart of the system.** | `agent_registry`, `uc_credentials`, `unity_catalog`, the `Query`/`TableMetadata` models |
 | `services/agent_registry.py` | In-memory `ConnectionManager` (`registry`) mapping `agent_id → live WebSocket`. The only place that knows which agents are connected *right now*. | `routers/agents_ws.py`, `services/query.py` |
 | `services/unity_catalog.py` | Async REST client for UC (catalogs, schemas, tables, permissions, temporary-table-credentials). Speaks REST directly via `httpx`. | UC container |
 | `services/uc_credentials.py` | `CredCache` with half-TTL refresh + `vend_workspace_creds`. Mints short-lived S3/Azure creds; returns `None` for local/NAS. | `unity_catalog`, `services/query.py` |
@@ -252,7 +254,7 @@ tasks (`src/agent/main.py` gathers them):
 
 | Module | Responsibility |
 |---|---|
-| `executor/runner.py` | `run_query_sync`: the synchronous DuckDB path. Sets `memory_limit`, loads the right storage extension (`httpfs`/`azure`) and applies vended creds via a connection-scoped `CREATE SECRET`, `ATTACH`es the workspace's UC catalog, then `COPY (sql) TO '<uuid>.parquet'`. |
+| `executor/runner.py` | `run_query_sync`: the synchronous DuckDB path. Sets `memory_limit`, loads the right storage extension (`httpfs`/`azure`) and applies vended creds via a connection-scoped `CREATE SECRET`, `ATTACH`es the workspace's UC catalog, then `COPY (sql) TO '<uuid>.parquet'`. When the dispatch carries `stats_for`, it also returns the target table's `COUNT(*)` for the catalog sidecar. |
 | `executor/supervisor.py` | `run_query`: runs `run_query_sync` on a thread executor with a wall-clock timeout. Uses DuckDB's thread-safe `conn.interrupt()` (via `loop.call_later` and on cancel) to actually stop a running query. |
 
 `config.py` holds operator ceilings (`max_memory_limit_gb`, `max_timeout_s`)
@@ -307,6 +309,7 @@ erDiagram
     workspaces ||--o{ workspace_members : has
     workspaces ||--o{ queries : runs
     workspaces ||--o{ saved_queries : stores
+    workspaces ||--o{ table_metadata : "stats + ownership"
     workspaces }o--|| storage_backends : "pinned to (1)"
     agents ||--o{ credentials : "session token"
     agents ||--o{ queries : executes
@@ -356,6 +359,7 @@ erDiagram
         uuid user_id
         text sql
         string status
+        string origin
         int row_count
         json progress
         string result_path
@@ -366,6 +370,16 @@ erDiagram
         text sql
         uuid default_agent_id
     }
+    table_metadata {
+        uuid id
+        uuid workspace_id
+        string schema_name
+        string table_name
+        uuid owner_id
+        bigint row_count
+        bigint size_bytes
+        datetime last_write_at
+    }
 ```
 
 Notes that matter for changes:
@@ -373,9 +387,15 @@ Notes that matter for changes:
 - **`credentials` is polymorphic** by `kind`: user `session`, agent
   `agent_bootstrap` (single-use), and agent `agent_session` (long-lived).
 - **`agents.capabilities`** is the last advertised `AgentCapabilities` JSON;
-  `result_host`/`result_port` tell the proxy where to read rows.
+  `result_host`/`result_port` tell the API where to fetch the result Parquet.
 - **`queries` is also the audit log** — there is no separate audit table.
-  `GET /admin/audit` reads filtered rows straight from `queries`.
+  `GET /admin/audit` reads filtered rows straight from `queries`, excluding
+  internal rows (`origin = "sample"`, used by the table-sample preview).
+- **`table_metadata` is the catalog sidecar** — the only DuckHaven-owned table
+  keyed by a UC schema/table name. It holds what UC does not track: `owner_id`,
+  `last_write_*`, and agent-computed `row_count`/`size_bytes`. Populated on
+  table create and on sample/stats completion; merged into `TableOut` by
+  `routers/schemas.py`. UC remains the source of truth for catalog structure.
 - **`workspaces.storage_backend_id` is immutable** after creation, and a
   backend cannot be deleted while any workspace references it.
 
@@ -418,19 +438,21 @@ sequenceDiagram
     API->>PG: update query (status=done, ...)
 
     UI->>API: GET /api/queries/{id} (poll)
-    UI->>API: GET /api/queries/{id}/rows (HTTP Range)
-    API->>AG: GET /results/{id}.parquet (Range + Bearer session token)
+    UI->>API: GET /api/queries/{id}/rows?limit&cursor
+    API->>AG: GET /results/{id}.parquet (Bearer session token)
     AG-->>API: parquet bytes
-    API-->>UI: bytes
+    API->>API: decode_parquet_page (duckdb read_parquet, LIMIT/OFFSET)
+    API-->>UI: RowsPageOut JSON {rows, columns, cursor, total}
 ```
 
 Key properties:
 
 - **Dispatch is a direct socket push**, not a queue. If the chosen agent is
   not connected, the request fails fast (`503`).
-- **Results are materialized and read where they are produced** — Parquet on
-  the executing agent. The control plane proxies a ranged read; it never
-  buffers the whole result set. Result lifetime is bounded by the agent's
+- **Results are materialized where they are produced** — Parquet on the
+  executing agent. The control plane fetches that Parquet and decodes the
+  requested page to JSON (`RowsPageOut`) with `duckdb`; `total` comes from the
+  persisted `Query.row_count`. Result lifetime is bounded by the agent's
   retention sweep, so a stale query is simply re-run from its saved SQL.
 - **Cancellation** sends a `cancel_query` frame; the agent calls
   `conn.interrupt()` to stop the in-flight DuckDB query.
@@ -515,16 +537,19 @@ one of these is almost certainly wrong** — if you believe you need to, raise
 it explicitly rather than working around it.
 
 - **I1 — The control plane never executes user SQL.** `api/` may construct a
-  DuckDB object *only* to parse (`sql_guard`). It must never `ATTACH`
-  storage, load extensions, or `.execute()` user SQL. All execution happens
-  on agents.
+  DuckDB object only to parse (`sql_guard`) and to decode a result Parquet
+  file into JSON rows (`services/query.py`, a fixed `read_parquet` over bytes
+  fetched from the agent). It must never `ATTACH` storage, load extensions, or
+  `.execute()` user SQL. All user-query execution happens on agents.
 - **I2 — Agents initiate the control connection; the control plane does
   not.** The control plane holds no static agent inventory and never dials an
-  agent's control channel. Its single outbound reach to an agent is the
-  ranged HTTP result read.
+  agent's control channel. Its only outbound reach to an agent is the HTTP
+  result read (the API fetches the result Parquet and decodes it to JSON).
 - **I3 — Unity Catalog owns catalog metadata; Postgres owns DuckHaven
-  entities.** Never persist schema/table state into Postgres, and never
-  treat DuckHaven's database as a catalog cache.
+  entities.** Never persist catalog *structure* (schemas, tables, columns) into
+  Postgres or treat DuckHaven's database as a catalog cache. Postgres may hold
+  a supplementary `table_metadata` sidecar — ownership, last-write provenance,
+  and row/size stats that UC does not track — keyed by the UC schema/table name.
 - **I4 — One workspace, one storage backend, forever.** The binding is set
   at creation and is immutable. Every table's `storage_location` derives from
   its workspace backend's `root_uri`.

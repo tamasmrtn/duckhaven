@@ -2,9 +2,8 @@
         test test-api test-agent test-web \
         test-integration test-integration-api test-integration-agent \
         lint format \
-        migrate migrate-new migrate-down seed \
+        migrate migrate-new migrate-down \
         compose-up compose-down compose-logs compose-pull \
-        compose-migrate compose-seed \
         clean
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
@@ -80,10 +79,9 @@ migrate-new:
 migrate-down:
 	uv run --package duckhaven-api alembic -c api/alembic.ini downgrade -1
 
-seed:
-	uv run --package duckhaven-api python scripts/seed-admin.py --email "$(email)" --password "$(password)"
-
 # ── Docker / deployment ───────────────────────────────────────────────────────
+# The compose stack auto-applies migrations and runs the browser-driven
+# first-admin flow on first boot — `compose-up` is the whole install.
 compose-up:
 	docker compose -f deploy/docker-compose.yml up -d
 
@@ -95,14 +93,6 @@ compose-logs:
 
 compose-pull:
 	docker compose -f deploy/docker-compose.yml pull
-
-# Migrate / seed the deployed stack by running inside the api container, which
-# already has DATABASE_URL pointing at the postgres service.
-compose-migrate:
-	docker compose -f deploy/docker-compose.yml exec api alembic -c alembic.ini upgrade head
-
-compose-seed:
-	docker compose -f deploy/docker-compose.yml exec api python scripts/seed-admin.py --email "$(email)" --password "$(password)"
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 clean:

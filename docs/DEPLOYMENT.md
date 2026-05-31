@@ -172,7 +172,7 @@ make compose-up
 make compose-migrate
 
 # Restart agents with new image
-docker pull ghcr.io/tmrtn/duckhaven-agent:latest
+docker pull ghcr.io/tamasmrtn/duckhaven-agent:latest
 docker restart duckhaven-agent
 ```
 

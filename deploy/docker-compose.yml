@@ -28,7 +28,7 @@ services:
       retries: 10
 
   api:
-    image: ghcr.io/tmrtn/duckhaven-api:${DUCKHAVEN_IMAGE_TAG:-latest}
+    image: ghcr.io/tamasmrtn/duckhaven-api:${DUCKHAVEN_IMAGE_TAG:-latest}
     restart: unless-stopped
     ports:
       - "8000:8000"

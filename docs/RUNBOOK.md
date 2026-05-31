@@ -18,7 +18,7 @@ directly on the host.
    # Pin a release tag instead of riding latest:
    DUCKHAVEN_IMAGE_TAG=v1.2.3
    ```
-   Images are published to `ghcr.io/tmrtn/duckhaven-{api,agent}` by
+   Images are published to `ghcr.io/tamasmrtn/duckhaven-{api,agent}` by
    `.github/workflows/build.yml`: `:latest` on every main push, `:v1.2.3` /
    `:v1.2` / `:v1` on git tags. Built for `linux/amd64` and `linux/arm64`.
 2. Start the stack: `make compose-up`.

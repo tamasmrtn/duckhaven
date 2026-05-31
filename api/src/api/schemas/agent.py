@@ -27,3 +27,8 @@ class AgentOut(BaseModel):
 class BootstrapTokenOut(BaseModel):
     token: str
     expires_at: datetime
+    # WebSocket URL the new agent should dial (derived from the request's
+    # Host / X-Forwarded-Proto so it Just Works behind a TLS terminator).
+    control_plane_url: str
+    # Image the agent compose snippet pins to.
+    agent_image: str

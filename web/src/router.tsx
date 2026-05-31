@@ -7,6 +7,7 @@ import {
 import { LoadingScreen } from "@/components/app/LoadingScreen";
 import { AppShell } from "@/components/app/AppShell";
 import { LoginPage } from "@/features/auth/LoginPage";
+import { SetupPage } from "@/features/auth/SetupPage";
 import { WelcomePage } from "@/features/auth/WelcomePage";
 import { WorksheetPage } from "@/features/worksheet/WorksheetPage";
 import { CatalogPage } from "@/features/catalog/CatalogPage";
@@ -24,6 +25,12 @@ const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/login",
   component: LoginPage,
+});
+
+const setupRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/setup",
+  component: SetupPage,
 });
 
 const indexRoute = createRoute({
@@ -117,6 +124,7 @@ const auditRoute = createRoute({
 export const routeTree = rootRoute.addChildren([
   indexRoute,
   loginRoute,
+  setupRoute,
   welcomeRoute,
   wsRoute.addChildren([
     worksheetsRoute,

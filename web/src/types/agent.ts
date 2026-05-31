@@ -20,6 +20,13 @@ export interface Agent {
   created_at: string;
 }
 
+export interface BootstrapToken {
+  token: string;
+  expires_at: string;
+  control_plane_url: string;
+  agent_image: string;
+}
+
 export function agentSupportsBackend(agent: Agent, kind: BackendKind): boolean {
   const { extensions } = agent.capabilities;
   if (kind === "s3") return extensions.includes("httpfs");

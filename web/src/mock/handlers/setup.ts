@@ -7,6 +7,9 @@ export const setupHandlers = [
   }),
 
   http.post("/api/setup/admin", () => {
-    return HttpResponse.json({ ...CURRENT_USER, role: "admin" });
+    return HttpResponse.json(
+      { ...CURRENT_USER, role: "admin" },
+      { status: 201 },
+    );
   }),
 ];

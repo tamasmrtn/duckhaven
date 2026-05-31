@@ -3,7 +3,7 @@
         test-integration test-integration-api test-integration-agent \
         lint format \
         migrate migrate-new migrate-down seed \
-        compose-up compose-down compose-logs compose-build \
+        compose-up compose-down compose-logs compose-pull \
         compose-migrate compose-seed \
         clean
 
@@ -93,8 +93,8 @@ compose-down:
 compose-logs:
 	docker compose -f deploy/docker-compose.yml logs -f
 
-compose-build:
-	docker compose -f deploy/docker-compose.yml build
+compose-pull:
+	docker compose -f deploy/docker-compose.yml pull
 
 # Migrate / seed the deployed stack by running inside the api container, which
 # already has DATABASE_URL pointing at the postgres service.

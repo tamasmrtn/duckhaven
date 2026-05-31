@@ -35,7 +35,7 @@ docker build -f agent/Dockerfile -t duckhaven-agent:latest .
 Or pull a published image (once available):
 
 ```bash
-docker pull ghcr.io/tmrtn/duckhaven-agent:latest
+docker pull ghcr.io/tamasmrtn/duckhaven-agent:latest
 ```
 
 ### 3. Create agent configuration

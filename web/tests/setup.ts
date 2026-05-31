@@ -1,10 +1,12 @@
 import '@testing-library/jest-dom/vitest'
 import { beforeAll, afterEach, afterAll, vi } from 'vitest'
 import { server } from './mock/server'
+import { resetMockState } from '@/mock/reset'
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }))
 afterEach(() => {
   server.resetHandlers()
+  resetMockState()
   window.localStorage.clear()
 })
 afterAll(() => server.close())

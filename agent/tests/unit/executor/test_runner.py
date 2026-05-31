@@ -59,3 +59,22 @@ def test_empty_result_produces_zero_rows(tmp_path):
     stats = run_query_sync("SELECT 1 WHERE 1=0", result_path, memory_limit_gb=1.0)
     assert result_path.exists()
     assert stats["row_count"] == 0
+
+
+def test_stats_for_reports_table_row_count(tmp_path):
+    """When asked, the runner reports the true table row count (size stays null)."""
+    result_path = tmp_path / "out.parquet"
+
+    def seed(conn):
+        conn.execute("CREATE TABLE main.events AS SELECT * FROM range(3) t(id)")
+
+    stats = run_query_sync(
+        "SELECT * FROM main.events",
+        result_path,
+        memory_limit_gb=1.0,
+        stats_for={"schema": "main", "table": "events"},
+        on_connect=seed,
+    )
+    assert stats["row_count"] == 3
+    assert stats["table_row_count"] == 3
+    assert stats["table_size_bytes"] is None

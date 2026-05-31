@@ -9,7 +9,7 @@ export const queriesApi = {
     agentId: string,
     opts?: { memory_limit?: number; timeout?: number },
   ) =>
-    post<{ id: string; status: "queued" }>(`/workspaces/${ws}/queries`, {
+    post<Query>(`/workspaces/${ws}/queries`, {
       sql,
       agent_id: agentId,
       ...opts,

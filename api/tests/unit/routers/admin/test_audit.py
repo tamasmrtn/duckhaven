@@ -170,6 +170,20 @@ async def test_audit_non_admin_forbidden(user_client: AsyncClient):
     assert resp.status_code == 403
 
 
+async def test_audit_excludes_sample_origin(
+    admin_client: AsyncClient, workspace: Workspace, db_session
+):
+    await _make_query(db_session, workspace)  # normal (origin=None)
+    db_session.add(Query(workspace_id=workspace.id, sql="SELECT 1", status="done", origin="sample"))
+    await db_session.commit()
+
+    resp = await admin_client.get("/admin/audit")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert all(row.get("origin") != "sample" for row in data)
+
+
 async def test_audit_filter_by_user_id(
     admin_client: AsyncClient,
     workspace: Workspace,

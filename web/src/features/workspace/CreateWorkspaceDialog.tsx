@@ -71,7 +71,6 @@ export function CreateWorkspaceDialog({
     setError("");
     try {
       let backendId: string;
-      let backendKind: BackendKind;
       if (creatingBackend) {
         const sb = await createBackend.mutateAsync({
           kind,
@@ -79,18 +78,15 @@ export function CreateWorkspaceDialog({
           root_uri: rootUri,
         });
         backendId = sb.id;
-        backendKind = sb.kind;
       } else {
         const sb =
           backends.find((b) => b.id === selectedBackendId) ?? backends[0];
         backendId = sb.id;
-        backendKind = sb.kind;
       }
       const ws = await createWorkspace.mutateAsync({
         slug,
         name: wsName,
         storage_backend_id: backendId,
-        kind: backendKind,
       });
       onCreated(ws.slug);
     } catch {

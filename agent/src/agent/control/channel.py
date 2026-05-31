@@ -49,6 +49,7 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path) -> None:
     workspace = payload.get("workspace") or {}
     workspace_slug = workspace.get("slug") if isinstance(workspace, dict) else None
     uc_endpoint = (payload.get("unity_catalog") or {}).get("endpoint")
+    stats_for = payload.get("stats_for")
     result_path = results_dir / f"{query_id}.parquet"
 
     progress = Frame(type=FrameType.QUERY_PROGRESS, payload={"query_id": query_id})
@@ -64,17 +65,23 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path) -> None:
             storage_credentials=storage_credentials,
             workspace_slug=workspace_slug,
             uc_endpoint=uc_endpoint,
+            stats_for=stats_for,
         )
-        done = Frame(
-            type=FrameType.QUERY_DONE,
-            payload={
-                "query_id": query_id,
-                "status": "done",
-                "row_count": stats["row_count"],
-                "duration_ms": stats["duration_ms"],
-                "result_path": str(result_path),
-            },
-        )
+        done_payload: dict[str, object] = {
+            "query_id": query_id,
+            "status": "done",
+            "row_count": stats["row_count"],
+            "duration_ms": stats["duration_ms"],
+            "result_path": str(result_path),
+        }
+        if stats_for:
+            done_payload["stats_table"] = {
+                "schema": stats_for.get("schema"),
+                "table": stats_for.get("table"),
+            }
+            done_payload["table_row_count"] = stats.get("table_row_count")
+            done_payload["table_size_bytes"] = stats.get("table_size_bytes")
+        done = Frame(type=FrameType.QUERY_DONE, payload=done_payload)
     except TimeoutError:
         done = Frame(
             type=FrameType.QUERY_DONE,

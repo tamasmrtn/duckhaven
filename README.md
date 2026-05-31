@@ -90,7 +90,7 @@ For the full architecture, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For
 | Frontend | React 19 + TypeScript + Vite, Monaco SQL editor, TanStack Router/Query/Table, Radix UI + shadcn/ui + Tailwind |
 | API / control plane | FastAPI (Python 3.14), async; `websockets` for the agent channel |
 | Database | PostgreSQL 16, SQLAlchemy 2.x (async) + Alembic migrations |
-| Agent | Python 3.14 embedding DuckDB; small HTTP server for result-range reads |
+| Agent | Python 3.14 embedding DuckDB; small HTTP server for result Parquet reads |
 | Engine | DuckDB ≥ 1.5 — present **only** on agents |
 | Catalog | Unity Catalog OSS — catalog + short-lived credential vendor |
 | Storage format | Delta Lake, Catalog Commits ON, one backend per workspace |

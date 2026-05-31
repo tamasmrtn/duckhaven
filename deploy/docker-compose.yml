@@ -28,12 +28,7 @@ services:
       retries: 10
 
   api:
-    # Built from the repo root so the Dockerfile can bundle the web UI
-    # (web/) and shared/ alongside the API. Image is tagged for reuse.
-    build:
-      context: ..
-      dockerfile: api/Dockerfile
-    image: duckhaven-api:0.1.0
+    image: ghcr.io/tmrtn/duckhaven-api:${DUCKHAVEN_IMAGE_TAG:-latest}
     restart: unless-stopped
     ports:
       - "8000:8000"

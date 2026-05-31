@@ -1,888 +1,567 @@
 # DuckHaven — Architecture
 
-> **Context for this revision.** RFC v0.2 was the pre-implementation design.
-> M0 (walking spike), M1 (frontend on MSW), M2 (backend + agent + unit
-> tests) and M3 (UC catalog + writes) have since landed. This revision
-> (v0.4) keeps the design intent intact but updates every decision, the
-> §6 API sketch, §5 storage layout, §11 milestones and §13 spike status
-> to match what was actually built, and adds §8.a (shared protocol
-> package) plus §16 (implementation status & known gaps) to make the
-> delta explicit.
->
-> **Status:** RFC v0.4 — implementation in progress. M0–M3 complete on
-> merge; M4 (multi-agent + hardening) pending. Subsequent revisions are
-> expected as M4 closes the remaining gaps listed in §16.
->
-> **Status badges** appear next to every decision:
-> `✓ Implemented` · `◐ Partial` · `○ Pending`.
->
-> **Audience:** the engineer(s) implementing DuckHaven.
+This document is the map of the DuckHaven codebase. It explains what the
+system is, how it is organized, how data moves through it, and — most
+importantly — **where to make a change**. It is written to be read in one
+sitting by a new contributor or a coding agent before touching the code.
+
+It deliberately describes *stable structure and invariants*, not progress.
+For roadmap and milestone status see the [README](../README.md#roadmap) and
+the issue tracker. For setup and operations see
+[DEVELOPMENT.md](DEVELOPMENT.md), [RUNBOOK.md](RUNBOOK.md), and
+[self-hosting/](self-hosting/).
 
 ---
 
-## 1. What DuckHaven Is
+## 1. Overview
 
-A self-hosted, browser-based SQL workspace and **federation control plane**
-over Delta Lake tables governed by Unity Catalog. DuckHaven's control plane
-runs on a single homelab-class box on a Tailscale network; the compute and
-storage it dispatches against are explicitly distributed.
+DuckHaven is a **self-hosted, browser-based SQL workspace** for teams that
+run [DuckDB](https://duckdb.org/) over Delta Lake tables governed by
+[Unity Catalog OSS](https://www.unitycatalog.io/). It gives a small team
+(2–10 users) collaborative worksheets, a shared catalog, per-workspace
+permissions, and a full audit trail — without a cloud warehouse, Kubernetes,
+or a platform team.
 
-| | |
+Architecturally, DuckHaven is a **control plane / compute split**:
+
+- The **control plane** (`api/`) is a single FastAPI process. It owns
+  identity, workspaces, the catalog/DDL, query state, and the agent
+  registry. **It never runs DuckDB queries.**
+- **Compute** lives in one or more **agents** (`agent/`). Each agent embeds
+  a DuckDB engine, runs on its own host, and *dials home* to the control
+  plane over a WebSocket. Users pick which agent runs each query.
+
+The result is a system that is small at the center (a Docker Compose stack
+on one homelab-class box) and horizontally expandable at the edge (add an
+agent host when you need more compute).
+
+| Concern | Choice |
 |---|---|
-| Control-plane unit | One `docker compose` stack on one Linux box (`deploy/docker-compose.yml`) |
-| Control-plane floor | 8 GB RAM, 50 GB SSD, 2–4 cores (no DuckDB locally) |
-| Compute | 1..N DuckDB **agents** registered with the control plane |
-| Agent host floor | 8 GB RAM per agent (DuckDB query memory dominates) |
-| Network | Tailscale-only; agents dial control plane outbound |
-| Users | 2–10, local accounts, per-user/per-group workspaces + shared "public" |
-| Engines | DuckDB only (multi-node, multi-version) |
-| Storage backends (MVP) | Local FS, NAS (mounted FS), S3, ADLS Gen 2 |
-| Catalog | Unity Catalog OSS (also vends storage credentials) |
-| Frontend | React SPA (SQL worksheets, no notebooks) |
-| Backend | FastAPI + Postgres |
-| Workspace layout | `uv` monorepo: `api/`, `agent/`, `shared/` (Python) + `web/` (React) + `deploy/`, `scripts/` |
-
-Two facts shape every decision below: (a) **the user picks the engine per
-worksheet** — DuckHaven is dispatcher, not optimizer; (b) **each workspace is
-bound to exactly one storage backend** — DuckHaven enforces this at
-workspace-create time and at every write.
+| Control plane | One `docker compose` stack: Postgres + Unity Catalog + the API |
+| Compute | 1..N DuckDB **agents** on separate hosts |
+| Engines | DuckDB only (heterogeneous versions allowed) |
+| Storage | Delta Lake on Local FS / NAS / S3 / ADLS Gen 2 (one backend per workspace) |
+| Catalog & credentials | Unity Catalog OSS — table governance + short-lived credential vending |
+| Frontend | React SPA — SQL worksheets (no notebooks) |
+| Network | Private only (Tailscale recommended); no public ingress |
 
 ---
 
-## 2. Non-Goals (explicit)
+## 2. Purpose & Philosophy
 
-*Unchanged from v0.2.*
+**Why DuckHaven exists.** Teams that love DuckDB end up sharing `.duckdb`
+files over chat. DuckHaven provides the worksheet/collaboration experience
+of MotherDuck or Databricks while keeping data on your own infrastructure,
+with no SaaS lock-in and no opaque billing.
 
-- Not a Spark / Databricks replacement. No distributed query plan; engines
-  are independent DuckDB processes.
-- Not multi-engine in MVP. No Spark, Trino, Polars. The agent contract is
-  drawn so a second engine type can be added later without re-architecting.
-- Not a notebook platform. SQL worksheets only.
-- Not internet-exposed. Tailscale is the network perimeter.
-- Not authoritative storage. Source data lives elsewhere.
-- Not an ingestion engine. External writers (delta-rs, dlt, Airbyte) feed it.
-- No row-level / column-level security in MVP. Workspace-level only.
-- No `UPDATE / MERGE / DELETE` in MVP (DuckDB UC extension does not yet
-  support them).
-- No cross-workspace joins in MVP.
-- No agent autoscaling, no agent-level cost-based routing. Users pick.
+Two ideas shape nearly every design decision:
+
+1. **DuckHaven is a dispatcher, not an optimizer.** The user picks the
+   engine (agent) per worksheet. There is no distributed query planner and
+   no cost-based routing. Compute is transparent and explicit.
+2. **A workspace is bound to exactly one storage backend.** This binding is
+   chosen at workspace-create time, is immutable, and is enforced on every
+   write. It keeps governance, credentials, and disaster-recovery reasoning
+   simple.
+
+### Non-goals (explicit boundaries)
+
+- **Not a Spark/Databricks replacement.** No distributed query plan; agents
+  are independent DuckDB processes with no cross-agent atomicity.
+- **Not multi-engine (yet).** DuckDB only. The agent contract is drawn so a
+  second engine type can be added without re-architecting the control plane.
+- **Not a notebook platform.** SQL worksheets only.
+- **Not internet-exposed.** The private network (Tailscale/WireGuard) is the
+  security perimeter; the API speaks plain HTTP behind it.
+- **Not authoritative storage and not an ingestion engine.** Source data
+  lives in the backends; external tools (delta-rs, dlt, Airbyte) write it.
+- **No `UPDATE`/`MERGE`/`DELETE`, no cross-workspace joins, no row/column
+  security** in the current scope. Permissions are workspace-level.
 
 ---
 
-## 3. System Diagram
+## 3. High-Level Architecture
+
+```mermaid
+flowchart TB
+    subgraph client[Client]
+        Browser["React SPA<br/>(browser, private network)"]
+    end
+
+    subgraph cp[Control plane — one Docker Compose stack]
+        API["duckhaven-api (FastAPI)<br/>auth · workspaces · queries<br/>DDL · agent registry · audit"]
+        PG[("Postgres 16<br/>app state + UC metastore")]
+        UC["Unity Catalog OSS<br/>catalog + credential vendor"]
+    end
+
+    subgraph edge[Compute edge — separate hosts]
+        A1["duckhaven-agent<br/>DuckDB engine"]
+        A2["duckhaven-agent<br/>DuckDB engine"]
+    end
+
+    subgraph store[Storage backends — one per workspace]
+        S[("Local FS / NAS / S3 / ADLS Gen 2<br/>Delta Lake tables")]
+    end
+
+    Browser -- "HTTPS-over-tunnel<br/>/api/*" --> API
+    API -- SQLAlchemy --> PG
+    API -- REST --> UC
+    A1 -. "outbound WebSocket<br/>(agent dials home)" .-> API
+    A2 -. "outbound WebSocket" .-> API
+    API -- "HTTP Range read<br/>(result rows)" --> A1
+    A1 -- "short-lived creds" --> S
+    A2 --> S
+```
+
+The defining structural fact: **the only long-lived connection between the
+control plane and an agent is initiated *by the agent*** (the WebSocket
+control channel). The control plane reaches back to an agent in exactly one
+place — a ranged HTTP `GET` to fetch result rows. Everything else flows over
+the agent-initiated socket.
+
+---
+
+## 4. Core Architectural Principles
+
+1. **Separation of control and compute.** The control plane orchestrates;
+   agents execute. The control plane process never opens a DuckDB database
+   (it uses DuckDB *only as a SQL parser* — see Invariant I1).
+2. **Agents are cattle that dial home.** An agent needs only a control-plane
+   URL and a bootstrap token. It registers itself, advertises its
+   capabilities, and holds one socket open. The control plane keeps no
+   static inventory of agent addresses.
+3. **Unity Catalog is the source of truth for catalog metadata.** Schemas,
+   tables, and table properties live in UC, not in Postgres. DuckHaven never
+   shadows catalog state in its own database.
+4. **Postgres is the single state-of-record for everything DuckHaven owns**
+   (users, workspaces, queries, agents). There is no Redis or separate queue
+   — query dispatch is a direct push over the agent socket.
+5. **Credentials are short-lived and connection-scoped.** UC vends temporary
+   storage credentials per `(agent, workspace)`; the agent applies them as a
+   DuckDB `SECRET` that dies with the per-query connection.
+6. **The wire contract is shared, not duplicated.** The control↔agent frame
+   protocol lives in one package (`shared/`) imported by both sides, so it
+   cannot drift.
+
+---
+
+## 5. Repository Structure
+
+DuckHaven is a polyglot monorepo: a `uv` Python workspace (`api`, `agent`,
+`shared`) plus an npm React app (`web`).
 
 ```
-   Browser ───────────────────────┐
-   (Tailscale)                    │  HTTP  (direct → api:8000)
-                ┌─────────────────▼────────────────────────────┐
-                │  duckhaven-api  (FastAPI)  — control plane   │
-                │  • auth, workspaces, queries, audit          │
-                │  • agent registry + dispatcher (WS)          │
-                │  • storage-backend registry                  │
-                │  • UC client + DDL                           │
-                └─┬───────────────┬─────────────────┬──────────┘
-                  │               │                 │
-        ┌─────────▼─────┐ ┌───────▼────────┐ ┌──────▼─────────┐
-        │ Postgres 16   │ │ unity-catalog  │ │ Agent control  │
-        │ users / ws /  │ │  REST :8080    │ │ channel (WS)   │
-        │ queries / etc │ │  catalog +     │ │ — agents dial  │
-        │  + UC store   │ │  cred vendor   │ │   home         │
-        └───────────────┘ └────────┬───────┘ └──────┬─────────┘
-                                   │                │
-                                   │     ┌──────────┴────────────────┐
-                                   │     ▼                            ▼
-                          ┌────────┴────────┐             ┌────────────────────┐
-                          │ duckhaven-agent │             │ duckhaven-agent    │
-                          │  (VM / host A)  │   ...       │  (VM / host N)     │
-                          │ • DuckDB ≥1.5   │             │ • DuckDB ≥1.5      │
-                          │ • shared proto  │             │ • shared proto     │
-                          │ • per-query cap │             │ • per-query cap    │
-                          │ • result HTTP   │             │ • result HTTP      │
-                          └──────┬──────────┘             └──────┬─────────────┘
-                                 │ short-lived creds             │
-                       ┌─────────▼────────┐ ┌──────────────┐ ┌───▼────────────┐
-                       │ Local FS / NAS   │ │  S3 bucket   │ │ ADLS Gen 2     │
-                       └──────────────────┘ └──────────────┘ └────────────────┘
-                          (workspace-pinned: each workspace → exactly one backend)
+duckhaven/
+├── api/          FastAPI control plane (the "brain")
+├── agent/        DuckDB compute agent (the "muscle")
+├── shared/       duckhaven-shared: the control↔agent wire contract
+├── web/          React SPA (SQL worksheets, catalog, admin)
+├── deploy/       Docker Compose stack, entrypoints, secrets bootstrap
+├── scripts/      Operator helpers (pg backup, token generation)
+├── docs/         This file + development, runbook, self-hosting guides
+├── Makefile      Canonical dev/test/lint/migrate/compose commands
+└── pyproject.toml  uv workspace root (members: api, agent, shared)
 ```
 
-Implementation note: in the current `deploy/docker-compose.yml`, the control
-plane services are `postgres`, `unity-catalog`, and `api`. The `api` service
-publishes port `8000` directly on the host (private Tailscale network — no
-edge TLS terminator). Agents are deployed separately (per D12) and are **not**
-part of the compose stack.
+Each Python package owns its own `pyproject.toml`. `api` and `agent` both
+declare `duckhaven-shared = { workspace = true }`. The dependency direction
+is strict: **`api` and `agent` depend on `shared`; nothing depends on `api`
+or `agent`** (Invariant I6).
 
 ---
 
-## 4. Architectural Decisions
+## 6. Code Map
 
-Each decision is presented in **Decision / Context / Consequences** form,
-prefixed by an implementation-status badge and (when reality has diverged)
-a `Current state` note.
+This is the navigation core. For each package: what it is for, how its
+internals are organized, and the files to open first.
 
----
+### 6.1 `shared/` — `duckhaven_shared` (the contract)
 
-### D1 — Federated DuckDB agents; control plane is dispatcher only · `✓ Implemented`
+**Purpose.** The single source of truth for the control-plane ↔ agent wire
+format. Tiny by design (only depends on `pydantic`).
 
-**Decision.** Compute lives in **`duckhaven-agent`** processes, each
-embedding one DuckDB engine, running on a separate host/VM from the control
-plane. The control plane (`duckhaven-api`) **does not run DuckDB**; it
-dispatches queries to a chosen agent over a job-dispatch RPC. The user
-selects the agent per worksheet (see D15).
+| Module | Defines |
+|---|---|
+| `protocol.py` | `FrameType` (string enum) and `Frame` (`{type, payload}`) — every message on the control WebSocket |
+| `schemas.py` | `AgentCapabilities` — the document an agent advertises (DuckDB version, loaded extensions, memory ceiling, cores, host) |
 
-**Context.** Decoupling control from compute makes hardware decisions
-elastic, supports heterogeneous DuckDB versions side-by-side, and removes
-the single-process OOM blast radius.
+`FrameType` values: `auth`, `auth_ok`, `dispatch_query`, `query_progress`,
+`query_done`, `cancel_query`, `heartbeat`, `agent_status`. **Adding or
+changing a frame means editing this package** — both sides pick it up by
+import, which is how the contract stays in sync (Invariant I5).
 
-**Current state.** Dispatch path implemented end-to-end:
-`api/src/api/routers/queries.py` → `api/src/api/routers/agents_ws.py`
-(WebSocket fan-out via `ConnectionManager` in
-`api/src/api/services/agent_registry.py`) → `agent/src/agent/control/channel.py`
-→ `agent/src/agent/executor/runner.py`. Validated by
-`api/tests/unit/test_queries.py` and `agent/tests/unit/control/test_channel.py`.
+### 6.2 `api/` — `duckhaven-api` (control plane)
 
-**Consequences.**
-- Control-plane footprint stays small (no DuckDB there).
-- The wire between control plane and agent is a small JSON frame protocol
-  over WebSocket (D16), defined in `duckhaven-shared` (§8.a).
-- Cross-agent atomicity does not exist; a `BEGIN/COMMIT` lives in one agent.
-- Agent crash kills its in-flight queries; clients see them as `failed`.
+**Purpose.** Everything the browser talks to, plus the agent-facing
+WebSocket. A FastAPI app backed by async SQLAlchemy + Postgres.
 
----
+**App composition** (`src/api/main.py`) — important to understand the URL
+surface:
 
-### D2 — Per-query memory cap + wall-clock timeout, enforced at the agent · `◐ Partial`
+- An **outer** ASGI app mounts three things:
+  - the **agent WebSocket** at `/agents/connect` (root level — agents dial here),
+  - the **REST API** sub-app under **`/api`** (shares an origin with the SPA),
+  - the **built SPA** as static files at `/` (only present in the image; a
+    catch-all serves `index.html` so client-side routes deep-link).
+- The REST sub-app owns a lifespan that constructs the shared `UCClient`
+  and the credential `CredCache` (held on `app.state`).
 
-**Decision.** Every query, before execution, sets `memory_limit` (default
-`6GB`) and `statement_timeout` (default `10min`). The **agent** owns the
-supervisor and the DuckDB interrupt. Defaults are workspace-overridable;
-operator-set ceilings on the agent are non-overridable.
+**Internal layout:**
 
-**Current state.**
-- `memory_limit` PRAGMA is set per query in `agent/src/agent/executor/runner.py`
-  before execution.
-- Wall-clock timeout is enforced by `asyncio.wait_for` in
-  `agent/src/agent/executor/supervisor.py`.
-- **Gap (G-D2-a):** DuckDB's query interrupt API is **not** wired. A
-  long-running query that doesn't yield will block its executor thread until
-  process restart. Tracked in §16.
-- **Gap (G-D2-b):** No per-host operator ceiling above which workspace
-  overrides cannot rise; ceilings are config-only.
+| Directory | Responsibility |
+|---|---|
+| `routers/` | HTTP/WS endpoints. One module per resource: `auth`, `workspaces`, `schemas` (catalog DDL), `queries`, `agents`, `health`, `setup`, plus `agents_ws` (the agent WebSocket) and `admin/` (`agents`, `storage`, `audit`). |
+| `services/` | Business logic, framework-free. The interesting code lives here (see below). |
+| `models/` | SQLAlchemy ORM models = the Postgres schema. |
+| `schemas/` | Pydantic request/response DTOs (distinct from ORM models). |
+| `db/` | Engine/session setup (`session.py`) and the declarative `Base`. |
+| `deps.py` | FastAPI dependencies: `get_db`, `get_current_user`, `get_uc_client`, `get_cred_cache`. |
+| `config.py` | `pydantic-settings` config (DB URL, UC URL, cookie/secret/TTL settings). |
+| `alembic/` | Database migrations. Applied automatically by the container entrypoint in production. |
 
-**Consequences.**
-- Memory-capped queries fail cleanly today.
-- Time-capped queries return `asyncio.TimeoutError` cleanly, but the
-  underlying DuckDB thread may continue until natural completion — close
-  G-D2-a before stress testing in M4 (see S4 in §13).
+**Key services to know:**
 
----
-
-### D3 — Local user table + bcrypt + sessions; no external IdP · `✓ Implemented`
-
-**Decision.** Identity lives in `users(id, email, password_hash[bcrypt-12+],
-…)`. Sessions are HTTP-only `Secure` cookies, SameSite=Lax. A
-`credentials(id, user_id, agent_id, kind[session|agent_bootstrap|agent_session],
-token, expires_at, …)` table covers user sessions and the agent
-bootstrap/session credentials (D14).
-
-**Current state.** Implemented in `api/src/api/services/auth.py` (bcrypt
-rounds=12) + `api/src/api/routers/auth.py` (`POST /auth/login`,
-`POST /auth/logout`, `GET /me`). Session TTL is 7 days (configurable). The
-first admin is created via the browser-driven onboarding flow
-(`POST /api/setup/admin`, gated by a one-shot token written to the secrets
-volume by `deploy/init-secrets.sh`). Tests in `api/tests/unit/test_auth.py`
-and `api/tests/unit/routers/test_setup.py`.
-
-**Consequences.** Unchanged from v0.2.
-
----
-
-### D4 — SQL worksheets only; no notebooks in MVP · `✓ Implemented`
-
-**Decision.** The frontend offers a Monaco-based SQL editor + result grid +
-saved queries + table browser + **engine selector**. No cell model.
-
-**Current state.** Implemented in `web/src/features/worksheet/WorksheetPage.tsx`
-(tabs, dirty indicator, Monaco editor at `SqlEditor.tsx`, `CatalogTree.tsx`,
-`ResultsTable.tsx`). Engine selector lives in
-`web/src/components/app/AgentPicker.tsx` (see D15).
-
----
-
-### D5 — Async query lifecycle; results materialized on the executing agent · `✓ Implemented`
-
-**Decision.**
-- `POST /workspaces/{ws}/queries` with `{sql, agent_id}` →
-  `{id, status:'queued'}`.
-- The control plane writes the query row to Postgres and pushes a
-  `dispatch_query` frame to the chosen agent's WebSocket channel.
-- The agent executes locally, materializes the result to
-  `/var/duckhaven-agent/results/{query_uuid}.parquet` **on the agent**, and
-  reports back `{status, row_count, duration_ms, result_path}`.
-- `GET /queries/{id}` → metadata from Postgres.
-- `GET /queries/{id}/rows` → control plane proxies a ranged HTTP read from
-  the agent that holds the result (HTTP `Range` header, not query cursor).
-- `DELETE /queries/{id}` → `cancel_query` frame forwarded to the agent.
-
-**Current state.** Wired end-to-end in
-`api/src/api/services/query.py`, `api/src/api/routers/queries.py`,
-`agent/src/agent/results/server.py`. `queries` table in Postgres is the
-single state-of-record (no Redis). Parquet retention is **agent uptime only**
-today (gap G-D5-a: the 24h retention sweep is not yet implemented).
-
-**Consequences.**
-- Postgres remains the query-state-of-record.
-- Result lifetime is bounded by agent uptime; affected queries are
-  re-runnable from saved SQL.
-- Pagination latency adds one control-plane hop on top of the agent's local
-  Parquet read.
-
----
-
-### D6 — Pluggable storage backends; per-workspace binding · `✓ Implemented`
-
-**Decision.** A workspace is bound to **exactly one** storage backend at
-create time. Supported backends in MVP:
-
-| Backend kind | URI prefix | DuckDB extension | Mount story |
-|---|---|---|---|
-| `local_fs` | `file:///var/duckhaven-agent/data/...` | none | Path mounted on every agent that serves the workspace |
-| `nas` | `file:///mnt/<name>/...` | none | NFS/SMB mounted on every agent that serves the workspace |
-| `s3` | `s3://bucket/prefix/...` | `httpfs` | Network — no mount |
-| `adls_gen2` | `abfss://container@account/...` | `azure` | Network — no mount |
-
-The control plane holds a **`storage_backends`** registry: `(id, kind, name,
-root_uri, uc_storage_credential_id, created_by, created_at)`. Workspaces
-reference a backend by id.
-
-**Current state.** Registry CRUD endpoints implemented under
-`/admin/storage-backends` (`api/src/api/routers/admin/storage.py`). Models
-in `api/src/api/models/storage_backend.py`, `workspace.py`. Web admin wizard
-in `web/src/features/admin/StorageBackendsPage.tsx`. Workspaces immutable
-once bound. Delete-guard prevents removing a backend that any workspace
-references. Tests in `api/tests/unit/test_admin/storage.py`.
-
-**Consequences.** Unchanged from v0.2.
-
----
-
-### D7 — Unity Catalog OSS, used both as catalog and as credential vendor · `✓ Implemented`
-
-**Decision.** Unity Catalog OSS runs as a JVM container. **One UC catalog
-per DuckHaven workspace.** UC additionally holds `storage_credentials` and
-`external_locations` for every workspace backend. At query dispatch time,
-the control plane requests **short-lived credentials** from UC scoped to the
-workspace's backend and forwards them to the agent.
-
-**Current state.** `api/src/api/services/unity_catalog.py` wraps the
-`unitycatalog` Python SDK with raw `httpx` fall-through for endpoints the
-SDK lacks (notably `temporary-table-credentials`). `services/uc_credentials.py`
-caches vended creds per `(agent_id, workspace_id)` with half-TTL refresh,
-sized by `cred_safety_window_s`. `services/query.py:dispatch_query` adds
-`backend` + `storage_credentials` keys to the `DISPATCH_QUERY` payload for
-S3/ADLS workspaces; local-fs/NAS workspaces send no creds and rely on the
-agent's filesystem mounts. UC catalog is eager-created on
-`POST /workspaces` (with rollback on UC failure) and lazy-self-healed for
-pre-M3 workspaces on first `POST /schemas` or `POST /queries`.
-
-**Consequences.** Unchanged from v0.2: short-lived creds, control plane
-on the hot path, R3 (vending bottleneck) is now mitigated by the cache.
-
----
-
-### D8 — DuckHaven owns DDL via UC REST; DuckDB on agents executes DML · `✓ Implemented`
-
-**Decision.** Table creation (`CREATE TABLE`) is performed by `duckhaven-api`
-calling Unity Catalog's REST API directly with the workspace's backend as
-the table's storage root. INSERT and SELECT run on a selected agent.
-UPDATE/MERGE/DELETE are out of scope until DuckDB ships support.
-
-**Current state.**
-- `api/src/api/routers/schemas.py` exposes
-  `GET/POST /workspaces/{ws}/schemas` and
-  `GET/POST /workspaces/{ws}/schemas/{s}/tables`, gated on
-  `assert_workspace_member` (`reader` for list, `writer` for create).
-- SQL allowlist lives in `api/src/api/services/sql_guard.py`. It calls
-  `duckdb.json_serialize_sql` on a module-level in-memory connection and
-  walks the AST; only top-level `SELECT` and `INSERT` (incl.
-  `INSERT … SELECT`) are accepted. The connection **parses only — no
-  execution, no extensions, no storage** (narrow carve-out of D1, the
-  only DuckDB code path on the control plane).
-- Web wires Create-Schema / Create-Table via
-  `web/src/features/catalog/CreateSchemaDialog.tsx` and
-  `CreateTableDialog.tsx`. Rename / Drop remain placeholders (M4).
-
----
-
-### D9 — Catalog Commits ON for every DuckHaven-managed table · `✓ Implemented`
-
-**Decision.** Every table created through DuckHaven's Create-Table flow has
-`TBLPROPERTIES ('delta.feature.catalogManaged' = 'supported')`. UC arbitrates
-all writes; conflicting writers receive a conflict error and retry.
-
-**Current state.** `POST /workspaces/{ws}/schemas/{s}/tables` in
-`api/src/api/routers/schemas.py` always sets
-`delta.feature.catalogManaged=supported` and `format=DELTA`, and always
-points `storage_location` at the workspace backend's `root_uri +
-/{schema}/{table}/`. End-to-end agent INSERT against UC-tracked
-catalogManaged Delta tables is **not yet verified on UC OSS 0.4.0** —
-spike S3 found that UC OSS 0.4.0 lacks the `/delta/preview/commits`
-endpoint DuckDB's `unity_catalog` extension uses for catalogManaged
-writes. The property is recorded in UC; runtime enforcement re-opens
-once UC OSS ships coordinated-commits.
-
----
-
-### D10 — Workspace-level permissions; permissions and storage co-pinned · `✓ Implemented`
-
-**Decision.** Permissions are workspace-scoped: `workspace_members(workspace_id,
-user_id, role[owner|writer|reader])`. DuckHaven enforces this at the API
-boundary; UC grants are mirrored as defense-in-depth.
-
-**Current state.** Enforced by `assert_workspace_member()` in
-`api/src/api/services/workspace.py`; role hierarchy reader < writer < owner.
-Endpoints `GET /workspaces/{ws}/members`, `POST /workspaces/{ws}/members`
-implemented. **UC mirror is not active**; DuckHaven is currently the
-sole permission authority. Mirror tracked as gap **G-D10-a** (M4). Tests
-in `api/tests/unit/test_workspaces.py`.
-
----
-
-### D11 — Audit log: who/when/SQL/agent/duration/rows/status · `✓ Implemented`
-
-**Decision.** A query audit row records every query the system runs:
-user, workspace, agent, SQL, status, timestamps, row count, duration, and
-error (if any).
-
-**Current state.** Audit is read directly from the `queries` table via
-`GET /admin/audit?workspace=&agent=&user=&since=&until=`
-(`api/src/api/routers/admin/audit.py`). Alembic migration
-`0002_add_queries_user_id.py` added `queries.user_id` (nullable FK to
-`users.id`, indexed); `services/query.py:dispatch_query` populates it
-from `current_user`. The web UI at `web/src/features/admin/AuditPage.tsx`
-exposes a user dropdown populated from `GET /admin/users`. No separate
-`audit_queries` table — the live `queries` row is the audit row.
-
----
-
-### D12 — Deployment: control plane as `docker compose`; agents as separate processes · `◐ Partial`
-
-**Decision.** Control-plane services live in one `docker-compose.yml` with
-pinned image tags. Agents are deployed separately (one container image per
-host).
-
-**Current state.**
-- `deploy/docker-compose.yml` runs `postgres:16-alpine`,
-  `unitycatalog/unitycatalog:0.4.0`, `duckhaven-api` (publishing `:8000`).
-- `duckhaven-api` and `duckhaven-agent` are built + pushed to
-  `ghcr.io/tamasmrtn/duckhaven-{api,agent}` by `.github/workflows/build.yml`
-  on every main push (`:latest`) and on `v*.*.*` tags (`:vX.Y.Z`, `:vX.Y`,
-  `:vX`). Built multi-arch (`linux/amd64,linux/arm64`).
-- `deploy/docker-compose.yml` pulls the api image as
-  `ghcr.io/tamasmrtn/duckhaven-api:${DUCKHAVEN_IMAGE_TAG:-latest}`; pin to a
-  release tag for predictable upgrades.
-- Alembic migrations are applied automatically by `deploy/api-entrypoint.sh`
-  when the `api` container starts (no separate `make migrate` step in
-  production). `make migrate` remains for local dev against a host-side
-  Postgres.
-- Tailscale-only ingress per design; the `api` service is exposed directly
-  on `:8000` (no edge reverse proxy or TLS terminator).
-
----
-
-### D13 — UI-first frontend; mocked backend during M1 · `✓ Implemented`
-
-**Decision.** M0 walking spike validates dispatch end-to-end. The frontend
-is built against a mock backend implementing §6. The real backend (M2) is
-implemented to satisfy that contract.
-
-**Current state.** M1 complete (PR #18). MSW handlers live under
-`web/src/mock/handlers/*` and are loaded only in `import.meta.env.DEV` from
-`web/src/main.tsx`. In production builds the SPA hits `/api/*` directly
-(Vite dev-server proxy maps `/api` → `http://localhost:8000`).
-`onUnhandledRequest: 'bypass'` in dev so any newly wired endpoint reaches
-the real API automatically.
-
----
-
-### D14 — Agents dial home with a one-time bootstrap token; control plane never initiates connections · `✓ Implemented`
-
-**Decision.** Operator generates a bootstrap token in the DuckHaven admin
-UI (or via `scripts/gen-token.sh`). Token is single-use, scoped to a
-label-free agent identity, valid for 24h. The agent starts with the token +
-the control-plane URL, opens an outbound WebSocket to `/agents/connect`,
-exchanges the bootstrap token for a long-lived **agent credential**
-(`credentials.kind = 'agent_session'`), and holds the WebSocket open for the
-rest of its life.
-
-**Current state.** Implemented in
-`api/src/api/routers/admin/agents.py` (POST `/admin/agents/bootstrap`,
-DELETE `/admin/agents/{id}/credential`) and the WebSocket handler in
-`api/src/api/routers/agents_ws.py`. Agent side:
-`agent/src/agent/control/channel.py` (AUTH → AUTH_OK → AGENT_STATUS, 5 s
-reconnect backoff). Tests:
-`api/tests/unit/test_admin/agents.py`, `agent/tests/unit/control/test_channel.py`.
-
-**Open gap (G-D14-a):** the long-lived agent credential is also the token
-the agent's HTTP result endpoint expects as a Bearer header (see D16), but
-the agent's `main.py` currently hardcodes the bearer to an empty string —
-result reads succeed today only because the control-plane proxy doesn't
-send a real bearer either. Tighten this together with G-D16-a.
-
----
-
-### D15 — User picks the executing agent per worksheet/query · `✓ Implemented`
-
-**Decision.** Every worksheet has an **engine selector** populated from the
-agents the user's workspaces can address. Each query carries an `agent_id`.
-
-**Current state.** Implemented in `web/src/components/app/AgentPicker.tsx`,
-embedded in the worksheet toolbar. The picker also performs the
-backend-compatibility filter described in D17 (currently **client-side**;
-see D17 `Current state`). Saved queries record `default_agent_id`
-(`api/src/api/models/saved_query.py`).
-
----
-
-### D16 — Agent control protocol: WebSocket dispatch, HTTP result range reads · `✓ Implemented`
-
-**Decision.** Two channels between control plane and agent:
-
-1. **Control channel** — one long-lived WebSocket per agent (initiated by
-   the agent). Frames: `auth`, `auth_ok`, `dispatch_query`, `query_progress`,
-   `query_done`, `cancel_query`, `heartbeat`, `agent_status`. JSON; small
-   payloads only. The frame schema lives in `duckhaven-shared` (§8.a).
-2. **Result-read channel** — control plane issues `GET` requests to the
-   agent's local HTTP endpoint (signed with the agent credential, Bearer
-   header) for **HTTP-Range** reads of `results/{uuid}.parquet`. The agent
-   listens on `127.0.0.1:8001` by default; binding to the Tailscale address
-   is an operator choice via `.env`.
-
-**Current state.** Implemented; happy path validated by
-`api/tests/unit/test_queries.py` (rows-proxy and cancel) and
-`agent/tests/unit/results/test_server.py` (200/401/404 paths).
-
-**Open gaps.**
-- **G-D16-a:** Agent result-server bearer is hardcoded empty
-  (`agent/src/agent/main.py`); must be populated from the `auth_ok` payload's
-  session token. Tied to G-D14-a.
-- **G-D16-b:** `query_progress` frames are recognised in
-  `api/src/api/routers/agents_ws.py` but not persisted; `GET /queries/{id}`
-  does not expose progress. Acceptable for MVP, revisit in M4.
-
----
-
-### D17 — Agent capability advertisement; dispatch-time backend compatibility check · `◐ Partial`
-
-**Decision.** On connect (and at every heartbeat), an agent advertises a
-small **capabilities document**: DuckDB version, list of loaded extensions
-(`unity_catalog`, `delta`, `httpfs`, `azure`, …), per-query memory ceiling,
-and host info. The control plane stores the latest doc per agent. At query
-dispatch time the control plane checks that the agent's extensions cover
-the workspace's backend kind; mismatches reject the query with a
-remediation hint.
-
-**Current state.**
-- Schema: `duckhaven_shared.schemas.AgentCapabilities` (DuckDB version,
-  extensions, memory limit, cores, optional `tailscale_ip` and `host`).
-- Advertisement: the agent sends `AGENT_STATUS` on initial connect
-  (`agent/src/agent/control/channel.py:_get_capabilities`). **Heartbeats do
-  NOT re-send capabilities today** (gap G-D17-a).
-- `agent/Dockerfile` pre-installs `httpfs`, `azure`, `unity_catalog`,
-  `delta` at image build time so `_get_capabilities` reports them on the
-  first connect (no first-query latency).
-- Storage: control plane persists the JSON document in `agents.capabilities`
-  on `AGENT_STATUS` receipt.
-- **Compatibility check at dispatch is currently client-side**: the React
-  `AgentPicker` calls `agentSupportsBackend()` and disables/warns on
-  incompatible agents, but `api/src/api/services/query.py` does not enforce
-  the check at dispatch time (gap G-D17-b). Any non-web client could
-  dispatch a workspace to an agent without the right extension and get a
-  DuckDB error at runtime.
-
----
-
-### D18 — DR: nightly `pg_dump`; data DR is delegated to backend · `◐ Partial`
-
-**Decision.** Control-plane Postgres (DuckHaven app state + UC metastore)
-is `pg_dump`'d nightly to a second disk. Data DR depends on backend kind.
-
-**Current state.**
-- `scripts/pg-backup.sh` exists, dumps to
-  `/var/duckhaven/backups/duckhaven_<ts>.sql.gz` via
-  `docker compose exec postgres pg_dump`. **Not wired to cron or systemd;
-  operator must schedule it** (gap G-D18-a). The backup directory is on the
-  same disk by default, against the spirit of D18 — runbook needs to
-  document "point this at a second disk / NAS mount" (gap G-D18-b).
-- Conditional DR banner described in v0.2 is **not yet in the web UI**
-  (gap G-D18-c) — `web/src/features/admin/StorageBackendsPage.tsx` shows
-  the backend kind but no DR badge yet.
-
----
-
-## 5. Storage Layout (canonical)
-
-### Control plane (`deploy/docker-compose.yml` named volumes)
-
-| Path / Volume | Owner | Purpose |
+| Service | What it does | Interacts with |
 |---|---|---|
-| `postgres_data` | postgres | DuckHaven app state + UC metastore |
-| `uc_data` | unity-catalog | UC's other state |
-| `api_data` | api | `/var/duckhaven` inside the api container (reserved) |
+| `services/query.py` | Dispatches a query to an agent over the registry socket; handles `query_progress`/`query_done` frames coming back; proxies result-row reads. **The heart of the system.** | `agent_registry`, `uc_credentials`, `unity_catalog`, the `Query` model |
+| `services/agent_registry.py` | In-memory `ConnectionManager` (`registry`) mapping `agent_id → live WebSocket`. The only place that knows which agents are connected *right now*. | `routers/agents_ws.py`, `services/query.py` |
+| `services/unity_catalog.py` | Async REST client for UC (catalogs, schemas, tables, permissions, temporary-table-credentials). Speaks REST directly via `httpx`. | UC container |
+| `services/uc_credentials.py` | `CredCache` with half-TTL refresh + `vend_workspace_creds`. Mints short-lived S3/Azure creds; returns `None` for local/NAS. | `unity_catalog`, `services/query.py` |
+| `services/sql_guard.py` | The SQL allowlist. Uses `duckdb.extract_statements` to **parse only** and reject anything other than `SELECT`/`INSERT`. No connection, no execution. | `routers/queries.py` |
+| `services/agent_capabilities.py` | Maps a backend kind to its required DuckDB extension and checks an agent's advertised capabilities at dispatch time. | `routers/queries.py` |
+| `services/workspace.py` | Membership/role checks (`assert_workspace_member`), workspace lookup, lazy UC catalog creation (`ensure_uc_catalog`), best-effort UC grant mirroring. | UC, the `Workspace`/`WorkspaceMember` models |
+| `services/auth.py` | bcrypt password hashing/verification and session-cookie handling. | `routers/auth.py`, `routers/setup.py` |
 
-`pg-backup.sh` writes to `/var/duckhaven/backups/duckhaven_<ts>.sql.gz` on
-the host (default — operator should redirect to a second disk).
+### 6.3 `agent/` — `duckhaven-agent` (compute)
 
-### Each agent host
+**Purpose.** Embed a DuckDB engine, execute dispatched queries, and serve
+result files. An agent is a single Python process running three concurrent
+tasks (`src/agent/main.py` gathers them):
+
+1. **Control channel** (`control/channel.py`) — opens the outbound WebSocket,
+   authenticates, advertises `AgentCapabilities`, then loops handling frames
+   (`dispatch_query`, `cancel_query`, `heartbeat`). Reconnects with backoff
+   if the socket drops. On each heartbeat it re-advertises capabilities.
+2. **Result server** (`results/server.py`) — a tiny `127.0.0.1` HTTP server
+   serving `results/{query_id}.parquet` with **HTTP `Range`** support, gated
+   by a Bearer token (the agent's session token, held in `auth.py:TokenHolder`).
+3. **Retention sweep** (`results/retention.py`) — periodically deletes result
+   Parquet files older than the retention window.
+
+**Query execution** is split for testability and cancellation:
+
+| Module | Responsibility |
+|---|---|
+| `executor/runner.py` | `run_query_sync`: the synchronous DuckDB path. Sets `memory_limit`, loads the right storage extension (`httpfs`/`azure`) and applies vended creds via a connection-scoped `CREATE SECRET`, `ATTACH`es the workspace's UC catalog, then `COPY (sql) TO '<uuid>.parquet'`. |
+| `executor/supervisor.py` | `run_query`: runs `run_query_sync` on a thread executor with a wall-clock timeout. Uses DuckDB's thread-safe `conn.interrupt()` (via `loop.call_later` and on cancel) to actually stop a running query. |
+
+`config.py` holds operator ceilings (`max_memory_limit_gb`, `max_timeout_s`)
+that per-query requests are clamped to.
+
+### 6.4 `web/` — the React SPA
+
+**Purpose.** The worksheet UI and admin console. React 19 + Vite, TanStack
+Router/Query/Table, Monaco editor, Radix + shadcn/ui + Tailwind.
+
+**Layered by responsibility** (open in this order to trace a feature):
+
+| Directory | Responsibility |
+|---|---|
+| `src/api/` | Thin `fetch` wrappers. `client.ts` prefixes every call with `/api` and sends cookies; one module per resource. |
+| `src/queries/` | TanStack Query hooks (`useX` query/mutation) wrapping `src/api/`. The data-fetching seam components consume. |
+| `src/features/` | Page-level features: `worksheet/`, `catalog/`, `saved-queries/`, `history/`, `auth/`, `admin/`. |
+| `src/components/app/` | App-shell chrome (`AppShell`, `TopBar`, `LeftRail`, `AgentPicker`, `WorkspaceSwitcher`, `CommandPalette`). |
+| `src/components/ui/` | shadcn/ui primitives. |
+| `src/router.tsx` | TanStack route tree. Authed routes nest under `/$ws/...` (`worksheets`, `catalog`, `saved-queries`, `history`, `admin/*`). |
+| `src/types/` | Shared TypeScript types mirroring the API DTOs. |
+| `src/mock/` | MSW handlers + fixtures used in `dev` (and tests) when the real API is absent. |
+
+The frontend's `AgentPicker` runs the same backend-compatibility check the
+control plane enforces server-side, so incompatible agents are visibly
+disabled before a query is even sent.
+
+### 6.5 `deploy/` & `scripts/`
+
+`deploy/docker-compose.yml` defines the control-plane stack:
+`init-secrets` (one-shot secret generation) → `postgres` →
+`unity-catalog` → `api`. `api-entrypoint.sh` runs Alembic migrations then
+starts uvicorn. `init-secrets.sh` writes the first-boot secrets (including
+the one-shot admin setup token). Agents are **not** in this file — they are
+deployed per host. `scripts/` holds operator helpers (`pg-backup.sh`,
+`gen-token.sh`).
+
+---
+
+## 7. Data Model
+
+DuckHaven splits its state across two stores, and the split is itself an
+invariant (I3): **DuckHaven's own entities live in Postgres; catalog
+metadata lives in Unity Catalog.**
+
+### Postgres (owned by `api/src/api/models/`)
+
+```mermaid
+erDiagram
+    users ||--o{ credentials : has
+    users ||--o{ workspace_members : joins
+    workspaces ||--o{ workspace_members : has
+    workspaces ||--o{ queries : runs
+    workspaces ||--o{ saved_queries : stores
+    workspaces }o--|| storage_backends : "pinned to (1)"
+    agents ||--o{ credentials : "session token"
+    agents ||--o{ queries : executes
+
+    users { uuid id; string email; string password_hash; string role }
+    credentials { uuid id; uuid user_id; uuid agent_id; string kind; string token; datetime expires_at }
+    workspaces { uuid id; string slug; uuid storage_backend_id }
+    workspace_members { uuid workspace_id; uuid user_id; string role }
+    storage_backends { uuid id; string kind; string name; string root_uri }
+    agents { uuid id; string name; string status; json capabilities; string result_host; int result_port }
+    queries { uuid id; uuid workspace_id; uuid agent_id; uuid user_id; text sql; string status; int row_count; json progress; string result_path }
+    saved_queries { uuid id; uuid workspace_id; text sql; uuid default_agent_id }
+```
+
+Notes that matter for changes:
+
+- **`credentials` is polymorphic** by `kind`: user `session`, agent
+  `agent_bootstrap` (single-use), and agent `agent_session` (long-lived).
+- **`agents.capabilities`** is the last advertised `AgentCapabilities` JSON;
+  `result_host`/`result_port` tell the proxy where to read rows.
+- **`queries` is also the audit log** — there is no separate audit table.
+  `GET /admin/audit` reads filtered rows straight from `queries`.
+- **`workspaces.storage_backend_id` is immutable** after creation, and a
+  backend cannot be deleted while any workspace references it.
+
+### Unity Catalog (owned by UC, addressed via `services/unity_catalog.py`)
+
+One **UC catalog per workspace** (named by the workspace `slug`), containing
+schemas and tables. Every DuckHaven-created table is `MANAGED`, `DELTA`
+format, with `delta.feature.catalogManaged = supported`, and its
+`storage_location` points into the workspace backend's `root_uri`. UC also
+holds the storage credentials it vends.
+
+---
+
+## 8. Data Flow & Runtime Behavior
+
+### 8.1 Query lifecycle (the primary flow)
+
+```mermaid
+sequenceDiagram
+    participant UI as React SPA
+    participant API as duckhaven-api
+    participant PG as Postgres
+    participant UC as Unity Catalog
+    participant AG as Agent (DuckDB)
+    participant ST as Storage backend
+
+    UI->>API: POST /api/workspaces/{ws}/queries {sql, agent_id}
+    API->>API: auth + membership check
+    API->>API: sql_guard.assert_allowed (parse-only)
+    API->>API: agent connected? backend compatible?
+    API->>PG: insert query (status=queued)
+    API->>UC: vend short-lived creds (cached, S3/ADLS only)
+    API->>AG: dispatch_query frame (sql, creds, backend, UC endpoint) [over agent WS]
+    API->>PG: status=running
+    API-->>UI: 202 {id, status}
+
+    AG->>AG: SET memory_limit; CREATE SECRET; ATTACH UC catalog
+    AG->>ST: COPY (sql) TO results/{id}.parquet
+    AG->>API: query_done frame {row_count, duration_ms, result_path}
+    API->>PG: update query (status=done, ...)
+
+    UI->>API: GET /api/queries/{id} (poll)
+    UI->>API: GET /api/queries/{id}/rows (HTTP Range)
+    API->>AG: GET /results/{id}.parquet (Range + Bearer session token)
+    AG-->>API: parquet bytes
+    API-->>UI: bytes
+```
+
+Key properties:
+
+- **Dispatch is a direct socket push**, not a queue. If the chosen agent is
+  not connected, the request fails fast (`503`).
+- **Results are materialized and read where they are produced** — Parquet on
+  the executing agent. The control plane proxies a ranged read; it never
+  buffers the whole result set. Result lifetime is bounded by the agent's
+  retention sweep, so a stale query is simply re-run from its saved SQL.
+- **Cancellation** sends a `cancel_query` frame; the agent calls
+  `conn.interrupt()` to stop the in-flight DuckDB query.
+- **A timeout** is enforced agent-side by the supervisor, also via
+  `conn.interrupt()`.
+
+### 8.2 Agent connection lifecycle
+
+```mermaid
+sequenceDiagram
+    participant AG as Agent
+    participant API as duckhaven-api
+    participant PG as Postgres
+
+    AG->>API: connect ws:/agents/connect
+    AG->>API: auth frame {bootstrap_token}
+    API->>PG: validate + delete single-use bootstrap cred
+    API->>PG: create agent row + agent_session credential
+    API-->>AG: auth_ok {agent_id, session_token}
+    AG->>API: agent_status {capabilities}
+    API->>PG: store capabilities, status=healthy
+    loop while connected
+        API->>AG: heartbeat
+        AG->>API: heartbeat + agent_status (re-advertise)
+        API->>AG: dispatch_query / cancel_query (as needed)
+    end
+    Note over API,PG: on disconnect → status=unavailable, drop from registry
+```
+
+The bootstrap token is exchanged exactly once for a long-lived
+`agent_session` token. That session token is what the control plane later
+presents as a Bearer credential when reading result rows.
+
+---
+
+## 9. External Integrations
+
+| Integration | Role | Boundary in code |
+|---|---|---|
+| **DuckDB** | The query engine — present *only* on agents. Also used by the control plane as a pure SQL parser. | `agent/.../executor/`, `api/.../services/sql_guard.py` |
+| **Unity Catalog OSS** | Catalog metadata authority + vendor of short-lived storage credentials. | `api/.../services/unity_catalog.py`, `uc_credentials.py` |
+| **Storage backends** | Where Delta tables physically live: Local FS, NAS (mounted FS), S3 (`httpfs`), ADLS Gen 2 (`azure`). One per workspace. | `agent/.../executor/runner.py` (secrets + attach), `StorageBackend` model |
+| **Postgres** | State-of-record for DuckHaven entities + the UC metastore. | `api/.../db/`, `models/` |
+| **Tailscale (operational)** | Recommended private network providing the transport-layer security perimeter. Not a code dependency. | deployment only |
+
+---
+
+## 10. Deployment Architecture
+
+**Control plane — one Docker Compose stack** (`deploy/docker-compose.yml`):
+
+```
+init-secrets  →  postgres:16-alpine
+                 unitycatalog/unitycatalog:v0.4.0
+                 duckhaven-api  (publishes :8000, serves SPA + REST + agent WS)
+```
+
+`init-secrets` runs once to generate the secret key and Postgres password;
+`api` applies migrations on start and serves the bundled SPA. The API is
+published directly on `:8000` over the private network — there is no edge
+TLS terminator by default; transport security comes from the tunnel. Images
+are built for `linux/amd64,linux/arm64` and published to
+`ghcr.io/tamasmrtn/duckhaven-{api,agent}`.
+
+**Agents — one process per host**, deployed separately (not in the compose
+file). An agent needs only the control-plane WebSocket URL and a bootstrap
+token. It writes results and mounts under `/var/duckhaven-agent/`.
 
 ```
 /var/duckhaven-agent/
-  results/{query_uuid}.parquet         # D5 materialized results (24h retention — G-D5-a)
-  cache/                               # optional DuckDB http/object-store cache
-  agent.toml / .env                    # control-plane URL + agent credential
-  mounts/                              # NAS/FS mounts (operator-configured)
-```
-
-### Backend roots (workspace-pinned; example layouts)
-
-```
-file:///var/duckhaven-agent/data/{workspace}/{schema}/{table}/_delta_log/
-file:///mnt/nas01/{workspace}/{schema}/{table}/_delta_log/
-s3://my-bucket/duckhaven/{workspace}/{schema}/{table}/_delta_log/
-abfss://container@acct/duckhaven/{workspace}/{schema}/{table}/_delta_log/
+  results/{query_uuid}.parquet   # materialized results (swept on a timer)
+  cache/                         # optional DuckDB object-store cache
+  mounts/                        # operator-configured NAS/FS mounts
 ```
 
 ---
 
-## 6. API Contract (current implementation)
+## 11. Architectural Invariants
 
-The shapes below describe what `api/src/api/routers/*` actually serves
-today. Endpoints from the v0.2 sketch that are not yet implemented are
-listed explicitly under `Pending` so the gap is visible.
+These are the rules that keep the design coherent. **A change that violates
+one of these is almost certainly wrong** — if you believe you need to, raise
+it explicitly rather than working around it.
 
-```
-# Auth & users — D3
-POST   /auth/login                   {email, password}             → sets session cookie
-POST   /auth/logout
-GET    /me                                                         → user
-
-# Workspaces — D6, D10
-GET    /workspaces                                                 → [workspace]
-POST   /workspaces                   {slug, name, storage_backend_id}  → workspace
-GET    /workspaces/{ws}                                            → workspace
-GET    /workspaces/{ws}/members
-POST   /workspaces/{ws}/members      {user_id, role}
-
-# Storage backends — D6 (admin)
-GET    /admin/storage-backends                                     → [backend]
-POST   /admin/storage-backends       {kind, name, root_uri, uc_storage_credential_id?}
-DELETE /admin/storage-backends/{id}                                → 409 if any workspace uses it
-
-# Agents — D14, D15, D17
-GET    /agents                                                     → [agent + capabilities] (for engine picker)
-GET    /admin/agents                                               → admin variant (includes inactive)
-POST   /admin/agents/bootstrap                                     → {token, expires_at}   (D14)
-DELETE /admin/agents/{agent_id}/credential                         → revoke session
-WS     /agents/connect                                             # agent-initiated, bootstrap or session token
-
-# Queries — D5
-POST   /workspaces/{ws}/queries      {sql, agent_id, [memory_limit_gb, timeout_s]}
-                                                                   → {id, status:'queued'}
-GET    /queries/{id}                                               → metadata (incl. agent_id)
-GET    /queries/{id}/rows            # HTTP Range header — proxied range read from agent
-DELETE /queries/{id}                                               → cancel signal to agent
-
-# Saved queries
-GET    /workspaces/{ws}/saved-queries
-POST   /workspaces/{ws}/saved-queries   {name, sql, default_agent_id}
-
-# Schemas / tables — D8, D9
-GET    /workspaces/{ws}/schemas
-POST   /workspaces/{ws}/schemas                {name}
-GET    /workspaces/{ws}/schemas/{s}/tables
-POST   /workspaces/{ws}/schemas/{s}/tables     {name, columns:[{name,type,nullable}]}
-GET    /workspaces/{ws}/schemas/{s}/tables/{t}
-
-# Audit — D11 (read-only)
-GET    /admin/audit?workspace=&agent=&user=&since=&until=          → audit rows from queries table
-```
-
-**Pending (M4+):**
-
-```
-# Schemas / tables — D8 (extensions)
-DELETE /workspaces/{ws}/schemas/{s}/tables/{t}
-```
-
-Pagination on `GET /queries/{id}/rows` is **HTTP `Range` based**, not query
-cursor; the v0.2 sketch's `?cursor&limit` was rejected during M2 in favour
-of Range so the proxy can stay zero-copy.
+- **I1 — The control plane never executes user SQL.** `api/` may construct a
+  DuckDB object *only* to parse (`sql_guard`). It must never `ATTACH`
+  storage, load extensions, or `.execute()` user SQL. All execution happens
+  on agents.
+- **I2 — Agents initiate the control connection; the control plane does
+  not.** The control plane holds no static agent inventory and never dials an
+  agent's control channel. Its single outbound reach to an agent is the
+  ranged HTTP result read.
+- **I3 — Unity Catalog owns catalog metadata; Postgres owns DuckHaven
+  entities.** Never persist schema/table state into Postgres, and never
+  treat DuckHaven's database as a catalog cache.
+- **I4 — One workspace, one storage backend, forever.** The binding is set
+  at creation and is immutable. Every table's `storage_location` derives from
+  its workspace backend's `root_uri`.
+- **I5 — The control↔agent wire format lives only in `shared/`.** Both
+  `api/` and `agent/` import `duckhaven_shared`. Never define a frame type or
+  payload shape independently on one side.
+- **I6 — Dependency direction is one-way:** `api → shared` and
+  `agent → shared`. `shared` depends on neither; `api` and `agent` never
+  import each other.
+- **I7 — Storage credentials are short-lived and connection-scoped.** Creds
+  are vended per `(agent, workspace)`, applied as a DuckDB `SECRET` on the
+  per-query connection, and never written to disk on the agent.
+- **I8 — Only `SELECT` and `INSERT` reach an agent.** All other DDL/DML is
+  rejected by `sql_guard`; table creation goes through UC REST in `api/`.
+- **I9 — Postgres is the only state-of-record.** No second source of truth
+  (no Redis, no in-memory queue surviving a restart). The in-memory agent
+  registry is an ephemeral index of live sockets, not state.
+- **I10 — Authorization happens at the API boundary** via
+  `assert_workspace_member` before any dispatch. UC grants are
+  defense-in-depth, not the primary gate.
 
 ---
 
-## 7. Resource Budget
+## 12. Common Change Scenarios
 
-*Unchanged from v0.2.*
+A quick "if you want to do X, start here" index for contributors and agents.
 
-### Control-plane box (8 GB floor)
-
-| Component | Resident | Notes |
+| You want to… | Start in | Also touch |
 |---|---|---|
-| Linux + page cache | ~1.0 GB | |
-| Postgres 16 | ~600 MB | DuckHaven app + UC metastore |
-| Unity Catalog OSS (JVM) | ~2.0 GB | Dictates the 8 GB floor |
-| `duckhaven-api` (FastAPI) | ~500 MB | Includes WebSocket fan-out |
-| **Baseline committed** | **~4.2 GB** | |
-| **Headroom for traffic + page cache** | **~3.8 GB** | |
+| Add a control↔agent message | `shared/.../protocol.py` (new `FrameType`) | sender + handler in `api/.../routers/agents_ws.py` / `services/query.py` and `agent/.../control/channel.py` |
+| Add a REST endpoint | `api/.../routers/<resource>.py` | a `schemas/` DTO, register in `main.py`, a test under `api/tests/unit/routers/`, and the web `src/api/` + `src/queries/` |
+| Add/alter a Postgres table | `api/.../models/` | a new migration in `api/alembic/versions/` (`make migrate-new name=...`) |
+| Change query execution (extensions, pragmas, attach) | `agent/.../executor/runner.py` | `supervisor.py` if it affects timeout/cancel |
+| Widen/narrow the SQL allowlist | `api/.../services/sql_guard.py` | its test in `tests/unit/services/test_sql_guard.py` |
+| Add a storage backend kind | `api/.../services/agent_capabilities.py` (required extension) | `agent/.../executor/runner.py` (secret + attach), `StorageBackend` validation, web `StorageIcon`/wizard |
+| Change credential vending | `api/.../services/uc_credentials.py` | `services/unity_catalog.py` if a new UC endpoint is needed |
+| Add a UI screen | `web/src/features/<feature>/` | `src/router.tsx`, `src/api/` + `src/queries/`, MSW handler in `src/mock/handlers/`, a test under `web/tests/` |
+| Change the agent handshake/auth | `api/.../routers/agents_ws.py` + `api/.../routers/admin/agents.py` | `agent/.../control/channel.py`, `agent/.../auth.py` |
 
-### Per agent host (8 GB floor)
-
-| Component | Resident | Notes |
-|---|---|---|
-| Linux + page cache | ~1.0 GB | |
-| `duckhaven-agent` idle | ~400 MB | DuckDB embedded |
-| Per-query budget | up to 6 GB | `memory_limit` PRAGMA (D2) |
-| **Baseline committed** | **~1.4 GB** | |
-| **Headroom** | **~6.6 GB** | Sized for one full-cap query at a time |
+Per project convention, **every change ships with tests** (pytest for
+`api`/`agent`, Vitest + RTL + MSW for `web`) and passes
+`make test && pre-commit run --all-files`.
 
 ---
 
-## 8. Tech Stack
+## 13. Known Technical Debt
 
-| Layer | Choice |
+Honest, stable-enough caveats. The live, itemized list lives in the issue
+tracker and the [README roadmap](../README.md#roadmap); this section names
+the *categories* a contributor should be aware of.
+
+- **Catalog-managed writes on UC OSS.** Every DuckHaven table is created with
+  `delta.feature.catalogManaged = supported`, but end-to-end coordinated
+  commit writes are gated on Unity Catalog OSS shipping the commit endpoints
+  DuckDB's `unity_catalog` extension needs. Cloud-backend write paths are
+  validated behind opt-in/env-gated integration tests.
+- **Single control-plane box.** The control plane is intentionally
+  single-node (Postgres + UC + API on one host). High availability is a
+  future concern, not a current property.
+- **Result durability.** Results live only on the executing agent until the
+  retention sweep removes them; they are not replicated. The recovery story
+  is "re-run from saved SQL," not "fetch the old result."
+- **Progress reporting is coarse.** `query_progress` frames are persisted to
+  `queries.progress`, but the UI surfaces a binary running/done rather than
+  streaming progress.
+
+---
+
+## 14. Glossary
+
+| Term | Meaning |
 |---|---|
-| Frontend | React 19 + TypeScript + Vite 8, Monaco editor, TanStack Router + Query + Table, Radix UI + shadcn/ui + Tailwind |
-| API | FastAPI (Python 3.14), async; `websockets` for agent channel |
-| ORM / migrations | SQLAlchemy 2.x (async) + Alembic |
-| Job dispatch | Direct WebSocket push to chosen agent; Postgres holds query state of record (no Redis) |
-| Agent runtime | Python 3.14 process embedding DuckDB; small HTTP server for result-range reads |
-| Engine | DuckDB ≥ 1.5.x (pinned minor) — present **only** on agents |
-| Catalog | Unity Catalog OSS 0.4.0 (pinned), used as catalog + credential vendor |
-| Catalog client | `unitycatalog` Python SDK + raw `httpx` for endpoints the SDK lacks (`api/src/api/services/unity_catalog.py`) |
-| Storage format | Delta Lake, Catalog Commits ON (D9), per-workspace backend (D6) |
-| Storage drivers (in agent) | DuckDB native (FS), `httpfs` (S3), `azure` (ADLS Gen 2) — pre-installed by `agent/Dockerfile` |
-| Ingress | `api` published directly on `:8000` over the private network (no edge TLS terminator) |
-| Identity | Local users + bcrypt + cookies (D3); agent sessions via WS (D14) |
-| Networking | Tailscale |
-| Container | docker compose v2 (control plane); single container for agents (image build operator-driven) |
-| Lint / format | Ruff (no mypy / no other typechecker) |
-| Tests | pytest + pytest-asyncio (API + agent); Vitest + RTL + MSW (web). Targets: api ≥80% cov, agent ≥75% cov |
-| Observability | JSON logs to stdout from every component + built-in audit UI |
-
-### 8.a — Shared protocol package (`duckhaven-shared`)
-
-`shared/` is a third `uv` workspace member (alongside `api/` and `agent/`)
-that is the single source of truth for the control plane ↔ agent contract.
-Both `api/pyproject.toml` and `agent/pyproject.toml` declare
-`duckhaven-shared = { workspace = true }`. Dependency footprint is just
-`pydantic>=2`.
-
-Two modules:
-
-- `duckhaven_shared.protocol` — defines `FrameType` (string enum of `auth`,
-  `auth_ok`, `dispatch_query`, `query_progress`, `query_done`,
-  `cancel_query`, `heartbeat`, `agent_status`) and `Frame`
-  (`{type: FrameType, payload: dict[str, Any]}`). This is the wire format
-  for D16's control channel.
-- `duckhaven_shared.schemas` — defines `AgentCapabilities`
-  (`duckdb_version`, `extensions: list[str]`, `memory_limit_gb`, `cores`,
-  optional `tailscale_ip`, `host`). This is the D17 advertisement payload.
-
-Consumers today:
-- `api/src/api/services/query.py` — builds `Frame(FrameType.DISPATCH_QUERY, …)`
-- `api/src/api/routers/agents_ws.py` — parses incoming frames and routes by
-  `FrameType`
-- `agent/src/agent/control/channel.py` — both sides of every frame; builds
-  `AgentCapabilities` on connect
-
-Adding a new frame type means changing this package and bumping both
-api/ and agent/ to pick up the new enum — by design, the contract cannot
-drift silently between sides.
+| **Control plane** | The `duckhaven-api` process (with Postgres + UC). Orchestrates; never runs DuckDB queries. |
+| **Agent** | A `duckhaven-agent` process embedding DuckDB, running on its own host, dialing home over WebSocket. The unit of compute. |
+| **Workspace** | A governance + collaboration boundary. Maps 1:1 to a Unity Catalog catalog and is pinned to exactly one storage backend. |
+| **Storage backend** | A physical location for Delta tables (Local FS, NAS, S3, ADLS Gen 2), registered once and referenced by workspaces. |
+| **Catalog-managed table** | A Delta table whose commits are arbitrated by Unity Catalog (`delta.feature.catalogManaged = supported`). |
+| **Bootstrap token** | A single-use credential an operator generates so a new agent can register. Exchanged once for a long-lived agent session token. |
+| **Capabilities** | The document an agent advertises (DuckDB version, loaded extensions, memory ceiling) used to match agents to workspace backends. |
+| **Frame** | One JSON message on the control WebSocket: `{type, payload}`, defined in `duckhaven-shared`. |
+| **Vended credentials** | Short-lived storage credentials minted by Unity Catalog per `(agent, workspace)` and applied as a connection-scoped DuckDB `SECRET`. |
 
 ---
 
-## 9. Security Model
-
-*Unchanged from v0.2 in intent. One concrete deviation:* G-D16-a means the
-agent's result HTTP server currently accepts the bearer header but the
-control-plane proxy and the agent itself both treat the token as empty.
-Closing G-D14-a / G-D16-a restores the design.
-
-- **Network perimeter:** Tailscale. No public ingress. The `api` service is
-  exposed directly on `:8000` over the private network (plain HTTP); transport
-  encryption is provided by the Tailscale/WireGuard tunnel.
-- **Authentication (users):** D3.
-- **Authentication (agents):** D14 — bootstrap token → long-lived agent
-  credential; WebSocket bound to that credential; HTTP result endpoint
-  signed with the same credential *(pending G-D14-a/G-D16-a)*.
-- **Authorization:** D10. Every query is validated for `workspace_members`
-  before dispatch.
-- **Backend credentials:** D7 — UC vends short-lived per-(agent, workspace)
-  creds, embedded into the `DISPATCH_QUERY` frame and applied by
-  `CREATE SECRET` on the agent's per-query DuckDB connection.
-- **Sandboxing (agents):** agent process has read+write only on
-  `/var/duckhaven-agent/` and the backend roots its workspaces require.
-- **Rate limiting:** login endpoint only, in-memory per-IP, 5 failed/min.
-- **Secrets:** UC token, Postgres password, agent bootstrap secret held in
-  `.env` outside the repo, consumed by docker compose. No vault.
-- **In threat model:** misclick / accidental destructive query, cookie
-  theft, leaked agent credential (short TTL on backend creds limits damage).
-- **Out of threat model:** RCE in DuckDB extensions, internet-borne
-  attackers, malicious DuckHaven users or operators.
-
----
-
-## 10. MVP Scope (definitive)
-
-*Unchanged from v0.2 — the scope statement is still the target.* See §16
-for current vs target coverage.
-
----
-
-## 11. Milestones
-
-| M | Goal | Status | Notes |
-|---|---|---|---|
-| **M0 — Walking spike** | One hardcoded SELECT through control plane + one agent. | ✓ Complete | Validated end-to-end during M2 build-out; D1/D14/D16 covered by integration of `agent/control/channel.py` + `api/routers/agents_ws.py`. |
-| **M1 — UX on mocked backend** | High-fidelity React UI against §6 mock, including engine selector and backend registry. | ✓ Complete (PR #18 — `b7485fa`) | All screens shipped; MSW handlers under `web/src/mock/handlers/*`. |
-| **M2 — Backend wiring** | Real FastAPI + Postgres + agent control protocol satisfy the M1 contract. | ✓ Complete (PR #19 — `5af1ce2`) | Auth (D3), workspaces (D6/D10), queries (D5), agents (D14–D17 partial), saved queries, audit (D11 partial), storage backends (D6). |
-| **M3 — Catalog + writes** | Create Table via UC REST against any of the four backend kinds; INSERT from worksheet. | ✓ Complete (branch `feat/m3-catalog-writes`) | Closes G-D7-*, G-D8-*, G-D9-*, G-D11-*, G-D17-c. Schemas/tables endpoints + SQL allowlist + UC credential vending + audit `user_id` all landed. |
-| **M4 — Multi-agent + hardening** | Two registered agents; engine selector exercised under load; production-ready single-control-plane box. | ○ Pending | Closes G-D2-a (DuckDB interrupt), G-D5-a (retention sweep), G-D10-a (UC permission mirror), G-D12-b (pin api image), G-D17-a/b (heartbeat caps + server-side compat check), G-D18-* (cron + banner). |
-
-**Total estimated wall time remaining: ~2 weeks** (M4 only).
-
----
-
-## 12. Risks
-
-*v0.2's risks remain accurate; current standings updated below.*
-
-| ID | Risk | L | I | Mitigation | Standing |
-|---|---|---|---|---|---|
-| R1 | Agent control protocol has rough edges at scale | M | M | Validated by `test_channel.py`; small JSON protocol | Lowered after M2 — cancel + reconnect paths green |
-| R2 | Dial-home breaks behind aggressive NAT / firewalls | L | M | Tailscale removes most NAT; runbook covers MTU | Unchanged |
-| R3 | UC credential vending becomes the bottleneck on hot dispatch | M | M | Cache vended creds per (agent, workspace) for ~½ TTL | Implemented in `services/uc_credentials.py` (half-TTL refresh) |
-| R4 | DuckHaven ↔ UC grant drift | M | M | v1.1 reconciliation cron | Not yet exercised — gated by G-D10-a (M4) |
-| R5 | Agent crash mid-query loses materialized results | M | L | Re-runnable from saved SQL; D5 marks queries failed cleanly | Unchanged |
-| R6 | DuckDB UC extension write path has rough edges on cloud backends | M | H | Spikes S3/S5 cover write paths | Confirmed rough: UC OSS 0.4.0 missing `/delta/preview/commits`; S3 local-fs spike currently skipped, cloud variants env-gated |
-| R7 | INSERT against a non-CC table corrupts data | M | H | DuckHaven refuses INSERT against non-CC tables (D9) | Enforced — every DuckHaven-created table sets `delta.feature.catalogManaged=supported`; SQL allowlist rejects DDL outside `POST /tables` |
-| R8 | Operator misconfigures a workspace backend | M | M | UC `external_locations` validated at workspace-create | Eager UC catalog create on `POST /workspaces` rolls back the pg row on UC failure |
-| R9 | Tailscale outage = total platform outage | L | H | Document static-IP fallback in runbook | Unchanged |
-| R10 | SSD failure on FS/NAS-backed workspace → data loss | L | C | Conditional UI banner (D18); v1.x `restic` | Banner G-D18-c |
-| R11 | Catalog metadata loss | L | H | Nightly `pg_dump` (D18) | Script exists, cron pending (G-D18-a) |
-| R12 | Pure UI-first sequencing forces backend rework | H | M | M0 spike grounds the contract | **Resolved** — M2 satisfied the §6 contract M1 was built against |
-
----
-
-## 13. Validation Spikes (status post-M2)
-
-| Spike | Topic | Status |
-|---|---|---|
-| **S1** | Agent control protocol (WS + range reads, cancel, disconnect→requeue) | ✓ Passed — covered by `agent/tests/unit/control/test_channel.py` + `api/tests/unit/test_queries.py` |
-| **S2** | UC OSS + DuckDB attach (local FS) | ✓ Passed — `api/tests/integration/test_uc_smoke.py` |
-| **S3** | UC Create-Managed-Delta from Python on each backend | ◐ Blocked on UC OSS upstream — `agent/tests/integration/test_create_table.py::test_create_table_local_fs` is skipped because UC OSS 0.4.0 does not implement `/api/2.1/unity-catalog/delta/preview/commits` (required by DuckDB's `unity_catalog` extension v0202409) and does not bootstrap the table's `_delta_log`. Cloud variants stay env-gated; re-enable when UC OSS ships coordinated-commits |
-| **S4** | Memory cap + supervisor on the agent (OOM + wall-clock) | ◐ Partial — wall-clock passes; OOM / DuckDB interrupt not yet stress-tested (G-D2-a) |
-| **S5** | UC credential vending end-to-end | ✓ Passed (local-fs/no-cred path) — `api/tests/integration/test_cred_vending.py`; S3/ADLS variants stay env-gated |
-
----
-
-## 14. Open Questions
-
-*All v0.2 questions still apply; revised standings:*
-
-1. **Q1.** Does UC's Python client cover Create-Managed-Delta-Table for all
-   backend kinds, or do we hand-roll REST? **Resolved (S3):** the
-   `unitycatalog` SDK covers catalog/schema CRUD and table create with
-   properties; `temporary-table-credentials` and other gaps are handled
-   by raw `httpx` in `services/unity_catalog.py`.
-2. **Q2.** UC credential-vending TTLs vs DuckDB's per-query lifetime — do
-   we refresh mid-query, or size TTL conservatively? **Resolved (S5):**
-   `services/uc_credentials.py` refreshes at half-TTL
-   (`cred_safety_window_s` default = `max(300, vended_ttl_s / 2)`);
-   per-query connections die before the cred does.
-3. **Q3.** Result-set retention — 24h agent-local default; revisit after
-   first user feedback. **Open — gated on G-D5-a implementation.**
-4. **Q4.** Workspace deletion semantics — refuse (require manual cleanup).
-   **MVP answer holds.**
-5. **Q5.** Agent-restart policy on OOM. **Open — M4.**
-6. **Q6.** Should saved queries pin an `agent_id` strictly, or just suggest
-   the last-used one? **Decided — suggest.** `default_agent_id` on
-   `saved_queries` is informational only.
-
----
-
-## 15. Future Expansion
-
-*Unchanged from v0.2.*
-
-- **v1.x writes maturity:** SSE-streamed results, worksheet-driven
-  `OPTIMIZE/VACUUM`, external **Quack endpoint** for BI clients with PAT
-  auth.
-- **v1.x DR for FS/NAS backends:** `restic` snapshots of the backend root
-  to NAS or object storage.
-- **v1.x observability:** `/metrics` Prometheus endpoints on the control
-  plane and each agent; drop-in Grafana dashboard; per-agent dashboards.
-- **v1.x agent labels + scoped routing** (builds on D17 capability
-  advertisement): workspaces declare required labels; control plane filters
-  the engine picker. Enables compliance ("eu-only agents") and class
-  selection ("large-mem agents").
-- **v2 UPDATE/MERGE/DELETE** when DuckDB ships them — widen the SQL
-  allowlist (D8); no other changes.
-- **v2 row-/column-level security** via query rewriting.
-- **v2 notebook UI** if demand emerges; reuses D5's query lifecycle.
-- **v2 heterogeneous engines** (Spark, Trino, Polars) — the agent contract
-  was drawn so an additional engine type plugs in at D1/D16/D17 without
-  changing the control plane's data model.
-- **v2 per-table backend override** if users need hot/cold tiering inside
-  a single workspace.
-- **v3 control-plane HA** if a single box is outgrown — Postgres replica,
-  UC HA, multiple FastAPI instances behind a load balancer.
-
----
-
-## 16. Implementation Status & Known Gaps (new)
-
-Per-decision summary (status from §4):
-
-| Decision | Status | Notes |
-|---|---|---|
-| D1 dispatch-only control plane | ✓ | Wired end-to-end |
-| D2 memory + timeout cap | ◐ | No DuckDB interrupt yet (G-D2-a) |
-| D3 local auth | ✓ | bcrypt-12, sessions, admin seed script |
-| D4 SQL worksheets only | ✓ | |
-| D5 async query lifecycle | ✓ | Retention sweep pending (G-D5-a) |
-| D6 pluggable storage backends | ✓ | Registry + workspace binding |
-| D7 UC catalog + credential vendor | ✓ | UC client + half-TTL cred cache wired |
-| D8 DDL via UC REST | ✓ | Schemas/tables endpoints + parse-only allowlist |
-| D9 Catalog Commits ON | ✓ | `delta.feature.catalogManaged=supported` set on every DuckHaven-created table |
-| D10 workspace permissions | ✓ | UC mirror deferred to M4 (G-D10-a) |
-| D11 audit log | ✓ | `queries.user_id` + `?user=` filter |
-| D12 deployment | ◐ | Agent image build + `:latest` pin pending |
-| D13 UI-first | ✓ | |
-| D14 agent dial-home | ✓ | Result-server bearer plumbing pending |
-| D15 user picks engine | ✓ | |
-| D16 WS + Range protocol | ✓ | Bearer + progress persistence pending |
-| D17 capability advertisement | ◐ | Heartbeat re-advertise + server-side compat check pending |
-| D18 DR | ◐ | Script exists, cron + banner pending |
-
-### Outstanding gaps tracker
-
-| ID | Gap | Closes in |
-|---|---|---|
-| G-D2-a | Wire DuckDB query interrupt into supervisor; today only `asyncio.wait_for` fires | M4 |
-| G-D2-b | Per-host operator ceiling cap on memory/timeout overrides | M4 |
-| G-D5-a | 24h result-Parquet retention sweep on agent (`/var/duckhaven-agent/results`) | M4 |
-| G-D10-a | UC permission mirror — replicate `workspace_members` to UC grants as defense-in-depth | M4 |
-| G-D12-a | Build + publish a versioned `duckhaven-agent` image | ✓ Done — `.github/workflows/build.yml` builds + pushes both images on `v*.*.*` tags |
-| G-D12-b | Pin `duckhaven-api` image to a version tag (drop `:latest`) | ✓ Done (M4) — compose pins `${DUCKHAVEN_API_IMAGE:-duckhaven-api:0.1.0}` |
-| G-D14-a | Agent receives session token in `auth_ok` and configures its HTTP bearer from it | M4 |
-| G-D16-a | Control-plane row-read proxy signs upstream requests with the agent bearer | M4 |
-| G-D16-b | Persist `query_progress` so `GET /queries/{id}` can stream progress | M4+ |
-| G-D17-a | Agent re-sends `agent_status` on each heartbeat (currently only on connect) | M4 |
-| G-D17-b | `api/services/query.py` enforces backend-extension compatibility at dispatch (currently only the React `AgentPicker` checks) | M4 |
-| G-D18-a | `scripts/pg-backup.sh` wired into cron / systemd timer | M4 |
-| G-D18-b | Document second-disk target in runbook (script defaults to local path) | M4 |
-| G-D18-c | Conditional DR banner in web UI for `local_fs` / `nas` workspaces | M4 |
-
----
-
-*End of architecture document.*
+*This document describes the structure and invariants of DuckHaven. When the
+structure changes, update this map; when only progress changes, update the
+tracker instead.*

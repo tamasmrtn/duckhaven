@@ -31,6 +31,17 @@ async def test_bootstrap_creates_token(admin_client: AsyncClient):
     data = resp.json()
     assert data["token"].startswith("dh_boot_")
     assert "expires_at" in data
+    assert data["control_plane_url"].endswith("/agents/connect")
+    assert data["agent_image"].startswith("ghcr.io/")
+
+
+async def test_bootstrap_derives_wss_from_forwarded_proto(admin_client: AsyncClient):
+    resp = await admin_client.post(
+        "/admin/agents/bootstrap",
+        headers={"X-Forwarded-Proto": "https", "X-Forwarded-Host": "duckhaven.example.com"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["control_plane_url"] == "wss://duckhaven.example.com/agents/connect"
 
 
 async def test_list_agents_empty(admin_client: AsyncClient):

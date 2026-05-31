@@ -26,8 +26,26 @@ import {
   useBootstrapAgent,
   useRevokeAgent,
 } from "@/queries/agents";
-import type { Agent, AgentStatus } from "@/types/agent";
+import type { Agent, AgentStatus, BootstrapToken } from "@/types/agent";
 import { cn } from "@/utils";
+
+function buildComposeSnippet(token: BootstrapToken): string {
+  return [
+    "services:",
+    "  duckhaven-agent:",
+    `    image: ${token.agent_image}`,
+    "    restart: unless-stopped",
+    "    environment:",
+    `      CONTROL_PLANE_URL: ${token.control_plane_url}`,
+    `      BOOTSTRAP_TOKEN: ${token.token}`,
+    "    volumes:",
+    "      - agent_results:/var/duckhaven-agent/results",
+    "",
+    "volumes:",
+    "  agent_results:",
+    "",
+  ].join("\n");
+}
 
 const statusIcon: Record<AgentStatus, React.ReactNode> = {
   healthy: <CheckCircle2 className="size-4 text-[var(--status-success)]" />,
@@ -150,10 +168,7 @@ interface BootstrapModalProps {
 
 function BootstrapModal({ open, onClose }: BootstrapModalProps) {
   const bootstrap = useBootstrapAgent();
-  const [token, setToken] = useState<{
-    token: string;
-    expires_at: string;
-  } | null>(null);
+  const [token, setToken] = useState<BootstrapToken | null>(null);
   const [copied, setCopied] = useState(false);
 
   function handleGenerate() {
@@ -164,7 +179,7 @@ function BootstrapModal({ open, onClose }: BootstrapModalProps) {
 
   function handleCopy() {
     if (!token) return;
-    void navigator.clipboard.writeText(token.token);
+    void navigator.clipboard.writeText(buildComposeSnippet(token));
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
@@ -177,39 +192,53 @@ function BootstrapModal({ open, onClose }: BootstrapModalProps) {
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && handleClose()}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Generate bootstrap token</DialogTitle>
+          <DialogTitle>Add an agent</DialogTitle>
         </DialogHeader>
         {!token ? (
           <div className="space-y-4 py-2">
             <p className="text-sm text-text-secondary">
-              Generate a one-time token to register a new agent. Valid for 24
-              hours.
+              Generate a one-time bootstrap token and a ready-to-paste compose
+              snippet for a new agent host. Token is valid for 24 hours.
             </p>
             <Button
               onClick={handleGenerate}
               disabled={bootstrap.isPending}
               className="w-full"
             >
-              {bootstrap.isPending ? "Generating…" : "Generate token"}
+              {bootstrap.isPending ? "Generating…" : "Generate snippet"}
             </Button>
           </div>
         ) : (
           <div className="space-y-4 py-2">
+            <p className="text-sm text-text-secondary">
+              On the new agent host, save the snippet below as
+              <code className="mx-1 rounded bg-[var(--bg-code)] px-1 py-0.5 font-mono text-xs">
+                docker-compose.yml
+              </code>
+              and run
+              <code className="mx-1 rounded bg-[var(--bg-code)] px-1 py-0.5 font-mono text-xs">
+                docker compose up -d
+              </code>
+              .
+            </p>
             <p className="text-xs text-[var(--status-running)] font-medium">
               This is the only time this token will be shown.
             </p>
-            <div className="flex items-center gap-2 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-code)] p-3">
-              <code className="flex-1 font-mono text-xs break-all text-text-primary">
-                {token.token}
-              </code>
+            <div className="relative">
+              <pre
+                className="overflow-x-auto rounded-md border border-[var(--border-subtle)] bg-[var(--bg-code)] p-3 font-mono text-xs text-text-primary"
+                data-testid="agent-compose-snippet"
+              >
+                {buildComposeSnippet(token)}
+              </pre>
               <Button
                 variant="ghost"
                 size="icon"
-                className="size-7 shrink-0"
+                className="absolute right-2 top-2 size-7"
                 onClick={handleCopy}
-                aria-label="Copy token"
+                aria-label="Copy compose snippet"
               >
                 {copied ? (
                   <RefreshCw className="size-3.5 text-[var(--status-success)]" />
@@ -219,7 +248,7 @@ function BootstrapModal({ open, onClose }: BootstrapModalProps) {
               </Button>
             </div>
             <p className="text-2xs text-text-tertiary">
-              Expires: {new Date(token.expires_at).toLocaleString()}
+              Token expires: {new Date(token.expires_at).toLocaleString()}
             </p>
             <Button variant="outline" className="w-full" onClick={handleClose}>
               Done

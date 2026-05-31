@@ -15,6 +15,8 @@ export const agentHandlers = [
     return HttpResponse.json({
       token,
       expires_at: new Date(Date.now() + 86400000).toISOString(),
+      control_plane_url: "ws://localhost:8000/agents/connect",
+      agent_image: "ghcr.io/tamasmrtn/duckhaven-agent:latest",
     });
   }),
 

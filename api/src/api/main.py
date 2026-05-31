@@ -8,7 +8,7 @@ from starlette.staticfiles import StaticFiles
 from starlette.types import Scope
 
 from api.config import settings
-from api.routers import agents, agents_ws, auth, queries, schemas, setup, workspaces
+from api.routers import agents, agents_ws, auth, health, queries, schemas, setup, workspaces
 from api.routers.admin import agents as admin_agents
 from api.routers.admin import audit as admin_audit
 from api.routers.admin import storage as admin_storage
@@ -42,6 +42,7 @@ api_app.add_middleware(
     allow_headers=["*"],
 )
 
+api_app.include_router(health.router, tags=["health"])
 api_app.include_router(setup.router)
 api_app.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_app.include_router(auth.me_router, tags=["auth"])

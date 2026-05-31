@@ -42,38 +42,40 @@ describe('AgentsPage', () => {
     await user.click(btn)
 
     await waitFor(() => {
-      expect(screen.getByText('Generate bootstrap token')).toBeInTheDocument()
+      expect(screen.getByRole('heading', { name: /add an agent/i })).toBeInTheDocument()
     })
   })
 
-  it('displays a token after clicking Generate token', async () => {
+  it('renders a copy-pasteable compose snippet after generating', async () => {
     const user = userEvent.setup()
     renderWithProviders({ initialRoute: AGENTS_ROUTE })
     await user.click(await screen.findByRole('button', { name: /generate bootstrap/i }))
-    await user.click(await screen.findByRole('button', { name: /generate token/i }))
+    await user.click(await screen.findByRole('button', { name: /generate snippet/i }))
 
-    await waitFor(() => {
-      expect(screen.getByText(/dh_boot_/)).toBeInTheDocument()
-      expect(screen.getByLabelText('Copy token')).toBeInTheDocument()
-    })
+    const snippet = await screen.findByTestId('agent-compose-snippet')
+    expect(snippet.textContent).toMatch(/dh_boot_/)
+    expect(snippet.textContent).toContain('CONTROL_PLANE_URL: ws://localhost:8000/agents/connect')
+    expect(snippet.textContent).toContain('image: ghcr.io/tamasmrtn/duckhaven-agent:latest')
+    expect(snippet.textContent).toContain('restart: unless-stopped')
+    expect(screen.getByLabelText('Copy compose snippet')).toBeInTheDocument()
   })
 
-  it('clears the token when the modal is closed and reopened', async () => {
+  it('clears the snippet when the modal is closed and reopened', async () => {
     const user = userEvent.setup()
     renderWithProviders({ initialRoute: AGENTS_ROUTE })
 
     // Open → generate → close
     await user.click(await screen.findByRole('button', { name: /generate bootstrap/i }))
-    await user.click(await screen.findByRole('button', { name: /generate token/i }))
-    await screen.findByText(/dh_boot_/)
+    await user.click(await screen.findByRole('button', { name: /generate snippet/i }))
+    await screen.findByTestId('agent-compose-snippet')
     await user.click(screen.getByRole('button', { name: /^done$/i }))
 
-    // Reopen — should show the generate button, not the token
+    // Reopen — should show the generate button, not the snippet
     await user.click(await screen.findByRole('button', { name: /generate bootstrap/i }))
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /generate token/i })).toBeInTheDocument()
-      expect(screen.queryByText(/dh_boot_/)).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /generate snippet/i })).toBeInTheDocument()
+      expect(screen.queryByTestId('agent-compose-snippet')).not.toBeInTheDocument()
     })
   })
 })

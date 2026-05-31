@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     # deploy/init-secrets.sh on first boot and deleted by the API after the
     # first admin is created.
     setup_token_path: Path = Path("/var/duckhaven/secrets/setup_token")
+    # Image self-hosters pull when running a new agent. Surfaced verbatim in
+    # the add-agent compose snippet (admin UI).
+    agent_image: str = "ghcr.io/tamasmrtn/duckhaven-agent:latest"
 
 
 settings = Settings()

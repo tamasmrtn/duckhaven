@@ -311,14 +311,61 @@ erDiagram
     agents ||--o{ credentials : "session token"
     agents ||--o{ queries : executes
 
-    users { uuid id; string email; string password_hash; string role }
-    credentials { uuid id; uuid user_id; uuid agent_id; string kind; string token; datetime expires_at }
-    workspaces { uuid id; string slug; uuid storage_backend_id }
-    workspace_members { uuid workspace_id; uuid user_id; string role }
-    storage_backends { uuid id; string kind; string name; string root_uri }
-    agents { uuid id; string name; string status; json capabilities; string result_host; int result_port }
-    queries { uuid id; uuid workspace_id; uuid agent_id; uuid user_id; text sql; string status; int row_count; json progress; string result_path }
-    saved_queries { uuid id; uuid workspace_id; text sql; uuid default_agent_id }
+    users {
+        uuid id
+        string email
+        string password_hash
+        string role
+    }
+    credentials {
+        uuid id
+        uuid user_id
+        uuid agent_id
+        string kind
+        string token
+        datetime expires_at
+    }
+    workspaces {
+        uuid id
+        string slug
+        uuid storage_backend_id
+    }
+    workspace_members {
+        uuid workspace_id
+        uuid user_id
+        string role
+    }
+    storage_backends {
+        uuid id
+        string kind
+        string name
+        string root_uri
+    }
+    agents {
+        uuid id
+        string name
+        string status
+        json capabilities
+        string result_host
+        int result_port
+    }
+    queries {
+        uuid id
+        uuid workspace_id
+        uuid agent_id
+        uuid user_id
+        text sql
+        string status
+        int row_count
+        json progress
+        string result_path
+    }
+    saved_queries {
+        uuid id
+        uuid workspace_id
+        text sql
+        uuid default_agent_id
+    }
 ```
 
 Notes that matter for changes:
@@ -365,7 +412,7 @@ sequenceDiagram
     API->>PG: status=running
     API-->>UI: 202 {id, status}
 
-    AG->>AG: SET memory_limit; CREATE SECRET; ATTACH UC catalog
+    AG->>AG: SET memory_limit, CREATE SECRET, ATTACH UC catalog
     AG->>ST: COPY (sql) TO results/{id}.parquet
     AG->>API: query_done frame {row_count, duration_ms, result_path}
     API->>PG: update query (status=done, ...)

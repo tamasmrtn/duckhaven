@@ -1,6 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { workspacesApi } from "@/api/workspaces";
-import type { BackendKind } from "@/types/storage-backend";
 
 export function useWorkspaces() {
   return useQuery({
@@ -32,7 +31,6 @@ export function useCreateWorkspace() {
       slug: string;
       name: string;
       storage_backend_id: string;
-      kind: BackendKind;
     }) => workspacesApi.create(data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["workspaces"] });

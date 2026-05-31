@@ -17,11 +17,12 @@ async def run_query(
     storage_credentials: dict[str, Any] | None = None,
     workspace_slug: str | None = None,
     uc_endpoint: str | None = None,
-) -> dict[str, int]:
+    stats_for: dict[str, str] | None = None,
+) -> dict[str, Any]:
     loop = asyncio.get_running_loop()
     conn_box: dict[str, duckdb.DuckDBPyConnection] = {}
 
-    def _run() -> dict[str, int]:
+    def _run() -> dict[str, Any]:
         return run_query_sync(
             sql,
             result_path,
@@ -30,6 +31,7 @@ async def run_query(
             storage_credentials=storage_credentials,
             workspace_slug=workspace_slug,
             uc_endpoint=uc_endpoint,
+            stats_for=stats_for,
             on_connect=lambda c: conn_box.__setitem__("conn", c),
         )
 

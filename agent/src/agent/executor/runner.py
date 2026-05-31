@@ -96,8 +96,9 @@ def run_query_sync(
     storage_credentials: dict[str, Any] | None = None,
     workspace_slug: str | None = None,
     uc_endpoint: str | None = None,
+    stats_for: dict[str, str] | None = None,
     on_connect: Callable[[duckdb.DuckDBPyConnection], None] | None = None,
-) -> dict[str, int]:
+) -> dict[str, Any]:
     """Run a query through DuckDB and materialize the result to Parquet.
 
     Optional kwargs (passed by the control plane in M3):
@@ -160,6 +161,21 @@ def run_query_sync(
             f"SELECT count(*) FROM read_parquet('{result_path}')"
         ).fetchone()
         row_count = row_count_result[0] if row_count_result else 0
-        return {"row_count": row_count, "duration_ms": duration_ms}
+        result: dict[str, Any] = {"row_count": row_count, "duration_ms": duration_ms}
+
+        # When asked, compute true table stats on the same UC-attached connection.
+        # size_bytes has no reliable cross-backend source yet, so it stays null.
+        if stats_for:
+            schema = stats_for.get("schema")
+            table = stats_for.get("table")
+            if schema and table:
+                try:
+                    cnt = conn.execute(f'SELECT count(*) FROM "{schema}"."{table}"').fetchone()
+                    result["table_row_count"] = cnt[0] if cnt else None
+                except Exception as exc:  # noqa: BLE001 - stats are best-effort
+                    logger.warning("Table stats failed for %s.%s: %s", schema, table, exc)
+                    result["table_row_count"] = None
+                result["table_size_bytes"] = None
+        return result
     finally:
         conn.close()

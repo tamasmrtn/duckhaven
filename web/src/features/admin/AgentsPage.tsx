@@ -5,8 +5,10 @@ import {
   AlertCircle,
   Copy,
   RefreshCw,
+  Server,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/app/EmptyState";
 import {
   Sheet,
   SheetContent,
@@ -27,7 +29,7 @@ import {
   useRevokeAgent,
 } from "@/queries/agents";
 import type { Agent, AgentStatus, BootstrapToken } from "@/types/agent";
-import { cn } from "@/utils";
+import { cn, plural } from "@/utils";
 
 function buildComposeSnippet(token: BootstrapToken): string {
   return [
@@ -214,11 +216,11 @@ function BootstrapModal({ open, onClose }: BootstrapModalProps) {
           <div className="space-y-4 py-2">
             <p className="text-sm text-text-secondary">
               On the new agent host, save the snippet below as
-              <code className="mx-1 rounded bg-[var(--bg-code)] px-1 py-0.5 font-mono text-xs">
+              <code className="mx-1 rounded bg-[var(--bg-code)] px-1 py-0.5 font-mono text-xs text-[var(--text-code)]">
                 docker-compose.yml
               </code>
               and run
-              <code className="mx-1 rounded bg-[var(--bg-code)] px-1 py-0.5 font-mono text-xs">
+              <code className="mx-1 rounded bg-[var(--bg-code)] px-1 py-0.5 font-mono text-xs text-[var(--text-code)]">
                 docker compose up -d
               </code>
               .
@@ -228,7 +230,7 @@ function BootstrapModal({ open, onClose }: BootstrapModalProps) {
             </p>
             <div className="relative">
               <pre
-                className="overflow-x-auto rounded-md border border-[var(--border-subtle)] bg-[var(--bg-code)] p-3 font-mono text-xs text-text-primary"
+                className="overflow-x-auto rounded-md border border-[var(--border-subtle)] bg-[var(--bg-code)] p-3 font-mono text-xs text-[var(--text-code)]"
                 data-testid="agent-compose-snippet"
               >
                 {buildComposeSnippet(token)}
@@ -269,7 +271,7 @@ export function AgentsPage() {
     <div className="flex h-full flex-col overflow-hidden">
       <div className="flex items-center justify-between border-b border-[var(--border-subtle)] px-6 py-3 shrink-0">
         <p className="text-xs text-text-secondary font-tabular">
-          {agents.length} agents
+          {plural(agents.length, "agent")}
         </p>
         <Button
           size="sm"
@@ -290,6 +292,21 @@ export function AgentsPage() {
               />
             ))}
           </div>
+        ) : agents.length === 0 ? (
+          <EmptyState
+            icon={Server}
+            title="No agents connected"
+            description="Generate a bootstrap token to connect an agent host."
+            action={
+              <Button
+                size="sm"
+                className="h-8 text-xs"
+                onClick={() => setBootstrapOpen(true)}
+              >
+                Generate bootstrap
+              </Button>
+            }
+          />
         ) : (
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-[var(--bg-surface)] z-10">

@@ -23,7 +23,7 @@ export function AuditPage() {
     <div className="flex h-full flex-col overflow-hidden">
       <div className="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] px-6 py-3 shrink-0">
         <p className="text-xs text-text-secondary font-tabular">
-          {queries.length} entries
+          {queries.length === 1 ? "1 entry" : `${queries.length} entries`}
         </p>
         <Input
           aria-label="filter by user id"

@@ -99,51 +99,29 @@ For the full architecture, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For
 | Containerisation | Docker Compose (control plane); single container per agent |
 | Tests | pytest + pytest-asyncio (api, agent); Vitest + React Testing Library + MSW (web) |
 
-## Getting Started
-
-### Prerequisites
-
-- Docker Engine 24+ and Docker Compose v2
-- A Linux host for the control plane (8 GB RAM minimum)
-- One or more Linux hosts/VMs for agents (8 GB RAM each)
-- (Recommended) Tailscale for a private network mesh
-
-### Control plane
+## Quickstart
 
 ```bash
 curl -O https://raw.githubusercontent.com/tamasmrtn/duckhaven/main/deploy/docker-compose.yml
 docker compose up -d
-
-# Read the one-shot setup token, then open http://<host>:8000 and paste it
-# into the form to create the first admin.
 docker compose exec api cat /var/duckhaven/secrets/setup_token
+# open http://<host>:8000 and paste the token into the setup screen
 ```
 
-Migrations apply automatically and `POSTGRES_PASSWORD` / `SECRET_KEY`
-are generated on first boot — no `git clone`, no `.env` editing
-required. To override either secret (e.g. to share a value across
-hosts), see [`deploy/.env.example`](deploy/.env.example).
+That is the whole install — no `git clone`, no `.env` editing, no
+`make` on the host. Secrets generate on first boot, migrations apply
+inside the api container, the first admin is created from the browser.
 
-This brings up Postgres, Unity Catalog OSS, and the FastAPI API on port 8000. To explore the UI locally, run `make dev-web` and open [http://localhost:5173](http://localhost:5173); log in with the credentials you just seeded. In a deployment, the API is reachable directly at `http://<control-plane-host>:8000`.
+## Self-hosting docs
 
-### Agent
+- [Install](docs/self-hosting/install.md)
+- [Update](docs/self-hosting/update.md)
+- [Reverse proxy + TLS (Caddy)](docs/self-hosting/reverse-proxy.md)
+- [Backup & restore](docs/self-hosting/backup-restore.md)
+- [Add an agent](docs/self-hosting/add-agent.md)
 
-Agents run DuckDB and are deployed separately — one container per host/VM. Generate a bootstrap token in the admin UI (Admin → Agents), then run the agent container with the token and the control-plane URL. See [docs/AGENTS.md](docs/AGENTS.md) for full agent setup.
-
-See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for production deployment and [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for local development.
-
-## Environment Variables
-
-Every control-plane variable is optional — with no `deploy/.env`, the stack auto-generates persistent secrets on first boot.
-
-| Variable | Default | Description |
-|---|---|---|
-| `POSTGRES_PASSWORD` | _random, persisted_ | Postgres password. Auto-generated on first boot and stored in the `secrets` volume; set this only to override (e.g. when sharing a value across hosts). |
-| `SECRET_KEY` | _random, persisted_ | Session-cookie signing key. Same behaviour as above. |
-| `COOKIE_SECURE` | `false` | Set `true` when serving over HTTPS behind a TLS terminator. |
-| `DUCKHAVEN_IMAGE_TAG` | `latest` | Image tag pulled from `ghcr.io/tamasmrtn/duckhaven-api`. Pin to a release tag (e.g. `v1.2.3`) for predictable upgrades. |
-
-Agent-side variables (`CONTROL_PLANE_URL`, `BOOTSTRAP_TOKEN`, `RESULTS_DIR`, …) are documented in [docs/AGENTS.md](docs/AGENTS.md).
+For local development (running the API and Vite dev server against a
+compose-managed Postgres) see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Roadmap
 

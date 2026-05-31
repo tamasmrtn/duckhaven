@@ -36,31 +36,24 @@ make compose-up
 ```
 
 This starts Postgres, Unity Catalog OSS, and the FastAPI app. The app serves
-both the REST API (under `/api`) and the web UI on port 8000.
+both the REST API (under `/api`) and the web UI on port 8000. Alembic
+migrations apply automatically as part of the api container's entrypoint —
+no separate `make migrate` step.
 
-### 3. Run migrations
+### 3. Create the first admin (browser)
 
-```bash
-make compose-migrate
-```
-
-This runs Alembic inside the `api` container, which already reaches Postgres
-on the compose network. (`make migrate` runs against a local dev database and
-is not used for the compose deployment.)
-
-### 4. Seed the admin user
+On first boot the `init-secrets` service writes a one-shot setup token to
+the secrets volume. Read it on the host:
 
 ```bash
-make compose-seed email=admin@example.com password=<strong-password>
+docker compose exec api cat /var/duckhaven/secrets/setup_token
 ```
 
-This creates the first admin account, also from inside the `api` container.
-Run it once against a fresh database.
-
-### 5. Access the app
-
-Open `http://<control-plane-host>:8000` — the web UI is served by the API at that
-address. (`http://localhost:5173` is the Vite dev server, for local development only.)
+Open `http://<control-plane-host>:8000` in a browser. The SPA detects an
+empty database and routes you to the setup screen. Paste the token, pick
+admin credentials, submit. The token file is consumed (deleted) after the
+admin is created and is **not** regenerated on subsequent boots — to start
+over you must `docker compose down -v` (which wipes Postgres too).
 
 ## Agent Deployment
 
@@ -159,10 +152,10 @@ Data lives on your storage backends, not in DuckHaven. Back up backend roots acc
 ## Updating
 
 ```bash
-# Pull the latest published images and restart the stack
+# Pull the latest published images and restart the stack. Migrations apply
+# automatically when the api container starts.
 make compose-pull
 make compose-up
-make compose-migrate
 
 # Restart agents with new image
 docker pull ghcr.io/tamasmrtn/duckhaven-agent:latest
@@ -176,6 +169,6 @@ docker restart duckhaven-agent
 | Agent shows `unavailable` | Agent not connected | Check agent logs (`docker logs duckhaven-agent`), verify `CONTROL_PLANE_URL` and `BOOTSTRAP_TOKEN` |
 | Query fails with `missing extension` | Agent lacks backend extension | Rebuild agent image or pick a different agent |
 | UC connection errors | Unity Catalog not ready | Wait for UC healthcheck (`docker compose ps`), check `UC_BASE_URL` |
-| Login fails | Wrong password or session expired | Reset admin password via `scripts/seed-admin.py` |
+| Login fails | Wrong password or session expired | Reset admin password directly in Postgres (UPDATE users SET password_hash=…) or wipe everything with `docker compose down -v` and re-run setup |
 | Login succeeds but immediately logs out | `COOKIE_SECURE=true` over plain HTTP | Set `COOKIE_SECURE=false` (or front the API with TLS) |
 | Results not loading | Agent result server unreachable | Verify agent is running, check `RESULTS_HTTP_PORT` firewall rules |

@@ -111,17 +111,18 @@ For the full architecture, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For
 ### Control plane
 
 ```bash
-git clone https://github.com/tamasmrtn/duckhaven.git
-cd duckhaven
+curl -O https://raw.githubusercontent.com/tamasmrtn/duckhaven/main/deploy/docker-compose.yml
+docker compose up -d
 
-make compose-up
-make compose-migrate
-make compose-seed email=you@example.com password=changeme
+# Read the one-shot setup token, then open http://<host>:8000 and paste it
+# into the form to create the first admin.
+docker compose exec api cat /var/duckhaven/secrets/setup_token
 ```
 
-`POSTGRES_PASSWORD` and `SECRET_KEY` are generated on first boot and
-persisted to a docker volume — no `.env` editing required. To override
-either (e.g. to share a secret across hosts), see [`deploy/.env.example`](deploy/.env.example).
+Migrations apply automatically and `POSTGRES_PASSWORD` / `SECRET_KEY`
+are generated on first boot — no `git clone`, no `.env` editing
+required. To override either secret (e.g. to share a value across
+hosts), see [`deploy/.env.example`](deploy/.env.example).
 
 This brings up Postgres, Unity Catalog OSS, and the FastAPI API on port 8000. To explore the UI locally, run `make dev-web` and open [http://localhost:5173](http://localhost:5173); log in with the credentials you just seeded. In a deployment, the API is reachable directly at `http://<control-plane-host>:8000`.
 

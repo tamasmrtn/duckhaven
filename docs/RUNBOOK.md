@@ -21,10 +21,11 @@ directly on the host.
    Images are published to `ghcr.io/tamasmrtn/duckhaven-{api,agent}` by
    `.github/workflows/build.yml`: `:latest` on every main push, `:v1.2.3` /
    `:v1.2` / `:v1` on git tags. Built for `linux/amd64` and `linux/arm64`.
-2. Start the stack: `make compose-up`.
-3. Apply migrations: `make migrate` (runs `alembic upgrade head`).
-4. Seed the first admin: `uv run python scripts/seed-admin.py --email you@host
-   --password <pw> --name "You"`.
+2. Start the stack: `make compose-up`. Migrations apply automatically.
+3. Read the one-shot setup token:
+   `docker compose -f deploy/docker-compose.yml exec api cat /var/duckhaven/secrets/setup_token`.
+4. Open `http://<host>:8000` and create the first admin from the setup
+   screen using the token.
 5. The API listens on port `8000` on the Tailscale address only. There is no
    public ingress; the Tailscale/WireGuard tunnel encrypts the wire.
 

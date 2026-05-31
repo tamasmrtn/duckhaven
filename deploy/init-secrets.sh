@@ -24,5 +24,19 @@ write_if_absent() {
     chmod 644 "$path"
 }
 
+# Detect first boot via the cornerstone secret. The setup_token gates the
+# browser-driven first-admin creation (POST /api/setup/admin); it is generated
+# ONLY on first boot so a stranger reading the volume after the operator has
+# already created the admin cannot mint a fresh token.
+if [ ! -s "$SECRETS_DIR/secret_key" ]; then
+    FIRST_BOOT=1
+else
+    FIRST_BOOT=0
+fi
+
 write_if_absent secret_key "${SECRET_KEY:-}"
 write_if_absent postgres_password "${POSTGRES_PASSWORD:-}"
+
+if [ "$FIRST_BOOT" = 1 ]; then
+    write_if_absent setup_token ""
+fi

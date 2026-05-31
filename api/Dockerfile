@@ -53,12 +53,9 @@ COPY --from=builder /app/.venv /app/.venv
 # The built SPA, served by FastAPI at / (see api.main, settings.static_dir).
 COPY --from=ui-builder /web/dist /app/static
 
-# Migration assets and the admin-seed script, run in-container against the DB
-# (see `make compose-migrate` / `make compose-seed`). The DB URL is read from
-# the container's DATABASE_URL via api.config.settings.
+# Alembic migrations applied at container start by api-entrypoint.sh.
 COPY api/alembic.ini /app/alembic.ini
 COPY api/alembic /app/alembic
-COPY scripts/seed-admin.py /app/scripts/seed-admin.py
 
 # Entrypoint + init script. The init-secrets compose service runs init-secrets.sh
 # once on first boot; the api service uses api-entrypoint.sh to read the

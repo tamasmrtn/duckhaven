@@ -11,6 +11,7 @@
   --bg-surface: #f8fafc;
   --bg-elevated: #ffffff;
   --bg-code: #0b0f19;
+  --text-code: #e2e8f0;
 
   /* Borders */
   --border-subtle: #e2e8f0;
@@ -72,6 +73,7 @@
   --bg-surface: #111827;
   --bg-elevated: #1f2937;
   --bg-code: #0b0f19;
+  --text-code: #e2e8f0;
 
   --border-subtle: #1f2937;
   --border-strong: #374151;

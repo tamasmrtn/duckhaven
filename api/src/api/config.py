@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     cookie_secure: bool = True
     # Directory of the built SPA, served at / when present (baked into the image).
     static_dir: Path = Path("/app/static")
+    # File holding the one-shot first-admin setup token, written by
+    # deploy/init-secrets.sh on first boot and deleted by the API after the
+    # first admin is created.
+    setup_token_path: Path = Path("/var/duckhaven/secrets/setup_token")
 
 
 settings = Settings()

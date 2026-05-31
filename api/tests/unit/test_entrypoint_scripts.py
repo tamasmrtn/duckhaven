@@ -75,6 +75,23 @@ def test_init_secrets_env_override_ignored_after_first_boot(tmp_path: Path) -> N
     assert (tmp_path / "secret_key").read_text() == "first"
 
 
+def test_init_secrets_generates_setup_token_on_first_boot(tmp_path: Path) -> None:
+    _run(INIT_SCRIPT, {"SECRETS_DIR": str(tmp_path)})
+    setup_token = tmp_path / "setup_token"
+    assert setup_token.is_file() and setup_token.read_text()
+
+
+def test_init_secrets_does_not_regenerate_setup_token_after_consumed(tmp_path: Path) -> None:
+    # First boot: token generated.
+    _run(INIT_SCRIPT, {"SECRETS_DIR": str(tmp_path)})
+    # API consumed the token after first-admin creation.
+    (tmp_path / "setup_token").unlink()
+    # Subsequent boot must NOT mint a new one — otherwise a stranger reading
+    # the volume could create a second admin.
+    _run(INIT_SCRIPT, {"SECRETS_DIR": str(tmp_path)})
+    assert not (tmp_path / "setup_token").exists()
+
+
 def test_api_entrypoint_exports_secret_key_and_database_url(tmp_path: Path) -> None:
     (tmp_path / "secret_key").write_text("test-secret")
     (tmp_path / "postgres_password").write_text("pg-test-pw")

@@ -26,4 +26,11 @@ DB_NAME="${POSTGRES_DB:-duckhaven}"
 DATABASE_URL="postgresql+asyncpg://${DB_USER}:${POSTGRES_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}"
 export DATABASE_URL
 
+# Apply pending migrations before the app starts. Only runs inside the built
+# image where /app/alembic.ini exists; in unit tests of this script the file
+# is absent and the step is skipped.
+if [ -f /app/alembic.ini ]; then
+    alembic -c /app/alembic.ini upgrade head
+fi
+
 exec "$@"

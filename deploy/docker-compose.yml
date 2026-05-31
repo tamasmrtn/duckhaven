@@ -1,13 +1,32 @@
 services:
+  # One-shot: generate SECRET_KEY and POSTGRES_PASSWORD on first boot. Reuses
+  # the api image so the compose stack has a single base. Idempotent — on
+  # subsequent boots the files already exist and the script no-ops.
+  init-secrets:
+    image: ghcr.io/tamasmrtn/duckhaven-api:${DUCKHAVEN_IMAGE_TAG:-latest}
+    entrypoint: ["/usr/local/bin/init-secrets.sh"]
+    environment:
+      # Honour operator-supplied overrides if .env sets them; otherwise the
+      # script generates random values.
+      SECRET_KEY: ${SECRET_KEY:-}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+    volumes:
+      - secrets:/var/duckhaven/secrets
+    restart: "no"
+
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    depends_on:
+      init-secrets:
+        condition: service_completed_successfully
     environment:
       POSTGRES_DB: duckhaven
       POSTGRES_USER: duckhaven
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - secrets:/run/secrets:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U duckhaven"]
       interval: 5s
@@ -33,19 +52,21 @@ services:
     ports:
       - "8000:8000"
     depends_on:
+      init-secrets:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql+asyncpg://duckhaven:${POSTGRES_PASSWORD}@postgres:5432/duckhaven
       UC_BASE_URL: http://unity-catalog:8080
-      SECRET_KEY: ${SECRET_KEY}
       # Plain-HTTP deployment by default; the browser drops Secure cookies over
       # HTTP, which would break login. Set true only behind a TLS terminator.
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
     volumes:
       - api_data:/var/duckhaven
+      - secrets:/var/duckhaven/secrets:ro
 
 volumes:
   postgres_data:
   uc_data:
   api_data:
+  secrets:

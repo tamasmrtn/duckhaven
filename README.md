@@ -111,16 +111,17 @@ For the full architecture, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For
 ### Control plane
 
 ```bash
-git clone https://github.com/tmrtn/duckhaven.git
+git clone https://github.com/tamasmrtn/duckhaven.git
 cd duckhaven
-cp deploy/.env.example deploy/.env
-# Edit deploy/.env — set POSTGRES_PASSWORD and SECRET_KEY
 
-make install
 make compose-up
-make migrate
-make seed email=you@example.com password=changeme
+make compose-migrate
+make compose-seed email=you@example.com password=changeme
 ```
+
+`POSTGRES_PASSWORD` and `SECRET_KEY` are generated on first boot and
+persisted to a docker volume — no `.env` editing required. To override
+either (e.g. to share a secret across hosts), see [`deploy/.env.example`](deploy/.env.example).
 
 This brings up Postgres, Unity Catalog OSS, and the FastAPI API on port 8000. To explore the UI locally, run `make dev-web` and open [http://localhost:5173](http://localhost:5173); log in with the credentials you just seeded. In a deployment, the API is reachable directly at `http://<control-plane-host>:8000`.
 
@@ -132,13 +133,14 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for production deployment and [docs
 
 ## Environment Variables
 
-The control-plane stack reads these from `deploy/.env` (copy `deploy/.env.example` to start):
+Every control-plane variable is optional — with no `deploy/.env`, the stack auto-generates persistent secrets on first boot.
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `POSTGRES_PASSWORD` | yes | `changeme` | Password for the bundled Postgres (DuckHaven app state + UC metastore). |
-| `SECRET_KEY` | yes | `changeme-use-a-long-random-value` | Session-cookie signing key. Generate one with `openssl rand -hex 32`. |
-| `DUCKHAVEN_IMAGE_TAG` | no | `latest` | Image tag pulled from `ghcr.io/tamasmrtn/duckhaven-api`. Pin to a release tag (e.g. `v1.2.3`) for predictable upgrades. |
+| Variable | Default | Description |
+|---|---|---|
+| `POSTGRES_PASSWORD` | _random, persisted_ | Postgres password. Auto-generated on first boot and stored in the `secrets` volume; set this only to override (e.g. when sharing a value across hosts). |
+| `SECRET_KEY` | _random, persisted_ | Session-cookie signing key. Same behaviour as above. |
+| `COOKIE_SECURE` | `false` | Set `true` when serving over HTTPS behind a TLS terminator. |
+| `DUCKHAVEN_IMAGE_TAG` | `latest` | Image tag pulled from `ghcr.io/tamasmrtn/duckhaven-api`. Pin to a release tag (e.g. `v1.2.3`) for predictable upgrades. |
 
 Agent-side variables (`CONTROL_PLANE_URL`, `BOOTSTRAP_TOKEN`, `RESULTS_DIR`, …) are documented in [docs/AGENTS.md](docs/AGENTS.md).
 

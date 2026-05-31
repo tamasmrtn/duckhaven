@@ -11,11 +11,11 @@ The control plane is one `docker compose` stack (`deploy/docker-compose.yml`:
 `postgres`, `unity-catalog`, `api`). The `api` service publishes port `8000`
 directly on the host.
 
-1. Create `deploy/.env` with at least:
+1. (Optional) create `deploy/.env`. Defaults work — `POSTGRES_PASSWORD` and
+   `SECRET_KEY` are generated on first boot and persisted to the `secrets`
+   docker volume. Set values in `.env` only if you need to override them
+   (e.g. pinning a release tag):
    ```sh
-   POSTGRES_PASSWORD=<strong-password>
-   SECRET_KEY=<random-32+ bytes>
-   # Pin a release tag instead of riding latest:
    DUCKHAVEN_IMAGE_TAG=v1.2.3
    ```
    Images are published to `ghcr.io/tamasmrtn/duckhaven-{api,agent}` by

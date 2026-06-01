@@ -75,7 +75,7 @@ jobs:
           path: coverage.xml
 
   integration:
-    name: Integrations tests
+    name: Integration tests
     runs-on: ubuntu-latest
     needs: [python-test]
     services:

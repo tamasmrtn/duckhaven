@@ -200,7 +200,6 @@ async def test_dispatch_payload_carries_backend_and_no_credentials(
     assert payload["backend"] == {"kind": "s3", "root_uri": "s3://bucket/prefix"}
     assert payload["workspace"] == {"slug": "s3-ws"}
     assert "storage_credentials" not in payload
-    assert "unity_catalog" not in payload
     assert "catalog" not in payload
 
 
@@ -213,7 +212,7 @@ async def test_dispatch_rejects_agent_missing_extension(
     from api.models.workspace import Workspace, WorkspaceMember
 
     agent, mock_ws = connected_agent
-    agent.capabilities = {"extensions": ["httpfs", "delta"]}  # no azure
+    agent.capabilities = {"extensions": ["httpfs", "iceberg"]}  # no azure
     db_session.add(agent)
 
     sb = StorageBackend(

@@ -15,7 +15,7 @@ def test_local_and_nas_need_no_extension():
 
 def test_cloud_backend_requires_extension():
     assert agent_supports_backend({"extensions": ["httpfs"]}, "s3") is True
-    assert agent_supports_backend({"extensions": ["delta"]}, "s3") is False
+    assert agent_supports_backend({"extensions": ["iceberg"]}, "s3") is False
     assert agent_supports_backend({"extensions": ["azure"]}, "adls_gen2") is True
     assert agent_supports_backend({"extensions": []}, "adls_gen2") is False
     assert agent_supports_backend(None, "s3") is False

@@ -174,7 +174,7 @@ async def test_create_table_is_iceberg_with_mapped_columns(
     assert resp.status_code == 201, resp.text
     body = resp.json()
     assert body["name"] == "events"
-    # Iceberg tables are catalog-managed; no Delta feature properties.
+    # Every Iceberg REST table is catalog-managed by definition.
     assert body["format"] == body["data_source_format"] == "ICEBERG"
     assert body["catalog_commits"] is True
     # Columns map to Iceberg primitive types (display type_name upper-cased).

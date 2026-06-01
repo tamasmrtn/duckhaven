@@ -285,7 +285,8 @@ disabled before a query is even sent.
 
 `deploy/docker-compose.yml` defines the control-plane stack:
 `init-secrets` (one-shot secret generation) → `postgres` →
-`unity-catalog` → `api`. `api-entrypoint.sh` runs Alembic migrations then
+`polaris-bootstrap` (one-shot schema + root principal) → `polaris` → `api`.
+`api-entrypoint.sh` runs Alembic migrations then
 starts uvicorn. `init-secrets.sh` writes the first-boot secrets (including
 the one-shot admin setup token). Agents are **not** in this file — they are
 deployed per host. `scripts/` holds operator helpers (`pg-backup.sh`,

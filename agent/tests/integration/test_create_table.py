@@ -1,8 +1,8 @@
 """End-to-end Iceberg write/read through DuckDB + Polaris.
 
-This is the capability the old Delta+UC stack could not do: a
-catalog-managed `INSERT` through DuckDB. With the `iceberg` extension and
-a Polaris REST catalog, `CREATE TABLE` / `INSERT` / `SELECT` all work.
+Exercises catalog-managed `INSERT` through DuckDB. With the `iceberg`
+extension and a Polaris REST catalog, `CREATE TABLE` / `INSERT` / `SELECT`
+all work against a catalog-managed table.
 
 Opt-in (`-m integration`); requires a live Polaris that shares a
 filesystem with this process (FILE storage). See conftest.

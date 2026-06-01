@@ -66,7 +66,7 @@ async def test_list_agents_with_capabilities(admin_client: AsyncClient, db_sessi
         status="healthy",
         capabilities={
             "duckdb_version": "1.5.2",
-            "extensions": ["uc", "delta"],
+            "extensions": ["iceberg", "httpfs"],
             "memory_limit_gb": 6.0,
             "cores": 4,
             "host": "testbox",

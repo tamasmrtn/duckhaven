@@ -8,7 +8,7 @@ Companion to `ARCHITECTURE.md` (§5 storage layout, §12 deployment, D14/D18).
 ## 1. Bring up the control plane
 
 The control plane is one `docker compose` stack (`deploy/docker-compose.yml`:
-`postgres`, `unity-catalog`, `api`). The `api` service publishes port `8000`
+`postgres`, `polaris`, `api`). The `api` service publishes port `8000`
 directly on the host.
 
 1. (Optional) create `deploy/.env`. Defaults work — `POSTGRES_PASSWORD` and

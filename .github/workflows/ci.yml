@@ -108,8 +108,10 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 30
+          -v /tmp:/tmp
         ports:
           - 8181:8181
+          - 8182:8182
     env:
       DATABASE_URL: postgresql+asyncpg://postgres:testpassword@localhost:5432/testdb
       POLARIS_BASE_URL: http://localhost:8181

@@ -11,7 +11,7 @@ function makeAgents(): Agent[] {
       status: "healthy",
       capabilities: {
         duckdb_version: "1.5.2",
-        extensions: ["unity_catalog", "delta", "httpfs", "azure"],
+        extensions: ["iceberg", "httpfs", "azure"],
         memory_limit_gb: 6,
         cores: 4,
         tailscale_ip: "100.74.12.10",
@@ -26,7 +26,7 @@ function makeAgents(): Agent[] {
       status: "healthy",
       capabilities: {
         duckdb_version: "1.5.2",
-        extensions: ["unity_catalog", "delta", "httpfs"],
+        extensions: ["iceberg", "httpfs"],
         memory_limit_gb: 12,
         cores: 8,
         tailscale_ip: "100.74.12.20",
@@ -41,7 +41,7 @@ function makeAgents(): Agent[] {
       status: "unavailable",
       capabilities: {
         duckdb_version: "1.4.3",
-        extensions: ["unity_catalog", "delta", "httpfs", "azure"],
+        extensions: ["iceberg", "httpfs", "azure"],
         memory_limit_gb: 6,
         cores: 2,
         tailscale_ip: null,
@@ -56,7 +56,7 @@ function makeAgents(): Agent[] {
       status: "degraded",
       capabilities: {
         duckdb_version: "1.5.2",
-        extensions: ["unity_catalog", "delta"],
+        extensions: ["iceberg"],
         memory_limit_gb: 6,
         cores: 2,
         tailscale_ip: "100.74.12.30",

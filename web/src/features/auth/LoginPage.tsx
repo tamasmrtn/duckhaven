@@ -63,7 +63,7 @@ export function LoginPage() {
             className="w-40 h-auto hidden dark:block"
           />
           <p className="text-sm text-text-secondary">
-            SQL workspace over Delta Lake
+            SQL workspace over Apache Iceberg
           </p>
         </div>
 

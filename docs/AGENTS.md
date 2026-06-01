@@ -29,8 +29,7 @@ The agent image pre-installs these DuckDB extensions at build time:
 |---|---|
 | `httpfs` | S3 storage backends |
 | `azure` | ADLS Gen 2 storage backends |
-| `unity_catalog` | Unity Catalog integration |
-| `delta` | Delta Lake table reads and writes |
+| `iceberg` | Apache Iceberg reads/writes + Polaris REST catalog attach |
 
 The agent advertises its loaded extensions to the control plane on connect. The frontend engine picker shows which backends each agent can serve. For example, an agent without the `azure` extension cannot execute queries against ADLS workspaces.
 

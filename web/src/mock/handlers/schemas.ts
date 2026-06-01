@@ -79,7 +79,7 @@ export const schemaHandlers = [
         workspace_id: ws.id,
         row_count: 0,
         size_bytes: 0,
-        format: "Delta",
+        format: "Iceberg",
         catalog_commits: true,
         owner: "you",
         last_write_at: null,

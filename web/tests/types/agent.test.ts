@@ -22,8 +22,8 @@ function makeAgent(extensions: string[]): Agent {
 
 describe('agentSupportsBackend()', () => {
   it('s3 requires httpfs extension', () => {
-    expect(agentSupportsBackend(makeAgent(['httpfs', 'delta']), 's3')).toBe(true)
-    expect(agentSupportsBackend(makeAgent(['delta']), 's3')).toBe(false)
+    expect(agentSupportsBackend(makeAgent(['httpfs', 'iceberg']), 's3')).toBe(true)
+    expect(agentSupportsBackend(makeAgent(['iceberg']), 's3')).toBe(false)
   })
 
   it('adls_gen2 requires azure extension', () => {

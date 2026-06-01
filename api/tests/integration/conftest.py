@@ -1,12 +1,9 @@
 """Shared fixtures for api integration tests.
 
-These tests require a live Unity Catalog OSS instance reachable at the URL
-named in the `UC_BASE_URL` environment variable. When unset (the default
+These tests require a live Apache Polaris instance reachable at the URL
+named in the `POLARIS_BASE_URL` environment variable (with
+`POLARIS_CLIENT_ID` / `POLARIS_CLIENT_SECRET`). When unset (the default
 on dev machines without `docker compose up`), every test is skipped.
-
-The fixtures here drive the UC REST API directly so the M3 spikes can
-validate UC behaviour before the production UCClient wrapper lands in
-Step 5.
 """
 
 from __future__ import annotations
@@ -18,74 +15,56 @@ from uuid import uuid4
 import httpx
 import pytest
 
+from api.services.polaris import PolarisClient
+
 
 @pytest.fixture(scope="session")
-def uc_base_url() -> str:
-    """Resolve UC_BASE_URL or skip the test. Probes once to fail fast."""
-
-    url = os.getenv("UC_BASE_URL")
+def polaris_base_url() -> str:
+    """Resolve POLARIS_BASE_URL or skip. Probes the health endpoint to fail fast."""
+    url = os.getenv("POLARIS_BASE_URL")
     if not url:
-        pytest.skip("UC_BASE_URL not set; skipping UC integration test")
+        pytest.skip("POLARIS_BASE_URL not set; skipping Polaris integration test")
+    # Health/metrics live on the management port (8182), the API on 8181.
+    health = url.replace(":8181", ":8182").rstrip("/") + "/q/health"
     try:
-        resp = httpx.get(f"{url}/api/2.1/unity-catalog/catalogs", timeout=2.0)
-        resp.raise_for_status()
+        httpx.get(health, timeout=2.0).raise_for_status()
     except httpx.HTTPError as exc:
-        pytest.skip(f"Unity Catalog unreachable at {url}: {exc}")
+        pytest.skip(f"Polaris unreachable at {url}: {exc}")
     return url
 
 
 @pytest.fixture
-async def uc_http(uc_base_url: str) -> AsyncIterator[httpx.AsyncClient]:
-    """Async httpx client pointed at the UC REST API."""
-
-    async with httpx.AsyncClient(base_url=uc_base_url, timeout=10.0) as client:
-        yield client
-
-
-async def _delete_catalog(client: httpx.AsyncClient, name: str) -> None:
-    """Force-delete a catalog and ignore any errors (best-effort teardown)."""
-
+async def polaris(polaris_base_url: str) -> AsyncIterator[PolarisClient]:
+    """A PolarisClient pointed at the live server, using env credentials."""
+    client = PolarisClient(
+        base_url=polaris_base_url,
+        realm=os.getenv("POLARIS_REALM", "POLARIS"),
+        client_id=os.getenv("POLARIS_CLIENT_ID", "root"),
+        client_secret=os.getenv("POLARIS_CLIENT_SECRET", "s3cr3t"),
+        timeout_s=10.0,
+    )
     try:
-        # Drop any tables under any schemas first (UC 0.4 doesn't always
-        # cascade on `force=true`).
-        schemas = await client.get("/api/2.1/unity-catalog/schemas", params={"catalog_name": name})
-        for schema in schemas.json().get("schemas", []) or []:
-            schema_name = schema["name"]
-            tables = await client.get(
-                "/api/2.1/unity-catalog/tables",
-                params={"catalog_name": name, "schema_name": schema_name},
-            )
-            for table in tables.json().get("tables", []) or []:
-                await client.delete(
-                    f"/api/2.1/unity-catalog/tables/{name}.{schema_name}.{table['name']}"
-                )
-            await client.delete(
-                f"/api/2.1/unity-catalog/schemas/{name}.{schema_name}",
-                params={"force": "true"},
-            )
-        await client.delete(f"/api/2.1/unity-catalog/catalogs/{name}", params={"force": "true"})
-    except httpx.HTTPError:
-        pass
+        yield client
+    finally:
+        await client.aclose()
 
 
 @pytest.fixture
-async def unique_catalog(uc_http: httpx.AsyncClient) -> AsyncIterator[str]:
-    """Create a uniquely-named catalog for the test; tear it down on exit."""
-
+async def unique_catalog(polaris: PolarisClient) -> AsyncIterator[str]:
+    """Create a uniquely-named FILE-storage catalog; tear it down on exit."""
     name = f"dh_it_{uuid4().hex[:12]}"
-    resp = await uc_http.post(
-        "/api/2.1/unity-catalog/catalogs",
-        json={"name": name, "comment": "duckhaven integration test"},
-    )
-    resp.raise_for_status()
+    base = f"file:///tmp/{name}"
+    await polaris.create_catalog(name, storage_type="FILE", base_location=base)
     try:
         yield name
     finally:
-        await _delete_catalog(uc_http, name)
+        try:
+            await polaris.delete_catalog(name)
+        except Exception:  # noqa: BLE001 - best-effort teardown
+            pass
 
 
 @pytest.fixture
 def unique_name() -> Iterator[str]:
-    """A short unique identifier safe to use as a UC object name."""
-
+    """A short unique identifier safe to use as a catalog object name."""
     yield f"dh_{uuid4().hex[:10]}"

@@ -11,9 +11,9 @@ from api.db.base import Base
 
 
 class TableMetadata(Base):
-    """Control-plane-tracked catalog metadata that Unity Catalog does not provide
+    """Control-plane-tracked catalog metadata that Polaris does not provide
     (ownership, last-write provenance, row/size stats). Keyed by workspace + the
-    UC schema/table name. Populated on table create and on write/sample completion.
+    catalog schema/table name. Populated on table create and on write/sample completion.
     """
 
     __tablename__ = "table_metadata"

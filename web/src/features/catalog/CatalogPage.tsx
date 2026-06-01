@@ -354,7 +354,7 @@ function TableDetail({
               <span className="font-mono">
                 {schema}.{table}
               </span>{" "}
-              from Unity Catalog. This cannot be undone.
+              from the Polaris catalog. This cannot be undone.
             </p>
           </div>
           <DialogFooter>

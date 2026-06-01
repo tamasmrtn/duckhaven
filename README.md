@@ -163,7 +163,7 @@ Repository layout:
 
 ## Inspiration
 
-DuckHaven's worksheet experience draws on MotherDuck and Databricks; it stands on [DuckDB](https://duckdb.org/) for compute and [Apache Polaris](https://polaris.apache.org/) for governance and credential vending.
+DuckHaven's worksheet experience draws on MotherDuck; it stands on [DuckDB](https://duckdb.org/) for compute and [Apache Polaris](https://polaris.apache.org/) for governance and credential vending.
 
 ## License
 

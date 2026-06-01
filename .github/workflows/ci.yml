@@ -75,7 +75,7 @@ jobs:
           path: coverage.xml
 
   integration:
-    name: Integration tests (Polaris + Postgres)
+    name: Integrations tests
     runs-on: ubuntu-latest
     needs: [python-test]
     services:

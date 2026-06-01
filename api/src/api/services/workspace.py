@@ -7,30 +7,41 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from api.models.workspace import Workspace, WorkspaceMember
-from api.services.unity_catalog import UCClient, UCConflictError
+from api.services.polaris import PolarisClient, PolarisConflictError
 
 logger = logging.getLogger(__name__)
 
 ROLE_ORDER = {"reader": 0, "writer": 1, "owner": 2}
 
-# Workspace role → UC catalog privileges. DuckHaven is the sole permission
-# authority (D10); these grants are defense-in-depth only.
-ROLE_PRIVILEGES = {
-    "reader": ["SELECT"],
-    "writer": ["SELECT", "MODIFY"],
-    "owner": ["ALL PRIVILEGES"],
+# Backend kind → Polaris storage type. local/NAS map to local-filesystem FILE
+# storage; cloud backends map to their object-store type.
+_KIND_TO_STORAGE_TYPE = {
+    "local_fs": "FILE",
+    "nas": "FILE",
+    "s3": "S3",
+    "adls_gen2": "AZURE",
 }
 
 
-async def mirror_member_grant(uc: UCClient, catalog: str, principal: str, role: str) -> None:
-    """Best-effort mirror of a workspace membership to a UC catalog grant
-    (G-D10-a). Any UC failure is logged and swallowed so a membership change
-    is never blocked by UC availability or missing grant support."""
-    privileges = ROLE_PRIVILEGES.get(role, ["SELECT"])
-    try:
-        await uc.update_permissions("catalog", catalog, principal=principal, add=privileges)
-    except Exception as exc:  # noqa: BLE001 - best-effort; never blocks the change
-        logger.warning("UC grant mirror failed for %s on %s: %s", principal, catalog, exc)
+def polaris_storage(kind: str, root_uri: str) -> tuple[str, str]:
+    """Resolve a backend's (Polaris storage type, base location URI).
+
+    FILE storage needs a `file://` URI; cloud roots already carry a scheme.
+    """
+    storage_type = _KIND_TO_STORAGE_TYPE.get(kind, "FILE")
+    base = root_uri.rstrip("/")
+    if "://" not in base:
+        base = f"file://{base}"
+    return storage_type, base
+
+
+async def mirror_member_grant(
+    polaris: PolarisClient, catalog: str, principal: str, role: str
+) -> None:
+    """No-op: DuckHaven is the sole permission authority (D10) and enforces
+    membership at the API boundary. The old UC grant mirror was best-effort
+    defense-in-depth only; Polaris RBAC wiring is intentionally out of scope."""
+    return None
 
 
 async def assert_workspace_member(
@@ -63,20 +74,28 @@ async def get_workspace(db: AsyncSession, slug_or_id: str) -> Workspace | None:
     return result.scalar_one_or_none()
 
 
-async def ensure_uc_catalog(uc: UCClient, slug: str, *, default_schema: str = "main") -> None:
-    """Lazily create the workspace's UC catalog and `main` schema.
+async def ensure_polaris_catalog(
+    polaris: PolarisClient,
+    slug: str,
+    *,
+    storage_type: str,
+    base_location: str,
+    default_schema: str = "main",
+) -> None:
+    """Lazily create the workspace's Polaris catalog and `main` namespace.
 
-    Idempotent: any UCConflictError from create_catalog/create_schema is
-    treated as success. Used both by the eager `POST /workspaces` path
-    (where the catalog won't exist yet) and as a self-heal for any
-    workspace rows that pre-date M3.
+    Idempotent: any PolarisConflictError from create is treated as success.
+    Used both by the eager `POST /workspaces` path (where the catalog won't
+    exist yet) and as a self-heal for catalog browsing.
     """
-    if not await uc.catalog_exists(slug):
+    if not await polaris.catalog_exists(slug):
         try:
-            await uc.create_catalog(slug)
-        except UCConflictError:
+            await polaris.create_catalog(
+                slug, storage_type=storage_type, base_location=base_location
+            )
+        except PolarisConflictError:
             pass
     try:
-        await uc.create_schema(slug, default_schema)
-    except UCConflictError:
+        await polaris.create_schema(slug, default_schema)
+    except PolarisConflictError:
         pass

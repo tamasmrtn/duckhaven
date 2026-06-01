@@ -13,26 +13,26 @@ from api.routers import agents, agents_ws, auth, health, queries, schemas, setup
 from api.routers.admin import agents as admin_agents
 from api.routers.admin import audit as admin_audit
 from api.routers.admin import storage as admin_storage
-from api.services.uc_credentials import CredCache
-from api.services.unity_catalog import UCClient
+from api.services.polaris import PolarisClient
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    app.state.uc_client = UCClient(
-        base_url=settings.uc_base_url,
-        token=settings.uc_token,
-        timeout_s=settings.uc_http_timeout_s,
+    app.state.polaris_client = PolarisClient(
+        base_url=settings.polaris_base_url,
+        realm=settings.polaris_realm,
+        client_id=settings.polaris_client_id,
+        client_secret=settings.polaris_client_secret,
+        timeout_s=settings.polaris_http_timeout_s,
     )
-    app.state.cred_cache = CredCache(safety_window_s=settings.cred_safety_window_s)
     try:
         yield
     finally:
-        await app.state.uc_client.aclose()
+        await app.state.polaris_client.aclose()
 
 
 # The browser-facing REST API. Mounted under /api on the outer app so it shares
-# an origin with the SPA; owns the lifespan-managed UCClient/CredCache state.
+# an origin with the SPA; owns the lifespan-managed PolarisClient state.
 api_app = FastAPI(title="duckhaven-api", lifespan=lifespan)
 
 api_app.add_middleware(

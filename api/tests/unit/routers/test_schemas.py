@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from fake_uc import FakeUC
+from fake_polaris import FakePolaris
 from httpx import AsyncClient
 
 from api.models.storage_backend import StorageBackend
@@ -61,7 +61,7 @@ async def _make_workspace(
 
 
 async def test_list_schemas_self_heals_catalog(
-    auth_client: AsyncClient, backend: StorageBackend, fake_uc: FakeUC
+    auth_client: AsyncClient, backend: StorageBackend, fake_polaris: FakePolaris
 ):
     slug = await _make_workspace(auth_client, backend, "alpha")
     # The eager workspace-create path already provisioned the catalog +
@@ -73,7 +73,7 @@ async def test_list_schemas_self_heals_catalog(
 
 
 async def test_list_schemas_self_heals_pre_m3_workspace(
-    auth_client: AsyncClient, backend: StorageBackend, fake_uc: FakeUC, db_session
+    auth_client: AsyncClient, backend: StorageBackend, fake_polaris: FakePolaris, db_session
 ):
     """A workspace row that pre-dates M3 has no UC catalog — listing
     schemas must self-heal (create catalog + main schema) on first access."""
@@ -93,11 +93,11 @@ async def test_list_schemas_self_heals_pre_m3_workspace(
     db_session.add(WorkspaceMember(workspace_id=ws.id, user_id=user_id, role="reader"))
     await db_session.commit()
 
-    assert slug not in fake_uc.catalogs  # no catalog yet
+    assert slug not in fake_polaris.catalogs  # no catalog yet
     resp = await auth_client.get(f"/workspaces/{slug}/schemas")
     assert resp.status_code == 200
-    assert slug in fake_uc.catalogs  # self-healed
-    assert (slug, "main") in fake_uc.schemas
+    assert slug in fake_polaris.catalogs  # self-healed
+    assert (slug, "main") in fake_polaris.schemas
 
 
 async def test_create_schema_requires_writer(
@@ -122,7 +122,7 @@ async def test_create_schema_requires_writer(
 
 
 async def test_create_schema_happy(
-    auth_client: AsyncClient, backend: StorageBackend, fake_uc: FakeUC
+    auth_client: AsyncClient, backend: StorageBackend, fake_polaris: FakePolaris
 ):
     slug = await _make_workspace(auth_client, backend, "alpha")
     resp = await auth_client.post(f"/workspaces/{slug}/schemas", json={"name": "analytics"})
@@ -131,7 +131,7 @@ async def test_create_schema_happy(
     assert body["name"] == "analytics"
     assert body["catalog_name"] == slug
     assert isinstance(body["workspace_id"], str)
-    assert (slug, "analytics") in fake_uc.schemas
+    assert (slug, "analytics") in fake_polaris.schemas
 
 
 async def test_create_schema_duplicate_is_409(auth_client: AsyncClient, backend: StorageBackend):
@@ -156,8 +156,8 @@ async def test_non_member_cannot_list(
 # --- create table ---
 
 
-async def test_create_table_sets_catalog_managed_and_location(
-    auth_client: AsyncClient, backend: StorageBackend, fake_uc: FakeUC
+async def test_create_table_is_iceberg_with_mapped_columns(
+    auth_client: AsyncClient, backend: StorageBackend, fake_polaris: FakePolaris
 ):
     slug = await _make_workspace(auth_client, backend, "alpha")
     resp = await auth_client.post(
@@ -174,15 +174,16 @@ async def test_create_table_sets_catalog_managed_and_location(
     assert resp.status_code == 201, resp.text
     body = resp.json()
     assert body["name"] == "events"
-    assert body["properties"]["delta.feature.catalogManaged"] == "supported"
-    # storage_location is the backend root joined with /<schema>/<table>/.
-    assert body["storage_location"] == "file:///var/duckhaven/data/main/events/"
-    # And the columns survived the UC mapping.
+    # Iceberg tables are catalog-managed; no Delta feature properties.
+    assert body["format"] == body["data_source_format"] == "ICEBERG"
+    assert body["catalog_commits"] is True
+    # Columns map to Iceberg primitive types (display type_name upper-cased).
     types = [(c["name"], c["type_name"]) for c in body["columns"]]
     assert types == [("ts", "TIMESTAMP"), ("user_id", "STRING"), ("amount", "DOUBLE")]
-    # And the body that went to UC carried the property.
-    sent = fake_uc.created_table_bodies[-1]
-    assert sent["properties"]["delta.feature.catalogManaged"] == "supported"
+    # The body sent to Polaris carries Iceberg schema fields (id/required/type).
+    sent = fake_polaris.created_table_bodies[-1]["columns"]
+    assert sent[0] == {"id": 1, "name": "ts", "required": True, "type": "timestamp"}
+    assert sent[1]["type"] == "string" and sent[1]["required"] is False
 
 
 async def test_create_table_rejects_unknown_type(auth_client: AsyncClient, backend: StorageBackend):
@@ -242,18 +243,18 @@ async def test_create_table_requires_writer(
 
 
 async def test_drop_table_writer(
-    auth_client: AsyncClient, backend: StorageBackend, fake_uc: FakeUC
+    auth_client: AsyncClient, backend: StorageBackend, fake_polaris: FakePolaris
 ):
     slug = await _make_workspace(auth_client, backend, "alpha")
     await auth_client.post(
         f"/workspaces/{slug}/schemas/main/tables",
         json={"name": "events", "columns": [{"name": "id", "type": "BIGINT"}]},
     )
-    assert (slug, "main", "events") in fake_uc.tables
+    assert (slug, "main", "events") in fake_polaris.tables
 
     resp = await auth_client.delete(f"/workspaces/{slug}/schemas/main/tables/events")
     assert resp.status_code == 204
-    assert (slug, "main", "events") not in fake_uc.tables
+    assert (slug, "main", "events") not in fake_polaris.tables
 
 
 async def test_drop_table_missing_is_404(auth_client: AsyncClient, backend: StorageBackend):
@@ -274,8 +275,8 @@ async def test_create_table_enriches_metadata(auth_client: AsyncClient, backend:
     assert resp.status_code == 201, resp.text
     body = resp.json()
     assert isinstance(body["workspace_id"], str)
-    assert body["format"] == body["data_source_format"] == "DELTA"
-    assert body["catalog_commits"] is True  # delta.feature.catalogManaged property
+    assert body["format"] == body["data_source_format"] == "ICEBERG"
+    assert body["catalog_commits"] is True  # every Iceberg REST table is catalog-managed
     assert body["columns"][0]["type"]  # simple display type present
     # Creator becomes owner + last writer; stats start empty.
     assert body["owner"] == "Owner"

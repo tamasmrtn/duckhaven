@@ -31,8 +31,8 @@ RUN uv sync --frozen --no-dev --no-editable --package duckhaven-agent
 ENV HOME=/home/duckhaven
 RUN mkdir -p /home/duckhaven && \
     /app/.venv/bin/python -c "import duckdb; c = duckdb.connect(); \
-    [c.execute(f'INSTALL {ext}') for ext in ('httpfs','azure','unity_catalog','delta')]; \
-    [c.execute(f'LOAD {ext}') for ext in ('httpfs','azure','unity_catalog','delta')]"
+    [c.execute(f'INSTALL {ext}') for ext in ('httpfs','azure','iceberg')]; \
+    [c.execute(f'LOAD {ext}') for ext in ('httpfs','azure','iceberg')]"
 
 # ── Runtime ──────────────────────────────────────────────────────────────────
 FROM python:3.14-slim AS runtime

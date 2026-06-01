@@ -45,10 +45,15 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path) -> None:
     memory_limit_gb = min(float(payload.get("memory_limit_gb", 6.0)), settings.max_memory_limit_gb)
     timeout_s = min(float(payload.get("timeout_s", 600.0)), settings.max_timeout_s)
     backend = payload.get("backend")
-    storage_credentials = payload.get("storage_credentials")
     workspace = payload.get("workspace") or {}
     workspace_slug = workspace.get("slug") if isinstance(workspace, dict) else None
-    uc_endpoint = (payload.get("unity_catalog") or {}).get("endpoint")
+    # Polaris connection info comes from agent config, not the wire; DuckDB
+    # does the OAuth2 exchange itself and Polaris vends storage creds on attach.
+    polaris = {
+        "endpoint": settings.polaris_base_url,
+        "client_id": settings.polaris_client_id,
+        "client_secret": settings.polaris_client_secret,
+    }
     stats_for = payload.get("stats_for")
     result_path = results_dir / f"{query_id}.parquet"
 
@@ -62,9 +67,8 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path) -> None:
             memory_limit_gb,
             timeout_s,
             backend=backend,
-            storage_credentials=storage_credentials,
             workspace_slug=workspace_slug,
-            uc_endpoint=uc_endpoint,
+            polaris=polaris,
             stats_for=stats_for,
         )
         done_payload: dict[str, object] = {

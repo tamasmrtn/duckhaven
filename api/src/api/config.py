@@ -7,12 +7,14 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "postgresql+asyncpg://duckhaven:duckhaven@localhost:5432/duckhaven"
-    uc_base_url: str = "http://localhost:8080"
-    uc_token: str | None = None
-    uc_http_timeout_s: float = 10.0
-    # Refresh vended storage creds once their remaining lifetime drops below
-    # this many seconds. Default sized for UC OSS's ~hour TTL (half-TTL).
-    cred_safety_window_s: int = 1800
+    # Apache Polaris (Iceberg REST catalog). The API authenticates to Polaris
+    # with a service-principal client id/secret to create catalogs, namespaces
+    # and tables. Dev defaults match the Polaris bootstrap root principal.
+    polaris_base_url: str = "http://localhost:8181"
+    polaris_realm: str = "POLARIS"
+    polaris_client_id: str = "root"
+    polaris_client_secret: str = "s3cr3t"
+    polaris_http_timeout_s: float = 10.0
     secret_key: str = "change-me-in-production"
     session_max_age_seconds: int = 86400 * 7
     cors_origins: list[str] = ["http://localhost:5173"]

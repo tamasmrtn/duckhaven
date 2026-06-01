@@ -343,9 +343,15 @@ class PolarisClient:
         return self._table_from_load_result(resp.json(), catalog, schema, name)
 
     async def delete_table(self, catalog: str, schema: str, name: str) -> None:
+        # Drop without purge: the Iceberg REST default. Polaris gates
+        # DROP_TABLE_WITH_PURGE behind TABLE_WRITE_DATA + a per-catalog
+        # DROP_WITH_PURGE_ENABLED feature flag (default off, see upstream
+        # apache/polaris#1617); without it the bootstrapped root principal
+        # 403s. Per ARCHITECTURE I10/D10, Polaris RBAC wiring is out of
+        # scope, and DuckHaven is not the storage reclamation authority —
+        # catalog-level drops and external sweeps reclaim the data files.
         resp = await self._http.delete(
             f"{self.CATALOG_PATH}/{catalog}/namespaces/{schema}/tables/{name}",
-            params={"purgeRequested": "true"},
             headers=await self._auth_headers(),
         )
         self._raise_for_status(resp)

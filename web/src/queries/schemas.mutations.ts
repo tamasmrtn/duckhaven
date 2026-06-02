@@ -25,6 +25,17 @@ export function useCreateTable(ws: string, schema: string) {
   });
 }
 
+export function useDropSchema(ws: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ schema, cascade }: { schema: string; cascade?: boolean }) =>
+      schemasApi.dropSchema(ws, schema, cascade),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["workspace", ws, "schemas"] });
+    },
+  });
+}
+
 export function useDeleteTable(ws: string, schema: string) {
   const qc = useQueryClient();
   return useMutation({

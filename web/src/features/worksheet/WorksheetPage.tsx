@@ -45,6 +45,7 @@ import { AgentPicker } from "@/components/app/AgentPicker";
 import { StatusPill } from "@/components/app/StatusPill";
 import { StorageLabel } from "@/components/app/StorageIcon";
 import { CatalogTree } from "./CatalogTree";
+import { takePendingSql } from "@/features/catalog/worksheetSql";
 import { SqlEditor } from "./SqlEditor";
 import { ResultsTable } from "./ResultsTable";
 import { cn } from "@/utils";
@@ -107,13 +108,30 @@ export function WorksheetPage() {
   const [tabs, setTabs] = useState<Tab[]>(() => loadTabs(ws));
   const [activeTab, setActiveTab] = useState("tab-1");
 
-  // Switching workspaces reuses this component; reload that workspace's tabs.
-  const [loadedWs, setLoadedWs] = useState(ws);
+  // On first render and whenever the workspace changes, (re)load that
+  // workspace's tabs and seed any SQL a catalog action stashed (e.g. Alter
+  // table). Adjusting state during render is the React-sanctioned pattern for
+  // syncing to a changing prop — see the matching block below.
+  const [loadedWs, setLoadedWs] = useState<string | null>(null);
   if (loadedWs !== ws) {
-    const loaded = loadTabs(ws);
+    const base = loadedWs === null ? tabs : loadTabs(ws);
+    const pending = takePendingSql(ws);
+    const next = pending
+      ? [
+          ...base,
+          {
+            id: `tab-seed-${ws}-${base.length}`,
+            title: "from catalog",
+            sql: pending,
+            dirty: true,
+          },
+        ]
+      : base;
     setLoadedWs(ws);
-    setTabs(loaded);
-    setActiveTab(loaded[0].id);
+    if (loadedWs !== null || pending) {
+      setTabs(next);
+      setActiveTab(pending ? next[next.length - 1].id : next[0].id);
+    }
   }
 
   // Persist tabs per workspace so they survive reloads and stay isolated.
@@ -124,6 +142,7 @@ export function WorksheetPage() {
       // ignore unavailable storage
     }
   }, [ws, tabs]);
+
   const [agentId, setAgentId] = useState<string>(() => agents[0]?.id ?? "");
   const [memoryLimit, setMemoryLimit] = useState(6);
   const [timeout, setTimeout_] = useState(10);

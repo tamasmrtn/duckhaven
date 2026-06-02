@@ -44,6 +44,9 @@ export const schemasApi = {
       name,
     }),
 
+  dropSchema: (ws: string, schema: string, cascade = false) =>
+    del(`/workspaces/${ws}/schemas/${schema}${cascade ? "?cascade=true" : ""}`),
+
   createTable: (
     ws: string,
     schema: string,

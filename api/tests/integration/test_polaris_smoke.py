@@ -34,11 +34,17 @@ async def test_catalog_exists_true_and_false(polaris: PolarisClient, unique_cata
     assert await polaris.catalog_exists("definitely_missing_catalog") is False
 
 
-async def test_create_catalog_conflict(polaris: PolarisClient, unique_catalog: str) -> None:
+async def test_create_catalog_conflict(
+    polaris: PolarisClient, unique_catalog: str, s3_catalog_storage: tuple[str, dict]
+) -> None:
     # The fixture already created it; a second create must conflict.
+    bucket, extra = s3_catalog_storage
     with pytest.raises(PolarisConflictError):
         await polaris.create_catalog(
-            unique_catalog, storage_type="FILE", base_location=f"file:///tmp/{unique_catalog}"
+            unique_catalog,
+            storage_type="S3",
+            base_location=f"{bucket}/{unique_catalog}",
+            extra_storage=extra,
         )
 
 

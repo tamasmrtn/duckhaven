@@ -36,6 +36,42 @@ services:
       timeout: 5s
       retries: 5
 
+  # Bundled S3-compatible object store. Backs the local_fs/nas catalogs (and is
+  # the storage Polaris vends credentials for). Its :9000 endpoint must be
+  # reachable by remote agents — that is the URL Polaris vends to DuckDB, set
+  # via S3_ENDPOINT (default localhost; set to the host's address in prod).
+  minio:
+    image: minio/minio:${MINIO_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio_data:/data
+
+  # One-shot: create the warehouse bucket once MinIO is reachable. Mirrors the
+  # polaris-bootstrap pattern; idempotent via `mc mb --ignore-existing`.
+  minio-bootstrap:
+    image: minio/mc:${MINIO_MC_IMAGE_TAG:-latest}
+    depends_on:
+      - minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      S3_BUCKET: ${S3_BUCKET:-warehouse}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >
+        until mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD";
+        do echo 'waiting for minio...'; sleep 1; done;
+        mc mb --ignore-existing "local/$$S3_BUCKET"
+    restart: "no"
+
   # One-shot: create Polaris's relational-jdbc schema + root principal in the
   # dedicated `polaris` database. Idempotent on the same realm/credentials.
   polaris-bootstrap:
@@ -63,6 +99,8 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+      minio-bootstrap:
+        condition: service_completed_successfully
     environment:
       POLARIS_PERSISTENCE_TYPE: relational-jdbc
       POLARIS_PERSISTENCE_RELATIONAL_JDBC_DATABASE_TYPE: postgresql
@@ -71,15 +109,14 @@ services:
       QUARKUS_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-duckhaven}
       POLARIS_REALM_CONTEXT_REALMS: ${POLARIS_REALM:-POLARIS}
       QUARKUS_OTEL_SDK_DISABLED: "true"
-      # FILE storage is local-filesystem only (single-host dev); allow it.
+      # Polaris signs/vends S3 credentials using these to reach the bundled
+      # MinIO. ALLOW_INSECURE_STORAGE_TYPES is needed for a custom http endpoint.
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      AWS_REGION: ${S3_REGION:-us-east-1}
       polaris.features."ALLOW_INSECURE_STORAGE_TYPES": "true"
-      polaris.features."SUPPORTED_CATALOG_STORAGE_TYPES": "[\"FILE\"]"
+      polaris.features."SUPPORTED_CATALOG_STORAGE_TYPES": "[\"S3\"]"
       polaris.readiness.ignore-severe-issues: "true"
-    volumes:
-      # FILE storage: Polaris writes table metadata under this path and the
-      # agent's DuckDB reads/writes data files at the same path, so on a
-      # single host both must share it (testing/dev only — not for prod).
-      - warehouse:/var/duckhaven/warehouse
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8182/q/health"]
       interval: 5s
@@ -104,6 +141,13 @@ services:
       POLARIS_REALM: ${POLARIS_REALM:-POLARIS}
       POLARIS_CLIENT_ID: ${POLARIS_CLIENT_ID:-root}
       POLARIS_CLIENT_SECRET: ${POLARIS_CLIENT_SECRET:-s3cr3t}
+      # Bundled MinIO backing local_fs/nas catalogs. S3_ENDPOINT is vended to
+      # remote agents (must be reachable by them); the internal endpoint is what
+      # Polaris uses inside the compose network.
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://localhost:9000}
+      S3_ENDPOINT_INTERNAL: ${S3_ENDPOINT_INTERNAL:-http://minio:9000}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_BUCKET: ${S3_BUCKET:-warehouse}
       # Plain-HTTP deployment by default; the browser drops Secure cookies over
       # HTTP, which would break login. Set true only behind a TLS terminator.
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
@@ -125,5 +169,5 @@ services:
 volumes:
   postgres_data:
   api_data:
-  warehouse:
+  minio_data:
   secrets:

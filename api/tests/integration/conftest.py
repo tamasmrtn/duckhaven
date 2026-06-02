@@ -50,11 +50,32 @@ async def polaris(polaris_base_url: str) -> AsyncIterator[PolarisClient]:
 
 
 @pytest.fixture
-async def unique_catalog(polaris: PolarisClient) -> AsyncIterator[str]:
-    """Create a uniquely-named FILE-storage catalog; tear it down on exit."""
+def s3_catalog_storage() -> tuple[str, dict]:
+    """(bucket base, extra storageConfigInfo) for a bundled-MinIO (S3) catalog.
+
+    Skips when POLARIS_S3_BUCKET is unset. Polaris is object-storage only, so
+    every integration catalog is S3-backed (see ADR 0001)."""
+    bucket = os.getenv("POLARIS_S3_BUCKET")
+    if not bucket:
+        pytest.skip("POLARIS_S3_BUCKET not set; skipping Polaris integration test")
+    extra: dict = {"region": os.getenv("POLARIS_S3_REGION", "us-east-1")}
+    if endpoint := os.getenv("POLARIS_S3_ENDPOINT"):
+        extra["endpoint"] = endpoint
+        extra["pathStyleAccess"] = True
+    if internal := os.getenv("POLARIS_S3_ENDPOINT_INTERNAL"):
+        extra["endpointInternal"] = internal
+    return bucket.rstrip("/"), extra
+
+
+@pytest.fixture
+async def unique_catalog(
+    polaris: PolarisClient, s3_catalog_storage: tuple[str, dict]
+) -> AsyncIterator[str]:
+    """Create a uniquely-named S3 (bundled MinIO) catalog; tear it down on exit."""
+    bucket, extra = s3_catalog_storage
     name = f"dh_it_{uuid4().hex[:12]}"
-    base = f"file:///tmp/{name}"
-    await polaris.create_catalog(name, storage_type="FILE", base_location=base)
+    base = f"{bucket}/{name}"
+    await polaris.create_catalog(name, storage_type="S3", base_location=base, extra_storage=extra)
     try:
         yield name
     finally:

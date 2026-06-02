@@ -92,34 +92,16 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
-      polaris:
-        image: apache/polaris:latest
-        # In-memory persistence + auto-bootstrap from these credentials; FILE
-        # storage allowed for the integration smoke tests.
-        env:
-          POLARIS_BOOTSTRAP_CREDENTIALS: POLARIS,root,s3cr3t
-          POLARIS_REALM_CONTEXT_REALMS: POLARIS
-          QUARKUS_OTEL_SDK_DISABLED: "true"
-          polaris.features."ALLOW_INSECURE_STORAGE_TYPES": "true"
-          polaris.features."SUPPORTED_CATALOG_STORAGE_TYPES": "[\"FILE\"]"
-          polaris.readiness.ignore-severe-issues: "true"
-        options: >-
-          --health-cmd "curl --fail http://localhost:8182/q/health || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 30
-          -v /tmp:/tmp
-        ports:
-          - 8181:8181
-          - 8182:8182
     env:
       DATABASE_URL: postgresql+asyncpg://postgres:testpassword@localhost:5432/testdb
       POLARIS_BASE_URL: http://localhost:8181
       POLARIS_CLIENT_ID: root
       POLARIS_CLIENT_SECRET: s3cr3t
-      # Shared with the Polaris container via the `-v /tmp:/tmp` mount above, so
-      # the agent FILE-storage read test can reach catalog metadata Polaris writes.
-      POLARIS_WAREHOUSE_DIR: /tmp/dh-warehouse
+      # DuckDB (in-process) reaches MinIO at the vended endpoint on localhost;
+      # Polaris (in the dh-polaris-net network started by `make polaris-dev`)
+      # reaches MinIO at the dh-minio-dev container name.
+      POLARIS_S3_ENDPOINT: http://localhost:9000
+      POLARIS_S3_ENDPOINT_INTERNAL: http://dh-minio-dev:9000
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
@@ -129,7 +111,13 @@ jobs:
       - name: Run migrations
         run: uv run alembic upgrade head
         working-directory: api
+      # Object storage only: stands up MinIO + Polaris-on-S3 so the INSERT
+      # roundtrip runs (Polaris vends scoped credentials to DuckDB).
+      - name: Start Polaris + MinIO (S3)
+        run: make polaris-dev
       - name: Integration tests
+        env:
+          POLARIS_S3_BUCKET: s3://warehouse
         run: make test-integration
 
   frontend-check:

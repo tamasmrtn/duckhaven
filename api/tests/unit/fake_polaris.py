@@ -147,7 +147,7 @@ class FakePolaris:
         return table
 
     async def delete_table(
-        self, catalog: str, schema: str, name: str, *, purge: bool = True
+        self, catalog: str, schema: str, name: str, *, purge: bool = False
     ) -> None:
         key = (catalog, schema, name)
         if key not in self.tables:

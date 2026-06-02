@@ -205,12 +205,23 @@ async def test_create_table_posts_schema(polaris: PolarisClient) -> None:
 
 
 @respx.mock
-async def test_delete_table(polaris: PolarisClient) -> None:
+async def test_delete_table_defaults_to_no_purge(polaris: PolarisClient) -> None:
     _mock_token()
     route = respx.delete(f"{CAT}/ws_alpha/namespaces/main/tables/events").mock(
         return_value=httpx.Response(204)
     )
     await polaris.delete_table("ws_alpha", "main", "events")
+    assert route.called
+    assert "purgeRequested" not in str(route.calls.last.request.url)
+
+
+@respx.mock
+async def test_delete_table_with_purge(polaris: PolarisClient) -> None:
+    _mock_token()
+    route = respx.delete(f"{CAT}/ws_alpha/namespaces/main/tables/events").mock(
+        return_value=httpx.Response(204)
+    )
+    await polaris.delete_table("ws_alpha", "main", "events", purge=True)
     assert route.called
     assert "purgeRequested=true" in str(route.calls.last.request.url)
 

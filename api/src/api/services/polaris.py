@@ -413,11 +413,12 @@ class PolarisClient:
         return self._table_from_load_result(resp.json(), catalog, schema, name)
 
     async def delete_table(
-        self, catalog: str, schema: str, name: str, *, purge: bool = True
+        self, catalog: str, schema: str, name: str, *, purge: bool = False
     ) -> None:
-        # DuckHaven-owned catalogs enable DROP_WITH_PURGE_ENABLED at create time
-        # and grant the service principal full content access, so purge=true
-        # reclaims the table's data files. Pass purge=false to drop metadata only.
+        # Default is the Iceberg REST behaviour (drop metadata only). DuckHaven's
+        # own drop paths pass purge=True against fully-owned catalogs, which
+        # enable DROP_WITH_PURGE_ENABLED and grant CATALOG_MANAGE_CONTENT
+        # (i.e. TABLE_WRITE_DATA) so purge is authorized and reclaims data files.
         resp = await self._http.delete(
             f"{self.CATALOG_PATH}/{catalog}/namespaces/{schema}/tables/{name}",
             params={"purgeRequested": "true"} if purge else None,

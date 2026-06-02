@@ -285,7 +285,7 @@ async def drop_schema(
             ),
         )
     for t in tables:
-        await polaris.delete_table(workspace.slug, schema, t.name)
+        await polaris.delete_table(workspace.slug, schema, t.name, purge=True)
         await _delete_table_meta(db, workspace.id, schema, t.name)
     try:
         await polaris.delete_schema(workspace.slug, schema)
@@ -384,7 +384,7 @@ async def drop_table(
 ) -> None:
     workspace = await _resolve_workspace(ws, user, db, min_role="writer")
     try:
-        await polaris.delete_table(workspace.slug, schema, table)
+        await polaris.delete_table(workspace.slug, schema, table, purge=True)
     except PolarisNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
     await _delete_table_meta(db, workspace.id, schema, table)

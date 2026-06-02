@@ -241,7 +241,12 @@ class PolarisClient:
                 "name": name,
                 "type": "INTERNAL",
                 "readOnly": False,
-                "properties": {"default-base-location": base_location},
+                "properties": {
+                    "default-base-location": base_location,
+                    # DuckHaven owns its catalogs: allow DROP ... PURGE so dropping
+                    # a table reclaims its data files (default-off feature flag).
+                    "polaris.config.drop-with-purge.enabled": "true",
+                },
                 "storageConfigInfo": storage_config,
             }
         }
@@ -278,14 +283,23 @@ class PolarisClient:
     _RW_CATALOG_ROLE = "duckhaven_rw"
     _PRINCIPAL_ROLE = "duckhaven"
 
-    async def ensure_catalog_access(self, catalog: str) -> None:
-        """Grant the service principal data access on a catalog so the agent's
-        DuckDB can read and write its tables.
+    # Catalog-level privileges granted to the RW role so the service principal
+    # fully owns each DuckHaven catalog: manage content (tables/namespaces +
+    # data), metadata, and access (grants).
+    _CATALOG_PRIVILEGES = (
+        "CATALOG_MANAGE_CONTENT",
+        "CATALOG_MANAGE_METADATA",
+        "CATALOG_MANAGE_ACCESS",
+    )
 
-        Wires CATALOG_MANAGE_CONTENT to a catalog role, binds it through a
-        principal role to the service principal. Idempotent: re-running tolerates
-        already-existing roles. Without this, Polaris returns 403 on loadTable
-        even though catalog/table creation (management API) succeeds.
+    async def ensure_catalog_access(self, catalog: str) -> None:
+        """Grant the service principal full ownership of a catalog so the agent's
+        DuckDB can read, write, and run DDL against its tables.
+
+        Wires the full catalog-management privilege set to a catalog role, binds
+        it through a principal role to the service principal. Idempotent:
+        re-running tolerates already-existing roles. Without this, Polaris returns
+        403 on loadTable even though catalog/table creation succeeds.
         """
         headers = await self._auth_headers()
         role, prole = self._RW_CATALOG_ROLE, self._PRINCIPAL_ROLE
@@ -304,10 +318,11 @@ class PolarisClient:
             )
 
         await _create(f"/catalogs/{catalog}/catalog-roles", {"catalogRole": {"name": role}})
-        await _put(
-            f"/catalogs/{catalog}/catalog-roles/{role}/grants",
-            {"grant": {"type": "catalog", "privilege": "CATALOG_MANAGE_CONTENT"}},
-        )
+        for privilege in self._CATALOG_PRIVILEGES:
+            await _put(
+                f"/catalogs/{catalog}/catalog-roles/{role}/grants",
+                {"grant": {"type": "catalog", "privilege": privilege}},
+            )
         await _create("/principal-roles", {"principalRole": {"name": prole}})
         await _put(
             f"/principal-roles/{prole}/catalog-roles/{catalog}", {"catalogRole": {"name": role}}
@@ -326,6 +341,13 @@ class PolarisClient:
         )
         self._raise_for_status(resp)
         return PolarisSchema(name=name, catalog_name=catalog)
+
+    async def delete_schema(self, catalog: str, name: str) -> None:
+        resp = await self._http.delete(
+            f"{self.CATALOG_PATH}/{catalog}/namespaces/{name}",
+            headers=await self._auth_headers(),
+        )
+        self._raise_for_status(resp)
 
     async def list_schemas(self, catalog: str) -> list[PolarisSchema]:
         resp = await self._http.get(
@@ -390,16 +412,16 @@ class PolarisClient:
         self._raise_for_status(resp)
         return self._table_from_load_result(resp.json(), catalog, schema, name)
 
-    async def delete_table(self, catalog: str, schema: str, name: str) -> None:
-        # Drop without purge: the Iceberg REST default. Polaris gates
-        # DROP_TABLE_WITH_PURGE behind TABLE_WRITE_DATA + a per-catalog
-        # DROP_WITH_PURGE_ENABLED feature flag (default off, see upstream
-        # apache/polaris#1617); without it the bootstrapped root principal
-        # 403s. Per ARCHITECTURE I10/D10, Polaris RBAC wiring is out of
-        # scope, and DuckHaven is not the storage reclamation authority —
-        # catalog-level drops and external sweeps reclaim the data files.
+    async def delete_table(
+        self, catalog: str, schema: str, name: str, *, purge: bool = False
+    ) -> None:
+        # Default is the Iceberg REST behaviour (drop metadata only). DuckHaven's
+        # own drop paths pass purge=True against fully-owned catalogs, which
+        # enable DROP_WITH_PURGE_ENABLED and grant CATALOG_MANAGE_CONTENT
+        # (i.e. TABLE_WRITE_DATA) so purge is authorized and reclaims data files.
         resp = await self._http.delete(
             f"{self.CATALOG_PATH}/{catalog}/namespaces/{schema}/tables/{name}",
+            params={"purgeRequested": "true"} if purge else None,
             headers=await self._auth_headers(),
         )
         self._raise_for_status(resp)

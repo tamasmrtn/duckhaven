@@ -17,18 +17,25 @@ ALLOWED = [
     "SELECT 1 /* /* SET memory_limit='1GB' */ */",  # nested-comment harmless
     "SELECT 'DROP TABLE x' AS s",  # literal containing DROP is harmless
     "-- comment\nSELECT 1",
-    # multi-statement, all allowed:
+    # DDL — catalog object management.
+    "CREATE TABLE t (x INT)",
+    "CREATE SCHEMA analytics",
+    "CREATE OR REPLACE VIEW v AS SELECT 1",
+    "ALTER TABLE t ADD COLUMN x INT",
+    "DROP TABLE t",
+    "DROP TABLE IF EXISTS t",
+    # Destructive DML.
+    "UPDATE t SET x=1",
+    "DELETE FROM t",
+    "TRUNCATE t",  # DuckDB classifies TRUNCATE as a DELETE statement
+    "MERGE INTO t USING u ON t.id = u.id WHEN MATCHED THEN DELETE",
+    # multi-statement, all allowed (DDL + DML):
     "SELECT 1; INSERT INTO t VALUES (1)",
+    "CREATE TABLE t (x INT); INSERT INTO t VALUES (1)",
 ]
 
 
 DISALLOWED = [
-    ("UPDATE t SET x=1", "UPDATE"),
-    ("DELETE FROM t", "DELETE"),
-    ("DROP TABLE t", "DROP"),
-    ("CREATE TABLE t (x INT)", "CREATE"),
-    ("ALTER TABLE t ADD COLUMN x INT", "ALTER"),
-    ("TRUNCATE t", None),  # any non-allowed type triggers rejection
     # DuckDB rewrites PRAGMA into SET internally; still rejected.
     ("PRAGMA memory_limit='1GB'", "SET"),
     ("SET memory_limit='1GB'", None),
@@ -37,11 +44,10 @@ DISALLOWED = [
     ("DETACH y", None),
     ("LOAD httpfs", "LOAD"),
     ("INSTALL httpfs", None),
-    # multi-statement mixed: SELECT then DROP must reject
-    ("SELECT 1; DROP TABLE x", "DROP"),
-    # MERGE — even if DuckDB grows MERGE support later, it stays
-    # out of the allowlist until we choose to widen it.
-    ("MERGE INTO t USING u ON t.id = u.id WHEN MATCHED THEN DELETE", None),
+    ("CALL pragma_version()", None),
+    ("VACUUM", None),
+    # multi-statement mixed: an allowed SELECT alongside a blocked COPY rejects.
+    ("SELECT 1; COPY t TO 'f.parquet'", "COPY"),
 ]
 
 

@@ -65,9 +65,9 @@ describe('queries contract', () => {
     expect(typeof q.started_at).toBe('string')
   })
 
-  it('dispatch rejects non-read SQL with a 422', async () => {
+  it('dispatch rejects sandbox-escaping SQL with a 422', async () => {
     await expect(
-      queriesApi.dispatch('acme-analytics', 'DROP TABLE raw.events', 'ag-1'),
+      queriesApi.dispatch('acme-analytics', "ATTACH 'evil.db' AS evil", 'ag-1'),
     ).rejects.toMatchObject({ name: 'ApiError', status: 422 })
   })
 

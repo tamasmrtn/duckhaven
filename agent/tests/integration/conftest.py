@@ -76,7 +76,10 @@ async def _provision(
                 "name": name,
                 "type": "INTERNAL",
                 "readOnly": False,
-                "properties": {"default-base-location": base_location},
+                "properties": {
+                    "default-base-location": base_location,
+                    "polaris.config.drop-with-purge.enabled": "true",
+                },
                 "storageConfigInfo": storage_config,
             }
         },
@@ -86,11 +89,12 @@ async def _provision(
         headers=h,
         json={"catalogRole": {"name": "duckhaven_rw"}},
     )
-    await c.put(
-        f"{MGMT_API}/catalogs/{name}/catalog-roles/duckhaven_rw/grants",
-        headers=h,
-        json={"grant": {"type": "catalog", "privilege": "CATALOG_MANAGE_CONTENT"}},
-    )
+    for privilege in ("CATALOG_MANAGE_CONTENT", "CATALOG_MANAGE_METADATA", "CATALOG_MANAGE_ACCESS"):
+        await c.put(
+            f"{MGMT_API}/catalogs/{name}/catalog-roles/duckhaven_rw/grants",
+            headers=h,
+            json={"grant": {"type": "catalog", "privilege": privilege}},
+        )
     await c.post(
         f"{MGMT_API}/principal-roles", headers=h, json={"principalRole": {"name": "duckhaven"}}
     )

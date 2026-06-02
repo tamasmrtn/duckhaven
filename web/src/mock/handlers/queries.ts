@@ -13,10 +13,23 @@ export function resetLiveQueries(): void {
   liveQueries = {};
 }
 
-// Mirrors the backend SQL guard: only read statements are allowed.
+// Mirrors the backend SQL guard: data statements + catalog DDL are allowed;
+// sandbox-escaping statements (ATTACH, COPY, LOAD, SET, …) are not.
+const ALLOWED_HEADS = [
+  "select",
+  "with",
+  "insert",
+  "update",
+  "delete",
+  "merge",
+  "create",
+  "alter",
+  "drop",
+];
+
 function sqlAllowed(sql: string): boolean {
   const head = sql.trim().toLowerCase();
-  return head.startsWith("select") || head.startsWith("with");
+  return ALLOWED_HEADS.some((kw) => head.startsWith(kw));
 }
 
 // Deterministic result rows for a finished query (no randomness).

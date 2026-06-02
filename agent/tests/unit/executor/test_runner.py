@@ -11,7 +11,31 @@ def test_simple_select_produces_parquet(tmp_path):
     stats = run_query_sync("SELECT 42 AS answer", result_path, memory_limit_gb=1.0)
     assert result_path.exists()
     assert stats["row_count"] == 1
+    assert stats["wrote_result"] is True
     assert stats["duration_ms"] >= 0
+
+
+def test_ddl_runs_without_result_file(tmp_path):
+    """Pure DDL executes but writes no Parquet and reports zero rows."""
+    result_path = tmp_path / "out.parquet"
+    stats = run_query_sync("CREATE TABLE t (x INT)", result_path, memory_limit_gb=1.0)
+    assert not result_path.exists()
+    assert stats["wrote_result"] is False
+    assert stats["row_count"] == 0
+
+
+def test_dml_reports_affected_count(tmp_path):
+    """A multi-statement DDL+DML script runs directly and reports the affected
+    row count from the final statement (no result file)."""
+    result_path = tmp_path / "out.parquet"
+    stats = run_query_sync(
+        "CREATE TABLE t (x INT); INSERT INTO t VALUES (1), (2), (3)",
+        result_path,
+        memory_limit_gb=1.0,
+    )
+    assert not result_path.exists()
+    assert stats["wrote_result"] is False
+    assert stats["row_count"] == 3
 
 
 def test_multiple_rows(tmp_path):

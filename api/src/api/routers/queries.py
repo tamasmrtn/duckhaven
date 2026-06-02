@@ -122,7 +122,11 @@ async def get_query_rows(
     await assert_workspace_member(db, query.workspace_id, user.id)
     if query.status != "done":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Query not done")
-    if query.agent_id is None or query.result_path is None:
+    # DDL/DML statements complete without a result file. Report an empty page
+    # rather than a 404 so the UI shows a clean "ran, no rows" state.
+    if query.result_path is None:
+        return RowsPageOut(rows=[], columns=[], cursor=None, total=0)
+    if query.agent_id is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No results available")
 
     agent_result = await db.execute(select(Agent).where(Agent.id == query.agent_id))

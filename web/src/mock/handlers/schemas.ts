@@ -92,6 +92,24 @@ export const schemaHandlers = [
     },
   ),
 
+  http.delete("/api/workspaces/:ws/schemas/:schema", ({ params, request }) => {
+    const ws = findWorkspace(params.ws as string);
+    if (!ws) return httpError(404, "Workspace not found");
+    const list = SCHEMAS[ws.id] ?? [];
+    const idx = list.findIndex((s) => s.name === params.schema);
+    if (idx === -1) return httpError(404, "Schema not found");
+    const cascade = new URL(request.url).searchParams.get("cascade") === "true";
+    if (list[idx].tables.length > 0 && !cascade) {
+      const names = list[idx].tables.map((t) => t.name).join(", ");
+      return httpError(
+        409,
+        `Schema '${params.schema}' is not empty (tables: ${names}). Pass cascade=true to drop them too.`,
+      );
+    }
+    list.splice(idx, 1);
+    return new HttpResponse(null, { status: 204 });
+  }),
+
   http.delete(
     "/api/workspaces/:ws/schemas/:schema/tables/:table",
     ({ params }) => {

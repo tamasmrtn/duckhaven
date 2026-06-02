@@ -17,6 +17,16 @@ vi.mock('@monaco-editor/react', () => ({
   default: () => null,
 }))
 
+// Radix menus rely on Pointer Capture + scrollIntoView, unimplemented in jsdom.
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false
+  Element.prototype.setPointerCapture = () => undefined
+  Element.prototype.releasePointerCapture = () => undefined
+}
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => undefined
+}
+
 // localStorage may be missing or incomplete in some jsdom workers
 const store: Record<string, string> = {}
 const localStorageMock: Storage = {

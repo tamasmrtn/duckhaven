@@ -93,6 +93,11 @@ class FakePolaris:
         self.schemas[(catalog, name)] = sc
         return sc
 
+    async def delete_schema(self, catalog: str, name: str) -> None:
+        if (catalog, name) not in self.schemas:
+            raise PolarisNotFoundError(f"schema {catalog}.{name}")
+        self.schemas.pop((catalog, name), None)
+
     async def list_schemas(self, catalog: str) -> list[PolarisSchema]:
         return [s for (c, _), s in self.schemas.items() if c == catalog]
 
@@ -141,7 +146,9 @@ class FakePolaris:
         self.tables[key] = table
         return table
 
-    async def delete_table(self, catalog: str, schema: str, name: str) -> None:
+    async def delete_table(
+        self, catalog: str, schema: str, name: str, *, purge: bool = False
+    ) -> None:
         key = (catalog, schema, name)
         if key not in self.tables:
             raise PolarisNotFoundError(f"{catalog}.{schema}.{name}")

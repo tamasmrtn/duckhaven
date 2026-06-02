@@ -1,8 +1,11 @@
 """SQL allowlist enforced before dispatch (G-D8-a).
 
-Only `SELECT` and `INSERT` (incl. `INSERT … SELECT` and CTE-wrapped
-INSERT) are permitted; every other DuckDB statement type is rejected.
-Multi-statement bodies must consist entirely of allowed statements.
+Data statements — `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `MERGE` — and
+catalog DDL — `CREATE`, `ALTER`, `DROP` — are permitted; everything that
+could escape the per-query sandbox (`ATTACH`/`DETACH`, `COPY`/`EXPORT`,
+`INSTALL`/`LOAD`, `SET`/`PRAGMA`, `CALL`, `VACUUM`, `PREPARE`/`EXECUTE`,
+transaction control, …) is rejected. Multi-statement bodies must consist
+entirely of allowed statements.
 
 The control plane uses DuckDB *as a parser*: `duckdb.extract_statements`
 is purely lexical/syntactic — no execution, no storage, no extensions
@@ -15,7 +18,16 @@ from __future__ import annotations
 
 import duckdb
 
-_ALLOWED_TYPES = {duckdb.StatementType.SELECT, duckdb.StatementType.INSERT}
+_ALLOWED_TYPES = {
+    duckdb.StatementType.SELECT,
+    duckdb.StatementType.INSERT,
+    duckdb.StatementType.UPDATE,
+    duckdb.StatementType.DELETE,
+    duckdb.StatementType.MERGE_INTO,
+    duckdb.StatementType.CREATE,
+    duckdb.StatementType.ALTER,
+    duckdb.StatementType.DROP,
+}
 
 
 class SQLNotAllowed(ValueError):
@@ -39,5 +51,6 @@ def assert_allowed(sql: str) -> None:
     if disallowed:
         names = ", ".join(sorted(set(disallowed)))
         raise SQLNotAllowed(
-            f"Disallowed statement type(s): {names}. Only SELECT and INSERT are permitted."
+            f"Disallowed statement type(s): {names}. Allowed: SELECT, INSERT, "
+            "UPDATE, DELETE, MERGE, CREATE, ALTER, DROP."
         )

@@ -3,6 +3,7 @@ import { ChevronRight, ChevronDown, Table2, Layers } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSchemas, useTables } from "@/queries/schemas";
+import { CatalogNodeMenu } from "@/features/catalog/CatalogNodeMenu";
 
 function formatRowCount(n: number | null) {
   if (n == null) return "";
@@ -31,20 +32,22 @@ function SchemaNode({ ws, schemaName, filter, onTableClick }: SchemaNodeProps) {
 
   return (
     <div>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-sm font-medium text-text-primary hover:bg-accent focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
-        aria-expanded={open}
-      >
-        {open ? (
-          <ChevronDown className="size-3.5 shrink-0 text-text-secondary" />
-        ) : (
-          <ChevronRight className="size-3.5 shrink-0 text-text-secondary" />
-        )}
-        <Layers className="size-3.5 shrink-0 text-[var(--brand-maya-blue)]" />
-        <span className="truncate">{schemaName}</span>
-      </button>
+      <CatalogNodeMenu ws={ws} node={{ kind: "schema", schema: schemaName }}>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-sm font-medium text-text-primary hover:bg-accent focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+          aria-expanded={open}
+        >
+          {open ? (
+            <ChevronDown className="size-3.5 shrink-0 text-text-secondary" />
+          ) : (
+            <ChevronRight className="size-3.5 shrink-0 text-text-secondary" />
+          )}
+          <Layers className="size-3.5 shrink-0 text-[var(--brand-maya-blue)]" />
+          <span className="truncate">{schemaName}</span>
+        </button>
+      </CatalogNodeMenu>
 
       {open && (
         <div className="ml-3 border-l border-[var(--border-subtle)] pl-2">
@@ -56,20 +59,29 @@ function SchemaNode({ ws, schemaName, filter, onTableClick }: SchemaNodeProps) {
                 />
               ))
             : filtered.map((table) => (
-                <button
+                <CatalogNodeMenu
                   key={table.name}
-                  type="button"
-                  onClick={() => onTableClick(schemaName, table.name)}
-                  className="flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-sm text-text-secondary hover:bg-accent hover:text-text-primary focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+                  ws={ws}
+                  node={{
+                    kind: "table",
+                    schema: schemaName,
+                    table: table.name,
+                  }}
                 >
-                  <Table2 className="size-3.5 shrink-0 text-text-tertiary" />
-                  <span className="truncate">{table.name}</span>
-                  {table.row_count != null && (
-                    <span className="ml-auto font-mono text-2xs text-text-tertiary font-tabular">
-                      {formatRowCount(table.row_count)}
-                    </span>
-                  )}
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => onTableClick(schemaName, table.name)}
+                    className="flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-sm text-text-secondary hover:bg-accent hover:text-text-primary focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+                  >
+                    <Table2 className="size-3.5 shrink-0 text-text-tertiary" />
+                    <span className="truncate">{table.name}</span>
+                    {table.row_count != null && (
+                      <span className="ml-auto font-mono text-2xs text-text-tertiary font-tabular">
+                        {formatRowCount(table.row_count)}
+                      </span>
+                    )}
+                  </button>
+                </CatalogNodeMenu>
               ))}
         </div>
       )}
@@ -102,11 +114,13 @@ export function CatalogTree({
       />
 
       <div className="flex-1 overflow-auto">
-        <div className="mb-1 px-2 py-1">
-          <span className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
-            {workspaceName}
-          </span>
-        </div>
+        <CatalogNodeMenu ws={ws} node={{ kind: "catalog" }}>
+          <div className="mb-1 px-2 py-1">
+            <span className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
+              {workspaceName}
+            </span>
+          </div>
+        </CatalogNodeMenu>
 
         {isLoading ? (
           <div className="space-y-1 px-1">

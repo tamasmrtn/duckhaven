@@ -1,23 +1,16 @@
 import { useState } from "react";
 import { useParams, Link, useNavigate } from "@tanstack/react-router";
-import { ChevronRight, Pencil, ExternalLink, Plus, Table2 } from "lucide-react";
+import {
+  ChevronRight,
+  Pencil,
+  ExternalLink,
+  Trash2,
+  Table2,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/app/EmptyState";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import {
   useSchemas,
   useTable,
@@ -28,8 +21,13 @@ import { useDeleteTable } from "@/queries/schemas.mutations";
 import { ResultsTable } from "@/features/worksheet/ResultsTable";
 import { StorageIcon } from "@/components/app/StorageIcon";
 import { useWorkspace } from "@/queries/workspaces";
-import { CreateSchemaDialog } from "@/features/catalog/CreateSchemaDialog";
-import { CreateTableDialog } from "@/features/catalog/CreateTableDialog";
+import { CatalogNodeMenu } from "@/features/catalog/CatalogNodeMenu";
+import { ConfirmDropDialog } from "@/features/catalog/ConfirmDropDialog";
+import {
+  alterTemplate,
+  selectTemplate,
+  stashWorksheetSql,
+} from "@/features/catalog/worksheetSql";
 import { cn } from "@/utils";
 
 function formatBytes(n: number | null) {
@@ -49,33 +47,19 @@ function SchemaList({ ws }: { ws: string }) {
   const { data: workspace } = useWorkspace(ws);
   const [selectedSchema, setSelectedSchema] = useState<string | null>(null);
   const { data: tables = [] } = useTables(ws, selectedSchema ?? "");
-  const [schemaDialogOpen, setSchemaDialogOpen] = useState(false);
-  const [tableDialogOpen, setTableDialogOpen] = useState(false);
 
   return (
     <div className="flex h-full gap-0">
       {/* Schema list */}
       <div className="w-56 shrink-0 border-r border-[var(--border-subtle)] bg-[var(--bg-surface)] p-2">
-        <div className="mb-2 flex items-center justify-between px-2">
-          <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
-            {workspace?.name ?? ws}
-          </p>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            aria-label="new schema"
-            className="h-5 w-5 p-0"
-            onClick={() => setSchemaDialogOpen(true)}
-          >
-            <Plus className="size-3" />
-          </Button>
-        </div>
-        <CreateSchemaDialog
-          ws={ws}
-          open={schemaDialogOpen}
-          onOpenChange={setSchemaDialogOpen}
-        />
+        <CatalogNodeMenu ws={ws} node={{ kind: "catalog" }}>
+          <div className="mb-2 px-2">
+            <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
+              {workspace?.name ?? ws}
+            </p>
+            <p className="text-2xs text-text-tertiary">Right-click to manage</p>
+          </div>
+        </CatalogNodeMenu>
         {isLoading ? (
           <div className="space-y-1">
             {Array.from({ length: 3 }).map((_, i) => (
@@ -89,20 +73,28 @@ function SchemaList({ ws }: { ws: string }) {
           <p className="px-2 text-sm text-text-tertiary">No schemas.</p>
         ) : (
           schemas.map((s) => (
-            <button
+            <CatalogNodeMenu
               key={s.name}
-              type="button"
-              onClick={() => setSelectedSchema(s.name)}
-              className={cn(
-                "flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm",
-                selectedSchema === s.name
-                  ? "bg-accent text-text-primary"
-                  : "text-text-secondary hover:bg-accent/50",
-              )}
+              ws={ws}
+              node={{ kind: "schema", schema: s.name }}
+              onDropped={() => {
+                if (selectedSchema === s.name) setSelectedSchema(null);
+              }}
             >
-              <ChevronRight className="size-3.5" />
-              {s.name}
-            </button>
+              <button
+                type="button"
+                onClick={() => setSelectedSchema(s.name)}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm",
+                  selectedSchema === s.name
+                    ? "bg-accent text-text-primary"
+                    : "text-text-secondary hover:bg-accent/50",
+                )}
+              >
+                <ChevronRight className="size-3.5" />
+                {s.name}
+              </button>
+            </CatalogNodeMenu>
           ))
         )}
       </div>
@@ -110,44 +102,33 @@ function SchemaList({ ws }: { ws: string }) {
       {/* Table list */}
       {selectedSchema && (
         <div className="w-56 shrink-0 border-r border-[var(--border-subtle)] bg-[var(--bg-surface)] p-2">
-          <div className="mb-2 flex items-center justify-between px-2">
+          <div className="mb-2 px-2">
             <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
               {selectedSchema}
             </p>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              aria-label="new table"
-              className="h-5 w-5 p-0"
-              onClick={() => setTableDialogOpen(true)}
-            >
-              <Plus className="size-3" />
-            </Button>
           </div>
-          <CreateTableDialog
-            ws={ws}
-            schema={selectedSchema}
-            open={tableDialogOpen}
-            onOpenChange={setTableDialogOpen}
-          />
           {tables.length === 0 ? (
             <EmptyState icon={Table2} title="No tables in this schema" />
           ) : (
             tables.map((t) => (
-              <Link
+              <CatalogNodeMenu
                 key={t.name}
-                to="/$ws/catalog/$schema/$table"
-                params={{ ws, schema: selectedSchema, table: t.name }}
-                className="flex w-full items-center justify-between rounded px-2 py-1.5 text-sm text-text-secondary hover:bg-accent/50 hover:text-text-primary"
+                ws={ws}
+                node={{ kind: "table", schema: selectedSchema, table: t.name }}
               >
-                {t.name}
-                <span className="font-mono text-2xs text-text-tertiary font-tabular">
-                  {t.row_count != null
-                    ? (t.row_count / 1_000_000).toFixed(1) + "M"
-                    : ""}
-                </span>
-              </Link>
+                <Link
+                  to="/$ws/catalog/$schema/$table"
+                  params={{ ws, schema: selectedSchema, table: t.name }}
+                  className="flex w-full items-center justify-between rounded px-2 py-1.5 text-sm text-text-secondary hover:bg-accent/50 hover:text-text-primary"
+                >
+                  {t.name}
+                  <span className="font-mono text-2xs text-text-tertiary font-tabular">
+                    {t.row_count != null
+                      ? (t.row_count / 1_000_000).toFixed(1) + "M"
+                      : ""}
+                  </span>
+                </Link>
+              </CatalogNodeMenu>
             ))
           )}
         </div>
@@ -183,11 +164,9 @@ function TableDetail({
   const deleteTable = useDeleteTable(ws, schema);
   const [dropOpen, setDropOpen] = useState(false);
 
-  async function handleDrop() {
-    await deleteTable.mutateAsync(table);
-    toast.success(`Dropped ${schema}.${table}`);
-    setDropOpen(false);
-    navigate({ to: "/$ws/catalog", params: { ws } });
+  function openInWorksheet(sql: string) {
+    stashWorksheetSql(ws, sql);
+    navigate({ to: "/$ws/worksheets", params: { ws } });
   }
 
   if (isLoading) {
@@ -244,14 +223,28 @@ function TableDetail({
               variant="outline"
               size="sm"
               className="h-7 gap-1.5 text-xs"
-              onClick={() => setDropOpen(true)}
+              onClick={() => openInWorksheet(alterTemplate(schema, table))}
             >
               <Pencil className="size-3" />
-              Rename / Drop
+              Alter table
             </Button>
-            <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1.5 text-xs"
+              onClick={() => openInWorksheet(selectTemplate(schema, table))}
+            >
               <ExternalLink className="size-3" />
               Query this table
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1.5 text-xs"
+              onClick={() => setDropOpen(true)}
+            >
+              <Trash2 className="size-3" />
+              Drop
             </Button>
           </div>
         </div>
@@ -324,58 +317,18 @@ function TableDetail({
         </div>
       </div>
 
-      <Dialog open={dropOpen} onOpenChange={setDropOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Manage {table}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3 text-sm">
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled
-                      className="text-xs"
-                    >
-                      Rename
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>
-                  Not supported by the DuckDB UC extension yet.
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-            <p className="text-text-secondary">
-              Dropping permanently removes{" "}
-              <span className="font-mono">
-                {schema}.{table}
-              </span>{" "}
-              from the Polaris catalog. This cannot be undone.
-            </p>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setDropOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={handleDrop}
-              disabled={deleteTable.isPending}
-            >
-              {deleteTable.isPending ? "Dropping…" : "Drop table"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDropDialog
+        open={dropOpen}
+        onOpenChange={setDropOpen}
+        kind="table"
+        name={table}
+        pending={deleteTable.isPending}
+        onConfirm={async () => {
+          await deleteTable.mutateAsync(table);
+          toast.success(`Dropped ${schema}.${table}`);
+          navigate({ to: "/$ws/catalog", params: { ws } });
+        }}
+      />
     </div>
   );
 }

@@ -75,8 +75,9 @@ Two ideas shape nearly every design decision:
   security perimeter; the API speaks plain HTTP behind it.
 - **Not authoritative storage and not an ingestion engine.** Source data
   lives in the backends; external tools (PyIceberg, dlt, Spark) write it.
-- **No `UPDATE`/`MERGE`/`DELETE`, no cross-workspace joins, no row/column
-  security** in the current scope. Permissions are workspace-level.
+- **No cross-workspace joins, no row/column security** in the current scope.
+  Permissions are workspace-level. (DDL and destructive DML — `CREATE`/`ALTER`/
+  `DROP`, `UPDATE`/`DELETE`/`MERGE` — *are* supported; see Invariant I8.)
 
 ---
 
@@ -228,7 +229,7 @@ surface:
 | `services/query.py` | Dispatches a query to an agent over the registry socket; handles `query_progress`/`query_done` frames coming back; fetches the result Parquet from the agent and decodes it to JSON rows (`decode_parquet_page`); also drives the synchronous table-sample preview and persists agent-reported table stats. **The heart of the system.** | `agent_registry`, the `Query`/`TableMetadata` models |
 | `services/agent_registry.py` | In-memory `ConnectionManager` (`registry`) mapping `agent_id → live WebSocket`. The only place that knows which agents are connected *right now*. | `routers/agents_ws.py`, `services/query.py` |
 | `services/polaris.py` | Async client for Polaris: catalogs (management API) + namespaces/tables (Iceberg REST), with OAuth2 client-credentials auth. Speaks REST directly via `httpx`. | Polaris container |
-| `services/sql_guard.py` | The SQL allowlist. Uses `duckdb.extract_statements` to **parse only** and reject anything other than `SELECT`/`INSERT`. No connection, no execution. | `routers/queries.py` |
+| `services/sql_guard.py` | The SQL allowlist. Uses `duckdb.extract_statements` to **parse only** and allow data + catalog DDL statements (`SELECT`/`INSERT`/`UPDATE`/`DELETE`/`MERGE`/`CREATE`/`ALTER`/`DROP`), rejecting sandbox-escaping ones (`ATTACH`, `COPY`, `LOAD`, `SET`, …). No connection, no execution. | `routers/queries.py` |
 | `services/agent_capabilities.py` | Maps a backend kind to its required DuckDB extension and checks an agent's advertised capabilities at dispatch time. | `routers/queries.py` |
 | `services/workspace.py` | Membership/role checks (`assert_workspace_member`), workspace lookup, lazy Polaris catalog creation (`ensure_polaris_catalog`), backend→storage mapping (`polaris_storage`). | Polaris, the `Workspace`/`WorkspaceMember` models |
 | `services/auth.py` | bcrypt password hashing/verification and session-cookie handling. | `routers/auth.py`, `routers/setup.py` |
@@ -407,10 +408,14 @@ namespaces (schemas) and tables. The default namespace is **`analytics`**, not
 shadows the Iceberg namespace, so `catalog.main.table` won't resolve. Every
 DuckHaven-created table is Apache **Iceberg** format and catalog-managed by
 definition; its location sits under the catalog's base location, derived from
-the workspace backend's `root_uri`. On catalog creation the API also wires a
-catalog grant (`CATALOG_MANAGE_CONTENT`) to the service principal
-(`ensure_catalog_access`) — without it Polaris returns 403 on table data
-access. The agent's DuckDB sets the working catalog with `USE <catalog>.<schema>`
+the workspace backend's `root_uri`. Catalogs are created **fully DuckHaven-owned**:
+`ensure_catalog_access` grants the service principal the full catalog-management
+set (`CATALOG_MANAGE_CONTENT` + `CATALOG_MANAGE_METADATA` + `CATALOG_MANAGE_ACCESS`),
+and `create_catalog` enables `polaris.config.drop-with-purge.enabled` so `DROP`
+reclaims data files — without the content grant Polaris returns 403 on table data
+access. REST-created tables record a `table_metadata` owner sidecar at create time;
+tables created via SQL DDL get one lazily (stats on sample). The agent's DuckDB
+sets the working catalog with `USE <catalog>.<schema>`
 (a bare `USE <catalog>` does not resolve the attached REST catalog). Polaris
 vends short-lived, scoped storage credentials to DuckDB on attach via access
 delegation (`ACCESS_DELEGATION_MODE 'vended_credentials'`).
@@ -592,8 +597,16 @@ it explicitly rather than working around it.
 - **I7 — Storage credentials are short-lived and connection-scoped.** Creds
   are vended per `(agent, workspace)`, applied as a DuckDB `SECRET` on the
   per-query connection, and never written to disk on the agent.
-- **I8 — Only `SELECT` and `INSERT` reach an agent.** All other DDL/DML is
-  rejected by `sql_guard`; table creation goes through Polaris REST in `api/`.
+- **I8 — Data + catalog DDL reach an agent; sandbox escapes do not.**
+  `sql_guard` allows `SELECT`/`INSERT`/`UPDATE`/`DELETE`/`MERGE` and
+  `CREATE`/`ALTER`/`DROP`, executed on the agent against the attached Polaris
+  REST catalog, and rejects anything that could break out of the per-query
+  sandbox (`ATTACH`/`DETACH`, `COPY`/`EXPORT`, `INSTALL`/`LOAD`, `SET`/`PRAGMA`,
+  `CALL`, `VACUUM`, transaction control). Only a single `SELECT` is materialized
+  to Parquet; other statements run directly and return no result grid. Structured
+  catalog DDL (create/drop schema, create/drop table) is **also** exposed as REST
+  endpoints driving the catalog UI; ALTER from the UI is generated as SQL and run
+  through the query path.
 - **I9 — Postgres is the only state-of-record.** No second source of truth
   (no Redis, no in-memory queue surviving a restart). The in-memory agent
   registry is an ephemeral index of live sockets, not state.
@@ -613,7 +626,8 @@ A quick "if you want to do X, start here" index for contributors and agents.
 | Add a REST endpoint | `api/.../routers/<resource>.py` | a `schemas/` DTO, register in `main.py`, a test under `api/tests/unit/routers/`, and the web `src/api/` + `src/queries/` |
 | Add/alter a Postgres table | `api/.../models/` | a new migration in `api/alembic/versions/` (`make migrate-new name=...`) |
 | Change query execution (extensions, pragmas, attach) | `agent/.../executor/runner.py` | `supervisor.py` if it affects timeout/cancel |
-| Widen/narrow the SQL allowlist | `api/.../services/sql_guard.py` | its test in `tests/unit/services/test_sql_guard.py` |
+| Widen/narrow the SQL allowlist | `api/.../services/sql_guard.py` | its test in `tests/unit/services/test_sql_guard.py`; the runner's single-`SELECT` branch in `agent/.../executor/runner.py` |
+| Add a catalog DDL UI action | `api/.../routers/schemas.py` (REST endpoint) + `services/polaris.py` | web `src/features/catalog/CatalogNodeMenu.tsx` (+ dialogs), `src/api/schemas.ts`, `src/queries/schemas.mutations.ts`, MSW handler, tests |
 | Add a storage backend kind | `api/.../services/agent_capabilities.py` (required extension) + `services/workspace.py` (`polaris_storage`) | `agent/.../executor/runner.py` (iceberg attach), `StorageBackend` validation, web `StorageIcon`/wizard |
 | Change catalog credentials | `agent/.../config.py` + `api/.../config.py` (Polaris client id/secret) | `agent/.../executor/runner.py` (iceberg `SECRET`) |
 | Add a UI screen | `web/src/features/<feature>/` | `src/router.tsx`, `src/api/` + `src/queries/`, MSW handler in `src/mock/handlers/`, a test under `web/tests/` |
@@ -637,6 +651,12 @@ the *categories* a contributor should be aware of.
   `services/workspace.polaris_storage`. Their write paths are validated behind
   opt-in/env-gated integration tests. The bundled-MinIO `local_fs`/`nas` path
   is fully wired (see §7).
+- **DuckDB-iceberg DDL coverage.** `DROP` now purges (catalogs enable
+  drop-with-purge and grant full ownership), but the breadth of `CREATE`/`ALTER`
+  support against the Polaris REST catalog is bounded by the DuckDB `iceberg`
+  extension version on the agent. The UI Alter flow generates SQL run through the
+  agent, so any unsupported op surfaces as a query error rather than a silent
+  no-op.
 - **Single control-plane box.** The control plane is intentionally
   single-node (Postgres + Polaris + API on one host). High availability is a
   future concern, not a current property.

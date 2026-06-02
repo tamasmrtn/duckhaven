@@ -22,10 +22,20 @@ import pytest
 pytestmark = pytest.mark.integration
 
 
-def _attach(conn: duckdb.DuckDBPyConnection, base_url: str, warehouse: str, ns: str, creds) -> None:
+def _attach(
+    conn: duckdb.DuckDBPyConnection,
+    base_url: str,
+    warehouse: str,
+    ns: str,
+    creds,
+    *,
+    delegation: str = "none",
+) -> None:
     client_id, client_secret = creds
     conn.execute("INSTALL iceberg")
     conn.execute("LOAD iceberg")
+    conn.execute("INSTALL httpfs")
+    conn.execute("LOAD httpfs")
     conn.execute(
         "CREATE SECRET dh_iceberg "
         "(TYPE ICEBERG, CLIENT_ID ?, CLIENT_SECRET ?, OAUTH2_SERVER_URI ?)",
@@ -36,7 +46,7 @@ def _attach(conn: duckdb.DuckDBPyConnection, base_url: str, warehouse: str, ns: 
     endpoint = f"{base_url}/api/catalog".replace("'", "''")
     conn.execute(
         f"ATTACH '{wh}' AS dh_catalog (TYPE ICEBERG, SECRET dh_iceberg, "
-        f"ENDPOINT '{endpoint}', ACCESS_DELEGATION_MODE 'none')"
+        f"ENDPOINT '{endpoint}', ACCESS_DELEGATION_MODE '{delegation}')"
     )
     conn.execute(f'USE dh_catalog."{ns}"')
 
@@ -57,3 +67,20 @@ async def test_attach_and_read_rest_table(
         conn.close()
     assert rows == []  # freshly created, empty
     assert columns == ["id", "label"]
+
+
+async def test_insert_select_roundtrip(
+    polaris_base_url: str, polaris_creds, polaris_s3_catalog: tuple[str, str]
+) -> None:
+    """Full write path: INSERT then read it back. Requires object storage
+    (S3), where Polaris vends scoped credentials to DuckDB — the capability the
+    old Delta+UC stack could not do."""
+    catalog, ns = polaris_s3_catalog
+    conn = duckdb.connect()
+    try:
+        _attach(conn, polaris_base_url, catalog, ns, polaris_creds, delegation="vended_credentials")
+        conn.execute("INSERT INTO events VALUES (1, 'one'), (2, 'two')")
+        rows = conn.execute("SELECT id, label FROM events ORDER BY id").fetchall()
+    finally:
+        conn.close()
+    assert rows == [(1, "one"), (2, "two")]

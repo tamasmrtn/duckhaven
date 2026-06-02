@@ -63,7 +63,8 @@ async def workspace(db_session, user: User):
 
 @pytest_asyncio.fixture
 async def agent(db_session):
-    a = Agent(name="test-agent", status="healthy")
+    # All backends (incl. local_fs/nas, now MinIO-backed) require httpfs.
+    a = Agent(name="test-agent", status="healthy", capabilities={"extensions": ["httpfs"]})
     db_session.add(a)
     await db_session.commit()
     await db_session.refresh(a)
@@ -136,8 +137,8 @@ async def test_create_query_dispatches(
     frame = json.loads(mock_ws.sent[0])
     assert frame["type"] == FrameType.DISPATCH_QUERY
     assert frame["payload"]["sql"] == "SELECT 42"
-    # M3: dispatch payload now carries the workspace backend descriptor; local
-    # backends don't get vended creds.
+    # Dispatch payload carries the workspace backend descriptor; the agent
+    # resolves storage handling from the kind (local_fs is MinIO-backed).
     assert frame["payload"]["backend"] == {"kind": "local_fs", "root_uri": "/tmp/test"}
     assert frame["payload"]["workspace"] == {"slug": "test-ws", "default_schema": "analytics"}
     assert "storage_credentials" not in frame["payload"]
@@ -151,7 +152,7 @@ async def test_dispatch_clamps_memory_to_agent_cap(
     import json
 
     agent, mock_ws = connected_agent
-    agent.capabilities = {"memory_limit_gb": 4.0, "extensions": []}
+    agent.capabilities = {"memory_limit_gb": 4.0, "extensions": ["httpfs"]}
     db_session.add(agent)
     await db_session.commit()
 

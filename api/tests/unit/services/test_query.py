@@ -94,7 +94,7 @@ async def test_query_done_upserts_table_stats(db_session):
 
 async def test_pick_agent_for(db_session):
     ws = await _make_workspace(db_session)
-    agent = Agent(name="a", status="healthy", capabilities={"extensions": ["iceberg"]})
+    agent = Agent(name="a", status="healthy", capabilities={"extensions": ["iceberg", "httpfs"]})
     db_session.add(agent)
     await db_session.commit()
     await db_session.refresh(agent)

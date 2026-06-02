@@ -1,17 +1,13 @@
-"""Agent DuckDB ↔ Polaris read/attach path over the Iceberg REST catalog.
+"""Agent DuckDB ↔ Polaris read/attach + write path over the Iceberg REST catalog.
 
-Opt-in (`-m integration`); requires a live Polaris sharing a filesystem
-with this process (see conftest). Validates the wiring that was broken
-before the namespace + RBAC + USE fixes: attach the catalog, resolve the
-(non-`main`) namespace, load a REST-created table's schema, and read it.
+Opt-in (`-m integration`); requires a live Polaris on object storage (see
+conftest; `make polaris-dev` provides a local MinIO-backed stack). Validates
+attaching the catalog, resolving the (non-`main`) namespace, loading a
+REST-created table's schema, reading it, and the full INSERT roundtrip.
 
 This mirrors the agent runner's attach pattern (`runner._attach_polaris`):
-an iceberg OAuth2 SECRET + `ATTACH … (TYPE ICEBERG …)` + `USE <cat>.<ns>`.
-
-Writes are not exercised here: with Polaris in a container and the agent on
-the host, DuckDB cannot write into Polaris-created table directories.
-End-to-end INSERT requires object storage (S3) or a same-user single-host
-filesystem.
+an iceberg OAuth2 SECRET + `ATTACH … (TYPE ICEBERG …)` + `USE <cat>.<ns>`,
+with Polaris vending scoped object-store credentials to DuckDB.
 """
 
 from __future__ import annotations
@@ -52,12 +48,12 @@ def _attach(
 
 
 async def test_attach_and_read_rest_table(
-    polaris_base_url: str, polaris_creds, polaris_catalog: tuple[str, str]
+    polaris_base_url: str, polaris_creds, polaris_s3_catalog: tuple[str, str]
 ) -> None:
-    catalog, ns = polaris_catalog
+    catalog, ns = polaris_s3_catalog
     conn = duckdb.connect()
     try:
-        _attach(conn, polaris_base_url, catalog, ns, polaris_creds)
+        _attach(conn, polaris_base_url, catalog, ns, polaris_creds, delegation="vended_credentials")
         # The namespace resolves and the REST-created table's schema loads
         # (this is exactly what failed before the namespace/RBAC/USE fixes).
         cur = conn.execute("SELECT id, label FROM events")

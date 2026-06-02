@@ -46,26 +46,26 @@ def fake_conn(monkeypatch: pytest.MonkeyPatch) -> FakeConn:
     return conn
 
 
-def test_local_fs_attaches_iceberg_without_delegation(fake_conn: FakeConn, tmp_path: Path):
+@pytest.mark.parametrize("kind", ["local_fs", "nas"])
+def test_local_backends_load_httpfs_and_vend_credentials(
+    kind: str, fake_conn: FakeConn, tmp_path: Path
+):
+    # local_fs/nas are backed by the bundled MinIO (S3): they load httpfs and
+    # use vended credentials, exactly like the s3 kind.
     runner_module.run_query_sync(
         "SELECT 1",
         tmp_path / "out.parquet",
         memory_limit_gb=1.0,
-        backend={"kind": "local_fs", "root_uri": "file:///tmp/data"},
+        backend={"kind": kind, "root_uri": "file:///tmp/data"},
         workspace_slug="ws-alpha",
         polaris=POLARIS,
     )
     cmds = [c[0] for c in fake_conn.commands]
-    # iceberg loaded; local FS needs no storage-IO extension.
     assert any("INSTALL iceberg" in c for c in cmds)
-    assert not any("httpfs" in c for c in cmds)
-    # No TYPE S3/AZURE storage secret — only the iceberg OAuth2 secret.
-    assert not any("TYPE S3" in c or "TYPE AZURE" in c for c in cmds)
-    secret_cmd = next(c for c in cmds if c.startswith("CREATE SECRET"))
-    assert "TYPE ICEBERG" in secret_cmd
+    assert any("INSTALL httpfs" in c for c in cmds)
+    assert any("LOAD httpfs" in c for c in cmds)
     attach_cmd = next(c for c in cmds if c.startswith("ATTACH"))
-    assert "TYPE ICEBERG" in attach_cmd
-    assert "ACCESS_DELEGATION_MODE 'none'" in attach_cmd
+    assert "ACCESS_DELEGATION_MODE 'vended_credentials'" in attach_cmd
 
 
 def test_s3_loads_httpfs_and_vends_credentials(fake_conn: FakeConn, tmp_path: Path):

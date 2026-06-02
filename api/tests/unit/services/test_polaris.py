@@ -63,12 +63,16 @@ async def test_create_catalog_sends_storage_config(polaris: PolarisClient) -> No
     _mock_token()
     route = respx.post(f"{MGMT}/catalogs").mock(return_value=httpx.Response(201))
     cat = await polaris.create_catalog(
-        "ws_alpha", storage_type="FILE", base_location="file:///w/ws_alpha"
+        "ws_alpha",
+        storage_type="S3",
+        base_location="s3://warehouse/ws_alpha",
+        extra_storage={"endpoint": "http://minio:9000", "pathStyleAccess": True},
     )
     assert cat.name == "ws_alpha"
     sent = route.calls.last.request.content
-    assert b'"storageType":"FILE"' in sent.replace(b" ", b"")
-    assert b"file:///w/ws_alpha" in sent
+    assert b'"storageType":"S3"' in sent.replace(b" ", b"")
+    assert b"s3://warehouse/ws_alpha" in sent
+    assert b"http://minio:9000" in sent
 
 
 @respx.mock

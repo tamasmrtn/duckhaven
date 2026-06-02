@@ -35,8 +35,8 @@ const KIND_LABELS: Record<BackendKind, string> = {
 };
 
 const KIND_URI_PLACEHOLDER: Record<BackendKind, string> = {
-  local_fs: "file:///var/duckhaven/data/",
-  nas: "file:///mnt/nas01/",
+  local_fs: "local/acme/",
+  nas: "nas/dept-finance/",
   s3: "s3://my-bucket/duckhaven/",
   adls_gen2: "abfss://container@account.dfs.core.windows.net/duckhaven/",
 };
@@ -171,8 +171,10 @@ function RegisterWizard({
               </>
             ) : (
               <p className="text-sm text-text-secondary">
-                No UC credential needed for {KIND_LABELS[kind]} backends —
-                access is via filesystem permissions.
+                No credential needed — {KIND_LABELS[kind]} backends are stored
+                in the bundled MinIO object store, which Polaris accesses with
+                the stack's configured credentials. The Root URI is a prefix
+                label within that bucket.
               </p>
             )}
             <div className="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-3 text-xs space-y-1">
@@ -232,8 +234,9 @@ export function StorageBackendsPage() {
         <Banner className="mx-6 mt-3">
           <ShieldAlert className="size-3.5 text-[var(--brand-orange)]" />
           <span>
-            Local FS / NAS backends have no off-box disaster recovery — data DR
-            is delegated to that disk. Ensure off-box backups (see the runbook).
+            Local FS / NAS backends are stored in the bundled MinIO object store
+            on the control-plane host — no off-box disaster recovery by default.
+            Ensure off-box backups (see the runbook).
           </span>
         </Banner>
       )}

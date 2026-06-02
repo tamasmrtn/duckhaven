@@ -4,17 +4,11 @@ Drives Apache Polaris directly over REST (no dependency on the api
 package) so the agent's DuckDB path can be exercised end-to-end. Skipped
 when POLARIS_BASE_URL is unset or the server is unreachable.
 
-Two storage backings are supported:
-
-- FILE (`polaris_catalog`): requires POLARIS_WAREHOUSE_DIR, a path shared
-  identically between the Polaris container and the test host. Validates
-  the read/attach path. Writes are NOT possible this way — Polaris creates
-  table directories the host agent can't write into.
-
-- S3 (`polaris_s3_catalog`): requires POLARIS_S3_BUCKET (+ endpoint env).
-  This is the path that supports `INSERT`, since Polaris vends scoped
-  object-store credentials to DuckDB. `make polaris-dev-s3` provides a
-  local MinIO-backed stack.
+Polaris is object-storage only (see ADR 0001). The `polaris_s3_catalog`
+fixture creates an S3-backed catalog and requires POLARIS_S3_BUCKET (+
+POLARIS_S3_ENDPOINT[_INTERNAL]). It supports both reads and `INSERT`, since
+Polaris vends scoped object-store credentials to DuckDB. `make polaris-dev`
+provides a local MinIO-backed stack.
 """
 
 from __future__ import annotations
@@ -145,24 +139,6 @@ async def _make_catalog(
                 await c.delete(f"{MGMT_API}/catalogs/{name}", headers=h)
             except httpx.HTTPError:
                 pass
-
-
-@pytest.fixture
-async def polaris_catalog(
-    polaris_base_url: str, polaris_creds: tuple[str, str]
-) -> AsyncIterator[tuple[str, str]]:
-    """FILE-backed catalog. Requires POLARIS_WAREHOUSE_DIR shared with Polaris."""
-    warehouse = os.getenv("POLARIS_WAREHOUSE_DIR")
-    if not warehouse:
-        pytest.skip("POLARIS_WAREHOUSE_DIR not set; skipping FILE-storage integration test")
-    base = f"file://{warehouse.rstrip('/')}/{uuid4().hex[:8]}"
-    async for cat in _make_catalog(
-        polaris_base_url,
-        polaris_creds,
-        base,
-        {"storageType": "FILE", "allowedLocations": [base]},
-    ):
-        yield cat
 
 
 @pytest.fixture

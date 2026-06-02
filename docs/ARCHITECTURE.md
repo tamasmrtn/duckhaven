@@ -412,8 +412,24 @@ catalog grant (`CATALOG_MANAGE_CONTENT`) to the service principal
 (`ensure_catalog_access`) — without it Polaris returns 403 on table data
 access. The agent's DuckDB sets the working catalog with `USE <catalog>.<schema>`
 (a bare `USE <catalog>` does not resolve the attached REST catalog). Polaris
-also vends short-lived storage credentials for cloud backends via access
-delegation.
+vends short-lived, scoped storage credentials to DuckDB on attach via access
+delegation (`ACCESS_DELEGATION_MODE 'vended_credentials'`).
+
+**Storage policy — object storage only (MinIO bundled).** Every workspace
+catalog is backed by **S3-compatible object storage**; there is no Polaris FILE
+storage. This is forced by DuckHaven's control-plane/compute-split topology:
+DuckDB can only read **and write** Iceberg tables through the REST catalog when
+storage is S3-compatible, because Polaris must vend scoped credentials the
+remote agent uses. FILE storage cannot support writes across the
+Polaris-container / remote-agent boundary (Polaris creates table directories as
+its container user; the agent gets permission denied), so it was removed. The
+compose stack therefore **bundles MinIO**, and the `local_fs`/`nas` backend
+kinds are physically backed by a MinIO bucket: their catalogs use
+`storageType = S3` pointed at MinIO (with the catalog's vended `endpoint` set to
+an externally-reachable URL the agent can reach, and an internal endpoint for
+Polaris itself). Per-workspace isolation comes from a `/{slug}` prefix under the
+shared bucket. The `s3`/`adls_gen2` kinds remain operator-owned external object
+stores.
 
 ---
 
@@ -502,7 +518,7 @@ presents as a Bearer credential when reading result rows.
 |---|---|---|
 | **DuckDB** | The query engine — present *only* on agents. Also used by the control plane as a pure SQL parser. | `agent/.../executor/`, `api/.../services/sql_guard.py` |
 | **Apache Polaris** | Iceberg REST catalog: metadata authority + vendor of short-lived storage credentials (via access delegation). | `api/.../services/polaris.py` |
-| **Storage backends** | Where Iceberg tables physically live: Local FS, NAS (mounted FS), S3 (`httpfs`), ADLS Gen 2 (`azure`). One per workspace. | `agent/.../executor/runner.py` (iceberg attach), `StorageBackend` model |
+| **Storage backends** | Where Iceberg tables physically live (all object storage): `local_fs`/`nas` (bundled MinIO, `httpfs`), S3 (`httpfs`), ADLS Gen 2 (`azure`). One per workspace. | `agent/.../executor/runner.py` (iceberg attach), `StorageBackend` model |
 | **Postgres** | State-of-record for DuckHaven entities + the Polaris metastore. | `api/.../db/`, `models/` |
 | **Tailscale (operational)** | Recommended private network providing the transport-layer security perimeter. Not a code dependency. | deployment only |
 
@@ -514,12 +530,18 @@ presents as a Bearer credential when reading result rows.
 
 ```
 init-secrets  →  postgres:16-alpine
-                 apache/polaris:latest
+                 minio            (object store; publishes :9000 API, :9001 console)
+minio-bootstrap  (one-shot: creates the warehouse bucket)
+polaris-bootstrap → apache/polaris:latest  (storage: S3 → MinIO)
                  duckhaven-api  (publishes :8000, serves SPA + REST + agent WS)
 ```
 
 `init-secrets` runs once to generate the secret key and Postgres password;
-`api` applies migrations on start and serves the bundled SPA. The API is
+`minio-bootstrap` and `polaris-bootstrap` are one-shots that provision the
+bucket and the Polaris realm/principal. MinIO's `:9000` endpoint must be
+reachable by remote agents (the URL Polaris vends to DuckDB), so it is
+published and configured via `S3_ENDPOINT`. `api` applies migrations on start
+and serves the bundled SPA. The API is
 published directly on `:8000` over the private network — there is no edge
 TLS terminator by default; transport security comes from the tunnel. Images
 are built for `linux/amd64,linux/arm64` and published to
@@ -609,20 +631,12 @@ Honest, stable-enough caveats. The live, itemized list lives in the issue
 tracker and the [README roadmap](../README.md#roadmap); this section names
 the *categories* a contributor should be aware of.
 
-- **Cloud-backend storage config.** Local FILE storage is the validated dev
-  path; S3/ADLS catalogs need their Polaris `storageConfigInfo` (role ARN /
-  tenant, region) wired in `services/workspace.polaris_storage`. Cloud write
-  paths are validated behind opt-in/env-gated integration tests.
-- **FILE storage is read-capable, not write-capable across hosts.** DuckDB can
-  read FILE-backed Iceberg tables through the REST catalog when Polaris and the
-  agent share a filesystem, but **writes (`INSERT`) require them to run as the
-  same OS user** on that filesystem — Polaris creates table directories the
-  agent must then write into. With Polaris containerised and the agent on the
-  host, writes fail with a permission error. The validated end-to-end write
-  path is **object storage (S3/ADLS)**, where Polaris vends scoped credentials;
-  FILE is a single-host/same-user dev convenience. Integration tests reflect
-  this: the agent test validates the FILE read/attach path; full INSERT is
-  covered against object storage.
+- **External cloud-backend storage config.** The `s3`/`adls_gen2` kinds
+  (operator-owned external object stores) still need their Polaris
+  `storageConfigInfo` credential wiring (role ARN / tenant) completed in
+  `services/workspace.polaris_storage`. Their write paths are validated behind
+  opt-in/env-gated integration tests. The bundled-MinIO `local_fs`/`nas` path
+  is fully wired (see §7).
 - **Single control-plane box.** The control plane is intentionally
   single-node (Postgres + Polaris + API on one host). High availability is a
   future concern, not a current property.

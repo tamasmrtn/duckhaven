@@ -32,6 +32,7 @@ class FakePolaris:
         self.fail_create_schema: bool = False
         self.fail_create_table: bool = False
         self.created_table_bodies: list[dict[str, Any]] = []
+        self.created_catalog_args: list[dict[str, Any]] = []
         self.granted_catalogs: list[str] = []
 
     # --- Catalogs ---
@@ -45,6 +46,15 @@ class FakePolaris:
         allowed_locations: list[str] | None = None,
         extra_storage: dict[str, Any] | None = None,
     ) -> PolarisCatalog:
+        self.created_catalog_args.append(
+            {
+                "name": name,
+                "storage_type": storage_type,
+                "base_location": base_location,
+                "allowed_locations": allowed_locations,
+                "extra_storage": extra_storage,
+            }
+        )
         if self.fail_create_catalog:
             raise PolarisError("simulated create_catalog failure")
         if name in self.catalogs:

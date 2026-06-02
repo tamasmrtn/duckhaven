@@ -42,6 +42,17 @@ _BACKEND_IO_EXTENSION: dict[str, str] = {
 _VENDED_BACKENDS = {"local_fs", "nas", "s3", "adls_gen2"}
 
 
+def _is_single_select(sql: str) -> bool:
+    """True when the body is exactly one `SELECT` — the only shape we materialize
+    to Parquet. Everything else (DDL/DML, multi-statement scripts) is executed
+    directly and produces no result file."""
+    try:
+        statements = duckdb.extract_statements(sql)
+    except Exception:  # noqa: BLE001 - a parse failure surfaces when executed
+        return False
+    return len(statements) == 1 and statements[0].type == duckdb.StatementType.SELECT
+
+
 def _safe_install_load(conn: duckdb.DuckDBPyConnection, name: str) -> bool:
     """INSTALL + LOAD an extension; log + return False on failure."""
     try:
@@ -106,7 +117,11 @@ def run_query_sync(
     stats_for: dict[str, str] | None = None,
     on_connect: Callable[[duckdb.DuckDBPyConnection], None] | None = None,
 ) -> dict[str, Any]:
-    """Run a query through DuckDB and materialize the result to Parquet.
+    """Run a query through DuckDB.
+
+    A single `SELECT` is materialized to Parquet (`wrote_result=True`); any other
+    statement — DDL or DML, including multi-statement scripts — is executed
+    directly with no result file (`wrote_result=False`).
 
     Optional kwargs (passed by the control plane):
     - `backend`: workspace storage backend descriptor `{kind, root_uri}`.
@@ -147,14 +162,28 @@ def run_query_sync(
                     logger.warning("Polaris ATTACH failed for %s: %s", workspace_slug, exc)
 
         start = time.monotonic()
-        conn.execute(f"COPY ({sql}) TO '{result_path}' (FORMAT PARQUET)")
-        duration_ms = int((time.monotonic() - start) * 1000)
-
-        row_count_result = conn.execute(
-            f"SELECT count(*) FROM read_parquet('{result_path}')"
-        ).fetchone()
-        row_count = row_count_result[0] if row_count_result else 0
-        result: dict[str, Any] = {"row_count": row_count, "duration_ms": duration_ms}
+        wrote_result = _is_single_select(sql)
+        if wrote_result:
+            # A single SELECT is materialized to Parquet so the control plane can
+            # page through its rows.
+            conn.execute(f"COPY ({sql}) TO '{result_path}' (FORMAT PARQUET)")
+            duration_ms = int((time.monotonic() - start) * 1000)
+            row_count_result = conn.execute(
+                f"SELECT count(*) FROM read_parquet('{result_path}')"
+            ).fetchone()
+            row_count = row_count_result[0] if row_count_result else 0
+        else:
+            # DDL/DML (and multi-statement scripts) produce no result grid. Run
+            # the body directly: DuckDB returns an affected-row count for
+            # INSERT/UPDATE/DELETE and no result set for pure DDL.
+            affected = conn.execute(sql).fetchone()
+            duration_ms = int((time.monotonic() - start) * 1000)
+            row_count = affected[0] if affected and isinstance(affected[0], int) else 0
+        result: dict[str, Any] = {
+            "row_count": row_count,
+            "duration_ms": duration_ms,
+            "wrote_result": wrote_result,
+        }
 
         # When asked, compute true table stats on the same attached connection.
         # size_bytes has no reliable cross-backend source yet, so it stays null.

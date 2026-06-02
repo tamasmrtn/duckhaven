@@ -9,6 +9,8 @@ plus the status-code dispatch (404 → NotFound, 409 → Conflict, other 4xx
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 import respx
@@ -73,6 +75,33 @@ async def test_create_catalog_sends_storage_config(polaris: PolarisClient) -> No
     assert b'"storageType":"S3"' in sent.replace(b" ", b"")
     assert b"s3://warehouse/ws_alpha" in sent
     assert b"http://minio:9000" in sent
+    # Catalogs are created DuckHaven-owned with drop-with-purge enabled.
+    assert b"polaris.config.drop-with-purge.enabled" in sent
+
+
+@respx.mock
+async def test_ensure_catalog_access_grants_full_ownership(polaris: PolarisClient) -> None:
+    """ensure_catalog_access wires the full catalog-management privilege set and
+    binds the RW role to the service principal."""
+    _mock_token()
+    grants = respx.put(f"{MGMT}/catalogs/ws_alpha/catalog-roles/duckhaven_rw/grants").mock(
+        return_value=httpx.Response(201)
+    )
+    respx.post(f"{MGMT}/catalogs/ws_alpha/catalog-roles").mock(return_value=httpx.Response(201))
+    respx.post(f"{MGMT}/principal-roles").mock(return_value=httpx.Response(201))
+    respx.put(f"{MGMT}/principal-roles/duckhaven/catalog-roles/ws_alpha").mock(
+        return_value=httpx.Response(201)
+    )
+    respx.put(f"{MGMT}/principals/root/principal-roles").mock(return_value=httpx.Response(201))
+
+    await polaris.ensure_catalog_access("ws_alpha")
+
+    granted = {json.loads(call.request.content)["grant"]["privilege"] for call in grants.calls}
+    assert granted == {
+        "CATALOG_MANAGE_CONTENT",
+        "CATALOG_MANAGE_METADATA",
+        "CATALOG_MANAGE_ACCESS",
+    }
 
 
 @respx.mock
@@ -183,6 +212,7 @@ async def test_delete_table(polaris: PolarisClient) -> None:
     )
     await polaris.delete_table("ws_alpha", "main", "events")
     assert route.called
+    assert "purgeRequested=true" in str(route.calls.last.request.url)
 
 
 @respx.mock

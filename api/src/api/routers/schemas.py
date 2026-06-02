@@ -112,6 +112,23 @@ async def _load_table_meta(
     }
 
 
+async def _delete_table_meta(
+    db: AsyncSession, workspace_id: uuid.UUID, schema_name: str, table_name: str
+) -> None:
+    """Remove the TableMetadata sidecar row for a dropped table, if present."""
+    existing = (
+        await db.execute(
+            select(TableMetadata).where(
+                TableMetadata.workspace_id == workspace_id,
+                TableMetadata.schema_name == schema_name,
+                TableMetadata.table_name == table_name,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        await db.delete(existing)
+
+
 router = APIRouter(prefix="/workspaces/{ws}/schemas")
 
 
@@ -242,6 +259,41 @@ async def create_schema(
     )
 
 
+@router.delete("/{schema}", status_code=status.HTTP_204_NO_CONTENT)
+async def drop_schema(
+    ws: str,
+    schema: str,
+    cascade: bool = False,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    polaris: PolarisClient = Depends(get_polaris_client),
+) -> None:
+    """Drop a schema. Fails if it still holds tables unless `cascade=true`, in
+    which case its tables are dropped first."""
+    workspace = await _resolve_workspace(ws, user, db, min_role="writer")
+    try:
+        tables = await polaris.list_tables(workspace.slug, schema)
+    except PolarisNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
+    if tables and not cascade:
+        names = ", ".join(t.name for t in tables)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Schema '{schema}' is not empty (tables: {names}). "
+                "Pass cascade=true to drop them too."
+            ),
+        )
+    for t in tables:
+        await polaris.delete_table(workspace.slug, schema, t.name)
+        await _delete_table_meta(db, workspace.id, schema, t.name)
+    try:
+        await polaris.delete_schema(workspace.slug, schema)
+    except PolarisNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
+    await db.commit()
+
+
 @router.get("/{schema}/tables", response_model=list[TableOut])
 async def list_tables(
     ws: str,
@@ -335,6 +387,8 @@ async def drop_table(
         await polaris.delete_table(workspace.slug, schema, table)
     except PolarisNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
+    await _delete_table_meta(db, workspace.id, schema, table)
+    await db.commit()
 
 
 # Rows previewed in the table-detail view.

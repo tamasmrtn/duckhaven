@@ -263,6 +263,101 @@ async def test_drop_table_missing_is_404(auth_client: AsyncClient, backend: Stor
     assert resp.status_code == 404
 
 
+async def test_drop_table_removes_sidecar(
+    auth_client: AsyncClient, backend: StorageBackend, db_session
+):
+    """Dropping a table also clears its TableMetadata sidecar row."""
+    from sqlalchemy import select
+
+    from api.models.table_metadata import TableMetadata
+
+    slug = await _make_workspace(auth_client, backend, "alpha")
+    await auth_client.post(
+        f"/workspaces/{slug}/schemas/main/tables",
+        json={"name": "events", "columns": [{"name": "id", "type": "BIGINT"}]},
+    )
+    rows = (await db_session.execute(select(TableMetadata))).scalars().all()
+    assert any(r.table_name == "events" for r in rows)
+
+    resp = await auth_client.delete(f"/workspaces/{slug}/schemas/main/tables/events")
+    assert resp.status_code == 204
+    rows = (await db_session.execute(select(TableMetadata))).scalars().all()
+    assert not any(r.table_name == "events" for r in rows)
+
+
+# --- drop schema ---
+
+
+async def test_drop_schema_empty(
+    auth_client: AsyncClient, backend: StorageBackend, fake_polaris: FakePolaris
+):
+    slug = await _make_workspace(auth_client, backend, "alpha")
+    await auth_client.post(f"/workspaces/{slug}/schemas", json={"name": "staging"})
+    assert (slug, "staging") in fake_polaris.schemas
+
+    resp = await auth_client.delete(f"/workspaces/{slug}/schemas/staging")
+    assert resp.status_code == 204
+    assert (slug, "staging") not in fake_polaris.schemas
+
+
+async def test_drop_schema_non_empty_requires_cascade(
+    auth_client: AsyncClient, backend: StorageBackend, fake_polaris: FakePolaris
+):
+    slug = await _make_workspace(auth_client, backend, "alpha")
+    await auth_client.post(f"/workspaces/{slug}/schemas", json={"name": "staging"})
+    await auth_client.post(
+        f"/workspaces/{slug}/schemas/staging/tables",
+        json={"name": "events", "columns": [{"name": "id", "type": "BIGINT"}]},
+    )
+
+    resp = await auth_client.delete(f"/workspaces/{slug}/schemas/staging")
+    assert resp.status_code == 409
+    assert "events" in resp.json()["detail"]
+    assert (slug, "staging") in fake_polaris.schemas  # not dropped
+
+
+async def test_drop_schema_cascade_drops_tables(
+    auth_client: AsyncClient, backend: StorageBackend, fake_polaris: FakePolaris, db_session
+):
+    from sqlalchemy import select
+
+    from api.models.table_metadata import TableMetadata
+
+    slug = await _make_workspace(auth_client, backend, "alpha")
+    await auth_client.post(f"/workspaces/{slug}/schemas", json={"name": "staging"})
+    await auth_client.post(
+        f"/workspaces/{slug}/schemas/staging/tables",
+        json={"name": "events", "columns": [{"name": "id", "type": "BIGINT"}]},
+    )
+
+    resp = await auth_client.delete(f"/workspaces/{slug}/schemas/staging?cascade=true")
+    assert resp.status_code == 204
+    assert (slug, "staging") not in fake_polaris.schemas
+    assert (slug, "staging", "events") not in fake_polaris.tables
+    rows = (await db_session.execute(select(TableMetadata))).scalars().all()
+    assert not any(r.table_name == "events" for r in rows)
+
+
+async def test_drop_schema_requires_writer(
+    auth_client: AsyncClient, backend: StorageBackend, db_session
+):
+    slug = "readonly4"
+    ws = Workspace(slug=slug, name="RO4", storage_backend_id=backend.id)
+    db_session.add(ws)
+    await db_session.commit()
+    await db_session.refresh(ws)
+    from sqlalchemy import select
+
+    user = (
+        await db_session.execute(select(User).where(User.email == "owner@test.local"))
+    ).scalar_one()
+    db_session.add(WorkspaceMember(workspace_id=ws.id, user_id=user.id, role="reader"))
+    await db_session.commit()
+
+    resp = await auth_client.delete(f"/workspaces/{slug}/schemas/analytics")
+    assert resp.status_code == 403
+
+
 # --- catalog enrichment ---
 
 

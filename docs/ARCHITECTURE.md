@@ -16,8 +16,8 @@ the issue tracker. For setup and operations see
 ## 1. Overview
 
 DuckHaven is a **self-hosted, browser-based SQL workspace** for teams that
-run [DuckDB](https://duckdb.org/) over Delta Lake tables governed by
-[Unity Catalog OSS](https://www.unitycatalog.io/). It gives a small team
+run [DuckDB](https://duckdb.org/) over Apache Iceberg tables governed by
+[Apache Polaris](https://polaris.apache.org/). It gives a small team
 (2–10 users) collaborative worksheets, a shared catalog, per-workspace
 permissions, and a full audit trail — without a cloud warehouse, Kubernetes,
 or a platform team.
@@ -37,11 +37,11 @@ agent host when you need more compute).
 
 | Concern | Choice |
 |---|---|
-| Control plane | One `docker compose` stack: Postgres + Unity Catalog + the API |
+| Control plane | One `docker compose` stack: Postgres + Apache Polaris + the API |
 | Compute | 1..N DuckDB **agents** on separate hosts |
 | Engines | DuckDB only (heterogeneous versions allowed) |
-| Storage | Delta Lake on Local FS / NAS / S3 / ADLS Gen 2 (one backend per workspace) |
-| Catalog & credentials | Unity Catalog OSS — table governance + short-lived credential vending |
+| Storage | Apache Iceberg on Local FS / NAS / S3 / ADLS Gen 2 (one backend per workspace) |
+| Catalog & credentials | Apache Polaris — table governance + short-lived credential vending |
 | Frontend | React SPA — SQL worksheets (no notebooks) |
 | Network | Private only (Tailscale recommended); no public ingress |
 
@@ -74,7 +74,7 @@ Two ideas shape nearly every design decision:
 - **Not internet-exposed.** The private network (Tailscale/WireGuard) is the
   security perimeter; the API speaks plain HTTP behind it.
 - **Not authoritative storage and not an ingestion engine.** Source data
-  lives in the backends; external tools (delta-rs, dlt, Airbyte) write it.
+  lives in the backends; external tools (PyIceberg, dlt, Spark) write it.
 - **No `UPDATE`/`MERGE`/`DELETE`, no cross-workspace joins, no row/column
   security** in the current scope. Permissions are workspace-level.
 
@@ -90,8 +90,8 @@ flowchart TB
 
     subgraph cp[Control plane — one Docker Compose stack]
         API["duckhaven-api (FastAPI)<br/>auth · workspaces · queries<br/>DDL · agent registry · audit"]
-        PG[("Postgres 16<br/>app state + UC metastore")]
-        UC["Unity Catalog OSS<br/>catalog + credential vendor"]
+        PG[("Postgres 16<br/>app state + Polaris metastore")]
+        Polaris["Apache Polaris<br/>catalog + credential vendor"]
     end
 
     subgraph edge[Compute edge — separate hosts]
@@ -100,12 +100,12 @@ flowchart TB
     end
 
     subgraph store[Storage backends — one per workspace]
-        S[("Local FS / NAS / S3 / ADLS Gen 2<br/>Delta Lake tables")]
+        S[("Local FS / NAS / S3 / ADLS Gen 2<br/>Apache Iceberg tables")]
     end
 
     Browser -- "HTTPS-over-tunnel<br/>/api/*" --> API
     API -- SQLAlchemy --> PG
-    API -- REST --> UC
+    API -- REST --> Polaris
     A1 -. "outbound WebSocket<br/>(agent dials home)" .-> API
     A2 -. "outbound WebSocket" .-> API
     API -- "HTTP read<br/>(result Parquet → JSON)" --> A1
@@ -130,15 +130,15 @@ JSON rows. Everything else flows over the agent-initiated socket.
    URL and a bootstrap token. It registers itself, advertises its
    capabilities, and holds one socket open. The control plane keeps no
    static inventory of agent addresses.
-3. **Unity Catalog is the source of truth for catalog structure.** Schemas,
-   tables, columns, and table properties live in UC, not in Postgres. DuckHaven
+3. **Apache Polaris is the source of truth for catalog structure.** Schemas,
+   tables, columns, and table properties live in Polaris, not in Postgres. DuckHaven
    never shadows catalog *structure* in its own database — it only keeps a
-   supplementary `table_metadata` sidecar for facts UC does not track
+   supplementary `table_metadata` sidecar for facts Polaris does not track
    (ownership, last-write provenance, row/size stats).
 4. **Postgres is the single state-of-record for everything DuckHaven owns**
    (users, workspaces, queries, agents). There is no Redis or separate queue
    — query dispatch is a direct push over the agent socket.
-5. **Credentials are short-lived and connection-scoped.** UC vends temporary
+5. **Credentials are short-lived and connection-scoped.** Polaris vends temporary
    storage credentials per `(agent, workspace)`; the agent applies them as a
    DuckDB `SECRET` that dies with the per-query connection.
 6. **The wire contract is shared, not duplicated.** The control↔agent frame
@@ -205,8 +205,8 @@ surface:
   - the **REST API** sub-app under **`/api`** (shares an origin with the SPA),
   - the **built SPA** as static files at `/` (only present in the image; a
     catch-all serves `index.html` so client-side routes deep-link).
-- The REST sub-app owns a lifespan that constructs the shared `UCClient`
-  and the credential `CredCache` (held on `app.state`).
+- The REST sub-app owns a lifespan that constructs the shared `PolarisClient`
+  (held on `app.state`).
 
 **Internal layout:**
 
@@ -217,21 +217,20 @@ surface:
 | `models/` | SQLAlchemy ORM models = the Postgres schema. |
 | `schemas/` | Pydantic request/response DTOs (distinct from ORM models). |
 | `db/` | Engine/session setup (`session.py`) and the declarative `Base`. |
-| `deps.py` | FastAPI dependencies: `get_db`, `get_current_user`, `get_uc_client`, `get_cred_cache`. |
-| `config.py` | `pydantic-settings` config (DB URL, UC URL, cookie/secret/TTL settings). |
+| `deps.py` | FastAPI dependencies: `get_db`, `get_current_user`, `get_polaris_client`. |
+| `config.py` | `pydantic-settings` config (DB URL, Polaris URL + client credentials, cookie/secret settings). |
 | `alembic/` | Database migrations. Applied automatically by the container entrypoint in production. |
 
 **Key services to know:**
 
 | Service | What it does | Interacts with |
 |---|---|---|
-| `services/query.py` | Dispatches a query to an agent over the registry socket; handles `query_progress`/`query_done` frames coming back; fetches the result Parquet from the agent and decodes it to JSON rows (`decode_parquet_page`); also drives the synchronous table-sample preview and persists agent-reported table stats. **The heart of the system.** | `agent_registry`, `uc_credentials`, `unity_catalog`, the `Query`/`TableMetadata` models |
+| `services/query.py` | Dispatches a query to an agent over the registry socket; handles `query_progress`/`query_done` frames coming back; fetches the result Parquet from the agent and decodes it to JSON rows (`decode_parquet_page`); also drives the synchronous table-sample preview and persists agent-reported table stats. **The heart of the system.** | `agent_registry`, the `Query`/`TableMetadata` models |
 | `services/agent_registry.py` | In-memory `ConnectionManager` (`registry`) mapping `agent_id → live WebSocket`. The only place that knows which agents are connected *right now*. | `routers/agents_ws.py`, `services/query.py` |
-| `services/unity_catalog.py` | Async REST client for UC (catalogs, schemas, tables, permissions, temporary-table-credentials). Speaks REST directly via `httpx`. | UC container |
-| `services/uc_credentials.py` | `CredCache` with half-TTL refresh + `vend_workspace_creds`. Mints short-lived S3/Azure creds; returns `None` for local/NAS. | `unity_catalog`, `services/query.py` |
+| `services/polaris.py` | Async client for Polaris: catalogs (management API) + namespaces/tables (Iceberg REST), with OAuth2 client-credentials auth. Speaks REST directly via `httpx`. | Polaris container |
 | `services/sql_guard.py` | The SQL allowlist. Uses `duckdb.extract_statements` to **parse only** and reject anything other than `SELECT`/`INSERT`. No connection, no execution. | `routers/queries.py` |
 | `services/agent_capabilities.py` | Maps a backend kind to its required DuckDB extension and checks an agent's advertised capabilities at dispatch time. | `routers/queries.py` |
-| `services/workspace.py` | Membership/role checks (`assert_workspace_member`), workspace lookup, lazy UC catalog creation (`ensure_uc_catalog`), best-effort UC grant mirroring. | UC, the `Workspace`/`WorkspaceMember` models |
+| `services/workspace.py` | Membership/role checks (`assert_workspace_member`), workspace lookup, lazy Polaris catalog creation (`ensure_polaris_catalog`), backend→storage mapping (`polaris_storage`). | Polaris, the `Workspace`/`WorkspaceMember` models |
 | `services/auth.py` | bcrypt password hashing/verification and session-cookie handling. | `routers/auth.py`, `routers/setup.py` |
 
 ### 6.3 `agent/` — `duckhaven-agent` (compute)
@@ -254,7 +253,7 @@ tasks (`src/agent/main.py` gathers them):
 
 | Module | Responsibility |
 |---|---|
-| `executor/runner.py` | `run_query_sync`: the synchronous DuckDB path. Sets `memory_limit`, loads the right storage extension (`httpfs`/`azure`) and applies vended creds via a connection-scoped `CREATE SECRET`, `ATTACH`es the workspace's UC catalog, then `COPY (sql) TO '<uuid>.parquet'`. When the dispatch carries `stats_for`, it also returns the target table's `COUNT(*)` for the catalog sidecar. |
+| `executor/runner.py` | `run_query_sync`: the synchronous DuckDB path. Sets `memory_limit`, loads `iceberg` (+ `httpfs`/`azure` for cloud), creates a connection-scoped iceberg OAuth2 `SECRET` from agent config and `ATTACH`es the workspace's Polaris catalog (warehouse = workspace slug; `vended_credentials` for cloud, `none` for FILE), then `COPY (sql) TO '<uuid>.parquet'`. When the dispatch carries `stats_for`, it also returns the target table's `COUNT(*)` for the catalog sidecar. |
 | `executor/supervisor.py` | `run_query`: runs `run_query_sync` on a thread executor with a wall-clock timeout. Uses DuckDB's thread-safe `conn.interrupt()` (via `loop.call_later` and on cancel) to actually stop a running query. |
 
 `config.py` holds operator ceilings (`max_memory_limit_gb`, `max_timeout_s`)
@@ -286,7 +285,8 @@ disabled before a query is even sent.
 
 `deploy/docker-compose.yml` defines the control-plane stack:
 `init-secrets` (one-shot secret generation) → `postgres` →
-`unity-catalog` → `api`. `api-entrypoint.sh` runs Alembic migrations then
+`polaris-bootstrap` (one-shot schema + root principal) → `polaris` → `api`.
+`api-entrypoint.sh` runs Alembic migrations then
 starts uvicorn. `init-secrets.sh` writes the first-boot secrets (including
 the one-shot admin setup token). Agents are **not** in this file — they are
 deployed per host. `scripts/` holds operator helpers (`pg-backup.sh`,
@@ -298,7 +298,7 @@ deployed per host. `scripts/` holds operator helpers (`pg-backup.sh`,
 
 DuckHaven splits its state across two stores, and the split is itself an
 invariant (I3): **DuckHaven's own entities live in Postgres; catalog
-metadata lives in Unity Catalog.**
+metadata lives in Apache Polaris.**
 
 ### Postgres (owned by `api/src/api/models/`)
 
@@ -392,20 +392,28 @@ Notes that matter for changes:
   `GET /admin/audit` reads filtered rows straight from `queries`, excluding
   internal rows (`origin = "sample"`, used by the table-sample preview).
 - **`table_metadata` is the catalog sidecar** — the only DuckHaven-owned table
-  keyed by a UC schema/table name. It holds what UC does not track: `owner_id`,
+  keyed by a Polaris schema/table name. It holds what Polaris does not track: `owner_id`,
   `last_write_*`, and agent-computed `row_count`/`size_bytes`. Populated on
   table create and on sample/stats completion; merged into `TableOut` by
-  `routers/schemas.py`. UC remains the source of truth for catalog structure.
+  `routers/schemas.py`. Polaris remains the source of truth for catalog structure.
 - **`workspaces.storage_backend_id` is immutable** after creation, and a
   backend cannot be deleted while any workspace references it.
 
-### Unity Catalog (owned by UC, addressed via `services/unity_catalog.py`)
+### Apache Polaris (owned by Polaris, addressed via `services/polaris.py`)
 
-One **UC catalog per workspace** (named by the workspace `slug`), containing
-schemas and tables. Every DuckHaven-created table is `MANAGED`, `DELTA`
-format, with `delta.feature.catalogManaged = supported`, and its
-`storage_location` points into the workspace backend's `root_uri`. UC also
-holds the storage credentials it vends.
+One **Polaris catalog per workspace** (named by the workspace `slug`), containing
+namespaces (schemas) and tables. The default namespace is **`analytics`**, not
+`main`: `main` is DuckDB's built-in default schema in an attached catalog and
+shadows the Iceberg namespace, so `catalog.main.table` won't resolve. Every
+DuckHaven-created table is Apache **Iceberg** format and catalog-managed by
+definition; its location sits under the catalog's base location, derived from
+the workspace backend's `root_uri`. On catalog creation the API also wires a
+catalog grant (`CATALOG_MANAGE_CONTENT`) to the service principal
+(`ensure_catalog_access`) — without it Polaris returns 403 on table data
+access. The agent's DuckDB sets the working catalog with `USE <catalog>.<schema>`
+(a bare `USE <catalog>` does not resolve the attached REST catalog). Polaris
+also vends short-lived storage credentials for cloud backends via access
+delegation.
 
 ---
 
@@ -418,7 +426,7 @@ sequenceDiagram
     participant UI as React SPA
     participant API as duckhaven-api
     participant PG as Postgres
-    participant UC as Unity Catalog
+    participant Polaris as Apache Polaris
     participant AG as Agent (DuckDB)
     participant ST as Storage backend
 
@@ -427,12 +435,12 @@ sequenceDiagram
     API->>API: sql_guard.assert_allowed (parse-only)
     API->>API: agent connected? backend compatible?
     API->>PG: insert query (status=queued)
-    API->>UC: vend short-lived creds (cached, S3/ADLS only)
-    API->>AG: dispatch_query frame (sql, creds, backend, UC endpoint) [over agent WS]
+    API->>AG: dispatch_query frame (sql, backend, workspace slug) [over agent WS]
     API->>PG: status=running
     API-->>UI: 202 {id, status}
 
-    AG->>AG: SET memory_limit, CREATE SECRET, ATTACH UC catalog
+    AG->>AG: SET memory_limit, CREATE iceberg SECRET (from config), ATTACH Polaris catalog
+    AG->>Polaris: load table metadata + vended storage creds (cloud) on attach
     AG->>ST: COPY (sql) TO results/{id}.parquet
     AG->>API: query_done frame {row_count, duration_ms, result_path}
     API->>PG: update query (status=done, ...)
@@ -493,9 +501,9 @@ presents as a Bearer credential when reading result rows.
 | Integration | Role | Boundary in code |
 |---|---|---|
 | **DuckDB** | The query engine — present *only* on agents. Also used by the control plane as a pure SQL parser. | `agent/.../executor/`, `api/.../services/sql_guard.py` |
-| **Unity Catalog OSS** | Catalog metadata authority + vendor of short-lived storage credentials. | `api/.../services/unity_catalog.py`, `uc_credentials.py` |
-| **Storage backends** | Where Delta tables physically live: Local FS, NAS (mounted FS), S3 (`httpfs`), ADLS Gen 2 (`azure`). One per workspace. | `agent/.../executor/runner.py` (secrets + attach), `StorageBackend` model |
-| **Postgres** | State-of-record for DuckHaven entities + the UC metastore. | `api/.../db/`, `models/` |
+| **Apache Polaris** | Iceberg REST catalog: metadata authority + vendor of short-lived storage credentials (via access delegation). | `api/.../services/polaris.py` |
+| **Storage backends** | Where Iceberg tables physically live: Local FS, NAS (mounted FS), S3 (`httpfs`), ADLS Gen 2 (`azure`). One per workspace. | `agent/.../executor/runner.py` (iceberg attach), `StorageBackend` model |
+| **Postgres** | State-of-record for DuckHaven entities + the Polaris metastore. | `api/.../db/`, `models/` |
 | **Tailscale (operational)** | Recommended private network providing the transport-layer security perimeter. Not a code dependency. | deployment only |
 
 ---
@@ -506,7 +514,7 @@ presents as a Bearer credential when reading result rows.
 
 ```
 init-secrets  →  postgres:16-alpine
-                 unitycatalog/unitycatalog:v0.4.0
+                 apache/polaris:latest
                  duckhaven-api  (publishes :8000, serves SPA + REST + agent WS)
 ```
 
@@ -545,11 +553,11 @@ it explicitly rather than working around it.
   not.** The control plane holds no static agent inventory and never dials an
   agent's control channel. Its only outbound reach to an agent is the HTTP
   result read (the API fetches the result Parquet and decodes it to JSON).
-- **I3 — Unity Catalog owns catalog metadata; Postgres owns DuckHaven
+- **I3 — Apache Polaris owns catalog metadata; Postgres owns DuckHaven
   entities.** Never persist catalog *structure* (schemas, tables, columns) into
   Postgres or treat DuckHaven's database as a catalog cache. Postgres may hold
   a supplementary `table_metadata` sidecar — ownership, last-write provenance,
-  and row/size stats that UC does not track — keyed by the UC schema/table name.
+  and row/size stats that Polaris does not track — keyed by the Polaris schema/table name.
 - **I4 — One workspace, one storage backend, forever.** The binding is set
   at creation and is immutable. Every table's `storage_location` derives from
   its workspace backend's `root_uri`.
@@ -563,12 +571,12 @@ it explicitly rather than working around it.
   are vended per `(agent, workspace)`, applied as a DuckDB `SECRET` on the
   per-query connection, and never written to disk on the agent.
 - **I8 — Only `SELECT` and `INSERT` reach an agent.** All other DDL/DML is
-  rejected by `sql_guard`; table creation goes through UC REST in `api/`.
+  rejected by `sql_guard`; table creation goes through Polaris REST in `api/`.
 - **I9 — Postgres is the only state-of-record.** No second source of truth
   (no Redis, no in-memory queue surviving a restart). The in-memory agent
   registry is an ephemeral index of live sockets, not state.
 - **I10 — Authorization happens at the API boundary** via
-  `assert_workspace_member` before any dispatch. UC grants are
+  `assert_workspace_member` before any dispatch. Polaris grants are
   defense-in-depth, not the primary gate.
 
 ---
@@ -584,8 +592,8 @@ A quick "if you want to do X, start here" index for contributors and agents.
 | Add/alter a Postgres table | `api/.../models/` | a new migration in `api/alembic/versions/` (`make migrate-new name=...`) |
 | Change query execution (extensions, pragmas, attach) | `agent/.../executor/runner.py` | `supervisor.py` if it affects timeout/cancel |
 | Widen/narrow the SQL allowlist | `api/.../services/sql_guard.py` | its test in `tests/unit/services/test_sql_guard.py` |
-| Add a storage backend kind | `api/.../services/agent_capabilities.py` (required extension) | `agent/.../executor/runner.py` (secret + attach), `StorageBackend` validation, web `StorageIcon`/wizard |
-| Change credential vending | `api/.../services/uc_credentials.py` | `services/unity_catalog.py` if a new UC endpoint is needed |
+| Add a storage backend kind | `api/.../services/agent_capabilities.py` (required extension) + `services/workspace.py` (`polaris_storage`) | `agent/.../executor/runner.py` (iceberg attach), `StorageBackend` validation, web `StorageIcon`/wizard |
+| Change catalog credentials | `agent/.../config.py` + `api/.../config.py` (Polaris client id/secret) | `agent/.../executor/runner.py` (iceberg `SECRET`) |
 | Add a UI screen | `web/src/features/<feature>/` | `src/router.tsx`, `src/api/` + `src/queries/`, MSW handler in `src/mock/handlers/`, a test under `web/tests/` |
 | Change the agent handshake/auth | `api/.../routers/agents_ws.py` + `api/.../routers/admin/agents.py` | `agent/.../control/channel.py`, `agent/.../auth.py` |
 
@@ -601,13 +609,22 @@ Honest, stable-enough caveats. The live, itemized list lives in the issue
 tracker and the [README roadmap](../README.md#roadmap); this section names
 the *categories* a contributor should be aware of.
 
-- **Catalog-managed writes on UC OSS.** Every DuckHaven table is created with
-  `delta.feature.catalogManaged = supported`, but end-to-end coordinated
-  commit writes are gated on Unity Catalog OSS shipping the commit endpoints
-  DuckDB's `unity_catalog` extension needs. Cloud-backend write paths are
-  validated behind opt-in/env-gated integration tests.
+- **Cloud-backend storage config.** Local FILE storage is the validated dev
+  path; S3/ADLS catalogs need their Polaris `storageConfigInfo` (role ARN /
+  tenant, region) wired in `services/workspace.polaris_storage`. Cloud write
+  paths are validated behind opt-in/env-gated integration tests.
+- **FILE storage is read-capable, not write-capable across hosts.** DuckDB can
+  read FILE-backed Iceberg tables through the REST catalog when Polaris and the
+  agent share a filesystem, but **writes (`INSERT`) require them to run as the
+  same OS user** on that filesystem — Polaris creates table directories the
+  agent must then write into. With Polaris containerised and the agent on the
+  host, writes fail with a permission error. The validated end-to-end write
+  path is **object storage (S3/ADLS)**, where Polaris vends scoped credentials;
+  FILE is a single-host/same-user dev convenience. Integration tests reflect
+  this: the agent test validates the FILE read/attach path; full INSERT is
+  covered against object storage.
 - **Single control-plane box.** The control plane is intentionally
-  single-node (Postgres + UC + API on one host). High availability is a
+  single-node (Postgres + Polaris + API on one host). High availability is a
   future concern, not a current property.
 - **Result durability.** Results live only on the executing agent until the
   retention sweep removes them; they are not replicated. The recovery story
@@ -622,15 +639,15 @@ the *categories* a contributor should be aware of.
 
 | Term | Meaning |
 |---|---|
-| **Control plane** | The `duckhaven-api` process (with Postgres + UC). Orchestrates; never runs DuckDB queries. |
+| **Control plane** | The `duckhaven-api` process (with Postgres + Polaris). Orchestrates; never runs DuckDB queries. |
 | **Agent** | A `duckhaven-agent` process embedding DuckDB, running on its own host, dialing home over WebSocket. The unit of compute. |
-| **Workspace** | A governance + collaboration boundary. Maps 1:1 to a Unity Catalog catalog and is pinned to exactly one storage backend. |
-| **Storage backend** | A physical location for Delta tables (Local FS, NAS, S3, ADLS Gen 2), registered once and referenced by workspaces. |
-| **Catalog-managed table** | A Delta table whose commits are arbitrated by Unity Catalog (`delta.feature.catalogManaged = supported`). |
+| **Workspace** | A governance + collaboration boundary. Maps 1:1 to an Apache Polaris catalog and is pinned to exactly one storage backend. |
+| **Storage backend** | A physical location for Iceberg tables (Local FS, NAS, S3, ADLS Gen 2), registered once and referenced by workspaces. |
+| **Catalog-managed table** | An Iceberg table whose commits are arbitrated by Apache Polaris (every Polaris REST table is catalog-managed). |
 | **Bootstrap token** | A single-use credential an operator generates so a new agent can register. Exchanged once for a long-lived agent session token. |
 | **Capabilities** | The document an agent advertises (DuckDB version, loaded extensions, memory ceiling) used to match agents to workspace backends. |
 | **Frame** | One JSON message on the control WebSocket: `{type, payload}`, defined in `duckhaven-shared`. |
-| **Vended credentials** | Short-lived storage credentials minted by Unity Catalog per `(agent, workspace)` and applied as a connection-scoped DuckDB `SECRET`. |
+| **Vended credentials** | Short-lived storage credentials minted by Apache Polaris per `(agent, workspace)` and applied as a connection-scoped DuckDB `SECRET`. |
 
 ---
 

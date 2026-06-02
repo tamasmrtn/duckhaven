@@ -1,9 +1,9 @@
-"""M3 Step 10 — runner cred + extension wiring.
+"""Runner Polaris/Iceberg attach + extension wiring.
 
 Uses a fake `duckdb.connect` to capture the SQL the runner issues
-without depending on the real extensions or real cloud creds. The real
-DuckDB path is exercised by the existing `test_runner.py` (local-fs
-SELECT) and by the S3 integration spike.
+without depending on the real extensions or a live Polaris. The real
+DuckDB path is exercised by `test_runner.py` (local-fs SELECT) and by
+the Polaris integration test.
 """
 
 from __future__ import annotations
@@ -14,6 +14,12 @@ from typing import Any
 import pytest
 
 from agent.executor import runner as runner_module
+
+POLARIS = {
+    "endpoint": "http://polaris:8181",
+    "client_id": "root",
+    "client_secret": "s3cr3t",
+}
 
 
 class FakeConn:
@@ -40,98 +46,91 @@ def fake_conn(monkeypatch: pytest.MonkeyPatch) -> FakeConn:
     return conn
 
 
-def test_local_fs_skips_secret_and_extensions(fake_conn: FakeConn, tmp_path: Path):
+def test_local_fs_attaches_iceberg_without_delegation(fake_conn: FakeConn, tmp_path: Path):
     runner_module.run_query_sync(
         "SELECT 1",
         tmp_path / "out.parquet",
         memory_limit_gb=1.0,
         backend={"kind": "local_fs", "root_uri": "file:///tmp/data"},
-        storage_credentials=None,
+        workspace_slug="ws-alpha",
+        polaris=POLARIS,
     )
     cmds = [c[0] for c in fake_conn.commands]
-    # Memory limit set; no extension installs; no CREATE SECRET.
-    assert any("memory_limit" in c for c in cmds)
-    assert not any("INSTALL" in c for c in cmds)
-    assert not any("CREATE SECRET" in c for c in cmds)
+    # iceberg loaded; local FS needs no storage-IO extension.
+    assert any("INSTALL iceberg" in c for c in cmds)
+    assert not any("httpfs" in c for c in cmds)
+    # No TYPE S3/AZURE storage secret — only the iceberg OAuth2 secret.
+    assert not any("TYPE S3" in c or "TYPE AZURE" in c for c in cmds)
+    secret_cmd = next(c for c in cmds if c.startswith("CREATE SECRET"))
+    assert "TYPE ICEBERG" in secret_cmd
+    attach_cmd = next(c for c in cmds if c.startswith("ATTACH"))
+    assert "TYPE ICEBERG" in attach_cmd
+    assert "ACCESS_DELEGATION_MODE 'none'" in attach_cmd
 
 
-def test_s3_loads_httpfs_and_creates_secret_with_scope(fake_conn: FakeConn, tmp_path: Path):
+def test_s3_loads_httpfs_and_vends_credentials(fake_conn: FakeConn, tmp_path: Path):
     runner_module.run_query_sync(
         "SELECT 1",
         tmp_path / "out.parquet",
         memory_limit_gb=1.0,
         backend={"kind": "s3", "root_uri": "s3://bucket/prefix"},
-        storage_credentials={
-            "kind": "s3",
-            "fields": {
-                "access_key_id": "AKIA…",
-                "secret_access_key": "secret",
-                "session_token": "tok",
-                "region": "us-east-1",
-            },
-            "expires_at": "2099-01-01T00:00:00Z",
-        },
         workspace_slug="ws-alpha",
+        polaris=POLARIS,
     )
     cmds = [c[0] for c in fake_conn.commands]
-    params_by_cmd = dict(fake_conn.commands)
-
     assert any("INSTALL httpfs" in c for c in cmds)
     assert any("LOAD httpfs" in c for c in cmds)
-
-    secret_cmd = next(c for c in cmds if c.startswith("CREATE SECRET"))
-    # Secret named after the workspace slug, sanitized for DuckDB identifiers.
-    assert "ws_ws_alpha" in secret_cmd
-    assert "TYPE S3" in secret_cmd
-    assert "KEY_ID ?" in secret_cmd
-    assert "SECRET ?" in secret_cmd
-    assert "SESSION_TOKEN ?" in secret_cmd
-    assert "REGION ?" in secret_cmd
-    assert "SCOPE ?" in secret_cmd
-    # Params line up with the field order in the SQL.
-    params = params_by_cmd[secret_cmd]
-    assert params == [
-        "AKIA…",
-        "secret",
-        "tok",
-        "us-east-1",
-        "s3://bucket/prefix",
-    ]
+    assert any("INSTALL iceberg" in c for c in cmds)
+    attach_cmd = next(c for c in cmds if c.startswith("ATTACH"))
+    assert "ACCESS_DELEGATION_MODE 'vended_credentials'" in attach_cmd
+    # The iceberg secret carries the OAuth2 client credentials.
+    secret_cmd, secret_params = next(
+        c for c in fake_conn.commands if c[0].startswith("CREATE SECRET")
+    )
+    assert "OAUTH2_SERVER_URI ?" in secret_cmd
+    assert secret_params == ["root", "s3cr3t", "http://polaris:8181/api/catalog/v1/oauth/tokens"]
 
 
-def test_adls_loads_azure_and_creates_secret(fake_conn: FakeConn, tmp_path: Path):
+def test_adls_loads_azure_and_vends_credentials(fake_conn: FakeConn, tmp_path: Path):
     runner_module.run_query_sync(
         "SELECT 1",
         tmp_path / "out.parquet",
         memory_limit_gb=1.0,
         backend={"kind": "adls_gen2", "root_uri": "abfss://c@a.dfs/"},
-        storage_credentials={
-            "kind": "azure",
-            "fields": {"connection_string": "DefaultEndpoints=..."},
-            "expires_at": "2099-01-01T00:00:00Z",
-        },
         workspace_slug="ws-blue",
+        polaris=POLARIS,
     )
     cmds = [c[0] for c in fake_conn.commands]
     assert any("INSTALL azure" in c for c in cmds)
     assert any("LOAD azure" in c for c in cmds)
-    secret_cmd = next(c for c in cmds if c.startswith("CREATE SECRET"))
-    assert "TYPE AZURE" in secret_cmd
-    assert "CONNECTION_STRING ?" in secret_cmd
+    attach_cmd = next(c for c in cmds if c.startswith("ATTACH"))
+    assert "ACCESS_DELEGATION_MODE 'vended_credentials'" in attach_cmd
 
 
-def test_uc_attach_when_endpoint_provided(fake_conn: FakeConn, tmp_path: Path):
+def test_attach_uses_workspace_slug_as_warehouse(fake_conn: FakeConn, tmp_path: Path):
     runner_module.run_query_sync(
         "SELECT 1",
         tmp_path / "out.parquet",
         memory_limit_gb=1.0,
         backend={"kind": "local_fs", "root_uri": "file:///tmp/data"},
         workspace_slug="ws-alpha",
-        uc_endpoint="http://uc:8080",
+        polaris=POLARIS,
+    )
+    attach_sql = next(c[0] for c in fake_conn.commands if c[0].startswith("ATTACH"))
+    # ATTACH takes no bind params; warehouse (slug) + endpoint are inlined.
+    assert "ATTACH 'ws-alpha' AS dh_catalog" in attach_sql
+    assert "ENDPOINT 'http://polaris:8181/api/catalog'" in attach_sql
+
+
+def test_no_polaris_means_no_attach(fake_conn: FakeConn, tmp_path: Path):
+    runner_module.run_query_sync(
+        "SELECT 1",
+        tmp_path / "out.parquet",
+        memory_limit_gb=1.0,
+        workspace_slug="ws-alpha",
     )
     cmds = [c[0] for c in fake_conn.commands]
-    assert any("INSTALL unity_catalog" in c for c in cmds)
-    assert any("ATTACH" in c and "UC_CATALOG" in c for c in cmds)
+    assert not any("ATTACH" in c for c in cmds)
 
 
 def test_no_workspace_slug_means_no_attach(fake_conn: FakeConn, tmp_path: Path):
@@ -139,6 +138,7 @@ def test_no_workspace_slug_means_no_attach(fake_conn: FakeConn, tmp_path: Path):
         "SELECT 1",
         tmp_path / "out.parquet",
         memory_limit_gb=1.0,
+        polaris=POLARIS,
     )
     cmds = [c[0] for c in fake_conn.commands]
     assert not any("ATTACH" in c for c in cmds)

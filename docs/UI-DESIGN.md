@@ -370,7 +370,7 @@ sample rows, or metadata.
 │ Catalog  /  acme-analytics  /  raw  /  events                       [≡] [✎] │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ Backend: S3 (s3://acme-data/duckhaven/acme-analytics/)                       │
-│ Format:  Delta · Catalog Commits ON · 42.1M rows · 312 MB · 14 commits       │
+│ Format:  Iceberg · Catalog Commits ON · 42.1M rows · 312 MB · 14 commits       │
 │ Owner:   Marton (you) · Last write: 2026-05-15 14:03 by jess (agent-b)       │
 │                                                                              │
 │ ┌─ Schema ────────────────────────────┐ ┌─ Sample (LIMIT 50) ────────────┐  │
@@ -424,10 +424,10 @@ It's a list with one drawer-style detail panel.
 ┌─ Admin / Agents ────────────────────────────────────── [Generate bootstrap] ┐
 │                                                                              │
 │ Status  Name         DuckDB  Host           Extensions        Mem  Last ping │
-│ ●green  agent-a      1.5.2   homeserver-01  uc,delta,httpfs,az 6G  2s ago    │
-│ ●green  agent-b      1.5.2   beefy-vm       uc,delta,httpfs    12G 1s ago    │
-│ ●red    agent-c      1.4.3   —              uc,delta,httpfs,az 6G  4m ago    │
-│ ●amber  agent-d      1.5.2   sandbox        uc,delta            6G 12s ago   │
+│ ●green  agent-a      1.5.2   homeserver-01  iceberg,httpfs,az 6G  2s ago    │
+│ ●green  agent-b      1.5.2   beefy-vm       iceberg,httpfs    12G 1s ago    │
+│ ●red    agent-c      1.4.3   —              iceberg,httpfs,az 6G  4m ago    │
+│ ●amber  agent-d      1.5.2   sandbox        iceberg                6G 12s ago   │
 │                                                                              │
 │ Drawer (agent-b selected) ────────────────────────────────────────────────── │
 │ Capabilities · 12 GB cap · 4 cores · Tailscale 100.74.x.x                    │

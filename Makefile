@@ -1,6 +1,7 @@
 .PHONY: install install-web dev dev-api dev-web \
         test test-api test-agent test-web \
         test-integration test-integration-api test-integration-agent \
+        polaris-dev polaris-dev-s3 polaris-dev-down \
         lint format \
         migrate migrate-new migrate-down \
         compose-up compose-down compose-logs compose-pull \
@@ -47,7 +48,7 @@ test-agent:
 test-web:
 	cd web && npm run test
 
-# ── Integration tests (opt-in; require UC + Postgres) ─────────────────────────
+# ── Integration tests (opt-in; require Polaris + Postgres) ────────────────────
 # Exit code 5 ("no tests ran") is tolerated so the targets are safe to run
 # before the first integration test lands on a branch.
 test-integration: test-integration-api test-integration-agent
@@ -59,6 +60,80 @@ test-integration-api:
 test-integration-agent:
 	@uv run --package duckhaven-agent pytest agent/tests/integration/ -v -m integration; \
 	  rc=$$?; if [ $$rc -ne 0 ] && [ $$rc -ne 5 ]; then exit $$rc; fi
+
+# ── Local Polaris (for integration tests) ─────────────────────────────────────
+# Spins up a single-container Apache Polaris with in-memory persistence and
+# FILE storage, sharing a warehouse dir with the host so the agent test can
+# read catalog metadata. Override the warehouse path or image tag if needed.
+POLARIS_IMAGE_TAG ?= latest
+POLARIS_WAREHOUSE_DIR ?= /tmp/duckhaven-warehouse
+
+polaris-dev:
+	mkdir -p $(POLARIS_WAREHOUSE_DIR) && chmod 777 $(POLARIS_WAREHOUSE_DIR)
+	docker rm -f dh-polaris-dev >/dev/null 2>&1 || true
+	docker run -d --name dh-polaris-dev \
+		-p 8181:8181 -p 8182:8182 \
+		-v $(POLARIS_WAREHOUSE_DIR):$(POLARIS_WAREHOUSE_DIR) \
+		-e POLARIS_BOOTSTRAP_CREDENTIALS=POLARIS,root,s3cr3t \
+		-e POLARIS_REALM_CONTEXT_REALMS=POLARIS \
+		-e QUARKUS_OTEL_SDK_DISABLED=true \
+		-e 'polaris.features."ALLOW_INSECURE_STORAGE_TYPES"=true' \
+		-e 'polaris.features."SUPPORTED_CATALOG_STORAGE_TYPES"=["FILE"]' \
+		-e polaris.readiness.ignore-severe-issues=true \
+		apache/polaris:$(POLARIS_IMAGE_TAG)
+	@echo "Waiting for Polaris to become healthy..."
+	@for i in $$(seq 1 30); do \
+		if curl -sf http://localhost:8182/q/health >/dev/null 2>&1; then echo "Polaris is up."; break; fi; \
+		sleep 2; \
+	done
+	@echo ""
+	@echo "Polaris (FILE) ready on :8181 — read/catalog tests. Run with:"
+	@echo "  POLARIS_BASE_URL=http://localhost:8181 POLARIS_CLIENT_ID=root \\"
+	@echo "  POLARIS_CLIENT_SECRET=s3cr3t POLARIS_WAREHOUSE_DIR=$(POLARIS_WAREHOUSE_DIR) \\"
+	@echo "  make test-integration"
+
+# S3 variant: MinIO + Polaris-on-S3. Required for the write/INSERT test, since
+# DuckDB can only write Iceberg tables to object storage (Polaris vends scoped
+# credentials); FILE storage is read-only across the container boundary.
+POLARIS_S3_BUCKET ?= warehouse
+
+polaris-dev-s3:
+	docker network create dh-polaris-net >/dev/null 2>&1 || true
+	docker rm -f dh-polaris-dev dh-minio-dev >/dev/null 2>&1 || true
+	docker run -d --name dh-minio-dev --network dh-polaris-net -p 9000:9000 \
+		-e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
+		minio/minio server /data
+	@echo "Waiting for MinIO..."
+	@for i in $$(seq 1 20); do \
+		curl -sf http://localhost:9000/minio/health/live >/dev/null 2>&1 && break; sleep 1; \
+	done
+	docker run --rm --network dh-polaris-net \
+		-e AWS_ACCESS_KEY_ID=minioadmin -e AWS_SECRET_ACCESS_KEY=minioadmin -e AWS_REGION=us-east-1 \
+		amazon/aws-cli:2.34.48 --endpoint-url http://dh-minio-dev:9000 s3 mb s3://$(POLARIS_S3_BUCKET) || true
+	docker run -d --name dh-polaris-dev --network dh-polaris-net \
+		-p 8181:8181 -p 8182:8182 \
+		-e POLARIS_BOOTSTRAP_CREDENTIALS=POLARIS,root,s3cr3t \
+		-e POLARIS_REALM_CONTEXT_REALMS=POLARIS \
+		-e AWS_REGION=us-east-1 -e AWS_ACCESS_KEY_ID=minioadmin -e AWS_SECRET_ACCESS_KEY=minioadmin \
+		-e QUARKUS_OTEL_SDK_DISABLED=true \
+		-e 'polaris.features."SUPPORTED_CATALOG_STORAGE_TYPES"=["S3","FILE"]' \
+		-e 'polaris.features."ALLOW_INSECURE_STORAGE_TYPES"=true' \
+		-e polaris.readiness.ignore-severe-issues=true \
+		apache/polaris:$(POLARIS_IMAGE_TAG)
+	@echo "Waiting for Polaris to become healthy..."
+	@for i in $$(seq 1 30); do \
+		if curl -sf http://localhost:8182/q/health >/dev/null 2>&1; then echo "Polaris is up."; break; fi; \
+		sleep 2; \
+	done
+	@echo ""
+	@echo "Polaris (S3/MinIO) ready on :8181 — write/INSERT test. Run with:"
+	@echo "  POLARIS_BASE_URL=http://localhost:8181 POLARIS_CLIENT_ID=root POLARIS_CLIENT_SECRET=s3cr3t \\"
+	@echo "  POLARIS_S3_BUCKET=s3://$(POLARIS_S3_BUCKET) POLARIS_S3_ENDPOINT=http://localhost:9000 \\"
+	@echo "  POLARIS_S3_ENDPOINT_INTERNAL=http://dh-minio-dev:9000 make test-integration"
+
+polaris-dev-down:
+	docker rm -f dh-polaris-dev dh-minio-dev >/dev/null 2>&1 || true
+	docker network rm dh-polaris-net >/dev/null 2>&1 || true
 
 # ── Lint / Format ─────────────────────────────────────────────────────────────
 lint:

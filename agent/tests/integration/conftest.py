@@ -1,90 +1,189 @@
 """Shared fixtures for agent integration tests.
 
-Mirrors `api/tests/integration/conftest.py` so the agent spike can drive
-Unity Catalog directly without depending on the api side. Tests are
-skipped when UC_BASE_URL is unset or the server is unreachable.
+Drives Apache Polaris directly over REST (no dependency on the api
+package) so the agent's DuckDB path can be exercised end-to-end. Skipped
+when POLARIS_BASE_URL is unset or the server is unreachable.
+
+Two storage backings are supported:
+
+- FILE (`polaris_catalog`): requires POLARIS_WAREHOUSE_DIR, a path shared
+  identically between the Polaris container and the test host. Validates
+  the read/attach path. Writes are NOT possible this way — Polaris creates
+  table directories the host agent can't write into.
+
+- S3 (`polaris_s3_catalog`): requires POLARIS_S3_BUCKET (+ endpoint env).
+  This is the path that supports `INSERT`, since Polaris vends scoped
+  object-store credentials to DuckDB. `make polaris-dev-s3` provides a
+  local MinIO-backed stack.
 """
 
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator, Iterator
-from pathlib import Path
+from collections.abc import AsyncIterator
+from typing import Any
 from uuid import uuid4
 
 import httpx
 import pytest
 
+CATALOG_API = "/api/catalog/v1"
+MGMT_API = "/api/management/v1"
+NAMESPACE = "analytics"
+
 
 @pytest.fixture(scope="session")
-def uc_base_url() -> str:
-    url = os.getenv("UC_BASE_URL")
+def polaris_base_url() -> str:
+    url = os.getenv("POLARIS_BASE_URL")
     if not url:
-        pytest.skip("UC_BASE_URL not set; skipping agent UC integration test")
+        pytest.skip("POLARIS_BASE_URL not set; skipping agent Polaris integration test")
+    health = url.replace(":8181", ":8182").rstrip("/") + "/q/health"
     try:
-        resp = httpx.get(f"{url}/api/2.1/unity-catalog/catalogs", timeout=2.0)
-        resp.raise_for_status()
+        httpx.get(health, timeout=2.0).raise_for_status()
     except httpx.HTTPError as exc:
-        pytest.skip(f"Unity Catalog unreachable at {url}: {exc}")
+        pytest.skip(f"Polaris unreachable at {url}: {exc}")
     return url
 
 
-@pytest.fixture
-async def uc_http(uc_base_url: str) -> AsyncIterator[httpx.AsyncClient]:
-    async with httpx.AsyncClient(base_url=uc_base_url, timeout=10.0) as client:
-        yield client
+@pytest.fixture(scope="session")
+def polaris_creds() -> tuple[str, str]:
+    return os.getenv("POLARIS_CLIENT_ID", "root"), os.getenv("POLARIS_CLIENT_SECRET", "s3cr3t")
 
 
-async def _delete_catalog(client: httpx.AsyncClient, name: str) -> None:
-    try:
-        schemas = await client.get("/api/2.1/unity-catalog/schemas", params={"catalog_name": name})
-        for schema in schemas.json().get("schemas", []) or []:
-            schema_name = schema["name"]
-            tables = await client.get(
-                "/api/2.1/unity-catalog/tables",
-                params={"catalog_name": name, "schema_name": schema_name},
-            )
-            for table in tables.json().get("tables", []) or []:
-                await client.delete(
-                    f"/api/2.1/unity-catalog/tables/{name}.{schema_name}.{table['name']}"
-                )
-            await client.delete(
-                f"/api/2.1/unity-catalog/schemas/{name}.{schema_name}",
-                params={"force": "true"},
-            )
-        await client.delete(f"/api/2.1/unity-catalog/catalogs/{name}", params={"force": "true"})
-    except httpx.HTTPError:
-        pass
+async def _token(client: httpx.AsyncClient, creds: tuple[str, str]) -> str:
+    resp = await client.post(
+        f"{CATALOG_API}/oauth/tokens",
+        data={
+            "grant_type": "client_credentials",
+            "client_id": creds[0],
+            "client_secret": creds[1],
+            "scope": "PRINCIPAL_ROLE:ALL",
+        },
+    )
+    resp.raise_for_status()
+    return resp.json()["access_token"]
 
 
-@pytest.fixture
-async def uc_catalog(uc_http: httpx.AsyncClient) -> AsyncIterator[str]:
+async def _provision(
+    c: httpx.AsyncClient,
+    h: dict[str, str],
+    name: str,
+    base_location: str,
+    storage_config: dict[str, Any],
+    principal: str,
+) -> None:
+    """Create a catalog with data-access grants + an `analytics` namespace
+    holding an `events` table (mirrors PolarisClient + ensure_catalog_access)."""
+    await c.post(
+        f"{MGMT_API}/catalogs",
+        headers=h,
+        json={
+            "catalog": {
+                "name": name,
+                "type": "INTERNAL",
+                "readOnly": False,
+                "properties": {"default-base-location": base_location},
+                "storageConfigInfo": storage_config,
+            }
+        },
+    )
+    await c.post(
+        f"{MGMT_API}/catalogs/{name}/catalog-roles",
+        headers=h,
+        json={"catalogRole": {"name": "duckhaven_rw"}},
+    )
+    await c.put(
+        f"{MGMT_API}/catalogs/{name}/catalog-roles/duckhaven_rw/grants",
+        headers=h,
+        json={"grant": {"type": "catalog", "privilege": "CATALOG_MANAGE_CONTENT"}},
+    )
+    await c.post(
+        f"{MGMT_API}/principal-roles", headers=h, json={"principalRole": {"name": "duckhaven"}}
+    )
+    await c.put(
+        f"{MGMT_API}/principal-roles/duckhaven/catalog-roles/{name}",
+        headers=h,
+        json={"catalogRole": {"name": "duckhaven_rw"}},
+    )
+    await c.put(
+        f"{MGMT_API}/principals/{principal}/principal-roles",
+        headers=h,
+        json={"principalRole": {"name": "duckhaven"}},
+    )
+    await c.post(f"{CATALOG_API}/{name}/namespaces", headers=h, json={"namespace": [NAMESPACE]})
+    await c.post(
+        f"{CATALOG_API}/{name}/namespaces/{NAMESPACE}/tables",
+        headers=h,
+        json={
+            "name": "events",
+            "schema": {
+                "type": "struct",
+                "schema-id": 0,
+                "fields": [
+                    {"id": 1, "name": "id", "required": False, "type": "long"},
+                    {"id": 2, "name": "label", "required": False, "type": "string"},
+                ],
+            },
+        },
+    )
+
+
+async def _make_catalog(
+    polaris_base_url: str,
+    creds: tuple[str, str],
+    base_location: str,
+    storage_config: dict[str, Any],
+) -> AsyncIterator[tuple[str, str]]:
     name = f"dh_agt_{uuid4().hex[:10]}"
-    resp = await uc_http.post(
-        "/api/2.1/unity-catalog/catalogs",
-        json={"name": name, "comment": "duckhaven agent spike"},
-    )
-    resp.raise_for_status()
-    try:
-        yield name
-    finally:
-        await _delete_catalog(uc_http, name)
+    async with httpx.AsyncClient(base_url=polaris_base_url, timeout=15.0) as c:
+        h = {"Authorization": f"Bearer {await _token(c, creds)}", "Polaris-Realm": "POLARIS"}
+        await _provision(c, h, name, base_location, storage_config, creds[0])
+        try:
+            yield name, NAMESPACE
+        finally:
+            try:
+                await c.delete(f"{MGMT_API}/catalogs/{name}", headers=h)
+            except httpx.HTTPError:
+                pass
 
 
 @pytest.fixture
-async def uc_schema(uc_http: httpx.AsyncClient, uc_catalog: str) -> AsyncIterator[str]:
-    resp = await uc_http.post(
-        "/api/2.1/unity-catalog/schemas",
-        json={"name": "main", "catalog_name": uc_catalog},
-    )
-    resp.raise_for_status()
-    yield "main"
+async def polaris_catalog(
+    polaris_base_url: str, polaris_creds: tuple[str, str]
+) -> AsyncIterator[tuple[str, str]]:
+    """FILE-backed catalog. Requires POLARIS_WAREHOUSE_DIR shared with Polaris."""
+    warehouse = os.getenv("POLARIS_WAREHOUSE_DIR")
+    if not warehouse:
+        pytest.skip("POLARIS_WAREHOUSE_DIR not set; skipping FILE-storage integration test")
+    base = f"file://{warehouse.rstrip('/')}/{uuid4().hex[:8]}"
+    async for cat in _make_catalog(
+        polaris_base_url,
+        polaris_creds,
+        base,
+        {"storageType": "FILE", "allowedLocations": [base]},
+    ):
+        yield cat
 
 
 @pytest.fixture
-def backend_root(tmp_path: Path) -> Iterator[Path]:
-    """A throwaway local-fs backend root usable as UC storage_location."""
-
-    root = tmp_path / "backend"
-    root.mkdir()
-    yield root
+async def polaris_s3_catalog(
+    polaris_base_url: str, polaris_creds: tuple[str, str]
+) -> AsyncIterator[tuple[str, str]]:
+    """S3-backed catalog (object storage supports writes via vended creds).
+    Requires POLARIS_S3_BUCKET (+ POLARIS_S3_ENDPOINT[_INTERNAL])."""
+    bucket = os.getenv("POLARIS_S3_BUCKET")
+    if not bucket:
+        pytest.skip("POLARIS_S3_BUCKET not set; skipping S3 write integration test")
+    base = f"{bucket.rstrip('/')}/{uuid4().hex[:8]}"
+    storage: dict[str, Any] = {
+        "storageType": "S3",
+        "allowedLocations": [base],
+        "region": os.getenv("POLARIS_S3_REGION", "us-east-1"),
+    }
+    if endpoint := os.getenv("POLARIS_S3_ENDPOINT"):
+        storage["endpoint"] = endpoint
+        storage["pathStyleAccess"] = True
+    if internal := os.getenv("POLARIS_S3_ENDPOINT_INTERNAL"):
+        storage["endpointInternal"] = internal
+    async for cat in _make_catalog(polaris_base_url, polaris_creds, base, storage):
+        yield cat

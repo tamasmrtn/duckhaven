@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_cred_cache, get_current_user, get_db, get_uc_client
+from api.deps import get_current_user, get_db
 from api.models.agent import Agent
 from api.models.query import Query, SavedQuery
 from api.models.storage_backend import StorageBackend
@@ -14,8 +14,6 @@ from api.services import query as query_service
 from api.services.agent_capabilities import agent_supports_backend, required_extension
 from api.services.agent_registry import registry
 from api.services.sql_guard import SQLNotAllowed, assert_allowed
-from api.services.uc_credentials import CredCache
-from api.services.unity_catalog import UCClient
 from api.services.workspace import assert_workspace_member, get_workspace
 
 router = APIRouter()
@@ -27,8 +25,6 @@ async def create_query(
     body: QueryCreate,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
-    uc: UCClient = Depends(get_uc_client),
-    cred_cache: CredCache = Depends(get_cred_cache),
 ) -> Query:
     workspace = await get_workspace(db, ws)
     if workspace is None:
@@ -77,8 +73,6 @@ async def create_query(
     await query_service.dispatch_query(
         db,
         query,
-        uc=uc,
-        cred_cache=cred_cache,
         memory_limit_gb=body.memory_limit_gb,
         timeout_s=body.timeout_s,
     )

@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_cred_cache, get_current_user, get_db, get_uc_client
+from api.deps import get_current_user, get_db, get_polaris_client
 from api.models.agent import Agent
 from api.models.storage_backend import StorageBackend
 from api.models.table_metadata import TableMetadata
@@ -33,14 +33,18 @@ from api.schemas.catalog import (
 )
 from api.schemas.query import RowsPageOut
 from api.services import query as query_service
-from api.services.uc_credentials import CredCache
-from api.services.unity_catalog import (
-    UCClient,
-    UCConflictError,
-    UCNotFoundError,
-    UCTable,
+from api.services.polaris import (
+    PolarisClient,
+    PolarisConflictError,
+    PolarisNotFoundError,
+    PolarisTable,
 )
-from api.services.workspace import assert_workspace_member, ensure_uc_catalog, get_workspace
+from api.services.workspace import (
+    assert_workspace_member,
+    ensure_polaris_catalog,
+    get_workspace,
+    polaris_storage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -111,37 +115,31 @@ async def _load_table_meta(
 router = APIRouter(prefix="/workspaces/{ws}/schemas")
 
 
-# Map the small set of allowed scalar types to the verbose UC column shape.
-_TYPE_TO_UC: dict[AllowedColumnType, tuple[str, str]] = {
-    "INTEGER": ("INT", "int"),
-    "BIGINT": ("LONG", "bigint"),
-    "DOUBLE": ("DOUBLE", "double"),
-    "VARCHAR": ("STRING", "string"),
-    "BOOLEAN": ("BOOLEAN", "boolean"),
-    "DATE": ("DATE", "date"),
-    "TIMESTAMP": ("TIMESTAMP", "timestamp"),
-    "DECIMAL": ("DECIMAL", "decimal"),
+# Map the small set of allowed scalar types to Iceberg primitive type strings.
+_TYPE_TO_ICEBERG: dict[AllowedColumnType, str] = {
+    "INTEGER": "int",
+    "BIGINT": "long",
+    "DOUBLE": "double",
+    "VARCHAR": "string",
+    "BOOLEAN": "boolean",
+    "DATE": "date",
+    "TIMESTAMP": "timestamp",
+    "DECIMAL": "decimal(38,9)",
 }
 
 
-def _column_for_uc(spec: ColumnSpec, position: int) -> dict[str, object]:
-    type_name, type_text = _TYPE_TO_UC[spec.type]
+def _column_for_iceberg(spec: ColumnSpec, field_id: int) -> dict[str, object]:
+    """Build an Iceberg schema field. Field ids are 1-based and unique."""
     return {
+        "id": field_id,
         "name": spec.name,
-        "type_text": type_text,
-        "type_name": type_name,
-        "type_json": "",
-        "type_precision": 0,
-        "type_scale": 0,
-        "type_interval_type": None,
-        "position": position,
-        "nullable": spec.nullable,
-        "comment": None,
+        "required": not spec.nullable,
+        "type": _TYPE_TO_ICEBERG[spec.type],
     }
 
 
 def _table_to_out(
-    table: UCTable, workspace_id: uuid.UUID, meta: _TableMeta | None = None
+    table: PolarisTable, workspace_id: uuid.UUID, meta: _TableMeta | None = None
 ) -> TableOut:
     props = table.properties or {}
     return TableOut(
@@ -166,7 +164,8 @@ def _table_to_out(
         ],
         properties=props,
         table_id=table.table_id,
-        catalog_commits="delta.feature.catalogManaged" in props,
+        # Every Iceberg REST table is catalog-managed by definition.
+        catalog_commits=True,
         row_count=meta.row_count if meta else None,
         size_bytes=meta.size_bytes if meta else None,
         owner=meta.owner if meta else None,
@@ -184,14 +183,22 @@ async def _resolve_workspace(ws: str, user: User, db: AsyncSession, min_role: st
     return workspace
 
 
-async def _backend_root_uri(db: AsyncSession, workspace: Workspace) -> str:
+async def _polaris_storage_args(db: AsyncSession, workspace: Workspace) -> tuple[str, str]:
+    """Resolve the (storage_type, base_location) for the workspace's backend."""
     backend = await db.get(StorageBackend, workspace.storage_backend_id)
     if backend is None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Workspace points to a missing storage backend",
         )
-    return backend.root_uri
+    return polaris_storage(backend.kind, backend.root_uri)
+
+
+async def _ensure_catalog(db: AsyncSession, polaris: PolarisClient, workspace: Workspace) -> None:
+    storage_type, base_location = await _polaris_storage_args(db, workspace)
+    await ensure_polaris_catalog(
+        polaris, workspace.slug, storage_type=storage_type, base_location=base_location
+    )
 
 
 @router.get("", response_model=list[CatalogSchemaOut])
@@ -199,11 +206,11 @@ async def list_schemas(
     ws: str,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    uc: UCClient = Depends(get_uc_client),
+    polaris: PolarisClient = Depends(get_polaris_client),
 ) -> list[CatalogSchemaOut]:
     workspace = await _resolve_workspace(ws, user, db, min_role="reader")
-    await ensure_uc_catalog(uc, workspace.slug)
-    schemas = await uc.list_schemas(workspace.slug)
+    await _ensure_catalog(db, polaris, workspace)
+    schemas = await polaris.list_schemas(workspace.slug)
     return [
         CatalogSchemaOut(name=s.name, catalog_name=s.catalog_name, workspace_id=str(workspace.id))
         for s in schemas
@@ -216,13 +223,13 @@ async def create_schema(
     body: CatalogSchemaCreate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    uc: UCClient = Depends(get_uc_client),
+    polaris: PolarisClient = Depends(get_polaris_client),
 ) -> CatalogSchemaOut:
     workspace = await _resolve_workspace(ws, user, db, min_role="writer")
-    await ensure_uc_catalog(uc, workspace.slug)
+    await _ensure_catalog(db, polaris, workspace)
     try:
-        sc = await uc.create_schema(workspace.slug, body.name)
-    except UCConflictError as exc:
+        sc = await polaris.create_schema(workspace.slug, body.name)
+    except PolarisConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return CatalogSchemaOut(
         name=sc.name, catalog_name=sc.catalog_name, workspace_id=str(workspace.id)
@@ -235,10 +242,10 @@ async def list_tables(
     schema: str,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    uc: UCClient = Depends(get_uc_client),
+    polaris: PolarisClient = Depends(get_polaris_client),
 ) -> list[TableOut]:
     workspace = await _resolve_workspace(ws, user, db, min_role="reader")
-    tables = await uc.list_tables(workspace.slug, schema)
+    tables = await polaris.list_tables(workspace.slug, schema)
     meta = await _load_table_meta(db, workspace.id, schema)
     return [_table_to_out(t, workspace.id, meta.get(t.name)) for t in tables]
 
@@ -250,12 +257,12 @@ async def get_table(
     table: str,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    uc: UCClient = Depends(get_uc_client),
+    polaris: PolarisClient = Depends(get_polaris_client),
 ) -> TableOut:
     workspace = await _resolve_workspace(ws, user, db, min_role="reader")
     try:
-        t = await uc.get_table(workspace.slug, schema, table)
-    except UCNotFoundError as exc:
+        t = await polaris.get_table(workspace.slug, schema, table)
+    except PolarisNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
     meta = await _load_table_meta(db, workspace.id, schema)
     return _table_to_out(t, workspace.id, meta.get(t.name))
@@ -272,27 +279,22 @@ async def create_table(
     body: TableCreate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    uc: UCClient = Depends(get_uc_client),
+    polaris: PolarisClient = Depends(get_polaris_client),
 ) -> TableOut:
     workspace = await _resolve_workspace(ws, user, db, min_role="writer")
-    root_uri = await _backend_root_uri(db, workspace)
-    # Storage layout matches §5: <root>/<schema>/<table>/ with a trailing slash.
-    storage_location = f"{root_uri.rstrip('/')}/{schema}/{body.name}/"
-    columns = [_column_for_uc(spec, idx) for idx, spec in enumerate(body.columns)]
+    # Iceberg schema fields use 1-based, unique field ids; Polaris places the
+    # table under the catalog's base location, so we pass no storage location.
+    columns = [_column_for_iceberg(spec, idx + 1) for idx, spec in enumerate(body.columns)]
 
-    await ensure_uc_catalog(uc, workspace.slug)
+    await _ensure_catalog(db, polaris, workspace)
     try:
-        t = await uc.create_table(
+        t = await polaris.create_table(
             catalog=workspace.slug,
             schema=schema,
             name=body.name,
             columns=columns,
-            storage_location=storage_location,
-            data_source_format="DELTA",
-            table_type="MANAGED",
-            properties={"delta.feature.catalogManaged": "supported"},
         )
-    except UCConflictError as exc:
+    except PolarisConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
     # Record ownership + initial (empty) stats. The creator is owner + last writer.
@@ -320,12 +322,12 @@ async def drop_table(
     table: str,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    uc: UCClient = Depends(get_uc_client),
+    polaris: PolarisClient = Depends(get_polaris_client),
 ) -> None:
     workspace = await _resolve_workspace(ws, user, db, min_role="writer")
     try:
-        await uc.delete_table(workspace.slug, schema, table)
-    except UCNotFoundError as exc:
+        await polaris.delete_table(workspace.slug, schema, table)
+    except PolarisNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
 
 
@@ -340,13 +342,12 @@ async def sample_table(
     table: str,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    uc: UCClient = Depends(get_uc_client),
-    cred_cache: CredCache = Depends(get_cred_cache),
+    polaris: PolarisClient = Depends(get_polaris_client),
 ) -> RowsPageOut:
     workspace = await _resolve_workspace(ws, user, db, min_role="reader")
     try:
-        await uc.get_table(workspace.slug, schema, table)
-    except UCNotFoundError as exc:
+        await polaris.get_table(workspace.slug, schema, table)
+    except PolarisNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
 
     agent = await query_service.pick_agent_for(db, workspace)
@@ -363,8 +364,6 @@ async def sample_table(
         agent=agent,
         user_id=user.id,
         sql=sql,
-        uc=uc,
-        cred_cache=cred_cache,
         origin="sample",
         stats_for={"schema": schema, "table": table},
     )

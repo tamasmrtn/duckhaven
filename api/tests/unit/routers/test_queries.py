@@ -139,7 +139,7 @@ async def test_create_query_dispatches(
     # M3: dispatch payload now carries the workspace backend descriptor; local
     # backends don't get vended creds.
     assert frame["payload"]["backend"] == {"kind": "local_fs", "root_uri": "/tmp/test"}
-    assert frame["payload"]["workspace"] == {"slug": "test-ws"}
+    assert frame["payload"]["workspace"] == {"slug": "test-ws", "default_schema": "analytics"}
     assert "storage_credentials" not in frame["payload"]
 
 
@@ -164,17 +164,14 @@ async def test_dispatch_clamps_memory_to_agent_cap(
     assert frame["payload"]["memory_limit_gb"] == 4.0
 
 
-async def test_dispatch_payload_embeds_s3_storage_credentials(
+async def test_dispatch_payload_carries_backend_and_no_credentials(
     authed_client: AsyncClient, db_session, user: User, connected_agent
 ):
-    """For cloud backends with at least one table in the UC catalog, the
-    dispatch frame must carry short-lived `storage_credentials`."""
+    """The dispatch frame carries the backend descriptor and the workspace
+    slug, but no storage credentials or catalog endpoint — the agent attaches
+    Polaris from its own config and Polaris vends storage creds on attach."""
     import json
 
-    from sqlalchemy import select
-
-    from api.deps import get_uc_client
-    from api.main import api_app
     from api.models.storage_backend import StorageBackend
     from api.models.workspace import Workspace, WorkspaceMember
 
@@ -193,46 +190,17 @@ async def test_dispatch_payload_embeds_s3_storage_credentials(
     db_session.add(WorkspaceMember(workspace_id=ws.id, user_id=user.id, role="owner"))
     await db_session.commit()
 
-    # Seed the FakeUC with a catalog, schema, and one anchor table so that
-    # vend_workspace_creds picks it up. The override returns the test's
-    # FakeUC instance.
-    fake_uc = await api_app.dependency_overrides[get_uc_client]()
-    await fake_uc.create_catalog("s3-ws")
-    await fake_uc.create_schema("s3-ws", "main")
-    await fake_uc.create_table(
-        catalog="s3-ws",
-        schema="main",
-        name="events",
-        columns=[
-            {
-                "name": "id",
-                "type_text": "int",
-                "type_name": "INT",
-                "type_json": "",
-                "position": 0,
-                "nullable": False,
-            }
-        ],
-        storage_location="s3://bucket/prefix/main/events/",
-    )
-
     resp = await authed_client.post(
         "/workspaces/s3-ws/queries",
         json={"sql": "SELECT 1", "agent_id": str(agent.id)},
     )
     assert resp.status_code == 202, resp.text
 
-    frame = json.loads(mock_ws.sent[-1])
-    assert frame["payload"]["backend"] == {
-        "kind": "s3",
-        "root_uri": "s3://bucket/prefix",
-    }
-    creds = frame["payload"]["storage_credentials"]
-    assert creds["kind"] == "s3"
-    assert creds["fields"]["access_key_id"] == "fake-key"
-    assert "expires_at" in creds
-    # Suppress unused symbol
-    _ = (select, WorkspaceMember)
+    payload = json.loads(mock_ws.sent[-1])["payload"]
+    assert payload["backend"] == {"kind": "s3", "root_uri": "s3://bucket/prefix"}
+    assert payload["workspace"] == {"slug": "s3-ws", "default_schema": "analytics"}
+    assert "storage_credentials" not in payload
+    assert "catalog" not in payload
 
 
 async def test_dispatch_rejects_agent_missing_extension(
@@ -244,7 +212,7 @@ async def test_dispatch_rejects_agent_missing_extension(
     from api.models.workspace import Workspace, WorkspaceMember
 
     agent, mock_ws = connected_agent
-    agent.capabilities = {"extensions": ["httpfs", "delta"]}  # no azure
+    agent.capabilities = {"extensions": ["httpfs", "iceberg"]}  # no azure
     db_session.add(agent)
 
     sb = StorageBackend(

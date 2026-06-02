@@ -6,7 +6,7 @@
 
 Your team loves DuckDB, but sharing `.duckdb` files across Slack is chaos. You want the worksheet experience of Databricks or Snowflake without the enterprise gravity, and MotherDuck-style collaboration without the cloud lock-in.
 
-DuckHaven is a self-hosted analytics workspace that lets teams write, share, and govern SQL queries over DuckDB. It combines browser-based worksheets with Unity Catalog governance — lightweight enough for a homelab, serious enough for a team. No cloud warehouse lock-in, no Kubernetes, no opaque billing, no platform team required.
+DuckHaven is a self-hosted analytics workspace that lets teams write, share, and govern SQL queries over DuckDB. It combines browser-based worksheets with Apache Polaris governance — lightweight enough for a homelab, serious enough for a team. No cloud warehouse lock-in, no Kubernetes, no opaque billing, no platform team required.
 
 ## Alternatives
 
@@ -21,7 +21,7 @@ DuckHaven is not the only way to run SQL over DuckDB. Pick the tool that fits yo
 | **Hosting** | Self-hosted | Cloud SaaS | Cloud/Enterprise | Local only |
 | **Engine** | DuckDB | DuckDB | Spark/JVM | DuckDB |
 | **Collaboration** | Worksheets + catalog + audit | Worksheets + sharing | Worksheets + notebooks | None |
-| **Governance** | Unity Catalog OSS | Proprietary | Unity Catalog Enterprise | None |
+| **Governance** | Apache Polaris | Proprietary | Unity Catalog Enterprise | None |
 | **Complexity** | Docker Compose | Zero setup | Kubernetes + platform team | Scripts |
 | **Cost model** | Free (self-hosted) | Per-seat SaaS | Enterprise contract | Free |
 
@@ -30,11 +30,11 @@ DuckHaven is not the only way to run SQL over DuckDB. Pick the tool that fits yo
 ## Features
 
 - **Browser-Based Worksheets** — Monaco SQL editor with tabs, results grid, and CSV export. Write queries together without emailing SQL snippets.
-- **Shared Catalog** — Browse schemas and tables with sample rows. Every table is Delta-native with Catalog Commits ON.
-- **Governed Workspaces** — Per-workspace permissions, Unity Catalog integration, and a full audit trail of who ran what.
+- **Shared Catalog** — Browse schemas and tables with sample rows. Every table is Iceberg-native with Catalog Commits ON.
+- **Governed Workspaces** — Per-workspace permissions, Polaris catalog integration, and a full audit trail of who ran what.
 - **Transparent Compute** — You pick the DuckDB agent per query. No opaque optimizer, no surprise costs, no hidden resource allocation.
 - **Self-Hosted** — Docker Compose on your network. Your data never leaves your infrastructure.
-- **Short-Lived Credentials** — Unity Catalog vends temporary storage credentials per query. No long-lived secrets on agents.
+- **Short-Lived Credentials** — Polaris vends temporary storage credentials per query. No long-lived secrets on agents.
 
 ## Screenshots
 
@@ -64,7 +64,7 @@ DuckHaven separates control from compute. The control plane manages users, works
 flowchart TB
     Browser["Browser (Tailscale)"] --> API["duckhaven-api (FastAPI)"]
     API --> Postgres["Postgres (app state)"]
-    API --> UC["Unity Catalog OSS (governance)"]
+    API --> UC["Apache Polaris (governance)"]
     API --> WS["WebSocket (agent control)"]
     WS --> Agent1["duckhaven-agent (DuckDB)"]
     WS --> Agent2["duckhaven-agent (DuckDB)"]
@@ -77,7 +77,7 @@ flowchart TB
 - The control plane does **not** run DuckDB. Compute lives in agent processes that dial home over WebSocket.
 - Users pick the executing agent per worksheet — transparent compute, no opaque optimizer.
 - Every workspace is bound to exactly one storage backend: local FS, NAS, S3, or Azure.
-- Unity Catalog OSS provides table governance and vends short-lived storage credentials per query.
+- Apache Polaris provides table governance and vends short-lived storage credentials per query.
 - SQL is allowlisted to `SELECT` and `INSERT` only. DDL runs through UC REST.
 - The API is exposed directly on port 8000 over a private network (Tailscale recommended); there is no public ingress.
 
@@ -92,8 +92,8 @@ For the full architecture, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For
 | Database | PostgreSQL 16, SQLAlchemy 2.x (async) + Alembic migrations |
 | Agent | Python 3.14 embedding DuckDB; small HTTP server for result Parquet reads |
 | Engine | DuckDB ≥ 1.5 — present **only** on agents |
-| Catalog | Unity Catalog OSS — catalog + short-lived credential vendor |
-| Storage format | Delta Lake, Catalog Commits ON, one backend per workspace |
+| Catalog | Apache Polaris — catalog + short-lived credential vendor |
+| Storage format | Apache Iceberg, Catalog Commits ON, one backend per workspace |
 | Storage backends | Local FS, NAS, S3 (`httpfs`), ADLS Gen 2 (`azure`) |
 | Package management | uv (Python workspace), npm (web) |
 | Containerisation | Docker Compose (control plane); single container per agent |
@@ -125,7 +125,7 @@ compose-managed Postgres) see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Roadmap
 
-- **Shipped (M3)** — SQL worksheets, catalog browser, query dispatch to agents, Unity Catalog integration, workspace permissions, saved queries, audit log, storage backend registry, agent bootstrap tokens.
+- **Shipped (M3)** — SQL worksheets, catalog browser, query dispatch to agents, Polaris catalog integration, workspace permissions, saved queries, audit log, storage backend registry, agent bootstrap tokens.
 - **In progress (M4)** — Multi-agent hardening, result retention sweep, UC permission mirroring, server-side backend compatibility checks, agent image publishing, DR automation.
 - **Future** — Notebook UI, heterogeneous engines (Spark, Trino, Polars), per-table backend override, control-plane HA, Prometheus metrics + Grafana dashboards.
 
@@ -163,7 +163,7 @@ Repository layout:
 
 ## Inspiration
 
-DuckHaven's worksheet experience draws on MotherDuck and Databricks; it stands on [DuckDB](https://duckdb.org/) for compute and [Unity Catalog OSS](https://www.unitycatalog.io/) for governance and credential vending.
+DuckHaven's worksheet experience draws on MotherDuck; it stands on [DuckDB](https://duckdb.org/) for compute and [Apache Polaris](https://polaris.apache.org/) for governance and credential vending.
 
 ## License
 

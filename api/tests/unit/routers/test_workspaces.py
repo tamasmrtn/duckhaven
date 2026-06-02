@@ -44,7 +44,7 @@ async def test_list_workspaces_empty(auth_client: AsyncClient):
 
 
 async def test_create_and_list_workspace(
-    auth_client: AsyncClient, backend: StorageBackend, fake_uc
+    auth_client: AsyncClient, backend: StorageBackend, fake_polaris
 ):
     resp = await auth_client.post(
         "/workspaces",
@@ -65,12 +65,12 @@ async def test_create_and_list_workspace(
     assert detail_resp.status_code == 200
     assert detail_resp.json()["storage_backend_kind"] == "local_fs"
     # Eager UC provisioning ran: catalog + default `main` schema both exist.
-    assert "myws" in fake_uc.catalogs
-    assert ("myws", "main") in fake_uc.schemas
+    assert "myws" in fake_polaris.catalogs
+    assert ("myws", "analytics") in fake_polaris.schemas
 
 
 async def test_create_workspace_rolls_back_on_uc_failure(
-    auth_client: AsyncClient, backend: StorageBackend, fake_uc, db_session
+    auth_client: AsyncClient, backend: StorageBackend, fake_polaris, db_session
 ):
     """If UC is unhealthy when the workspace is created, both the pg row
     and the owner membership are rolled back so the caller can retry."""
@@ -78,7 +78,7 @@ async def test_create_workspace_rolls_back_on_uc_failure(
 
     from api.models.workspace import Workspace, WorkspaceMember
 
-    fake_uc.fail_create_catalog = True
+    fake_polaris.fail_create_catalog = True
     resp = await auth_client.post(
         "/workspaces",
         json={"slug": "broken", "name": "Broken", "storage_backend_id": str(backend.id)},
@@ -175,10 +175,11 @@ async def test_add_member(auth_client: AsyncClient, backend: StorageBackend, db_
     assert resp.json()["role"] == "reader"
 
 
-async def test_add_member_mirrors_uc_grant(
-    auth_client: AsyncClient, backend: StorageBackend, db_session, fake_uc
+async def test_add_member_succeeds(
+    auth_client: AsyncClient, backend: StorageBackend, db_session, fake_polaris
 ):
-    """Adding a member mirrors a best-effort catalog grant to UC (G-D10-a)."""
+    """Adding a member succeeds. The catalog grant mirror is a no-op now —
+    DuckHaven enforces membership at the API boundary (D10)."""
     from api.models.user import User
     from api.services.auth import hash_password
 
@@ -202,40 +203,4 @@ async def test_add_member_mirrors_uc_grant(
         json={"user_id": str(target.id), "role": "writer"},
     )
     assert resp.status_code == 201
-
-    grants = [c for c in fake_uc.permission_changes if c["principal"] == "grantee@test.local"]
-    assert len(grants) == 1
-    assert grants[0]["securable_type"] == "catalog"
-    assert grants[0]["full_name"] == "grant-ws"
-    assert grants[0]["add"] == ["SELECT", "MODIFY"]
-
-
-async def test_add_member_survives_uc_grant_failure(
-    auth_client: AsyncClient, backend: StorageBackend, db_session, fake_uc
-):
-    """A UC grant failure never blocks the membership change (best-effort)."""
-    from api.models.user import User
-    from api.services.auth import hash_password
-
-    target = User(
-        email="grantee2@test.local",
-        password_hash=hash_password("pw"),
-        name="G2",
-        role="user",
-    )
-    db_session.add(target)
-    await db_session.commit()
-    await db_session.refresh(target)
-
-    create = await auth_client.post(
-        "/workspaces",
-        json={"slug": "grant-ws2", "name": "Grant WS2", "storage_backend_id": str(backend.id)},
-    )
-    ws_slug = create.json()["slug"]
-    fake_uc.fail_update_permissions = True
-
-    resp = await auth_client.post(
-        f"/workspaces/{ws_slug}/members",
-        json={"user_id": str(target.id), "role": "reader"},
-    )
-    assert resp.status_code == 201
+    assert resp.json()["role"] == "writer"

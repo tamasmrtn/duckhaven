@@ -14,9 +14,9 @@ async def run_query(
     timeout_s: float,
     *,
     backend: dict[str, Any] | None = None,
-    storage_credentials: dict[str, Any] | None = None,
     workspace_slug: str | None = None,
-    uc_endpoint: str | None = None,
+    polaris: dict[str, Any] | None = None,
+    default_schema: str | None = None,
     stats_for: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     loop = asyncio.get_running_loop()
@@ -28,9 +28,9 @@ async def run_query(
             result_path,
             memory_limit_gb,
             backend=backend,
-            storage_credentials=storage_credentials,
             workspace_slug=workspace_slug,
-            uc_endpoint=uc_endpoint,
+            polaris=polaris,
+            default_schema=default_schema,
             stats_for=stats_for,
             on_connect=lambda c: conn_box.__setitem__("conn", c),
         )

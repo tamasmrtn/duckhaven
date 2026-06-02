@@ -12,7 +12,6 @@ import httpx
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.config import settings
 from api.models.agent import Agent
 from api.models.query import Query
 from api.models.storage_backend import StorageBackend
@@ -21,8 +20,7 @@ from api.models.user import Credential
 from api.models.workspace import Workspace
 from api.services.agent_capabilities import agent_supports_backend
 from api.services.agent_registry import registry
-from api.services.uc_credentials import CredCache, vend_workspace_creds
-from api.services.unity_catalog import UCClient
+from api.services.workspace import DEFAULT_SCHEMA
 from duckhaven_shared.protocol import Frame, FrameType
 
 
@@ -30,8 +28,6 @@ async def dispatch_query(
     db: AsyncSession,
     query: Query,
     *,
-    uc: UCClient,
-    cred_cache: CredCache,
     memory_limit_gb: float = 6.0,
     timeout_s: float = 600.0,
     stats_for: dict[str, str] | None = None,
@@ -55,22 +51,17 @@ async def dispatch_query(
     if backend is None:
         raise ValueError("Storage backend missing for workspace")
 
-    creds = await cred_cache.get_or_fetch(
-        f"{query.agent_id}:{workspace.slug}",
-        lambda: vend_workspace_creds(uc, workspace.slug, backend.kind),
-    )
-
+    # The agent attaches Polaris from its own config (endpoint + client creds)
+    # and uses the workspace slug as the warehouse; the control plane vends
+    # nothing and passes no catalog token.
     payload: dict[str, object] = {
         "query_id": str(query.id),
         "sql": query.sql,
         "memory_limit_gb": memory_limit_gb,
         "timeout_s": timeout_s,
-        "workspace": {"slug": workspace.slug},
+        "workspace": {"slug": workspace.slug, "default_schema": DEFAULT_SCHEMA},
         "backend": {"kind": backend.kind, "root_uri": backend.root_uri},
-        "unity_catalog": {"endpoint": settings.uc_base_url},
     }
-    if creds is not None:
-        payload["storage_credentials"] = creds.to_payload()
     if stats_for is not None:
         # Ask the agent to also compute true table stats for this table.
         payload["stats_for"] = stats_for
@@ -250,8 +241,6 @@ async def run_sync_query(
     agent: Agent,
     user_id: uuid.UUID,
     sql: str,
-    uc: UCClient,
-    cred_cache: CredCache,
     origin: str | None = None,
     stats_for: dict[str, str] | None = None,
     timeout_s: float = 30.0,
@@ -272,7 +261,7 @@ async def run_sync_query(
     )
     db.add(query)
     await db.flush()
-    await dispatch_query(db, query, uc=uc, cred_cache=cred_cache, stats_for=stats_for)
+    await dispatch_query(db, query, stats_for=stats_for)
 
     deadline = asyncio.get_event_loop().time() + timeout_s
     while asyncio.get_event_loop().time() < deadline:

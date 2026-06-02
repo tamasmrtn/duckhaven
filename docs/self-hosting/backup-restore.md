@@ -2,7 +2,7 @@
 
 DuckHaven's only durable state is the Postgres volume (`postgres_data`),
 which holds users, workspaces, saved queries, audit log, agent registrations,
-and the Unity Catalog metastore. The `secrets` volume holds `SECRET_KEY` and
+and the Polaris metastore (in the dedicated `polaris` database). The `secrets` volume holds `SECRET_KEY` and
 `POSTGRES_PASSWORD`; you need both volumes to restore a working install.
 
 Table data lives on your **storage backends** (S3, ADLS, NAS, local FS) — back

@@ -1,6 +1,6 @@
 # Install DuckHaven
 
-DuckHaven runs as one `docker compose` stack — Postgres, Unity Catalog, and the
+DuckHaven runs as one `docker compose` stack — Postgres, Apache Polaris, and the
 DuckHaven API (which serves both the REST API and the web UI on port 8000). No
 `git clone` is required.
 

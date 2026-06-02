@@ -71,7 +71,7 @@ make test-agent
 # Web tests only
 make test-web
 
-# Integration tests (requires Postgres + Unity Catalog)
+# Integration tests (requires Postgres + Polaris)
 make test-integration
 ```
 
@@ -149,7 +149,7 @@ docs/         Architecture, design, and deployment docs
 - Agent unit tests: `agent/tests/unit/`
 - Integration tests: `api/tests/integration/` and `agent/tests/integration/`
 - Use `AsyncClient` + `ASGITransport` for API tests.
-- Override `get_db`, `get_uc_client`, and `get_cred_cache` in `conftest.py`.
+- Override `get_db` and `get_polaris_client` in `conftest.py`.
 
 ## Conventional Commits
 

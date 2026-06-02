@@ -6,6 +6,13 @@ class Settings(BaseSettings):
 
     control_plane_url: str = "ws://localhost:8000/agents/connect"
     bootstrap_token: str = ""
+    # Apache Polaris (Iceberg REST catalog) the agent's DuckDB ATTACHes per
+    # query. DuckDB performs the OAuth2 client-credentials exchange itself using
+    # these; storage creds are then vended by Polaris on attach. Dev defaults
+    # match the Polaris bootstrap root principal.
+    polaris_base_url: str = "http://localhost:8181"
+    polaris_client_id: str = "root"
+    polaris_client_secret: str = "s3cr3t"
     results_dir: str = "/var/duckhaven-agent/results"
     results_http_port: int = 8001
     memory_limit_bytes: int = 6 * 1024**3  # 6 GB default

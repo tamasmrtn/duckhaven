@@ -156,8 +156,8 @@ function RegisterWizard({
             {kind === "s3" || kind === "adls_gen2" ? (
               <>
                 <p className="text-sm text-text-secondary">
-                  Bind a Unity Catalog storage credential for short-lived
-                  credential vending.
+                  Bind a Polaris storage credential for short-lived credential
+                  vending.
                 </p>
                 <div className="space-y-1.5">
                   <Label className="text-sm">UC Storage Credential ID</Label>

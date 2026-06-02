@@ -32,6 +32,7 @@ class FakePolaris:
         self.fail_create_schema: bool = False
         self.fail_create_table: bool = False
         self.created_table_bodies: list[dict[str, Any]] = []
+        self.granted_catalogs: list[str] = []
 
     # --- Catalogs ---
 
@@ -66,6 +67,10 @@ class FakePolaris:
             self.schemas.pop(key, None)
         for key in [k for k in self.tables if k[0] == name]:
             self.tables.pop(key, None)
+
+    async def ensure_catalog_access(self, catalog: str) -> None:
+        # Grants are a real-Polaris concern; nothing to model in-memory.
+        self.granted_catalogs.append(catalog)
 
     # --- Namespaces ---
 

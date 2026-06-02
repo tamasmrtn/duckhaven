@@ -116,9 +116,10 @@ def test_attach_uses_workspace_slug_as_warehouse(fake_conn: FakeConn, tmp_path: 
         workspace_slug="ws-alpha",
         polaris=POLARIS,
     )
-    attach = next(c for c in fake_conn.commands if c[0].startswith("ATTACH"))
-    # Warehouse (slug) and catalog endpoint are bound params.
-    assert attach[1] == ["ws-alpha", "http://polaris:8181/api/catalog"]
+    attach_sql = next(c[0] for c in fake_conn.commands if c[0].startswith("ATTACH"))
+    # ATTACH takes no bind params; warehouse (slug) + endpoint are inlined.
+    assert "ATTACH 'ws-alpha' AS dh_catalog" in attach_sql
+    assert "ENDPOINT 'http://polaris:8181/api/catalog'" in attach_sql
 
 
 def test_no_polaris_means_no_attach(fake_conn: FakeConn, tmp_path: Path):

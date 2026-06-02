@@ -69,7 +69,7 @@ async def test_list_schemas_self_heals_catalog(
     resp = await auth_client.get(f"/workspaces/{slug}/schemas")
     assert resp.status_code == 200
     names = {row["name"] for row in resp.json()}
-    assert "main" in names
+    assert "analytics" in names
 
 
 async def test_list_schemas_self_heals_pre_m3_workspace(
@@ -97,7 +97,7 @@ async def test_list_schemas_self_heals_pre_m3_workspace(
     resp = await auth_client.get(f"/workspaces/{slug}/schemas")
     assert resp.status_code == 200
     assert slug in fake_polaris.catalogs  # self-healed
-    assert (slug, "main") in fake_polaris.schemas
+    assert (slug, "analytics") in fake_polaris.schemas
 
 
 async def test_create_schema_requires_writer(
@@ -117,7 +117,7 @@ async def test_create_schema_requires_writer(
     db_session.add(WorkspaceMember(workspace_id=ws.id, user_id=user.id, role="reader"))
     await db_session.commit()
 
-    resp = await auth_client.post(f"/workspaces/{slug}/schemas", json={"name": "analytics"})
+    resp = await auth_client.post(f"/workspaces/{slug}/schemas", json={"name": "staging"})
     assert resp.status_code == 403
 
 
@@ -125,13 +125,13 @@ async def test_create_schema_happy(
     auth_client: AsyncClient, backend: StorageBackend, fake_polaris: FakePolaris
 ):
     slug = await _make_workspace(auth_client, backend, "alpha")
-    resp = await auth_client.post(f"/workspaces/{slug}/schemas", json={"name": "analytics"})
+    resp = await auth_client.post(f"/workspaces/{slug}/schemas", json={"name": "staging"})
     assert resp.status_code == 201, resp.text
     body = resp.json()
-    assert body["name"] == "analytics"
+    assert body["name"] == "staging"
     assert body["catalog_name"] == slug
     assert isinstance(body["workspace_id"], str)
-    assert (slug, "analytics") in fake_polaris.schemas
+    assert (slug, "staging") in fake_polaris.schemas
 
 
 async def test_create_schema_duplicate_is_409(auth_client: AsyncClient, backend: StorageBackend):

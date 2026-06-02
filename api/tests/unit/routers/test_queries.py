@@ -139,7 +139,7 @@ async def test_create_query_dispatches(
     # M3: dispatch payload now carries the workspace backend descriptor; local
     # backends don't get vended creds.
     assert frame["payload"]["backend"] == {"kind": "local_fs", "root_uri": "/tmp/test"}
-    assert frame["payload"]["workspace"] == {"slug": "test-ws"}
+    assert frame["payload"]["workspace"] == {"slug": "test-ws", "default_schema": "analytics"}
     assert "storage_credentials" not in frame["payload"]
 
 
@@ -198,7 +198,7 @@ async def test_dispatch_payload_carries_backend_and_no_credentials(
 
     payload = json.loads(mock_ws.sent[-1])["payload"]
     assert payload["backend"] == {"kind": "s3", "root_uri": "s3://bucket/prefix"}
-    assert payload["workspace"] == {"slug": "s3-ws"}
+    assert payload["workspace"] == {"slug": "s3-ws", "default_schema": "analytics"}
     assert "storage_credentials" not in payload
     assert "catalog" not in payload
 

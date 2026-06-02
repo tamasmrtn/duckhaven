@@ -66,7 +66,7 @@ async def test_create_and_list_workspace(
     assert detail_resp.json()["storage_backend_kind"] == "local_fs"
     # Eager UC provisioning ran: catalog + default `main` schema both exist.
     assert "myws" in fake_polaris.catalogs
-    assert ("myws", "main") in fake_polaris.schemas
+    assert ("myws", "analytics") in fake_polaris.schemas
 
 
 async def test_create_workspace_rolls_back_on_uc_failure(

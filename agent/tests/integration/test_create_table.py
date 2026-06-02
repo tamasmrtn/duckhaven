@@ -1,11 +1,17 @@
-"""End-to-end Iceberg write/read through DuckDB + Polaris.
+"""Agent DuckDB ↔ Polaris read/attach path over the Iceberg REST catalog.
 
-Exercises catalog-managed `INSERT` through DuckDB. With the `iceberg`
-extension and a Polaris REST catalog, `CREATE TABLE` / `INSERT` / `SELECT`
-all work against a catalog-managed table.
+Opt-in (`-m integration`); requires a live Polaris sharing a filesystem
+with this process (see conftest). Validates the wiring that was broken
+before the namespace + RBAC + USE fixes: attach the catalog, resolve the
+(non-`main`) namespace, load a REST-created table's schema, and read it.
 
-Opt-in (`-m integration`); requires a live Polaris that shares a
-filesystem with this process (FILE storage). See conftest.
+This mirrors the agent runner's attach pattern (`runner._attach_polaris`):
+an iceberg OAuth2 SECRET + `ATTACH … (TYPE ICEBERG …)` + `USE <cat>.<ns>`.
+
+Writes are not exercised here: with Polaris in a container and the agent on
+the host, DuckDB cannot write into Polaris-created table directories.
+End-to-end INSERT requires object storage (S3) or a same-user single-host
+filesystem.
 """
 
 from __future__ import annotations
@@ -16,7 +22,7 @@ import pytest
 pytestmark = pytest.mark.integration
 
 
-def _attach(conn: duckdb.DuckDBPyConnection, base_url: str, warehouse: str, creds) -> None:
+def _attach(conn: duckdb.DuckDBPyConnection, base_url: str, warehouse: str, ns: str, creds) -> None:
     client_id, client_secret = creds
     conn.execute("INSTALL iceberg")
     conn.execute("LOAD iceberg")
@@ -25,23 +31,29 @@ def _attach(conn: duckdb.DuckDBPyConnection, base_url: str, warehouse: str, cred
         "(TYPE ICEBERG, CLIENT_ID ?, CLIENT_SECRET ?, OAUTH2_SERVER_URI ?)",
         [client_id, client_secret, f"{base_url}/api/catalog/v1/oauth/tokens"],
     )
+    # ATTACH does not accept bind parameters; inline the (trusted) values.
+    wh = warehouse.replace("'", "''")
+    endpoint = f"{base_url}/api/catalog".replace("'", "''")
     conn.execute(
-        "ATTACH ? AS dh_catalog (TYPE ICEBERG, SECRET dh_iceberg, "
-        "ENDPOINT ?, ACCESS_DELEGATION_MODE 'none')",
-        [warehouse, f"{base_url}/api/catalog"],
+        f"ATTACH '{wh}' AS dh_catalog (TYPE ICEBERG, SECRET dh_iceberg, "
+        f"ENDPOINT '{endpoint}', ACCESS_DELEGATION_MODE 'none')"
     )
-    conn.execute("USE dh_catalog")
+    conn.execute(f'USE dh_catalog."{ns}"')
 
 
-async def test_create_insert_select_roundtrip(
-    polaris_base_url: str, polaris_creds, polaris_catalog: str
+async def test_attach_and_read_rest_table(
+    polaris_base_url: str, polaris_creds, polaris_catalog: tuple[str, str]
 ) -> None:
+    catalog, ns = polaris_catalog
     conn = duckdb.connect()
     try:
-        _attach(conn, polaris_base_url, polaris_catalog, polaris_creds)
-        conn.execute("CREATE TABLE main.events (id BIGINT, label VARCHAR)")
-        conn.execute("INSERT INTO main.events VALUES (1, 'one'), (2, 'two')")
-        rows = conn.execute("SELECT id, label FROM main.events ORDER BY id").fetchall()
+        _attach(conn, polaris_base_url, catalog, ns, polaris_creds)
+        # The namespace resolves and the REST-created table's schema loads
+        # (this is exactly what failed before the namespace/RBAC/USE fixes).
+        cur = conn.execute("SELECT id, label FROM events")
+        rows = cur.fetchall()
+        columns = [d[0] for d in cur.description]
     finally:
         conn.close()
-    assert rows == [(1, "one"), (2, "two")]
+    assert rows == []  # freshly created, empty
+    assert columns == ["id", "label"]

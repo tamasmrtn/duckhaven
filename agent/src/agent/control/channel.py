@@ -47,6 +47,7 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path) -> None:
     backend = payload.get("backend")
     workspace = payload.get("workspace") or {}
     workspace_slug = workspace.get("slug") if isinstance(workspace, dict) else None
+    default_schema = workspace.get("default_schema") if isinstance(workspace, dict) else None
     # Polaris connection info comes from agent config, not the wire; DuckDB
     # does the OAuth2 exchange itself and Polaris vends storage creds on attach.
     polaris = {
@@ -69,6 +70,7 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path) -> None:
             backend=backend,
             workspace_slug=workspace_slug,
             polaris=polaris,
+            default_schema=default_schema,
             stats_for=stats_for,
         )
         done_payload: dict[str, object] = {

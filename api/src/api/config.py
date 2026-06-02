@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     polaris_realm: str = "POLARIS"
     polaris_client_id: str = "root"
     polaris_client_secret: str = "s3cr3t"
+    # Polaris principal name the client credentials map to (grantee for catalog
+    # data access). Defaults to the bootstrap root principal.
+    polaris_principal: str = "root"
     polaris_http_timeout_s: float = 10.0
     secret_key: str = "change-me-in-production"
     session_max_age_seconds: int = 86400 * 7

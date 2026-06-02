@@ -23,6 +23,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         realm=settings.polaris_realm,
         client_id=settings.polaris_client_id,
         client_secret=settings.polaris_client_secret,
+        principal=settings.polaris_principal,
         timeout_s=settings.polaris_http_timeout_s,
     )
     try:

@@ -23,6 +23,11 @@ logger = logging.getLogger(__name__)
 # Fixed identifiers for the per-connection iceberg secret and attached catalog.
 _ICEBERG_SECRET = "dh_iceberg"
 _CATALOG_ALIAS = "dh_catalog"
+# Default namespace to `USE`. Must match the API's default (see
+# api/services/workspace.DEFAULT_SCHEMA). `USE <catalog>.<schema>` sets both the
+# default catalog and schema; a bare `USE <catalog>` does not reliably resolve
+# an attached Iceberg REST catalog (lazy namespace loading).
+_DEFAULT_NAMESPACE = "analytics"
 
 # Backend kind -> DuckDB storage-IO extension (loaded so DuckDB can read/write
 # the object store with the credentials Polaris vends). Local FS needs none.
@@ -49,6 +54,7 @@ def _attach_polaris(
     warehouse: str,
     polaris: dict[str, Any],
     delegation_mode: str,
+    default_schema: str,
 ) -> None:
     """Create the iceberg OAuth2 secret and ATTACH the Polaris catalog.
 
@@ -65,12 +71,23 @@ def _attach_polaris(
             f"{endpoint}/api/catalog/v1/oauth/tokens",
         ],
     )
+    # ATTACH does not accept bind parameters, so inline the warehouse and
+    # endpoint as quoted literals (single quotes escaped). The warehouse is the
+    # workspace slug and the endpoint comes from agent config — neither is
+    # user-supplied SQL.
+    wh = warehouse.replace("'", "''")
+    cat_endpoint = f"{endpoint}/api/catalog".replace("'", "''")
     conn.execute(
-        f"ATTACH ? AS {_CATALOG_ALIAS} (TYPE ICEBERG, SECRET {_ICEBERG_SECRET}, "
-        f"ENDPOINT ?, ACCESS_DELEGATION_MODE '{delegation_mode}')",
-        [warehouse, f"{endpoint}/api/catalog"],
+        f"ATTACH '{wh}' AS {_CATALOG_ALIAS} "
+        f"(TYPE ICEBERG, SECRET {_ICEBERG_SECRET}, ENDPOINT '{cat_endpoint}', "
+        f"ACCESS_DELEGATION_MODE '{delegation_mode}')"
     )
-    conn.execute(f"USE {_CATALOG_ALIAS}")
+    # `USE <catalog>.<schema>` sets the default catalog (so the user's
+    # schema-qualified SQL resolves) and a default schema (for unqualified
+    # names). A bare `USE <catalog>` does not reliably resolve the attached
+    # Iceberg catalog's namespaces.
+    schema = (default_schema or _DEFAULT_NAMESPACE).replace('"', '""')
+    conn.execute(f'USE {_CATALOG_ALIAS}."{schema}"')
 
 
 def run_query_sync(
@@ -80,6 +97,7 @@ def run_query_sync(
     backend: dict[str, Any] | None = None,
     workspace_slug: str | None = None,
     polaris: dict[str, Any] | None = None,
+    default_schema: str | None = None,
     stats_for: dict[str, str] | None = None,
     on_connect: Callable[[duckdb.DuckDBPyConnection], None] | None = None,
 ) -> dict[str, Any]:
@@ -118,6 +136,7 @@ def run_query_sync(
                         warehouse=workspace_slug,
                         polaris=polaris,
                         delegation_mode=delegation,
+                        default_schema=default_schema or _DEFAULT_NAMESPACE,
                     )
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Polaris ATTACH failed for %s: %s", workspace_slug, exc)

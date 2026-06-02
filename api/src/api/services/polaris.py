@@ -141,12 +141,17 @@ class PolarisClient:
         realm: str,
         client_id: str,
         client_secret: str,
+        principal: str | None = None,
         timeout_s: float = 10.0,
         http: httpx.AsyncClient | None = None,
     ) -> None:
         self._realm = realm
         self._client_id = client_id
         self._client_secret = client_secret
+        # The Polaris principal these credentials authenticate as; used as the
+        # grantee when wiring catalog data access. Defaults to the client id
+        # (true for the bootstrap `root` principal).
+        self._principal = principal or client_id
         self._http = http or httpx.AsyncClient(
             base_url=base_url,
             timeout=timeout_s,
@@ -267,6 +272,49 @@ class PolarisClient:
             f"{self.MGMT_PATH}/catalogs/{name}", headers=await self._auth_headers()
         )
         self._raise_for_status(resp)
+
+    # --- Access / grants ---
+
+    _RW_CATALOG_ROLE = "duckhaven_rw"
+    _PRINCIPAL_ROLE = "duckhaven"
+
+    async def ensure_catalog_access(self, catalog: str) -> None:
+        """Grant the service principal data access on a catalog so the agent's
+        DuckDB can read and write its tables.
+
+        Wires CATALOG_MANAGE_CONTENT to a catalog role, binds it through a
+        principal role to the service principal. Idempotent: re-running tolerates
+        already-existing roles. Without this, Polaris returns 403 on loadTable
+        even though catalog/table creation (management API) succeeds.
+        """
+        headers = await self._auth_headers()
+        role, prole = self._RW_CATALOG_ROLE, self._PRINCIPAL_ROLE
+
+        async def _create(path: str, body: dict[str, Any]) -> None:
+            try:
+                self._raise_for_status(
+                    await self._http.post(f"{self.MGMT_PATH}{path}", json=body, headers=headers)
+                )
+            except PolarisConflictError:
+                pass
+
+        async def _put(path: str, body: dict[str, Any]) -> None:
+            self._raise_for_status(
+                await self._http.put(f"{self.MGMT_PATH}{path}", json=body, headers=headers)
+            )
+
+        await _create(f"/catalogs/{catalog}/catalog-roles", {"catalogRole": {"name": role}})
+        await _put(
+            f"/catalogs/{catalog}/catalog-roles/{role}/grants",
+            {"grant": {"type": "catalog", "privilege": "CATALOG_MANAGE_CONTENT"}},
+        )
+        await _create("/principal-roles", {"principalRole": {"name": prole}})
+        await _put(
+            f"/principal-roles/{prole}/catalog-roles/{catalog}", {"catalogRole": {"name": role}}
+        )
+        await _put(
+            f"/principals/{self._principal}/principal-roles", {"principalRole": {"name": prole}}
+        )
 
     # --- Namespaces (Iceberg REST) ---
 

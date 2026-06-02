@@ -16,6 +16,7 @@ async def run_query(
     backend: dict[str, Any] | None = None,
     workspace_slug: str | None = None,
     polaris: dict[str, Any] | None = None,
+    default_schema: str | None = None,
     stats_for: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     loop = asyncio.get_running_loop()
@@ -29,6 +30,7 @@ async def run_query(
             backend=backend,
             workspace_slug=workspace_slug,
             polaris=polaris,
+            default_schema=default_schema,
             stats_for=stats_for,
             on_connect=lambda c: conn_box.__setitem__("conn", c),
         )

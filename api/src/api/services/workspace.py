@@ -74,15 +74,22 @@ async def get_workspace(db: AsyncSession, slug_or_id: str) -> Workspace | None:
     return result.scalar_one_or_none()
 
 
+# Default namespace created in every workspace catalog. NOT `main`: that name
+# collides with DuckDB's built-in default schema in an attached catalog, which
+# shadows the Iceberg namespace and makes `catalog.main.table` unresolvable.
+DEFAULT_SCHEMA = "analytics"
+
+
 async def ensure_polaris_catalog(
     polaris: PolarisClient,
     slug: str,
     *,
     storage_type: str,
     base_location: str,
-    default_schema: str = "main",
+    default_schema: str = DEFAULT_SCHEMA,
 ) -> None:
-    """Lazily create the workspace's Polaris catalog and `main` namespace.
+    """Lazily create the workspace's Polaris catalog and default namespace,
+    and grant the service principal data access on it.
 
     Idempotent: any PolarisConflictError from create is treated as success.
     Used both by the eager `POST /workspaces` path (where the catalog won't
@@ -95,6 +102,8 @@ async def ensure_polaris_catalog(
             )
         except PolarisConflictError:
             pass
+    # Wire data-access grants so the agent's DuckDB can read/write tables.
+    await polaris.ensure_catalog_access(slug)
     try:
         await polaris.create_schema(slug, default_schema)
     except PolarisConflictError:

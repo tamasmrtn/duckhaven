@@ -402,11 +402,18 @@ Notes that matter for changes:
 ### Apache Polaris (owned by Polaris, addressed via `services/polaris.py`)
 
 One **Polaris catalog per workspace** (named by the workspace `slug`), containing
-namespaces (schemas) and tables. Every DuckHaven-created table is Apache
-**Iceberg** format and catalog-managed by definition; its location sits under
-the catalog's base location, which is derived from the workspace backend's
-`root_uri`. Polaris also vends short-lived storage credentials for cloud
-backends via Iceberg access delegation.
+namespaces (schemas) and tables. The default namespace is **`analytics`**, not
+`main`: `main` is DuckDB's built-in default schema in an attached catalog and
+shadows the Iceberg namespace, so `catalog.main.table` won't resolve. Every
+DuckHaven-created table is Apache **Iceberg** format and catalog-managed by
+definition; its location sits under the catalog's base location, derived from
+the workspace backend's `root_uri`. On catalog creation the API also wires a
+catalog grant (`CATALOG_MANAGE_CONTENT`) to the service principal
+(`ensure_catalog_access`) — without it Polaris returns 403 on table data
+access. The agent's DuckDB sets the working catalog with `USE <catalog>.<schema>`
+(a bare `USE <catalog>` does not resolve the attached REST catalog). Polaris
+also vends short-lived storage credentials for cloud backends via access
+delegation.
 
 ---
 
@@ -606,9 +613,16 @@ the *categories* a contributor should be aware of.
   path; S3/ADLS catalogs need their Polaris `storageConfigInfo` (role ARN /
   tenant, region) wired in `services/workspace.polaris_storage`. Cloud write
   paths are validated behind opt-in/env-gated integration tests.
-- **Single-host FILE storage.** FILE-backed catalogs require Polaris and the
-  agent's DuckDB to share a filesystem; it is a dev/testing storage type, not
-  for distributed deployments.
+- **FILE storage is read-capable, not write-capable across hosts.** DuckDB can
+  read FILE-backed Iceberg tables through the REST catalog when Polaris and the
+  agent share a filesystem, but **writes (`INSERT`) require them to run as the
+  same OS user** on that filesystem — Polaris creates table directories the
+  agent must then write into. With Polaris containerised and the agent on the
+  host, writes fail with a permission error. The validated end-to-end write
+  path is **object storage (S3/ADLS)**, where Polaris vends scoped credentials;
+  FILE is a single-host/same-user dev convenience. Integration tests reflect
+  this: the agent test validates the FILE read/attach path; full INSERT is
+  covered against object storage.
 - **Single control-plane box.** The control plane is intentionally
   single-node (Postgres + Polaris + API on one host). High availability is a
   future concern, not a current property.

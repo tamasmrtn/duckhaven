@@ -20,6 +20,7 @@ from api.models.user import Credential
 from api.models.workspace import Workspace
 from api.services.agent_capabilities import agent_supports_backend
 from api.services.agent_registry import registry
+from api.services.workspace import DEFAULT_SCHEMA
 from duckhaven_shared.protocol import Frame, FrameType
 
 
@@ -58,7 +59,7 @@ async def dispatch_query(
         "sql": query.sql,
         "memory_limit_gb": memory_limit_gb,
         "timeout_s": timeout_s,
-        "workspace": {"slug": workspace.slug},
+        "workspace": {"slug": workspace.slug, "default_schema": DEFAULT_SCHEMA},
         "backend": {"kind": backend.kind, "root_uri": backend.root_uri},
     }
     if stats_for is not None:

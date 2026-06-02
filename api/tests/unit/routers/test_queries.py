@@ -98,7 +98,7 @@ async def test_create_query_rejects_disallowed_sql(
     agent, mock_ws = connected_agent
     resp = await authed_client.post(
         f"/workspaces/{workspace.slug}/queries",
-        json={"sql": "DROP TABLE events", "agent_id": str(agent.id)},
+        json={"sql": "ATTACH 'evil.db' AS evil", "agent_id": str(agent.id)},
     )
     assert resp.status_code == 422
     body = resp.json()
@@ -328,6 +328,35 @@ async def test_rows_query_not_done(
 
     resp = await authed_client.get(f"/queries/{query_id}/rows")
     assert resp.status_code == 409
+
+
+async def test_rows_done_without_result_returns_empty_page(
+    authed_client: AsyncClient, workspace: Workspace, agent: Agent, db_session
+):
+    """A DDL/DML query finishes done with no result file; rows returns an empty
+    page rather than 404."""
+    from datetime import UTC, datetime
+
+    from api.models.query import Query
+
+    query = Query(
+        workspace_id=workspace.id,
+        agent_id=agent.id,
+        sql="CREATE TABLE t (x INT)",
+        status="done",
+        result_path=None,
+        started_at=datetime.now(UTC),
+    )
+    db_session.add(query)
+    await db_session.commit()
+    await db_session.refresh(query)
+
+    resp = await authed_client.get(f"/queries/{query.id}/rows")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["rows"] == []
+    assert body["columns"] == []
+    assert body["total"] == 0
 
 
 # --- saved queries ---

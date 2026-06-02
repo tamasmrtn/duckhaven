@@ -183,8 +183,10 @@ async def _resolve_workspace(ws: str, user: User, db: AsyncSession, min_role: st
     return workspace
 
 
-async def _polaris_storage_args(db: AsyncSession, workspace: Workspace) -> tuple[str, str]:
-    """Resolve the (storage_type, base_location) for the workspace's backend."""
+async def _polaris_storage_args(
+    db: AsyncSession, workspace: Workspace
+) -> tuple[str, str, dict | None]:
+    """Resolve (storage_type, base_location, extra_storage) for the workspace's backend."""
     backend = await db.get(StorageBackend, workspace.storage_backend_id)
     if backend is None:
         raise HTTPException(
@@ -195,9 +197,13 @@ async def _polaris_storage_args(db: AsyncSession, workspace: Workspace) -> tuple
 
 
 async def _ensure_catalog(db: AsyncSession, polaris: PolarisClient, workspace: Workspace) -> None:
-    storage_type, base_location = await _polaris_storage_args(db, workspace)
+    storage_type, base_location, extra_storage = await _polaris_storage_args(db, workspace)
     await ensure_polaris_catalog(
-        polaris, workspace.slug, storage_type=storage_type, base_location=base_location
+        polaris,
+        workspace.slug,
+        storage_type=storage_type,
+        base_location=base_location,
+        extra_storage=extra_storage,
     )
 
 

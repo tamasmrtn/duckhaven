@@ -4,13 +4,16 @@ from api.services.agent_capabilities import agent_supports_backend, required_ext
 def test_required_extension_mapping():
     assert required_extension("s3") == "httpfs"
     assert required_extension("adls_gen2") == "azure"
-    assert required_extension("local_fs") is None
-    assert required_extension("nas") is None
+    # local_fs/nas are MinIO-backed (S3) and so also need httpfs.
+    assert required_extension("local_fs") == "httpfs"
+    assert required_extension("nas") == "httpfs"
 
 
-def test_local_and_nas_need_no_extension():
-    assert agent_supports_backend({"extensions": []}, "local_fs") is True
-    assert agent_supports_backend(None, "nas") is True
+def test_local_and_nas_require_httpfs():
+    assert agent_supports_backend({"extensions": ["httpfs"]}, "local_fs") is True
+    assert agent_supports_backend({"extensions": []}, "local_fs") is False
+    assert agent_supports_backend({"extensions": ["httpfs"]}, "nas") is True
+    assert agent_supports_backend(None, "nas") is False
 
 
 def test_cloud_backend_requires_extension():

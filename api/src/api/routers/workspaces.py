@@ -68,10 +68,14 @@ async def create_workspace(
     # Eagerly provision the workspace's Polaris catalog and default namespace.
     # If Polaris is unreachable or otherwise fails, the pg row is rolled back
     # so the caller can retry once Polaris is healthy (D7).
-    storage_type, base_location = polaris_storage(backend.kind, backend.root_uri)
+    storage_type, base_location, extra_storage = polaris_storage(backend.kind, backend.root_uri)
     try:
         await ensure_polaris_catalog(
-            polaris, ws.slug, storage_type=storage_type, base_location=base_location
+            polaris,
+            ws.slug,
+            storage_type=storage_type,
+            base_location=base_location,
+            extra_storage=extra_storage,
         )
     except PolarisError as exc:
         logger.warning("Polaris provisioning failed for ws=%s; rolling back: %s", ws.slug, exc)

@@ -67,6 +67,13 @@ async def test_create_and_list_workspace(
     # Eager UC provisioning ran: catalog + default `main` schema both exist.
     assert "myws" in fake_polaris.catalogs
     assert ("myws", "analytics") in fake_polaris.schemas
+    # local_fs is backed by the bundled MinIO bucket, scoped per workspace by
+    # slug, with the vended/internal endpoints in extra_storage.
+    args = fake_polaris.created_catalog_args[-1]
+    assert args["storage_type"] == "S3"
+    assert args["base_location"] == "s3://warehouse/var/duckhaven/data/myws"
+    assert args["extra_storage"]["endpoint"] == "http://localhost:9000"
+    assert args["extra_storage"]["endpointInternal"] == "http://minio:9000"
 
 
 async def test_create_workspace_rolls_back_on_uc_failure(

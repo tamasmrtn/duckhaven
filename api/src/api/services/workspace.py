@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from api.config import settings
 from api.models.workspace import Workspace, WorkspaceMember
 from api.services.polaris import PolarisClient, PolarisConflictError
 
@@ -13,26 +14,51 @@ logger = logging.getLogger(__name__)
 
 ROLE_ORDER = {"reader": 0, "writer": 1, "owner": 2}
 
-# Backend kind → Polaris storage type. local/NAS map to local-filesystem FILE
-# storage; cloud backends map to their object-store type.
+# Backend kind → Polaris storage type. Every backend is object storage: local_fs
+# and nas are physically backed by the bundled MinIO bucket (S3); s3 / adls_gen2
+# are operator-owned external object stores.
 _KIND_TO_STORAGE_TYPE = {
-    "local_fs": "FILE",
-    "nas": "FILE",
+    "local_fs": "S3",
+    "nas": "S3",
     "s3": "S3",
     "adls_gen2": "AZURE",
 }
 
+# Kinds backed by the bundled MinIO bucket. Their root_uri is a prefix label
+# under that bucket rather than a real storage URI.
+_BUNDLED_MINIO_KINDS = {"local_fs", "nas"}
 
-def polaris_storage(kind: str, root_uri: str) -> tuple[str, str]:
-    """Resolve a backend's (Polaris storage type, base location URI).
 
-    FILE storage needs a `file://` URI; cloud roots already carry a scheme.
+def _minio_prefix(root_uri: str) -> str:
+    """Normalise a local backend's root_uri into a bucket-relative prefix."""
+    prefix = root_uri.strip()
+    if "://" in prefix:
+        prefix = prefix.split("://", 1)[1]
+    return prefix.strip("/")
+
+
+def polaris_storage(kind: str, root_uri: str) -> tuple[str, str, dict | None]:
+    """Resolve a backend's (Polaris storage type, base location, extra storage).
+
+    local_fs/nas are backed by the bundled MinIO bucket: their root_uri is a
+    prefix label under that bucket and the extra storage config carries the
+    vended/internal endpoints. s3/adls_gen2 are external stores whose root_uri
+    already carries a scheme; they get no MinIO endpoint injected.
     """
-    storage_type = _KIND_TO_STORAGE_TYPE.get(kind, "FILE")
-    base = root_uri.rstrip("/")
-    if "://" not in base:
-        base = f"file://{base}"
-    return storage_type, base
+    storage_type = _KIND_TO_STORAGE_TYPE.get(kind, "S3")
+    if kind in _BUNDLED_MINIO_KINDS:
+        prefix = _minio_prefix(root_uri)
+        base = f"s3://{settings.s3_bucket}"
+        if prefix:
+            base = f"{base}/{prefix}"
+        extra = {
+            "endpoint": settings.s3_endpoint,
+            "endpointInternal": settings.s3_endpoint_internal,
+            "pathStyleAccess": True,
+            "region": settings.s3_region,
+        }
+        return storage_type, base, extra
+    return storage_type, root_uri.rstrip("/"), None
 
 
 async def mirror_member_grant(
@@ -86,19 +112,26 @@ async def ensure_polaris_catalog(
     *,
     storage_type: str,
     base_location: str,
+    extra_storage: dict | None = None,
     default_schema: str = DEFAULT_SCHEMA,
 ) -> None:
     """Lazily create the workspace's Polaris catalog and default namespace,
     and grant the service principal data access on it.
 
+    The catalog's base location is scoped per workspace (a `/{slug}` suffix) so
+    workspaces sharing a backend never collide on object-store paths.
     Idempotent: any PolarisConflictError from create is treated as success.
     Used both by the eager `POST /workspaces` path (where the catalog won't
     exist yet) and as a self-heal for catalog browsing.
     """
+    scoped_location = f"{base_location.rstrip('/')}/{slug}"
     if not await polaris.catalog_exists(slug):
         try:
             await polaris.create_catalog(
-                slug, storage_type=storage_type, base_location=base_location
+                slug,
+                storage_type=storage_type,
+                base_location=scoped_location,
+                extra_storage=extra_storage,
             )
         except PolarisConflictError:
             pass

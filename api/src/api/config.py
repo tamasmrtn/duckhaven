@@ -18,6 +18,14 @@ class Settings(BaseSettings):
     # data access). Defaults to the bootstrap root principal.
     polaris_principal: str = "root"
     polaris_http_timeout_s: float = 10.0
+    # Bundled MinIO object store backing the local_fs/nas catalogs. `s3_endpoint`
+    # is the externally-reachable URL Polaris vends to DuckDB agents (must be
+    # reachable from the agent host); `s3_endpoint_internal` is what Polaris uses
+    # to reach MinIO inside the compose network.
+    s3_endpoint: str = "http://localhost:9000"
+    s3_endpoint_internal: str = "http://minio:9000"
+    s3_region: str = "us-east-1"
+    s3_bucket: str = "warehouse"
     secret_key: str = "change-me-in-production"
     session_max_age_seconds: int = 86400 * 7
     cors_origins: list[str] = ["http://localhost:5173"]

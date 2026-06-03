@@ -7,7 +7,7 @@ from pathlib import Path
 import websockets
 from websockets.exceptions import ConnectionClosed
 
-from agent.auth import TokenHolder
+from agent.auth import TokenHolder, load_session_token, save_session_token
 from agent.config import settings
 from agent.executor.supervisor import run_query
 from duckhaven_shared.protocol import Frame, FrameType
@@ -117,18 +117,33 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path) -> None:
 async def run_control_channel(
     results_dir: Path | None = None,
     token_holder: TokenHolder | None = None,
+    session_token_path: Path | None = None,
 ) -> None:
     if results_dir is None:
         results_dir = Path(settings.results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
+    if session_token_path is None:
+        session_token_path = (
+            Path(settings.session_token_path)
+            if settings.session_token_path
+            else results_dir / ".session-token"
+        )
 
     while True:
         try:
             async with websockets.connect(settings.control_plane_url) as ws:
+                # Authenticate with the long-lived session token once we have one
+                # (held in memory, or persisted from a previous run); fall back to
+                # the single-use bootstrap token only for the first registration.
+                auth_token = (
+                    (token_holder.value if token_holder else "")
+                    or load_session_token(session_token_path)
+                    or settings.bootstrap_token
+                )
                 auth = Frame(
                     type=FrameType.AUTH,
                     payload={
-                        "token": settings.bootstrap_token,
+                        "token": auth_token,
                         "name": platform.node(),
                         # Where the control plane fetches result Parquet. The host
                         # is the socket peer address, observed by the API on accept.
@@ -144,8 +159,12 @@ async def run_control_channel(
                     return
 
                 logger.info("Authenticated as agent %s", frame.payload["agent_id"])
+                session_token = frame.payload.get("session_token", "")
                 if token_holder is not None:
-                    token_holder.value = frame.payload.get("session_token", "")
+                    token_holder.value = session_token
+                # Persist so a restart re-authenticates with the session token
+                # instead of the now-consumed bootstrap token.
+                save_session_token(session_token_path, session_token)
 
                 caps = Frame(type=FrameType.AGENT_STATUS, payload=_get_capabilities().model_dump())
                 await ws.send(caps.model_dump_json())

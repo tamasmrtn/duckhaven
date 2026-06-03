@@ -14,10 +14,16 @@ class Settings(BaseSettings):
     polaris_client_id: str = "root"
     polaris_client_secret: str = "s3cr3t"
     results_dir: str = "/var/duckhaven-agent/results"
-    # Interface the result server binds. Defaults to loopback (secure default for
-    # a same-host deploy). Set to 0.0.0.0 when the control plane reaches the
-    # result port across a container/host boundary (the endpoint is Bearer-gated).
-    results_http_host: str = "127.0.0.1"
+    # File where the agent persists its long-lived session token so it can
+    # re-authenticate across restarts instead of re-consuming the single-use
+    # bootstrap token. Empty => resolved at runtime to `<results_dir>/.session-token`
+    # (the results dir is the agent's persistent volume; the retention sweep only
+    # touches `*.parquet`, so a dotfile here is safe).
+    session_token_path: str = ""
+    # Interface the result server binds. Defaults to all interfaces because the
+    # control plane reaches the result port across a container/host boundary in the
+    # remote-agent topology; the endpoint is Bearer-gated by the session token.
+    results_http_host: str = "0.0.0.0"  # noqa: S104 - intentional; Bearer-gated endpoint
     results_http_port: int = 8001
     memory_limit_bytes: int = 6 * 1024**3  # 6 GB default
     # Operator-set, non-overridable ceilings: per-query overrides clamp to these.

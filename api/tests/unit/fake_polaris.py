@@ -31,6 +31,9 @@ class FakePolaris:
         self.fail_create_catalog: bool = False
         self.fail_create_schema: bool = False
         self.fail_create_table: bool = False
+        # When set, list_tables raises it — used to exercise the router-level
+        # PolarisError exception handler.
+        self.raise_on_list_tables: PolarisError | None = None
         self.created_table_bodies: list[dict[str, Any]] = []
         self.created_catalog_args: list[dict[str, Any]] = []
         self.granted_catalogs: list[str] = []
@@ -104,6 +107,8 @@ class FakePolaris:
     # --- Tables ---
 
     async def list_tables(self, catalog: str, schema: str) -> list[PolarisTable]:
+        if self.raise_on_list_tables is not None:
+            raise self.raise_on_list_tables
         # Iceberg REST list returns identifiers only (no columns).
         return [
             PolarisTable(name=t.name, catalog_name=catalog, schema_name=schema)

@@ -1,10 +1,10 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 from starlette.staticfiles import StaticFiles
 from starlette.types import Scope
 
@@ -13,7 +13,12 @@ from api.routers import agents, agents_ws, auth, health, queries, schemas, setup
 from api.routers.admin import agents as admin_agents
 from api.routers.admin import audit as admin_audit
 from api.routers.admin import storage as admin_storage
-from api.services.polaris import PolarisClient
+from api.services.polaris import (
+    PolarisBadRequestError,
+    PolarisClient,
+    PolarisError,
+    PolarisNotFoundError,
+)
 
 
 @asynccontextmanager
@@ -43,6 +48,21 @@ api_app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Surface PolarisError escaping a route as a meaningful HTTP response instead of a
+# bare 500. NotFound/BadRequest map to their natural client codes; everything else
+# (server errors, conflicts, the base class) is an upstream failure -> 502.
+@api_app.exception_handler(PolarisError)
+async def _polaris_error_handler(_: Request, exc: PolarisError) -> JSONResponse:
+    if isinstance(exc, PolarisNotFoundError):
+        code = status.HTTP_404_NOT_FOUND
+    elif isinstance(exc, PolarisBadRequestError):
+        code = status.HTTP_422_UNPROCESSABLE_ENTITY
+    else:
+        code = status.HTTP_502_BAD_GATEWAY
+    return JSONResponse(status_code=code, content={"detail": str(exc)})
+
 
 api_app.include_router(health.router, tags=["health"])
 api_app.include_router(setup.router)

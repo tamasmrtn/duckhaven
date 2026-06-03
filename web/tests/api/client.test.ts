@@ -57,7 +57,7 @@ describe('get()', () => {
 
   it('unwraps a structured detail object to its human-readable message', async () => {
     // The SQL guard returns {"detail": {"error", "detail"}}; we must surface the
-    // inner detail string, never "[object Object]" (BUG-5).
+    // inner detail string, never "[object Object]".
     mockFetch(422, {
       detail: { error: 'sql_not_allowed', detail: 'Disallowed statement type(s): SET' },
     })

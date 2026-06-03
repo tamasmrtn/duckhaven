@@ -5,7 +5,7 @@ import { server } from '@tests/mock/server'
 import { renderWithProviders } from '@tests/utils'
 
 describe('workspace route guard', () => {
-  it('redirects to /login when deep-linking a protected route while logged out (Bug #3)', async () => {
+  it('redirects to /login when deep-linking a protected route while logged out', async () => {
     server.use(
       http.get('/api/me', () => HttpResponse.json({ error: 'unauthorized' }, { status: 401 })),
     )
@@ -17,7 +17,7 @@ describe('workspace route guard', () => {
     expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument()
   })
 
-  it('shows a not-found page for an unknown workspace slug (Bug #5)', async () => {
+  it('shows a not-found page for an unknown workspace slug', async () => {
     // /api/me succeeds (default handler); /api/workspaces/:ws 404s for unknown slugs.
     renderWithProviders({ initialRoute: '/this-route-does-not-exist' })
 

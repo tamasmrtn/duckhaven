@@ -40,7 +40,7 @@ describe('StatusPill', () => {
     expect(pill).toHaveAttribute('aria-live', 'polite')
   })
 
-  it('exposes the status as an accessible name and title (BUG-9)', () => {
+  it('exposes the status as an accessible name and title', () => {
     render(<StatusPill status="failed" />)
     const pill = screen.getByRole('status')
     expect(pill).toHaveAttribute('aria-label', 'failed')

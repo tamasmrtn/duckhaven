@@ -15,7 +15,7 @@ describe('StorageBackendsPage DR banner', () => {
     ).toBeInTheDocument()
   })
 
-  it('uses the singular noun for a single backend (Bug #8)', async () => {
+  it('uses the singular noun for a single backend', async () => {
     server.use(
       http.get('/api/admin/storage-backends', () =>
         HttpResponse.json([

@@ -55,6 +55,40 @@ describe('get()', () => {
     })
   })
 
+  it('unwraps a structured detail object to its human-readable message', async () => {
+    // The SQL guard returns {"detail": {"error", "detail"}}; we must surface the
+    // inner detail string, never "[object Object]" (BUG-5).
+    mockFetch(422, {
+      detail: { error: 'sql_not_allowed', detail: 'Disallowed statement type(s): SET' },
+    })
+    await expect(get('/test')).rejects.toMatchObject({
+      status: 422,
+      message: 'Disallowed statement type(s): SET',
+    })
+  })
+
+  it('falls back to the structured error code when detail has no message', async () => {
+    mockFetch(422, { detail: { error: 'agent_incompatible' } })
+    await expect(get('/test')).rejects.toMatchObject({
+      message: 'agent_incompatible',
+    })
+  })
+
+  it('uses a plain string detail directly', async () => {
+    mockFetch(404, { detail: 'Workspace not found' })
+    await expect(get('/test')).rejects.toMatchObject({
+      message: 'Workspace not found',
+    })
+  })
+
+  it('falls back to "HTTP {status}" for an unrecognized error body', async () => {
+    mockFetch(500, { unexpected: true })
+    await expect(get('/test')).rejects.toMatchObject({
+      status: 500,
+      message: 'HTTP 500',
+    })
+  })
+
   it('falls back to "HTTP 500" when body is not JSON', async () => {
     vi.spyOn(global, 'fetch').mockResolvedValue({
       ok: false,

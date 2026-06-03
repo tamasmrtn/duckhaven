@@ -30,6 +30,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
 import { useWorkspace } from "@/queries/workspaces";
@@ -147,6 +148,7 @@ export function WorksheetPage() {
   const [memoryLimit, setMemoryLimit] = useState(6);
   const [timeout, setTimeout_] = useState(10);
   const [activeQueryId, setActiveQueryId] = useState<string | null>(null);
+  const [dispatchError, setDispatchError] = useState<string | null>(null);
   const [saveOpen, setSaveOpen] = useState(false);
   const [saveName, setSaveName] = useState("");
   const [leftWidth, setLeftWidth] = useState(280);
@@ -216,12 +218,21 @@ export function WorksheetPage() {
   async function runQuery() {
     if (!currentTab?.sql.trim() || !resolvedAgentId) return;
     setActiveQueryId(null);
-    const result = await dispatchQuery.mutateAsync({
-      sql: currentTab.sql,
-      agentId: resolvedAgentId,
-      opts: { memory_limit: memoryLimit, timeout: timeout * 60 },
-    });
-    setActiveQueryId(result.id);
+    setDispatchError(null);
+    try {
+      const result = await dispatchQuery.mutateAsync({
+        sql: currentTab.sql,
+        agentId: resolvedAgentId,
+        opts: { memory_limit: memoryLimit, timeout: timeout * 60 },
+      });
+      setActiveQueryId(result.id);
+    } catch (err) {
+      // A rejected dispatch (e.g. disallowed SQL → 422) never creates a query,
+      // so surface its message here rather than relying on queryData.error.
+      setDispatchError(
+        err instanceof Error ? err.message : "Query failed to run.",
+      );
+    }
   }
 
   async function handleCancel() {
@@ -508,6 +519,14 @@ export function WorksheetPage() {
               <span className="text-xs font-medium text-text-secondary">
                 Results
               </span>
+              {dispatchError && (
+                <span
+                  className="text-xs text-[var(--status-failed)] truncate max-w-md"
+                  role="alert"
+                >
+                  {dispatchError}
+                </span>
+              )}
               {queryData && (
                 <>
                   <StatusPill
@@ -562,6 +581,9 @@ export function WorksheetPage() {
                   ? "bg-[var(--status-success)]"
                   : "bg-[var(--status-failed)]",
               )}
+              role="img"
+              aria-label={resolvedAgent.status}
+              title={resolvedAgent.status}
             />
             {resolvedAgent.name}
           </span>
@@ -591,6 +613,9 @@ export function WorksheetPage() {
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle>Save query</DialogTitle>
+            <DialogDescription>
+              Save the current worksheet SQL as a named, reusable query.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-2 py-2">
             <Label htmlFor="save-name" className="text-sm">

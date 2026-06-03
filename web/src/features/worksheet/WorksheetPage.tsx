@@ -68,10 +68,23 @@ ORDER BY 1;`;
 
 // The landing/showcase workspace keeps example worksheets; every other
 // workspace (including freshly created ones) starts blank — worksheets are
-// scoped per workspace rather than shared (Bug #9).
+// scoped per workspace rather than shared.
 const DEMO_WORKSPACE_SLUG = "acme-analytics";
 
 const tabsStorageKey = (ws: string) => `dh-worksheets-${ws}`;
+
+// The active query id is persisted (per workspace, per browser tab) so a refresh
+// mid-execution recovers the running/completed query instead of dead-ending at
+// "No results yet" — the existing polling rehydrates results once the id is set.
+const activeQueryStorageKey = (ws: string) => `dh-active-query-${ws}`;
+
+function loadActiveQueryId(ws: string): string | null {
+  try {
+    return sessionStorage.getItem(activeQueryStorageKey(ws));
+  } catch {
+    return null;
+  }
+}
 
 function seededTabs(ws: string): Tab[] {
   if (ws === DEMO_WORKSPACE_SLUG) {
@@ -108,6 +121,12 @@ export function WorksheetPage() {
 
   const [tabs, setTabs] = useState<Tab[]>(() => loadTabs(ws));
   const [activeTab, setActiveTab] = useState("tab-1");
+  // Declared before the workspace-sync block below so that block can rehydrate
+  // it on a workspace switch. Initialized from sessionStorage so a refresh
+  // mid-execution recovers the running/completed query.
+  const [activeQueryId, setActiveQueryId] = useState<string | null>(() =>
+    loadActiveQueryId(ws),
+  );
 
   // On first render and whenever the workspace changes, (re)load that
   // workspace's tabs and seed any SQL a catalog action stashed (e.g. Alter
@@ -129,6 +148,12 @@ export function WorksheetPage() {
         ]
       : base;
     setLoadedWs(ws);
+    // On an actual workspace switch (not the initial mount, where the useState
+    // initializer already loaded it), rehydrate the active query for the new
+    // workspace so results don't bleed across workspaces.
+    if (loadedWs !== null) {
+      setActiveQueryId(loadActiveQueryId(ws));
+    }
     if (loadedWs !== null || pending) {
       setTabs(next);
       setActiveTab(pending ? next[next.length - 1].id : next[0].id);
@@ -144,10 +169,22 @@ export function WorksheetPage() {
     }
   }, [ws, tabs]);
 
+  // Persist the active query id so a refresh mid-execution recovers it.
+  useEffect(() => {
+    try {
+      if (activeQueryId) {
+        sessionStorage.setItem(activeQueryStorageKey(ws), activeQueryId);
+      } else {
+        sessionStorage.removeItem(activeQueryStorageKey(ws));
+      }
+    } catch {
+      // ignore unavailable storage
+    }
+  }, [ws, activeQueryId]);
+
   const [agentId, setAgentId] = useState<string>(() => agents[0]?.id ?? "");
   const [memoryLimit, setMemoryLimit] = useState(6);
   const [timeout, setTimeout_] = useState(10);
-  const [activeQueryId, setActiveQueryId] = useState<string | null>(null);
   const [dispatchError, setDispatchError] = useState<string | null>(null);
   const [saveOpen, setSaveOpen] = useState(false);
   const [saveName, setSaveName] = useState("");
@@ -158,6 +195,8 @@ export function WorksheetPage() {
 
   const isDraggingVert = useRef(false);
   const isDraggingHoriz = useRef(false);
+  // Synchronous re-entrancy guard for dispatch (see runQuery).
+  const runLock = useRef(false);
 
   const currentTab = tabs.find((t) => t.id === activeTab);
   const dispatchQuery = useDispatchQuery(ws);
@@ -217,6 +256,12 @@ export function WorksheetPage() {
 
   async function runQuery() {
     if (!currentTab?.sql.trim() || !resolvedAgentId) return;
+    // A rapid double-click fires two click events in the same tick, before
+    // React re-renders with dispatchQuery.isPending, so the reactive disabled
+    // prop alone cannot stop the second dispatch. This ref lock is set
+    // synchronously and released only when the mutation settles.
+    if (runLock.current) return;
+    runLock.current = true;
     setActiveQueryId(null);
     setDispatchError(null);
     try {
@@ -232,6 +277,8 @@ export function WorksheetPage() {
       setDispatchError(
         err instanceof Error ? err.message : "Query failed to run.",
       );
+    } finally {
+      runLock.current = false;
     }
   }
 
@@ -346,7 +393,7 @@ export function WorksheetPage() {
 
       {/* Three-pane layout */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Catalog pane — inline on desktop, a drawer on mobile (Bug #6) */}
+        {/* Catalog pane — inline on desktop, a drawer on mobile */}
         {!isMobile && (
           <>
             <div

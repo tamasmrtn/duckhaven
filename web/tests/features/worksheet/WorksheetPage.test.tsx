@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse, delay } from 'msw'
 import { renderWithProviders } from '@tests/utils'
 import { server } from '@tests/mock/server'
 
@@ -39,7 +39,7 @@ describe('WorksheetPage tabs', () => {
     expect(screen.getByText('funnel-draft')).toBeInTheDocument()
   })
 
-  it('opens a freshly created workspace with a single empty tab (Bug #9)', async () => {
+  it('opens a freshly created workspace with a single empty tab', async () => {
     // The route guard requires the workspace to exist.
     server.use(
       http.get('/api/workspaces/qa-test-workspace', () =>
@@ -74,7 +74,51 @@ describe('WorksheetPage run', () => {
     })
   })
 
-  it('disables Run and shows guidance when no agents are connected (Bug #4)', async () => {
+  it('double-clicking Run dispatches only one query', async () => {
+    // The dispatch stays in flight (delay) so two clicks land in the same tick,
+    // before React re-renders the button to disabled. The synchronous ref lock
+    // in runQuery must drop the second click.
+    let postCount = 0
+    server.use(
+      http.post('/api/workspaces/:ws/queries', async () => {
+        postCount += 1
+        // Keep the first dispatch in flight so the second click lands while the
+        // ref lock is still held (mirrors a real rapid double-click).
+        await delay(100)
+        return HttpResponse.json({ id: 'q-dbl', status: 'queued' }, { status: 202 })
+      }),
+      http.get('/api/queries/q-dbl', () =>
+        HttpResponse.json({
+          id: 'q-dbl',
+          workspace_id: 'ws-1',
+          agent_id: 'ag-1',
+          sql: 'SELECT 1',
+          status: 'running',
+          row_count: null,
+          duration_ms: null,
+          error: null,
+          progress: { stage: 'scanning' },
+          started_at: new Date().toISOString(),
+          finished_at: null,
+        }),
+      ),
+    )
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: WS_ROUTE })
+    const runBtn = await screen.findByRole('button', { name: /run query/i })
+
+    // Fire two clicks without awaiting the first, so the second lands while the
+    // first dispatch is still pending (the disabled prop has not re-rendered).
+    const first = user.click(runBtn)
+    const second = user.click(runBtn)
+    await Promise.all([first, second])
+
+    // The query becomes active (status surfaces); only one POST was sent.
+    await screen.findByText('scanning', undefined, { timeout: 3000 })
+    expect(postCount).toBe(1)
+  })
+
+  it('disables Run and shows guidance when no agents are connected', async () => {
     server.use(http.get('/api/agents', () => HttpResponse.json([])))
     renderWithProviders({ initialRoute: WS_ROUTE })
 
@@ -86,7 +130,7 @@ describe('WorksheetPage run', () => {
     expect(link).toHaveAttribute('href', '/acme-analytics/admin/agents')
   })
 
-  it('surfaces a rejected dispatch as a readable error (BUG-5)', async () => {
+  it('surfaces a rejected dispatch as a readable error', async () => {
     // A disallowed query returns a structured 422; the worksheet must show the
     // human-readable message, never "[object Object]".
     server.use(
@@ -139,7 +183,42 @@ describe('WorksheetPage run', () => {
   })
 })
 
-describe('WorksheetPage responsive (Bug #6)', () => {
+describe('WorksheetPage active query persistence', () => {
+  afterEach(() => {
+    sessionStorage.clear()
+  })
+
+  it('rehydrates a persisted active query after a reload', async () => {
+    // Simulate a reload while a query was active: the id is in sessionStorage.
+    sessionStorage.setItem('dh-active-query-acme-analytics', 'q-persisted')
+    server.use(
+      http.get('/api/queries/q-persisted', () =>
+        HttpResponse.json({
+          id: 'q-persisted',
+          workspace_id: 'ws-1',
+          agent_id: 'ag-1',
+          sql: 'SELECT 1',
+          status: 'done',
+          row_count: 1,
+          duration_ms: 7,
+          error: null,
+          progress: null,
+          started_at: '2026-05-15T10:00:00Z',
+          finished_at: '2026-05-15T10:00:00.007Z',
+        }),
+      ),
+    )
+
+    renderWithProviders({ initialRoute: WS_ROUTE })
+
+    // The recovered query's status surfaces without the user re-running it.
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toBeInTheDocument()
+    })
+  })
+})
+
+describe('WorksheetPage responsive', () => {
   const originalMatchMedia = window.matchMedia
   afterEach(() => {
     window.matchMedia = originalMatchMedia

@@ -30,45 +30,63 @@ async def agent_connect(ws: WebSocket, db: AsyncSession = Depends(get_db)) -> No
             return
 
         token = frame.payload["token"]
+        # The agent sends a single token: its persisted session token on a
+        # reconnect, or the single-use bootstrap token on its first registration.
+        # We accept both kinds and branch on the credential's kind below so one
+        # logical agent maps to one row across restarts and network blips.
         result = await db.execute(
             select(Credential).where(
                 Credential.token == token,
-                Credential.kind == "agent_bootstrap",
+                Credential.kind.in_(("agent_bootstrap", "agent_session")),
             )
         )
         cred = result.scalar_one_or_none()
         if cred is None:
-            await ws.close(code=1008, reason="Invalid bootstrap token")
+            await ws.close(code=1008, reason="Invalid token")
             return
 
-        await db.delete(cred)
-
-        label = frame.payload.get("name", f"agent-{secrets.token_hex(4)}")
         # The agent's result server is reachable at the socket peer address; the
         # agent advertises its result port in the auth frame. Together these tell
         # services/query.proxy_rows where to fetch result Parquet.
         result_host = ws.client.host if ws.client else None
         result_port = frame.payload.get("result_port")
-        agent = Agent(
-            name=label,
-            status="healthy",
-            result_host=result_host,
-            result_port=int(result_port) if result_port is not None else None,
-        )
-        db.add(agent)
-        await db.flush()
-        agent_id = agent.id
+        result_port_int = int(result_port) if result_port is not None else None
 
-        session_token = secrets.token_urlsafe(32)
-        session_cred = Credential(
-            user_id=None,
-            agent_id=agent_id,
-            kind="agent_session",
-            token=session_token,
-            expires_at=None,
-        )
-        db.add(session_cred)
-        await db.commit()
+        if cred.kind == "agent_session":
+            # Re-authentication: rebind the existing agent row instead of minting
+            # a new one. The session token is long-lived and is not consumed.
+            agent_id = cred.agent_id
+            await db.execute(
+                sa.update(Agent)
+                .where(Agent.id == agent_id)
+                .values(status="healthy", result_host=result_host, result_port=result_port_int)
+            )
+            session_token = token
+            await db.commit()
+        else:
+            # First registration: the bootstrap token is single-use.
+            await db.delete(cred)
+            label = frame.payload.get("name", f"agent-{secrets.token_hex(4)}")
+            agent = Agent(
+                name=label,
+                status="healthy",
+                result_host=result_host,
+                result_port=result_port_int,
+            )
+            db.add(agent)
+            await db.flush()
+            agent_id = agent.id
+
+            session_token = secrets.token_urlsafe(32)
+            session_cred = Credential(
+                user_id=None,
+                agent_id=agent_id,
+                kind="agent_session",
+                token=session_token,
+                expires_at=None,
+            )
+            db.add(session_cred)
+            await db.commit()
 
         await ws.send_text(
             json.dumps(

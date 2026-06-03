@@ -2,9 +2,8 @@
 
 Status endpoint is unauthenticated and idempotent — the SPA polls it on boot
 to decide whether to route to /setup. The create endpoint is gated by a
-one-shot token written to the secrets volume on first boot
-(see deploy/init-secrets.sh); the token file is deleted after the admin is
-successfully created so it cannot be replayed.
+one-shot token written on first boot (see deploy/api-entrypoint.sh); the token
+file is deleted after the admin is successfully created so it cannot be replayed.
 """
 
 import secrets

@@ -33,12 +33,17 @@ class Settings(BaseSettings):
     # Directory of the built SPA, served at / when present (baked into the image).
     static_dir: Path = Path("/app/static")
     # File holding the one-shot first-admin setup token, written by
-    # deploy/init-secrets.sh on first boot and deleted by the API after the
+    # deploy/api-entrypoint.sh on first boot and deleted by the API after the
     # first admin is created.
     setup_token_path: Path = Path("/var/duckhaven/setup_token")
     # Image self-hosters pull when running a new agent. Surfaced verbatim in
     # the add-agent compose snippet (admin UI).
     agent_image: str = "ghcr.io/tamasmrtn/duckhaven-agent:latest"
+    # Single-use token the bundled agent exchanges for a session credential on
+    # first registration. When set, the API seeds it on startup (folds in the
+    # former agent-bootstrap one-shot); unset disables seeding.
+    agent_bootstrap_token: str | None = None
+    agent_bootstrap_ttl_hours: int = 240
 
 
 settings = Settings()

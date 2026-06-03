@@ -284,14 +284,15 @@ disabled before a query is even sent.
 
 ### 6.5 `deploy/` & `scripts/`
 
-`deploy/docker-compose.yml` defines the control-plane stack:
-`init-secrets` (one-shot secret generation) → `postgres` →
-`polaris-bootstrap` (one-shot schema + root principal) → `polaris` → `api`.
-`api-entrypoint.sh` runs Alembic migrations then
-starts uvicorn. `init-secrets.sh` writes the first-boot secrets (including
-the one-shot admin setup token). Agents are **not** in this file — they are
-deployed per host. `scripts/` holds operator helpers (`pg-backup.sh`,
-`gen-token.sh`).
+`deploy/docker-compose.yml` defines the all-in-one stack:
+`postgres` → `polaris-bootstrap` (one-shot schema + root principal) →
+`polaris` → `api` → `agent`, plus `minio` for object storage.
+`api-entrypoint.sh` generates the first-boot secrets (including the one-shot
+admin setup token), runs Alembic migrations, then starts uvicorn; the API
+also seeds the agent bootstrap token on startup. `minio` pre-creates the
+warehouse bucket in its own entrypoint. Remote agents can still be deployed
+per host against the same control plane. `scripts/` holds operator helpers
+(`pg-backup.sh`, `gen-token.sh`).
 
 ---
 
@@ -531,30 +532,33 @@ presents as a Bearer credential when reading result rows.
 
 ## 10. Deployment Architecture
 
-**Control plane — one Docker Compose stack** (`deploy/docker-compose.yml`):
+**All-in-one Docker Compose stack** (`deploy/docker-compose.yml`) — six
+services:
 
 ```
-init-secrets  →  postgres:16-alpine
-                 minio            (object store; publishes :9000 API, :9001 console)
-minio-bootstrap  (one-shot: creates the warehouse bucket)
-polaris-bootstrap → apache/polaris:latest  (storage: S3 → MinIO)
-                 duckhaven-api  (publishes :8000, serves SPA + REST + agent WS)
+postgres:16-alpine
+minio                (object store; publishes :9000 API, :9001 console)
+polaris-bootstrap →  apache/polaris:latest  (one-shot realm/principal; storage: S3 → MinIO)
+                     duckhaven-api    (publishes :8000, serves SPA + REST + agent WS)
+                     duckhaven-agent  (bundled compute; dials the API WS)
 ```
 
-`init-secrets` runs once to generate the secret key and Postgres password;
-`minio-bootstrap` and `polaris-bootstrap` are one-shots that provision the
-bucket and the Polaris realm/principal. MinIO's `:9000` endpoint must be
-reachable by remote agents (the URL Polaris vends to DuckDB), so it is
-published and configured via `S3_ENDPOINT`. `api` applies migrations on start
-and serves the bundled SPA. The API is
-published directly on `:8000` over the private network — there is no edge
-TLS terminator by default; transport security comes from the tunnel. Images
-are built for `linux/amd64,linux/arm64` and published to
+`polaris-bootstrap` is the only remaining one-shot — it provisions the Polaris
+realm/principal (the admin tool ships as its own image). Everything else
+self-prepares: `api-entrypoint.sh` generates the secret key + setup token on
+first boot and applies migrations; the API seeds the agent bootstrap token on
+startup; `minio` pre-creates the warehouse bucket in its entrypoint; Postgres
+creates the dedicated `polaris` DB via an initdb script. MinIO's `:9000`
+endpoint must be reachable by remote agents (the URL Polaris vends to DuckDB),
+so it is published and configured via `S3_ENDPOINT` (default `http://minio:9000`
+for the bundled agent). `api` is published directly on `:8000` over the private
+network — there is no edge TLS terminator by default; transport security comes
+from the tunnel. Images are built for `linux/amd64,linux/arm64` and published to
 `ghcr.io/tamasmrtn/duckhaven-{api,agent}`.
 
-**Agents — one process per host**, deployed separately (not in the compose
-file). An agent needs only the control-plane WebSocket URL and a bootstrap
-token. It writes results and mounts under `/var/duckhaven-agent/`.
+**Additional agents — one process per host**, deployed separately against the
+same control plane. An agent needs only the control-plane WebSocket URL and a
+bootstrap token. It writes results and mounts under `/var/duckhaven-agent/`.
 
 ```
 /var/duckhaven-agent/

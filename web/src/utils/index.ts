@@ -9,3 +9,9 @@ export function cn(...inputs: ClassValue[]) {
 export function plural(n: number, word: string, suffix = "s") {
   return `${n} ${word}${n === 1 ? "" : suffix}`;
 }
+
+/** Short, legible fallback for a raw UUID when no human-readable name exists. */
+export function shortId(id: string | null | undefined) {
+  if (!id) return "—";
+  return id.length > 8 ? id.slice(0, 8) : id;
+}

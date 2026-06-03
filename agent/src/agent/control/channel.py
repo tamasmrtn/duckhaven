@@ -23,6 +23,15 @@ def _get_capabilities() -> AgentCapabilities:
 
     conn = duckdb.connect()
     version = duckdb.version()
+    # Load the pre-installed query extensions so they are advertised as available.
+    # A fresh connection lists only built-ins under `WHERE loaded`; the storage
+    # backends require these (httpfs for S3/MinIO, azure for ADLS, iceberg for
+    # the catalog), and dispatch is gated on them being advertised.
+    for ext in ("httpfs", "azure", "iceberg"):
+        try:
+            conn.execute(f"LOAD {ext}")
+        except duckdb.Error:
+            logger.warning("Extension %s unavailable; not advertising it", ext)
     extensions = [
         row[0]
         for row in conn.execute(
@@ -118,7 +127,13 @@ async def run_control_channel(
             async with websockets.connect(settings.control_plane_url) as ws:
                 auth = Frame(
                     type=FrameType.AUTH,
-                    payload={"token": settings.bootstrap_token, "name": platform.node()},
+                    payload={
+                        "token": settings.bootstrap_token,
+                        "name": platform.node(),
+                        # Where the control plane fetches result Parquet. The host
+                        # is the socket peer address, observed by the API on accept.
+                        "result_port": settings.results_http_port,
+                    },
                 )
                 await ws.send(auth.model_dump_json())
 

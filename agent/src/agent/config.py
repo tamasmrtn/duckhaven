@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     polaris_client_id: str = "root"
     polaris_client_secret: str = "s3cr3t"
     results_dir: str = "/var/duckhaven-agent/results"
+    # Interface the result server binds. Defaults to loopback (secure default for
+    # a same-host deploy). Set to 0.0.0.0 when the control plane reaches the
+    # result port across a container/host boundary (the endpoint is Bearer-gated).
+    results_http_host: str = "127.0.0.1"
     results_http_port: int = 8001
     memory_limit_bytes: int = 6 * 1024**3  # 6 GB default
     # Operator-set, non-overridable ceilings: per-query overrides clamp to these.

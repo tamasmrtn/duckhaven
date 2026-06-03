@@ -44,7 +44,17 @@ async def agent_connect(ws: WebSocket, db: AsyncSession = Depends(get_db)) -> No
         await db.delete(cred)
 
         label = frame.payload.get("name", f"agent-{secrets.token_hex(4)}")
-        agent = Agent(name=label, status="healthy")
+        # The agent's result server is reachable at the socket peer address; the
+        # agent advertises its result port in the auth frame. Together these tell
+        # services/query.proxy_rows where to fetch result Parquet.
+        result_host = ws.client.host if ws.client else None
+        result_port = frame.payload.get("result_port")
+        agent = Agent(
+            name=label,
+            status="healthy",
+            result_host=result_host,
+            result_port=int(result_port) if result_port is not None else None,
+        )
         db.add(agent)
         await db.flush()
         agent_id = agent.id

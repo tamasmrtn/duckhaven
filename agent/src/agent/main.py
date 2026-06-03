@@ -17,7 +17,7 @@ async def _run_result_server(results_dir: Path, token_holder: TokenHolder) -> No
     app = make_results_app(results_dir, token_holder)
     config = uvicorn.Config(
         app,
-        host="127.0.0.1",
+        host=settings.results_http_host,
         port=settings.results_http_port,
         log_level="warning",
     )

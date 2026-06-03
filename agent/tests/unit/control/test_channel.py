@@ -19,6 +19,42 @@ async def _complete_auth(ws, *, session_token: str = "tok-test") -> None:
     await ws.recv()  # consume AGENT_STATUS
 
 
+def test_get_capabilities_loads_and_advertises_query_extensions(monkeypatch):
+    """The agent must LOAD the pre-installed query extensions before
+    introspecting, so httpfs/azure/iceberg are advertised — dispatch is gated on
+    them (regression for the agent-incompatible defect)."""
+    import duckdb
+
+    import agent.control.channel as ch_module
+
+    loaded: list[str] = []
+
+    class FakeConn:
+        def execute(self, sql: str):
+            if sql.startswith("LOAD "):
+                loaded.append(sql.split(" ", 1)[1])
+                return self
+
+            # Introspection query returns whatever was LOADed plus a built-in.
+            class _Cur:
+                def fetchall(_self):
+                    return [("parquet",), *[(ext,) for ext in loaded]]
+
+            return _Cur()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(duckdb, "connect", lambda *a, **k: FakeConn())
+    monkeypatch.setattr(duckdb, "version", lambda: "v-test")
+
+    caps = ch_module._get_capabilities()
+
+    assert loaded == ["httpfs", "azure", "iceberg"]
+    assert "httpfs" in caps.extensions
+    assert "iceberg" in caps.extensions
+
+
 async def test_dispatch_clamps_to_operator_ceilings(tmp_path, monkeypatch):
     """Per-query memory/timeout overrides are clamped to the agent's operator
     ceilings before execution (G-D2-b)."""
@@ -91,6 +127,9 @@ async def test_bootstrap_exchange(tmp_path, monkeypatch):
         frame = Frame.model_validate_json(raw)
         assert frame.type == FrameType.AUTH
         assert "token" in frame.payload
+        # The agent advertises where its result server listens so the control
+        # plane can fetch result Parquet (host = socket peer, observed by API).
+        assert frame.payload["result_port"] == ch_module.settings.results_http_port
 
         auth_ok = Frame(
             type=FrameType.AUTH_OK,

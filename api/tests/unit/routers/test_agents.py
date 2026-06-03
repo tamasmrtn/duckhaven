@@ -1,4 +1,5 @@
 import json
+import uuid
 from datetime import UTC
 
 import pytest
@@ -122,7 +123,16 @@ async def test_ws_valid_bootstrap_exchange(ws_client, db_engine):
     async with AsyncClient(transport=ws_client, base_url="http://test") as c:
         async with aconnect_ws("http://test/agents/connect", c) as ws:
             await ws.send_text(
-                json.dumps({"type": "auth", "payload": {"token": token, "name": "ws-test-agent"}})
+                json.dumps(
+                    {
+                        "type": "auth",
+                        "payload": {
+                            "token": token,
+                            "name": "ws-test-agent",
+                            "result_port": 8001,
+                        },
+                    }
+                )
             )
             raw = await asyncio.wait_for(ws.receive_text(), timeout=5.0)
             received.update(json.loads(raw))
@@ -130,3 +140,12 @@ async def test_ws_valid_bootstrap_exchange(ws_client, db_engine):
     assert received.get("type") == "auth_ok"
     assert "agent_id" in received.get("payload", {})
     assert "session_token" in received.get("payload", {})
+
+    # The advertised result port and the socket peer host are persisted so the
+    # control plane can later fetch result Parquet from the agent.
+    agent_id = uuid.UUID(received["payload"]["agent_id"])
+    async with factory() as db:
+        agent = await db.get(Agent, agent_id)
+        assert agent is not None
+        assert agent.result_port == 8001
+        assert agent.result_host

@@ -23,7 +23,7 @@ directly on the host.
    `:v1.2` / `:v1` on git tags. Built for `linux/amd64` and `linux/arm64`.
 2. Start the stack: `make compose-up`. Migrations apply automatically.
 3. Read the one-shot setup token:
-   `docker compose -f deploy/docker-compose.yml exec api cat /var/duckhaven/secrets/setup_token`.
+   `docker compose -f deploy/docker-compose.yml exec api cat /var/duckhaven/setup_token`.
 4. Open `http://<host>:8000` and create the first admin from the setup
    screen using the token.
 5. The API listens on port `8000` on the Tailscale address only. There is no

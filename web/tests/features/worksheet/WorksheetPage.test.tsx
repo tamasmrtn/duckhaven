@@ -86,6 +86,28 @@ describe('WorksheetPage run', () => {
     expect(link).toHaveAttribute('href', '/acme-analytics/admin/agents')
   })
 
+  it('surfaces a rejected dispatch as a readable error (BUG-5)', async () => {
+    // A disallowed query returns a structured 422; the worksheet must show the
+    // human-readable message, never "[object Object]".
+    server.use(
+      http.post('/api/workspaces/:ws/queries', () =>
+        HttpResponse.json(
+          { detail: { error: 'sql_not_allowed', detail: 'Disallowed statement type(s): SET' } },
+          { status: 422 },
+        ),
+      ),
+    )
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: WS_ROUTE })
+    const runBtn = await screen.findByRole('button', { name: /run query/i })
+
+    await user.click(runBtn)
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Disallowed statement type(s): SET')
+    expect(screen.queryByText('[object Object]')).not.toBeInTheDocument()
+  })
+
   it('shows the running progress stage in the results header', async () => {
     server.use(
       http.post('/api/workspaces/:ws/queries', () =>

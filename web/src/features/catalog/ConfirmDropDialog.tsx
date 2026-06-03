@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -73,6 +74,10 @@ export function ConfirmDropDialog({
           <DialogTitle>
             Drop {kind} {name}
           </DialogTitle>
+          <DialogDescription>
+            Permanently remove this {kind} from the catalog. This cannot be
+            undone.
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-3 py-2 text-sm">
           <p className="text-text-secondary">

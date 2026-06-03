@@ -72,6 +72,14 @@ export function useSaveQuery(ws: string) {
   });
 }
 
+export function useWorkspaceQueries(ws: string) {
+  return useQuery({
+    queryKey: ["workspace", ws, "queries"],
+    queryFn: () => queriesApi.listForWorkspace(ws),
+    enabled: !!ws,
+  });
+}
+
 export function useAuditLog(filters?: { user_id?: string }) {
   return useQuery({
     queryKey: ["admin", "audit", filters?.user_id ?? ""],

@@ -3,6 +3,7 @@ import { Plus, Trash2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -101,6 +102,10 @@ export function CreateTableDialog({
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>New table in {schema}</DialogTitle>
+          <DialogDescription>
+            Define the table name and its columns; it is created in the {schema}{" "}
+            schema.
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-2">
           <div className="space-y-1.5">

@@ -2,7 +2,7 @@ import { useParams } from "@tanstack/react-router";
 import { Clock } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusPill } from "@/components/app/StatusPill";
-import { useAuditLog } from "@/queries/queries";
+import { useWorkspaceQueries } from "@/queries/queries";
 import { cn } from "@/utils";
 
 function formatDuration(ms: number | null) {
@@ -12,10 +12,8 @@ function formatDuration(ms: number | null) {
 }
 
 export function HistoryPage() {
-  useParams({ from: "/$ws/history" });
-  const { data: queries = [], isLoading } = useAuditLog();
-
-  const wsQueries = queries.filter((q) => q.workspace_id.startsWith("ws-"));
+  const { ws } = useParams({ from: "/$ws/history" });
+  const { data: wsQueries = [], isLoading } = useWorkspaceQueries(ws);
 
   return (
     <div className="flex h-full flex-col">

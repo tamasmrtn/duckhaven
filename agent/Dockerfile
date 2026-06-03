@@ -57,6 +57,11 @@ RUN pip uninstall -y pip 2>/dev/null || true; \
 COPY --from=builder /home/duckhaven/.duckdb /home/duckhaven/.duckdb
 RUN chown -R duckhaven:duckhaven /home/duckhaven
 
+# Pre-create the results dir owned by the runtime user so an empty named volume
+# mounted here inherits non-root ownership (the agent writes result Parquet as
+# the duckhaven user).
+RUN mkdir -p /var/duckhaven-agent/results && chown -R duckhaven:duckhaven /var/duckhaven-agent
+
 USER duckhaven
 
 CMD ["python", "-m", "agent.main"]

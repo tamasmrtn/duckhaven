@@ -18,6 +18,18 @@ describe('SetupPage', () => {
     expect(screen.getByRole('button', { name: /create admin/i })).toBeInTheDocument()
   })
 
+  it('shows the correct setup-token path in the hint (BUG-7)', async () => {
+    server.use(
+      http.get('/api/setup/status', () => HttpResponse.json({ needs_admin: true })),
+    )
+    renderWithProviders({ initialRoute: '/setup' })
+
+    expect(
+      await screen.findByText(/cat \/var\/duckhaven\/setup_token/),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/secrets\/setup_token/)).not.toBeInTheDocument()
+  })
+
   it('redirects to /login when setup is already complete', async () => {
     server.use(
       http.get('/api/setup/status', () => HttpResponse.json({ needs_admin: false })),

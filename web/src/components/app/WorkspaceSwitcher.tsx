@@ -2,6 +2,7 @@ import { useNavigate } from "@tanstack/react-router";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -54,6 +55,9 @@ export function WorkspaceSwitcher({
       >
         <DialogHeader className="sr-only">
           <DialogTitle>Switch workspace</DialogTitle>
+          <DialogDescription>
+            Search and switch between your workspaces.
+          </DialogDescription>
         </DialogHeader>
         <Command className="rounded-lg">
           <CommandInput

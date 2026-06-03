@@ -15,6 +15,8 @@ export const queriesApi = {
       ...opts,
     }),
 
+  listForWorkspace: (ws: string) => get<Query[]>(`/workspaces/${ws}/queries`),
+
   get: (id: string) => get<Query>(`/queries/${id}`),
 
   rows: (id: string, cursor?: string, limit = 50) =>

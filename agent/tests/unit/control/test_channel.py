@@ -19,6 +19,42 @@ async def _complete_auth(ws, *, session_token: str = "tok-test") -> None:
     await ws.recv()  # consume AGENT_STATUS
 
 
+def test_get_capabilities_loads_and_advertises_query_extensions(monkeypatch):
+    """The agent must LOAD the pre-installed query extensions before
+    introspecting, so httpfs/azure/iceberg are advertised — dispatch is gated on
+    them (regression for the agent-incompatible defect)."""
+    import duckdb
+
+    import agent.control.channel as ch_module
+
+    loaded: list[str] = []
+
+    class FakeConn:
+        def execute(self, sql: str):
+            if sql.startswith("LOAD "):
+                loaded.append(sql.split(" ", 1)[1])
+                return self
+
+            # Introspection query returns whatever was LOADed plus a built-in.
+            class _Cur:
+                def fetchall(_self):
+                    return [("parquet",), *[(ext,) for ext in loaded]]
+
+            return _Cur()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(duckdb, "connect", lambda *a, **k: FakeConn())
+    monkeypatch.setattr(duckdb, "version", lambda: "v-test")
+
+    caps = ch_module._get_capabilities()
+
+    assert loaded == ["httpfs", "azure", "iceberg"]
+    assert "httpfs" in caps.extensions
+    assert "iceberg" in caps.extensions
+
+
 async def test_dispatch_clamps_to_operator_ceilings(tmp_path, monkeypatch):
     """Per-query memory/timeout overrides are clamped to the agent's operator
     ceilings before execution (G-D2-b)."""
@@ -91,6 +127,9 @@ async def test_bootstrap_exchange(tmp_path, monkeypatch):
         frame = Frame.model_validate_json(raw)
         assert frame.type == FrameType.AUTH
         assert "token" in frame.payload
+        # The agent advertises where its result server listens so the control
+        # plane can fetch result Parquet (host = socket peer, observed by API).
+        assert frame.payload["result_port"] == ch_module.settings.results_http_port
 
         auth_ok = Frame(
             type=FrameType.AUTH_OK,
@@ -147,6 +186,113 @@ async def test_auth_ok_populates_token_holder(tmp_path, monkeypatch):
             pass
 
     assert holder.value == "tok-holder"
+
+
+async def test_auth_ok_persists_session_token_to_disk(tmp_path, monkeypatch):
+    """The session token from auth_ok is written to the session-token file so a
+    restart can re-authenticate without the (consumed) bootstrap token."""
+    import agent.control.channel as ch_module
+
+    session_path = tmp_path / ".session-token"
+
+    async def handler(ws):
+        await _complete_auth(ws, session_token="tok-persisted")
+        await asyncio.sleep(0.1)
+
+    async with websockets.serve(handler, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        monkeypatch.setattr(ch_module.settings, "control_plane_url", f"ws://127.0.0.1:{port}")
+        monkeypatch.setattr(ch_module.settings, "bootstrap_token", "tok-boot")
+
+        task = asyncio.create_task(
+            ch_module.run_control_channel(results_dir=tmp_path, session_token_path=session_path)
+        )
+        await asyncio.sleep(0.2)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError, Exception:
+            pass
+
+    assert session_path.read_text().strip() == "tok-persisted"
+
+
+async def test_reconnect_uses_persisted_session_token(tmp_path, monkeypatch):
+    """With a persisted session token, the agent authenticates with it rather
+    than re-sending the single-use bootstrap token (BUG-2 reconnect path)."""
+    import agent.control.channel as ch_module
+
+    session_path = tmp_path / ".session-token"
+    session_path.write_text("tok-from-disk")
+
+    sent_tokens: list[str] = []
+
+    async def handler(ws):
+        raw = await ws.recv()
+        sent_tokens.append(Frame.model_validate_json(raw).payload["token"])
+        await ws.send(
+            Frame(
+                type=FrameType.AUTH_OK,
+                payload={"agent_id": str(uuid.uuid4()), "session_token": "tok-from-disk"},
+            ).model_dump_json()
+        )
+        await ws.recv()  # capabilities
+        await asyncio.sleep(0.05)
+
+    async with websockets.serve(handler, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        monkeypatch.setattr(ch_module.settings, "control_plane_url", f"ws://127.0.0.1:{port}")
+        monkeypatch.setattr(ch_module.settings, "bootstrap_token", "tok-boot")
+
+        task = asyncio.create_task(
+            ch_module.run_control_channel(results_dir=tmp_path, session_token_path=session_path)
+        )
+        await asyncio.sleep(0.2)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError, Exception:
+            pass
+
+    assert sent_tokens[0] == "tok-from-disk"
+
+
+async def test_first_registration_falls_back_to_bootstrap_token(tmp_path, monkeypatch):
+    """With no persisted session token, the agent authenticates with the
+    bootstrap token (very first registration)."""
+    import agent.control.channel as ch_module
+
+    session_path = tmp_path / ".session-token"  # does not exist
+    sent_tokens: list[str] = []
+
+    async def handler(ws):
+        raw = await ws.recv()
+        sent_tokens.append(Frame.model_validate_json(raw).payload["token"])
+        await ws.send(
+            Frame(
+                type=FrameType.AUTH_OK,
+                payload={"agent_id": str(uuid.uuid4()), "session_token": "tok-new"},
+            ).model_dump_json()
+        )
+        await ws.recv()  # capabilities
+        await asyncio.sleep(0.05)
+
+    async with websockets.serve(handler, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        monkeypatch.setattr(ch_module.settings, "control_plane_url", f"ws://127.0.0.1:{port}")
+        monkeypatch.setattr(ch_module.settings, "bootstrap_token", "tok-boot")
+
+        task = asyncio.create_task(
+            ch_module.run_control_channel(results_dir=tmp_path, session_token_path=session_path)
+        )
+        await asyncio.sleep(0.2)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError, Exception:
+            pass
+
+    assert sent_tokens[0] == "tok-boot"
 
 
 async def test_dispatch_sends_done_frame(tmp_path, monkeypatch):

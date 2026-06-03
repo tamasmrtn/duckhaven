@@ -20,6 +20,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
@@ -197,6 +198,10 @@ function BootstrapModal({ open, onClose }: BootstrapModalProps) {
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>Add an agent</DialogTitle>
+          <DialogDescription>
+            Generate a single-use bootstrap token and a compose snippet to
+            register a new agent host.
+          </DialogDescription>
         </DialogHeader>
         {!token ? (
           <div className="space-y-4 py-2">
@@ -345,6 +350,9 @@ export function AgentsPage() {
                         "size-2.5 rounded-full inline-block",
                         statusDot[agent.status],
                       )}
+                      role="img"
+                      aria-label={agent.status}
+                      title={agent.status}
                     />
                   </td>
                   <td className="px-4 py-2 font-medium">{agent.name}</td>

@@ -7,6 +7,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -89,6 +90,10 @@ function RegisterWizard({
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>Register storage backend — Step {step} of 3</DialogTitle>
+          <DialogDescription>
+            Configure a storage location (local FS, NAS, S3, or ADLS) that
+            workspaces can use for their tables.
+          </DialogDescription>
         </DialogHeader>
 
         {step === 1 && (

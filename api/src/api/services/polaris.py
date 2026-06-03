@@ -313,9 +313,17 @@ class PolarisClient:
                 pass
 
         async def _put(path: str, body: dict[str, Any]) -> None:
-            self._raise_for_status(
-                await self._http.put(f"{self.MGMT_PATH}{path}", json=body, headers=headers)
-            )
+            try:
+                self._raise_for_status(
+                    await self._http.put(f"{self.MGMT_PATH}{path}", json=body, headers=headers)
+                )
+            except PolarisServerError as exc:
+                # Polaris's grant-record writes — both privilege grants and the
+                # catalog-role/principal-role bindings below — are not idempotent:
+                # re-applying an existing one returns 500 with a Postgres duplicate-key
+                # body, not a 409. Treat that as already-applied so re-runs are no-ops.
+                if "duplicate key" not in str(exc):
+                    raise
 
         await _create(f"/catalogs/{catalog}/catalog-roles", {"catalogRole": {"name": role}})
         for privilege in self._CATALOG_PRIVILEGES:

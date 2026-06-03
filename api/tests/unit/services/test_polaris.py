@@ -104,6 +104,57 @@ async def test_ensure_catalog_access_grants_full_ownership(polaris: PolarisClien
     }
 
 
+# The five idempotent writes ensure_catalog_access makes: two role-create POSTs
+# (idempotent via _create's 409 handling) and three privilege-grant + two
+# role-binding PUTs (idempotent via _put's duplicate-key handling).
+_GRANT_PUT = f"{MGMT}/catalogs/ws_alpha/catalog-roles/duckhaven_rw/grants"
+_ROLE_BIND_PUT = f"{MGMT}/principal-roles/duckhaven/catalog-roles/ws_alpha"
+_PRINCIPAL_BIND_PUT = f"{MGMT}/principals/root/principal-roles"
+
+# Polaris returns this (wrapped) Postgres error body, with HTTP 500, when a
+# grant_records row already exists — for both privilege grants and role bindings.
+_DUP_KEY_BODY = (
+    "Failed to write to grant records due to Failed due to 'ERROR: duplicate key "
+    "value violates unique constraint \"grant_records_pkey\" ...' (sql-state '23505')"
+)
+
+
+def _mock_access_writes(failing_put: str) -> None:
+    """Mock ensure_catalog_access's writes as 2xx — the two role-create POSTs and
+    every PUT except `failing_put`, which the caller mocks to fail (one route per
+    URL, so respx route precedence is unambiguous)."""
+    respx.post(f"{MGMT}/catalogs/ws_alpha/catalog-roles").mock(return_value=httpx.Response(201))
+    respx.post(f"{MGMT}/principal-roles").mock(return_value=httpx.Response(201))
+    for url in (_GRANT_PUT, _ROLE_BIND_PUT, _PRINCIPAL_BIND_PUT):
+        if url != failing_put:
+            respx.put(url).mock(return_value=httpx.Response(201))
+
+
+@pytest.mark.parametrize("failing_put", [_GRANT_PUT, _ROLE_BIND_PUT, _PRINCIPAL_BIND_PUT])
+@respx.mock
+async def test_ensure_catalog_access_tolerates_duplicate_key(
+    polaris: PolarisClient, failing_put: str
+) -> None:
+    """Every PUT (privilege grant and role binding alike) routes through the
+    duplicate-key-tolerant _put: a 500 with a Postgres duplicate-key body — Polaris's
+    non-idempotent response when the grant_records row exists — must be a no-op."""
+    _mock_token()
+    _mock_access_writes(failing_put)
+    respx.put(failing_put).mock(return_value=httpx.Response(500, text=_DUP_KEY_BODY))
+    # Must not raise.
+    await polaris.ensure_catalog_access("ws_alpha")
+
+
+@respx.mock
+async def test_ensure_catalog_access_reraises_real_server_error(polaris: PolarisClient) -> None:
+    """A 500 whose body is not a duplicate-key violation is a real failure."""
+    _mock_token()
+    _mock_access_writes(_GRANT_PUT)
+    respx.put(_GRANT_PUT).mock(return_value=httpx.Response(500, text="boom"))
+    with pytest.raises(PolarisServerError):
+        await polaris.ensure_catalog_access("ws_alpha")
+
+
 @respx.mock
 async def test_catalog_exists_true_false(polaris: PolarisClient) -> None:
     _mock_token()

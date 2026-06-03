@@ -53,6 +53,18 @@ async def test_get_catalog_not_found(polaris: PolarisClient) -> None:
         await polaris.get_catalog("nope_missing_catalog")
 
 
+async def test_ensure_catalog_access_is_idempotent(
+    polaris: PolarisClient, unique_catalog: str
+) -> None:
+    """Grants are wired on first call; the second re-grants existing grants, which
+    Polaris answers with a duplicate-key 500 the client must treat as a no-op."""
+    await polaris.ensure_catalog_access(unique_catalog)
+    # Must not raise — and grants must remain intact, so a namespace create still works.
+    await polaris.ensure_catalog_access(unique_catalog)
+    await polaris.create_schema(unique_catalog, "main")
+    assert "main" in [s.name for s in await polaris.list_schemas(unique_catalog)]
+
+
 # --- namespaces ---
 
 

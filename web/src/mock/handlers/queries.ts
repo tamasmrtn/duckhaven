@@ -132,6 +132,16 @@ export const queryHandlers = [
     return new HttpResponse(null, { status: 204 });
   }),
 
+  // Workspace-scoped query history (member-accessible), newest first.
+  http.get("/api/workspaces/:ws/queries", ({ params }) => {
+    const ws = findWorkspace(params.ws as string);
+    if (!ws) return httpError(404, "Workspace not found");
+    const rows = QUERY_HISTORY.filter((q) => q.workspace_id === ws.id)
+      .slice()
+      .sort((a, b) => b.started_at.localeCompare(a.started_at));
+    return HttpResponse.json(rows);
+  }),
+
   // Saved queries
   http.get("/api/workspaces/:ws/saved-queries", ({ params }) => {
     const ws = findWorkspace(params.ws as string);

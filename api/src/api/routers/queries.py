@@ -1,7 +1,8 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import Query as QueryParam
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user, get_db
@@ -77,6 +78,35 @@ async def create_query(
         timeout_s=body.timeout_s,
     )
     return query
+
+
+@router.get("/workspaces/{ws}/queries", response_model=list[QueryOut])
+async def list_workspace_queries(
+    ws: str,
+    limit: int = QueryParam(default=100, le=1000),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[Query]:
+    """Query history for a workspace, newest first.
+
+    Workspace-scoped (gated on membership) so non-admin members can view their
+    own history; the admin audit log lives separately under /admin/audit.
+    Internal queries (e.g. table-sample previews) are excluded, mirroring the
+    audit log.
+    """
+    workspace = await get_workspace(db, ws)
+    if workspace is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+    await assert_workspace_member(db, workspace.id, user.id)
+
+    result = await db.execute(
+        select(Query)
+        .where(Query.workspace_id == workspace.id)
+        .where(or_(Query.origin.is_(None), Query.origin != "sample"))
+        .order_by(Query.started_at.desc())
+        .limit(limit)
+    )
+    return list(result.scalars().all())
 
 
 @router.get("/queries/{query_id}", response_model=QueryOut)

@@ -236,6 +236,88 @@ async def test_dispatch_rejects_agent_missing_extension(
     assert mock_ws.sent == []
 
 
+# --- workspace query history ---
+
+
+async def test_list_workspace_queries_scoped_and_ordered(
+    authed_client: AsyncClient, workspace: Workspace, agent: Agent, db_session, user: User
+):
+    """History lists only this workspace's queries, newest first, and excludes
+    sample-origin internal queries (BUG-4)."""
+    from datetime import UTC, datetime, timedelta
+
+    from api.models.query import Query
+
+    now = datetime.now(UTC)
+    # Two real queries in the workspace + one internal sample preview.
+    db_session.add_all(
+        [
+            Query(
+                workspace_id=workspace.id,
+                agent_id=agent.id,
+                sql="SELECT 'older'",
+                status="done",
+                started_at=now - timedelta(minutes=5),
+            ),
+            Query(
+                workspace_id=workspace.id,
+                agent_id=agent.id,
+                sql="SELECT 'newer'",
+                status="done",
+                started_at=now,
+            ),
+            Query(
+                workspace_id=workspace.id,
+                agent_id=agent.id,
+                sql="SELECT 'sample'",
+                status="done",
+                origin="sample",
+                started_at=now - timedelta(minutes=1),
+            ),
+        ]
+    )
+    # A query in a different workspace must not leak in.
+    other_ws = Workspace(
+        slug="other-ws", name="Other", storage_backend_id=workspace.storage_backend_id
+    )
+    db_session.add(other_ws)
+    await db_session.flush()
+    db_session.add(
+        Query(
+            workspace_id=other_ws.id,
+            agent_id=agent.id,
+            sql="SELECT 'foreign'",
+            status="done",
+            started_at=now,
+        )
+    )
+    await db_session.commit()
+
+    resp = await authed_client.get(f"/workspaces/{workspace.slug}/queries")
+    assert resp.status_code == 200
+    rows = resp.json()
+    sqls = [r["sql"] for r in rows]
+    assert sqls == ["SELECT 'newer'", "SELECT 'older'"]  # newest first, sample excluded
+
+
+async def test_list_workspace_queries_non_member_forbidden(
+    client: AsyncClient, workspace: Workspace, db_session
+):
+    """A user who is not a member of the workspace cannot read its history."""
+    outsider = User(
+        email="outsider@queries.local",
+        password_hash=hash_password("pw"),
+        name="Outsider",
+        role="user",
+    )
+    db_session.add(outsider)
+    await db_session.commit()
+
+    await client.post("/auth/login", json={"email": "outsider@queries.local", "password": "pw"})
+    resp = await client.get(f"/workspaces/{workspace.slug}/queries")
+    assert resp.status_code == 403
+
+
 # --- query status ---
 
 

@@ -73,7 +73,9 @@ services:
     restart: "no"
 
   # One-shot: create Polaris's relational-jdbc schema + root principal in the
-  # dedicated `polaris` database. Idempotent on the same realm/credentials.
+  # dedicated `polaris` database. Idempotent: the wrapper treats the admin
+  # tool's "realm already exists" exit (3) as success, so re-running `up`/`start`
+  # is a no-op rather than blocking the dependent services.
   polaris-bootstrap:
     image: apache/polaris-admin-tool:${POLARIS_IMAGE_TAG:-latest}
     depends_on:
@@ -85,7 +87,13 @@ services:
       QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres:5432/polaris
       QUARKUS_DATASOURCE_USERNAME: duckhaven
       QUARKUS_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-duckhaven}
+    volumes:
+      - ./polaris-bootstrap.sh:/polaris-bootstrap.sh:ro
+    entrypoint: ["/bin/sh", "/polaris-bootstrap.sh"]
     command:
+      - java
+      - -jar
+      - /deployments/polaris-admin-tool.jar
       - bootstrap
       - --realm=${POLARIS_REALM:-POLARIS}
       - --credential=${POLARIS_REALM:-POLARIS},${POLARIS_CLIENT_ID:-root},${POLARIS_CLIENT_SECRET:-s3cr3t}

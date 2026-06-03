@@ -1,5 +1,5 @@
 .PHONY: install install-web dev dev-api dev-web \
-        test test-api test-agent test-web \
+        test test-api test-agent test-web test-deploy \
         test-integration test-integration-api test-integration-agent \
         polaris-dev polaris-dev-s3 polaris-dev-down \
         lint format \
@@ -27,7 +27,7 @@ dev:
 	$(MAKE) dev-web
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
-test: test-api test-agent test-web
+test: test-api test-agent test-web test-deploy
 
 test-api:
 	uv run --package duckhaven-api pytest api/tests/unit/ -v \
@@ -47,6 +47,9 @@ test-agent:
 
 test-web:
 	cd web && npm run test
+
+test-deploy:
+	uv run --package duckhaven-api pytest deploy/tests/ -v
 
 # ── Integration tests (opt-in; require Polaris + Postgres) ────────────────────
 # Exit code 5 ("no tests ran") is tolerated so the targets are safe to run

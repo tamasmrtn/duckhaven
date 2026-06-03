@@ -63,7 +63,7 @@ export function SetupPage() {
           Run on the control-plane host to read your setup token, then paste it
           below:
           <pre className="mt-2 overflow-x-auto rounded bg-[var(--bg-surface)] p-2 font-mono text-xs">
-            docker compose exec api cat /var/duckhaven/secrets/setup_token
+            docker compose exec api cat /var/duckhaven/setup_token
           </pre>
         </div>
 

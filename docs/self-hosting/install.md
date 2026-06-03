@@ -26,7 +26,7 @@ automatically. No `.env` editing required.
 Read the setup token on the host:
 
 ```bash
-docker compose exec api cat /var/duckhaven/secrets/setup_token
+docker compose exec api cat /var/duckhaven/setup_token
 ```
 
 Open `http://<host>:8000` in a browser. The SPA detects an empty database and

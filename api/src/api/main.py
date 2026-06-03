@@ -9,11 +9,13 @@ from starlette.staticfiles import StaticFiles
 from starlette.types import Scope
 
 from api.config import settings
+from api.db.session import async_session_factory
 from api.routers import agents, agents_ws, auth, health, queries, schemas, setup, workspaces
 from api.routers.admin import agents as admin_agents
 from api.routers.admin import audit as admin_audit
 from api.routers.admin import storage as admin_storage
 from api.routers.admin import users as admin_users
+from api.services.bootstrap import seed_agent_bootstrap_token
 from api.services.polaris import (
     PolarisBadRequestError,
     PolarisClient,
@@ -24,6 +26,14 @@ from api.services.polaris import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # Migrations have already run (api-entrypoint.sh) by the time the app
+    # starts, so the credentials table exists. Seed before serving traffic so
+    # the bundled agent can register the moment /api/healthz reports ready.
+    async with async_session_factory() as db:
+        await seed_agent_bootstrap_token(
+            db, settings.agent_bootstrap_token, settings.agent_bootstrap_ttl_hours
+        )
+
     app.state.polaris_client = PolarisClient(
         base_url=settings.polaris_base_url,
         realm=settings.polaris_realm,

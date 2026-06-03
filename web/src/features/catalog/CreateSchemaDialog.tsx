@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -54,6 +55,9 @@ export function CreateSchemaDialog({
       <DialogContent className="max-w-sm">
         <DialogHeader>
           <DialogTitle>New schema</DialogTitle>
+          <DialogDescription>
+            Create a new schema (namespace) in this workspace's catalog.
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-3 py-2">
           <div className="space-y-1.5">

@@ -23,6 +23,14 @@ describe('AgentsPage', () => {
     await screen.findByText(`${AGENTS.length} agents`)
   })
 
+  it('exposes each agent status via an accessible label, not color alone (BUG-9)', async () => {
+    renderWithProviders({ initialRoute: AGENTS_ROUTE })
+    await screen.findByText('agent-a')
+    // The status indicator dots carry their textual state for assistive tech.
+    expect(screen.getAllByRole('img', { name: 'healthy' }).length).toBeGreaterThan(0)
+    expect(screen.getByRole('img', { name: 'unavailable' })).toBeInTheDocument()
+  })
+
   it('shows an empty state when there are no agents (Bug #10)', async () => {
     server.use(
       http.get('/api/admin/agents', () => HttpResponse.json([])),

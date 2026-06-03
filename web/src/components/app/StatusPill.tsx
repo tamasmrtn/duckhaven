@@ -70,6 +70,8 @@ export function StatusPill({ status, startedAt, durationMs }: StatusPillProps) {
       )}
       role="status"
       aria-live="polite"
+      aria-label={labels[status]}
+      title={labels[status]}
     >
       <span className={cn("size-1.5 rounded-full", dots[status])} />
       {labels[status]}

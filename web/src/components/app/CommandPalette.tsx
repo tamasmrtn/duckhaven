@@ -2,6 +2,7 @@ import { useNavigate } from "@tanstack/react-router";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -45,6 +46,9 @@ export function CommandPalette({
       >
         <DialogHeader className="sr-only">
           <DialogTitle>Command palette</DialogTitle>
+          <DialogDescription>
+            Search commands, workspaces, and tables.
+          </DialogDescription>
         </DialogHeader>
         <Command className="rounded-lg">
           <CommandInput

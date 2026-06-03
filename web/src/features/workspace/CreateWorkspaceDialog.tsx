@@ -4,6 +4,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -99,6 +100,10 @@ export function CreateWorkspaceDialog({
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>Create workspace</DialogTitle>
+          <DialogDescription>
+            Name the workspace and choose (or create) the storage backend its
+            tables live on.
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4 py-1">
           <div className="space-y-1.5">

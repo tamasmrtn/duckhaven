@@ -1,33 +1,16 @@
 services:
-  # One-shot: generate SECRET_KEY and POSTGRES_PASSWORD on first boot. Reuses
-  # the api image so the compose stack has a single base. Idempotent — on
-  # subsequent boots the files already exist and the script no-ops.
-  init-secrets:
-    image: ghcr.io/tamasmrtn/duckhaven-api:${DUCKHAVEN_IMAGE_TAG:-latest}
-    entrypoint: ["/usr/local/bin/init-secrets.sh"]
-    environment:
-      # Honour operator-supplied overrides if .env sets them; otherwise the
-      # script generates random values.
-      SECRET_KEY: ${SECRET_KEY:-}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
-    volumes:
-      - api_data:/var/duckhaven
-      - secrets:/var/duckhaven/secrets
-    restart: "no"
-
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
-    depends_on:
-      init-secrets:
-        condition: service_completed_successfully
     environment:
       POSTGRES_DB: duckhaven
       POSTGRES_USER: duckhaven
-      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      # Internal-only password (Postgres publishes no port). Shared with the
+      # polaris and api services via compose interpolation so they all agree;
+      # override in .env for a non-default deployment.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-duckhaven}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - secrets:/run/secrets:ro
       # Creates the dedicated `polaris` database on first init.
       - ./postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
@@ -39,43 +22,33 @@ services:
   # Bundled S3-compatible object store. Backs the local_fs/nas catalogs (and is
   # the storage Polaris vends credentials for). Its :9000 endpoint must be
   # reachable by remote agents — that is the URL Polaris vends to DuckDB, set
-  # via S3_ENDPOINT (default localhost; set to the host's address in prod).
+  # via S3_ENDPOINT (defaults to the in-network minio:9000; set to the host's
+  # address when running agents on other hosts). The entrypoint pre-creates the
+  # warehouse bucket as a top-level directory (MinIO registers it as a bucket),
+  # folding in the former minio-bootstrap one-shot.
   minio:
     image: minio/minio:${MINIO_IMAGE_TAG:-latest}
     restart: unless-stopped
-    command: server /data --console-address ":9001"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - mkdir -p "/data/${S3_BUCKET:-warehouse}" && exec minio server /data --console-address ":9001"
     ports:
       - "9000:9000"
       - "9001:9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      S3_BUCKET: ${S3_BUCKET:-warehouse}
     volumes:
       - minio_data:/data
-
-  # One-shot: create the warehouse bucket once MinIO is reachable. Mirrors the
-  # polaris-bootstrap pattern; idempotent via `mc mb --ignore-existing`.
-  minio-bootstrap:
-    image: minio/mc:${MINIO_MC_IMAGE_TAG:-latest}
-    depends_on:
-      - minio
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      S3_BUCKET: ${S3_BUCKET:-warehouse}
-    entrypoint:
-      - /bin/sh
-      - -c
-      - >
-        until mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD";
-        do echo 'waiting for minio...'; sleep 1; done;
-        mc mb --ignore-existing "local/$$S3_BUCKET"
-    restart: "no"
 
   # One-shot: create Polaris's relational-jdbc schema + root principal in the
   # dedicated `polaris` database. Idempotent: the wrapper treats the admin
   # tool's "realm already exists" exit (3) as success, so re-running `up`/`start`
-  # is a no-op rather than blocking the dependent services.
+  # is a no-op rather than blocking the dependent services. Stays a separate
+  # service because the admin tool ships as its own image (the polaris server
+  # image does not include it).
   polaris-bootstrap:
     image: apache/polaris-admin-tool:${POLARIS_IMAGE_TAG:-latest}
     depends_on:
@@ -107,8 +80,8 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
-      minio-bootstrap:
-        condition: service_completed_successfully
+      minio:
+        condition: service_started
     environment:
       POLARIS_PERSISTENCE_TYPE: relational-jdbc
       POLARIS_PERSISTENCE_RELATIONAL_JDBC_DATABASE_TYPE: postgresql
@@ -138,30 +111,40 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      init-secrets:
-        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       polaris:
         condition: service_healthy
     environment:
+      # Captured to the secrets dir (inside api_data) on first boot by the
+      # entrypoint and reused thereafter; the postgres password is shared with
+      # the postgres/polaris services via compose interpolation.
+      SECRET_KEY: ${SECRET_KEY:-}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-duckhaven}
       POLARIS_BASE_URL: http://polaris:8181
       POLARIS_REALM: ${POLARIS_REALM:-POLARIS}
       POLARIS_CLIENT_ID: ${POLARIS_CLIENT_ID:-root}
       POLARIS_CLIENT_SECRET: ${POLARIS_CLIENT_SECRET:-s3cr3t}
       # Bundled MinIO backing local_fs/nas catalogs. S3_ENDPOINT is vended to
-      # remote agents (must be reachable by them); the internal endpoint is what
-      # Polaris uses inside the compose network.
-      S3_ENDPOINT: ${S3_ENDPOINT:-http://localhost:9000}
+      # agents; it defaults to the in-network minio:9000 so the bundled agent
+      # works out of the box. Set it to a host-reachable address when running
+      # agents on other hosts. S3_ENDPOINT_INTERNAL is what Polaris uses inside
+      # the compose network.
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
       S3_ENDPOINT_INTERNAL: ${S3_ENDPOINT_INTERNAL:-http://minio:9000}
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_BUCKET: ${S3_BUCKET:-warehouse}
+      # Single-use token the API seeds on startup so the bundled agent can
+      # auto-register without an operator minting one in the admin UI (folds in
+      # the former agent-bootstrap one-shot; idempotent re-seed on restart).
+      AGENT_BOOTSTRAP_TOKEN: ${AGENT_BOOTSTRAP_TOKEN:-dh_boot_localdev_seed}
       # Plain-HTTP deployment by default; the browser drops Secure cookies over
       # HTTP, which would break login. Set true only behind a TLS terminator.
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
     volumes:
+      # secret_key + setup_token live under this mount (/var/duckhaven/secrets
+      # and /var/duckhaven), generated by the entrypoint on first boot.
       - api_data:/var/duckhaven
-      - secrets:/var/duckhaven/secrets:ro
     healthcheck:
       # Use python stdlib so the image stays curl-free.
       test:
@@ -174,41 +157,18 @@ services:
       retries: 5
       start_period: 30s
 
-  # One-shot: seed a single-use agent bootstrap credential so the bundled agent
-  # can auto-register without an operator generating one in the admin UI. Mirrors
-  # the polaris/minio bootstrap pattern; idempotent via WHERE NOT EXISTS. Runs
-  # after the API has applied migrations (the credentials table must exist).
-  agent-bootstrap:
-    image: postgres:16-alpine
-    depends_on:
-      api:
-        condition: service_healthy
-    environment:
-      PGPASSWORD: ${POSTGRES_PASSWORD:-duckhaven}
-      AGENT_BOOTSTRAP_TOKEN: ${AGENT_BOOTSTRAP_TOKEN:-dh_boot_localdev_seed}
-    entrypoint:
-      - /bin/sh
-      - -c
-      - >
-        psql -h postgres -U duckhaven -d duckhaven -v ON_ERROR_STOP=1 -c
-        "INSERT INTO credentials (id, kind, token, expires_at)
-         SELECT gen_random_uuid(), 'agent_bootstrap', '$$AGENT_BOOTSTRAP_TOKEN',
-                now() + interval '240 hours'
-         WHERE NOT EXISTS (SELECT 1 FROM credentials WHERE token = '$$AGENT_BOOTSTRAP_TOKEN');"
-    restart: "no"
-
   # Bundled DuckHaven compute agent. Dials the API control plane over WebSocket,
   # exchanges the seeded bootstrap token for a session credential, advertises its
   # DuckDB capabilities, and executes dispatched queries. The result server binds
   # 0.0.0.0 (Bearer-gated) so the API can fetch result Parquet across the network.
+  # The API seeds the bootstrap token during its own startup, so a healthy api is
+  # sufficient — no separate bootstrap service to wait on.
   agent:
     image: ghcr.io/tamasmrtn/duckhaven-agent:${DUCKHAVEN_IMAGE_TAG:-latest}
     restart: unless-stopped
     depends_on:
       api:
         condition: service_healthy
-      agent-bootstrap:
-        condition: service_completed_successfully
     environment:
       CONTROL_PLANE_URL: ws://api:8000/agents/connect
       BOOTSTRAP_TOKEN: ${AGENT_BOOTSTRAP_TOKEN:-dh_boot_localdev_seed}
@@ -236,5 +196,4 @@ volumes:
   postgres_data:
   api_data:
   minio_data:
-  secrets:
   agent_results:

@@ -6,6 +6,7 @@ import { agentHandlers } from '@/mock/handlers/agents'
 import { schemaHandlers } from '@/mock/handlers/schemas'
 import { queryHandlers } from '@/mock/handlers/queries'
 import { storageBackendHandlers } from '@/mock/handlers/storage-backends'
+import { userHandlers } from '@/mock/handlers/users'
 
 export const server = setupServer(
   ...authHandlers,
@@ -15,4 +16,5 @@ export const server = setupServer(
   ...schemaHandlers,
   ...queryHandlers,
   ...storageBackendHandlers,
+  ...userHandlers,
 )

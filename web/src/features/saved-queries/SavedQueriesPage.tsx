@@ -1,12 +1,21 @@
-import { useParams } from "@tanstack/react-router";
+import { useNavigate, useParams } from "@tanstack/react-router";
 import { Database, Clock, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSavedQueries } from "@/queries/queries";
+import { stashWorksheetSql } from "@/features/catalog/worksheetSql";
 
 export function SavedQueriesPage() {
   const { ws } = useParams({ from: "/$ws/saved-queries" });
+  const navigate = useNavigate();
   const { data: queries = [], isLoading } = useSavedQueries(ws);
+
+  // Snowsight-style hand-off: stash the SQL and navigate to the worksheet, which
+  // seeds a new tab from the stash on mount (same channel as catalog actions).
+  function openInWorksheet(sql: string) {
+    stashWorksheetSql(ws, sql);
+    navigate({ to: "/$ws/worksheets", params: { ws } });
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -47,6 +56,7 @@ export function SavedQueriesPage() {
                     size="icon"
                     className="size-6 shrink-0"
                     aria-label="Open in worksheet"
+                    onClick={() => openInWorksheet(q.sql)}
                   >
                     <ExternalLink className="size-3" />
                   </Button>

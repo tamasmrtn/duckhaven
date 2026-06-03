@@ -10,6 +10,12 @@ from api.models.storage_backend import StorageBackend
 from api.models.user import User
 from api.models.workspace import Workspace, WorkspaceMember
 from api.services.auth import hash_password
+from api.services.polaris import (
+    PolarisBadRequestError,
+    PolarisError,
+    PolarisNotFoundError,
+    PolarisServerError,
+)
 
 
 @pytest.fixture
@@ -336,6 +342,35 @@ async def test_drop_schema_cascade_drops_tables(
     assert (slug, "staging", "events") not in fake_polaris.tables
     rows = (await db_session.execute(select(TableMetadata))).scalars().all()
     assert not any(r.table_name == "events" for r in rows)
+
+
+# --- PolarisError -> HTTP exception handler ---
+
+
+@pytest.mark.parametrize(
+    ("exc", "expected_status"),
+    [
+        (PolarisNotFoundError("missing namespace"), 404),
+        (PolarisBadRequestError("bad request"), 422),
+        (PolarisServerError("upstream exploded"), 502),
+        (PolarisError("generic polaris failure"), 502),
+    ],
+)
+async def test_polaris_error_maps_to_http_response(
+    auth_client: AsyncClient,
+    backend: StorageBackend,
+    fake_polaris: FakePolaris,
+    exc: PolarisError,
+    expected_status: int,
+):
+    """A PolarisError escaping a route is rendered by the exception handler with
+    the mapped status and the exception message echoed in `detail`."""
+    slug = await _make_workspace(auth_client, backend, "alpha")
+    fake_polaris.raise_on_list_tables = exc
+
+    resp = await auth_client.get(f"/workspaces/{slug}/schemas/main/tables")
+    assert resp.status_code == expected_status
+    assert resp.json()["detail"] == str(exc)
 
 
 async def test_drop_schema_requires_writer(

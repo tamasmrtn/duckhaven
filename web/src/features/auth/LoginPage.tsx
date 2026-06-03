@@ -43,7 +43,7 @@ export function LoginPage() {
           : { to: "/welcome" },
       );
     } catch {
-      setError("Invalid credentials. Try any email and password.");
+      setError("Invalid credentials.");
     }
   }
 

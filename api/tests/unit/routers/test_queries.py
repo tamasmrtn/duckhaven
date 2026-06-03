@@ -243,7 +243,7 @@ async def test_list_workspace_queries_scoped_and_ordered(
     authed_client: AsyncClient, workspace: Workspace, agent: Agent, db_session, user: User
 ):
     """History lists only this workspace's queries, newest first, and excludes
-    sample-origin internal queries (BUG-4)."""
+    sample-origin internal queries."""
     from datetime import UTC, datetime, timedelta
 
     from api.models.query import Query

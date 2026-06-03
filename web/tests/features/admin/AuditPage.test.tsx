@@ -12,6 +12,16 @@ describe('AuditPage', () => {
     await screen.findByText(`${QUERY_HISTORY.length} entries`)
   })
 
+  it('resolves workspace and agent ids to slug/name', async () => {
+    renderWithProviders({ initialRoute: AUDIT_ROUTE })
+    await screen.findByText(`${QUERY_HISTORY.length} entries`)
+    // ws-2 → acme-research slug; ag-2 → agent-b name.
+    expect(await screen.findByText('acme-research')).toBeInTheDocument()
+    expect(screen.getAllByText('agent-b').length).toBeGreaterThan(0)
+    // The raw UUID-shaped ids must not be shown when a mapping exists.
+    expect(screen.queryByText('ws-2')).not.toBeInTheDocument()
+  })
+
   it('filtering by an unknown user_id narrows the result to zero', async () => {
     const user = userEvent.setup()
     renderWithProviders({ initialRoute: AUDIT_ROUTE })

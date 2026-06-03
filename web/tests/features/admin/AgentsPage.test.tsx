@@ -23,7 +23,7 @@ describe('AgentsPage', () => {
     await screen.findByText(`${AGENTS.length} agents`)
   })
 
-  it('exposes each agent status via an accessible label, not color alone (BUG-9)', async () => {
+  it('exposes each agent status via an accessible label, not color alone', async () => {
     renderWithProviders({ initialRoute: AGENTS_ROUTE })
     await screen.findByText('agent-a')
     // The status indicator dots carry their textual state for assistive tech.
@@ -31,7 +31,7 @@ describe('AgentsPage', () => {
     expect(screen.getByRole('img', { name: 'unavailable' })).toBeInTheDocument()
   })
 
-  it('shows an empty state when there are no agents (Bug #10)', async () => {
+  it('shows an empty state when there are no agents', async () => {
     server.use(
       http.get('/api/admin/agents', () => HttpResponse.json([])),
     )
@@ -51,6 +51,22 @@ describe('AgentsPage', () => {
     await waitFor(() => {
       expect(screen.getAllByText('agent-b').length).toBeGreaterThan(1)
     })
+  })
+
+  it('agent drawer has an accessible description', async () => {
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: AGENTS_ROUTE })
+    await screen.findByText('agent-b')
+
+    await user.click(screen.getByText('agent-b'))
+
+    // SheetContent must wire aria-describedby to a description, otherwise Radix
+    // logs a missing-description a11y warning when the drawer opens.
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveAttribute('aria-describedby')
+    expect(
+      screen.getByText('Agent status, capabilities, and credential management.'),
+    ).toBeInTheDocument()
   })
 
   it('opens the bootstrap modal when the button is clicked', async () => {
@@ -76,6 +92,9 @@ describe('AgentsPage', () => {
     expect(snippet.textContent).toContain('CONTROL_PLANE_URL: ws://localhost:8000/agents/connect')
     expect(snippet.textContent).toContain('image: ghcr.io/tamasmrtn/duckhaven-agent:latest')
     expect(snippet.textContent).toContain('restart: unless-stopped')
+    // The result-server bind host must be documented in the snippet so
+    // externally-added agents are reachable by the control plane out of the box.
+    expect(snippet.textContent).toContain('RESULTS_HTTP_HOST: 0.0.0.0')
     expect(screen.getByLabelText('Copy compose snippet')).toBeInTheDocument()
   })
 
@@ -87,7 +106,7 @@ describe('AgentsPage', () => {
 
     const snippet = await screen.findByTestId('agent-compose-snippet')
     // The dark code background must pair with the light --text-code token,
-    // not --text-primary (which is dark in light mode — Bug #2).
+    // not --text-primary (which is dark in light mode).
     expect(snippet.className).toContain('text-[var(--text-code)]')
     expect(snippet.className).not.toContain('text-text-primary')
   })

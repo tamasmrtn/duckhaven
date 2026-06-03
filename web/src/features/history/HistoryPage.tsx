@@ -3,7 +3,8 @@ import { Clock } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusPill } from "@/components/app/StatusPill";
 import { useWorkspaceQueries } from "@/queries/queries";
-import { cn } from "@/utils";
+import { useAgents } from "@/queries/agents";
+import { cn, shortId } from "@/utils";
 
 function formatDuration(ms: number | null) {
   if (ms == null) return "—";
@@ -14,6 +15,8 @@ function formatDuration(ms: number | null) {
 export function HistoryPage() {
   const { ws } = useParams({ from: "/$ws/history" });
   const { data: wsQueries = [], isLoading } = useWorkspaceQueries(ws);
+  const { data: agents = [] } = useAgents();
+  const agentName = new Map(agents.map((a) => [a.id, a.name]));
 
   return (
     <div className="flex h-full flex-col">
@@ -77,7 +80,7 @@ export function HistoryPage() {
                     )}
                   </td>
                   <td className="px-4 py-2 font-mono text-xs text-text-secondary">
-                    {q.agent_id}
+                    {agentName.get(q.agent_id) ?? shortId(q.agent_id)}
                   </td>
                   <td className="px-4 py-2 font-mono text-xs text-text-secondary font-tabular">
                     {q.row_count != null ? q.row_count.toLocaleString() : "—"}

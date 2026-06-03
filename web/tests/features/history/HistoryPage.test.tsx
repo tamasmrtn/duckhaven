@@ -53,4 +53,40 @@ describe('HistoryPage', () => {
     renderWithProviders({ initialRoute: '/public/history' })
     expect(await screen.findByText('No queries yet.')).toBeInTheDocument()
   })
+
+  it('resolves the agent id to its human-readable name', async () => {
+    // Fixture rows reference ag-1/ag-2; the agents cache maps those to names.
+    renderWithProviders({ initialRoute: '/acme-analytics/history' })
+    expect((await screen.findAllByText('agent-a')).length).toBeGreaterThan(0)
+  })
+
+  it('falls back to a short id for an unknown agent', async () => {
+    server.use(
+      http.get('/api/workspaces/:ws/queries', () =>
+        HttpResponse.json([
+          {
+            id: 'q-unknown-agent',
+            workspace_id: '137f7947-0000-4000-8000-000000000001',
+            agent_id: 'deadbeef-1111-2222-3333-444455556666',
+            user_id: 'u-1',
+            sql: 'SELECT unknown_agent_marker',
+            status: 'done',
+            row_count: 1,
+            duration_ms: 5,
+            error: null,
+            progress: null,
+            started_at: '2026-05-15T10:00:00Z',
+            finished_at: '2026-05-15T10:00:00.005Z',
+          },
+        ]),
+      ),
+    )
+    renderWithProviders({ initialRoute: '/acme-analytics/history' })
+    await screen.findByText('SELECT unknown_agent_marker')
+    // Short id (first 8 chars), never the full UUID.
+    expect(screen.getByText('deadbeef')).toBeInTheDocument()
+    expect(
+      screen.queryByText('deadbeef-1111-2222-3333-444455556666'),
+    ).not.toBeInTheDocument()
+  })
 })

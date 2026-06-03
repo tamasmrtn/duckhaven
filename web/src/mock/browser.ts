@@ -6,6 +6,7 @@ import { agentHandlers } from "./handlers/agents";
 import { schemaHandlers } from "./handlers/schemas";
 import { queryHandlers } from "./handlers/queries";
 import { storageBackendHandlers } from "./handlers/storage-backends";
+import { userHandlers } from "./handlers/users";
 
 export const worker = setupWorker(
   ...authHandlers,
@@ -15,4 +16,5 @@ export const worker = setupWorker(
   ...schemaHandlers,
   ...queryHandlers,
   ...storageBackendHandlers,
+  ...userHandlers,
 );

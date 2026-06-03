@@ -13,6 +13,7 @@ from api.routers import agents, agents_ws, auth, health, queries, schemas, setup
 from api.routers.admin import agents as admin_agents
 from api.routers.admin import audit as admin_audit
 from api.routers.admin import storage as admin_storage
+from api.routers.admin import users as admin_users
 from api.services.polaris import (
     PolarisBadRequestError,
     PolarisClient,
@@ -75,6 +76,7 @@ api_app.include_router(agents.router, tags=["agents"])
 api_app.include_router(admin_agents.router, prefix="/admin", tags=["admin"])
 api_app.include_router(admin_storage.router, prefix="/admin", tags=["admin"])
 api_app.include_router(admin_audit.router, prefix="/admin", tags=["admin"])
+api_app.include_router(admin_users.router, prefix="/admin", tags=["admin"])
 
 
 class SPAStaticFiles(StaticFiles):

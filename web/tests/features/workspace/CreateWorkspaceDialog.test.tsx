@@ -5,7 +5,7 @@ import { createTestQueryClient } from '@tests/utils'
 import { CreateWorkspaceDialog } from '@/features/workspace/CreateWorkspaceDialog'
 
 describe('CreateWorkspaceDialog', () => {
-  it('has an accessible description so Radix does not warn (BUG-9)', async () => {
+  it('has an accessible description so Radix does not warn', async () => {
     const queryClient = createTestQueryClient()
     render(
       <QueryClientProvider client={queryClient}>

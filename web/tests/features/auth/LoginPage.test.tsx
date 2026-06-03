@@ -14,7 +14,7 @@ describe('LoginPage', () => {
     expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument()
   })
 
-  it('uses a descriptive password placeholder, not bullets (Bug #7)', async () => {
+  it('uses a descriptive password placeholder, not bullets', async () => {
     renderWithProviders({ initialRoute: '/login' })
     const password = await screen.findByLabelText(/password/i)
     expect(password).toHaveAttribute('placeholder')
@@ -61,6 +61,22 @@ describe('LoginPage', () => {
     await waitFor(() => {
       expect(screen.getByRole('alert')).toBeInTheDocument()
     })
+  })
+
+  it('shows a production-ready credentials error without a dev hint', async () => {
+    server.use(
+      http.post('/api/auth/login', () => new HttpResponse(null, { status: 401 })),
+    )
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: '/login' })
+
+    await user.type(await screen.findByLabelText(/email/i), 'wrong@example.com')
+    await user.type(screen.getByLabelText(/password/i), 'wrong')
+    await user.click(screen.getByRole('button', { name: /sign in/i }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Invalid credentials.')
+    expect(alert).not.toHaveTextContent(/try any email and password/i)
   })
 
   it('disables submit button while pending', async () => {

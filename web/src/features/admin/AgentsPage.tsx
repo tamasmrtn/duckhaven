@@ -14,6 +14,7 @@ import {
   SheetContent,
   SheetHeader,
   SheetTitle,
+  SheetDescription,
 } from "@/components/ui/sheet";
 import {
   Dialog,
@@ -41,6 +42,9 @@ function buildComposeSnippet(token: BootstrapToken): string {
     "    environment:",
     `      CONTROL_PLANE_URL: ${token.control_plane_url}`,
     `      BOOTSTRAP_TOKEN: ${token.token}`,
+    "      # Bind the agent's result server to all interfaces so the control",
+    "      # plane can fetch query results back across the host boundary.",
+    "      RESULTS_HTTP_HOST: 0.0.0.0",
     "    volumes:",
     "      - agent_results:/var/duckhaven-agent/results",
     "",
@@ -90,6 +94,9 @@ function AgentDrawer({ agent, open, onClose }: AgentDrawerProps) {
             {statusIcon[agent.status]}
             {agent.name}
           </SheetTitle>
+          <SheetDescription>
+            Agent status, capabilities, and credential management.
+          </SheetDescription>
         </SheetHeader>
 
         <div className="mt-6 space-y-4">

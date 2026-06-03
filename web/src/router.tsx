@@ -58,8 +58,8 @@ const wsRoute = createRoute({
   component: AppShell,
   notFoundComponent: NotFoundPage,
   // Centralized guard for every workspace route: require a session, then a
-  // real workspace. Logged-out deep links redirect to /login (Bug #3); unknown
-  // workspace slugs render the not-found page instead of a blank shell (Bug #5).
+  // real workspace. Logged-out deep links redirect to /login; unknown
+  // workspace slugs render the not-found page instead of a blank shell.
   beforeLoad: async ({ params }) => {
     try {
       await authApi.me();

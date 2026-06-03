@@ -18,7 +18,7 @@ describe('SetupPage', () => {
     expect(screen.getByRole('button', { name: /create admin/i })).toBeInTheDocument()
   })
 
-  it('shows the correct setup-token path in the hint (BUG-7)', async () => {
+  it('shows the correct setup-token path in the hint', async () => {
     server.use(
       http.get('/api/setup/status', () => HttpResponse.json({ needs_admin: true })),
     )

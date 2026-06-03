@@ -47,7 +47,7 @@ describe('CatalogPage', () => {
     })
   })
 
-  it('shows an empty state when a schema has no tables (Bug #10)', async () => {
+  it('shows an empty state when a schema has no tables', async () => {
     server.use(
       http.get('/api/workspaces/:ws/schemas/:schema/tables', () =>
         HttpResponse.json([]),

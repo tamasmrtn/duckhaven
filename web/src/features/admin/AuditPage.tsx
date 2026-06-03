@@ -4,7 +4,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { StatusPill } from "@/components/app/StatusPill";
 import { useAuditLog } from "@/queries/queries";
-import { cn } from "@/utils";
+import { useAgents } from "@/queries/agents";
+import { useWorkspaces } from "@/queries/workspaces";
+import { cn, shortId } from "@/utils";
 
 function formatDuration(ms: number | null) {
   if (ms == null) return "—";
@@ -18,6 +20,10 @@ export function AuditPage() {
   const { data: queries = [], isLoading } = useAuditLog(
     trimmed ? { user_id: trimmed } : undefined,
   );
+  const { data: agents = [] } = useAgents();
+  const { data: workspaces = [] } = useWorkspaces();
+  const agentName = new Map(agents.map((a) => [a.id, a.name]));
+  const workspaceSlug = new Map(workspaces.map((w) => [w.id, w.slug]));
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -86,10 +92,11 @@ export function AuditPage() {
                     <StatusPill status={q.status} durationMs={q.duration_ms} />
                   </td>
                   <td className="px-4 py-2 font-mono text-xs text-text-secondary">
-                    {q.workspace_id}
+                    {workspaceSlug.get(q.workspace_id) ??
+                      shortId(q.workspace_id)}
                   </td>
                   <td className="px-4 py-2 font-mono text-xs text-text-secondary">
-                    {q.agent_id}
+                    {agentName.get(q.agent_id) ?? shortId(q.agent_id)}
                   </td>
                   <td className="px-4 py-2 max-w-xs">
                     <pre className="truncate font-mono text-xs">{q.sql}</pre>

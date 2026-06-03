@@ -166,8 +166,67 @@ services:
       retries: 5
       start_period: 30s
 
+  # One-shot: seed a single-use agent bootstrap credential so the bundled agent
+  # can auto-register without an operator generating one in the admin UI. Mirrors
+  # the polaris/minio bootstrap pattern; idempotent via WHERE NOT EXISTS. Runs
+  # after the API has applied migrations (the credentials table must exist).
+  agent-bootstrap:
+    image: postgres:16-alpine
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-duckhaven}
+      AGENT_BOOTSTRAP_TOKEN: ${AGENT_BOOTSTRAP_TOKEN:-dh_boot_localdev_seed}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >
+        psql -h postgres -U duckhaven -d duckhaven -v ON_ERROR_STOP=1 -c
+        "INSERT INTO credentials (id, kind, token, expires_at)
+         SELECT gen_random_uuid(), 'agent_bootstrap', '$$AGENT_BOOTSTRAP_TOKEN',
+                now() + interval '240 hours'
+         WHERE NOT EXISTS (SELECT 1 FROM credentials WHERE token = '$$AGENT_BOOTSTRAP_TOKEN');"
+    restart: "no"
+
+  # Bundled DuckHaven compute agent. Dials the API control plane over WebSocket,
+  # exchanges the seeded bootstrap token for a session credential, advertises its
+  # DuckDB capabilities, and executes dispatched queries. The result server binds
+  # 0.0.0.0 (Bearer-gated) so the API can fetch result Parquet across the network.
+  agent:
+    image: ghcr.io/tamasmrtn/duckhaven-agent:${DUCKHAVEN_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+      agent-bootstrap:
+        condition: service_completed_successfully
+    environment:
+      CONTROL_PLANE_URL: ws://api:8000/agents/connect
+      BOOTSTRAP_TOKEN: ${AGENT_BOOTSTRAP_TOKEN:-dh_boot_localdev_seed}
+      POLARIS_BASE_URL: http://polaris:8181
+      POLARIS_CLIENT_ID: ${POLARIS_CLIENT_ID:-root}
+      POLARIS_CLIENT_SECRET: ${POLARIS_CLIENT_SECRET:-s3cr3t}
+      # The control plane reaches the result server across the compose network,
+      # so bind all interfaces rather than loopback.
+      RESULTS_HTTP_HOST: 0.0.0.0
+    volumes:
+      - agent_results:/var/duckhaven-agent/results
+    healthcheck:
+      # Result server up = agent process alive. Stdlib so the image stays curl-free.
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket,sys; s=socket.create_connection(('127.0.0.1',8001),2); s.close()"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
 volumes:
   postgres_data:
   api_data:
   minio_data:
   secrets:
+  agent_results:

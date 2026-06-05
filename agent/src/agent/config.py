@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     max_timeout_s: float = 600.0
     result_retention_hours: float = 24.0
     retention_sweep_interval_s: float = 3600.0
+    # Cadence at which the agent pushes live CPU/memory utilization samples over
+    # the control channel. Independent of (and finer than) capability heartbeats.
+    metrics_sample_interval_s: float = 2.0
 
 
 settings = Settings()

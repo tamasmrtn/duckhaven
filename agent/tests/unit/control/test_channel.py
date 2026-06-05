@@ -55,6 +55,81 @@ def test_get_capabilities_loads_and_advertises_query_extensions(monkeypatch):
     assert "iceberg" in caps.extensions
 
 
+def test_get_capabilities_reports_detected_cpu(monkeypatch):
+    """`cores` is no longer hardcoded — it (and the CPU model) come from runtime
+    detection rather than a fixed `1`."""
+    import duckdb
+
+    import agent.control.channel as ch_module
+
+    class FakeConn:
+        def execute(self, sql: str):
+            if "duckdb_extensions" not in sql:
+                return self  # LOAD <ext>
+
+            class _Cur:
+                def fetchall(_self):
+                    return [("parquet",)]
+
+            return _Cur()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(duckdb, "connect", lambda *a, **k: FakeConn())
+    monkeypatch.setattr(duckdb, "version", lambda: "v-test")
+    monkeypatch.setattr(
+        ch_module,
+        "cpu_capability",
+        lambda: {"cores": 4, "cpu_model": "Test CPU", "cpu_cores_physical": 2},
+    )
+
+    caps = ch_module._get_capabilities()
+
+    assert caps.cores == 4
+    assert caps.cpu_model == "Test CPU"
+    assert caps.cpu_cores_physical == 2
+
+
+async def test_pushes_metrics_samples(tmp_path, monkeypatch):
+    """After auth the agent streams METRICS_SAMPLE frames on its own cadence."""
+    import agent.control.channel as ch_module
+
+    monkeypatch.setattr(ch_module.settings, "metrics_sample_interval_s", 0.05)
+    got = asyncio.Event()
+    received: list[Frame] = []
+
+    async def handler(ws):
+        await _complete_auth(ws)
+        for _ in range(10):
+            raw = await asyncio.wait_for(ws.recv(), timeout=2.0)
+            frame = Frame.model_validate_json(raw)
+            if frame.type == FrameType.METRICS_SAMPLE:
+                received.append(frame)
+                got.set()
+                break
+        await asyncio.sleep(0.05)
+
+    async with websockets.serve(handler, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        monkeypatch.setattr(ch_module.settings, "control_plane_url", f"ws://127.0.0.1:{port}")
+        monkeypatch.setattr(ch_module.settings, "bootstrap_token", "tok")
+
+        task = asyncio.create_task(ch_module.run_control_channel(results_dir=tmp_path))
+        await asyncio.wait_for(got.wait(), timeout=3.0)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError, Exception:
+            pass
+
+    assert received
+    payload = received[0].payload
+    assert "cpu_percent" in payload
+    assert "memory_percent" in payload
+    assert "sampled_at" in payload
+
+
 async def test_dispatch_clamps_to_operator_ceilings(tmp_path, monkeypatch):
     """Per-query memory/timeout overrides are clamped to the agent's operator
     ceilings before execution (G-D2-b)."""

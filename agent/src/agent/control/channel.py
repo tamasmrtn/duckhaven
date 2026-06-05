@@ -10,6 +10,7 @@ from websockets.exceptions import ConnectionClosed
 from agent.auth import TokenHolder, load_session_token, save_session_token
 from agent.config import settings
 from agent.executor.supervisor import run_query
+from agent.metrics.system import MetricsSampler, cpu_capability
 from duckhaven_shared.protocol import Frame, FrameType
 from duckhaven_shared.schemas import AgentCapabilities
 
@@ -39,11 +40,14 @@ def _get_capabilities() -> AgentCapabilities:
         ).fetchall()
     ]
     conn.close()
+    cpu = cpu_capability()
     return AgentCapabilities(
         duckdb_version=version,
         extensions=extensions,
         memory_limit_gb=settings.memory_limit_bytes / 1024**3,
-        cores=1,
+        cores=cpu["cores"],
+        cpu_model=cpu["cpu_model"],
+        cpu_cores_physical=cpu["cpu_cores_physical"],
         host=platform.node() or None,
     )
 
@@ -116,6 +120,17 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path) -> None:
     await ws.send(done.model_dump_json())
 
 
+async def _push_metrics(ws, sampler: MetricsSampler) -> None:
+    """Push live CPU/memory utilization samples on a fixed cadence until cancelled."""
+    while True:
+        await asyncio.sleep(settings.metrics_sample_interval_s)
+        frame = Frame(
+            type=FrameType.METRICS_SAMPLE,
+            payload=sampler.sample().model_dump(mode="json"),
+        )
+        await ws.send(frame.model_dump_json())
+
+
 async def run_control_channel(
     results_dir: Path | None = None,
     token_holder: TokenHolder | None = None,
@@ -171,29 +186,36 @@ async def run_control_channel(
                 caps = Frame(type=FrameType.AGENT_STATUS, payload=_get_capabilities().model_dump())
                 await ws.send(caps.model_dump_json())
 
-                async for raw_msg in ws:
-                    msg = Frame.model_validate_json(raw_msg)
-
-                    if msg.type == FrameType.HEARTBEAT:
-                        await ws.send(Frame(type=FrameType.HEARTBEAT).model_dump_json())
-                        # Re-advertise capabilities so the control plane's stored
-                        # doc + last_ping_at stay fresh (G-D17-a).
-                        caps = Frame(
-                            type=FrameType.AGENT_STATUS, payload=_get_capabilities().model_dump()
-                        )
-                        await ws.send(caps.model_dump_json())
-
-                    elif msg.type == FrameType.DISPATCH_QUERY:
-                        query_id = msg.payload.get("query_id", str(uuid.uuid4()))
-                        task = asyncio.create_task(_handle_dispatch(ws, msg.payload, results_dir))
-                        _in_flight[query_id] = task
-
-                    elif msg.type == FrameType.CANCEL_QUERY:
-                        query_id = msg.payload.get("query_id", "")
-                        task = _in_flight.pop(query_id, None)
-                        if task:
-                            task.cancel()
+                # Push live utilization on its own cadence; cancelled on disconnect.
+                metrics_task = asyncio.create_task(_push_metrics(ws, MetricsSampler()))
+                try:
+                    await _consume(ws, results_dir)
+                finally:
+                    metrics_task.cancel()
 
         except (ConnectionClosed, OSError) as exc:
             logger.warning("Disconnected (%s), reconnecting in 5s", exc)
         await asyncio.sleep(5)
+
+
+async def _consume(ws, results_dir: Path) -> None:
+    async for raw_msg in ws:
+        msg = Frame.model_validate_json(raw_msg)
+
+        if msg.type == FrameType.HEARTBEAT:
+            await ws.send(Frame(type=FrameType.HEARTBEAT).model_dump_json())
+            # Re-advertise capabilities so the control plane's stored
+            # doc + last_ping_at stay fresh (G-D17-a).
+            caps = Frame(type=FrameType.AGENT_STATUS, payload=_get_capabilities().model_dump())
+            await ws.send(caps.model_dump_json())
+
+        elif msg.type == FrameType.DISPATCH_QUERY:
+            query_id = msg.payload.get("query_id", str(uuid.uuid4()))
+            task = asyncio.create_task(_handle_dispatch(ws, msg.payload, results_dir))
+            _in_flight[query_id] = task
+
+        elif msg.type == FrameType.CANCEL_QUERY:
+            query_id = msg.payload.get("query_id", "")
+            task = _in_flight.pop(query_id, None)
+            if task:
+                task.cancel()

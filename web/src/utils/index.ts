@@ -10,6 +10,14 @@ export function plural(n: number, word: string, suffix = "s") {
   return `${n} ${word}${n === 1 ? "" : suffix}`;
 }
 
+/** Format a byte count into a short, legible string (KB/MB/GB). */
+export function formatBytes(n: number | null) {
+  if (n == null) return "—";
+  if (n >= 1_073_741_824) return `${(n / 1_073_741_824).toFixed(1)} GB`;
+  if (n >= 1_048_576) return `${(n / 1_048_576).toFixed(1)} MB`;
+  return `${(n / 1024).toFixed(0)} KB`;
+}
+
 /** Short, legible fallback for a raw UUID when no human-readable name exists. */
 export function shortId(id: string | null | undefined) {
   if (!id) return "—";

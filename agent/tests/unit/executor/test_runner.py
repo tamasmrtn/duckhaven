@@ -15,6 +15,14 @@ def test_simple_select_produces_parquet(tmp_path):
     assert stats["duration_ms"] >= 0
 
 
+def test_select_reports_result_bytes(tmp_path):
+    """A materialized SELECT reports the Parquet result file's size."""
+    result_path = tmp_path / "out.parquet"
+    stats = run_query_sync("SELECT * FROM range(100) t(x)", result_path, memory_limit_gb=1.0)
+    assert stats["result_bytes"] == result_path.stat().st_size
+    assert stats["result_bytes"] > 0
+
+
 def test_ddl_runs_without_result_file(tmp_path):
     """Pure DDL executes but writes no Parquet and reports zero rows."""
     result_path = tmp_path / "out.parquet"
@@ -22,6 +30,7 @@ def test_ddl_runs_without_result_file(tmp_path):
     assert not result_path.exists()
     assert stats["wrote_result"] is False
     assert stats["row_count"] == 0
+    assert stats["result_bytes"] is None
 
 
 def test_dml_reports_affected_count(tmp_path):

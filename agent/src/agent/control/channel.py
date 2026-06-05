@@ -89,6 +89,7 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path) -> None:
             "duration_ms": stats["duration_ms"],
             # Only a SELECT writes a Parquet result file; DDL/DML have none.
             "result_path": str(result_path) if stats.get("wrote_result") else None,
+            "result_bytes": stats.get("result_bytes"),
         }
         if stats_for:
             done_payload["stats_table"] = {

@@ -65,6 +65,7 @@ export const queryHandlers = [
       status: "queued",
       row_count: null,
       duration_ms: null,
+      result_bytes: null,
       error: null,
       progress: null,
       started_at: new Date().toISOString(),
@@ -84,6 +85,7 @@ export const queryHandlers = [
         liveQueries[id].status = "done";
         liveQueries[id].row_count = 30;
         liveQueries[id].duration_ms = 1400;
+        liveQueries[id].result_bytes = 4096;
         liveQueries[id].progress = null;
         liveQueries[id].finished_at = new Date().toISOString();
       }

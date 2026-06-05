@@ -49,7 +49,7 @@ import { CatalogTree } from "./CatalogTree";
 import { takePendingSql } from "@/features/catalog/worksheetSql";
 import { SqlEditor } from "./SqlEditor";
 import { ResultsTable } from "./ResultsTable";
-import { cn } from "@/utils";
+import { cn, formatBytes } from "@/utils";
 
 interface Tab {
   id: string;
@@ -585,6 +585,12 @@ export function WorksheetPage() {
                     queryData.row_count != null && (
                       <span className="text-xs text-text-secondary font-tabular">
                         {queryData.row_count.toLocaleString()} rows
+                      </span>
+                    )}
+                  {queryData.status === "done" &&
+                    queryData.result_bytes != null && (
+                      <span className="text-xs text-text-secondary font-tabular">
+                        {formatBytes(queryData.result_bytes)}
                       </span>
                     )}
                   {queryData.status === "failed" && queryData.error && (

@@ -377,6 +377,47 @@ async def test_query_progress_persisted_and_exposed(
     assert body["progress"] == {"stage": "scanning", "pct": 42}
 
 
+async def test_query_done_persists_result_bytes(
+    authed_client: AsyncClient, workspace: Workspace, agent: Agent, db_session
+):
+    """A QUERY_DONE frame's result_bytes persists and is exposed by GET /queries/{id}."""
+    from datetime import UTC, datetime
+
+    from api.models.query import Query
+    from api.services import query as query_service
+    from duckhaven_shared.protocol import Frame, FrameType
+
+    query = Query(
+        workspace_id=workspace.id,
+        agent_id=agent.id,
+        sql="SELECT 1",
+        status="running",
+        started_at=datetime.now(UTC),
+    )
+    db_session.add(query)
+    await db_session.commit()
+    await db_session.refresh(query)
+
+    await query_service.handle_agent_frame(
+        db_session,
+        Frame(
+            type=FrameType.QUERY_DONE,
+            payload={
+                "query_id": str(query.id),
+                "status": "done",
+                "row_count": 3,
+                "duration_ms": 12,
+                "result_bytes": 4096,
+                "result_path": "/tmp/x.parquet",
+            },
+        ),
+    )
+
+    resp = await authed_client.get(f"/queries/{query.id}")
+    assert resp.status_code == 200
+    assert resp.json()["result_bytes"] == 4096
+
+
 # --- cancel ---
 
 

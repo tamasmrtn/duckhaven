@@ -216,6 +216,32 @@ describe('WorksheetPage active query persistence', () => {
       expect(screen.getByRole('status')).toBeInTheDocument()
     })
   })
+
+  it('shows the materialized result size when a query completes', async () => {
+    sessionStorage.setItem('dh-active-query-acme-analytics', 'q-sized')
+    server.use(
+      http.get('/api/queries/q-sized', () =>
+        HttpResponse.json({
+          id: 'q-sized',
+          workspace_id: 'ws-1',
+          agent_id: 'ag-1',
+          sql: 'SELECT 1',
+          status: 'done',
+          row_count: 1,
+          duration_ms: 7,
+          result_bytes: 2_097_152,
+          error: null,
+          progress: null,
+          started_at: '2026-05-15T10:00:00Z',
+          finished_at: '2026-05-15T10:00:00.007Z',
+        }),
+      ),
+    )
+
+    renderWithProviders({ initialRoute: WS_ROUTE })
+
+    expect(await screen.findByText('2.0 MB')).toBeInTheDocument()
+  })
 })
 
 describe('WorksheetPage responsive', () => {

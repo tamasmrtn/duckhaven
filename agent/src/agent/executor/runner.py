@@ -163,6 +163,7 @@ def run_query_sync(
 
         start = time.monotonic()
         wrote_result = _is_single_select(sql)
+        result_bytes: int | None = None
         if wrote_result:
             # A single SELECT is materialized to Parquet so the control plane can
             # page through its rows.
@@ -172,6 +173,9 @@ def run_query_sync(
                 f"SELECT count(*) FROM read_parquet('{result_path}')"
             ).fetchone()
             row_count = row_count_result[0] if row_count_result else 0
+            # Size of the materialized result so the UI can show how large it is.
+            if result_path.exists():
+                result_bytes = result_path.stat().st_size
         else:
             # DDL/DML (and multi-statement scripts) produce no result grid. Run
             # the body directly: DuckDB returns an affected-row count for
@@ -183,6 +187,7 @@ def run_query_sync(
             "row_count": row_count,
             "duration_ms": duration_ms,
             "wrote_result": wrote_result,
+            "result_bytes": result_bytes,
         }
 
         # When asked, compute true table stats on the same attached connection.

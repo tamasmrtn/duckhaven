@@ -14,6 +14,7 @@ export interface Query {
   status: QueryStatus;
   row_count: number | null;
   duration_ms: number | null;
+  result_bytes: number | null;
   error: string | null;
   progress?: Record<string, unknown> | null;
   started_at: string;

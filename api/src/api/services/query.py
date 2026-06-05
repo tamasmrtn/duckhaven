@@ -91,6 +91,7 @@ async def handle_agent_frame(db: AsyncSession, frame: Frame) -> None:
                 status=frame.payload.get("status", "done"),
                 row_count=frame.payload.get("row_count"),
                 duration_ms=frame.payload.get("duration_ms"),
+                result_bytes=frame.payload.get("result_bytes"),
                 error=frame.payload.get("error"),
                 result_path=frame.payload.get("result_path"),
                 finished_at=datetime.now(tz=UTC),

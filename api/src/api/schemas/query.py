@@ -23,6 +23,7 @@ class QueryOut(BaseModel):
     status: str
     row_count: int | None
     duration_ms: int | None
+    result_bytes: int | None = None
     error: str | None
     progress: dict[str, Any] | None = None
     started_at: datetime

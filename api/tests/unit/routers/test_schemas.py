@@ -35,9 +35,9 @@ async def owner(db_session) -> User:
 @pytest.fixture
 async def backend(db_session, owner: User) -> StorageBackend:
     sb = StorageBackend(
-        kind="local_fs",
-        name="local",
-        root_uri="file:///var/duckhaven/data",
+        kind="object_store",
+        name="primary",
+        root_uri="",
         created_by=owner.id,
     )
     db_session.add(sb)

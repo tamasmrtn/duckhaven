@@ -414,6 +414,66 @@ async def test_create_table_enriches_metadata(auth_client: AsyncClient, backend:
     assert body["row_count"] == 0
 
 
+async def test_table_detail_surfaces_iceberg_metadata(
+    auth_client: AsyncClient, backend: StorageBackend, fake_polaris: FakePolaris, db_session
+):
+    """Iceberg metadata flows end to end: format version from Polaris, and the
+    agent-probed snapshot/file/delete fields from the QUERY_DONE frame."""
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from api.models.query import Query
+    from api.services import query as query_service
+    from duckhaven_shared.protocol import Frame, FrameType
+
+    slug = await _make_workspace(auth_client, backend, "alpha")
+    await auth_client.post(
+        f"/workspaces/{slug}/schemas/main/tables",
+        json={"name": "events", "columns": [{"name": "id", "type": "BIGINT"}]},
+    )
+    # Polaris reports the Iceberg format version on load.
+    fake_polaris.tables[(slug, "main", "events")].format_version = 2
+
+    ws = (await db_session.execute(select(Workspace).where(Workspace.slug == slug))).scalar_one()
+    query = Query(
+        workspace_id=ws.id,
+        sql="SELECT * FROM main.events",
+        status="running",
+        started_at=datetime.now(UTC),
+    )
+    db_session.add(query)
+    await db_session.commit()
+    await db_session.refresh(query)
+
+    await query_service.handle_agent_frame(
+        db_session,
+        Frame(
+            type=FrameType.QUERY_DONE,
+            payload={
+                "query_id": str(query.id),
+                "status": "done",
+                "stats_table": {"schema": "main", "table": "events"},
+                "table_row_count": 5,
+                "iceberg": {
+                    "snapshot_id": 7264354987654321234,
+                    "snapshot_at": "2026-05-15T14:03:00+00:00",
+                    "data_file_count": 128,
+                    "has_deletes": True,
+                },
+            },
+        ),
+    )
+
+    body = (await auth_client.get(f"/workspaces/{slug}/schemas/main/tables/events")).json()
+    assert body["format_version"] == 2
+    # 64-bit snapshot ids are serialized as strings to dodge JS precision loss.
+    assert body["snapshot_id"] == "7264354987654321234"
+    assert body["data_file_count"] == 128
+    assert body["has_deletes"] is True
+    assert body["snapshot_at"] is not None
+
+
 async def test_list_schemas_includes_workspace_id(
     auth_client: AsyncClient, backend: StorageBackend
 ):

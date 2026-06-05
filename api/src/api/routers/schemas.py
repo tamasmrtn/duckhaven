@@ -59,6 +59,10 @@ class _TableMeta:
     last_write_at: datetime | None
     last_write_by: str | None
     last_write_agent: str | None
+    snapshot_id: int | None
+    snapshot_at: datetime | None
+    data_file_count: int | None
+    has_deletes: bool | None
 
 
 async def _load_table_meta(
@@ -107,6 +111,10 @@ async def _load_table_meta(
             last_write_at=r.last_write_at,
             last_write_by=users.get(r.last_write_by_id) if r.last_write_by_id else None,
             last_write_agent=agents.get(r.last_write_agent_id) if r.last_write_agent_id else None,
+            snapshot_id=r.snapshot_id,
+            snapshot_at=r.snapshot_at,
+            data_file_count=r.data_file_count,
+            has_deletes=r.has_deletes,
         )
         for r in rows
     }
@@ -189,6 +197,14 @@ def _table_to_out(
         last_write_at=meta.last_write_at if meta else None,
         last_write_by=meta.last_write_by if meta else None,
         last_write_agent=meta.last_write_agent if meta else None,
+        # Iceberg-native metadata: format version from Polaris; the rest from the
+        # control-plane sidecar (agent probe). snapshot_id is serialized as a
+        # string — Iceberg 64-bit ids exceed JS's safe-integer range.
+        format_version=table.format_version,
+        snapshot_id=(str(meta.snapshot_id) if meta and meta.snapshot_id is not None else None),
+        snapshot_at=meta.snapshot_at if meta else None,
+        data_file_count=meta.data_file_count if meta else None,
+        has_deletes=meta.has_deletes if meta else None,
     )
 
 

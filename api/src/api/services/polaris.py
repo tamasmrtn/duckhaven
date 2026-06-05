@@ -92,6 +92,8 @@ class PolarisTable(_PolarisModel):
     columns: list[PolarisColumn] = Field(default_factory=list)
     properties: dict[str, str] | None = None
     comment: str | None = None
+    # Iceberg table-format version, from the REST LoadTableResult metadata.
+    format_version: int | None = None
 
 
 # Iceberg primitive type string -> upper-cased display base.
@@ -458,4 +460,5 @@ class PolarisClient:
             storage_location=body.get("metadata-location") or metadata.get("location"),
             columns=_columns_from_iceberg_schema(table_schema),
             properties=metadata.get("properties") or {},
+            format_version=metadata.get("format-version"),
         )

@@ -136,6 +136,19 @@ async def _upsert_table_stats(db: AsyncSession, query_id: uuid.UUID, frame: Fram
         existing.row_count = row_count
     if size_bytes is not None:
         existing.size_bytes = size_bytes
+
+    # Iceberg-native metadata from the agent probe (each field best-effort).
+    iceberg = frame.payload.get("iceberg")
+    if iceberg:
+        if iceberg.get("snapshot_id") is not None:
+            existing.snapshot_id = iceberg["snapshot_id"]
+        snapshot_at = iceberg.get("snapshot_at")
+        if snapshot_at is not None:
+            existing.snapshot_at = datetime.fromisoformat(snapshot_at)
+        if iceberg.get("data_file_count") is not None:
+            existing.data_file_count = iceberg["data_file_count"]
+        if iceberg.get("has_deletes") is not None:
+            existing.has_deletes = iceberg["has_deletes"]
     await db.commit()
 
 

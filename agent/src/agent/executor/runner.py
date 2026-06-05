@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +63,52 @@ def _safe_install_load(conn: duckdb.DuckDBPyConnection, name: str) -> bool:
     except Exception as exc:  # noqa: BLE001 - any failure is recoverable
         logger.warning("Failed to load %s: %s", name, exc)
         return False
+
+
+def _iceberg_metadata(conn: duckdb.DuckDBPyConnection, schema: str, table: str) -> dict[str, Any]:
+    """Best-effort Iceberg-native metadata for a table in the attached catalog.
+
+    Returns the current snapshot id + timestamp, the data-file count, and a
+    has-deletes flag (true when the table carries position/equality delete files
+    — the same probe the future merge-on-read read guard will use). Each field is
+    independently best-effort: a probe failure (e.g. an older `iceberg` extension
+    lacking a function) degrades that field to None rather than failing the
+    query. The catalog must already be ATTACHed.
+    """
+    ident = f'{_CATALOG_ALIAS}."{schema}"."{table}"'
+    meta: dict[str, Any] = {
+        "snapshot_id": None,
+        "snapshot_at": None,
+        "data_file_count": None,
+        "has_deletes": None,
+    }
+    try:
+        snap = conn.execute(
+            f"SELECT snapshot_id, timestamp_ms FROM iceberg_snapshots({ident}) "
+            "ORDER BY sequence_number DESC LIMIT 1"
+        ).fetchone()
+        if snap:
+            meta["snapshot_id"] = snap[0]
+            ts = snap[1]
+            if isinstance(ts, datetime):
+                meta["snapshot_at"] = ts.isoformat()
+            elif isinstance(ts, (int, float)):
+                meta["snapshot_at"] = datetime.fromtimestamp(ts / 1000, tz=UTC).isoformat()
+    except Exception as exc:  # noqa: BLE001 - metadata is best-effort
+        logger.warning("iceberg_snapshots failed for %s.%s: %s", schema, table, exc)
+    try:
+        rows = conn.execute(
+            f"SELECT content, count(*) FROM iceberg_metadata({ident}) GROUP BY content"
+        ).fetchall()
+        if rows:
+            counts = {str(content): n for content, n in rows}
+            meta["data_file_count"] = counts.get("DATA", 0)
+            meta["has_deletes"] = any(
+                key in counts for key in ("POSITION_DELETES", "EQUALITY_DELETES")
+            )
+    except Exception as exc:  # noqa: BLE001 - metadata is best-effort
+        logger.warning("iceberg_metadata failed for %s.%s: %s", schema, table, exc)
+    return meta
 
 
 def _attach_polaris(
@@ -203,6 +250,10 @@ def run_query_sync(
                     logger.warning("Table stats failed for %s.%s: %s", schema, table, exc)
                     result["table_row_count"] = None
                 result["table_size_bytes"] = None
+                # Iceberg-native metadata for the table-detail page. Only
+                # meaningful when a catalog is attached; best-effort throughout.
+                if workspace_slug and polaris:
+                    result["iceberg"] = _iceberg_metadata(conn, schema, table)
         return result
     finally:
         conn.close()

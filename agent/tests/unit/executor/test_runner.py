@@ -94,6 +94,43 @@ def test_empty_result_produces_zero_rows(tmp_path):
     assert stats["row_count"] == 0
 
 
+def test_iceberg_metadata_parses_snapshot_and_deletes():
+    """The probe maps iceberg_snapshots + iceberg_metadata rows to the wire shape."""
+    from agent.executor.runner import _iceberg_metadata
+
+    class FakeConn:
+        def execute(self, sql):
+            return self
+
+        def fetchone(self):  # iceberg_snapshots row
+            return (123456789, 1715780580000)
+
+        def fetchall(self):  # iceberg_metadata grouped by content
+            return [("DATA", 128), ("POSITION_DELETES", 2)]
+
+    meta = _iceberg_metadata(FakeConn(), "analytics", "events")
+    assert meta["snapshot_id"] == 123456789
+    assert meta["snapshot_at"].startswith("2024-")
+    assert meta["data_file_count"] == 128
+    assert meta["has_deletes"] is True
+
+
+def test_iceberg_metadata_best_effort_on_failure():
+    """A probe failure (e.g. an older iceberg extension) degrades to all-null."""
+    from agent.executor.runner import _iceberg_metadata
+
+    class BoomConn:
+        def execute(self, sql):
+            raise RuntimeError("no such function: iceberg_snapshots")
+
+    assert _iceberg_metadata(BoomConn(), "analytics", "events") == {
+        "snapshot_id": None,
+        "snapshot_at": None,
+        "data_file_count": None,
+        "has_deletes": None,
+    }
+
+
 def test_stats_for_reports_table_row_count(tmp_path):
     """When asked, the runner reports the true table row count (size stays null)."""
     result_path = tmp_path / "out.parquet"

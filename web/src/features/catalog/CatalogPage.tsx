@@ -28,18 +28,37 @@ import {
   selectTemplate,
   stashWorksheetSql,
 } from "@/features/catalog/worksheetSql";
-import { cn } from "@/utils";
-
-function formatBytes(n: number | null) {
-  if (n == null) return "—";
-  if (n >= 1_073_741_824) return `${(n / 1_073_741_824).toFixed(1)} GB`;
-  if (n >= 1_048_576) return `${(n / 1_048_576).toFixed(1)} MB`;
-  return `${(n / 1024).toFixed(0)} KB`;
-}
+import { cn, formatBytes } from "@/utils";
+import type { CatalogTable } from "@/types/catalog";
 
 function formatNumber(n: number | null) {
   if (n == null) return "—";
   return n.toLocaleString();
+}
+
+/** Iceberg-native facts for the table-detail header: format version, current
+ * snapshot, data-file count, and a has-deletes badge. Renders nothing when no
+ * Iceberg metadata has been captured yet. */
+function IcebergMetaLine({ table }: { table: CatalogTable }) {
+  const parts: string[] = [];
+  if (table.format_version != null)
+    parts.push(`Iceberg v${table.format_version}`);
+  if (table.snapshot_id) parts.push(`snapshot ${table.snapshot_id}`);
+  if (table.data_file_count != null)
+    parts.push(`${formatNumber(table.data_file_count)} files`);
+  if (table.snapshot_at)
+    parts.push(`updated ${new Date(table.snapshot_at).toLocaleString()}`);
+  if (parts.length === 0 && !table.has_deletes) return null;
+  return (
+    <p className="flex items-center gap-1.5 text-xs text-text-tertiary">
+      {parts.length > 0 && <span>{parts.join(" · ")}</span>}
+      {table.has_deletes && (
+        <span className="rounded border border-[var(--border-subtle)] px-1.5 py-0.5 font-medium text-text-secondary">
+          has deletes
+        </span>
+      )}
+    </p>
+  );
 }
 
 function SchemaList({ ws }: { ws: string }) {
@@ -217,6 +236,7 @@ function TableDetail({
                 by {tableData.last_write_by} ({tableData.last_write_agent})
               </p>
             )}
+            <IcebergMetaLine table={tableData} />
           </div>
           <div className="flex gap-2">
             <Button

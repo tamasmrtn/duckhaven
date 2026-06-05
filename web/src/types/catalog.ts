@@ -17,6 +17,11 @@ export interface CatalogTable {
   last_write_at: string | null;
   last_write_by: string | null;
   last_write_agent: string | null;
+  format_version: number | null;
+  snapshot_id: string | null;
+  snapshot_at: string | null;
+  data_file_count: number | null;
+  has_deletes: boolean | null;
   columns: TableColumn[];
 }
 

@@ -19,7 +19,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # Bundled S3-compatible object store. Backs the local_fs/nas catalogs (and is
+  # Bundled S3-compatible object store. Backs the object_store catalogs (and is
   # the storage Polaris vends credentials for). Its :9000 endpoint must be
   # reachable by remote agents — that is the URL Polaris vends to DuckDB, set
   # via S3_ENDPOINT (defaults to the in-network minio:9000; set to the host's
@@ -125,7 +125,7 @@ services:
       POLARIS_REALM: ${POLARIS_REALM:-POLARIS}
       POLARIS_CLIENT_ID: ${POLARIS_CLIENT_ID:-root}
       POLARIS_CLIENT_SECRET: ${POLARIS_CLIENT_SECRET:-s3cr3t}
-      # Bundled MinIO backing local_fs/nas catalogs. S3_ENDPOINT is vended to
+      # Bundled MinIO backing object_store catalogs. S3_ENDPOINT is vended to
       # agents; it defaults to the in-network minio:9000 so the bundled agent
       # works out of the box. Set it to a host-reachable address when running
       # agents on other hosts. S3_ENDPOINT_INTERNAL is what Polaris uses inside

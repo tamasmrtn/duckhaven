@@ -205,8 +205,8 @@ disappear on `#0B0F19`).
   - **DuckHaven mark** — a duck silhouette nested inside a rounded
     junction-point shape (a nod to DuckDB's railroad-diagram motif and to
     DuckHaven being a "haven" — a port of call for a duck).
-  - **Storage backend glyphs** — local FS (disk), NAS (server stack), S3
-    (object cube), ADLS (cloud), each 20 px, single-color, currentColor.
+  - **Storage backend glyphs** — object storage (database), S3 (object cube),
+    ADLS (cloud), each 20 px, single-color, currentColor.
 
 ### 2.6 Motion
 
@@ -404,8 +404,8 @@ command palette but pre-filtered to workspaces. Linear-style:
 │                                                  │
 │ ▸ acme-analytics    S3       owner       ↵       │
 │ ▸ acme-research     ADLS     writer              │
-│ ▸ public            local    reader              │
-│ ▸ home-lab          NAS      owner               │
+│ ▸ public            object   reader              │
+│ ▸ home-lab          object   owner               │
 │ ─────────────────                                │
 │ + Create workspace…                              │
 └──────────────────────────────────────────────────┘
@@ -455,8 +455,8 @@ A flat table; backends are the second-most-edited admin object.
 │ Kind     Name           Root URI                            UC cred   In use│
 │ S3       acme-prod      s3://acme-data/duckhaven/           ✓ valid   3 ws  │
 │ ADLS     research       abfss://research@acme/duckhaven/    ✓ valid   1 ws  │
-│ NAS      home-nas       file:///mnt/nas01/                  —         1 ws  │
-│ local_fs box            file:///var/duckhaven/data/         —         2 ws  │
+│ Object   home-lab       home-lab/                           —         1 ws  │
+│ Object   box                                                —         2 ws  │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 

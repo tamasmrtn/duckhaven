@@ -7,8 +7,22 @@ export interface AgentCapabilities {
   extensions: string[];
   memory_limit_gb: number;
   cores: number;
+  cpu_model: string | null;
+  cpu_cores_physical: number | null;
   tailscale_ip: string | null;
   host: string | null;
+}
+
+export interface MetricsSample {
+  cpu_percent: number;
+  memory_percent: number;
+  sampled_at: string;
+}
+
+export interface AgentMetrics {
+  agent_id: string;
+  name: string;
+  samples: MetricsSample[];
 }
 
 export interface Agent {

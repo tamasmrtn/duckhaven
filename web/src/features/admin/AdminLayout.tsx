@@ -8,6 +8,7 @@ import { cn } from "@/utils";
 
 const tabs = [
   { segment: "agents", label: "Agents" },
+  { segment: "metrics", label: "Utilization" },
   { segment: "storage", label: "Storage backends" },
   { segment: "users", label: "Users" },
   { segment: "audit", label: "Audit" },

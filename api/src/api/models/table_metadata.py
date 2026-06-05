@@ -3,7 +3,16 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -31,6 +40,12 @@ class TableMetadata(Base):
     owner_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     row_count: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+    # Iceberg-native metadata, refreshed from the agent probe on table sample.
+    snapshot_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    snapshot_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    data_file_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    has_deletes: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     last_write_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_write_by_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id"), nullable=True

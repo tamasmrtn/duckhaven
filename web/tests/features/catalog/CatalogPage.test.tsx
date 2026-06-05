@@ -106,6 +106,18 @@ describe('CatalogPage', () => {
     ).toBeInTheDocument()
   })
 
+  it('surfaces Iceberg-native metadata on the table detail view', async () => {
+    renderWithProviders({ initialRoute: '/acme-analytics/catalog/raw/events' })
+
+    // The events fixture carries format version, snapshot, file count, deletes.
+    expect(await screen.findByText(/Iceberg v2/)).toBeInTheDocument()
+    expect(screen.getByText(/128 files/)).toBeInTheDocument()
+    expect(
+      screen.getByText(/snapshot 7264354987654321234/),
+    ).toBeInTheDocument()
+    expect(screen.getByText('has deletes')).toBeInTheDocument()
+  })
+
   it('routes "Alter table" into a worksheet seeded with ALTER SQL', async () => {
     const user = userEvent.setup()
     renderWithProviders({ initialRoute: '/acme-analytics/catalog/raw/events' })

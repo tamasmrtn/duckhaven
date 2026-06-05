@@ -85,6 +85,11 @@ export const schemaHandlers = [
         last_write_at: null,
         last_write_by: null,
         last_write_agent: null,
+        format_version: 2,
+        snapshot_id: null,
+        snapshot_at: null,
+        data_file_count: null,
+        has_deletes: null,
         columns,
       };
       schema.tables.push(created);

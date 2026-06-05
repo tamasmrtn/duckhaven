@@ -76,3 +76,10 @@ class TableOut(BaseModel):
     last_write_at: datetime | None = None
     last_write_by: str | None = None
     last_write_agent: str | None = None
+    # Iceberg-native metadata (web/src/types/catalog.ts CatalogTable).
+    # snapshot_id is a string: Iceberg 64-bit ids exceed JS's safe-integer range.
+    format_version: int | None = None
+    snapshot_id: str | None = None
+    snapshot_at: datetime | None = None
+    data_file_count: int | None = None
+    has_deletes: bool | None = None

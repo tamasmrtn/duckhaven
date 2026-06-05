@@ -98,6 +98,7 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path) -> None:
             }
             done_payload["table_row_count"] = stats.get("table_row_count")
             done_payload["table_size_bytes"] = stats.get("table_size_bytes")
+            done_payload["iceberg"] = stats.get("iceberg")
         done = Frame(type=FrameType.QUERY_DONE, payload=done_payload)
     except TimeoutError:
         done = Frame(

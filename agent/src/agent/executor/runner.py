@@ -97,14 +97,25 @@ def _iceberg_metadata(conn: duckdb.DuckDBPyConnection, schema: str, table: str) 
     except Exception as exc:  # noqa: BLE001 - metadata is best-effort
         logger.warning("iceberg_snapshots failed for %s.%s: %s", schema, table, exc)
     try:
+        # The column classifying data vs delete files moved from `content`
+        # (DATA/POSITION_DELETES/EQUALITY_DELETES) to `manifest_content`
+        # (DATA/DELETE) in newer DuckDB iceberg extensions; `content` now carries
+        # the manifest-entry status (ADDED/EXISTING/DELETED). Pick whichever the
+        # running extension exposes — `content` still exists in the new schema, so
+        # we must inspect the columns rather than just querying it.
+        columns = [
+            d[0]
+            for d in conn.execute(f"SELECT * FROM iceberg_metadata({ident}) LIMIT 0").description
+        ]
+        classify = "manifest_content" if "manifest_content" in columns else "content"
         rows = conn.execute(
-            f"SELECT content, count(*) FROM iceberg_metadata({ident}) GROUP BY content"
+            f"SELECT {classify}, count(*) FROM iceberg_metadata({ident}) GROUP BY {classify}"
         ).fetchall()
         if rows:
             counts = {str(content): n for content, n in rows}
             meta["data_file_count"] = counts.get("DATA", 0)
             meta["has_deletes"] = any(
-                key in counts for key in ("POSITION_DELETES", "EQUALITY_DELETES")
+                key in counts for key in ("DELETE", "POSITION_DELETES", "EQUALITY_DELETES")
             )
     except Exception as exc:  # noqa: BLE001 - metadata is best-effort
         logger.warning("iceberg_metadata failed for %s.%s: %s", schema, table, exc)

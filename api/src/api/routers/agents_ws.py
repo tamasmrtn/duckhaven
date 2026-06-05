@@ -121,6 +121,11 @@ async def agent_connect(ws: WebSocket, db: AsyncSession = Depends(get_db)) -> No
                 )
                 await db.commit()
 
+            elif msg_frame.type == FrameType.METRICS_SAMPLE:
+                # High-frequency live utilization: kept in an in-memory ring
+                # buffer only, never persisted.
+                registry.record_metrics(agent_id, msg_frame.payload)
+
             elif msg_frame.type in (FrameType.QUERY_DONE, FrameType.QUERY_PROGRESS):
                 from api.services.query import handle_agent_frame
 

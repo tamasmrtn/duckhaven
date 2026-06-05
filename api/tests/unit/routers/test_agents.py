@@ -95,6 +95,79 @@ async def test_list_agents_with_capabilities(admin_client: AsyncClient, db_sessi
         registry.unregister(agent.id)
 
 
+async def test_list_agents_exposes_cpu_capability_fields(admin_client: AsyncClient, db_session):
+    """The new CPU capability fields round-trip through AgentCapabilitiesOut."""
+    agent = Agent(
+        name="cpu-agent",
+        status="unavailable",
+        capabilities={
+            "duckdb_version": "1.5.2",
+            "extensions": [],
+            "memory_limit_gb": 6.0,
+            "cores": 8,
+            "cpu_model": "AMD EPYC 7763",
+            "cpu_cores_physical": 4,
+        },
+    )
+    db_session.add(agent)
+    await db_session.commit()
+
+    resp = await admin_client.get("/agents")
+    assert resp.status_code == 200
+    caps = resp.json()[0]["capabilities"]
+    assert caps["cores"] == 8
+    assert caps["cpu_model"] == "AMD EPYC 7763"
+    assert caps["cpu_cores_physical"] == 4
+
+
+async def test_ws_metrics_sample_buffered_not_persisted(ws_client, db_engine):
+    """A METRICS_SAMPLE frame lands in the in-memory ring buffer and never the DB."""
+    import asyncio
+    from datetime import datetime, timedelta
+
+    from httpx import AsyncClient
+    from httpx_ws import aconnect_ws
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.models.user import Credential
+    from api.services.agent_registry import registry
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    token = "dh_boot_metrics789"
+    async with factory() as db:
+        db.add(
+            Credential(
+                user_id=None,
+                agent_id=None,
+                kind="agent_bootstrap",
+                token=token,
+                expires_at=datetime.now(tz=UTC) + timedelta(hours=1),
+            )
+        )
+        await db.commit()
+
+    sample = {"cpu_percent": 77.0, "memory_percent": 12.0, "sampled_at": "2026-06-05T00:00:00Z"}
+    async with AsyncClient(transport=ws_client, base_url="http://test") as c:
+        async with aconnect_ws("http://test/agents/connect", c) as ws:
+            await ws.send_text(
+                json.dumps(
+                    {"type": "auth", "payload": {"token": token, "name": "m", "result_port": 8001}}
+                )
+            )
+            raw = await asyncio.wait_for(ws.receive_text(), timeout=5.0)
+            agent_id = uuid.UUID(json.loads(raw)["payload"]["agent_id"])
+
+            await ws.send_text(json.dumps({"type": "metrics_sample", "payload": sample}))
+            await asyncio.sleep(0.1)
+            # Buffered while connected (lost on disconnect, so assert in-context).
+            assert registry.recent_metrics().get(str(agent_id)) == [sample]
+
+    async with factory() as db:
+        agent = await db.get(Agent, agent_id)
+        assert agent is not None
+        assert agent.capabilities is None  # metrics never touch the capabilities column
+
+
 async def test_ws_valid_bootstrap_exchange(ws_client, db_engine):
     import asyncio
     from datetime import datetime, timedelta

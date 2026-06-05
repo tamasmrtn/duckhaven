@@ -11,7 +11,13 @@ from api.config import settings
 from api.deps import get_admin_user, get_db
 from api.models.agent import Agent
 from api.models.user import Credential, User
-from api.schemas.agent import AgentCapabilitiesOut, AgentOut, BootstrapTokenOut
+from api.schemas.agent import (
+    AgentCapabilitiesOut,
+    AgentMetricsOut,
+    AgentOut,
+    BootstrapTokenOut,
+    MetricsSampleOut,
+)
 from api.services.agent_registry import registry
 
 router = APIRouter(prefix="/agents")
@@ -46,6 +52,28 @@ async def list_agents(
             )
         )
     return out
+
+
+@router.get("/metrics", response_model=list[AgentMetricsOut])
+async def list_metrics(
+    admin: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[AgentMetricsOut]:
+    """Recent live-utilization samples per connected agent (in-memory ring buffer)."""
+    buffers = registry.recent_metrics()
+    if not buffers:
+        return []
+    ids = [uuid.UUID(aid) for aid in buffers]
+    result = await db.execute(select(Agent).where(Agent.id.in_(ids)))
+    names = {str(agent.id): agent.name for agent in result.scalars().all()}
+    return [
+        AgentMetricsOut(
+            agent_id=uuid.UUID(aid),
+            name=names.get(aid, aid),
+            samples=[MetricsSampleOut(**sample) for sample in samples],
+        )
+        for aid, samples in buffers.items()
+    ]
 
 
 def _agent_dial_url(request: Request) -> str:

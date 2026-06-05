@@ -54,7 +54,7 @@ async def user_client(client: AsyncClient, regular_user: User):
 @pytest.fixture
 async def workspace(db_session, admin: User) -> Workspace:
     sb = StorageBackend(
-        kind="local_fs", name="audit-store", root_uri="/tmp/audit", created_by=admin.id
+        kind="object_store", name="audit-store", root_uri="/tmp/audit", created_by=admin.id
     )
     db_session.add(sb)
     await db_session.flush()
@@ -102,7 +102,7 @@ async def test_audit_filter_by_workspace_id(
     admin_client: AsyncClient, workspace: Workspace, db_session, admin: User
 ):
     sb2 = StorageBackend(
-        kind="local_fs", name="other-store", root_uri="/tmp/other", created_by=admin.id
+        kind="object_store", name="other-store", root_uri="/tmp/other", created_by=admin.id
     )
     db_session.add(sb2)
     await db_session.flush()

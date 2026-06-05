@@ -46,14 +46,14 @@ async def test_list_backends_empty(admin_client: AsyncClient):
     assert resp.json() == []
 
 
-async def test_create_local_fs_backend(admin_client: AsyncClient):
+async def test_create_object_store_backend(admin_client: AsyncClient):
     resp = await admin_client.post(
         "/admin/storage-backends",
-        json={"kind": "local_fs", "name": "local", "root_uri": "file:///var/data"},
+        json={"kind": "object_store", "name": "primary", "root_uri": ""},
     )
     assert resp.status_code == 201
     data = resp.json()
-    assert data["kind"] == "local_fs"
+    assert data["kind"] == "object_store"
     assert data["workspace_count"] == 0
 
 
@@ -65,10 +65,20 @@ async def test_create_invalid_kind(admin_client: AsyncClient):
     assert resp.status_code == 422
 
 
+@pytest.mark.parametrize("kind", ["local_fs", "nas"])
+async def test_legacy_kinds_no_longer_creatable(admin_client: AsyncClient, kind: str):
+    """local_fs/nas collapsed into object_store; they can't be created anymore."""
+    resp = await admin_client.post(
+        "/admin/storage-backends",
+        json={"kind": kind, "name": "legacy", "root_uri": "file:///x"},
+    )
+    assert resp.status_code == 422
+
+
 async def test_delete_unused_backend(admin_client: AsyncClient):
     create = await admin_client.post(
         "/admin/storage-backends",
-        json={"kind": "local_fs", "name": "todel", "root_uri": "file:///tmp/del"},
+        json={"kind": "object_store", "name": "todel", "root_uri": "del/"},
     )
     backend_id = create.json()["id"]
     resp = await admin_client.delete(f"/admin/storage-backends/{backend_id}")
@@ -79,7 +89,7 @@ async def test_delete_used_backend_fails(admin_client: AsyncClient, admin: User,
     from api.models.storage_backend import StorageBackend
     from api.models.workspace import Workspace
 
-    sb = StorageBackend(kind="local_fs", name="used", root_uri="file:///used", created_by=admin.id)
+    sb = StorageBackend(kind="object_store", name="used", root_uri="used/", created_by=admin.id)
     db_session.add(sb)
     await db_session.flush()
     ws = Workspace(slug="occupied", name="Occupied", storage_backend_id=sb.id)

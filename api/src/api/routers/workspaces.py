@@ -13,6 +13,7 @@ from api.schemas.workspace import AddMemberRequest, MemberOut, WorkspaceCreate, 
 from api.services.polaris import PolarisClient, PolarisError
 from api.services.workspace import (
     assert_workspace_member,
+    default_object_store_backend,
     ensure_polaris_catalog,
     get_workspace,
     mirror_member_grant,
@@ -48,15 +49,25 @@ async def create_workspace(
     existing = await db.execute(select(Workspace).where(Workspace.slug == body.slug))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Slug already taken")
-    backend = await db.get(StorageBackend, body.storage_backend_id)
-    if backend is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unknown storage backend"
-        )
+    # No backend chosen → auto-provision a bundled object-store backend so the
+    # common case needs only a workspace name. Track it so it can be rolled back
+    # alongside the workspace if Polaris provisioning fails below.
+    auto_backend: StorageBackend | None = None
+    if body.storage_backend_id is None:
+        backend = default_object_store_backend(body.name, user.id)
+        db.add(backend)
+        await db.flush()
+        auto_backend = backend
+    else:
+        backend = await db.get(StorageBackend, body.storage_backend_id)
+        if backend is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unknown storage backend"
+            )
     ws = Workspace(
         slug=body.slug,
         name=body.name,
-        storage_backend_id=body.storage_backend_id,
+        storage_backend_id=backend.id,
     )
     db.add(ws)
     await db.flush()
@@ -81,6 +92,8 @@ async def create_workspace(
         logger.warning("Polaris provisioning failed for ws=%s; rolling back: %s", ws.slug, exc)
         await db.delete(member)
         await db.delete(ws)
+        if auto_backend is not None:
+            await db.delete(auto_backend)
         await db.commit()
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

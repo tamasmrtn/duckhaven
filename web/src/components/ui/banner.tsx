@@ -3,7 +3,7 @@ import { cn } from "@/utils";
 
 /**
  * A small, non-modal advisory note (orange accent). Used for the DR warning
- * on local/NAS backends (G-D18-c). Conveys meaning by label, not color alone.
+ * on object_store backends (G-D18-c). Conveys meaning by label, not color alone.
  */
 export function Banner({
   children,

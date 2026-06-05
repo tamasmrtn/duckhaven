@@ -3,14 +3,9 @@ import { render, screen } from '@testing-library/react'
 import { StorageIcon, StorageLabel } from '@/components/app/StorageIcon'
 
 describe('StorageIcon', () => {
-  it('renders Local FS aria-label for local_fs', () => {
-    render(<StorageIcon kind="local_fs" />)
-    expect(screen.getByLabelText('Local FS')).toBeInTheDocument()
-  })
-
-  it('renders NAS aria-label for nas', () => {
-    render(<StorageIcon kind="nas" />)
-    expect(screen.getByLabelText('NAS')).toBeInTheDocument()
+  it('renders Object storage aria-label for object_store', () => {
+    render(<StorageIcon kind="object_store" />)
+    expect(screen.getByLabelText('Object storage')).toBeInTheDocument()
   })
 
   it('renders S3 aria-label for s3', () => {

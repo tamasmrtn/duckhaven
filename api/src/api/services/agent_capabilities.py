@@ -6,11 +6,10 @@ so a non-web client cannot dispatch a workspace to an agent that lacks the
 extension its storage backend requires.
 """
 
-# Every backend is object storage now: local_fs/nas are backed by the bundled
-# MinIO (S3) and so also need httpfs.
+# Every backend is object storage now: object_store is backed by the bundled
+# MinIO (S3) and so also needs httpfs.
 _BACKEND_EXTENSION: dict[str, str] = {
-    "local_fs": "httpfs",
-    "nas": "httpfs",
+    "object_store": "httpfs",
     "s3": "httpfs",
     "adls_gen2": "azure",
 }

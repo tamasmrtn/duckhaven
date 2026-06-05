@@ -49,7 +49,7 @@ async def _make_workspace(db_session) -> Workspace:
     user = User(email="svc@test.local", password_hash=hash_password("pw"), name="Svc", role="user")
     db_session.add(user)
     await db_session.flush()
-    sb = StorageBackend(kind="local_fs", name="s", root_uri="/tmp/s", created_by=user.id)
+    sb = StorageBackend(kind="object_store", name="s", root_uri="/tmp/s", created_by=user.id)
     db_session.add(sb)
     await db_session.flush()
     ws = Workspace(slug="svc-ws", name="Svc WS", storage_backend_id=sb.id)

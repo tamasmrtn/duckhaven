@@ -95,23 +95,49 @@ def test_empty_result_produces_zero_rows(tmp_path):
 
 
 def test_iceberg_metadata_parses_snapshot_and_deletes():
-    """The probe maps iceberg_snapshots + iceberg_metadata rows to the wire shape."""
+    """The probe maps iceberg_snapshots + iceberg_metadata rows to the wire
+    shape, classifying data/delete files via the newer `manifest_content`."""
     from agent.executor.runner import _iceberg_metadata
 
     class FakeConn:
+        # Newer iceberg extension: `manifest_content` carries DATA/DELETE.
+        description = [("manifest_content",), ("count",)]
+
         def execute(self, sql):
             return self
 
         def fetchone(self):  # iceberg_snapshots row
             return (123456789, 1715780580000)
 
-        def fetchall(self):  # iceberg_metadata grouped by content
-            return [("DATA", 128), ("POSITION_DELETES", 2)]
+        def fetchall(self):  # iceberg_metadata grouped by manifest_content
+            return [("DATA", 128), ("DELETE", 2)]
 
     meta = _iceberg_metadata(FakeConn(), "analytics", "events")
     assert meta["snapshot_id"] == 123456789
     assert meta["snapshot_at"].startswith("2024-")
     assert meta["data_file_count"] == 128
+    assert meta["has_deletes"] is True
+
+
+def test_iceberg_metadata_legacy_content_schema():
+    """Older iceberg extensions without `manifest_content` classify via the
+    `content` column (DATA/POSITION_DELETES/EQUALITY_DELETES)."""
+    from agent.executor.runner import _iceberg_metadata
+
+    class FakeConn:
+        description = [("content",), ("count",)]
+
+        def execute(self, sql):
+            return self
+
+        def fetchone(self):
+            return (1, 1715780580000)
+
+        def fetchall(self):
+            return [("DATA", 5), ("POSITION_DELETES", 1)]
+
+    meta = _iceberg_metadata(FakeConn(), "analytics", "events")
+    assert meta["data_file_count"] == 5
     assert meta["has_deletes"] is True
 
 

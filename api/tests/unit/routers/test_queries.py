@@ -42,7 +42,7 @@ async def authed_client(client: AsyncClient, user: User):
 @pytest_asyncio.fixture
 async def workspace(db_session, user: User):
     backend = StorageBackend(
-        kind="local_fs",
+        kind="object_store",
         name="test-store",
         root_uri="/tmp/test",
         created_by=user.id,
@@ -63,7 +63,7 @@ async def workspace(db_session, user: User):
 
 @pytest_asyncio.fixture
 async def agent(db_session):
-    # All backends (incl. local_fs/nas, now MinIO-backed) require httpfs.
+    # All backends (object_store is MinIO-backed) require httpfs.
     a = Agent(name="test-agent", status="healthy", capabilities={"extensions": ["httpfs"]})
     db_session.add(a)
     await db_session.commit()
@@ -138,8 +138,8 @@ async def test_create_query_dispatches(
     assert frame["type"] == FrameType.DISPATCH_QUERY
     assert frame["payload"]["sql"] == "SELECT 42"
     # Dispatch payload carries the workspace backend descriptor; the agent
-    # resolves storage handling from the kind (local_fs is MinIO-backed).
-    assert frame["payload"]["backend"] == {"kind": "local_fs", "root_uri": "/tmp/test"}
+    # resolves storage handling from the kind (object_store is MinIO-backed).
+    assert frame["payload"]["backend"] == {"kind": "object_store", "root_uri": "/tmp/test"}
     assert frame["payload"]["workspace"] == {"slug": "test-ws", "default_schema": "analytics"}
     assert "storage_credentials" not in frame["payload"]
 

@@ -104,8 +104,9 @@ gunzip -c <backup>.sql.gz | docker compose -f deploy/docker-compose.yml \
 ### Data DR by backend kind
 
 - `s3` / `adls_gen2`: delegated to the cloud provider's durability.
-- `local_fs` / `nas`: **no off-box DR** — the web UI shows a DR banner for
-  these backends (G-D18-c). Ensure an independent backup of the backend root.
+- `object_store` (bundled MinIO): **no off-box DR** — the web UI shows a DR
+  banner for these backends (G-D18-c). Ensure an independent backup of the
+  MinIO bucket.
 
 ---
 

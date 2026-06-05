@@ -236,7 +236,7 @@ async def pick_agent_for(db: AsyncSession, workspace: Workspace) -> Agent | None
     if not connected:
         return None
     backend = await db.get(StorageBackend, workspace.storage_backend_id)
-    kind = backend.kind if backend is not None else "local_fs"
+    kind = backend.kind if backend is not None else "object_store"
     agents = (
         (await db.execute(sa.select(Agent).where(Agent.id.in_([uuid.UUID(c) for c in connected]))))
         .scalars()

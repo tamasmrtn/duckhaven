@@ -40,7 +40,7 @@ agent host when you need more compute).
 | Control plane | One `docker compose` stack: Postgres + Apache Polaris + the API |
 | Compute | 1..N DuckDB **agents** on separate hosts |
 | Engines | DuckDB only (heterogeneous versions allowed) |
-| Storage | Apache Iceberg on Local FS / NAS / S3 / ADLS Gen 2 (one backend per workspace) |
+| Storage | Apache Iceberg on Object storage (bundled MinIO) / S3 / ADLS Gen 2 (one backend per workspace) |
 | Catalog & credentials | Apache Polaris — table governance + short-lived credential vending |
 | Frontend | React SPA — SQL worksheets (no notebooks) |
 | Network | Private only (Tailscale recommended); no public ingress |
@@ -101,7 +101,7 @@ flowchart TB
     end
 
     subgraph store[Storage backends — one per workspace]
-        S[("Local FS / NAS / S3 / ADLS Gen 2<br/>Apache Iceberg tables")]
+        S[("Object storage / S3 / ADLS Gen 2<br/>Apache Iceberg tables")]
     end
 
     Browser -- "HTTPS-over-tunnel<br/>/api/*" --> API
@@ -429,8 +429,8 @@ storage is S3-compatible, because Polaris must vend scoped credentials the
 remote agent uses. FILE storage cannot support writes across the
 Polaris-container / remote-agent boundary (Polaris creates table directories as
 its container user; the agent gets permission denied), so it was removed. The
-compose stack therefore **bundles MinIO**, and the `local_fs`/`nas` backend
-kinds are physically backed by a MinIO bucket: their catalogs use
+compose stack therefore **bundles MinIO**, and the `object_store` backend
+kind is physically backed by a MinIO bucket: its catalogs use
 `storageType = S3` pointed at MinIO (with the catalog's vended `endpoint` set to
 an externally-reachable URL the agent can reach, and an internal endpoint for
 Polaris itself). Per-workspace isolation comes from a `/{slug}` prefix under the
@@ -524,7 +524,7 @@ presents as a Bearer credential when reading result rows.
 |---|---|---|
 | **DuckDB** | The query engine — present *only* on agents. Also used by the control plane as a pure SQL parser. | `agent/.../executor/`, `api/.../services/sql_guard.py` |
 | **Apache Polaris** | Iceberg REST catalog: metadata authority + vendor of short-lived storage credentials (via access delegation). | `api/.../services/polaris.py` |
-| **Storage backends** | Where Iceberg tables physically live (all object storage): `local_fs`/`nas` (bundled MinIO, `httpfs`), S3 (`httpfs`), ADLS Gen 2 (`azure`). One per workspace. | `agent/.../executor/runner.py` (iceberg attach), `StorageBackend` model |
+| **Storage backends** | Where Iceberg tables physically live (all object storage): `object_store` (bundled MinIO, `httpfs`), S3 (`httpfs`), ADLS Gen 2 (`azure`). One per workspace. | `agent/.../executor/runner.py` (iceberg attach), `StorageBackend` model |
 | **Postgres** | State-of-record for DuckHaven entities + the Polaris metastore. | `api/.../db/`, `models/` |
 | **Tailscale (operational)** | Recommended private network providing the transport-layer security perimeter. Not a code dependency. | deployment only |
 
@@ -653,7 +653,7 @@ the *categories* a contributor should be aware of.
   (operator-owned external object stores) still need their Polaris
   `storageConfigInfo` credential wiring (role ARN / tenant) completed in
   `services/workspace.polaris_storage`. Their write paths are validated behind
-  opt-in/env-gated integration tests. The bundled-MinIO `local_fs`/`nas` path
+  opt-in/env-gated integration tests. The bundled-MinIO `object_store` path
   is fully wired (see §7).
 - **DuckDB-iceberg DDL coverage.** `DROP` now purges (catalogs enable
   drop-with-purge and grant full ownership), but the breadth of `CREATE`/`ALTER`
@@ -680,7 +680,7 @@ the *categories* a contributor should be aware of.
 | **Control plane** | The `duckhaven-api` process (with Postgres + Polaris). Orchestrates; never runs DuckDB queries. |
 | **Agent** | A `duckhaven-agent` process embedding DuckDB, running on its own host, dialing home over WebSocket. The unit of compute. |
 | **Workspace** | A governance + collaboration boundary. Maps 1:1 to an Apache Polaris catalog and is pinned to exactly one storage backend. |
-| **Storage backend** | A physical location for Iceberg tables (Local FS, NAS, S3, ADLS Gen 2), registered once and referenced by workspaces. |
+| **Storage backend** | A physical location for Iceberg tables (Object storage, S3, ADLS Gen 2), registered once and referenced by workspaces. |
 | **Catalog-managed table** | An Iceberg table whose commits are arbitrated by Apache Polaris (every Polaris REST table is catalog-managed). |
 | **Bootstrap token** | A single-use credential an operator generates so a new agent can register. Exchanged once for a long-lived agent session token. |
 | **Capabilities** | The document an agent advertises (DuckDB version, loaded extensions, memory ceiling) used to match agents to workspace backends. |

@@ -20,9 +20,9 @@ async def user(db_session):
 @pytest.fixture
 async def backend(db_session, user):
     sb = StorageBackend(
-        kind="local_fs",
-        name="local",
-        root_uri="file:///var/duckhaven/data",
+        kind="object_store",
+        name="primary",
+        root_uri="",
         created_by=user.id,
     )
     db_session.add(sb)
@@ -54,26 +54,69 @@ async def test_create_and_list_workspace(
     data = resp.json()
     assert data["slug"] == "myws"
     # WorkspaceOut surfaces the backend kind (the web UI renders it).
-    assert data["storage_backend_kind"] == "local_fs"
+    assert data["storage_backend_kind"] == "object_store"
 
     list_resp = await auth_client.get("/workspaces")
     listed = list_resp.json()
     assert len(listed) == 1
-    assert listed[0]["storage_backend_kind"] == "local_fs"
+    assert listed[0]["storage_backend_kind"] == "object_store"
 
     detail_resp = await auth_client.get("/workspaces/myws")
     assert detail_resp.status_code == 200
-    assert detail_resp.json()["storage_backend_kind"] == "local_fs"
+    assert detail_resp.json()["storage_backend_kind"] == "object_store"
     # Eager UC provisioning ran: catalog + default `main` schema both exist.
     assert "myws" in fake_polaris.catalogs
     assert ("myws", "analytics") in fake_polaris.schemas
-    # local_fs is backed by the bundled MinIO bucket, scoped per workspace by
+    # object_store is backed by the bundled MinIO bucket, scoped per workspace by
     # slug, with the vended/internal endpoints in extra_storage.
     args = fake_polaris.created_catalog_args[-1]
     assert args["storage_type"] == "S3"
-    assert args["base_location"] == "s3://warehouse/var/duckhaven/data/myws"
+    assert args["base_location"] == "s3://warehouse/myws"
     assert args["extra_storage"]["endpoint"] == "http://localhost:9000"
     assert args["extra_storage"]["endpointInternal"] == "http://minio:9000"
+
+
+async def test_create_workspace_auto_provisions_object_store(
+    auth_client: AsyncClient, user: User, fake_polaris, db_session
+):
+    """The common case: no storage_backend_id → a bundled object_store backend
+    is auto-provisioned and the catalog lands at the bucket root scoped by slug."""
+    from sqlalchemy import select
+
+    resp = await auth_client.post(
+        "/workspaces",
+        json={"slug": "auto", "name": "Auto"},
+    )
+    assert resp.status_code == 201
+    assert resp.json()["storage_backend_kind"] == "object_store"
+
+    backends = (await db_session.execute(select(StorageBackend))).scalars().all()
+    assert len(backends) == 1
+    assert backends[0].kind == "object_store"
+    assert backends[0].root_uri == ""
+
+    args = fake_polaris.created_catalog_args[-1]
+    assert args["base_location"] == "s3://warehouse/auto"
+
+
+async def test_auto_provisioned_backend_rolls_back_on_failure(
+    auth_client: AsyncClient, user: User, fake_polaris, db_session
+):
+    """If Polaris fails on a name-only create, the auto-provisioned backend is
+    rolled back too — a failed create leaves nothing behind."""
+    from sqlalchemy import select
+
+    from api.models.workspace import Workspace, WorkspaceMember
+
+    fake_polaris.fail_create_catalog = True
+    resp = await auth_client.post(
+        "/workspaces",
+        json={"slug": "auto-broken", "name": "Auto Broken"},
+    )
+    assert resp.status_code == 502
+    assert (await db_session.execute(select(Workspace))).all() == []
+    assert (await db_session.execute(select(WorkspaceMember))).all() == []
+    assert (await db_session.execute(select(StorageBackend))).all() == []
 
 
 async def test_create_workspace_rolls_back_on_uc_failure(

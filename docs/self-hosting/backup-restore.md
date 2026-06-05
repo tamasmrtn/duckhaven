@@ -5,8 +5,8 @@ which holds users, workspaces, saved queries, audit log, agent registrations,
 and the Polaris metastore (in the dedicated `polaris` database). The `secrets` volume holds `SECRET_KEY` and
 `POSTGRES_PASSWORD`; you need both volumes to restore a working install.
 
-Table data lives on your **storage backends** (S3, ADLS, NAS, local FS) — back
-those up via their own tooling.
+Table data lives on your **storage backends** (bundled object storage, S3,
+ADLS) — back those up via their own tooling.
 
 ## Backup
 

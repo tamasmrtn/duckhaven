@@ -1,4 +1,4 @@
-export type BackendKind = "local_fs" | "nas" | "s3" | "adls_gen2";
+export type BackendKind = "object_store" | "s3" | "adls_gen2";
 
 export interface StorageBackend {
   id: string;

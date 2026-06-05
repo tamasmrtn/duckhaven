@@ -12,7 +12,7 @@ from api.schemas.storage_backend import StorageBackendCreate, StorageBackendOut
 
 router = APIRouter(prefix="/storage-backends")
 
-VALID_KINDS = {"local_fs", "nas", "s3", "adls_gen2"}
+VALID_KINDS = {"object_store", "s3", "adls_gen2"}
 
 
 @router.get("", response_model=list[StorageBackendOut])

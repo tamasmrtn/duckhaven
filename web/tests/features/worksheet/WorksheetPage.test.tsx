@@ -48,7 +48,7 @@ describe('WorksheetPage tabs', () => {
           slug: 'qa-test-workspace',
           name: 'QA Test Workspace',
           storage_backend_id: 'sb-1',
-          storage_backend_kind: 'local_fs',
+          storage_backend_kind: 'object_store',
           created_at: new Date().toISOString(),
         }),
       ),

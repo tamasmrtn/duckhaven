@@ -211,8 +211,9 @@ export function WorksheetPage() {
   const firstHealthyAgent = agents.find((a) => a.status === "healthy");
   const resolvedAgentId = agentId || firstHealthyAgent?.id || "";
   const resolvedAgent = agents.find((a) => a.id === resolvedAgentId);
-  // Run requires an agent. When none is available (e.g. a LOCAL_FS workspace
-  // with no connected agents) explain how to enable it instead of dead-ending.
+  // Run requires an agent. When none is available (e.g. an object_store
+  // workspace with no connected agents) explain how to enable it instead of
+  // dead-ending.
   const needsAgent = !resolvedAgentId;
 
   function updateTabSql(sql: string) {

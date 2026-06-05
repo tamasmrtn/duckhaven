@@ -29,8 +29,8 @@ export interface BootstrapToken {
 
 export function agentSupportsBackend(agent: Agent, kind: BackendKind): boolean {
   const { extensions } = agent.capabilities;
-  // Every backend is object storage: local_fs/nas are backed by the bundled
-  // MinIO (S3) and need httpfs, just like s3.
+  // Every backend is object storage: object_store is backed by the bundled
+  // MinIO (S3) and needs httpfs, just like s3.
   if (kind === "adls_gen2") return extensions.includes("azure");
   return extensions.includes("httpfs");
 }

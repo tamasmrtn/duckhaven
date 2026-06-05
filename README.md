@@ -68,7 +68,7 @@ flowchart TB
     API --> WS["WebSocket (agent control)"]
     WS --> Agent1["duckhaven-agent (DuckDB)"]
     WS --> Agent2["duckhaven-agent (DuckDB)"]
-    Agent1 --> Storage["Storage backend (local / NAS / S3 / ADLS)"]
+    Agent1 --> Storage["Storage backend (Object storage / S3 / ADLS)"]
     Agent2 --> Storage
 ```
 
@@ -76,7 +76,7 @@ flowchart TB
 
 - The control plane does **not** run DuckDB. Compute lives in agent processes that dial home over WebSocket.
 - Users pick the executing agent per worksheet — transparent compute, no opaque optimizer.
-- Every workspace is bound to exactly one storage backend: local FS, NAS, S3, or Azure.
+- Every workspace is bound to exactly one storage backend: bundled object storage (MinIO), S3, or Azure.
 - Apache Polaris provides table governance and vends short-lived storage credentials per query.
 - SQL is allowlisted to `SELECT` and `INSERT` only. DDL runs through UC REST.
 - The API is exposed directly on port 8000 over a private network (Tailscale recommended); there is no public ingress.
@@ -94,7 +94,7 @@ For the full architecture, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For
 | Engine | DuckDB ≥ 1.5 — present **only** on agents |
 | Catalog | Apache Polaris — catalog + short-lived credential vendor |
 | Storage format | Apache Iceberg, Catalog Commits ON, one backend per workspace |
-| Storage backends | Local FS, NAS, S3 (`httpfs`), ADLS Gen 2 (`azure`) |
+| Storage backends | Object storage (bundled MinIO, `httpfs`), S3 (`httpfs`), ADLS Gen 2 (`azure`) |
 | Package management | uv (Python workspace), npm (web) |
 | Containerisation | Docker Compose (control plane); single container per agent |
 | Tests | pytest + pytest-asyncio (api, agent); Vitest + React Testing Library + MSW (web) |

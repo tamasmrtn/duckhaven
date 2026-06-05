@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict
 class WorkspaceCreate(BaseModel):
     slug: str
     name: str
-    storage_backend_id: uuid.UUID
+    storage_backend_id: uuid.UUID | None = None
 
 
 class WorkspaceOut(BaseModel):

@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from api.config import settings
+from api.models.storage_backend import StorageBackend
 from api.models.workspace import Workspace, WorkspaceMember
 from api.services.polaris import PolarisClient, PolarisConflictError
 
@@ -14,19 +15,18 @@ logger = logging.getLogger(__name__)
 
 ROLE_ORDER = {"reader": 0, "writer": 1, "owner": 2}
 
-# Backend kind → Polaris storage type. Every backend is object storage: local_fs
-# and nas are physically backed by the bundled MinIO bucket (S3); s3 / adls_gen2
-# are operator-owned external object stores.
+# Backend kind → Polaris storage type. Every backend is object storage:
+# object_store is physically backed by the bundled MinIO bucket (S3); s3 /
+# adls_gen2 are operator-owned external object stores.
 _KIND_TO_STORAGE_TYPE = {
-    "local_fs": "S3",
-    "nas": "S3",
+    "object_store": "S3",
     "s3": "S3",
     "adls_gen2": "AZURE",
 }
 
 # Kinds backed by the bundled MinIO bucket. Their root_uri is a prefix label
 # under that bucket rather than a real storage URI.
-_BUNDLED_MINIO_KINDS = {"local_fs", "nas"}
+_BUNDLED_MINIO_KINDS = {"object_store"}
 
 
 def _minio_prefix(root_uri: str) -> str:
@@ -40,7 +40,7 @@ def _minio_prefix(root_uri: str) -> str:
 def polaris_storage(kind: str, root_uri: str) -> tuple[str, str, dict | None]:
     """Resolve a backend's (Polaris storage type, base location, extra storage).
 
-    local_fs/nas are backed by the bundled MinIO bucket: their root_uri is a
+    object_store is backed by the bundled MinIO bucket: its root_uri is a
     prefix label under that bucket and the extra storage config carries the
     vended/internal endpoints. s3/adls_gen2 are external stores whose root_uri
     already carries a scheme; they get no MinIO endpoint injected.
@@ -59,6 +59,19 @@ def polaris_storage(kind: str, root_uri: str) -> tuple[str, str, dict | None]:
         }
         return storage_type, base, extra
     return storage_type, root_uri.rstrip("/"), None
+
+
+def default_object_store_backend(name: str, created_by: uuid.UUID) -> StorageBackend:
+    """Build a bundled object-store backend at the MinIO bucket root for a
+    name-only workspace. root_uri="" keeps the catalog base at the bucket root;
+    per-workspace isolation comes from the `/{slug}` scope added in
+    ensure_polaris_catalog. The caller adds and flushes the row."""
+    return StorageBackend(
+        kind="object_store",
+        name=name,
+        root_uri="",
+        created_by=created_by,
+    )
 
 
 async def mirror_member_grant(

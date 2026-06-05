@@ -12,8 +12,9 @@ describe('WelcomePage', () => {
     expect(await screen.findByLabelText(/workspace name/i)).toBeInTheDocument()
   })
 
-  it('creates a backend and workspace on a fresh deployment, then navigates', async () => {
-    // Fresh deployment: no storage backends yet, so the inline create form shows.
+  it('creates a name-only workspace on a fresh deployment, then navigates', async () => {
+    // Fresh deployment: no storage backends yet. The user only names the
+    // workspace; the API auto-provisions bundled object storage.
     server.use(
       http.get('/api/admin/storage-backends', () => HttpResponse.json([])),
     )
@@ -21,11 +22,7 @@ describe('WelcomePage', () => {
     const { router } = renderWithProviders({ initialRoute: '/welcome' })
 
     await user.type(await screen.findByLabelText(/workspace name/i), 'Analytics')
-    await user.type(await screen.findByLabelText(/backend name/i), 'primary-store')
-    await user.type(
-      screen.getByLabelText(/root uri/i),
-      'file:///var/duckhaven/data/',
-    )
+    expect(screen.queryByLabelText(/root uri/i)).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /create workspace/i }))
 
     await waitFor(() =>

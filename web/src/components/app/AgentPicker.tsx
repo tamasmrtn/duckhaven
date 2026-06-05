@@ -55,8 +55,8 @@ function AgentRow({ agent, backend }: { agent: Agent; backend?: BackendKind }) {
             {agent.capabilities.host}
           </span>
         )}
-        {["s3", "adls_gen2", "local_fs"].map((ext) => {
-          // local_fs/nas are MinIO-backed (S3), so they also need httpfs.
+        {["s3", "adls_gen2", "object_store"].map((ext) => {
+          // object_store is MinIO-backed (S3), so it also needs httpfs.
           const supported =
             ext === "adls_gen2"
               ? agent.capabilities.extensions.includes("azure")
@@ -71,7 +71,7 @@ function AgentRow({ agent, backend }: { agent: Agent; backend?: BackendKind }) {
                   : "text-[var(--status-failed)]",
               )}
             >
-              {ext === "s3" ? "S3" : ext === "adls_gen2" ? "ADLS" : "local"}{" "}
+              {ext === "s3" ? "S3" : ext === "adls_gen2" ? "ADLS" : "object"}{" "}
               {supported ? "✓" : "✗"}
             </span>
           );

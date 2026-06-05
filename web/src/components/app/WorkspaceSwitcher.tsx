@@ -92,8 +92,8 @@ export function WorkspaceSwitcher({
                   <span className="text-2xs font-mono text-text-tertiary uppercase">
                     {ws.storage_backend_kind === "adls_gen2"
                       ? "ADLS"
-                      : ws.storage_backend_kind === "local_fs"
-                        ? "local"
+                      : ws.storage_backend_kind === "object_store"
+                        ? "object"
                         : ws.storage_backend_kind.toUpperCase()}
                   </span>
                 </CommandItem>

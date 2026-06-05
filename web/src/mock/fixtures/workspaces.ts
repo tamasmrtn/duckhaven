@@ -23,7 +23,7 @@ function makeWorkspaces(): Workspace[] {
       slug: "public",
       name: "public",
       storage_backend_id: "sb-4",
-      storage_backend_kind: "local_fs",
+      storage_backend_kind: "object_store",
       created_at: "2026-01-01T00:00:00Z",
     },
     {
@@ -31,7 +31,7 @@ function makeWorkspaces(): Workspace[] {
       slug: "home-lab",
       name: "home-lab",
       storage_backend_id: "sb-3",
-      storage_backend_kind: "nas",
+      storage_backend_kind: "object_store",
       created_at: "2026-02-01T00:00:00Z",
     },
   ];

@@ -30,7 +30,7 @@ export function useCreateWorkspace() {
     mutationFn: (data: {
       slug: string;
       name: string;
-      storage_backend_id: string;
+      storage_backend_id?: string;
     }) => workspacesApi.create(data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["workspaces"] });

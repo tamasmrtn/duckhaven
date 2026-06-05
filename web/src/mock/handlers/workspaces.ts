@@ -18,12 +18,27 @@ export const workspaceHandlers = [
     const body = (await request.json()) as {
       slug: string;
       name: string;
-      storage_backend_id: string;
+      storage_backend_id?: string;
     };
-    const backend = STORAGE_BACKENDS.find(
-      (b) => b.id === body.storage_backend_id,
-    );
-    if (!backend) return httpError(404, "Storage backend not found");
+    let backend;
+    if (body.storage_backend_id == null) {
+      // Mirror the API: auto-provision a bundled object-store backend.
+      backend = {
+        id: nextId("sb"),
+        kind: "object_store" as const,
+        name: body.name,
+        root_uri: "",
+        uc_storage_credential_id: null,
+        uc_credential_valid: null,
+        workspace_count: 0,
+        created_by: "u-1",
+        created_at: new Date().toISOString(),
+      };
+      STORAGE_BACKENDS.push(backend);
+    } else {
+      backend = STORAGE_BACKENDS.find((b) => b.id === body.storage_backend_id);
+      if (!backend) return httpError(404, "Storage backend not found");
+    }
     const ws = {
       id: nextId("ws"),
       slug: body.slug,

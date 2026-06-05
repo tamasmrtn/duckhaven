@@ -6,7 +6,7 @@ export const workspacesApi = {
 
   get: (ws: string) => get<Workspace>(`/workspaces/${ws}`),
 
-  create: (data: { slug: string; name: string; storage_backend_id: string }) =>
+  create: (data: { slug: string; name: string; storage_backend_id?: string }) =>
     post<Workspace>("/workspaces", data),
 
   members: (ws: string) => get<WorkspaceMember[]>(`/workspaces/${ws}/members`),

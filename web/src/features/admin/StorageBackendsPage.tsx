@@ -29,15 +29,13 @@ import type { BackendKind } from "@/types/storage-backend";
 import { cn, plural } from "@/utils";
 
 const KIND_LABELS: Record<BackendKind, string> = {
-  local_fs: "Local FS",
-  nas: "NAS",
+  object_store: "Object storage (MinIO)",
   s3: "S3",
   adls_gen2: "ADLS Gen 2",
 };
 
 const KIND_URI_PLACEHOLDER: Record<BackendKind, string> = {
-  local_fs: "local/acme/",
-  nas: "nas/dept-finance/",
+  object_store: "acme/ (optional prefix)",
   s3: "s3://my-bucket/duckhaven/",
   adls_gen2: "abfss://container@account.dfs.core.windows.net/duckhaven/",
 };
@@ -91,7 +89,7 @@ function RegisterWizard({
         <DialogHeader>
           <DialogTitle>Register storage backend — Step {step} of 3</DialogTitle>
           <DialogDescription>
-            Configure a storage location (local FS, NAS, S3, or ADLS) that
+            Configure a storage location (object storage, S3, or ADLS) that
             workspaces can use for their tables.
           </DialogDescription>
         </DialogHeader>
@@ -137,19 +135,33 @@ function RegisterWizard({
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-sm">Root URI</Label>
+              <Label className="text-sm">
+                Root URI
+                {kind === "object_store" && (
+                  <span className="ml-1 text-text-tertiary">(optional)</span>
+                )}
+              </Label>
               <Input
                 placeholder={KIND_URI_PLACEHOLDER[kind]}
                 value={uri}
                 onChange={(e) => setUri(e.target.value)}
                 className="font-mono text-xs"
               />
+              {kind === "object_store" && (
+                <p className="text-2xs text-text-tertiary">
+                  Leave blank to use the bundled MinIO bucket root. A value is a
+                  prefix label within that bucket.
+                </p>
+              )}
             </div>
             <DialogFooter className="gap-2">
               <Button variant="outline" onClick={() => setStep(1)}>
                 Back
               </Button>
-              <Button onClick={() => setStep(3)} disabled={!name || !uri}>
+              <Button
+                onClick={() => setStep(3)}
+                disabled={!name || (kind !== "object_store" && !uri)}
+              >
                 Next
               </Button>
             </DialogFooter>
@@ -176,10 +188,9 @@ function RegisterWizard({
               </>
             ) : (
               <p className="text-sm text-text-secondary">
-                No credential needed — {KIND_LABELS[kind]} backends are stored
-                in the bundled MinIO object store, which Polaris accesses with
-                the stack's configured credentials. The Root URI is a prefix
-                label within that bucket.
+                No credential needed — object storage is the bundled MinIO
+                object store, which Polaris accesses with the stack's configured
+                credentials. The Root URI is a prefix label within that bucket.
               </p>
             )}
             <div className="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-3 text-xs space-y-1">
@@ -215,9 +226,7 @@ export function StorageBackendsPage() {
   const deleteBackend = useDeleteStorageBackend();
   const [wizardOpen, setWizardOpen] = useState(false);
 
-  const hasLocalBackend = backends.some(
-    (b) => b.kind === "local_fs" || b.kind === "nas",
-  );
+  const hasLocalBackend = backends.some((b) => b.kind === "object_store");
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -239,7 +248,7 @@ export function StorageBackendsPage() {
         <Banner className="mx-6 mt-3">
           <ShieldAlert className="size-3.5 text-[var(--brand-orange)]" />
           <span>
-            Local FS / NAS backends are stored in the bundled MinIO object store
+            Object storage backends are stored in the bundled MinIO object store
             on the control-plane host — no off-box disaster recovery by default.
             Ensure off-box backups (see the runbook).
           </span>

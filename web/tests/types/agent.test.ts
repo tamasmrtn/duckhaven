@@ -31,13 +31,8 @@ describe('agentSupportsBackend()', () => {
     expect(agentSupportsBackend(makeAgent(['httpfs']), 'adls_gen2')).toBe(false)
   })
 
-  it('local_fs requires httpfs (MinIO-backed)', () => {
-    expect(agentSupportsBackend(makeAgent([]), 'local_fs')).toBe(false)
-    expect(agentSupportsBackend(makeAgent(['httpfs', 'azure']), 'local_fs')).toBe(true)
-  })
-
-  it('nas requires httpfs (MinIO-backed)', () => {
-    expect(agentSupportsBackend(makeAgent([]), 'nas')).toBe(false)
-    expect(agentSupportsBackend(makeAgent(['httpfs']), 'nas')).toBe(true)
+  it('object_store requires httpfs (MinIO-backed)', () => {
+    expect(agentSupportsBackend(makeAgent([]), 'object_store')).toBe(false)
+    expect(agentSupportsBackend(makeAgent(['httpfs', 'azure']), 'object_store')).toBe(true)
   })
 })

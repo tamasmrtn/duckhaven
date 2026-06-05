@@ -1,4 +1,4 @@
-import { HardDrive, Server, Box, Cloud } from "lucide-react";
+import { Database, Box, Cloud } from "lucide-react";
 import type { BackendKind } from "@/types/storage-backend";
 import { cn } from "@/utils";
 
@@ -11,15 +11,13 @@ const icons: Record<
   BackendKind,
   React.ComponentType<{ className?: string }>
 > = {
-  local_fs: HardDrive,
-  nas: Server,
+  object_store: Database,
   s3: Box,
   adls_gen2: Cloud,
 };
 
 const labels: Record<BackendKind, string> = {
-  local_fs: "Local FS",
-  nas: "NAS",
+  object_store: "Object storage",
   s3: "S3",
   adls_gen2: "ADLS",
 };

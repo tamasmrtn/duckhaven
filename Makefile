@@ -50,7 +50,7 @@ test-web:
 	cd web && npm run test
 
 test-deploy:
-	uv run --package duckhaven-api pytest deploy/tests/ -v
+	uv run --package duckhaven-api pytest tests/deploy/ -v
 
 # ── Integration tests (opt-in; require Polaris + Postgres) ────────────────────
 # Exit code 5 ("no tests ran") is tolerated so the targets are safe to run

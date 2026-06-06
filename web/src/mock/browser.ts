@@ -3,6 +3,7 @@ import { authHandlers } from "./handlers/auth";
 import { setupHandlers } from "./handlers/setup";
 import { workspaceHandlers } from "./handlers/workspaces";
 import { agentHandlers } from "./handlers/agents";
+import { metricsHandlers } from "./handlers/metrics";
 import { schemaHandlers } from "./handlers/schemas";
 import { queryHandlers } from "./handlers/queries";
 import { storageBackendHandlers } from "./handlers/storage-backends";
@@ -13,6 +14,7 @@ export const worker = setupWorker(
   ...setupHandlers,
   ...workspaceHandlers,
   ...agentHandlers,
+  ...metricsHandlers,
   ...schemaHandlers,
   ...queryHandlers,
   ...storageBackendHandlers,

@@ -13,6 +13,7 @@ class FrameType(StrEnum):
     CANCEL_QUERY = "cancel_query"
     HEARTBEAT = "heartbeat"
     AGENT_STATUS = "agent_status"
+    METRICS_SAMPLE = "metrics_sample"
 
 
 class Frame(BaseModel):

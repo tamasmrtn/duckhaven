@@ -50,6 +50,38 @@ async def test_list_agents_empty(admin_client: AsyncClient):
     assert resp.json() == []
 
 
+async def test_list_metrics_empty(admin_client: AsyncClient):
+    resp = await admin_client.get("/admin/agents/metrics")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+async def test_list_metrics_returns_samples_with_name(admin_client: AsyncClient, db_session):
+    agent = Agent(name="busy-agent", status="healthy")
+    db_session.add(agent)
+    await db_session.commit()
+    await db_session.refresh(agent)
+
+    from api.services.agent_registry import registry
+
+    registry.register(agent.id, object())  # type: ignore[arg-type]
+    registry.record_metrics(
+        agent.id,
+        {"cpu_percent": 33.0, "memory_percent": 50.0, "sampled_at": "2026-06-05T00:00:00Z"},
+    )
+    try:
+        resp = await admin_client.get("/admin/agents/metrics")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["name"] == "busy-agent"
+        assert data[0]["agent_id"] == str(agent.id)
+        assert data[0]["samples"][0]["cpu_percent"] == 33.0
+        assert data[0]["samples"][0]["memory_percent"] == 50.0
+    finally:
+        registry.unregister(agent.id)
+
+
 async def test_revoke_nonexistent_agent(admin_client: AsyncClient):
     resp = await admin_client.delete(f"/admin/agents/{uuid.uuid4()}/credential")
     assert resp.status_code == 404

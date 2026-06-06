@@ -42,8 +42,10 @@ async def test_without_delegation_object_store_is_unreadable(
 async def test_invalid_polaris_credentials_fail_attach(
     polaris_base_url, polaris_s3_catalog
 ) -> None:
-    """Bad Polaris client credentials fail the OAuth2 exchange at ATTACH time —
-    the agent cannot impersonate a principal it cannot authenticate as."""
+    """Bad Polaris client credentials fail the OAuth2 client-credentials
+    exchange — the agent cannot impersonate a principal it cannot authenticate
+    as. DuckDB performs the exchange eagerly at CREATE SECRET time, so the
+    failure surfaces there (or, for engines that defer it, at ATTACH)."""
     catalog, ns = polaris_s3_catalog
     conn = duckdb.connect()
     try:
@@ -51,13 +53,13 @@ async def test_invalid_polaris_credentials_fail_attach(
         conn.execute("LOAD iceberg")
         conn.execute("INSTALL httpfs")
         conn.execute("LOAD httpfs")
-        conn.execute(
-            "CREATE SECRET dh_iceberg "
-            "(TYPE ICEBERG, CLIENT_ID ?, CLIENT_SECRET ?, OAUTH2_SERVER_URI ?)",
-            ["root", "wrong-secret", f"{polaris_base_url}/api/catalog/v1/oauth/tokens"],
-        )
         endpoint = f"{polaris_base_url}/api/catalog"
         with pytest.raises(duckdb.Error):
+            conn.execute(
+                "CREATE SECRET dh_iceberg "
+                "(TYPE ICEBERG, CLIENT_ID ?, CLIENT_SECRET ?, OAUTH2_SERVER_URI ?)",
+                ["root", "wrong-secret", f"{polaris_base_url}/api/catalog/v1/oauth/tokens"],
+            )
             conn.execute(
                 f"ATTACH '{catalog}' AS dh_catalog (TYPE ICEBERG, SECRET dh_iceberg, "
                 f"ENDPOINT '{endpoint}', ACCESS_DELEGATION_MODE 'vended_credentials')"

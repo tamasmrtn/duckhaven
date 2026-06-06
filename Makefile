@@ -77,7 +77,7 @@ test-cross-component:
 #   export DH_SETUP_TOKEN="$$(docker compose -f deploy/docker-compose.yml \
 #     exec -T api cat /var/duckhaven/setup_token)"
 test-e2e:
-	cd e2e && npm ci && npx playwright install --with-deps chromium && npx playwright test
+	cd tests/e2e && npm ci && npx playwright install --with-deps chromium && npx playwright test
 
 # ── Local Polaris (for integration tests) ─────────────────────────────────────
 # Spins up MinIO + Apache Polaris-on-S3 (in-memory persistence). Object storage

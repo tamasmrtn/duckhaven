@@ -19,7 +19,12 @@ export const ADMIN_STORAGE_STATE = ".auth/admin.json";
 
 export async function setMonacoValue(page: Page, sql: string): Promise<void> {
   await page.waitForFunction(() => !!(window as any).monaco?.editor?.getEditors?.().length);
-  await page.evaluate((value) => {
-    (window as any).monaco.editor.getEditors()[0].setValue(value);
-  }, sql);
+  // Focus the editor, select all, and replace via insertText — a single input
+  // event that fires the React onChange the worksheet's Run handler depends on.
+  // (editor.setValue() mutates the model without notifying React, so Run would
+  // dispatch nothing; page.keyboard.type() triggers per-keystroke autocomplete
+  // that corrupts the SQL.)
+  await page.evaluate(() => (window as any).monaco.editor.getEditors()[0].focus());
+  await page.keyboard.press("ControlOrMeta+A");
+  await page.keyboard.insertText(sql);
 }

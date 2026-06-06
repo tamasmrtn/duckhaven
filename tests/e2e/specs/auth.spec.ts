@@ -24,7 +24,8 @@ test("session persists across a reload", async ({ page, loginPage }) => {
 test("logging out returns to the login screen and protects routes", async ({ page, loginPage }) => {
   await loginPage.loginAsAdmin();
   // The user menu (trigger labelled with the admin's name) holds "Sign out".
-  await page.getByRole("button", { name: /Account|Admin/i }).click();
+  // Scope to the banner so the regex can't also match the nav "Admin" button.
+  await page.getByRole("banner").getByRole("button", { name: /Account|Admin/i }).click();
   await page.getByRole("menuitem", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/login/);
 

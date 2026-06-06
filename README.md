@@ -125,9 +125,9 @@ compose-managed Postgres) see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Roadmap
 
-- **Shipped (M3)** — SQL worksheets, catalog browser, query dispatch to agents, Polaris catalog integration, workspace permissions, saved queries, audit log, storage backend registry, agent bootstrap tokens.
-- **In progress (M4)** — Multi-agent hardening, result retention sweep, UC permission mirroring, server-side backend compatibility checks, agent image publishing, DR automation.
-- **Future** — Notebook UI, heterogeneous engines (Spark, Trino, Polars), per-table backend override, control-plane HA, Prometheus metrics + Grafana dashboards.
+- **Shipped** — SQL worksheets, catalog browser, query dispatch to agents, Polaris/Iceberg catalog integration with native table metadata, workspace permissions, saved queries, audit log, storage backend registry, agent bootstrap tokens, name-only workspace creation, result size reporting, result retention sweep, multi-agent dispatch, live agent CPU/memory utilization, published agent and API images (GHCR), server-side backend compatibility checks.
+- **In progress** — External cloud-backend (S3 / ADLS Gen 2) credential wiring, broader Iceberg DDL coverage.
+- **Future** — Notebook UI, heterogeneous engines (Spark, Trino, Polars), per-table backend override, Polaris RBAC permission mirroring, control-plane HA, Prometheus metrics + Grafana dashboards, off-box result durability / DR automation.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §13 for the gap tracker.
 

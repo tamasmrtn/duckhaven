@@ -75,4 +75,7 @@ async def test_create_table_rejects_unknown_type(admin_client, workspace_slug) -
 
 
 async def test_catalog_endpoints_require_auth(app_client, workspace_slug) -> None:
+    # The workspace_slug fixture authenticated the shared client; drop the
+    # session cookie to assert the unauthenticated path is rejected.
+    app_client.cookies.clear()
     assert (await app_client.get(f"/workspaces/{workspace_slug}/schemas")).status_code == 401

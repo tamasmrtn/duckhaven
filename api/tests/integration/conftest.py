@@ -27,7 +27,7 @@ import httpx
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import text
+from sqlalchemy import NullPool, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from testkit import polaris as dh_polaris
 
@@ -136,19 +136,28 @@ def unique_name() -> Iterator[str]:
 # --- Real Postgres (schema-per-session isolation) ---
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture
 async def pg_engine():
     """An async engine bound to a throwaway schema in the real database.
 
     Uses a unique schema (set as the connection ``search_path``) rather than a
     fresh database so no CREATE DATABASE privilege is required and parallel
     workers never collide. Dropped CASCADE on teardown.
+
+    Function-scoped with NullPool: asyncpg connections are event-loop bound and
+    pytest-asyncio gives each test its own loop, so a session-scoped engine would
+    leak connections across loops ("another operation is in progress"). A fresh
+    engine per test keeps every connection inside the test's own loop.
     """
     url = os.getenv("DATABASE_URL")
     if not url:
         pytest.skip("DATABASE_URL not set; skipping api Postgres integration test")
     schema = f"dh_it_{uuid4().hex[:12]}"
-    engine = create_async_engine(url, connect_args={"server_settings": {"search_path": schema}})
+    engine = create_async_engine(
+        url,
+        poolclass=NullPool,
+        connect_args={"server_settings": {"search_path": schema}},
+    )
     async with engine.begin() as conn:
         await conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
     try:

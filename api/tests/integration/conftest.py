@@ -20,9 +20,7 @@ Postgres + real Polaris + the bundled MinIO. No FakePolaris, no SQLite.
 from __future__ import annotations
 
 import os
-import sys
 from collections.abc import AsyncIterator, Iterator
-from pathlib import Path
 from uuid import uuid4
 
 import httpx
@@ -31,20 +29,17 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from testkit import polaris as dh_polaris
 
-# Make the repo-root `dh_testkit` package importable from this per-package run.
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-
-from api.config import settings  # noqa: E402
-from api.db.base import Base  # noqa: E402
-from api.deps import get_db, get_polaris_client  # noqa: E402
-from api.main import api_app  # noqa: E402
-from api.models.agent import Agent  # noqa: E402
-from api.models.user import User  # noqa: E402
-from api.services.agent_registry import registry  # noqa: E402
-from api.services.auth import hash_password  # noqa: E402
-from api.services.polaris import PolarisClient  # noqa: E402
-from dh_testkit import polaris as dh_polaris  # noqa: E402
+from api.config import settings
+from api.db.base import Base
+from api.deps import get_db, get_polaris_client
+from api.main import api_app
+from api.models.agent import Agent
+from api.models.user import User
+from api.services.agent_registry import registry
+from api.services.auth import hash_password
+from api.services.polaris import PolarisClient
 
 # Plain HTTP transport in tests; never emit Secure cookies the test client drops.
 settings.cookie_secure = False

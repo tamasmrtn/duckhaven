@@ -15,18 +15,12 @@ provides a local MinIO-backed stack.
 from __future__ import annotations
 
 import os
-import sys
 from collections.abc import AsyncIterator, Callable, Iterator
-from pathlib import Path
 
 import duckdb
 import httpx
 import pytest
-
-# Make the repo-root `dh_testkit` package importable from this per-package run.
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-
-from dh_testkit import polaris as dh_polaris  # noqa: E402
+from testkit import polaris as dh_polaris
 
 
 @pytest.fixture(scope="session")

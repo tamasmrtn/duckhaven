@@ -32,15 +32,14 @@ _DEFAULT_NAMESPACE = "analytics"
 
 # Backend kind -> DuckDB storage-IO extension (loaded so DuckDB can read/write
 # the object store with the credentials Polaris vends). Every backend is object
-# storage: local_fs/nas are backed by the bundled MinIO (S3) and need httpfs.
+# storage: object_store is backed by the bundled MinIO (S3) and needs httpfs.
 _BACKEND_IO_EXTENSION: dict[str, str] = {
-    "local_fs": "httpfs",
-    "nas": "httpfs",
+    "object_store": "httpfs",
     "s3": "httpfs",
     "adls_gen2": "azure",
 }
 # All backends are object storage, so all get vended credentials from Polaris.
-_VENDED_BACKENDS = {"local_fs", "nas", "s3", "adls_gen2"}
+_VENDED_BACKENDS = {"object_store", "s3", "adls_gen2"}
 
 
 def _is_single_select(sql: str) -> bool:
@@ -199,7 +198,7 @@ def run_query_sync(
         backend_kind = (backend or {}).get("kind")
 
         # Load the storage-IO extension so DuckDB can read/write the object
-        # store with the credentials Polaris vends. Local FS needs none.
+        # store with the credentials Polaris vends.
         if (io_ext := _BACKEND_IO_EXTENSION.get(backend_kind or "")) is not None:
             _safe_install_load(conn, io_ext)
 

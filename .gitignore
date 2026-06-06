@@ -20,6 +20,12 @@ web/.cache/
 *.tsbuildinfo
 web/coverage/
 
+# Playwright tooling: deps + run artifacts (the committed suite lives in e2e/)
+node_modules/
+test-results/
+playwright-report/
+/playwright.config.ts
+
 # DuckDB
 *.duckdb
 *.duckdb.wal
@@ -46,3 +52,6 @@ Thumbs.db
 
 # Agent runtime results (not source)
 agent/results/
+
+qa/
+.playwright-mcp/

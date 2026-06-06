@@ -115,10 +115,110 @@ jobs:
       # roundtrip runs (Polaris vends scoped credentials to DuckDB).
       - name: Start Polaris + MinIO (S3)
         run: make polaris-dev
-      - name: Integration tests
+      - name: Component integration tests (API + agent)
         env:
           POLARIS_S3_BUCKET: s3://warehouse
-        run: make test-integration
+        run: make test-integration-api test-integration-agent
+
+  cross-component:
+    name: Cross-component tests
+    runs-on: ubuntu-latest
+    needs: [python-test]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: testdb
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:testpassword@localhost:5432/testdb
+      POLARIS_BASE_URL: http://localhost:8181
+      POLARIS_CLIENT_ID: root
+      POLARIS_CLIENT_SECRET: s3cr3t
+      POLARIS_S3_ENDPOINT: http://localhost:9000
+      POLARIS_S3_ENDPOINT_INTERNAL: http://dh-minio-dev:9000
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv sync --dev
+      - name: Start Polaris + MinIO (S3)
+        run: make polaris-dev
+      # Boots the real API + agent over the live control channel; the harness
+      # applies migrations and creates the first admin itself.
+      - name: Cross-component tests
+        env:
+          POLARIS_S3_BUCKET: s3://warehouse
+        run: make test-cross-component
+
+  e2e:
+    name: E2E (Playwright)
+    runs-on: ubuntu-latest
+    needs: [python-test]
+    # Heavy full-stack run: only on merge to main or PRs labelled `run-e2e`.
+    if: >-
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.labels.*.name, 'run-e2e')
+    env:
+      DUCKHAVEN_IMAGE_TAG: ci-e2e
+      DH_BASE_URL: http://localhost:8000
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
+      # Build branch images (SPA is baked into the API image) so E2E exercises
+      # this branch's code, not the published :latest tags.
+      - name: Build API image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: api/Dockerfile
+          load: true
+          tags: ghcr.io/tamasmrtn/duckhaven-api:ci-e2e
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build agent image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: agent/Dockerfile
+          load: true
+          tags: ghcr.io/tamasmrtn/duckhaven-agent:ci-e2e
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Start the full stack
+        run: make compose-up
+      - name: Wait for the stack to be healthy
+        run: ./scripts/wait-for-stack.sh
+      - name: Capture the first-boot setup token
+        run: |
+          token=$(docker compose -f deploy/docker-compose.yml exec -T api \
+            cat /var/duckhaven/setup_token)
+          echo "DH_SETUP_TOKEN=$token" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Run E2E
+        run: make test-e2e
+      - name: Capture compose logs on failure
+        if: failure()
+        run: docker compose -f deploy/docker-compose.yml logs --no-color > compose-logs.txt
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: e2e-artifacts
+          path: |
+            e2e/playwright-report/
+            e2e/test-results/
+            compose-logs.txt
 
   frontend-check:
     name: Frontend lint & typecheck

@@ -1,6 +1,7 @@
 .PHONY: install install-web dev dev-api dev-web \
         test test-api test-agent test-web test-deploy \
         test-integration test-integration-api test-integration-agent \
+        test-cross-component test-e2e \
         polaris-dev polaris-dev-s3 polaris-dev-down \
         lint format \
         migrate migrate-new migrate-down \
@@ -54,7 +55,7 @@ test-deploy:
 # ── Integration tests (opt-in; require Polaris + Postgres) ────────────────────
 # Exit code 5 ("no tests ran") is tolerated so the targets are safe to run
 # before the first integration test lands on a branch.
-test-integration: test-integration-api test-integration-agent
+test-integration: test-integration-api test-integration-agent test-cross-component
 
 test-integration-api:
 	@uv run --package duckhaven-api pytest api/tests/integration/ -v -m integration; \
@@ -63,6 +64,20 @@ test-integration-api:
 test-integration-agent:
 	@uv run --package duckhaven-agent pytest agent/tests/integration/ -v -m integration; \
 	  rc=$$?; if [ $$rc -ne 0 ] && [ $$rc -ne 5 ]; then exit $$rc; fi
+
+# Cross-component (Layer 2): boots the real API + agent over the live control
+# channel. Needs Postgres + Polaris + MinIO (DATABASE_URL, POLARIS_BASE_URL,
+# POLARIS_S3_*); skips cleanly when unset.
+test-cross-component:
+	@uv run pytest tests/cross_component/ -v -m cross_component; \
+	  rc=$$?; if [ $$rc -ne 0 ] && [ $$rc -ne 5 ]; then exit $$rc; fi
+
+# End-to-end (Layer 3): Playwright against the full compose stack. Bring it up
+# first (`make compose-up`) and export DH_SETUP_TOKEN for a fresh stack:
+#   export DH_SETUP_TOKEN="$$(docker compose -f deploy/docker-compose.yml \
+#     exec -T api cat /var/duckhaven/setup_token)"
+test-e2e:
+	cd e2e && npm ci && npx playwright install --with-deps chromium && npx playwright test
 
 # ── Local Polaris (for integration tests) ─────────────────────────────────────
 # Spins up MinIO + Apache Polaris-on-S3 (in-memory persistence). Object storage

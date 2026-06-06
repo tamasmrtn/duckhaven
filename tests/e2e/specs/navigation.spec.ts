@@ -1,11 +1,6 @@
 /** Deep linking, browser refresh, and route/state persistence. */
-import { expect, test } from "@playwright/test";
-
-import { BASE_URL, WS_SLUG, login } from "../helpers";
-
-test.beforeEach(async ({ page }) => {
-  await login(page);
-});
+import { expect, test } from "../fixtures/test";
+import { BASE_URL, WS_SLUG } from "../helpers";
 
 test("deep-link refresh keeps the session and route", async ({ page }) => {
   const url = `${BASE_URL}/${WS_SLUG}/catalog`;

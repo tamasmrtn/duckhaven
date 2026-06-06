@@ -1,32 +1,28 @@
 /** Login, logout, session persistence, and credential validation. */
-import { expect, test } from "@playwright/test";
+import { expect, test } from "../fixtures/test";
+import { ADMIN_EMAIL, BASE_URL, WS_SLUG } from "../helpers";
 
-import { ADMIN_EMAIL, ADMIN_PASSWORD, BASE_URL, WS_SLUG, login } from "../helpers";
-
-test("valid credentials log in and route to the workspace", async ({ page }) => {
-  await login(page);
+test("valid credentials log in and route to the workspace @smoke", async ({ page, loginPage }) => {
+  await loginPage.loginAsAdmin();
   await expect(page).toHaveURL(new RegExp(`/${WS_SLUG}/`));
 });
 
-test("invalid credentials are rejected with an error", async ({ page }) => {
-  await page.goto(`${BASE_URL}/login`);
-  await page.getByRole("textbox", { name: "Email" }).fill(ADMIN_EMAIL);
-  await page.getByRole("textbox", { name: "Password" }).fill("WrongPassword");
-  await page.getByRole("button", { name: "Sign in" }).click();
+test("invalid credentials are rejected with an error", async ({ page, loginPage }) => {
+  await loginPage.login(ADMIN_EMAIL, "WrongPassword");
   await expect(page).toHaveURL(/\/login/);
-  await expect(page.locator('[role="alert"]').first()).toBeVisible();
-  await expect(page.locator('[role="alert"]').first()).not.toBeEmpty();
+  await expect(loginPage.error).toBeVisible();
+  await expect(loginPage.error).not.toBeEmpty();
 });
 
-test("session persists across a reload", async ({ page }) => {
-  await login(page);
+test("session persists across a reload", async ({ page, loginPage }) => {
+  await loginPage.loginAsAdmin();
   await page.reload();
   await expect(page).not.toHaveURL(/\/login/);
   await expect(page).toHaveURL(new RegExp(`/${WS_SLUG}/`));
 });
 
-test("logging out returns to the login screen and protects routes", async ({ page }) => {
-  await login(page);
+test("logging out returns to the login screen and protects routes", async ({ page, loginPage }) => {
+  await loginPage.loginAsAdmin();
   // The user menu (trigger labelled with the admin's name) holds "Sign out".
   await page.getByRole("button", { name: /Account|Admin/i }).click();
   await page.getByRole("menuitem", { name: "Sign out" }).click();

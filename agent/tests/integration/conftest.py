@@ -16,9 +16,10 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from pathlib import Path
 
+import duckdb
 import httpx
 import pytest
 
@@ -55,3 +56,60 @@ async def polaris_s3_catalog(
         pytest.skip("POLARIS_S3_BUCKET not set; skipping S3 write integration test")
     async with dh_polaris.s3_catalog(polaris_base_url, polaris_creds, prefix="dh_agt") as cat:
         yield cat
+
+
+def _attach_catalog(
+    conn: duckdb.DuckDBPyConnection,
+    base_url: str,
+    catalog: str,
+    namespace: str,
+    creds: tuple[str, str],
+    *,
+    delegation: str = "vended_credentials",
+) -> None:
+    """Mirror the agent runner's attach (`runner._attach_polaris`): an iceberg
+    OAuth2 SECRET + `ATTACH … (TYPE ICEBERG …)` + `USE <cat>.<ns>`, with Polaris
+    vending scoped object-store credentials to DuckDB."""
+    client_id, client_secret = creds
+    conn.execute("INSTALL iceberg")
+    conn.execute("LOAD iceberg")
+    conn.execute("INSTALL httpfs")
+    conn.execute("LOAD httpfs")
+    conn.execute(
+        "CREATE SECRET dh_iceberg "
+        "(TYPE ICEBERG, CLIENT_ID ?, CLIENT_SECRET ?, OAUTH2_SERVER_URI ?)",
+        [client_id, client_secret, f"{base_url}/api/catalog/v1/oauth/tokens"],
+    )
+    # ATTACH does not accept bind parameters; inline the (trusted) values.
+    wh = catalog.replace("'", "''")
+    endpoint = f"{base_url}/api/catalog".replace("'", "''")
+    conn.execute(
+        f"ATTACH '{wh}' AS dh_catalog (TYPE ICEBERG, SECRET dh_iceberg, "
+        f"ENDPOINT '{endpoint}', ACCESS_DELEGATION_MODE '{delegation}')"
+    )
+    conn.execute(f'USE dh_catalog."{namespace}"')
+
+
+@pytest.fixture
+def attach_factory(
+    polaris_base_url: str, polaris_creds: tuple[str, str]
+) -> Iterator[Callable[..., duckdb.DuckDBPyConnection]]:
+    """Return ``make(catalog, namespace, *, delegation=...)`` -> an attached
+    DuckDB connection. Connections are closed on teardown. Sync (DuckDB is sync)
+    and depends only on sync fixtures, so async tests can pass the catalog tuple
+    resolved from ``polaris_s3_catalog``."""
+    conns: list[duckdb.DuckDBPyConnection] = []
+
+    def _make(
+        catalog: str, namespace: str, *, delegation: str = "vended_credentials"
+    ) -> duckdb.DuckDBPyConnection:
+        conn = duckdb.connect()
+        _attach_catalog(
+            conn, polaris_base_url, catalog, namespace, polaris_creds, delegation=delegation
+        )
+        conns.append(conn)
+        return conn
+
+    yield _make
+    for conn in conns:
+        conn.close()

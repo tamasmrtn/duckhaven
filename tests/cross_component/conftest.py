@@ -183,14 +183,17 @@ def stack(_require_env, tmp_path_factory) -> Iterator[Stack]:
             api_log,
         )
 
-        # 3. Create the first admin (consumes the setup token).
+        # 3. Create the first admin (consumes the setup token). 409 = an admin
+        #    already exists (a reused database from a prior local run) — fine,
+        #    we log in with the same credentials below. CI gets a fresh DB (200).
         with httpx.Client(base_url=base_url, timeout=10.0) as c:
             r = c.post(
                 "/api/setup/admin",
                 json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD, "name": "XC Admin"},
                 headers={"X-Setup-Token": SETUP_TOKEN},
             )
-            r.raise_for_status()
+            if r.status_code not in (200, 409):
+                r.raise_for_status()
 
         # 4. Start the agent and wait until the API reports it healthy.
         results_dir = tmp / "agent-results"
@@ -257,16 +260,29 @@ def spawn_agent(stack: Stack, tmp_path_factory) -> Iterator[Callable[[], subproc
     api_port = int(stack.base_url.rsplit(":", 1)[1])
     started: list[subprocess.Popen] = []
 
+    def _mint_bootstrap_token() -> str:
+        """Mint a fresh single-use bootstrap token via the admin API — the
+        seeded AGENT_BOOTSTRAP_TOKEN was already consumed by the session agent."""
+        with httpx.Client(base_url=stack.base_url, timeout=10.0) as c:
+            c.post(
+                "/api/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}
+            ).raise_for_status()
+            resp = c.post("/api/admin/agents/bootstrap")
+            resp.raise_for_status()
+            return resp.json()["token"]
+
     def _spawn() -> subprocess.Popen:
         d = tmp_path_factory.mktemp("xc-agent")
         results_dir = d / "results"
         results_dir.mkdir()
         log = d / "agent.log"
+        env = _agent_env(api_port, results_dir, _free_port())
+        env["BOOTSTRAP_TOKEN"] = _mint_bootstrap_token()
         with log.open("w") as fh:
             proc = subprocess.Popen(
                 ["uv", "run", "--package", "duckhaven-agent", "python", "-m", "agent.main"],
                 cwd=REPO_ROOT,
-                env=_agent_env(api_port, results_dir, _free_port()),
+                env=env,
                 stdout=fh,
                 stderr=subprocess.STDOUT,
             )

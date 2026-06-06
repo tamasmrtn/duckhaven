@@ -3,10 +3,9 @@
 > Companion to `ARCHITECTURE.md`. Defines the visual language, information
 > architecture, and key screens for the DuckHaven control plane SPA
 > (`duckhaven-api` is the contract; this document covers the React frontend
-> described in §4 D4, D13 and §8 of the architecture).
+> described in §6 (the `web/` code map) and §8 of the architecture).
 >
-> **Status:** Design RFC v0.1 — pre-implementation. Co-evolves with the
-> mocked-backend milestone (M1).
+> **Status:** Implemented — describes the shipped DuckHaven SPA.
 >
 > **Audience:** the engineer(s) building the frontend.
 

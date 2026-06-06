@@ -46,17 +46,14 @@ def fake_conn(monkeypatch: pytest.MonkeyPatch) -> FakeConn:
     return conn
 
 
-@pytest.mark.parametrize("kind", ["local_fs", "nas"])
-def test_local_backends_load_httpfs_and_vend_credentials(
-    kind: str, fake_conn: FakeConn, tmp_path: Path
-):
-    # local_fs/nas are backed by the bundled MinIO (S3): they load httpfs and
-    # use vended credentials, exactly like the s3 kind.
+def test_object_store_loads_httpfs_and_vends_credentials(fake_conn: FakeConn, tmp_path: Path):
+    # object_store is backed by the bundled MinIO (S3): it loads httpfs and
+    # uses vended credentials, exactly like the s3 kind.
     runner_module.run_query_sync(
         "SELECT 1",
         tmp_path / "out.parquet",
         memory_limit_gb=1.0,
-        backend={"kind": kind, "root_uri": "file:///tmp/data"},
+        backend={"kind": "object_store", "root_uri": "file:///tmp/data"},
         workspace_slug="ws-alpha",
         polaris=POLARIS,
     )
@@ -112,7 +109,7 @@ def test_attach_uses_workspace_slug_as_warehouse(fake_conn: FakeConn, tmp_path: 
         "SELECT 1",
         tmp_path / "out.parquet",
         memory_limit_gb=1.0,
-        backend={"kind": "local_fs", "root_uri": "file:///tmp/data"},
+        backend={"kind": "object_store", "root_uri": "file:///tmp/data"},
         workspace_slug="ws-alpha",
         polaris=POLARIS,
     )

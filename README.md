@@ -64,7 +64,7 @@ DuckHaven separates control from compute. The control plane manages users, works
 flowchart TB
     Browser["Browser (Tailscale)"] --> API["duckhaven-api (FastAPI)"]
     API --> Postgres["Postgres (app state)"]
-    API --> UC["Apache Polaris (governance)"]
+    API --> Polaris["Apache Polaris (governance)"]
     API --> WS["WebSocket (agent control)"]
     WS --> Agent1["duckhaven-agent (DuckDB)"]
     WS --> Agent2["duckhaven-agent (DuckDB)"]
@@ -78,7 +78,7 @@ flowchart TB
 - Users pick the executing agent per worksheet — transparent compute, no opaque optimizer.
 - Every workspace is bound to exactly one storage backend: bundled object storage (MinIO), S3, or Azure.
 - Apache Polaris provides table governance and vends short-lived storage credentials per query.
-- SQL is allowlisted to `SELECT` and `INSERT` only. DDL runs through UC REST.
+- SQL is allowlisted to `SELECT` and `INSERT` only. DDL runs through Polaris REST.
 - The API is exposed directly on port 8000 over a private network (Tailscale recommended); there is no public ingress.
 
 For the full architecture, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For the UI design system, see [docs/UI-DESIGN.md](docs/UI-DESIGN.md).
@@ -104,7 +104,7 @@ For the full architecture, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For
 ```bash
 curl -O https://raw.githubusercontent.com/tamasmrtn/duckhaven/main/deploy/docker-compose.yml
 docker compose up -d
-docker compose exec api cat /var/duckhaven/secrets/setup_token
+docker compose exec api cat /var/duckhaven/setup_token
 # open http://<host>:8000 and paste the token into the setup screen
 ```
 
@@ -129,7 +129,7 @@ compose-managed Postgres) see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 - **In progress (M4)** — Multi-agent hardening, result retention sweep, UC permission mirroring, server-side backend compatibility checks, agent image publishing, DR automation.
 - **Future** — Notebook UI, heterogeneous engines (Spark, Trino, Polars), per-table backend override, control-plane HA, Prometheus metrics + Grafana dashboards.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §11 and §16 for the full milestone and gap tracker.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §13 for the gap tracker.
 
 ## Contributing
 

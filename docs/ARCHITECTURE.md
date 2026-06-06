@@ -244,8 +244,10 @@ tasks (`src/agent/main.py` gathers them):
    authenticates, advertises `AgentCapabilities`, then loops handling frames
    (`dispatch_query`, `cancel_query`, `heartbeat`). Reconnects with backoff
    if the socket drops. On each heartbeat it re-advertises capabilities.
-2. **Result server** (`results/server.py`) — a tiny `127.0.0.1` HTTP server
-   serving `results/{query_id}.parquet` with **HTTP `Range`** support, gated
+2. **Result server** (`results/server.py`) — an HTTP server bound to
+   `RESULTS_HTTP_HOST` (`0.0.0.0` in compose) that advertises its port to the
+   control plane, serving `results/{query_id}.parquet` with **HTTP `Range`**
+   support, gated
    by a Bearer token (the agent's session token, held in `auth.py:TokenHolder`).
 3. **Retention sweep** (`results/retention.py`) — periodically deletes result
    Parquet files older than the retention window.
@@ -254,7 +256,7 @@ tasks (`src/agent/main.py` gathers them):
 
 | Module | Responsibility |
 |---|---|
-| `executor/runner.py` | `run_query_sync`: the synchronous DuckDB path. Sets `memory_limit`, loads `iceberg` (+ `httpfs`/`azure` for cloud), creates a connection-scoped iceberg OAuth2 `SECRET` from agent config and `ATTACH`es the workspace's Polaris catalog (warehouse = workspace slug; `vended_credentials` for cloud, `none` for FILE), then `COPY (sql) TO '<uuid>.parquet'`. When the dispatch carries `stats_for`, it also returns the target table's `COUNT(*)` for the catalog sidecar. |
+| `executor/runner.py` | `run_query_sync`: the synchronous DuckDB path. Sets `memory_limit`, loads `iceberg` (+ `httpfs`/`azure` for cloud), creates a connection-scoped iceberg OAuth2 `SECRET` from agent config and `ATTACH`es the workspace's Polaris catalog (warehouse = workspace slug; `vended_credentials` for every backend, since all are object storage), then `COPY (sql) TO '<uuid>.parquet'`. When the dispatch carries `stats_for`, it also returns the target table's `COUNT(*)` for the catalog sidecar. |
 | `executor/supervisor.py` | `run_query`: runs `run_query_sync` on a thread executor with a wall-clock timeout. Uses DuckDB's thread-safe `conn.interrupt()` (via `loop.call_later` and on cancel) to actually stop a running query. |
 
 `config.py` holds operator ceilings (`max_memory_limit_gb`, `max_timeout_s`)

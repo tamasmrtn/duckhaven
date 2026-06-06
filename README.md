@@ -78,7 +78,7 @@ flowchart TB
 - Users pick the executing agent per worksheet — transparent compute, no opaque optimizer.
 - Every workspace is bound to exactly one storage backend: bundled object storage (MinIO), S3, or Azure.
 - Apache Polaris provides table governance and vends short-lived storage credentials per query.
-- SQL is allowlisted to `SELECT` and `INSERT` only. DDL runs through Polaris REST.
+- SQL is allowlisted to data statements (`SELECT`/`INSERT`/`UPDATE`/`DELETE`/`MERGE`) and catalog DDL (`CREATE`/`ALTER`/`DROP`), executed on the agent against the Polaris catalog; sandbox escapes (`ATTACH`, `COPY`, `LOAD`, `SET`, …) are rejected.
 - The API is exposed directly on port 8000 over a private network (Tailscale recommended); there is no public ingress.
 
 For the full architecture, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For the UI design system, see [docs/UI-DESIGN.md](docs/UI-DESIGN.md).

@@ -118,6 +118,31 @@ def _require_env() -> None:
         pytest.skip(f"cross-component tests need {', '.join(missing)}; skipping")
 
 
+def _preinstall_agent_extensions() -> None:
+    """Install the DuckDB extensions the agent advertises into the shared
+    ``~/.duckdb`` cache, mirroring what the agent Docker image bakes in at build
+    time. The agent here runs from the uv env (not the image), and its capability
+    probe only ``LOAD``s (relying on pre-installed extensions), so without this
+    ``httpfs`` is never advertised and dispatch is rejected as agent_incompatible.
+    """
+    subprocess.run(
+        [
+            "uv",
+            "run",
+            "--package",
+            "duckhaven-agent",
+            "python",
+            "-c",
+            "import duckdb; c = duckdb.connect(); "
+            "[c.execute(f'INSTALL {e}') for e in ('httpfs', 'azure', 'iceberg')]; "
+            "[c.execute(f'LOAD {e}') for e in ('httpfs', 'azure', 'iceberg')]",
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+    )
+
+
 @pytest.fixture(scope="session")
 def stack(_require_env, tmp_path_factory) -> Iterator[Stack]:
     """Migrate the DB, boot the API + agent subprocesses, create the first
@@ -128,6 +153,10 @@ def stack(_require_env, tmp_path_factory) -> Iterator[Stack]:
     setup_token_file.write_text(SETUP_TOKEN)
 
     api_env = _api_env(db_url, setup_token_file)
+
+    # Pre-install agent DuckDB extensions (the image bakes these in; the uv-run
+    # agent needs them cached so its LOAD-only capability probe advertises httpfs).
+    _preinstall_agent_extensions()
 
     # 1. Apply migrations to the target database.
     subprocess.run(

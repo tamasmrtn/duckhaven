@@ -8,7 +8,7 @@ no-op, while still propagating genuine failures.
 import subprocess
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parents[1] / "polaris-bootstrap.sh"
+SCRIPT = Path(__file__).resolve().parents[2] / "deploy" / "polaris-bootstrap.sh"
 
 
 def _run_wrapper(inner_exit_code: int) -> int:

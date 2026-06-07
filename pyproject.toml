@@ -30,8 +30,13 @@ known-first-party = ["api", "agent", "duckhaven_shared"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["api/tests/unit", "agent/tests/unit"]
+# Expose tests/'s children as top-level importable modules (testkit, ...) so
+# the shared kit imports cleanly from per-package runs without sys.path hacks
+# and without colliding with each service's own `tests` package.
+pythonpath = ["tests"]
 markers = [
     "integration: integration tests requiring external services (UC, Postgres). Opt-in via `make test-integration`.",
+    "cross_component: live API+agent tests over the control channel. Opt-in via `make test-cross-component`.",
 ]
 
 [tool.coverage.run]

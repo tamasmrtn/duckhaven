@@ -1,0 +1,14 @@
+{
+  "name": "duckhaven-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "description": "End-to-end Playwright suite for the DuckHaven compose stack",
+  "scripts": {
+    "test": "playwright test",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "@types/node": "^22.0.0"
+  }
+}

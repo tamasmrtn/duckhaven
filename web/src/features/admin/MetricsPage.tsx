@@ -13,7 +13,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAgentMetrics } from "@/queries/metrics";
 import type { AgentMetrics } from "@/types/agent";
 import { plural } from "@/utils";
-import { formatAbsoluteTimestamp, formatRelativeTick } from "./metricsTime";
+import {
+  formatAbsoluteTimestamp,
+  formatRelativeTick,
+  relativeMinuteTicks,
+} from "./metricsTime";
 
 const SERIES_COLORS = [
   "#3b82f6",
@@ -29,17 +33,19 @@ type MetricField = "cpu_percent" | "memory_percent";
 // Merge per-agent sample arrays into a single time-keyed dataset with one column
 // per agent, so recharts can draw a line per agent over a shared X axis.
 function buildSeries(metrics: AgentMetrics[], field: MetricField) {
-  const byTime = new Map<string, Record<string, number | string>>();
+  const byTime = new Map<string, Record<string, number>>();
   for (const agent of metrics) {
     for (const sample of agent.samples) {
-      const row = byTime.get(sample.sampled_at) ?? { t: sample.sampled_at };
+      // `t` is epoch ms so the x-axis is a true time scale (proportional
+      // spacing + clean minute ticks), not a categorical per-sample axis.
+      const row = byTime.get(sample.sampled_at) ?? {
+        t: Date.parse(sample.sampled_at),
+      };
       row[agent.name] = sample[field];
       byTime.set(sample.sampled_at, row);
     }
   }
-  return Array.from(byTime.values()).sort((a, b) =>
-    String(a.t).localeCompare(String(b.t)),
-  );
+  return Array.from(byTime.values()).sort((a, b) => a.t - b.t);
 }
 
 function UtilizationChart({
@@ -52,9 +58,11 @@ function UtilizationChart({
   field: MetricField;
 }) {
   const data = buildSeries(metrics, field);
-  // Anchor "time ago" labels to the most recent sample in the window. With no
-  // data there are no ticks to format, so the fallback value is never read.
-  const refMs = data.length ? Date.parse(String(data[data.length - 1].t)) : 0;
+  // Anchor "time ago" labels to the most recent sample, and place one tick per
+  // minute so labels are distinct (no repeated "-2m -2m -2m").
+  const refMs = data.length ? data[data.length - 1].t : 0;
+  const minMs = data.length ? data[0].t : 0;
+  const ticks = relativeMinuteTicks(minMs, refMs);
   return (
     <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4">
       <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-text-secondary">
@@ -69,9 +77,12 @@ function UtilizationChart({
             />
             <XAxis
               dataKey="t"
-              tickFormatter={(v) => formatRelativeTick(String(v), refMs)}
+              type="number"
+              scale="time"
+              domain={["dataMin", "dataMax"]}
+              ticks={ticks}
+              tickFormatter={(v) => formatRelativeTick(Number(v), refMs)}
               tick={{ fontSize: 11, fill: "var(--text-tertiary)" }}
-              minTickGap={40}
             />
             <YAxis
               domain={[0, 100]}
@@ -80,7 +91,7 @@ function UtilizationChart({
               width={44}
             />
             <Tooltip
-              labelFormatter={(label) => formatAbsoluteTimestamp(String(label))}
+              labelFormatter={(label) => formatAbsoluteTimestamp(Number(label))}
               formatter={(value) => `${value}%`}
             />
             {metrics.map((agent, i) => (

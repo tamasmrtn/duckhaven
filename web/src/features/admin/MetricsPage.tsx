@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAgentMetrics } from "@/queries/metrics";
 import type { AgentMetrics } from "@/types/agent";
 import { plural } from "@/utils";
+import { formatAbsoluteTimestamp, formatRelativeTick } from "./metricsTime";
 
 const SERIES_COLORS = [
   "#3b82f6",
@@ -41,13 +42,6 @@ function buildSeries(metrics: AgentMetrics[], field: MetricField) {
   );
 }
 
-function formatTick(value: string) {
-  return new Date(value).toLocaleTimeString([], {
-    minute: "2-digit",
-    second: "2-digit",
-  });
-}
-
 function UtilizationChart({
   title,
   metrics,
@@ -58,6 +52,9 @@ function UtilizationChart({
   field: MetricField;
 }) {
   const data = buildSeries(metrics, field);
+  // Anchor "time ago" labels to the most recent sample in the window. With no
+  // data there are no ticks to format, so the fallback value is never read.
+  const refMs = data.length ? Date.parse(String(data[data.length - 1].t)) : 0;
   return (
     <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4">
       <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-text-secondary">
@@ -72,7 +69,7 @@ function UtilizationChart({
             />
             <XAxis
               dataKey="t"
-              tickFormatter={formatTick}
+              tickFormatter={(v) => formatRelativeTick(String(v), refMs)}
               tick={{ fontSize: 11, fill: "var(--text-tertiary)" }}
               minTickGap={40}
             />
@@ -83,7 +80,7 @@ function UtilizationChart({
               width={44}
             />
             <Tooltip
-              labelFormatter={(label) => formatTick(String(label))}
+              labelFormatter={(label) => formatAbsoluteTimestamp(String(label))}
               formatter={(value) => `${value}%`}
             />
             {metrics.map((agent, i) => (

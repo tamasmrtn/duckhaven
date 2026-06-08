@@ -98,6 +98,30 @@ describe('AgentsPage', () => {
     expect(screen.getByLabelText('Copy compose snippet')).toBeInTheDocument()
   })
 
+  it('bakes a typed display name into the snippet as AGENT_NAME', async () => {
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: AGENTS_ROUTE })
+    await user.click(await screen.findByRole('button', { name: /generate bootstrap/i }))
+    await user.type(
+      screen.getByLabelText(/display name/i),
+      'analytics-prod-1',
+    )
+    await user.click(await screen.findByRole('button', { name: /generate snippet/i }))
+
+    const snippet = await screen.findByTestId('agent-compose-snippet')
+    expect(snippet.textContent).toContain('AGENT_NAME: analytics-prod-1')
+  })
+
+  it('omits AGENT_NAME when no display name is given', async () => {
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: AGENTS_ROUTE })
+    await user.click(await screen.findByRole('button', { name: /generate bootstrap/i }))
+    await user.click(await screen.findByRole('button', { name: /generate snippet/i }))
+
+    const snippet = await screen.findByTestId('agent-compose-snippet')
+    expect(snippet.textContent).not.toContain('AGENT_NAME')
+  })
+
   it('renders the snippet with a readable (theme-independent) code text color', async () => {
     const user = userEvent.setup()
     renderWithProviders({ initialRoute: AGENTS_ROUTE })

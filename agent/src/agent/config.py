@@ -6,6 +6,9 @@ class Settings(BaseSettings):
 
     control_plane_url: str = "ws://localhost:8000/agents/connect"
     bootstrap_token: str = ""
+    # Operator-assigned display name, set once at first registration. Empty =>
+    # falls back to the host name. Ignored on reconnect (name is bound at signup).
+    agent_name: str = ""
     # Apache Polaris (Iceberg REST catalog) the agent's DuckDB ATTACHes per
     # query. DuckDB performs the OAuth2 client-credentials exchange itself using
     # these; storage creds are then vended by Polaris on attach. Dev defaults

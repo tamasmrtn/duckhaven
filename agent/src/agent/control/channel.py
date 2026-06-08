@@ -161,7 +161,7 @@ async def run_control_channel(
                     type=FrameType.AUTH,
                     payload={
                         "token": auth_token,
-                        "name": platform.node(),
+                        "name": settings.agent_name or platform.node(),
                         # Where the control plane fetches result Parquet. The host
                         # is the socket peer address, observed by the API on accept.
                         "result_port": settings.results_http_port,

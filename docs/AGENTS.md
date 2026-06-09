@@ -31,7 +31,10 @@ The agent image pre-installs these DuckDB extensions at build time:
 | `azure` | ADLS Gen 2 storage backends |
 | `iceberg` | Apache Iceberg reads/writes + Polaris REST catalog attach |
 
-The agent advertises its loaded extensions to the control plane on connect. The frontend engine picker shows which backends each agent can serve. For example, an agent without the `azure` extension cannot execute queries against ADLS workspaces.
+The agent advertises its loaded extensions to the control plane on connect. The
+frontend engine picker shows which backends each agent can serve. For example,
+an agent without the `azure` extension cannot execute queries against ADLS
+workspaces.
 
 ## Running Without Docker
 
@@ -55,6 +58,7 @@ Ensure DuckDB ≥1.5 is installed and the extensions above are available.
 ## Multiple Agents
 
 You can run multiple agents on the same host or different hosts. Each agent:
+
 - Needs its own `RESULTS_DIR` (or will overwrite another agent's results).
 - Needs its own `BOOTSTRAP_TOKEN` (each token is single-use).
 - Should have sufficient memory for its `MEMORY_LIMIT_BYTES` plus OS overhead.

@@ -137,7 +137,9 @@ coverage if anyone ever uses non-ASCII column names.
 | `text-xl` | 24 | Workspace switcher header, empty-state titles |
 | `text-2xl` | 32 | Login screen, onboarding only |
 
-Body line-height 1.5. Code line-height 1.6. Tabular figures (`font-variant-numeric: tabular-nums`) on every numeric column — rows, durations, byte counts.
+Body line-height 1.5. Code line-height 1.6. Tabular figures
+(`font-variant-numeric: tabular-nums`) on every numeric column — rows,
+durations, byte counts.
 
 ### 2.3 Spacing & Sizing
 
@@ -201,11 +203,11 @@ disappear on `#0B0F19`).
   body text.
 - **Never emoji**, anywhere — including empty states and toasts.
 - Two custom SVGs we maintain in-repo:
-  - **DuckHaven mark** — a duck silhouette nested inside a rounded
-    junction-point shape (a nod to DuckDB's railroad-diagram motif and to
-    DuckHaven being a "haven" — a port of call for a duck).
-  - **Storage backend glyphs** — object storage (database), S3 (object cube),
-    ADLS (cloud), each 20 px, single-color, currentColor.
+   - **DuckHaven mark** — a duck silhouette nested inside a rounded
+     junction-point shape (a nod to DuckDB's railroad-diagram motif and to
+     DuckHaven being a "haven" — a port of call for a duck).
+   - **Storage backend glyphs** — object storage (database), S3 (object cube),
+     ADLS (cloud), each 20 px, single-color, currentColor.
 
 ### 2.6 Motion
 
@@ -305,6 +307,7 @@ against the shadcn/ui primitives.
 ```
 
 Notes:
+
 - **Three vertical panes**, draggable dividers: catalog (240–360 px),
   editor + results (the rest, with horizontal divider between them).
 - **Tab strip** holds open worksheets. Dot = unsaved. ⋮ menu per tab:
@@ -386,6 +389,7 @@ sample rows, or metadata.
 ```
 
 Notes:
+
 - **Breadcrumb is clickable** all the way up. ⌘-click to open in a new tab.
 - **No edit-schema UI in MVP** — DuckDB's UC extension can't ALTER (D8).
   The pencil icon top-right opens "Rename / Drop", that's it.
@@ -437,6 +441,7 @@ It's a list with one drawer-style detail panel.
 ```
 
 Notes:
+
 - **Bootstrap token modal** shows the one-time token with a copy-to-
   clipboard button and a clear "this is the only time we'll show it"
   warning. The token field is `JetBrains Mono`, 14 px, no obscuring — at
@@ -460,6 +465,7 @@ A flat table; backends are the second-most-edited admin object.
 ```
 
 Notes:
+
 - "In use" is non-zero → delete is disabled with a tooltip listing the
   workspaces.
 - "Register backend" is a 3-step wizard: kind → URI → UC credential
@@ -563,13 +569,13 @@ destructive actions).
 - Every interactive element has a 2 px `--brand-slate-blue` focus ring
   with a 2 px offset. The ring never collides with adjacent elements.
 - **Global shortcuts**:
-  - `⌘K` / `Ctrl+K`: command palette
-  - `⌘.` / `Ctrl+.`: workspace switcher
-  - `⌘↵` / `Ctrl+↵`: Run query
-  - `⌘S` / `Ctrl+S`: Save worksheet (no autosave — the editor isn't a
-    notebook; we don't want surprise persistence of half-typed SQL)
-  - `⌘W` / `Ctrl+W`: Close current tab (with unsaved-changes guard)
-  - `Esc`: dismiss modal / cancel running query (with confirm if >1 s)
+   - `⌘K` / `Ctrl+K`: command palette
+   - `⌘.` / `Ctrl+.`: workspace switcher
+   - `⌘↵` / `Ctrl+↵`: Run query
+   - `⌘S` / `Ctrl+S`: Save worksheet (no autosave — the editor isn't a
+     notebook; we don't want surprise persistence of half-typed SQL)
+   - `⌘W` / `Ctrl+W`: Close current tab (with unsaved-changes guard)
+   - `Esc`: dismiss modal / cancel running query (with confirm if >1 s)
 - Tab order matches visual order. Tree rows use ↑↓ for navigation, → / ←
   for expand/collapse, `Enter` for "open in active worksheet", `⌘Enter`
   for "open in new tab".

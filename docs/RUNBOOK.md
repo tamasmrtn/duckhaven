@@ -15,9 +15,11 @@ directly on the host.
    `SECRET_KEY` are generated on first boot and persisted to the `secrets`
    docker volume. Set values in `.env` only if you need to override them
    (e.g. pinning a release tag):
+
    ```sh
    DUCKHAVEN_IMAGE_TAG=v1.2.3
    ```
+
    Images are published to `ghcr.io/tamasmrtn/duckhaven-{api,agent}` by
    `.github/workflows/build.yml`: `:latest` on every main push, `:v1.2.3` /
    `:v1.2` / `:v1` on git tags. Built for `linux/amd64` and `linux/arm64`.
@@ -42,6 +44,7 @@ For **each** agent host:
    `SESSION_COOKIE=<cookie> scripts/gen-token.sh`, mint a bootstrap token
    (single-use, 24 h).
 2. On the agent host, build/pull the agent image and set its `.env`:
+
    ```sh
    CONTROL_PLANE_URL=ws://<control-plane-tailscale>:8000/agents/connect
    BOOTSTRAP_TOKEN=<token-from-step-1>
@@ -50,6 +53,7 @@ For **each** agent host:
    MAX_TIMEOUT_S=600
    RESULT_RETENTION_HOURS=24
    ```
+
 3. Start the agent (`python -m agent.main`). It exchanges the bootstrap token
    for a long-lived `agent_session` credential, advertises its capabilities,
    and holds the WebSocket open.

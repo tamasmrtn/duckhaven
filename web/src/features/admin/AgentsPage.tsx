@@ -25,6 +25,8 @@ import {
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   useAdminAgents,
   useBootstrapAgent,
@@ -33,7 +35,7 @@ import {
 import type { Agent, AgentStatus, BootstrapToken } from "@/types/agent";
 import { cn, plural } from "@/utils";
 
-function buildComposeSnippet(token: BootstrapToken): string {
+function buildComposeSnippet(token: BootstrapToken, name?: string): string {
   return [
     "services:",
     "  duckhaven-agent:",
@@ -42,6 +44,7 @@ function buildComposeSnippet(token: BootstrapToken): string {
     "    environment:",
     `      CONTROL_PLANE_URL: ${token.control_plane_url}`,
     `      BOOTSTRAP_TOKEN: ${token.token}`,
+    ...(name ? [`      AGENT_NAME: ${name}`] : []),
     "      # Bind the agent's result server to all interfaces so the control",
     "      # plane can fetch query results back across the host boundary.",
     "      RESULTS_HTTP_HOST: 0.0.0.0",
@@ -179,6 +182,7 @@ interface BootstrapModalProps {
 function BootstrapModal({ open, onClose }: BootstrapModalProps) {
   const bootstrap = useBootstrapAgent();
   const [token, setToken] = useState<BootstrapToken | null>(null);
+  const [name, setName] = useState("");
   const [copied, setCopied] = useState(false);
 
   function handleGenerate() {
@@ -189,13 +193,14 @@ function BootstrapModal({ open, onClose }: BootstrapModalProps) {
 
   function handleCopy() {
     if (!token) return;
-    void navigator.clipboard.writeText(buildComposeSnippet(token));
+    void navigator.clipboard.writeText(buildComposeSnippet(token, name));
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
 
   function handleClose() {
     setToken(null);
+    setName("");
     setCopied(false);
     onClose();
   }
@@ -216,6 +221,21 @@ function BootstrapModal({ open, onClose }: BootstrapModalProps) {
               Generate a one-time bootstrap token and a ready-to-paste compose
               snippet for a new agent host. Token is valid for 24 hours.
             </p>
+            <div className="space-y-1.5">
+              <Label htmlFor="agent-display-name">
+                Display name (optional)
+              </Label>
+              <Input
+                id="agent-display-name"
+                placeholder="e.g. analytics-prod-1"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+              <p className="text-2xs text-text-tertiary">
+                Shown in charts and lists. Defaults to the host name if left
+                blank, and cannot be changed after the agent registers.
+              </p>
+            </div>
             <Button
               onClick={handleGenerate}
               disabled={bootstrap.isPending}
@@ -245,7 +265,7 @@ function BootstrapModal({ open, onClose }: BootstrapModalProps) {
                 className="overflow-x-auto rounded-md border border-[var(--border-subtle)] bg-[var(--bg-code)] p-3 font-mono text-xs text-[var(--text-code)]"
                 data-testid="agent-compose-snippet"
               >
-                {buildComposeSnippet(token)}
+                {buildComposeSnippet(token, name)}
               </pre>
               <Button
                 variant="ghost"

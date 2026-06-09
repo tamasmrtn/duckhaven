@@ -30,7 +30,7 @@ if the compose project isn't named `deploy`.)
 
 ## Restore
 
-### Postgres
+### Postgres (restore)
 
 Bring the stack up empty, then load the dump:
 
@@ -40,7 +40,7 @@ gunzip -c duckhaven-2026-03-05.sql.gz | docker compose exec -T postgres psql -U 
 docker compose up -d
 ```
 
-### Secrets
+### Secrets (restore)
 
 ```bash
 docker volume create deploy_secrets

@@ -167,6 +167,7 @@ test: add agent capability advertisement tests
 Max 72 characters in the subject line. No trailing period.
 
 Branch prefixes:
+
 - `feat/` — new feature
 - `fix/` — bug fix
 - `chore/` — maintenance, deps, config

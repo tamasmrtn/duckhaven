@@ -9,6 +9,7 @@ Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-s
 **Don't assume. Don't hide confusion. Surface tradeoffs.**
 
 Before implementing:
+
 - State your assumptions explicitly. If uncertain, ask.
 - If multiple interpretations exist, present them - don't pick silently.
 - If a simpler approach exists, say so. Push back when warranted.
@@ -31,12 +32,14 @@ Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, sim
 **Touch only what you must. Clean up only your own mess.**
 
 When editing existing code:
+
 - Don't "improve" adjacent code, comments, or formatting.
 - Don't refactor things that aren't broken.
 - Match existing style, even if you'd do it differently.
 - If you notice unrelated dead code, mention it - don't delete it.
 
 When your changes create orphans:
+
 - Remove imports/variables/functions that YOUR changes made unused.
 - Don't remove pre-existing dead code unless asked.
 
@@ -47,11 +50,13 @@ The test: Every changed line should trace directly to the user's request.
 **Define success criteria. Loop until verified.**
 
 Transform tasks into verifiable goals:
+
 - "Add validation" → "Write tests for invalid inputs, then make them pass"
 - "Fix the bug" → "Write a test that reproduces it, then make it pass"
 - "Refactor X" → "Ensure tests pass before and after"
 
 For multi-step tasks, state a brief plan:
+
 ```
 1. [Step] → verify: [check]
 2. [Step] → verify: [check]
@@ -69,12 +74,12 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 - Never commit directly to `main`.
 - Create a branch before any work begins, named with a type prefix:
-  - `feat/` — new feature
-  - `fix/` — bug fix
-  - `chore/` — maintenance, deps, config, tooling
-  - `docs/` — documentation only
-  - `refactor/` — behaviour-preserving restructure
-  - `test/` — test additions or corrections
+   - `feat/` — new feature
+   - `fix/` — bug fix
+   - `chore/` — maintenance, deps, config, tooling
+   - `docs/` — documentation only
+   - `refactor/` — behaviour-preserving restructure
+   - `test/` — test additions or corrections
 - Branch slug: lowercase, hyphen-separated, 3–5 words. Example: `feat/agent-capability-advertisement`.
 
 ### Committing
@@ -82,11 +87,11 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - Group changed files into **logical units** and commit each unit separately. Do not dump all changes into one commit.
 - Stage specific files by name (`git add src/foo.py`), never `git add .` or `git add -A`.
 - Commit message rules:
-  - Start with a capital letter.
-  - Imperative mood: "Add validation" not "Added validation".
-  - Max 72 characters, no trailing period.
-  - No `Co-authored-by` trailers. No AI attribution of any kind.
-  - Body (if needed): blank line after subject, wrapped at 72 chars.
+   - Start with a capital letter.
+   - Imperative mood: "Add validation" not "Added validation".
+   - Max 72 characters, no trailing period.
+   - No `Co-authored-by` trailers. No AI attribution of any kind.
+   - Body (if needed): blank line after subject, wrapped at 72 chars.
 - Do not commit debug statements, commented-out code, or secrets.
 
 ### Safety
@@ -122,12 +127,14 @@ EOF
 **Every feature or fix requires tests. Write them as part of the implementation, not after.**
 
 For every plan involving a code change:
+
 - Add or update tests covering the new or changed behavior.
 - Frontend (`web/`): add tests under `web/tests/` using Vitest + React Testing Library + MSW.
 - Python API: add tests under `api/tests/` using pytest.
 - Python agent: add tests under `agent/tests/` using pytest.
 
 Test scope by change type:
+
 - New utility/pure function → unit test inputs, outputs, and edge cases.
 - New component → render output and user interactions.
 - New query/hook → use `renderHook` + MSW handler override.
@@ -140,10 +147,13 @@ N. Run tests and pre-commit → verify: make test && pre-commit run --all-files
 ```
 
 If only one layer changed, scope the test command:
+
 - `make test-web` — frontend only
 - `make test-api` — Python API only
 - `make test-agent` — Python agent only
 
 ---
 
-**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+**These guidelines are working if:** fewer unnecessary changes in diffs, fewer
+rewrites due to overcomplication, and clarifying questions come before
+implementation rather than after mistakes.

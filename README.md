@@ -4,17 +4,29 @@
 
 ![Worksheet UI](docs/images/worksheet-light.png)
 
-Your team loves DuckDB, but sharing `.duckdb` files across Slack is chaos. You want the worksheet experience of Databricks or Snowflake without the enterprise gravity, and MotherDuck-style collaboration without the cloud lock-in.
+Your team loves DuckDB, but sharing `.duckdb` files across Slack is chaos. You
+want the worksheet experience of Databricks or Snowflake without the enterprise
+gravity, and MotherDuck-style collaboration without the cloud lock-in.
 
-DuckHaven is a self-hosted analytics workspace that lets teams write, share, and govern SQL queries over DuckDB. It combines browser-based worksheets with Apache Polaris governance — lightweight enough for a homelab, serious enough for a team. No cloud warehouse lock-in, no Kubernetes, no opaque billing, no platform team required.
+DuckHaven is a self-hosted analytics workspace that lets teams write, share, and
+govern SQL queries over DuckDB. It combines browser-based worksheets with Apache
+Polaris governance — lightweight enough for a homelab, serious enough for a team.
+No cloud warehouse lock-in, no Kubernetes, no opaque billing, no platform team
+required.
 
 ## Alternatives
 
-DuckHaven is not the only way to run SQL over DuckDB. Pick the tool that fits your constraints:
+DuckHaven is not the only way to run SQL over DuckDB. Pick the tool that fits
+your constraints:
 
-- **[MotherDuck](https://motherduck.com/)** is managed DuckDB in the cloud, with collaboration and sharing built in. Use it when you want zero operational overhead and are comfortable with a SaaS holding your data.
-- **[Databricks](https://www.databricks.com/)** is the enterprise lakehouse — Spark, notebooks, and Unity Catalog Enterprise. Use it when you have a platform team, a Kubernetes budget, and workloads that outgrow a single box.
-- **Ad hoc DuckDB** is a `.duckdb` file and a CLI. Use it for solo, throwaway analysis where collaboration, query history, and governance don't matter.
+- **[MotherDuck](https://motherduck.com/)** is managed DuckDB in the cloud, with
+  collaboration and sharing built in. Use it when you want zero operational
+  overhead and are comfortable with a SaaS holding your data.
+- **[Databricks](https://www.databricks.com/)** is the enterprise lakehouse —
+  Spark, notebooks, and Unity Catalog Enterprise. Use it when you have a platform
+  team, a Kubernetes budget, and workloads that outgrow a single box.
+- **Ad hoc DuckDB** is a `.duckdb` file and a CLI. Use it for solo, throwaway
+  analysis where collaboration, query history, and governance don't matter.
 
 | | DuckHaven | MotherDuck | Databricks | Ad hoc DuckDB |
 |---|---|---|---|---|
@@ -25,14 +37,21 @@ DuckHaven is not the only way to run SQL over DuckDB. Pick the tool that fits yo
 | **Complexity** | Docker Compose | Zero setup | Kubernetes + platform team | Scripts |
 | **Cost model** | Free (self-hosted) | Per-seat SaaS | Enterprise contract | Free |
 
-**Use DuckHaven instead when** you run a homelab or a small team and want collaborative, governed SQL over DuckDB on your own infrastructure — browser worksheets, a shared catalog, per-workspace permissions, and a full audit trail — with data sovereignty, network privacy, and no SaaS lock-in.
+**Use DuckHaven instead when** you run a homelab or a small team and want
+collaborative, governed SQL over DuckDB on your own infrastructure — browser
+worksheets, a shared catalog, per-workspace permissions, and a full audit
+trail — with data sovereignty, network privacy, and no SaaS lock-in.
 
 ## Features
 
-- **Browser-Based Worksheets** — Monaco SQL editor with tabs, results grid, and CSV export. Write queries together without emailing SQL snippets.
-- **Shared Catalog** — Browse schemas and tables with sample rows. Every table is Iceberg-native with Catalog Commits ON.
-- **Governed Workspaces** — Per-workspace permissions, Polaris catalog integration, and a full audit trail of who ran what.
-- **Transparent Compute** — You pick the DuckDB agent per query. No opaque optimizer, no surprise costs, no hidden resource allocation.
+- **Browser-Based Worksheets** — Monaco SQL editor with tabs, results grid, and
+  CSV export. Write queries together without emailing SQL snippets.
+- **Shared Catalog** — Browse schemas and tables with sample rows. Every table
+  is Iceberg-native with Catalog Commits ON.
+- **Governed Workspaces** — Per-workspace permissions, Polaris catalog
+  integration, and a full audit trail of who ran what.
+- **Transparent Compute** — You pick the DuckDB agent per query. No opaque
+  optimizer, no surprise costs, no hidden resource allocation.
 - **Self-Hosted** — Docker Compose on your network. Your data never leaves your infrastructure.
 - **Short-Lived Credentials** — Polaris vends temporary storage credentials per query. No long-lived secrets on agents.
 
@@ -58,7 +77,9 @@ Register agents, view capabilities, and generate bootstrap tokens from the admin
 
 ## Architecture
 
-DuckHaven separates control from compute. The control plane manages users, workspaces, and queries. DuckDB agents connect via WebSocket to execute SQL and return results.
+DuckHaven separates control from compute. The control plane manages users,
+workspaces, and queries. DuckDB agents connect via WebSocket to execute SQL and
+return results.
 
 ```mermaid
 flowchart TB
@@ -78,10 +99,15 @@ flowchart TB
 - Users pick the executing agent per worksheet — transparent compute, no opaque optimizer.
 - Every workspace is bound to exactly one storage backend: bundled object storage (MinIO), S3, or Azure.
 - Apache Polaris provides table governance and vends short-lived storage credentials per query.
-- SQL is allowlisted to data statements (`SELECT`/`INSERT`/`UPDATE`/`DELETE`/`MERGE`) and catalog DDL (`CREATE`/`ALTER`/`DROP`), executed on the agent against the Polaris catalog; sandbox escapes (`ATTACH`, `COPY`, `LOAD`, `SET`, …) are rejected.
-- The API is exposed directly on port 8000 over a private network (Tailscale recommended); there is no public ingress.
+- SQL is allowlisted to data statements
+  (`SELECT`/`INSERT`/`UPDATE`/`DELETE`/`MERGE`) and catalog DDL
+  (`CREATE`/`ALTER`/`DROP`), executed on the agent against the Polaris catalog;
+  sandbox escapes (`ATTACH`, `COPY`, `LOAD`, `SET`, …) are rejected.
+- The API is exposed directly on port 8000 over a private network (Tailscale
+  recommended); there is no public ingress.
 
-For the full architecture, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For the UI design system, see [docs/UI-DESIGN.md](docs/UI-DESIGN.md).
+For the full architecture, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For
+the UI design system, see [docs/UI-DESIGN.md](docs/UI-DESIGN.md).
 
 ## Tech Stack
 
@@ -121,19 +147,31 @@ inside the api container, the first admin is created from the browser.
 - [Add an agent](docs/self-hosting/add-agent.md)
 
 For local development (running the API and Vite dev server against a
-compose-managed Postgres) see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+compose-managed Postgres) see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). For
+cutting a new release see [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Roadmap
 
-- **Shipped** — SQL worksheets, catalog browser, query dispatch to agents, Polaris/Iceberg catalog integration with native table metadata, workspace permissions, saved queries, audit log, storage backend registry, agent bootstrap tokens, name-only workspace creation, result size reporting, result retention sweep, multi-agent dispatch, live agent CPU/memory utilization, published agent and API images (GHCR), server-side backend compatibility checks.
+- **Shipped** — SQL worksheets, catalog browser, query dispatch to agents,
+  Polaris/Iceberg catalog integration with native table metadata, workspace
+  permissions, saved queries, audit log, storage backend registry, agent
+  bootstrap tokens, name-only workspace creation, result size reporting, result
+  retention sweep, multi-agent dispatch, live agent CPU/memory utilization,
+  published agent and API images (GHCR), server-side backend compatibility
+  checks.
 - **In progress** — External cloud-backend (S3 / ADLS Gen 2) credential wiring.
-- **Future** — Notebook UI, heterogeneous engines (Spark, Trino, Polars), per-table backend override, Polaris RBAC permission mirroring, control-plane HA, Prometheus metrics + Grafana dashboards, off-box result durability / DR automation.
+- **Future** — Notebook UI, heterogeneous engines (Spark, Trino, Polars),
+  per-table backend override, Polaris RBAC permission mirroring, control-plane
+  HA, Prometheus metrics + Grafana dashboards, off-box result durability / DR
+  automation.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §13 for the gap tracker.
 
 ## Contributing
 
-Conventional commits, branch prefixes (`feat/`, `fix/`, `chore/`, `docs/`, `refactor/`, `test/`), and tests for every change. See [CLAUDE.md](CLAUDE.md) for the full development guidelines.
+Conventional commits, branch prefixes (`feat/`, `fix/`, `chore/`, `docs/`,
+`refactor/`, `test/`), and tests for every change. See [CLAUDE.md](CLAUDE.md)
+for the full development guidelines.
 
 - Frontend: Vitest + React Testing Library + MSW
 - Backend: pytest + pytest-asyncio (API ≥80% coverage, agent ≥75% coverage)
@@ -163,7 +201,10 @@ Repository layout:
 
 ## Inspiration
 
-DuckHaven's worksheet experience draws on MotherDuck; it stands on [DuckDB](https://duckdb.org/) for compute and [Apache Polaris](https://polaris.apache.org/) for governance and credential vending.
+DuckHaven's worksheet experience draws on MotherDuck; it stands on
+[DuckDB](https://duckdb.org/) for compute and
+[Apache Polaris](https://polaris.apache.org/) for governance and credential
+vending.
 
 ## License
 

@@ -202,10 +202,10 @@ WebSocket. A FastAPI app backed by async SQLAlchemy + Postgres.
 surface:
 
 - An **outer** ASGI app mounts three things:
-  - the **agent WebSocket** at `/agents/connect` (root level — agents dial here),
-  - the **REST API** sub-app under **`/api`** (shares an origin with the SPA),
-  - the **built SPA** as static files at `/` (only present in the image; a
-    catch-all serves `index.html` so client-side routes deep-link).
+   - the **agent WebSocket** at `/agents/connect` (root level — agents dial here),
+   - the **REST API** sub-app under **`/api`** (shares an origin with the SPA),
+   - the **built SPA** as static files at `/` (only present in the image; a
+     catch-all serves `index.html` so client-side routes deep-link).
 - The REST sub-app owns a lifespan that constructs the shared `PolarisClient`
   (held on `app.state`).
 

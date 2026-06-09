@@ -233,6 +233,78 @@ async def test_bootstrap_exchange(tmp_path, monkeypatch):
     assert received_caps[0].type == FrameType.AGENT_STATUS
 
 
+async def test_auth_frame_uses_configured_agent_name(tmp_path, monkeypatch):
+    """When AGENT_NAME is set, the agent advertises it as its display name."""
+    import agent.control.channel as ch_module
+
+    auth_names: list[str] = []
+
+    async def handler(ws):
+        raw = await ws.recv()
+        auth_names.append(Frame.model_validate_json(raw).payload["name"])
+        await ws.send(
+            Frame(
+                type=FrameType.AUTH_OK,
+                payload={"agent_id": str(uuid.uuid4()), "session_token": "tok"},
+            ).model_dump_json()
+        )
+        await ws.recv()  # capabilities
+        await asyncio.sleep(0.05)
+
+    async with websockets.serve(handler, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        monkeypatch.setattr(ch_module.settings, "control_plane_url", f"ws://127.0.0.1:{port}")
+        monkeypatch.setattr(ch_module.settings, "bootstrap_token", "tok-boot")
+        monkeypatch.setattr(ch_module.settings, "agent_name", "analytics-prod-1")
+
+        task = asyncio.create_task(ch_module.run_control_channel(results_dir=tmp_path))
+        await asyncio.sleep(0.2)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError, Exception:
+            pass
+
+    assert auth_names[0] == "analytics-prod-1"
+
+
+async def test_auth_frame_falls_back_to_hostname(tmp_path, monkeypatch):
+    """With no AGENT_NAME, the agent advertises its host name (platform.node)."""
+    import platform
+
+    import agent.control.channel as ch_module
+
+    auth_names: list[str] = []
+
+    async def handler(ws):
+        raw = await ws.recv()
+        auth_names.append(Frame.model_validate_json(raw).payload["name"])
+        await ws.send(
+            Frame(
+                type=FrameType.AUTH_OK,
+                payload={"agent_id": str(uuid.uuid4()), "session_token": "tok"},
+            ).model_dump_json()
+        )
+        await ws.recv()  # capabilities
+        await asyncio.sleep(0.05)
+
+    async with websockets.serve(handler, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        monkeypatch.setattr(ch_module.settings, "control_plane_url", f"ws://127.0.0.1:{port}")
+        monkeypatch.setattr(ch_module.settings, "bootstrap_token", "tok-boot")
+        monkeypatch.setattr(ch_module.settings, "agent_name", "")
+
+        task = asyncio.create_task(ch_module.run_control_channel(results_dir=tmp_path))
+        await asyncio.sleep(0.2)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError, Exception:
+            pass
+
+    assert auth_names[0] == platform.node()
+
+
 async def test_auth_ok_populates_token_holder(tmp_path, monkeypatch):
     """The session token from auth_ok lands in the shared TokenHolder so the
     result server can authenticate control-plane range reads."""

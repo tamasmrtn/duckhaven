@@ -172,6 +172,7 @@ services:
     environment:
       CONTROL_PLANE_URL: ws://api:8000/agents/connect
       BOOTSTRAP_TOKEN: ${AGENT_BOOTSTRAP_TOKEN:-dh_boot_localdev_seed}
+      AGENT_NAME: TestAgent-1
       POLARIS_BASE_URL: http://polaris:8181
       POLARIS_CLIENT_ID: ${POLARIS_CLIENT_ID:-root}
       POLARIS_CLIENT_SECRET: ${POLARIS_CLIENT_SECRET:-s3cr3t}

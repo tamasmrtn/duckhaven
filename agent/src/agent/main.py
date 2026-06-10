@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from pathlib import Path
 
 import uvicorn
@@ -11,6 +12,21 @@ from agent.results.retention import sweep_loop
 from agent.results.server import make_results_app
 
 logging.basicConfig(level=logging.INFO)
+
+
+def _use_writable_workdir(results_dir: Path) -> None:
+    """Run from a working directory the runtime user can write to.
+
+    DuckDB creates some files relative to the process working directory — most
+    notably the transient ``data`` staging directory an Iceberg write uses (e.g.
+    ``CREATE TABLE … AS SELECT``). The container's default cwd (``/app``) is
+    root-owned while the agent runs as a non-root user, so such writes fail with
+    ``IO Error: Failed to create directory "data": Permission denied``.
+    results_dir is owned by the runtime user, so use it as the working dir.
+    Queries run concurrently in a thread pool, so cwd is set once here at
+    startup rather than per query (cwd is process-global).
+    """
+    os.chdir(results_dir)
 
 
 async def _run_result_server(results_dir: Path, token_holder: TokenHolder) -> None:
@@ -28,6 +44,7 @@ async def _run_result_server(results_dir: Path, token_holder: TokenHolder) -> No
 async def main() -> None:
     results_dir = Path(settings.results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
+    _use_writable_workdir(results_dir)
     session_token_path = (
         Path(settings.session_token_path)
         if settings.session_token_path

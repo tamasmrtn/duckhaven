@@ -1,10 +1,19 @@
-import { useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { Editor, type OnMount, type BeforeMount } from "@monaco-editor/react";
 import { useIsDark } from "@/hooks/useIsDark";
+import { activeStatement } from "./statements";
+
+export interface SqlEditorHandle {
+  // The SQL to run for the current cursor/selection: the selected text if any,
+  // otherwise the single statement under the cursor.
+  getRunPayload: () => string;
+}
 
 interface SqlEditorProps {
   value: string;
   onChange: (value: string) => void;
+  // Invoked by the Ctrl/Cmd+Enter command with the run payload.
+  onRun?: (payload: string) => void;
   readOnly?: boolean;
 }
 
@@ -66,56 +75,89 @@ const DUCKHAVEN_LIGHT_THEME = {
   },
 };
 
-export function SqlEditor({ value, onChange, readOnly }: SqlEditorProps) {
-  const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
-  const isDark = useIsDark();
+export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
+  function SqlEditor({ value, onChange, onRun, readOnly }, ref) {
+    const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
+    const isDark = useIsDark();
 
-  const handleBeforeMount: BeforeMount = (monaco) => {
-    monaco.editor.defineTheme("duckhaven-dark", DUCKHAVEN_DARK_THEME);
-    monaco.editor.defineTheme("duckhaven-light", DUCKHAVEN_LIGHT_THEME);
-  };
+    // Monaco command callbacks are captured once at mount, so route onRun
+    // through a ref to always call the latest handler, not a stale closure.
+    const onRunRef = useRef(onRun);
+    useEffect(() => {
+      onRunRef.current = onRun;
+    }, [onRun]);
 
-  const handleMount: OnMount = (editor, monaco) => {
-    editorRef.current = editor;
+    // Reads the live editor: the selection if non-empty, else the single
+    // statement under the cursor. Falls back to `value` only before the model
+    // exists (never at runtime).
+    const computeRunPayload = (): string => {
+      const editor = editorRef.current;
+      const model = editor?.getModel();
+      if (!editor || !model) return value;
+      const selection = editor.getSelection();
+      const selected = selection ? model.getValueInRange(selection) : "";
+      if (selected.trim()) return selected;
+      const offset = model.getOffsetAt(
+        editor.getPosition() ?? { lineNumber: 1, column: 1 },
+      );
+      return activeStatement(model.getValue(), offset);
+    };
 
-    // Ctrl+S / Cmd+S: auto-format
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
-      void editor.getAction("editor.action.formatDocument")?.run();
-    });
-  };
+    useImperativeHandle(ref, () => ({ getRunPayload: computeRunPayload }));
 
-  return (
-    <Editor
-      height="100%"
-      defaultLanguage="sql"
-      value={value}
-      onChange={(v) => onChange(v ?? "")}
-      beforeMount={handleBeforeMount}
-      onMount={handleMount}
-      theme={isDark ? "duckhaven-dark" : "duckhaven-light"}
-      options={{
-        fontSize: 13,
-        fontFamily: '"JetBrains Mono", Menlo, monospace',
-        fontLigatures: true,
-        lineHeight: 20,
-        minimap: { enabled: false },
-        scrollBeyondLastLine: false,
-        wordWrap: "on",
-        tabSize: 2,
-        lineNumbers: "on",
-        glyphMargin: true,
-        folding: false,
-        readOnly,
-        automaticLayout: true,
-        suggest: { showKeywords: true },
-        quickSuggestions: true,
-        padding: { top: 12, bottom: 12 },
-      }}
-      loading={
-        <div className="flex h-full items-center justify-center bg-[var(--bg-canvas)] text-text-secondary text-sm">
-          Loading editor…
-        </div>
-      }
-    />
-  );
-}
+    const handleBeforeMount: BeforeMount = (monaco) => {
+      monaco.editor.defineTheme("duckhaven-dark", DUCKHAVEN_DARK_THEME);
+      monaco.editor.defineTheme("duckhaven-light", DUCKHAVEN_LIGHT_THEME);
+    };
+
+    const handleMount: OnMount = (editor, monaco) => {
+      editorRef.current = editor;
+
+      // Ctrl+S / Cmd+S: auto-format
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+        void editor.getAction("editor.action.formatDocument")?.run();
+      });
+
+      // Ctrl+Enter / Cmd+Enter: run. A distinct chord from plain Enter, so the
+      // suggestion widget (which consumes Enter) does not swallow it.
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
+        onRunRef.current?.(computeRunPayload());
+      });
+    };
+
+    return (
+      <Editor
+        height="100%"
+        defaultLanguage="sql"
+        value={value}
+        onChange={(v) => onChange(v ?? "")}
+        beforeMount={handleBeforeMount}
+        onMount={handleMount}
+        theme={isDark ? "duckhaven-dark" : "duckhaven-light"}
+        options={{
+          fontSize: 13,
+          fontFamily: '"JetBrains Mono", Menlo, monospace',
+          fontLigatures: true,
+          lineHeight: 20,
+          minimap: { enabled: false },
+          scrollBeyondLastLine: false,
+          wordWrap: "on",
+          tabSize: 2,
+          lineNumbers: "on",
+          glyphMargin: true,
+          folding: false,
+          readOnly,
+          automaticLayout: true,
+          suggest: { showKeywords: true },
+          quickSuggestions: true,
+          padding: { top: 12, bottom: 12 },
+        }}
+        loading={
+          <div className="flex h-full items-center justify-center bg-[var(--bg-canvas)] text-text-secondary text-sm">
+            Loading editor…
+          </div>
+        }
+      />
+    );
+  },
+);

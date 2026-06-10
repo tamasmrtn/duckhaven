@@ -181,6 +181,107 @@ describe('WorksheetPage run', () => {
 
     expect(await screen.findByText('scanning')).toBeInTheDocument()
   })
+
+  it('runs a multi-statement worksheet sequentially, one dispatch at a time', async () => {
+    // Seed a tab whose SQL spans two statements. Under the Monaco stub the
+    // editor handle returns the tab's value, so Run splits it and dispatches
+    // each statement in turn.
+    localStorage.setItem(
+      'dh-worksheets-acme-analytics',
+      JSON.stringify([
+        {
+          id: 'tab-1',
+          title: 'multi',
+          sql: 'CREATE TABLE t AS SELECT 1; SELECT 2',
+          dirty: false,
+        },
+      ]),
+    )
+    const dispatched: string[] = []
+    server.use(
+      http.post('/api/workspaces/:ws/queries', async ({ request }) => {
+        const body = (await request.json()) as { sql: string }
+        dispatched.push(body.sql)
+        return HttpResponse.json(
+          { id: `q-${dispatched.length}`, status: 'queued' },
+          { status: 202 },
+        )
+      }),
+      http.get('/api/queries/:id', ({ params }) =>
+        HttpResponse.json({
+          id: params.id,
+          workspace_id: 'ws-1',
+          agent_id: 'ag-1',
+          sql: 'x',
+          status: 'done',
+          row_count: 1,
+          duration_ms: 5,
+          error: null,
+          progress: null,
+          started_at: '2026-05-15T10:00:00Z',
+          finished_at: '2026-05-15T10:00:00.005Z',
+        }),
+      ),
+    )
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: WS_ROUTE })
+    const runBtn = await screen.findByRole('button', { name: /run query/i })
+
+    await user.click(runBtn)
+
+    await waitFor(() => expect(dispatched).toHaveLength(2))
+    // The first statement runs before the second is dispatched.
+    expect(dispatched).toEqual(['CREATE TABLE t AS SELECT 1', 'SELECT 2'])
+    expect(await screen.findByText(/statement 2\/2/i)).toBeInTheDocument()
+  })
+
+  it('halts the sequence when a statement does not complete', async () => {
+    localStorage.setItem(
+      'dh-worksheets-acme-analytics',
+      JSON.stringify([
+        {
+          id: 'tab-1',
+          title: 'multi',
+          sql: 'CREATE TABLE t AS SELECT 1; SELECT 2',
+          dirty: false,
+        },
+      ]),
+    )
+    let posts = 0
+    server.use(
+      http.post('/api/workspaces/:ws/queries', () => {
+        posts += 1
+        return HttpResponse.json(
+          { id: `q-${posts}`, status: 'queued' },
+          { status: 202 },
+        )
+      }),
+      http.get('/api/queries/:id', ({ params }) =>
+        HttpResponse.json({
+          id: params.id,
+          workspace_id: 'ws-1',
+          agent_id: 'ag-1',
+          sql: 'x',
+          status: 'failed',
+          row_count: null,
+          duration_ms: 3,
+          error: 'boom',
+          progress: null,
+          started_at: '2026-05-15T10:00:00Z',
+          finished_at: '2026-05-15T10:00:00.003Z',
+        }),
+      ),
+    )
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: WS_ROUTE })
+    const runBtn = await screen.findByRole('button', { name: /run query/i })
+
+    await user.click(runBtn)
+
+    // The first statement fails, so the second is never dispatched.
+    expect(await screen.findByText('boom')).toBeInTheDocument()
+    expect(posts).toBe(1)
+  })
 })
 
 describe('WorksheetPage active query persistence', () => {

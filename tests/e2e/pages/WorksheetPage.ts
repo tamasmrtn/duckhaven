@@ -29,7 +29,17 @@ export class WorksheetPage {
 
   /** Run a query and return the rendered result grid as a matrix of cell text. */
   async runAndReadRows(sql: string): Promise<string[][]> {
-    await this.run(sql);
+    await this.setSql(sql);
+    // Arm the rows-response wait before running so the grid is read only after
+    // the result page has actually been fetched (the control plane fetches the
+    // first row window from the agent), not the instant "done" appears.
+    const rowsFetched = this.page.waitForResponse(
+      (r) => /\/queries\/[^/]+\/rows/.test(r.url()) && r.request().method() === "GET",
+    );
+    await this.runButton.click();
+    await expect(this.page.getByText(/done \d+/).first()).toBeVisible({ timeout: 30_000 });
+    await rowsFetched;
+    await this.page.waitForTimeout(100); // let React commit the fetched rows
     return this.page.evaluate(() =>
       [...document.querySelectorAll("table tbody tr")].map((tr) =>
         [...tr.querySelectorAll("td")].map((td) =>
@@ -43,5 +53,28 @@ export class WorksheetPage {
     return this.page.evaluate(
       () => document.querySelectorAll("table tbody tr").length,
     );
+  }
+
+  /** Scroll the results grid to the bottom to trigger the next page fetch. */
+  async scrollResultsToBottom(): Promise<void> {
+    await this.page.evaluate(() => {
+      const el = [...document.querySelectorAll(".overflow-auto")].find((c) =>
+        c.querySelector("table"),
+      );
+      if (el) {
+        el.scrollTop = el.scrollHeight;
+        el.dispatchEvent(new Event("scroll", { bubbles: true }));
+      }
+    });
+  }
+
+  /** Scroll repeatedly until the grid has rendered `expected` rows (or stalls). */
+  async loadRowsUntil(expected: number, maxScrolls = 30): Promise<number> {
+    for (let i = 0; i < maxScrolls; i++) {
+      if ((await this.rowCount()) >= expected) break;
+      await this.scrollResultsToBottom();
+      await this.page.waitForTimeout(250);
+    }
+    return this.rowCount();
   }
 }

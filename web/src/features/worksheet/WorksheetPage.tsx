@@ -47,7 +47,9 @@ import { StatusPill } from "@/components/app/StatusPill";
 import { StorageLabel } from "@/components/app/StorageIcon";
 import { CatalogTree } from "./CatalogTree";
 import { takePendingSql } from "@/features/catalog/worksheetSql";
-import { SqlEditor } from "./SqlEditor";
+import { SqlEditor, type SqlEditorHandle } from "./SqlEditor";
+import { splitStatements } from "./statements";
+import { queriesApi } from "@/api/queries";
 import { ResultsTable } from "./ResultsTable";
 import { cn, formatBytes } from "@/utils";
 
@@ -186,6 +188,10 @@ export function WorksheetPage() {
   const [memoryLimit, setMemoryLimit] = useState(6);
   const [timeout, setTimeout_] = useState(10);
   const [dispatchError, setDispatchError] = useState<string | null>(null);
+  // Progress across a multi-statement run (selection spanning several `;`).
+  const [runSeq, setRunSeq] = useState<{ index: number; total: number } | null>(
+    null,
+  );
   const [saveOpen, setSaveOpen] = useState(false);
   const [saveName, setSaveName] = useState("");
   const [leftWidth, setLeftWidth] = useState(280);
@@ -195,8 +201,10 @@ export function WorksheetPage() {
 
   const isDraggingVert = useRef(false);
   const isDraggingHoriz = useRef(false);
-  // Synchronous re-entrancy guard for dispatch (see runQuery).
+  // Synchronous re-entrancy guard for dispatch (see runPayload).
   const runLock = useRef(false);
+  // Imperative handle to read the editor's current selection / cursor statement.
+  const editorRef = useRef<SqlEditorHandle>(null);
 
   const currentTab = tabs.find((t) => t.id === activeTab);
   const dispatchQuery = useDispatchQuery(ws);
@@ -252,23 +260,55 @@ export function WorksheetPage() {
     );
   }
 
-  async function runQuery() {
-    if (!currentTab?.sql.trim() || !resolvedAgentId) return;
+  // Run button: run the editor's selection, else the statement under the cursor.
+  function runQuery() {
+    void runPayload(
+      editorRef.current?.getRunPayload() ?? currentTab?.sql ?? "",
+    );
+  }
+
+  // Poll a query to a terminal status, mirroring useQuery_'s cadence. Used to
+  // serialize a multi-statement run so each statement finishes before the next.
+  async function waitForTerminal(id: string): Promise<string> {
+    for (;;) {
+      const q = await queriesApi.get(id);
+      if (q.status !== "queued" && q.status !== "running") return q.status;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+  }
+
+  // Dispatch the statements of `text` sequentially. A single statement (the
+  // cursor case) is one dispatch; a multi-statement selection runs each in turn,
+  // waiting for the previous to finish and stopping if one does not succeed.
+  async function runPayload(text: string) {
+    const statements = splitStatements(text);
+    if (statements.length === 0 || !resolvedAgentId) return;
     // A rapid double-click fires two click events in the same tick, before
     // React re-renders with dispatchQuery.isPending, so the reactive disabled
     // prop alone cannot stop the second dispatch. This ref lock is set
-    // synchronously and released only when the mutation settles.
+    // synchronously and held across the whole sequence.
     if (runLock.current) return;
     runLock.current = true;
     setActiveQueryId(null);
     setDispatchError(null);
+    const multi = statements.length > 1;
+    setRunSeq(null);
     try {
-      const result = await dispatchQuery.mutateAsync({
-        sql: currentTab.sql,
-        agentId: resolvedAgentId,
-        opts: { memory_limit: memoryLimit, timeout: timeout * 60 },
-      });
-      setActiveQueryId(result.id);
+      for (let i = 0; i < statements.length; i++) {
+        if (multi) setRunSeq({ index: i + 1, total: statements.length });
+        const result = await dispatchQuery.mutateAsync({
+          sql: statements[i],
+          agentId: resolvedAgentId,
+          opts: { memory_limit: memoryLimit, timeout: timeout * 60 },
+        });
+        setActiveQueryId(result.id);
+        // Wait for every statement but the last; abort the sequence if one
+        // does not complete cleanly. The last streams via the reactive hooks.
+        if (i < statements.length - 1) {
+          const status = await waitForTerminal(result.id);
+          if (status !== "done") break;
+        }
+      }
     } catch (err) {
       // A rejected dispatch (e.g. disallowed SQL → 422) never creates a query,
       // so surface its message here rather than relying on queryData.error.
@@ -547,7 +587,12 @@ export function WorksheetPage() {
             className="overflow-hidden shrink-0"
             style={{ height: `${editorHeight}%` }}
           >
-            <SqlEditor value={currentTab?.sql ?? ""} onChange={updateTabSql} />
+            <SqlEditor
+              ref={editorRef}
+              value={currentTab?.sql ?? ""}
+              onChange={updateTabSql}
+              onRun={runPayload}
+            />
           </div>
 
           {/* Vertical drag handle */}
@@ -570,6 +615,11 @@ export function WorksheetPage() {
                   role="alert"
                 >
                   {dispatchError}
+                </span>
+              )}
+              {runSeq && runSeq.total > 1 && (
+                <span className="text-xs text-text-secondary font-tabular">
+                  Statement {runSeq.index}/{runSeq.total}
                 </span>
               )}
               {queryData && (

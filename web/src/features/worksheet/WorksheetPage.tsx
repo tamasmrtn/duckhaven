@@ -203,10 +203,7 @@ export function WorksheetPage() {
   const cancelQuery = useCancelQuery();
   const saveQuery = useSaveQuery(ws);
   const { data: queryData } = useQuery_(activeQueryId);
-  const { data: rowsData, isLoading: rowsLoading } = useQueryRows(
-    activeQueryId,
-    queryData?.status === "done",
-  );
+  const queryRows = useQueryRows(activeQueryId, queryData?.status === "done");
 
   const firstHealthyAgent = agents.find((a) => a.status === "healthy");
   const resolvedAgentId = agentId || firstHealthyAgent?.id || "";
@@ -614,10 +611,15 @@ export function WorksheetPage() {
 
             <div className="flex-1 overflow-hidden">
               <ResultsTable
-                columns={rowsData?.columns ?? []}
-                rows={rowsData?.rows ?? []}
-                total={rowsData?.total ?? 0}
-                isLoading={rowsLoading && queryData?.status === "running"}
+                columns={queryRows.columns}
+                rows={queryRows.rows}
+                total={queryRows.total}
+                isLoading={
+                  queryRows.isLoading && queryData?.status === "running"
+                }
+                onLoadMore={queryRows.fetchNextPage}
+                hasMore={queryRows.hasNextPage}
+                isLoadingMore={queryRows.isFetchingNextPage}
               />
             </div>
           </div>

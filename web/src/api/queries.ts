@@ -19,7 +19,7 @@ export const queriesApi = {
 
   get: (id: string) => get<Query>(`/queries/${id}`),
 
-  rows: (id: string, cursor?: string, limit = 50) =>
+  rows: (id: string, cursor?: string, limit = 100) =>
     get<QueryRowsPage>(
       `/queries/${id}/rows?limit=${limit}${cursor ? `&cursor=${cursor}` : ""}`,
     ),

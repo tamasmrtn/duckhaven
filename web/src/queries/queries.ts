@@ -1,4 +1,9 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  useQuery,
+  useInfiniteQuery,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { queriesApi } from "@/api/queries";
 
 export function useQuery_(id: string | null) {
@@ -15,11 +20,24 @@ export function useQuery_(id: string | null) {
 }
 
 export function useQueryRows(id: string | null, enabled = true) {
-  return useQuery({
+  const query = useInfiniteQuery({
     queryKey: ["query", id, "rows"],
-    queryFn: () => queriesApi.rows(id!),
+    queryFn: ({ pageParam }) => queriesApi.rows(id!, pageParam),
     enabled: !!id && enabled,
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.cursor ?? undefined,
   });
+
+  const pages = query.data?.pages ?? [];
+  return {
+    columns: pages[0]?.columns ?? [],
+    rows: pages.flatMap((p) => p.rows),
+    total: pages[0]?.total ?? 0,
+    isLoading: query.isLoading,
+    fetchNextPage: query.fetchNextPage,
+    hasNextPage: query.hasNextPage,
+    isFetchingNextPage: query.isFetchingNextPage,
+  };
 }
 
 export function useDispatchQuery(ws: string) {

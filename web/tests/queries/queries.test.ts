@@ -1,10 +1,68 @@
 import { describe, it, expect, vi } from 'vitest'
-import { renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { server } from '@tests/mock/server'
 import { http, HttpResponse } from 'msw'
-import { useQuery_, useDispatchQuery, useSavedQueries, useSaveQuery } from '@/queries/queries'
+import {
+  useQuery_,
+  useQueryRows,
+  useDispatchQuery,
+  useSavedQueries,
+  useSaveQuery,
+} from '@/queries/queries'
 import { SAVED_QUERIES } from '@/mock/fixtures/queries'
 import { createWrapper } from '@tests/utils'
+
+describe('useQueryRows()', () => {
+  it('pages through results by following the cursor', async () => {
+    const { queryClient, wrapper } = createWrapper()
+    const { result } = renderHook(() => useQueryRows('q-1'), { wrapper })
+
+    // First page: 100 rows of a 120-row result, more available.
+    await waitFor(() => expect(result.current.rows.length).toBe(100))
+    expect(result.current.total).toBe(120)
+    expect(result.current.hasNextPage).toBe(true)
+    const firstPageRows = result.current.rows
+
+    // Fetching the next page accumulates rows rather than replacing them.
+    await act(async () => {
+      await result.current.fetchNextPage()
+    })
+    await waitFor(() => expect(result.current.rows.length).toBe(120))
+    expect(result.current.rows.slice(0, 100)).toEqual(firstPageRows)
+    expect(result.current.hasNextPage).toBe(false)
+
+    queryClient.clear()
+  })
+
+  it('requests the next page with the returned cursor', async () => {
+    const seen: (string | null)[] = []
+    server.use(
+      http.get('/api/queries/q-1/rows', ({ request }) => {
+        const url = new URL(request.url)
+        seen.push(url.searchParams.get('cursor'))
+        const offset = parseInt(url.searchParams.get('cursor') ?? '0')
+        const rows = Array.from({ length: 50 }, (_, i) => ({ n: offset + i }))
+        return HttpResponse.json({
+          rows,
+          columns: ['n'],
+          cursor: offset + 50 < 200 ? String(offset + 50) : null,
+          total: 200,
+        })
+      }),
+    )
+
+    const { queryClient, wrapper } = createWrapper()
+    const { result } = renderHook(() => useQueryRows('q-1'), { wrapper })
+    await waitFor(() => expect(result.current.rows.length).toBe(50))
+    await act(async () => {
+      await result.current.fetchNextPage()
+    })
+    await waitFor(() => expect(result.current.rows.length).toBe(100))
+
+    expect(seen).toEqual([null, '50'])
+    queryClient.clear()
+  })
+})
 
 describe('useQuery_()', () => {
   it('returns null data when id is null', () => {

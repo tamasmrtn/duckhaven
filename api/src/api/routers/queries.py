@@ -1,5 +1,6 @@
 import uuid
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi import Query as QueryParam
 from sqlalchemy import or_, select
@@ -170,12 +171,27 @@ async def get_query_rows(
     token = await query_service.agent_session_token(db, query.agent_id)
 
     offset = int(cursor) if cursor and cursor.isdigit() else 0
-    upstream = await query_service.proxy_rows(agent, query, token=token)
+    try:
+        upstream = await query_service.proxy_rows(
+            agent, query, row_offset=offset, row_limit=limit, token=token
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Agent result endpoint unavailable",
+        ) from exc
+    if upstream.status_code == 404:
+        # The result file was swept by retention while the user was paging.
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="Result no longer available")
     if upstream.status_code != 200:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to fetch results from agent"
         )
-    rows, columns = query_service.decode_parquet_page(upstream.content, limit, offset)
+    # When the agent sliced the window (X-DH-Row-Offset present) the body already
+    # starts at the requested rows, so decode at offset 0. An older agent that
+    # ignored the params returns the whole file — fall back to decoding at offset.
+    decode_offset = 0 if "X-DH-Row-Offset" in upstream.headers else offset
+    rows, columns = query_service.decode_parquet_page(upstream.content, limit, decode_offset)
     total = query.row_count or 0
     next_offset = offset + limit
     next_cursor = str(next_offset) if next_offset < total else None

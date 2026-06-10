@@ -575,15 +575,20 @@ async def test_get_query_rows_resolves_agent_bearer(
 
     captured: dict[str, object] = {}
 
-    async def fake_proxy(agent_arg, query_arg, range_header=None, *, token=None):
+    async def fake_proxy(agent_arg, query_arg, *, row_offset=None, row_limit=None, token=None):
         captured["token"] = token
-        return httpx.Response(200, content=_parquet_bytes())
+        captured["row_offset"] = row_offset
+        captured["row_limit"] = row_limit
+        return httpx.Response(
+            200, content=_parquet_bytes(), headers={"X-DH-Row-Offset": str(row_offset)}
+        )
 
     monkeypatch.setattr(query_service, "proxy_rows", fake_proxy)
 
     resp = await authed_client.get(f"/queries/{query.id}/rows")
     assert resp.status_code == 200
     assert captured["token"] == session_token
+    assert captured["row_offset"] == 0
     body = resp.json()
     assert body["columns"] == ["a", "b"]
     assert body["rows"] == [{"a": 1, "b": "x"}]
@@ -591,8 +596,124 @@ async def test_get_query_rows_resolves_agent_bearer(
     assert body["cursor"] is None
 
 
-async def test_proxy_rows_sets_bearer_header(monkeypatch):
-    """proxy_rows attaches the agent bearer and forwards the Range header."""
+def _make_parquet(select_sql: str) -> bytes:
+    import os
+    import tempfile
+
+    import duckdb
+
+    with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as fh:
+        path = fh.name
+    try:
+        duckdb.connect().execute(f"COPY ({select_sql}) TO '{path}' (FORMAT PARQUET)")
+        with open(path, "rb") as f:
+            return f.read()
+    finally:
+        os.unlink(path)
+
+
+async def _done_query_with_agent(db_session, workspace, agent, *, row_count: int):
+    from datetime import UTC, datetime
+
+    from api.models.query import Query
+    from api.models.user import Credential
+
+    agent.result_host = "127.0.0.1"
+    agent.result_port = 8001
+    db_session.add(agent)
+    db_session.add(Credential(user_id=None, agent_id=agent.id, kind="agent_session", token="tok"))
+    query = Query(
+        workspace_id=workspace.id,
+        agent_id=agent.id,
+        sql="SELECT 1",
+        status="done",
+        row_count=row_count,
+        result_path="/var/duckhaven-agent/results/x.parquet",
+        started_at=datetime.now(UTC),
+    )
+    db_session.add(query)
+    await db_session.commit()
+    await db_session.refresh(query)
+    return query
+
+
+async def test_get_query_rows_far_page_requests_window_only(
+    authed_client: AsyncClient, workspace: Workspace, agent: Agent, db_session, monkeypatch
+):
+    """A far-offset page passes the window to the agent and decodes the returned
+    slice at offset 0 — never pulling the whole result through the decoder."""
+    import httpx
+
+    from api.services import query as query_service
+
+    query = await _done_query_with_agent(db_session, workspace, agent, row_count=10_000)
+
+    captured: dict[str, object] = {}
+
+    async def fake_proxy(agent_arg, query_arg, *, row_offset=None, row_limit=None, token=None):
+        captured["row_offset"] = row_offset
+        captured["row_limit"] = row_limit
+        # Simulate the agent slicing rows [offset, offset+limit).
+        sliced = _make_parquet(
+            f"SELECT i AS n FROM range({row_offset}, {row_offset + row_limit}) t(i)"
+        )
+        return httpx.Response(200, content=sliced, headers={"X-DH-Row-Offset": str(row_offset)})
+
+    monkeypatch.setattr(query_service, "proxy_rows", fake_proxy)
+
+    resp = await authed_client.get(f"/queries/{query.id}/rows?limit=5&cursor=9000")
+    assert resp.status_code == 200
+    assert captured["row_offset"] == 9000
+    assert captured["row_limit"] == 5
+    body = resp.json()
+    assert [r["n"] for r in body["rows"]] == [9000, 9001, 9002, 9003, 9004]
+    assert body["total"] == 10_000
+    assert body["cursor"] == "9005"
+
+
+async def test_get_query_rows_fallback_when_agent_does_not_slice(
+    authed_client: AsyncClient, workspace: Workspace, agent: Agent, db_session, monkeypatch
+):
+    """An older agent ignores the window params and returns the whole file (no
+    X-DH-Row-Offset); the control plane still pages correctly via local offset."""
+    import httpx
+
+    from api.services import query as query_service
+
+    query = await _done_query_with_agent(db_session, workspace, agent, row_count=10)
+
+    async def fake_proxy(agent_arg, query_arg, *, row_offset=None, row_limit=None, token=None):
+        full = _make_parquet("SELECT i AS n FROM range(10) t(i)")
+        return httpx.Response(200, content=full)  # no slice header
+
+    monkeypatch.setattr(query_service, "proxy_rows", fake_proxy)
+
+    resp = await authed_client.get(f"/queries/{query.id}/rows?limit=3&cursor=4")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert [r["n"] for r in body["rows"]] == [4, 5, 6]
+
+
+async def test_get_query_rows_swept_result_returns_410(
+    authed_client: AsyncClient, workspace: Workspace, agent: Agent, db_session, monkeypatch
+):
+    import httpx
+
+    from api.services import query as query_service
+
+    query = await _done_query_with_agent(db_session, workspace, agent, row_count=10)
+
+    async def fake_proxy(agent_arg, query_arg, *, row_offset=None, row_limit=None, token=None):
+        return httpx.Response(404, json={"detail": "Not found"})
+
+    monkeypatch.setattr(query_service, "proxy_rows", fake_proxy)
+
+    resp = await authed_client.get(f"/queries/{query.id}/rows")
+    assert resp.status_code == 410
+
+
+async def test_proxy_rows_sets_bearer_and_window(monkeypatch):
+    """proxy_rows attaches the agent bearer and forwards the row window params."""
     from datetime import UTC, datetime
 
     import httpx
@@ -605,8 +726,9 @@ async def test_proxy_rows_sets_bearer_header(monkeypatch):
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["auth"] = request.headers.get("Authorization")
-        seen["range"] = request.headers.get("Range")
-        return httpx.Response(206, content=b"x")
+        seen["row_offset"] = request.url.params.get("row_offset")
+        seen["row_limit"] = request.url.params.get("row_limit")
+        return httpx.Response(200, content=b"x")
 
     transport = httpx.MockTransport(handler)
     real_client = httpx.AsyncClient
@@ -620,10 +742,11 @@ async def test_proxy_rows_sets_bearer_header(monkeypatch):
     )
     query.id = uuid.uuid4()
 
-    resp = await query_service.proxy_rows(agent, query, "bytes=0-10", token="abc")
-    assert resp.status_code == 206
+    resp = await query_service.proxy_rows(agent, query, row_offset=200, row_limit=50, token="abc")
+    assert resp.status_code == 200
     assert seen["auth"] == "Bearer abc"
-    assert seen["range"] == "bytes=0-10"
+    assert seen["row_offset"] == "200"
+    assert seen["row_limit"] == "50"
 
 
 async def test_cancel_query_agent_not_connected(

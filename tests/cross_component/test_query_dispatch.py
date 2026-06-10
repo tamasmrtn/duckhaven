@@ -42,6 +42,48 @@ async def test_select_one_roundtrip(api_client, workspace, healthy_agent) -> Non
     assert rows["total"] == 1
 
 
+async def test_paginate_thousand_rows(api_client, workspace, healthy_agent) -> None:
+    """A 1000-row result pages 100 at a time into exactly 10 pages.
+
+    Exercises the real keystone path end to end: the agent materializes 1000 rows
+    to Parquet, and each page is fetched as its own row window (row_offset/
+    row_limit) the control plane proxies from the agent — never the whole file.
+    The concatenated pages must reproduce 0..999 in order, proving correct
+    windowing across the cursor boundaries.
+    """
+    body = await _run(
+        api_client,
+        workspace,
+        healthy_agent["id"],
+        "SELECT n FROM range(1000) t(n) ORDER BY n",
+    )
+    assert body["status"] == "done", body
+    assert body["row_count"] == 1000
+
+    query_id = body["id"]
+    pages: list[dict] = []
+    collected: list[int] = []
+    cursor: str | None = None
+    while True:
+        url = f"/api/queries/{query_id}/rows?limit=100"
+        if cursor is not None:
+            url += f"&cursor={cursor}"
+        page = (await api_client.get(url)).json()
+        assert page["columns"] == ["n"]
+        assert page["total"] == 1000
+        pages.append(page)
+        collected.extend(r["n"] for r in page["rows"])
+        cursor = page["cursor"]
+        if cursor is None:
+            break
+        assert len(pages) < 20, "cursor never terminated"
+
+    assert len(pages) == 10, f"expected 10 pages, got {len(pages)}"
+    assert all(len(p["rows"]) == 100 for p in pages)
+    assert pages[-1]["cursor"] is None
+    assert collected == list(range(1000))
+
+
 async def test_table_write_then_read(api_client, workspace, healthy_agent) -> None:
     agent_id = healthy_agent["id"]
     # Create the table through the control plane (real Polaris DDL).

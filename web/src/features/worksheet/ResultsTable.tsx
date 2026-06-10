@@ -1,3 +1,4 @@
+import type { UIEvent } from "react";
 import {
   useReactTable,
   getCoreRowModel,
@@ -15,6 +16,9 @@ interface ResultsTableProps {
   rows: QueryRow[];
   total: number;
   isLoading?: boolean;
+  onLoadMore?: () => void;
+  hasMore?: boolean;
+  isLoadingMore?: boolean;
 }
 
 function cellDisplay(value: unknown): string {
@@ -47,7 +51,18 @@ export function ResultsTable({
   rows,
   total,
   isLoading,
+  onLoadMore,
+  hasMore,
+  isLoadingMore,
 }: ResultsTableProps) {
+  function handleScroll(e: UIEvent<HTMLDivElement>) {
+    if (!onLoadMore || !hasMore || isLoadingMore) return;
+    const el = e.currentTarget;
+    // Fetch the next page once scrolled within 200px of the bottom.
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 200) {
+      onLoadMore();
+    }
+  }
   const colDefs: ColumnDef<QueryRow>[] = columns.map((col) => ({
     accessorKey: col,
     header: col,
@@ -139,7 +154,7 @@ export function ResultsTable({
       </div>
 
       {/* Table */}
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto" onScroll={handleScroll}>
         <table className="w-full text-sm">
           <thead className="sticky top-0 bg-[var(--bg-surface)] z-10">
             {table.getHeaderGroups().map((hg) => (
@@ -176,6 +191,11 @@ export function ResultsTable({
             ))}
           </tbody>
         </table>
+        {isLoadingMore && (
+          <div className="py-2 text-center text-xs text-text-tertiary">
+            Loading more…
+          </div>
+        )}
       </div>
     </div>
   );

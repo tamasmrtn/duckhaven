@@ -32,10 +32,13 @@ function sqlAllowed(sql: string): boolean {
   return ALLOWED_HEADS.some((kw) => head.startsWith(kw));
 }
 
-// Deterministic result rows for a finished query (no randomness).
+// Deterministic result rows for a finished query (no randomness). Spans
+// multiple pages so cursor-based paging can be exercised.
+const RESULT_ROW_COUNT = 120;
+
 function generateResultRows(sql: string) {
   if (!sql.toLowerCase().includes("select")) return { rows: [], columns: [] };
-  const rows = Array.from({ length: 30 }, (_, i) => ({
+  const rows = Array.from({ length: RESULT_ROW_COUNT }, (_, i) => ({
     d: new Date(Date.UTC(2026, 0, 1) - i * 86400000).toISOString().slice(0, 10),
     n: ((i * 317) % 15000) + 1000,
   }));
@@ -105,6 +108,8 @@ export const queryHandlers = [
   http.get("/api/queries/:id/rows", ({ params, request }) => {
     const url = new URL(request.url);
     const limit = parseInt(url.searchParams.get("limit") ?? "50");
+    const cursor = url.searchParams.get("cursor");
+    const offset = cursor ? parseInt(cursor) : 0;
     const id = params.id as string;
     const live = liveQueries[id];
     const hist = QUERY_HISTORY.find((q) => q.id === id);
@@ -116,11 +121,12 @@ export const queryHandlers = [
 
     const sql = live ? live.sql : (hist?.sql ?? "");
     const { rows, columns } = generateResultRows(sql);
-    const page = rows.slice(0, limit);
+    const page = rows.slice(offset, offset + limit);
+    const nextOffset = offset + limit;
     return HttpResponse.json({
       rows: page,
       columns,
-      cursor: null,
+      cursor: nextOffset < rows.length ? String(nextOffset) : null,
       total: rows.length,
     });
   }),

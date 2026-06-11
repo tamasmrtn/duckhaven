@@ -32,3 +32,11 @@ export function useTableSample(ws: string, schema: string, table: string) {
     enabled: !!ws && !!schema && !!table,
   });
 }
+
+export function useTableSnapshots(ws: string, schema: string, table: string) {
+  return useQuery({
+    queryKey: ["workspace", ws, "schema", schema, "table", table, "snapshots"],
+    queryFn: () => schemasApi.tableSnapshots(ws, schema, table),
+    enabled: !!ws && !!schema && !!table,
+  });
+}

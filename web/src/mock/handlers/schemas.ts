@@ -1,5 +1,9 @@
 import { http, HttpResponse } from "msw";
-import { SCHEMAS, generateSampleRows } from "../fixtures/schemas";
+import {
+  SCHEMAS,
+  generateSampleRows,
+  generateSnapshots,
+} from "../fixtures/schemas";
 import { findWorkspace } from "../fixtures/workspaces";
 import { httpError } from "../lib/errors";
 import type { CatalogTable, TableColumn } from "@/types/catalog";
@@ -151,6 +155,21 @@ export const schemaHandlers = [
         cursor: null,
         total: table.row_count ?? rows.length,
       });
+    },
+  ),
+
+  http.get(
+    "/api/workspaces/:ws/schemas/:schema/tables/:table/snapshots",
+    ({ params }) => {
+      const ws = findWorkspace(params.ws as string);
+      if (!ws) return httpError(404, "Workspace not found");
+      const schema = (SCHEMAS[ws.id] ?? []).find(
+        (s) => s.name === params.schema,
+      );
+      if (!schema) return httpError(404, "Schema not found");
+      const table = schema.tables.find((t) => t.name === params.table);
+      if (!table) return httpError(404, "Table not found");
+      return HttpResponse.json(generateSnapshots(table));
     },
   ),
 ];

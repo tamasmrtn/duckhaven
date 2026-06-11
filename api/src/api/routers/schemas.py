@@ -27,6 +27,7 @@ from api.schemas.catalog import (
     CatalogSchemaCreate,
     CatalogSchemaOut,
     ColumnSpec,
+    SnapshotOut,
     TableColumnOut,
     TableCreate,
     TableOut,
@@ -37,6 +38,7 @@ from api.services.polaris import (
     PolarisClient,
     PolarisConflictError,
     PolarisNotFoundError,
+    PolarisSnapshot,
     PolarisTable,
 )
 from api.services.workspace import (
@@ -208,6 +210,35 @@ def _table_to_out(
     )
 
 
+def _snapshot_metric(summary: dict[str, str], key: str) -> int | None:
+    """Parse a numeric Iceberg snapshot-summary metric; None if absent/garbage."""
+    raw = summary.get(key)
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except TypeError, ValueError:
+        return None
+
+
+def _snapshot_to_out(snap: PolarisSnapshot) -> SnapshotOut:
+    return SnapshotOut(
+        snapshot_id=str(snap.snapshot_id),
+        parent_snapshot_id=(
+            str(snap.parent_snapshot_id) if snap.parent_snapshot_id is not None else None
+        ),
+        committed_at=datetime.fromtimestamp(snap.timestamp_ms / 1000, tz=UTC),
+        operation=snap.operation,
+        is_current=snap.is_current,
+        schema_id=snap.schema_id,
+        added_records=_snapshot_metric(snap.summary, "added-records"),
+        deleted_records=_snapshot_metric(snap.summary, "deleted-records"),
+        total_records=_snapshot_metric(snap.summary, "total-records"),
+        added_data_files=_snapshot_metric(snap.summary, "added-data-files"),
+        total_data_files=_snapshot_metric(snap.summary, "total-data-files"),
+    )
+
+
 async def _resolve_workspace(ws: str, user: User, db: AsyncSession, min_role: str) -> Workspace:
     workspace = await get_workspace(db, ws)
     if workspace is None:
@@ -340,6 +371,25 @@ async def get_table(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
     meta = await _load_table_meta(db, workspace.id, schema)
     return _table_to_out(t, workspace.id, meta.get(t.name))
+
+
+@router.get("/{schema}/tables/{table}/snapshots", response_model=list[SnapshotOut])
+async def list_snapshots(
+    ws: str,
+    schema: str,
+    table: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    polaris: PolarisClient = Depends(get_polaris_client),
+) -> list[SnapshotOut]:
+    """Iceberg snapshot history for a table, newest first. Read live from
+    Polaris (never persisted); a table with no snapshots returns []."""
+    workspace = await _resolve_workspace(ws, user, db, min_role="reader")
+    try:
+        snapshots = await polaris.list_snapshots(workspace.slug, schema, table)
+    except PolarisNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
+    return [_snapshot_to_out(s) for s in snapshots]
 
 
 @router.post(

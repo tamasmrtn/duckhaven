@@ -32,6 +32,10 @@ ALLOWED = [
     # multi-statement, all allowed (DDL + DML):
     "SELECT 1; INSERT INTO t VALUES (1)",
     "CREATE TABLE t (x INT); INSERT INTO t VALUES (1)",
+    # Iceberg time-travel: DuckDB's AT (...) clause is a SELECT (snapshot-history
+    # "query at this snapshot"). Locks I8 — these must not classify as an escape.
+    "SELECT * FROM analytics.events AT (VERSION => 1234567890)",
+    "SELECT * FROM analytics.events AT (TIMESTAMP => '2026-05-15T14:03:00Z') LIMIT 100",
 ]
 
 

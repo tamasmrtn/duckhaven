@@ -128,6 +128,21 @@ async def test_get_table_not_found(polaris: PolarisClient, unique_catalog: str) 
         await polaris.get_table(unique_catalog, "main", "ghost_table")
 
 
+async def test_list_snapshots_reads_live_load_table(
+    polaris: PolarisClient, unique_catalog: str, unique_name: str
+) -> None:
+    """The snapshot read parses the live LoadTableResult. A freshly created
+    table has had no data written, so its snapshot log is empty — this
+    confirms the production read path against real Polaris metadata."""
+    await polaris.create_schema(unique_catalog, "main")
+    await polaris.create_table(
+        catalog=unique_catalog, schema="main", name=unique_name, columns=_cols()
+    )
+    assert await polaris.list_snapshots(unique_catalog, "main", unique_name) == []
+    with pytest.raises(PolarisNotFoundError):
+        await polaris.list_snapshots(unique_catalog, "main", "ghost_table")
+
+
 async def test_delete_table_not_found(polaris: PolarisClient, unique_catalog: str) -> None:
     await polaris.create_schema(unique_catalog, "main")
     with pytest.raises(PolarisNotFoundError):

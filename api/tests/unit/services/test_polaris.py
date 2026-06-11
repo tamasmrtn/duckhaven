@@ -228,6 +228,54 @@ async def test_get_table_maps_columns(polaris: PolarisClient) -> None:
 
 
 @respx.mock
+async def test_list_snapshots_orders_newest_first_and_flags_current(
+    polaris: PolarisClient,
+) -> None:
+    _mock_token()
+    respx.get(f"{CAT}/ws_alpha/namespaces/main/tables/events").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "metadata": {
+                    "current-snapshot-id": 22,
+                    "snapshots": [
+                        {
+                            "snapshot-id": 11,
+                            "timestamp-ms": 1000,
+                            "schema-id": 0,
+                            "summary": {"operation": "append", "added-records": "5"},
+                        },
+                        {
+                            "snapshot-id": 22,
+                            "parent-snapshot-id": 11,
+                            "timestamp-ms": 2000,
+                            "schema-id": 0,
+                            "summary": {"operation": "overwrite", "added-records": "3"},
+                        },
+                    ],
+                },
+            },
+        )
+    )
+    snaps = await polaris.list_snapshots("ws_alpha", "main", "events")
+    # Newest first.
+    assert [s.snapshot_id for s in snaps] == [22, 11]
+    assert snaps[0].is_current is True
+    assert snaps[0].parent_snapshot_id == 11
+    assert snaps[0].operation == "overwrite"
+    assert snaps[1].is_current is False
+
+
+@respx.mock
+async def test_list_snapshots_empty_when_no_snapshot_log(polaris: PolarisClient) -> None:
+    _mock_token()
+    respx.get(f"{CAT}/ws_alpha/namespaces/main/tables/fresh").mock(
+        return_value=httpx.Response(200, json={"metadata": {"table-uuid": "x"}})
+    )
+    assert await polaris.list_snapshots("ws_alpha", "main", "fresh") == []
+
+
+@respx.mock
 async def test_create_table_posts_schema(polaris: PolarisClient) -> None:
     _mock_token()
     route = respx.post(f"{CAT}/ws_alpha/namespaces/main/tables").mock(

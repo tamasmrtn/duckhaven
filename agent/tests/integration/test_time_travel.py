@@ -10,6 +10,8 @@ user worksheet takes. No `runner.py` change is needed; this locks the syntax.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import duckdb
 import pytest
 
@@ -53,10 +55,22 @@ async def test_time_travel_returns_past_state(
 
         # Snapshot A: one row.
         conn.execute("INSERT INTO events VALUES (1, 'one')")
+        # iceberg_snapshots needs the catalog-qualified table: a bare name makes
+        # it glob the filesystem (version guessing) instead of resolving via the
+        # attached REST catalog — the same form runner._iceberg_metadata uses.
+        ident = f'{runner._CATALOG_ALIAS}."{ns}"."events"'
         snap_a, ts_a = conn.execute(
-            "SELECT snapshot_id, timestamp_ms FROM iceberg_snapshots(events) "
+            f"SELECT snapshot_id, timestamp_ms FROM iceberg_snapshots({ident}) "
             "ORDER BY sequence_number DESC LIMIT 1"
         ).fetchone()
+
+        # `iceberg_snapshots` reports the commit time as a datetime here (older
+        # extensions return epoch millis); normalize to UTC epoch ms either way.
+        if isinstance(ts_a, datetime):
+            dt = ts_a if ts_a.tzinfo else ts_a.replace(tzinfo=UTC)
+            ts_a_ms = int(dt.timestamp() * 1000)
+        else:
+            ts_a_ms = int(ts_a)
 
         # Snapshot B: a second row.
         conn.execute("INSERT INTO events VALUES (2, 'two')")
@@ -66,7 +80,7 @@ async def test_time_travel_returns_past_state(
             f"SELECT count(*) FROM events AT (VERSION => {snap_a})"
         ).fetchone()[0]
         as_of_time = conn.execute(
-            f"SELECT count(*) FROM events AT (TIMESTAMP => epoch_ms({int(ts_a)}))"
+            f"SELECT count(*) FROM events AT (TIMESTAMP => epoch_ms({ts_a_ms}))"
         ).fetchone()[0]
     finally:
         conn.close()

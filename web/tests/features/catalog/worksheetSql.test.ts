@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import {
   alterTemplate,
   selectTemplate,
+  snapshotByTimestampTemplate,
+  snapshotByVersionTemplate,
   stashWorksheetSql,
   takePendingSql,
 } from '@/features/catalog/worksheetSql'
@@ -15,6 +17,19 @@ describe('worksheetSql', () => {
     )
     expect(alterTemplate('analytics', 'events')).toBe(
       'ALTER TABLE "analytics"."events" ADD COLUMN new_column VARCHAR;',
+    )
+  })
+
+  it('builds Iceberg time-travel templates (AT VERSION / TIMESTAMP)', () => {
+    expect(
+      snapshotByVersionTemplate('analytics', 'events', '7264354987654321234'),
+    ).toBe(
+      'SELECT * FROM "analytics"."events" AT (VERSION => 7264354987654321234) LIMIT 100;',
+    )
+    expect(
+      snapshotByTimestampTemplate('analytics', 'events', '2026-05-15T14:03:00Z'),
+    ).toBe(
+      "SELECT * FROM \"analytics\".\"events\" AT (TIMESTAMP => '2026-05-15T14:03:00Z') LIMIT 100;",
     )
   })
 

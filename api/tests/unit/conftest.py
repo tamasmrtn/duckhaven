@@ -13,7 +13,7 @@ from fake_polaris import FakePolaris  # noqa: E402
 
 from api.config import settings  # noqa: E402
 from api.db.base import Base  # noqa: E402
-from api.deps import get_db, get_polaris_client  # noqa: E402
+from api.deps import get_db, get_polaris_client, get_session_factory  # noqa: E402
 from api.main import api_app, app  # noqa: E402
 
 # Disable secure cookies in tests (plain HTTP transport)
@@ -78,10 +78,8 @@ async def ws_client(db_engine):
 
     factory = async_sessionmaker(db_engine, expire_on_commit=False)
 
-    async def override_get_db():
-        async with factory() as session:
-            yield session
-
-    app.dependency_overrides[get_db] = override_get_db
+    # The agent WS opens short-lived per-frame sessions from the injected factory,
+    # so swap the factory (not a single session) onto the test engine.
+    app.dependency_overrides[get_session_factory] = lambda: factory
     yield ASGIWebSocketTransport(app=app)
     app.dependency_overrides.clear()

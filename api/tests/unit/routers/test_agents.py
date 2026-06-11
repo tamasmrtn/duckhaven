@@ -351,3 +351,123 @@ async def test_ws_multiple_reconnects_keep_one_row(ws_client, db_engine):
 
     async with factory() as db:
         assert (await db.execute(select(func.count()).select_from(Agent))).scalar_one() == 1
+
+
+async def _add_bootstrap(factory, token: str) -> None:
+    from datetime import datetime, timedelta
+
+    from api.models.user import Credential
+
+    async with factory() as db:
+        db.add(
+            Credential(
+                kind="agent_bootstrap",
+                token=token,
+                expires_at=datetime.now(tz=UTC) + timedelta(hours=1),
+            )
+        )
+        await db.commit()
+
+
+async def test_ws_frame_error_does_not_break_next_frame(ws_client, db_engine):
+    """A frame whose handling raises is logged and skipped; the per-frame session
+    is fresh, so the next frame on the same socket is still processed."""
+    import asyncio
+
+    from httpx import AsyncClient
+    from httpx_ws import aconnect_ws
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    token = "dh_boot_frameerr"
+    await _add_bootstrap(factory, token)
+
+    caps = {"duckdb_version": "1.5.2", "memory_limit_gb": 6.0}
+    async with AsyncClient(transport=ws_client, base_url="http://test") as c:
+        async with aconnect_ws("http://test/agents/connect", c) as ws:
+            await ws.send_text(
+                json.dumps({"type": "auth", "payload": {"token": token, "result_port": 8001}})
+            )
+            raw = await asyncio.wait_for(ws.receive_text(), timeout=5.0)
+            agent_id = uuid.UUID(json.loads(raw)["payload"]["agent_id"])
+
+            # A QUERY_DONE frame with no query_id raises KeyError inside the
+            # handler; under the old shared-session design this disconnected the
+            # agent and the next frame was never processed.
+            await ws.send_text(json.dumps({"type": "query_done", "payload": {"status": "done"}}))
+            # A valid AGENT_STATUS frame must still land after the bad frame.
+            await ws.send_text(json.dumps({"type": "agent_status", "payload": caps}))
+            await asyncio.sleep(0.2)
+
+    async with factory() as db:
+        agent = await db.get(Agent, agent_id)
+        assert agent is not None
+        # The capabilities write proves the loop survived the failed frame.
+        assert agent.capabilities == caps
+
+
+async def test_ws_query_done_visible_to_separate_session(ws_client, db_engine):
+    """QUERY_DONE applied in the handler's per-frame session is committed and so
+    visible to a separate session (the run_sync_query poll contract)."""
+    import asyncio
+
+    from httpx import AsyncClient
+    from httpx_ws import aconnect_ws
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.models.query import Query
+    from api.models.storage_backend import StorageBackend
+    from api.models.user import User
+    from api.models.workspace import Workspace
+    from api.services.auth import hash_password
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    token = "dh_boot_qdone"
+    await _add_bootstrap(factory, token)
+
+    async with factory() as db:
+        user = User(
+            email="qd@test.local", password_hash=hash_password("pw"), name="QD", role="user"
+        )
+        db.add(user)
+        await db.flush()
+        sb = StorageBackend(kind="object_store", name="qd", root_uri="/tmp/qd", created_by=user.id)
+        db.add(sb)
+        await db.flush()
+        ws_row = Workspace(slug="qd-ws", name="QD WS", storage_backend_id=sb.id)
+        db.add(ws_row)
+        await db.flush()
+        query = Query(workspace_id=ws_row.id, sql="SELECT 1", status="running")
+        db.add(query)
+        await db.commit()
+        query_id = query.id
+
+    async with AsyncClient(transport=ws_client, base_url="http://test") as c:
+        async with aconnect_ws("http://test/agents/connect", c) as ws:
+            await ws.send_text(
+                json.dumps({"type": "auth", "payload": {"token": token, "result_port": 8001}})
+            )
+            await asyncio.wait_for(ws.receive_text(), timeout=5.0)
+
+            await ws.send_text(
+                json.dumps(
+                    {
+                        "type": "query_done",
+                        "payload": {
+                            "query_id": str(query_id),
+                            "status": "done",
+                            "row_count": 7,
+                            "duration_ms": 123,
+                        },
+                    }
+                )
+            )
+            await asyncio.sleep(0.2)
+            # Read in a fresh session while the socket is still open: the terminal
+            # status must already be committed and visible cross-session.
+            async with factory() as db:
+                done = await db.get(Query, query_id)
+                assert done is not None
+                assert done.status == "done"
+                assert done.row_count == 7
+                assert done.duration_ms == 123

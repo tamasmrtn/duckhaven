@@ -1,7 +1,7 @@
 from collections.abc import AsyncGenerator
 
 from fastapi import Cookie, Depends, HTTPException, Request, status
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.db.session import async_session_factory
 from api.models.user import User
@@ -12,6 +12,12 @@ from api.services.polaris import PolarisClient
 async def get_db() -> AsyncGenerator[AsyncSession]:
     async with async_session_factory() as session:
         yield session
+
+
+def get_session_factory() -> async_sessionmaker[AsyncSession]:
+    """Yield the session factory itself so long-lived connections (e.g. the agent
+    WebSocket) can open short-lived per-frame sessions instead of pinning one."""
+    return async_session_factory
 
 
 async def get_current_user(

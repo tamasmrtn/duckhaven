@@ -30,3 +30,19 @@ export interface CatalogSchema {
   workspace_id: string;
   tables: CatalogTable[];
 }
+
+// One row of a table's Iceberg snapshot history (api SnapshotOut). Ids are
+// strings: Iceberg 64-bit snapshot ids exceed JS's safe-integer range.
+export interface TableSnapshot {
+  snapshot_id: string;
+  parent_snapshot_id: string | null;
+  committed_at: string;
+  operation: string | null;
+  is_current: boolean;
+  schema_id: number | null;
+  added_records: number | null;
+  deleted_records: number | null;
+  total_records: number | null;
+  added_data_files: number | null;
+  total_data_files: number | null;
+}

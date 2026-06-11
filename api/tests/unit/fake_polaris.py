@@ -17,6 +17,7 @@ from api.services.polaris import (
     PolarisError,
     PolarisNotFoundError,
     PolarisSchema,
+    PolarisSnapshot,
     PolarisTable,
     _columns_from_iceberg_schema,
 )
@@ -27,6 +28,8 @@ class FakePolaris:
         self.catalogs: dict[str, PolarisCatalog] = {}
         self.schemas: dict[tuple[str, str], PolarisSchema] = {}
         self.tables: dict[tuple[str, str, str], PolarisTable] = {}
+        # Snapshot history per table, seeded by tests (newest-first like prod).
+        self.snapshots: dict[tuple[str, str, str], list[PolarisSnapshot]] = {}
         # Test knobs:
         self.fail_create_catalog: bool = False
         self.fail_create_schema: bool = False
@@ -121,6 +124,12 @@ class FakePolaris:
         if key not in self.tables:
             raise PolarisNotFoundError(f"{catalog}.{schema}.{name}")
         return self.tables[key]
+
+    async def list_snapshots(self, catalog: str, schema: str, name: str) -> list[PolarisSnapshot]:
+        key = (catalog, schema, name)
+        if key not in self.tables:
+            raise PolarisNotFoundError(f"{catalog}.{schema}.{name}")
+        return self.snapshots.get(key, [])
 
     async def create_table(
         self,

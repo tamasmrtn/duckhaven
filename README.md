@@ -158,7 +158,8 @@ cutting a new release see [docs/RELEASING.md](docs/RELEASING.md).
   bootstrap tokens, name-only workspace creation, result size reporting, result
   retention sweep, multi-agent dispatch, live agent CPU/memory utilization,
   published agent and API images (GHCR), server-side backend compatibility
-  checks.
+  checks, Iceberg snapshot history browsing with "query at this snapshot"
+  time travel.
 - **In progress** — External cloud-backend (S3 / ADLS Gen 2) credential wiring.
 - **Future** — Notebook UI, heterogeneous engines (Spark, Trino, Polars),
   per-table backend override, Polaris RBAC permission mirroring, control-plane

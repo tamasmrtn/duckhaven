@@ -127,4 +127,43 @@ describe('CatalogPage', () => {
     // Navigates to the worksheet, seeding a new tab from the catalog action.
     expect(await screen.findByText(/from catalog/i)).toBeInTheDocument()
   })
+
+  it('lists snapshot history under the History tab', async () => {
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: '/acme-analytics/catalog/raw/events' })
+
+    await user.click(await screen.findByRole('tab', { name: /history/i }))
+
+    // The events fixture has a current snapshot → a non-empty, current-flagged log.
+    expect(await screen.findByText('current')).toBeInTheDocument()
+    expect(screen.getByText('overwrite')).toBeInTheDocument()
+    expect(
+      screen.getAllByRole('button', { name: /query at this snapshot/i }).length,
+    ).toBeGreaterThan(0)
+  })
+
+  it('shows an empty state for a table with no snapshot history', async () => {
+    const user = userEvent.setup()
+    // The `users` fixture has snapshot_id === null → no history.
+    renderWithProviders({ initialRoute: '/acme-analytics/catalog/raw/users' })
+
+    await user.click(await screen.findByRole('tab', { name: /history/i }))
+
+    expect(
+      await screen.findByText(/no snapshot history yet/i),
+    ).toBeInTheDocument()
+  })
+
+  it('routes "Query at this snapshot" into a worksheet seeded with time-travel SQL', async () => {
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: '/acme-analytics/catalog/raw/events' })
+
+    await user.click(await screen.findByRole('tab', { name: /history/i }))
+    const buttons = await screen.findAllByRole('button', {
+      name: /query at this snapshot/i,
+    })
+    await user.click(buttons[0])
+
+    expect(await screen.findByText(/from catalog/i)).toBeInTheDocument()
+  })
 })

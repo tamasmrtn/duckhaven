@@ -83,3 +83,23 @@ class TableOut(BaseModel):
     snapshot_at: datetime | None = None
     data_file_count: int | None = None
     has_deletes: bool | None = None
+
+
+class SnapshotOut(BaseModel):
+    """One row of a table's Iceberg snapshot history (read live from Polaris).
+
+    Ids are strings: Iceberg 64-bit snapshot ids exceed JS's safe-integer
+    range. Metric fields come from the Iceberg snapshot `summary` and are
+    null when the commit did not record them."""
+
+    snapshot_id: str
+    parent_snapshot_id: str | None = None
+    committed_at: datetime
+    operation: str | None = None
+    is_current: bool = False
+    schema_id: int | None = None
+    added_records: int | None = None
+    deleted_records: int | None = None
+    total_records: int | None = None
+    added_data_files: int | None = None
+    total_data_files: int | None = None

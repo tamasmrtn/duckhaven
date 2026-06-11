@@ -15,6 +15,7 @@ from api.services.polaris import (
     PolarisError,
     PolarisNotFoundError,
     PolarisServerError,
+    PolarisSnapshot,
 )
 
 
@@ -220,6 +221,81 @@ async def test_get_table_404(auth_client: AsyncClient, backend: StorageBackend):
     slug = await _make_workspace(auth_client, backend, "alpha")
     resp = await auth_client.get(f"/workspaces/{slug}/schemas/main/tables/ghost")
     assert resp.status_code == 404
+
+
+# --- snapshot history ---
+
+
+async def _make_table(auth_client: AsyncClient, slug: str, name: str = "events") -> None:
+    resp = await auth_client.post(
+        f"/workspaces/{slug}/schemas/main/tables",
+        json={"name": name, "columns": [{"name": "id", "type": "BIGINT"}]},
+    )
+    assert resp.status_code == 201, resp.text
+
+
+async def test_list_snapshots_returns_history(
+    auth_client: AsyncClient, backend: StorageBackend, fake_polaris: FakePolaris
+):
+    slug = await _make_workspace(auth_client, backend, "alpha")
+    await _make_table(auth_client, slug)
+    # Seed newest-first history (the service guarantees ordering; the fake
+    # returns what it is given).
+    fake_polaris.snapshots[(slug, "main", "events")] = [
+        PolarisSnapshot(
+            snapshot_id=9223372036854775807,  # > JS safe-integer range
+            parent_snapshot_id=11,
+            timestamp_ms=2000,
+            operation="overwrite",
+            summary={"operation": "overwrite", "added-records": "3", "total-records": "8"},
+            is_current=True,
+        ),
+        PolarisSnapshot(
+            snapshot_id=11,
+            timestamp_ms=1000,
+            operation="append",
+            summary={"operation": "append", "added-records": "5"},
+        ),
+    ]
+    resp = await auth_client.get(f"/workspaces/{slug}/schemas/main/tables/events/snapshots")
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()
+    assert [r["snapshot_id"] for r in rows] == ["9223372036854775807", "11"]
+    assert rows[0]["is_current"] is True
+    assert rows[0]["parent_snapshot_id"] == "11"
+    assert rows[0]["operation"] == "overwrite"
+    assert rows[0]["added_records"] == 3
+    assert rows[0]["total_records"] == 8
+    # Unrecorded metrics stay null rather than zero.
+    assert rows[1]["total_records"] is None
+
+
+async def test_list_snapshots_empty_for_table_without_history(
+    auth_client: AsyncClient, backend: StorageBackend
+):
+    slug = await _make_workspace(auth_client, backend, "alpha")
+    await _make_table(auth_client, slug)
+    resp = await auth_client.get(f"/workspaces/{slug}/schemas/main/tables/events/snapshots")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+async def test_list_snapshots_404_for_unknown_table(
+    auth_client: AsyncClient, backend: StorageBackend
+):
+    slug = await _make_workspace(auth_client, backend, "alpha")
+    resp = await auth_client.get(f"/workspaces/{slug}/schemas/main/tables/ghost/snapshots")
+    assert resp.status_code == 404
+
+
+async def test_list_snapshots_non_member_denied(
+    auth_client: AsyncClient, backend: StorageBackend, db_session
+):
+    ws = Workspace(slug="other", name="Other", storage_backend_id=backend.id)
+    db_session.add(ws)
+    await db_session.commit()
+    resp = await auth_client.get("/workspaces/other/schemas/main/tables/events/snapshots")
+    assert resp.status_code == 403
 
 
 async def test_create_table_requires_writer(

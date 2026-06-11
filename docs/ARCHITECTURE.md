@@ -417,7 +417,12 @@ set (`CATALOG_MANAGE_CONTENT` + `CATALOG_MANAGE_METADATA` + `CATALOG_MANAGE_ACCE
 and `create_catalog` enables `polaris.config.drop-with-purge.enabled` so `DROP`
 reclaims data files — without the content grant Polaris returns 403 on table data
 access. REST-created tables record a `table_metadata` owner sidecar at create time;
-tables created via SQL DDL get one lazily (stats on sample). The agent's DuckDB
+tables created via SQL DDL get one lazily (stats on sample). A table's **Iceberg
+snapshot history** (the catalog History tab) is read **live** off the
+`loadTable` metadata via `list_snapshots` — never persisted to Postgres — and a
+"query at this snapshot" worksheet pins the read with DuckDB's `AT (VERSION => …)`
+/ `AT (TIMESTAMP => …)` time-travel clause (there is no `BEFORE`; the UI says
+"as of"). The agent's DuckDB
 sets the working catalog with `USE <catalog>.<schema>`
 (a bare `USE <catalog>` does not resolve the attached REST catalog). Polaris
 vends short-lived, scoped storage credentials to DuckDB on attach via access

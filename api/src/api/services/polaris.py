@@ -96,6 +96,22 @@ class PolarisTable(_PolarisModel):
     format_version: int | None = None
 
 
+class PolarisSnapshot(_PolarisModel):
+    """One Iceberg snapshot, read live from the LoadTableResult metadata.
+
+    Ids stay as ints here (64-bit Iceberg snapshot ids); the API layer
+    stringifies them for JS safety. `summary` is the raw Iceberg snapshot
+    summary (operation + per-commit metrics)."""
+
+    snapshot_id: int
+    parent_snapshot_id: int | None = None
+    timestamp_ms: int
+    operation: str | None = None
+    summary: dict[str, str] = Field(default_factory=dict)
+    schema_id: int | None = None
+    is_current: bool = False
+
+
 # Iceberg primitive type string -> upper-cased display base.
 def _iceberg_type_name(type_text: str) -> str:
     base = type_text.split("(", 1)[0]
@@ -396,6 +412,19 @@ class PolarisClient:
         self._raise_for_status(resp)
         return self._table_from_load_result(resp.json(), catalog, schema, name)
 
+    async def list_snapshots(self, catalog: str, schema: str, name: str) -> list[PolarisSnapshot]:
+        """Snapshot history for a table, newest first.
+
+        Reuses the same LoadTableResult GET as `get_table` — the snapshot log
+        is already part of the table metadata, so this is a metadata read with
+        no table scan. Never persisted (read on demand)."""
+        resp = await self._http.get(
+            f"{self.CATALOG_PATH}/{catalog}/namespaces/{schema}/tables/{name}",
+            headers=await self._auth_headers(),
+        )
+        self._raise_for_status(resp)
+        return self._snapshots_from_load_result(resp.json())
+
     async def create_table(
         self,
         *,
@@ -462,3 +491,24 @@ class PolarisClient:
             properties=metadata.get("properties") or {},
             format_version=metadata.get("format-version"),
         )
+
+    @staticmethod
+    def _snapshots_from_load_result(body: dict[str, Any]) -> list[PolarisSnapshot]:
+        """Map an Iceberg REST LoadTableResult's snapshot log to snapshots,
+        newest first. A table with no snapshots yields an empty list."""
+        metadata = body.get("metadata") or {}
+        current_id = metadata.get("current-snapshot-id")
+        snapshots = [
+            PolarisSnapshot(
+                snapshot_id=snap["snapshot-id"],
+                parent_snapshot_id=snap.get("parent-snapshot-id"),
+                timestamp_ms=snap["timestamp-ms"],
+                operation=(snap.get("summary") or {}).get("operation"),
+                summary=snap.get("summary") or {},
+                schema_id=snap.get("schema-id"),
+                is_current=snap["snapshot-id"] == current_id,
+            )
+            for snap in metadata.get("snapshots") or []
+        ]
+        snapshots.sort(key=lambda s: s.timestamp_ms, reverse=True)
+        return snapshots

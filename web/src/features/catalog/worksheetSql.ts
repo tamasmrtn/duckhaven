@@ -31,3 +31,24 @@ export function selectTemplate(schema: string, table: string): string {
 export function alterTemplate(schema: string, table: string): string {
   return `ALTER TABLE ${quote(schema)}.${quote(table)} ADD COLUMN new_column VARCHAR;`;
 }
+
+// Iceberg time-travel ("query at this snapshot"). DuckDB's `AT (...)` clause
+// reads the table *as of* the given point — snapshot id is exact; timestamp
+// resolves to the snapshot in effect at that instant. There is no BEFORE in
+// DuckDB, so the UI is labelled "as of", never "before".
+export function snapshotByVersionTemplate(
+  schema: string,
+  table: string,
+  snapshotId: string,
+): string {
+  return `SELECT * FROM ${quote(schema)}.${quote(table)} AT (VERSION => ${snapshotId}) LIMIT 100;`;
+}
+
+export function snapshotByTimestampTemplate(
+  schema: string,
+  table: string,
+  isoTimestamp: string,
+): string {
+  const ts = isoTimestamp.replace(/'/g, "''");
+  return `SELECT * FROM ${quote(schema)}.${quote(table)} AT (TIMESTAMP => '${ts}') LIMIT 100;`;
+}

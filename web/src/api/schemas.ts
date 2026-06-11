@@ -1,5 +1,9 @@
 import { del, get, post } from "./client";
-import type { CatalogSchema, CatalogTable } from "@/types/catalog";
+import type {
+  CatalogSchema,
+  CatalogTable,
+  TableSnapshot,
+} from "@/types/catalog";
 import type { QueryRowsPage } from "@/types/query";
 
 // The 8-type set the Create-Table dialog offers; the api enforces the same.
@@ -37,6 +41,11 @@ export const schemasApi = {
   sampleRows: (ws: string, schema: string, table: string) =>
     get<QueryRowsPage>(
       `/workspaces/${ws}/schemas/${schema}/tables/${table}/sample`,
+    ),
+
+  tableSnapshots: (ws: string, schema: string, table: string) =>
+    get<TableSnapshot[]>(
+      `/workspaces/${ws}/schemas/${schema}/tables/${table}/snapshots`,
     ),
 
   createSchema: (ws: string, name: string) =>

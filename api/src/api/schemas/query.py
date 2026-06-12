@@ -8,7 +8,6 @@ from pydantic import BaseModel, ConfigDict
 class QueryCreate(BaseModel):
     sql: str
     agent_id: uuid.UUID
-    memory_limit_gb: float = 6.0
     timeout_s: float = 600.0
 
 

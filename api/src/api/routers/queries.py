@@ -75,7 +75,6 @@ async def create_query(
     await query_service.dispatch_query(
         db,
         query,
-        memory_limit_gb=body.memory_limit_gb,
         timeout_s=body.timeout_s,
     )
     return query

@@ -144,27 +144,6 @@ async def test_create_query_dispatches(
     assert "storage_credentials" not in frame["payload"]
 
 
-async def test_dispatch_clamps_memory_to_agent_cap(
-    authed_client: AsyncClient, workspace: Workspace, connected_agent, db_session
-):
-    """A memory request above the agent's advertised ceiling is clamped in the
-    dispatch payload (G-D2-b)."""
-    import json
-
-    agent, mock_ws = connected_agent
-    agent.capabilities = {"memory_limit_gb": 4.0, "extensions": ["httpfs"]}
-    db_session.add(agent)
-    await db_session.commit()
-
-    resp = await authed_client.post(
-        f"/workspaces/{workspace.slug}/queries",
-        json={"sql": "SELECT 1", "agent_id": str(agent.id), "memory_limit_gb": 100.0},
-    )
-    assert resp.status_code == 202
-    frame = json.loads(mock_ws.sent[-1])
-    assert frame["payload"]["memory_limit_gb"] == 4.0
-
-
 async def test_dispatch_payload_carries_backend_and_no_credentials(
     authed_client: AsyncClient, db_session, user: User, connected_agent
 ):

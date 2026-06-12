@@ -14,6 +14,7 @@ class FrameType(StrEnum):
     HEARTBEAT = "heartbeat"
     AGENT_STATUS = "agent_status"
     METRICS_SAMPLE = "metrics_sample"
+    SET_CONCURRENCY = "set_concurrency"
 
 
 class Frame(BaseModel):

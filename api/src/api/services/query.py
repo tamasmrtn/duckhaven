@@ -57,7 +57,8 @@ async def dispatch_query(
 
     frame = Frame(type=FrameType.DISPATCH_QUERY, payload=payload)
     await registry.send(query.agent_id, frame.model_dump_json())
-    query.status = "running"
+    # Status stays "queued" until the agent admits the query and emits
+    # QUERY_PROGRESS; the agent may hold it in its admission queue first.
     await db.commit()
 
 

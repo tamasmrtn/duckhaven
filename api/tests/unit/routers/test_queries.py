@@ -107,6 +107,45 @@ async def test_create_query_rejects_disallowed_sql(
     assert mock_ws.sent == []
 
 
+async def test_set_concurrency_command_intercepted(
+    authed_client: AsyncClient, workspace: Workspace, connected_agent
+):
+    """`SET duckhaven_concurrency` is a control command: it is not rejected by the
+    SQL guard, sends a SET_CONCURRENCY frame to the agent, and records a done
+    query for audit."""
+    import json
+
+    from duckhaven_shared.protocol import FrameType
+
+    agent, mock_ws = connected_agent
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SET duckhaven_concurrency = 'single'", "agent_id": str(agent.id)},
+    )
+    assert resp.status_code == 202
+    data = resp.json()
+    assert data["status"] == "done"
+    assert data["row_count"] == 0
+
+    assert len(mock_ws.sent) == 1
+    frame = json.loads(mock_ws.sent[0])
+    assert frame["type"] == FrameType.SET_CONCURRENCY
+    assert frame["payload"] == {"profile": "single"}
+
+
+async def test_set_concurrency_invalid_profile_rejected(
+    authed_client: AsyncClient, workspace: Workspace, connected_agent
+):
+    agent, mock_ws = connected_agent
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SET duckhaven_concurrency = 'nope'", "agent_id": str(agent.id)},
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["error"] == "sql_not_allowed"
+    assert mock_ws.sent == []
+
+
 async def test_create_query_agent_not_found(authed_client: AsyncClient, workspace: Workspace):
     resp = await authed_client.post(
         f"/workspaces/{workspace.slug}/queries",
@@ -125,7 +164,9 @@ async def test_create_query_dispatches(
     )
     assert resp.status_code == 202
     data = resp.json()
-    assert data["status"] == "running"
+    # Status stays "queued" until the agent admits the query (it may queue it
+    # behind others first) and emits QUERY_PROGRESS.
+    assert data["status"] == "queued"
     assert data["sql"] == "SELECT 42"
     # Dispatch records the authenticated user_id on the query (G-D11-a).
     assert data["user_id"] == str(user.id)

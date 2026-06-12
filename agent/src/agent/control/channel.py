@@ -10,7 +10,7 @@ from websockets.exceptions import ConnectionClosed
 from agent.auth import TokenHolder, load_session_token, save_session_token
 from agent.config import settings
 from agent.executor.supervisor import run_query
-from agent.metrics.system import MetricsSampler, cpu_capability
+from agent.metrics.system import MetricsSampler, cpu_capability, effective_memory_bytes
 from duckhaven_shared.protocol import Frame, FrameType
 from duckhaven_shared.schemas import AgentCapabilities
 
@@ -44,7 +44,7 @@ def _get_capabilities() -> AgentCapabilities:
     return AgentCapabilities(
         duckdb_version=version,
         extensions=extensions,
-        memory_limit_gb=settings.memory_limit_bytes / 1024**3,
+        memory_limit_gb=round(effective_memory_bytes() / 1024**3, 1),
         cores=cpu["cores"],
         cpu_model=cpu["cpu_model"],
         cpu_cores_physical=cpu["cpu_cores_physical"],
@@ -55,7 +55,6 @@ def _get_capabilities() -> AgentCapabilities:
 async def _handle_dispatch(ws, payload: dict, results_dir: Path) -> None:
     query_id = payload["query_id"]
     sql = payload["sql"]
-    memory_limit_gb = min(float(payload.get("memory_limit_gb", 6.0)), settings.max_memory_limit_gb)
     timeout_s = min(float(payload.get("timeout_s", 600.0)), settings.max_timeout_s)
     backend = payload.get("backend")
     workspace = payload.get("workspace") or {}
@@ -78,7 +77,6 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path) -> None:
         stats = await run_query(
             sql,
             result_path,
-            memory_limit_gb,
             timeout_s,
             backend=backend,
             workspace_slug=workspace_slug,

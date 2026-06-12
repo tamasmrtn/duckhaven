@@ -37,7 +37,6 @@ def _run(
     return run_query_sync(
         sql,
         tmp_path / f"{uuid4().hex}.parquet",
-        memory_limit_gb=1.0,
         backend={"kind": "s3"},
         workspace_slug=catalog,
         polaris={"endpoint": base_url, "client_id": creds[0], "client_secret": creds[1]},
@@ -76,7 +75,6 @@ async def test_create_insert_select_drop_roundtrip(
     selected = run_query_sync(
         f"SELECT id, label FROM {table} ORDER BY id",
         result_path,
-        memory_limit_gb=1.0,
         backend={"kind": "s3"},
         workspace_slug=catalog,
         polaris={
@@ -125,7 +123,6 @@ async def test_alter_table_add_column(
     selected = run_query_sync(
         f"SELECT note FROM {table}",
         result_path,
-        memory_limit_gb=1.0,
         backend={"kind": "s3"},
         workspace_slug=catalog,
         polaris={

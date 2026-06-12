@@ -51,17 +51,26 @@ def _read_cpu_usage_usec(base: Path) -> int | None:
     return None
 
 
-def _read_memory_usage(base: Path) -> tuple[int, int] | None:
-    """``(current_bytes, limit_bytes)`` from cgroup v2, or ``None`` if unlimited."""
+def _read_cgroup_memory_limit(base: Path) -> int | None:
+    """cgroup v2 ``memory.max`` in bytes, or ``None`` when unlimited ("max") / absent."""
     try:
-        current = int((base / "memory.current").read_text().strip())
-        limit_raw = (base / "memory.max").read_text().strip()
+        raw = (base / "memory.max").read_text().strip()
     except OSError:
         return None
-    if limit_raw == "max":
+    if raw == "max":
         return None
-    limit = int(limit_raw)
-    if limit <= 0:
+    limit = int(raw)
+    return limit if limit > 0 else None
+
+
+def _read_memory_usage(base: Path) -> tuple[int, int] | None:
+    """``(current_bytes, limit_bytes)`` from cgroup v2, or ``None`` if unlimited."""
+    limit = _read_cgroup_memory_limit(base)
+    if limit is None:
+        return None
+    try:
+        current = int((base / "memory.current").read_text().strip())
+    except OSError:
         return None
     return current, limit
 
@@ -76,11 +85,30 @@ def _cpu_model() -> str | None:
     return platform.processor() or None
 
 
+def effective_cores(base: Path = _CGROUP_BASE) -> int:
+    """Effective core count: cgroup quota (rounded) else host logical cores.
+
+    Single source of truth for the advertised cores, the CPU% denominator, and
+    the DuckDB ``threads`` setting.
+    """
+    cores = _read_cgroup_cores(base)
+    return max(1, round(cores)) if cores else (os.cpu_count() or 1)
+
+
+def effective_memory_bytes(base: Path = _CGROUP_BASE) -> int:
+    """Effective memory: cgroup ``memory.max`` else total host RAM.
+
+    Single source of truth for the advertised capability, the memory% denominator,
+    and the DuckDB ``memory_limit`` setting.
+    """
+    limit = _read_cgroup_memory_limit(base)
+    return limit if limit is not None else psutil.virtual_memory().total
+
+
 def cpu_capability(base: Path = _CGROUP_BASE) -> dict[str, object]:
     """Static CPU capability advertised in AGENT_STATUS (cgroup-aware)."""
-    cores = _read_cgroup_cores(base)
     return {
-        "cores": max(1, round(cores)) if cores else (os.cpu_count() or 1),
+        "cores": effective_cores(base),
         "cpu_model": _cpu_model(),
         "cpu_cores_physical": psutil.cpu_count(logical=False),
     }
@@ -97,7 +125,8 @@ class MetricsSampler:
 
     def __init__(self, base: Path = _CGROUP_BASE) -> None:
         self._base = base
-        self._cores = _read_cgroup_cores(base) or float(os.cpu_count() or 1)
+        self._cores = effective_cores(base)
+        self._memory_bytes = effective_memory_bytes(base)
         self._last_usage_usec = _read_cpu_usage_usec(base)
         self._last_ts = time.monotonic()
         # Prime psutil so its first delta-based reading (the fallback path) is real.
@@ -129,5 +158,5 @@ class MetricsSampler:
         mem = _read_memory_usage(self._base)
         if mem is None:
             return round(psutil.virtual_memory().percent, 1)
-        current, limit = mem
-        return round(max(0.0, min(100.0, current / limit * 100)), 1)
+        current, _limit = mem
+        return round(max(0.0, min(100.0, current / self._memory_bytes * 100)), 1)

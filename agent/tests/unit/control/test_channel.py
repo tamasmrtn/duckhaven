@@ -131,20 +131,18 @@ async def test_pushes_metrics_samples(tmp_path, monkeypatch):
 
 
 async def test_dispatch_clamps_to_operator_ceilings(tmp_path, monkeypatch):
-    """Per-query memory/timeout overrides are clamped to the agent's operator
-    ceilings before execution (G-D2-b)."""
+    """A per-query timeout override is clamped to the agent's operator ceiling
+    before execution (G-D2-b)."""
     import agent.control.channel as ch_module
 
     captured: dict[str, float] = {}
 
-    async def fake_run_query(sql, result_path, memory_limit_gb, timeout_s, **kwargs):
-        captured["memory_limit_gb"] = memory_limit_gb
+    async def fake_run_query(sql, result_path, timeout_s, **kwargs):
         captured["timeout_s"] = timeout_s
         result_path.write_bytes(b"PAR1fake")
         return {"row_count": 0, "duration_ms": 0}
 
     monkeypatch.setattr(ch_module, "run_query", fake_run_query)
-    monkeypatch.setattr(ch_module.settings, "max_memory_limit_gb", 4.0)
     monkeypatch.setattr(ch_module.settings, "max_timeout_s", 60.0)
 
     class FakeWS:
@@ -160,13 +158,11 @@ async def test_dispatch_clamps_to_operator_ceilings(tmp_path, monkeypatch):
         {
             "query_id": str(uuid.uuid4()),
             "sql": "SELECT 1",
-            "memory_limit_gb": 100.0,
             "timeout_s": 99999.0,
         },
         tmp_path,
     )
 
-    assert captured["memory_limit_gb"] == 4.0
     assert captured["timeout_s"] == 60.0
 
 
@@ -450,7 +446,7 @@ async def test_dispatch_sends_done_frame(tmp_path, monkeypatch):
     query_id = str(uuid.uuid4())
     done_frames: list[Frame] = []
 
-    async def mock_run_query(sql, result_path, memory_limit_gb, timeout_s, **kwargs):
+    async def mock_run_query(sql, result_path, timeout_s, **kwargs):
         result_path.write_bytes(b"PAR1fake")
         return {"row_count": 1, "duration_ms": 10}
 
@@ -473,7 +469,6 @@ async def test_dispatch_sends_done_frame(tmp_path, monkeypatch):
             payload={
                 "query_id": query_id,
                 "sql": "SELECT 1",
-                "memory_limit_gb": 1.0,
                 "timeout_s": 30.0,
             },
         )
@@ -605,7 +600,7 @@ async def test_dispatch_error_sends_failed_frame(tmp_path, monkeypatch):
     query_id = str(uuid.uuid4())
     done_frames: list[Frame] = []
 
-    async def failing_run_query(sql, result_path, memory_limit_gb, timeout_s, **kwargs):
+    async def failing_run_query(sql, result_path, timeout_s, **kwargs):
         raise RuntimeError("intentional-error")
 
     # Patch the name as imported into channel.py, not the supervisor module
@@ -620,7 +615,6 @@ async def test_dispatch_error_sends_failed_frame(tmp_path, monkeypatch):
                 payload={
                     "query_id": query_id,
                     "sql": "NOT VALID SQL",
-                    "memory_limit_gb": 1.0,
                     "timeout_s": 30.0,
                 },
             ).model_dump_json()
@@ -665,7 +659,7 @@ async def test_cancel_query_cancels_in_flight_task(tmp_path, monkeypatch):
     query_id = str(uuid.uuid4())
     progress_received = asyncio.Event()
 
-    async def slow_run_query(sql, result_path, memory_limit_gb, timeout_s, **kwargs):
+    async def slow_run_query(sql, result_path, timeout_s, **kwargs):
         await asyncio.sleep(30)
         return {"row_count": 0, "duration_ms": 0}
 
@@ -680,7 +674,6 @@ async def test_cancel_query_cancels_in_flight_task(tmp_path, monkeypatch):
                 payload={
                     "query_id": query_id,
                     "sql": "SELECT 1",
-                    "memory_limit_gb": 1.0,
                     "timeout_s": 60.0,
                 },
             ).model_dump_json()

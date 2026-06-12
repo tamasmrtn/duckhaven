@@ -10,7 +10,6 @@ from agent.executor.runner import run_query_sync
 async def run_query(
     sql: str,
     result_path: Path,
-    memory_limit_gb: float,
     timeout_s: float,
     *,
     backend: dict[str, Any] | None = None,
@@ -26,7 +25,6 @@ async def run_query(
         return run_query_sync(
             sql,
             result_path,
-            memory_limit_gb,
             backend=backend,
             workspace_slug=workspace_slug,
             polaris=polaris,

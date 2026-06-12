@@ -19,6 +19,8 @@ from typing import Any
 
 import duckdb
 
+from agent.metrics.system import effective_cores, effective_memory_bytes
+
 logger = logging.getLogger(__name__)
 
 # Fixed identifiers for the per-connection iceberg secret and attached catalog.
@@ -166,7 +168,6 @@ def _attach_polaris(
 def run_query_sync(
     sql: str,
     result_path: Path,
-    memory_limit_gb: float,
     backend: dict[str, Any] | None = None,
     workspace_slug: str | None = None,
     polaris: dict[str, Any] | None = None,
@@ -193,7 +194,13 @@ def run_query_sync(
     if on_connect is not None:
         on_connect(conn)
     try:
-        conn.execute(f"SET memory_limit='{memory_limit_gb}GB'")
+        # DuckDB must use the full allocation the machine grants the agent: the
+        # cgroup limit when set, else full host capacity (the same cgroup-aware
+        # values advertised as capabilities). DuckDB's default thread count
+        # ignores the cgroup CPU quota, so `threads` is set explicitly.
+        mem_gb = effective_memory_bytes() / 1024**3
+        conn.execute(f"SET memory_limit='{mem_gb}GB'")
+        conn.execute(f"SET threads={effective_cores()}")
 
         backend_kind = (backend or {}).get("kind")
 

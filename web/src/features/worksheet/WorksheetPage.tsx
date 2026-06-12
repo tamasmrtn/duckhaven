@@ -185,7 +185,6 @@ export function WorksheetPage() {
   }, [ws, activeQueryId]);
 
   const [agentId, setAgentId] = useState<string>(() => agents[0]?.id ?? "");
-  const [memoryLimit, setMemoryLimit] = useState(6);
   const [timeout, setTimeout_] = useState(10);
   const [dispatchError, setDispatchError] = useState<string | null>(null);
   // Progress across a multi-statement run (selection spanning several `;`).
@@ -299,7 +298,7 @@ export function WorksheetPage() {
         const result = await dispatchQuery.mutateAsync({
           sql: statements[i],
           agentId: resolvedAgentId,
-          opts: { memory_limit: memoryLimit, timeout: timeout * 60 },
+          opts: { timeout: timeout * 60 },
         });
         setActiveQueryId(result.id);
         // Wait for every statement but the last; abort the sequence if one
@@ -507,17 +506,6 @@ export function WorksheetPage() {
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-56 space-y-3 p-3" align="start">
-                <div className="space-y-1">
-                  <Label className="text-xs">Memory limit (GB)</Label>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={64}
-                    value={memoryLimit}
-                    onChange={(e) => setMemoryLimit(Number(e.target.value))}
-                    className="h-7 text-xs"
-                  />
-                </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Timeout (min)</Label>
                   <Input

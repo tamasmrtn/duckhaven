@@ -166,6 +166,10 @@ services:
   agent:
     image: ghcr.io/tamasmrtn/duckhaven-agent:${DUCKHAVEN_IMAGE_TAG:-latest}
     restart: unless-stopped
+    # Memory cap so the cgroup-aware detection has a concrete memory.max to read
+    # end to end. Remove or raise via AGENT_MEM_LIMIT= for an unconstrained agent
+    # that advertises full host RAM.
+    mem_limit: ${AGENT_MEM_LIMIT:-4g}
     depends_on:
       api:
         condition: service_healthy

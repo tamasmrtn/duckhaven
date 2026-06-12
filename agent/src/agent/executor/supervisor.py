@@ -12,6 +12,8 @@ async def run_query(
     result_path: Path,
     timeout_s: float,
     *,
+    memory_bytes: int,
+    threads: int,
     backend: dict[str, Any] | None = None,
     workspace_slug: str | None = None,
     polaris: dict[str, Any] | None = None,
@@ -25,6 +27,8 @@ async def run_query(
         return run_query_sync(
             sql,
             result_path,
+            memory_bytes=memory_bytes,
+            threads=threads,
             backend=backend,
             workspace_slug=workspace_slug,
             polaris=polaris,

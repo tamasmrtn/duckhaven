@@ -35,6 +35,15 @@ class Settings(BaseSettings):
     # Cadence at which the agent pushes live CPU/memory utilization samples over
     # the control channel. Independent of (and finer than) capability heartbeats.
     metrics_sample_interval_s: float = 2.0
+    # Query admission / queueing (see agent.executor.admission). The concurrency
+    # profile is the default slot ladder; users can switch it at runtime with the
+    # worksheet `SET duckhaven_concurrency` command. Headroom is the fraction of
+    # the cgroup/host memory held back so DuckDB overshoot can't trip the OOM
+    # killer. queued_timeout_s = 0 disables the queued timeout.
+    max_concurrency_profile: str = "decaying_3"
+    memory_headroom_fraction: float = 0.10
+    max_queue_depth: int = 100
+    queued_timeout_s: float = 0.0
 
 
 settings = Settings()

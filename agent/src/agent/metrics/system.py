@@ -15,6 +15,7 @@ from pathlib import Path
 
 import psutil
 
+from duckhaven_shared.concurrency import DEFAULT_PROFILE
 from duckhaven_shared.schemas import MetricsSample
 
 logger = logging.getLogger(__name__)
@@ -132,10 +133,21 @@ class MetricsSampler:
         # Prime psutil so its first delta-based reading (the fallback path) is real.
         psutil.cpu_percent(interval=None)
 
-    def sample(self) -> MetricsSample:
+    def sample(
+        self,
+        *,
+        running_queries: int = 0,
+        queued_queries: int = 0,
+        active_profile: str = DEFAULT_PROFILE,
+    ) -> MetricsSample:
+        # Resource percentages are sampled here; the admission counts/profile are
+        # supplied by the caller (channel) so this stays a pure resource sampler.
         return MetricsSample(
             cpu_percent=self._cpu_percent(),
             memory_percent=self._memory_percent(),
+            running_queries=running_queries,
+            queued_queries=queued_queries,
+            active_profile=active_profile,
             sampled_at=datetime.now(tz=UTC),
         )
 

@@ -37,6 +37,8 @@ def _run(
     return run_query_sync(
         sql,
         tmp_path / f"{uuid4().hex}.parquet",
+        memory_bytes=1024**3,
+        threads=2,
         backend={"kind": "s3"},
         workspace_slug=catalog,
         polaris={"endpoint": base_url, "client_id": creds[0], "client_secret": creds[1]},

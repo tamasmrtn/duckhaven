@@ -52,6 +52,8 @@ def test_object_store_loads_httpfs_and_vends_credentials(fake_conn: FakeConn, tm
     runner_module.run_query_sync(
         "SELECT 1",
         tmp_path / "out.parquet",
+        memory_bytes=1024**3,
+        threads=2,
         backend={"kind": "object_store", "root_uri": "file:///tmp/data"},
         workspace_slug="ws-alpha",
         polaris=POLARIS,
@@ -68,6 +70,8 @@ def test_s3_loads_httpfs_and_vends_credentials(fake_conn: FakeConn, tmp_path: Pa
     runner_module.run_query_sync(
         "SELECT 1",
         tmp_path / "out.parquet",
+        memory_bytes=1024**3,
+        threads=2,
         backend={"kind": "s3", "root_uri": "s3://bucket/prefix"},
         workspace_slug="ws-alpha",
         polaris=POLARIS,
@@ -90,6 +94,8 @@ def test_adls_loads_azure_and_vends_credentials(fake_conn: FakeConn, tmp_path: P
     runner_module.run_query_sync(
         "SELECT 1",
         tmp_path / "out.parquet",
+        memory_bytes=1024**3,
+        threads=2,
         backend={"kind": "adls_gen2", "root_uri": "abfss://c@a.dfs/"},
         workspace_slug="ws-blue",
         polaris=POLARIS,
@@ -105,6 +111,8 @@ def test_attach_uses_workspace_slug_as_warehouse(fake_conn: FakeConn, tmp_path: 
     runner_module.run_query_sync(
         "SELECT 1",
         tmp_path / "out.parquet",
+        memory_bytes=1024**3,
+        threads=2,
         backend={"kind": "object_store", "root_uri": "file:///tmp/data"},
         workspace_slug="ws-alpha",
         polaris=POLARIS,
@@ -119,6 +127,8 @@ def test_no_polaris_means_no_attach(fake_conn: FakeConn, tmp_path: Path):
     runner_module.run_query_sync(
         "SELECT 1",
         tmp_path / "out.parquet",
+        memory_bytes=1024**3,
+        threads=2,
         workspace_slug="ws-alpha",
     )
     cmds = [c[0] for c in fake_conn.commands]
@@ -129,6 +139,8 @@ def test_no_workspace_slug_means_no_attach(fake_conn: FakeConn, tmp_path: Path):
     runner_module.run_query_sync(
         "SELECT 1",
         tmp_path / "out.parquet",
+        memory_bytes=1024**3,
+        threads=2,
         polaris=POLARIS,
     )
     cmds = [c[0] for c in fake_conn.commands]

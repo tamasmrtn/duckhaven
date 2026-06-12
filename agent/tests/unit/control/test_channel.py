@@ -3,7 +3,31 @@ import uuid
 
 import websockets
 
+from agent.executor.admission import Admission
 from duckhaven_shared.protocol import Frame, FrameType
+
+
+def _admission(profile: str = "single", **kwargs) -> Admission:
+    """A test admission manager with an exact, headroom-free budget."""
+    return Admission(
+        profile=profile,
+        headroom=0.0,
+        mem_bytes_provider=lambda: 1024**3,
+        cores_provider=lambda: 2,
+        **kwargs,
+    )
+
+
+class _FakeWS:
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+
+    async def send(self, msg: str) -> None:
+        self.sent.append(msg)
+
+
+def _frame_types(ws: _FakeWS) -> list[FrameType]:
+    return [Frame.model_validate_json(m).type for m in ws.sent]
 
 
 async def _complete_auth(ws, *, session_token: str = "tok-test") -> None:
@@ -161,6 +185,7 @@ async def test_dispatch_clamps_to_operator_ceilings(tmp_path, monkeypatch):
             "timeout_s": 99999.0,
         },
         tmp_path,
+        _admission(),
     )
 
     assert captured["timeout_s"] == 60.0
@@ -709,3 +734,100 @@ async def test_cancel_query_cancels_in_flight_task(tmp_path, monkeypatch):
             await task
         except asyncio.CancelledError, Exception:
             pass
+
+
+async def test_set_concurrency_via_consume_reconfigures(tmp_path):
+    """A SET_CONCURRENCY frame retunes the admission manager's active profile."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="decaying_3")
+
+    class IterWS:
+        def __init__(self, msgs):
+            self._msgs = msgs
+            self.sent: list[str] = []
+
+        async def send(self, msg):
+            self.sent.append(msg)
+
+        async def __aiter__(self):
+            for msg in self._msgs:
+                yield msg
+
+    ws = IterWS(
+        [Frame(type=FrameType.SET_CONCURRENCY, payload={"profile": "single"}).model_dump_json()]
+    )
+    await ch_module._consume(ws, tmp_path, admission)
+    assert admission.active_profile == "single"
+
+
+async def test_second_query_stays_queued_until_first_finishes(tmp_path, monkeypatch):
+    """With one slot, a second dispatch waits in the queue (no QUERY_PROGRESS)
+    until the first finishes and frees the slot."""
+    import agent.control.channel as ch_module
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fake_run_query(sql, result_path, timeout_s, **kwargs):
+        started.set()
+        await release.wait()
+        result_path.write_bytes(b"PAR1fake")
+        return {"row_count": 0, "duration_ms": 0}
+
+    monkeypatch.setattr(ch_module, "run_query", fake_run_query)
+    admission = _admission(profile="single")
+
+    ws1, ws2 = _FakeWS(), _FakeWS()
+    t1 = asyncio.create_task(
+        ch_module._handle_dispatch(ws1, {"query_id": "q1", "sql": "S"}, tmp_path, admission)
+    )
+    await started.wait()
+    started.clear()
+
+    t2 = asyncio.create_task(
+        ch_module._handle_dispatch(ws2, {"query_id": "q2", "sql": "S"}, tmp_path, admission)
+    )
+    await asyncio.sleep(0)
+    assert admission.queued_count == 1
+    assert FrameType.QUERY_PROGRESS not in _frame_types(ws2)  # still queued
+
+    release.set()
+    await t1
+    await started.wait()  # q2 admitted and now running
+    assert FrameType.QUERY_PROGRESS in _frame_types(ws2)
+    await t2
+
+
+async def test_queue_full_returns_failed_frame(tmp_path, monkeypatch):
+    """When the slot is busy and the queue is at capacity, a new dispatch fails
+    fast with a 'queue full' QUERY_DONE rather than oversubscribing."""
+    import agent.control.channel as ch_module
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def blocking_run_query(sql, result_path, timeout_s, **kwargs):
+        started.set()
+        await release.wait()
+        result_path.write_bytes(b"PAR1fake")
+        return {"row_count": 0, "duration_ms": 0}
+
+    monkeypatch.setattr(ch_module, "run_query", blocking_run_query)
+    admission = _admission(profile="single", max_queue_depth=0)
+
+    ws1 = _FakeWS()
+    t1 = asyncio.create_task(
+        ch_module._handle_dispatch(ws1, {"query_id": "q1", "sql": "S"}, tmp_path, admission)
+    )
+    await started.wait()
+
+    ws2 = _FakeWS()
+    await ch_module._handle_dispatch(ws2, {"query_id": "q2", "sql": "S"}, tmp_path, admission)
+    done = Frame.model_validate_json(ws2.sent[-1])
+    assert done.type == FrameType.QUERY_DONE
+    assert done.payload["status"] == "failed"
+    assert done.payload["error"] == "queue full"
+
+    release.set()
+    await t1

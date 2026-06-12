@@ -79,15 +79,15 @@ def test_sampler_falls_back_to_host_without_cgroup(tmp_path):
 
 
 def test_allocation_has_single_source_of_truth(tmp_path, monkeypatch):
-    """The advertised capability, the utilization denominator, and the DuckDB
-    session config all derive from effective_memory_bytes/effective_cores -- so
-    they can never diverge."""
+    """The advertised capability, the utilization denominator, and the admission
+    budget all derive from effective_memory_bytes/effective_cores -- so they can
+    never diverge. (The runner then executes within the slice admission grants.)"""
     import agent.control.channel as channel
-    import agent.executor.runner as runner
+    import agent.executor.admission as admission_mod
 
     mem = 9 * 1024**3
     cores = 5
-    for mod in (sysm, channel, runner):
+    for mod in (sysm, channel, admission_mod):
         monkeypatch.setattr(mod, "effective_memory_bytes", lambda *a, **k: mem, raising=False)
         monkeypatch.setattr(mod, "effective_cores", lambda *a, **k: cores, raising=False)
 
@@ -101,18 +101,9 @@ def test_allocation_has_single_source_of_truth(tmp_path, monkeypatch):
     assert sampler._memory_bytes == mem
     assert sampler._cores == cores
 
-    # (c) actual DuckDB session config
-    import duckdb
-
-    result_path = tmp_path / "out.parquet"
-    runner.run_query_sync(
-        "SELECT current_setting('memory_limit') AS m, current_setting('threads') AS t",
-        result_path,
-    )
-    mem_setting, threads_setting = (
-        duckdb.connect().execute(f"SELECT * FROM read_parquet('{result_path}')").fetchone()
-    )
-    assert int(threads_setting) == cores
-    ref = duckdb.connect()
-    ref.execute(f"SET memory_limit='{mem / 1024**3}GB'")
-    assert mem_setting == ref.execute("SELECT current_setting('memory_limit')").fetchone()[0]
+    # (c) admission budget: a single full slot equals the whole detected memory
+    # (no headroom) and its threads equal the detected cores.
+    adm = admission_mod.Admission(profile="single", headroom=0.0)
+    assert adm._budget == mem
+    assert adm._slots[0].memory_bytes == mem
+    assert adm._slots[0].threads == cores

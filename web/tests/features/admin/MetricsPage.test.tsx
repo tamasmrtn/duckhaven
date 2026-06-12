@@ -25,6 +25,26 @@ describe('MetricsPage', () => {
     await screen.findByText(`${METRICS.length} agents reporting`)
   })
 
+  it('shows aggregate running and queued query counters', async () => {
+    renderWithProviders({ initialRoute: METRICS_ROUTE })
+
+    // Aggregate of each agent's latest sample across the fixture agents.
+    const totals = METRICS.reduce(
+      (acc, agent) => {
+        const latest = agent.samples[agent.samples.length - 1]
+        acc.running += latest.running_queries
+        acc.queued += latest.queued_queries
+        return acc
+      },
+      { running: 0, queued: 0 },
+    )
+
+    const running = await screen.findByText('Running queries')
+    expect(running.parentElement).toHaveTextContent(String(totals.running))
+    const queued = screen.getByText('Queued queries')
+    expect(queued.parentElement).toHaveTextContent(String(totals.queued))
+  })
+
   it('shows an empty state when no agents are reporting', async () => {
     server.use(
       http.get('/api/admin/agents/metrics', () => HttpResponse.json([])),

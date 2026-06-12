@@ -16,6 +16,9 @@ export interface AgentCapabilities {
 export interface MetricsSample {
   cpu_percent: number;
   memory_percent: number;
+  running_queries: number;
+  queued_queries: number;
+  active_profile: string;
   sampled_at: string;
 }
 

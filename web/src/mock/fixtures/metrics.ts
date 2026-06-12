@@ -12,6 +12,9 @@ function makeSamples(seed: number) {
       memory_percent: Math.round(
         Math.max(5, Math.min(95, 50 + wave / 2 + seed * 3)),
       ),
+      running_queries: Math.max(0, Math.round(1 + Math.sin((i + seed) / 5))),
+      queued_queries: seed > 2 ? Math.max(0, Math.round(Math.sin(i / 6))) : 0,
+      active_profile: "decaying_3",
       sampled_at: new Date(t).toISOString(),
     };
   });

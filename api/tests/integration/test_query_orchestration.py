@@ -32,7 +32,9 @@ async def test_valid_query_is_dispatched(admin_client, workspace_slug, connected
     )
     assert resp.status_code == 202, resp.text
     body = resp.json()
-    assert body["status"] == "running"
+    # Status stays "queued" until the agent admits the query and emits
+    # QUERY_PROGRESS; the agent may hold it in its admission queue first.
+    assert body["status"] == "queued"
 
     # The agent received exactly one DISPATCH_QUERY frame for this query.
     assert len(stub.sent) == 1

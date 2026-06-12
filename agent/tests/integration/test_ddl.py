@@ -77,6 +77,8 @@ async def test_create_insert_select_drop_roundtrip(
     selected = run_query_sync(
         f"SELECT id, label FROM {table} ORDER BY id",
         result_path,
+        memory_bytes=1024**3,
+        threads=2,
         backend={"kind": "s3"},
         workspace_slug=catalog,
         polaris={
@@ -125,6 +127,8 @@ async def test_alter_table_add_column(
     selected = run_query_sync(
         f"SELECT note FROM {table}",
         result_path,
+        memory_bytes=1024**3,
+        threads=2,
         backend={"kind": "s3"},
         workspace_slug=catalog,
         polaris={

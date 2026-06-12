@@ -698,11 +698,3 @@ The same way `ARCHITECTURE.md §2` declares non-goals, this doc declares
 ---
 
 *End of design document.*
-
-## References
-
-- Databricks SQL editor (new) — `docs.databricks.com/aws/en/sql/user/sql-editor/`
-- Snowflake Snowsight worksheets — `docs.snowflake.com/en/user-guide/ui-snowsight-worksheets`
-- DuckDB Design Manual — `duckdb.org/design/manual/`
-- Lucide icons — `lucide.dev`
-- shadcn/ui — `ui.shadcn.com`

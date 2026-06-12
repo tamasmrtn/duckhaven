@@ -29,6 +29,9 @@ class AgentOut(BaseModel):
 class MetricsSampleOut(BaseModel):
     cpu_percent: float
     memory_percent: float
+    running_queries: int = 0
+    queued_queries: int = 0
+    active_profile: str = "decaying_3"
     sampled_at: datetime
 
 

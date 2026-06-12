@@ -28,21 +28,11 @@ async def dispatch_query(
     db: AsyncSession,
     query: Query,
     *,
-    memory_limit_gb: float = 6.0,
     timeout_s: float = 600.0,
     stats_for: dict[str, str] | None = None,
 ) -> None:
     if query.agent_id is None or registry.get(query.agent_id) is None:
         raise ValueError("Agent not connected")
-
-    # Clamp the requested memory to the agent's advertised ceiling so the
-    # picker's numbers and the dispatched cap agree (the agent enforces its
-    # own hard ceiling regardless; this is fast feedback). G-D2-b.
-    agent = await db.get(Agent, query.agent_id)
-    if agent is not None and agent.capabilities:
-        cap = agent.capabilities.get("memory_limit_gb")
-        if cap:
-            memory_limit_gb = min(memory_limit_gb, float(cap))
 
     workspace = await db.get(Workspace, query.workspace_id)
     if workspace is None:
@@ -57,7 +47,6 @@ async def dispatch_query(
     payload: dict[str, object] = {
         "query_id": str(query.id),
         "sql": query.sql,
-        "memory_limit_gb": memory_limit_gb,
         "timeout_s": timeout_s,
         "workspace": {"slug": workspace.slug, "default_schema": DEFAULT_SCHEMA},
         "backend": {"kind": backend.kind, "root_uri": backend.root_uri},
@@ -68,7 +57,8 @@ async def dispatch_query(
 
     frame = Frame(type=FrameType.DISPATCH_QUERY, payload=payload)
     await registry.send(query.agent_id, frame.model_dump_json())
-    query.status = "running"
+    # Status stays "queued" until the agent admits the query and emits
+    # QUERY_PROGRESS; the agent may hold it in its admission queue first.
     await db.commit()
 
 

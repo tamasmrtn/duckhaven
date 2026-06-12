@@ -9,8 +9,9 @@ from websockets.exceptions import ConnectionClosed
 
 from agent.auth import TokenHolder, load_session_token, save_session_token
 from agent.config import settings
+from agent.executor.admission import Admission, QueuedTimeout, QueueFull, Reservation
 from agent.executor.supervisor import run_query
-from agent.metrics.system import MetricsSampler, cpu_capability
+from agent.metrics.system import MetricsSampler, cpu_capability, effective_memory_bytes
 from duckhaven_shared.protocol import Frame, FrameType
 from duckhaven_shared.schemas import AgentCapabilities
 
@@ -44,7 +45,7 @@ def _get_capabilities() -> AgentCapabilities:
     return AgentCapabilities(
         duckdb_version=version,
         extensions=extensions,
-        memory_limit_gb=settings.memory_limit_bytes / 1024**3,
+        memory_limit_gb=round(effective_memory_bytes() / 1024**3, 1),
         cores=cpu["cores"],
         cpu_model=cpu["cpu_model"],
         cpu_cores_physical=cpu["cpu_cores_physical"],
@@ -52,10 +53,17 @@ def _get_capabilities() -> AgentCapabilities:
     )
 
 
-async def _handle_dispatch(ws, payload: dict, results_dir: Path) -> None:
+async def _send_failed(ws, query_id: str, error: str) -> None:
+    done = Frame(
+        type=FrameType.QUERY_DONE,
+        payload={"query_id": query_id, "status": "failed", "error": error},
+    )
+    await ws.send(done.model_dump_json())
+
+
+async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admission) -> None:
     query_id = payload["query_id"]
     sql = payload["sql"]
-    memory_limit_gb = min(float(payload.get("memory_limit_gb", 6.0)), settings.max_memory_limit_gb)
     timeout_s = min(float(payload.get("timeout_s", 600.0)), settings.max_timeout_s)
     backend = payload.get("backend")
     workspace = payload.get("workspace") or {}
@@ -71,6 +79,25 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path) -> None:
     stats_for = payload.get("stats_for")
     result_path = results_dir / f"{query_id}.parquet"
 
+    # Admission gate: wait in the FIFO queue until the agent has capacity. While
+    # queued we send no QUERY_PROGRESS, so the control plane keeps the query in
+    # the `queued` state until it actually starts running.
+    try:
+        reservation: Reservation = await admission.acquire()
+    except QueueFull:
+        await _send_failed(ws, query_id, "queue full")
+        _in_flight.pop(query_id, None)
+        return
+    except QueuedTimeout:
+        await _send_failed(ws, query_id, "queued timeout")
+        _in_flight.pop(query_id, None)
+        return
+    except asyncio.CancelledError:
+        # Cancelled while queued: the admission manager dropped the waiter; the
+        # control plane already marked the query cancelled.
+        _in_flight.pop(query_id, None)
+        raise
+
     progress = Frame(type=FrameType.QUERY_PROGRESS, payload={"query_id": query_id})
     await ws.send(progress.model_dump_json())
 
@@ -78,8 +105,9 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path) -> None:
         stats = await run_query(
             sql,
             result_path,
-            memory_limit_gb,
             timeout_s,
+            memory_bytes=reservation.memory_bytes,
+            threads=reservation.threads,
             backend=backend,
             workspace_slug=workspace_slug,
             polaris=polaris,
@@ -115,19 +143,22 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path) -> None:
             payload={"query_id": query_id, "status": "failed", "error": str(exc)},
         )
     finally:
+        admission.release(reservation)
         _in_flight.pop(query_id, None)
 
     await ws.send(done.model_dump_json())
 
 
-async def _push_metrics(ws, sampler: MetricsSampler) -> None:
-    """Push live CPU/memory utilization samples on a fixed cadence until cancelled."""
+async def _push_metrics(ws, sampler: MetricsSampler, admission: Admission) -> None:
+    """Push live CPU/memory utilization + admission counts on a fixed cadence."""
     while True:
         await asyncio.sleep(settings.metrics_sample_interval_s)
-        frame = Frame(
-            type=FrameType.METRICS_SAMPLE,
-            payload=sampler.sample().model_dump(mode="json"),
+        sample = sampler.sample(
+            running_queries=admission.running_count,
+            queued_queries=admission.queued_count,
+            active_profile=admission.active_profile,
         )
+        frame = Frame(type=FrameType.METRICS_SAMPLE, payload=sample.model_dump(mode="json"))
         await ws.send(frame.model_dump_json())
 
 
@@ -145,6 +176,15 @@ async def run_control_channel(
             if settings.session_token_path
             else results_dir / ".session-token"
         )
+
+    # One admission manager for the agent's lifetime; the in-memory queue + the
+    # active concurrency profile persist across reconnects (reset on restart).
+    admission = Admission(
+        profile=settings.max_concurrency_profile,
+        headroom=settings.memory_headroom_fraction,
+        max_queue_depth=settings.max_queue_depth,
+        queued_timeout_s=settings.queued_timeout_s,
+    )
 
     while True:
         try:
@@ -187,9 +227,9 @@ async def run_control_channel(
                 await ws.send(caps.model_dump_json())
 
                 # Push live utilization on its own cadence; cancelled on disconnect.
-                metrics_task = asyncio.create_task(_push_metrics(ws, MetricsSampler()))
+                metrics_task = asyncio.create_task(_push_metrics(ws, MetricsSampler(), admission))
                 try:
-                    await _consume(ws, results_dir)
+                    await _consume(ws, results_dir, admission)
                 finally:
                     metrics_task.cancel()
 
@@ -198,7 +238,7 @@ async def run_control_channel(
         await asyncio.sleep(5)
 
 
-async def _consume(ws, results_dir: Path) -> None:
+async def _consume(ws, results_dir: Path, admission: Admission) -> None:
     async for raw_msg in ws:
         msg = Frame.model_validate_json(raw_msg)
 
@@ -209,9 +249,18 @@ async def _consume(ws, results_dir: Path) -> None:
             caps = Frame(type=FrameType.AGENT_STATUS, payload=_get_capabilities().model_dump())
             await ws.send(caps.model_dump_json())
 
+        elif msg.type == FrameType.SET_CONCURRENCY:
+            # Agent-global change to the admission slot ladder for FUTURE queries
+            # (driven by the worksheet `SET duckhaven_concurrency` command).
+            try:
+                admission.set_profile(msg.payload["profile"])
+                logger.info("Concurrency profile set to %s", admission.active_profile)
+            except (KeyError, ValueError) as exc:
+                logger.warning("Ignoring invalid SET_CONCURRENCY: %s", exc)
+
         elif msg.type == FrameType.DISPATCH_QUERY:
             query_id = msg.payload.get("query_id", str(uuid.uuid4()))
-            task = asyncio.create_task(_handle_dispatch(ws, msg.payload, results_dir))
+            task = asyncio.create_task(_handle_dispatch(ws, msg.payload, results_dir, admission))
             _in_flight[query_id] = task
 
         elif msg.type == FrameType.CANCEL_QUERY:

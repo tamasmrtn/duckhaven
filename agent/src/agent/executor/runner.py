@@ -166,7 +166,9 @@ def _attach_polaris(
 def run_query_sync(
     sql: str,
     result_path: Path,
-    memory_limit_gb: float,
+    *,
+    memory_bytes: int,
+    threads: int,
     backend: dict[str, Any] | None = None,
     workspace_slug: str | None = None,
     polaris: dict[str, Any] | None = None,
@@ -193,7 +195,13 @@ def run_query_sync(
     if on_connect is not None:
         on_connect(conn)
     try:
-        conn.execute(f"SET memory_limit='{memory_limit_gb}GB'")
+        # The admission manager sizes each query's slice of the agent's budget
+        # (memory_bytes + threads) so concurrent sessions never oversubscribe the
+        # cgroup memory limit. DuckDB's default thread count ignores the cgroup
+        # CPU quota, so `threads` is set explicitly.
+        mem_gb = memory_bytes / 1024**3
+        conn.execute(f"SET memory_limit='{mem_gb}GB'")
+        conn.execute(f"SET threads={threads}")
 
         backend_kind = (backend or {}).get("kind")
 

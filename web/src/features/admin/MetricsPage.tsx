@@ -134,12 +134,44 @@ function CurrentValueCard({ agent }: { agent: AgentMetrics }) {
           </p>
         </div>
       </div>
+      {latest && (
+        <p className="mt-3 text-2xs text-text-tertiary">
+          Concurrency: {latest.active_profile}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// Aggregate running/queued query counts from each agent's most recent sample.
+function queryTotals(metrics: AgentMetrics[]) {
+  return metrics.reduce(
+    (acc, agent) => {
+      const latest = agent.samples[agent.samples.length - 1];
+      if (latest) {
+        acc.running += latest.running_queries;
+        acc.queued += latest.queued_queries;
+      }
+      return acc;
+    },
+    { running: 0, queued: 0 },
+  );
+}
+
+function QueryCounter({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4">
+      <p className="text-2xs uppercase tracking-wide text-text-tertiary">
+        {label}
+      </p>
+      <p className="font-mono text-3xl font-tabular">{value}</p>
     </div>
   );
 }
 
 export function MetricsPage() {
   const { data: metrics = [], isLoading } = useAgentMetrics();
+  const totals = queryTotals(metrics);
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -164,6 +196,10 @@ export function MetricsPage() {
           />
         ) : (
           <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <QueryCounter label="Running queries" value={totals.running} />
+              <QueryCounter label="Queued queries" value={totals.queued} />
+            </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {metrics.map((agent) => (
                 <CurrentValueCard key={agent.agent_id} agent={agent} />

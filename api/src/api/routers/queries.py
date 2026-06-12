@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -17,6 +18,8 @@ from api.services.agent_capabilities import agent_supports_backend, required_ext
 from api.services.agent_registry import registry
 from api.services.sql_guard import SQLNotAllowed, assert_allowed
 from api.services.workspace import assert_workspace_member, get_workspace
+from duckhaven_shared.concurrency import parse_set_concurrency
+from duckhaven_shared.protocol import Frame, FrameType
 
 router = APIRouter()
 
@@ -32,6 +35,19 @@ async def create_query(
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
     await assert_workspace_member(db, workspace.id, user.id)
+
+    # `SET duckhaven_concurrency = '<profile>'` is a DuckHaven control command,
+    # not DuckDB SQL (sql_guard rejects SET): intercept it before the guard,
+    # retune the selected agent's admission, and record a done query for audit.
+    try:
+        profile = parse_set_concurrency(body.sql)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": "sql_not_allowed", "detail": str(exc)},
+        ) from exc
+    if profile is not None:
+        return await _set_concurrency(db, workspace.id, user.id, body, profile)
 
     try:
         assert_allowed(body.sql)
@@ -75,9 +91,41 @@ async def create_query(
     await query_service.dispatch_query(
         db,
         query,
-        memory_limit_gb=body.memory_limit_gb,
         timeout_s=body.timeout_s,
     )
+    return query
+
+
+async def _set_concurrency(
+    db: AsyncSession, workspace_id: uuid.UUID, user_id: uuid.UUID, body: QueryCreate, profile: str
+) -> Query:
+    """Apply a concurrency `SET` to the selected agent and log it as a done query.
+
+    Agent-global: it retunes admission for every query on that agent, not just
+    this user's. The agent owns the profile (held in memory, reset on restart).
+    """
+    result = await db.execute(select(Agent).where(Agent.id == body.agent_id))
+    agent = result.scalar_one_or_none()
+    if agent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+    if registry.get(body.agent_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Agent not connected"
+        )
+    frame = Frame(type=FrameType.SET_CONCURRENCY, payload={"profile": profile})
+    await registry.send(body.agent_id, frame.model_dump_json())
+    query = Query(
+        workspace_id=workspace_id,
+        agent_id=body.agent_id,
+        user_id=user_id,
+        sql=body.sql,
+        status="done",
+        row_count=0,
+        finished_at=datetime.now(tz=UTC),
+    )
+    db.add(query)
+    await db.commit()
+    await db.refresh(query)
     return query
 
 

@@ -7,7 +7,7 @@ export const queriesApi = {
     ws: string,
     sql: string,
     agentId: string,
-    opts?: { memory_limit?: number; timeout?: number },
+    opts?: { timeout?: number },
   ) =>
     post<Query>(`/workspaces/${ws}/queries`, {
       sql,

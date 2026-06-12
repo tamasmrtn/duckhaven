@@ -67,7 +67,14 @@ async def test_list_metrics_returns_samples_with_name(admin_client: AsyncClient,
     registry.register(agent.id, object())  # type: ignore[arg-type]
     registry.record_metrics(
         agent.id,
-        {"cpu_percent": 33.0, "memory_percent": 50.0, "sampled_at": "2026-06-05T00:00:00Z"},
+        {
+            "cpu_percent": 33.0,
+            "memory_percent": 50.0,
+            "running_queries": 2,
+            "queued_queries": 3,
+            "active_profile": "decaying_3",
+            "sampled_at": "2026-06-05T00:00:00Z",
+        },
     )
     try:
         resp = await admin_client.get("/admin/agents/metrics")
@@ -76,8 +83,13 @@ async def test_list_metrics_returns_samples_with_name(admin_client: AsyncClient,
         assert len(data) == 1
         assert data[0]["name"] == "busy-agent"
         assert data[0]["agent_id"] == str(agent.id)
-        assert data[0]["samples"][0]["cpu_percent"] == 33.0
-        assert data[0]["samples"][0]["memory_percent"] == 50.0
+        sample = data[0]["samples"][0]
+        assert sample["cpu_percent"] == 33.0
+        assert sample["memory_percent"] == 50.0
+        # Admission counts + active profile round-trip to the Utilization page.
+        assert sample["running_queries"] == 2
+        assert sample["queued_queries"] == 3
+        assert sample["active_profile"] == "decaying_3"
     finally:
         registry.unregister(agent.id)
 

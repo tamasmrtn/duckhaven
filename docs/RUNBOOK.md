@@ -120,3 +120,59 @@ Tailscale is the only network path (R9). If it is down the platform is
 unreachable. Document the agents' and control plane's static Tailscale IPs so
 operators can confirm reachability; agents auto-reconnect (5 s backoff) once the
 tailnet recovers.
+
+---
+
+## 6. Query queueing & concurrency
+
+Each agent runs queries under **admission control** so it never oversubscribes
+its memory and gets OOM-killed: instead of picking up every dispatched query, it
+admits queries up to a memory budget and **queues** the rest (FIFO). When a
+running query finishes, the oldest queued query starts.
+
+### How capacity is split
+
+The agent's budget is `effective memory × (1 − headroom)` (cgroup limit when set,
+else host RAM; headroom defaults to 10%, `MEMORY_HEADROOM_FRACTION`). The budget
+is divided into a **weighted slot ladder**; a new query takes the largest free
+slot, so the first running query gets the most memory/threads and later ones get
+less. Profiles:
+
+| Profile        | Weights   | Slots | Share of budget        |
+| -------------- | --------- | ----- | ---------------------- |
+| `single`       | `[1]`     | 1     | one query gets 100%    |
+| `equal_2`      | `[1,1]`   | 2     | 50% / 50%              |
+| `decaying_2`   | `[2,1]`   | 2     | 67% / 33%              |
+| `decaying_3`   | `[3,2,1]` | 3     | 50% / 33% / 17%        |
+
+Default is `decaying_3` (`MAX_CONCURRENCY_PROFILE`). The queue holds up to
+`MAX_QUEUE_DEPTH` (default 100) queries; beyond that a query fails with
+`queue full`. `QUEUED_TIMEOUT_S` (default 0 = off) fails a query that waits too
+long with `queued timeout`. DuckDB fixes a session's memory at start and cannot
+resize a running query, so a lone query uses its slot's share, not the whole box
+(only `single` gives one query the full budget).
+
+### Changing the profile from the worksheet
+
+Run this DuckHaven control command (its own statement) in a worksheet:
+
+```sql
+SET duckhaven_concurrency = 'decaying_3';   -- single | equal_2 | decaying_2 | decaying_3
+RESET duckhaven_concurrency;                 -- back to the default
+```
+
+- It applies to the **agent currently selected** in that worksheet and is
+  **agent-global**: it changes concurrency for *every* user's queries on that
+  agent (like `ALTER WAREHOUSE`), not just your session.
+- It takes effect for **future** admissions; already-running queries keep their
+  slot. The setting is held in memory and **resets to the default on agent
+  restart**.
+- It is recorded in **Admin → Audit** like any query.
+
+### Monitoring
+
+**Admin → Utilization** shows two counters at the top — **Running queries** and
+**Queued queries** (aggregated across agents) — plus each agent's active profile.
+A persistently non-zero queued count means the agent is saturated: raise the
+slot count (e.g. switch to `decaying_3`) only if per-query memory still suffices,
+or add another agent.

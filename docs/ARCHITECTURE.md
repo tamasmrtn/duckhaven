@@ -242,8 +242,10 @@ tasks (`src/agent/main.py` gathers them):
 
 1. **Control channel** (`control/channel.py`) — opens the outbound WebSocket,
    authenticates, advertises `AgentCapabilities`, then loops handling frames
-   (`dispatch_query`, `cancel_query`, `heartbeat`). Reconnects with backoff
-   if the socket drops. On each heartbeat it re-advertises capabilities.
+   (`dispatch_query`, `cancel_query`, `heartbeat`, `set_concurrency`). Reconnects
+   with backoff if the socket drops. On each heartbeat it re-advertises
+   capabilities; each `metrics_sample` also carries the live running/queued query
+   counts and active concurrency profile.
 2. **Result server** (`results/server.py`) — an HTTP server bound to
    `RESULTS_HTTP_HOST` (`0.0.0.0` in compose) that advertises its port to the
    control plane, serving `results/{query_id}.parquet` with **HTTP `Range`**
@@ -256,11 +258,13 @@ tasks (`src/agent/main.py` gathers them):
 
 | Module | Responsibility |
 |---|---|
-| `executor/runner.py` | `run_query_sync`: the synchronous DuckDB path. Sets `memory_limit`, loads `iceberg` (+ `httpfs`/`azure` for cloud), creates a connection-scoped iceberg OAuth2 `SECRET` from agent config and `ATTACH`es the workspace's Polaris catalog (warehouse = workspace slug; `vended_credentials` for every backend, since all are object storage), then `COPY (sql) TO '<uuid>.parquet'`. When the dispatch carries `stats_for`, it also returns the target table's `COUNT(*)` for the catalog sidecar. |
+| `executor/admission.py` | `Admission`: memory-budget admission control with a FIFO queue. The cgroup-aware budget (`effective_memory_bytes() × (1 − headroom)`) is split into a weighted slot ladder (profiles in `duckhaven_shared.concurrency`); a new query takes the largest free slot, the rest queue. Enforces the invariant `Σ running memory_limit ≤ budget` so the agent never OOM-kills. Exposes live running/queued counts and the active profile, switchable at runtime via the `set_concurrency` frame. |
+| `executor/runner.py` | `run_query_sync`: the synchronous DuckDB path. Sets `memory_limit`/`threads` to the slice the admission manager granted, loads `iceberg` (+ `httpfs`/`azure` for cloud), creates a connection-scoped iceberg OAuth2 `SECRET` from agent config and `ATTACH`es the workspace's Polaris catalog (warehouse = workspace slug; `vended_credentials` for every backend, since all are object storage), then `COPY (sql) TO '<uuid>.parquet'`. When the dispatch carries `stats_for`, it also returns the target table's `COUNT(*)` for the catalog sidecar. |
 | `executor/supervisor.py` | `run_query`: runs `run_query_sync` on a thread executor with a wall-clock timeout. Uses DuckDB's thread-safe `conn.interrupt()` (via `loop.call_later` and on cancel) to actually stop a running query. |
 
-`config.py` holds operator ceilings (`max_memory_limit_gb`, `max_timeout_s`)
-that per-query requests are clamped to.
+`config.py` holds the operator timeout ceiling (`max_timeout_s`, per-query
+requests clamp to it) and the admission knobs (`max_concurrency_profile`,
+`memory_headroom_fraction`, `max_queue_depth`, `queued_timeout_s`).
 
 ### 6.4 `web/` — the React SPA
 

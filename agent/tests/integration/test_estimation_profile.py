@@ -72,16 +72,26 @@ async def test_profile_captured_over_real_catalog(
     assert profile is not None
     assert profile["summary"]["latency_ms"] > 0
     assert profile["summary"]["peak_memory_bytes"] >= 0
+    # rows_returned surfaces the real result size (500 groups), not the COPY count.
+    assert profile["summary"]["rows_returned"] == 500
 
-    # The operator tree includes a scan that read the seeded rows.
-    scanned = []
+    # The operator tree has a blocking GROUP BY producing the 500 groups, above a
+    # scan that read at least the seeded rows. (DuckDB's Iceberg scan may report
+    # operator_rows_scanned as a multiple of the row count, so assert a lower
+    # bound rather than exact equality.)
+    types, produced, scanned = [], [], []
     stack = [profile["tree"]]
     while stack:
         node = stack.pop()
+        types.append(node["type"])
+        if node["rows_produced"] is not None:
+            produced.append(node["rows_produced"])
         if node["rows_scanned"]:
             scanned.append(node["rows_scanned"])
         stack.extend(node["children"])
-    assert 50000 in scanned
+    assert any("GROUP_BY" in t for t in types)
+    assert 500 in produced
+    assert max(scanned) >= 50000
 
 
 async def test_profile_temp_file_cleaned_up(polaris_s3_catalog, attach_factory, tmp_path) -> None:

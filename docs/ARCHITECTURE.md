@@ -285,7 +285,7 @@ Router/Query/Table, Monaco editor, Radix + shadcn/ui + Tailwind.
 | `src/features/` | Page-level features: `worksheet/`, `catalog/`, `saved-queries/`, `history/`, `auth/`, `admin/`. |
 | `src/components/app/` | App-shell chrome (`AppShell`, `TopBar`, `LeftRail`, `AgentPicker`, `WorkspaceSwitcher`, `CommandPalette`). |
 | `src/components/ui/` | shadcn/ui primitives. |
-| `src/router.tsx` | TanStack route tree. Authed routes nest under `/$ws/...` (`worksheets`, `catalog`, `saved-queries`, `history`, `admin/*`). |
+| `src/router.tsx` | TanStack route tree. Authed routes nest under `/$ws/...` (`worksheets`, `catalog`, `saved-queries`, `history`, `queries/$queryId` (the dedicated query-profile graph), `admin/*`). |
 | `src/types/` | Shared TypeScript types mirroring the API DTOs. |
 | `src/mock/` | MSW handlers + fixtures used in `dev` (and tests) when the real API is absent. |
 

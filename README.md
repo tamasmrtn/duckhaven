@@ -56,9 +56,10 @@ trail — with data sovereignty, network privacy, and no SaaS lock-in.
   DuckDB's optimizer plan (`EXPLAIN`), so cheap queries pack in while heavy ones
   reserve more (and queue when the agent is busy). The agent never oversubscribes
   its memory budget.
-- **Query Profiles** — After a query runs, inspect a per-operator profile: rows
-  in → out, bytes, and timing per step, with automatic flags for spills to disk,
-  scan blow-ups, and bad cardinality estimates.
+- **Query Profiles** — After a query runs, inspect a per-operator profile: an
+  interactive operator graph with rows in → out, bytes, and timing per step,
+  plus automatic flags for spills to disk, scan blow-ups, and bad cardinality
+  estimates.
 - **Self-Hosted** — Docker Compose on your network. Your data never leaves your infrastructure.
 - **Short-Lived Credentials** — Polaris vends temporary storage credentials per query. No long-lived secrets on agents.
 

@@ -207,20 +207,28 @@ or add another agent.
 
 After a query finishes, the agent captures DuckDB's per-operator execution
 profile and ships it (KB-sized) to the control plane, where it is stored on the
-query and served from `GET /queries/{id}/profile`. Open a query in the
-worksheet (or click any row in **History**) and select the **Profile** tab to
-see:
+query and served from `GET /queries/{id}/profile`. There are two ways to view it:
+
+- **Worksheet → Profile tab** — an inline summary + collapsible operator tree
+  for a quick glance at the query you just ran, with an **Open full profile**
+  link to the dedicated page.
+- **Dedicated profile page** (`/{ws}/queries/{id}`) — reached by clicking any
+  row in **History**. It shows an interactive operator **graph** (result on top,
+  scans at the bottom; data flows up) where clicking a node opens its detail.
+
+Both surface:
 
 - a summary strip — latency, CPU time, rows returned, result size, **peak
   memory**, **spill to disk**, and bytes read/written;
-- an interactive operator tree — rows scanned → produced, bytes, and a time bar
-  per operator, expandable to its `EXTRA_INFO` (join conditions, filters, group
-  keys);
+- per-operator metrics — rows scanned → produced, bytes, a time-share bar, and
+  the operator's `EXTRA_INFO` (join conditions, filters, group keys);
 - **inefficiency highlights** computed from the profile — spilled queries
   (worth a larger reservation or less intermediate data), scan blow-ups (a scan
   reading far more rows than the query returns), bad cardinality estimates
-  (actual far from the optimizer's `EXPLAIN` estimate), and time hotspots.
+  (actual far from the optimizer's `EXPLAIN` estimate), and time hotspots. The
+  dedicated page also ranks the **most expensive operators** and lists the
+  detected issues in a **diagnostics** panel, each linking to the offending node.
 
 Profiling is on by default and best-effort: a capture failure yields no profile
-rather than failing the query, and DDL/DML carry no profile (the tab shows a
-no-profile state). Set `PROFILING_ENABLED=false` on the agent to disable it.
+rather than failing the query, and DDL/DML carry no profile (a no-profile state
+is shown). Set `PROFILING_ENABLED=false` on the agent to disable it.

@@ -92,6 +92,42 @@ async def test_query_done_upserts_table_stats(db_session):
     assert meta.size_bytes is None
 
 
+async def test_query_done_persists_profile(db_session):
+    ws = await _make_workspace(db_session)
+    query = Query(workspace_id=ws.id, sql="SELECT 1", status="running")
+    db_session.add(query)
+    await db_session.commit()
+    await db_session.refresh(query)
+
+    profile = {
+        "summary": {"latency_ms": 12.0, "peak_memory_bytes": 1024, "spill_bytes": 0},
+        "tree": {"type": "PROJECTION", "children": []},
+    }
+    frame = Frame(
+        type=FrameType.QUERY_DONE,
+        payload={"query_id": str(query.id), "status": "done", "profile": profile},
+    )
+    await query_service.handle_agent_frame(db_session, frame)
+    await db_session.refresh(query)
+    assert query.profile == profile
+
+
+async def test_query_done_without_profile_stays_null(db_session):
+    ws = await _make_workspace(db_session)
+    query = Query(workspace_id=ws.id, sql="CREATE TABLE t (x INT)", status="running")
+    db_session.add(query)
+    await db_session.commit()
+    await db_session.refresh(query)
+
+    frame = Frame(
+        type=FrameType.QUERY_DONE,
+        payload={"query_id": str(query.id), "status": "done"},
+    )
+    await query_service.handle_agent_frame(db_session, frame)
+    await db_session.refresh(query)
+    assert query.profile is None
+
+
 async def test_pick_agent_for(db_session):
     ws = await _make_workspace(db_session)
     agent = Agent(name="a", status="healthy", capabilities={"extensions": ["iceberg", "httpfs"]})

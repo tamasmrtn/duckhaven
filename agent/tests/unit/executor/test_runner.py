@@ -181,6 +181,81 @@ def test_iceberg_metadata_best_effort_on_failure():
     }
 
 
+def test_select_captures_normalized_profile(tmp_path):
+    """A materialized SELECT returns a normalized profile: query summary with
+    latency + peak memory, and an operator tree with actual cardinalities."""
+    result_path = tmp_path / "out.parquet"
+    stats = _run(
+        "SELECT x % 10 g, count(*) c FROM range(50000) t(x) GROUP BY g ORDER BY c",
+        result_path,
+        enable_profiling=True,
+    )
+    profile = stats["profile"]
+    assert profile is not None
+    summary = profile["summary"]
+    assert summary["latency_ms"] > 0
+    assert summary["peak_memory_bytes"] >= 0
+    assert set(summary) >= {"latency_ms", "peak_memory_bytes", "spill_bytes"}
+    # rows_returned reflects the real result size (10 groups), not the COPY's
+    # returned-row count of 1.
+    assert summary["rows_returned"] == 10 == stats["row_count"]
+    # The admission reservation the query ran under is recorded on the summary.
+    assert summary["reserved_memory_bytes"] == _MEM
+    assert summary["reserved_threads"] == _THREADS
+    assert profile["tree"]["type"]  # operator tree present
+
+
+def test_profiling_disabled_yields_null_profile(tmp_path):
+    result_path = tmp_path / "out.parquet"
+    stats = _run("SELECT 1 AS x", result_path, enable_profiling=False)
+    assert stats["profile"] is None
+
+
+def test_ddl_has_no_profile(tmp_path):
+    result_path = tmp_path / "out.parquet"
+    stats = _run("CREATE TABLE t (x INT)", result_path, enable_profiling=True)
+    assert stats["profile"] is None
+
+
+def test_profile_temp_file_cleaned_up(tmp_path):
+    result_path = tmp_path / "out.parquet"
+    _run("SELECT 1 AS x", result_path, enable_profiling=True)
+    assert not (tmp_path / "out.profile.json").exists()
+
+
+def test_forced_spill_reports_spill_bytes(tmp_path):
+    """A large sort under a tiny memory_limit spills to a temp dir; the profile's
+    query-level spill_bytes is positive (DuckDB reports spill at the root)."""
+    import duckdb
+
+    conn = duckdb.connect()
+    conn.execute(f"SET temp_directory='{tmp_path / 'spill'}'")
+    conn.execute("CREATE TABLE big AS SELECT i id, 'str' || i s FROM range(3000000) t(i)")
+    result_path = tmp_path / "out.parquet"
+    stats = run_query_sync(
+        "SELECT s, count(*) c FROM big GROUP BY s ORDER BY c DESC, s",
+        result_path,
+        memory_bytes=200 * 1024**2,  # 200 MB forces spill
+        threads=2,
+        conn=conn,
+        enable_profiling=True,
+    )
+    assert stats["profile"]["summary"]["spill_bytes"] > 0
+
+
+def test_capture_profile_best_effort_on_missing_or_bad_file(tmp_path):
+    """A missing or malformed profile file degrades to None, never raises."""
+    import duckdb
+
+    from agent.executor.runner import _capture_profile
+
+    conn = duckdb.connect()
+    assert _capture_profile(conn, tmp_path / "nope.json") is None
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json")
+    assert _capture_profile(conn, bad) is None
+
+
 def test_stats_for_reports_table_row_count(tmp_path):
     """When asked, the runner reports the true table row count (size stays null)."""
     result_path = tmp_path / "out.parquet"

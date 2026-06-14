@@ -46,10 +46,22 @@ class _Slot:
 
 
 @dataclass
-class Reservation:
-    """A grant returned by ``acquire`` and handed back to ``release``."""
+class ReservationRequest:
+    """A requested reservation size for the ``auto`` profile (estimate-driven)."""
 
-    slot: _Slot
+    memory_bytes: int
+    threads: int
+
+
+@dataclass
+class Reservation:
+    """A grant returned by ``acquire`` and handed back to ``release``.
+
+    ``slot`` is the fixed ladder slot for static profiles, or ``None`` for an
+    ``auto`` reservation (sized from the query's estimate, no fixed slot).
+    """
+
+    slot: _Slot | None
     memory_bytes: int
     threads: int
 
@@ -64,6 +76,8 @@ class Admission:
         headroom: float = 0.10,
         max_queue_depth: int = 100,
         queued_timeout_s: float = 0.0,
+        floor_bytes: int = 64 * 1024 * 1024,
+        ceiling_fraction: float = 1.0,
         mem_bytes_provider=None,
         cores_provider=None,
     ) -> None:
@@ -75,9 +89,14 @@ class Admission:
         self._cores = max(1, cores_provider())
         self._max_queue_depth = max_queue_depth
         self._queued_timeout_s = queued_timeout_s
+        # Bounds for ``auto`` reservations so an estimate can never oversubscribe
+        # the budget nor request a uselessly tiny slice.
+        self._floor_bytes = min(floor_bytes, self._budget)
+        self._ceiling_bytes = max(self._floor_bytes, int(ceiling_fraction * self._budget))
         self._committed = 0
         self._running = 0
-        self._waiters: deque[asyncio.Future] = deque()
+        # Each waiter is queued with its request (None for static profiles).
+        self._waiters: deque[tuple[asyncio.Future, ReservationRequest | None]] = deque()
         self.set_profile(profile)
 
     # -- profile -----------------------------------------------------------
@@ -92,19 +111,42 @@ class Admission:
         if weights is None:
             valid = ", ".join(CONCURRENCY_PROFILES)
             raise ValueError(f"Unknown concurrency profile '{profile}'. Valid: {valid}.")
-        total = sum(weights)
         self._profile = profile
-        self._slots = [
-            _Slot(
-                memory_bytes=max(1, round(self._budget * w / total)),
-                threads=max(1, round(self._cores * w / total)),
-            )
-            for w in weights
-        ]
+        # ``auto`` has no fixed ladder; reservations are sized per-query at
+        # admission time (see ``acquire`` with a ReservationRequest).
+        total = sum(weights)
+        self._slots = (
+            [
+                _Slot(
+                    memory_bytes=max(1, round(self._budget * w / total)),
+                    threads=max(1, round(self._cores * w / total)),
+                )
+                for w in weights
+            ]
+            if total
+            else []
+        )
 
     @property
     def active_profile(self) -> str:
         return self._profile
+
+    @property
+    def is_auto(self) -> bool:
+        return self._profile == "auto"
+
+    @property
+    def cores(self) -> int:
+        return self._cores
+
+    @property
+    def budget_bytes(self) -> int:
+        return self._budget
+
+    @property
+    def committed_fraction(self) -> float:
+        """Share of the budget currently reserved (utilization in auto mode)."""
+        return self._committed / self._budget
 
     @property
     def running_count(self) -> int:
@@ -116,9 +158,26 @@ class Admission:
 
     # -- admission ---------------------------------------------------------
 
-    def _try_admit(self) -> Reservation | None:
-        """Grab the largest free slot that fits the remaining budget, or None."""
+    def _clamp(self, memory_bytes: int) -> int:
+        """Bound an ``auto`` request to ``[floor, ceiling]`` so it can never
+        oversubscribe the budget yet always (eventually) fits."""
+        return max(self._floor_bytes, min(memory_bytes, self._ceiling_bytes))
+
+    def _try_admit(self, request: ReservationRequest | None = None) -> Reservation | None:
+        """Admit a query if capacity allows, else None.
+
+        Static profiles take the largest free ladder slot; ``auto`` requests take
+        a clamped byte reservation. Both are gated on the ``_committed`` byte
+        counter, so ``sum(running) <= budget`` holds regardless of profile.
+        """
         free = self._budget - self._committed
+        if request is not None:
+            clamped = self._clamp(request.memory_bytes)
+            if clamped <= free:
+                self._committed += clamped
+                self._running += 1
+                return Reservation(None, clamped, request.threads)
+            return None
         for slot in self._slots:  # descending by size
             if not slot.occupied and slot.memory_bytes <= free:
                 slot.occupied = True
@@ -127,14 +186,15 @@ class Admission:
                 return Reservation(slot, slot.memory_bytes, slot.threads)
         return None
 
-    async def acquire(self) -> Reservation:
+    async def acquire(self, request: ReservationRequest | None = None) -> Reservation:
         """Admit immediately if capacity allows, else queue FIFO until it does.
 
-        Raises ``QueueFull`` when the queue is at capacity, ``QueuedTimeout`` when
-        the wait exceeds ``queued_timeout_s``. Cancellation while queued removes
-        the waiter cleanly.
+        ``request`` sizes an ``auto`` reservation; ``None`` uses the static slot
+        ladder. Raises ``QueueFull`` when the queue is at capacity, ``QueuedTimeout``
+        when the wait exceeds ``queued_timeout_s``. Cancellation while queued
+        removes the waiter cleanly.
         """
-        reservation = self._try_admit()
+        reservation = self._try_admit(request)
         if reservation is not None:
             return reservation
 
@@ -142,7 +202,7 @@ class Admission:
             raise QueueFull("admission queue is full")
 
         waiter: asyncio.Future = asyncio.get_running_loop().create_future()
-        self._waiters.append(waiter)
+        self._waiters.append((waiter, request))
         try:
             if self._queued_timeout_s > 0:
                 await asyncio.wait_for(waiter, self._queued_timeout_s)
@@ -151,9 +211,10 @@ class Admission:
             return waiter.result()
         except (TimeoutError, asyncio.CancelledError) as exc:
             # Removed from the queue before admission: drop the waiter. If we were
-            # admitted in the same tick (result already set), hand the slot back.
-            if waiter in self._waiters:
-                self._waiters.remove(waiter)
+            # admitted in the same tick (result already set), hand the grant back.
+            entry = next((e for e in self._waiters if e[0] is waiter), None)
+            if entry is not None:
+                self._waiters.remove(entry)
             elif waiter.done() and not waiter.cancelled():
                 self.release(waiter.result())
             if isinstance(exc, TimeoutError):
@@ -162,24 +223,26 @@ class Admission:
 
     def release(self, reservation: Reservation) -> None:
         """Return a reservation and promote the oldest waiter that now fits."""
-        reservation.slot.occupied = False
+        if reservation.slot is not None:
+            reservation.slot.occupied = False
         self._committed -= reservation.memory_bytes
         self._running -= 1
         self._promote()
 
     def _promote(self) -> None:
-        """Admit queued waiters (oldest first) while capacity allows."""
+        """Admit queued waiters (oldest first) while the head-of-line fits.
+
+        Head-of-line: we only admit the oldest waiter, preserving FIFO fairness
+        with heterogeneous ``auto`` sizes (we never skip a large query to admit a
+        smaller one behind it).
+        """
         while self._waiters:
-            reservation = self._try_admit()
+            waiter, request = self._waiters[0]
+            if waiter.cancelled():
+                self._waiters.popleft()
+                continue
+            reservation = self._try_admit(request)
             if reservation is None:
                 return
-            waiter = self._waiters.popleft()
-            if waiter.cancelled():
-                # The waiter went away between admit and wake; undo the grant
-                # inline (not via release, to avoid re-entering _promote) and try
-                # the next waiter.
-                reservation.slot.occupied = False
-                self._committed -= reservation.memory_bytes
-                self._running -= 1
-                continue
+            self._waiters.popleft()
             waiter.set_result(reservation)

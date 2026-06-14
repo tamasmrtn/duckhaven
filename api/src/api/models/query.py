@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Integer, String, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from api.db.base import Base
@@ -28,6 +28,12 @@ class Query(Base):
     result_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     progress: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Normalized post-execution DuckDB profile (query summary + operator tree);
+    # null for DDL/DML, older queries, or when profiling failed. KB-sized. JSONB
+    # on Postgres; plain JSON on other dialects (e.g. SQLite under tests).
+    profile: Mapped[dict | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=True
+    )
     result_path: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

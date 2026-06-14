@@ -133,32 +133,56 @@ running query finishes, the oldest queued query starts.
 ### How capacity is split
 
 The agent's budget is `effective memory × (1 − headroom)` (cgroup limit when set,
-else host RAM; headroom defaults to 10%, `MEMORY_HEADROOM_FRACTION`). The budget
-is divided into a **weighted slot ladder**; a new query takes the largest free
-slot, so the first running query gets the most memory/threads and later ones get
-less. Profiles:
+else host RAM; headroom defaults to 10%, `MEMORY_HEADROOM_FRACTION`). There are
+two ways to size each query's slice of that budget:
 
-| Profile        | Weights   | Slots | Share of budget        |
-| -------------- | --------- | ----- | ---------------------- |
-| `single`       | `[1]`     | 1     | one query gets 100%    |
-| `equal_2`      | `[1,1]`   | 2     | 50% / 50%              |
-| `decaying_2`   | `[2,1]`   | 2     | 67% / 33%              |
-| `decaying_3`   | `[3,2,1]` | 3     | 50% / 33% / 17%        |
+- **`auto` (the default)** — before running a query the agent runs `EXPLAIN` and
+  estimates its peak memory from the optimizer's plan: the cardinality of
+  *blocking* operators (joins, group-bys, sorts) times the row width, with a
+  safety multiplier. The estimate snaps to a "T-shirt" bucket of the budget, so
+  cheap queries reserve a small slice and pack in while heavy ones reserve more
+  and queue when the agent is busy. Unestimable queries (DDL/DML, multi-statement,
+  or an `EXPLAIN` failure/timeout) fall back to a default bucket. Estimation is
+  best-effort under a short timeout and never delays or drops a query.
+- **Static slot ladders** — the budget is divided into a fixed **weighted slot
+  ladder**; a new query takes the largest free slot, so the first running query
+  gets the most memory/threads and later ones get less.
 
-Default is `decaying_3` (`MAX_CONCURRENCY_PROFILE`). The queue holds up to
-`MAX_QUEUE_DEPTH` (default 100) queries; beyond that a query fails with
-`queue full`. `QUEUED_TIMEOUT_S` (default 0 = off) fails a query that waits too
-long with `queued timeout`. DuckDB fixes a session's memory at start and cannot
-resize a running query, so a lone query uses its slot's share, not the whole box
-(only `single` gives one query the full budget).
+| Profile        | Weights   | Slots | Share of budget                  |
+| -------------- | --------- | ----- | -------------------------------- |
+| `auto`         | —         | —     | per-query, from the EXPLAIN estimate |
+| `single`       | `[1]`     | 1     | one query gets 100%              |
+| `equal_2`      | `[1,1]`   | 2     | 50% / 50%                        |
+| `decaying_2`   | `[2,1]`   | 2     | 67% / 33%                        |
+| `decaying_3`   | `[3,2,1]` | 3     | 50% / 33% / 17%                  |
+
+Default is `auto` (`MAX_CONCURRENCY_PROFILE`); the static ladders remain
+selectable as fallbacks. The queue holds up to `MAX_QUEUE_DEPTH` (default 100)
+queries; beyond that a query fails with `queue full`. `QUEUED_TIMEOUT_S`
+(default 0 = off) fails a query that waits too long with `queued timeout`.
+Whatever the mode, the agent enforces `Σ running memory_limit ≤ budget`, so it
+never oversubscribes (DuckDB fixes a session's memory at start and cannot resize
+a running query). Under a static ladder a lone query uses its slot's share, not
+the whole box (only `single` gives one query the full budget); under `auto` a
+query reserves the bucket its estimate maps to, up to the full budget.
+
+#### Tuning the `auto` estimator
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `ESTIMATE_SAFETY_MULTIPLIER` | `1.5` | Multiplies the raw EXPLAIN estimate to absorb under-estimation. |
+| `ESTIMATE_FLOOR_BYTES` | `64 MiB` | Minimum reservation, so a tiny estimate still gets a usable slice. |
+| `ESTIMATE_CEILING_FRACTION` | `1.0` | Caps a reservation at this fraction of the budget. |
+| `EXPLAIN_TIMEOUT_S` | `2.0` | Time budget for the pre-run `EXPLAIN`; on timeout the query uses the fallback bucket. |
+| `ESTIMATE_FALLBACK_BUCKET` | `M` | Bucket used when a query is unestimable (DDL/DML, multi-statement, EXPLAIN error/timeout). |
 
 ### Changing the profile from the worksheet
 
 Run this DuckHaven control command (its own statement) in a worksheet:
 
 ```sql
-SET duckhaven_concurrency = 'decaying_3';   -- single | equal_2 | decaying_2 | decaying_3
-RESET duckhaven_concurrency;                 -- back to the default
+SET duckhaven_concurrency = 'auto';   -- auto | single | equal_2 | decaying_2 | decaying_3
+RESET duckhaven_concurrency;           -- back to the default (auto)
 ```
 
 - It applies to the **agent currently selected** in that worksheet and is
@@ -176,3 +200,36 @@ RESET duckhaven_concurrency;                 -- back to the default
 A persistently non-zero queued count means the agent is saturated: raise the
 slot count (e.g. switch to `decaying_3`) only if per-query memory still suffices,
 or add another agent.
+
+---
+
+## 7. Query profiles
+
+After a query finishes, the agent captures DuckDB's per-operator execution
+profile and ships it (KB-sized) to the control plane, where it is stored on the
+query and served from `GET /queries/{id}/profile`. There are two ways to view it:
+
+- **Worksheet → Profile tab** — an inline summary + collapsible operator tree
+  for a quick glance at the query you just ran, with an **Open full profile**
+  link to the dedicated page.
+- **Dedicated profile page** (`/{ws}/queries/{id}`) — reached by clicking any
+  row in **History**. It shows an interactive operator **graph** (result on top,
+  scans at the bottom; data flows up) where clicking a node opens its detail.
+
+Both surface:
+
+- a summary strip — latency, CPU time, rows returned, result size, **peak
+  memory**, the **reserved memory + CPU** the query ran under, **spill to disk**,
+  and bytes read/written (so a spill is read against what was reserved);
+- per-operator metrics — rows scanned → produced, bytes, a time-share bar, and
+  the operator's `EXTRA_INFO` (join conditions, filters, group keys);
+- **inefficiency highlights** computed from the profile — spilled queries
+  (worth a larger reservation or less intermediate data), scan blow-ups (a scan
+  reading far more rows than the query returns), bad cardinality estimates
+  (actual far from the optimizer's `EXPLAIN` estimate), and time hotspots. The
+  dedicated page also ranks the **most expensive operators** and lists the
+  detected issues in a **diagnostics** panel, each linking to the offending node.
+
+Profiling is on by default and best-effort: a capture failure yields no profile
+rather than failing the query, and DDL/DML carry no profile (a no-profile state
+is shown). Set `PROFILING_ENABLED=false` on the agent to disable it.

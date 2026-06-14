@@ -13,6 +13,18 @@ export class WorksheetPage {
     return this.page.locator('[aria-label="New worksheet"]');
   }
 
+  get profileTab(): Locator {
+    return this.page.getByRole("tab", { name: "profile" });
+  }
+
+  get resultsTab(): Locator {
+    return this.page.getByRole("tab", { name: "results" });
+  }
+
+  async openProfile(): Promise<void> {
+    await this.profileTab.click();
+  }
+
   async goto(ws = WS_SLUG): Promise<void> {
     await this.page.goto(`${BASE_URL}/${ws}/worksheets`);
   }

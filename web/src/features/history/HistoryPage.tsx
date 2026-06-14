@@ -1,4 +1,4 @@
-import { useParams } from "@tanstack/react-router";
+import { useNavigate, useParams } from "@tanstack/react-router";
 import { Clock } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusPill } from "@/components/app/StatusPill";
@@ -14,9 +14,14 @@ function formatDuration(ms: number | null) {
 
 export function HistoryPage() {
   const { ws } = useParams({ from: "/$ws/history" });
+  const navigate = useNavigate();
   const { data: wsQueries = [], isLoading } = useWorkspaceQueries(ws);
   const { data: agents = [] } = useAgents();
   const agentName = new Map(agents.map((a) => [a.id, a.name]));
+
+  function openProfile(queryId: string) {
+    navigate({ to: "/$ws/queries/$queryId", params: { ws, queryId } });
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -61,8 +66,9 @@ export function HistoryPage() {
               {wsQueries.map((q, i) => (
                 <tr
                   key={q.id}
+                  onClick={() => openProfile(q.id)}
                   className={cn(
-                    "border-b border-[var(--border-subtle)] hover:bg-accent/50",
+                    "cursor-pointer border-b border-[var(--border-subtle)] hover:bg-accent/50",
                     i % 2 === 0 ? "" : "bg-[var(--bg-surface)]/40",
                   )}
                 >

@@ -84,6 +84,7 @@ async def handle_agent_frame(db: AsyncSession, frame: Frame) -> None:
                 result_bytes=frame.payload.get("result_bytes"),
                 error=frame.payload.get("error"),
                 result_path=frame.payload.get("result_path"),
+                profile=frame.payload.get("profile"),
                 finished_at=datetime.now(tz=UTC),
             )
         )

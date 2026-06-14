@@ -361,6 +361,51 @@ async def test_get_query_not_found(authed_client: AsyncClient):
     assert resp.status_code == 404
 
 
+async def test_get_query_profile_returns_persisted(
+    authed_client: AsyncClient, workspace: Workspace, agent: Agent, db_session
+):
+    from api.models.query import Query
+
+    profile = {
+        "summary": {"latency_ms": 5.0, "spill_bytes": 0},
+        "tree": {"type": "PROJECTION", "children": []},
+    }
+    query = Query(
+        workspace_id=workspace.id,
+        agent_id=agent.id,
+        sql="SELECT 1",
+        status="done",
+        profile=profile,
+    )
+    db_session.add(query)
+    await db_session.commit()
+    await db_session.refresh(query)
+
+    resp = await authed_client.get(f"/queries/{query.id}/profile")
+    assert resp.status_code == 200
+    assert resp.json() == profile
+
+
+async def test_get_query_profile_null_when_absent(
+    authed_client: AsyncClient, workspace: Workspace, connected_agent
+):
+    agent, _ = connected_agent
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(agent.id)},
+    )
+    query_id = resp.json()["id"]
+
+    resp = await authed_client.get(f"/queries/{query_id}/profile")
+    assert resp.status_code == 200
+    assert resp.json() is None
+
+
+async def test_get_query_profile_not_found(authed_client: AsyncClient):
+    resp = await authed_client.get(f"/queries/{uuid.uuid4()}/profile")
+    assert resp.status_code == 404
+
+
 async def test_query_progress_persisted_and_exposed(
     authed_client: AsyncClient, workspace: Workspace, agent: Agent, db_session
 ):

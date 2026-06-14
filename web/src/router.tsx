@@ -18,6 +18,7 @@ import { WorksheetPage } from "@/features/worksheet/WorksheetPage";
 import { CatalogPage } from "@/features/catalog/CatalogPage";
 import { SavedQueriesPage } from "@/features/saved-queries/SavedQueriesPage";
 import { HistoryPage } from "@/features/history/HistoryPage";
+import { QueryProfilePage } from "@/features/query-profile/QueryProfilePage";
 import { AdminLayout } from "@/features/admin/AdminLayout";
 import { AgentsPage } from "@/features/admin/AgentsPage";
 import { MetricsPage } from "@/features/admin/MetricsPage";
@@ -111,6 +112,12 @@ const historyRoute = createRoute({
   component: HistoryPage,
 });
 
+const queryProfileRoute = createRoute({
+  getParentRoute: () => wsRoute,
+  path: "/queries/$queryId",
+  component: QueryProfilePage,
+});
+
 const adminRoute = createRoute({
   getParentRoute: () => wsRoute,
   path: "/admin",
@@ -166,6 +173,7 @@ export const routeTree = rootRoute.addChildren([
     catalogTableRoute,
     savedQueriesRoute,
     historyRoute,
+    queryProfileRoute,
     adminRoute.addChildren([
       adminIndexRoute,
       agentsRoute,

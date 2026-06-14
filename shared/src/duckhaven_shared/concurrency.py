@@ -13,13 +13,27 @@ from __future__ import annotations
 import re
 
 # Profile name -> descending slot weights. Slot count = number of weights.
+# ``auto`` has no fixed ladder (empty weights): the agent sizes each reservation
+# from the query's EXPLAIN estimate and snaps it to a BUCKET_FRACTIONS bucket.
 CONCURRENCY_PROFILES: dict[str, list[int]] = {
+    "auto": [],
     "single": [1],
     "equal_2": [1, 1],
     "decaying_2": [2, 1],
     "decaying_3": [3, 2, 1],
 }
-DEFAULT_PROFILE = "decaying_3"
+DEFAULT_PROFILE = "auto"
+
+# T-shirt buckets for the ``auto`` profile, as fractions of the agent's memory
+# budget. An estimate snaps UP to the smallest bucket that fits (see
+# ``agent.executor.estimator.bucket_for``).
+BUCKET_FRACTIONS: dict[str, float] = {
+    "XS": 1 / 12,
+    "S": 1 / 6,
+    "M": 1 / 3,
+    "L": 2 / 3,
+    "XL": 1.0,
+}
 
 # `SET duckhaven_concurrency = '<profile>'` (quotes optional) or
 # `RESET duckhaven_concurrency` (-> the default). Case-insensitive, tolerant of

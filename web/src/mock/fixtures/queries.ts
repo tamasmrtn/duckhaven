@@ -119,6 +119,62 @@ function makeSavedQueries(): SavedQuery[] {
   ];
 }
 
+// A representative post-execution profile: a spilling sort over a scan that
+// reads far more rows than the query returns (exercises the inefficiency
+// badges in dev + tests).
+export const SAMPLE_PROFILE = {
+  summary: {
+    latency_ms: 1420,
+    cpu_time_ms: 5300,
+    rows_returned: 30,
+    result_bytes: 4096,
+    peak_memory_bytes: 268435456,
+    spill_bytes: 79495168,
+    bytes_read: 134217728,
+    bytes_written: 0,
+    reserved_memory_bytes: 357913941,
+    reserved_threads: 2,
+  },
+  tree: {
+    type: "ORDER_BY",
+    name: "ORDER_BY",
+    estimated_cardinality: 30,
+    rows_scanned: 0,
+    rows_produced: 30,
+    time_ms: 900,
+    result_bytes: 4096,
+    extra_info: { "Order By": "count_star() DESC" },
+    children: [
+      {
+        type: "HASH_GROUP_BY",
+        name: "HASH_GROUP_BY",
+        estimated_cardinality: 100,
+        rows_scanned: 0,
+        rows_produced: 30,
+        time_ms: 200,
+        result_bytes: 2048,
+        extra_info: { Groups: "#0", Aggregates: "count_star()" },
+        children: [
+          {
+            type: "SEQ_SCAN",
+            name: "events",
+            estimated_cardinality: 2000,
+            rows_scanned: 2000000,
+            rows_produced: 2000000,
+            time_ms: 300,
+            result_bytes: 0,
+            extra_info: {
+              Table: "analytics.events",
+              Filters: "ts > '2026-01-01'",
+            },
+            children: [],
+          },
+        ],
+      },
+    ],
+  },
+};
+
 export let QUERY_HISTORY = makeQueryHistory();
 export let SAVED_QUERIES = makeSavedQueries();
 

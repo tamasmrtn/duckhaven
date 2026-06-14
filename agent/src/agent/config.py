@@ -40,10 +40,24 @@ class Settings(BaseSettings):
     # worksheet `SET duckhaven_concurrency` command. Headroom is the fraction of
     # the cgroup/host memory held back so DuckDB overshoot can't trip the OOM
     # killer. queued_timeout_s = 0 disables the queued timeout.
-    max_concurrency_profile: str = "decaying_3"
+    max_concurrency_profile: str = "auto"
     memory_headroom_fraction: float = 0.10
     max_queue_depth: int = 100
     queued_timeout_s: float = 0.0
+
+    # EXPLAIN-based cost estimation (the `auto` profile). Each query's reservation
+    # is sized from its EXPLAIN estimate * safety, snapped to a T-shirt bucket, and
+    # clamped to [floor, ceiling*budget]. Unestimable queries (DDL/DML,
+    # multi-statement, EXPLAIN failure, timeout) fall back to `estimate_fallback_bucket`.
+    estimate_safety_multiplier: float = 1.5
+    estimate_floor_bytes: int = 64 * 1024 * 1024
+    estimate_ceiling_fraction: float = 1.0
+    explain_timeout_s: float = 2.0
+    estimate_fallback_bucket: str = "M"
+
+    # Post-execution profiling: capture DuckDB's JSON profile per query and ship
+    # it in QUERY_DONE. Best-effort; this flag is the kill switch.
+    profiling_enabled: bool = True
 
 
 settings = Settings()

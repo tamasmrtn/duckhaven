@@ -21,6 +21,38 @@ export interface Query {
   finished_at: string | null;
 }
 
+export interface QueryProfileSummary {
+  latency_ms: number;
+  cpu_time_ms: number;
+  rows_returned: number;
+  result_bytes: number;
+  peak_memory_bytes: number;
+  spill_bytes: number;
+  bytes_read: number;
+  bytes_written: number;
+  // The admission reservation the query ran under. Optional: profiles captured
+  // before this was recorded omit them.
+  reserved_memory_bytes?: number;
+  reserved_threads?: number;
+}
+
+export interface QueryProfileNode {
+  type: string;
+  name: string;
+  estimated_cardinality: number | null;
+  rows_scanned: number | null;
+  rows_produced: number | null;
+  time_ms: number | null;
+  result_bytes: number | null;
+  extra_info: Record<string, unknown>;
+  children: QueryProfileNode[];
+}
+
+export interface QueryProfile {
+  summary: QueryProfileSummary;
+  tree: QueryProfileNode;
+}
+
 export interface QueryRow {
   [column: string]: string | number | boolean | null;
 }

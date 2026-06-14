@@ -1,5 +1,5 @@
 import { get, post, del } from "./client";
-import type { Query, QueryRowsPage } from "@/types/query";
+import type { Query, QueryProfile, QueryRowsPage } from "@/types/query";
 import type { SavedQuery } from "@/types/saved-query";
 
 export const queriesApi = {
@@ -18,6 +18,8 @@ export const queriesApi = {
   listForWorkspace: (ws: string) => get<Query[]>(`/workspaces/${ws}/queries`),
 
   get: (id: string) => get<Query>(`/queries/${id}`),
+
+  profile: (id: string) => get<QueryProfile | null>(`/queries/${id}/profile`),
 
   rows: (id: string, cursor?: string, limit = 100) =>
     get<QueryRowsPage>(

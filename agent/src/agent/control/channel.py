@@ -9,9 +9,18 @@ from websockets.exceptions import ConnectionClosed
 
 from agent.auth import TokenHolder, load_session_token, save_session_token
 from agent.config import settings
-from agent.executor.admission import Admission, QueuedTimeout, QueueFull, Reservation
+from agent.executor.admission import (
+    Admission,
+    QueuedTimeout,
+    QueueFull,
+    Reservation,
+    ReservationRequest,
+)
+from agent.executor.estimator import bucket_for, estimate_memory_bytes
+from agent.executor.runner import open_and_attach
 from agent.executor.supervisor import run_query
 from agent.metrics.system import MetricsSampler, cpu_capability, effective_memory_bytes
+from duckhaven_shared.concurrency import BUCKET_FRACTIONS
 from duckhaven_shared.protocol import Frame, FrameType
 from duckhaven_shared.schemas import AgentCapabilities
 
@@ -61,6 +70,51 @@ async def _send_failed(ws, query_id: str, error: str) -> None:
     await ws.send(done.model_dump_json())
 
 
+async def _prepare_and_estimate(sql: str, **attach_kwargs) -> tuple[object | None, int | None]:
+    """Open+attach a connection and estimate peak memory (best-effort, `auto`).
+
+    Runs on a thread executor with a short EXPLAIN timeout enforced via
+    `conn.interrupt()`. Returns `(conn|None, estimate|None)`; the estimator
+    swallows an interrupted EXPLAIN as `None`. Never raises into dispatch.
+    """
+    loop = asyncio.get_running_loop()
+    conn_box: dict[str, object] = {}
+
+    def _work() -> int | None:
+        conn = open_and_attach(**attach_kwargs)
+        conn_box["conn"] = conn
+        return estimate_memory_bytes(conn, sql, safety=settings.estimate_safety_multiplier)
+
+    def _interrupt() -> None:
+        conn = conn_box.get("conn")
+        if conn is not None:
+            try:
+                conn.interrupt()
+            except Exception:  # noqa: BLE001 - interrupt is best-effort
+                pass
+
+    handle = loop.call_later(settings.explain_timeout_s, _interrupt)
+    try:
+        estimate = await loop.run_in_executor(None, _work)
+    except Exception as exc:  # noqa: BLE001 - estimation must never drop a query
+        logger.warning("Estimate prepare failed: %s", exc)
+        estimate = None
+    finally:
+        handle.cancel()
+    return conn_box.get("conn"), estimate
+
+
+def _build_request(estimate: int | None, admission: Admission) -> ReservationRequest:
+    """Map an estimate (or the fallback bucket) to a reservation request."""
+    if estimate is None:
+        frac = BUCKET_FRACTIONS[settings.estimate_fallback_bucket]
+        mem = int(frac * admission.budget_bytes)
+    else:
+        mem, frac, _ = bucket_for(estimate, admission.budget_bytes, BUCKET_FRACTIONS)
+    threads = max(1, round(admission.cores * frac))
+    return ReservationRequest(memory_bytes=mem, threads=threads)
+
+
 async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admission) -> None:
     query_id = payload["query_id"]
     sql = payload["sql"]
@@ -82,19 +136,41 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
     # Admission gate: wait in the FIFO queue until the agent has capacity. While
     # queued we send no QUERY_PROGRESS, so the control plane keeps the query in
     # the `queued` state until it actually starts running.
+    #
+    # In the `auto` profile we open+attach a connection and run EXPLAIN BEFORE
+    # acquiring, so the reservation is sized from the optimizer's estimate; that
+    # same connection is then reused for execution + profiling. Static profiles
+    # take a fixed ladder slot and let the runner open its own connection.
+    conn = None
     try:
-        reservation: Reservation = await admission.acquire()
+        if admission.is_auto:
+            conn, estimate = await _prepare_and_estimate(
+                sql,
+                backend=backend,
+                workspace_slug=workspace_slug,
+                polaris=polaris,
+                default_schema=default_schema,
+            )
+            reservation: Reservation = await admission.acquire(_build_request(estimate, admission))
+        else:
+            reservation = await admission.acquire()
     except QueueFull:
+        if conn is not None:
+            conn.close()
         await _send_failed(ws, query_id, "queue full")
         _in_flight.pop(query_id, None)
         return
     except QueuedTimeout:
+        if conn is not None:
+            conn.close()
         await _send_failed(ws, query_id, "queued timeout")
         _in_flight.pop(query_id, None)
         return
     except asyncio.CancelledError:
         # Cancelled while queued: the admission manager dropped the waiter; the
         # control plane already marked the query cancelled.
+        if conn is not None:
+            conn.close()
         _in_flight.pop(query_id, None)
         raise
 
@@ -113,6 +189,8 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
             polaris=polaris,
             default_schema=default_schema,
             stats_for=stats_for,
+            conn=conn,
+            enable_profiling=settings.profiling_enabled,
         )
         done_payload: dict[str, object] = {
             "query_id": query_id,
@@ -122,6 +200,9 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
             # Only a SELECT writes a Parquet result file; DDL/DML have none.
             "result_path": str(result_path) if stats.get("wrote_result") else None,
             "result_bytes": stats.get("result_bytes"),
+            # Normalized post-execution profile (best-effort; null for DDL/DML or
+            # when profiling is disabled/failed).
+            "profile": stats.get("profile"),
         }
         if stats_for:
             done_payload["stats_table"] = {

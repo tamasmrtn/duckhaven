@@ -10,6 +10,7 @@ delegation — so the runner injects no storage secrets of its own.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from collections.abc import Callable
@@ -19,7 +20,32 @@ from typing import Any
 
 import duckdb
 
+from agent.executor.plan import parse_profile
+
 logger = logging.getLogger(__name__)
+
+# Curated profile metric set (see Part 2). Keys are DuckDB metric names; the
+# value "true" enables each. Captured per operator + per query, then parsed by
+# the shared tree-walker into the normalized profile shape.
+_PROFILE_METRICS = (
+    "OPERATOR_TYPE",
+    "OPERATOR_NAME",
+    "OPERATOR_CARDINALITY",
+    "OPERATOR_ROWS_SCANNED",
+    "OPERATOR_TIMING",
+    "RESULT_SET_SIZE",
+    "EXTRA_INFO",
+    "CPU_TIME",
+    "LATENCY",
+    "ROWS_RETURNED",
+    "CUMULATIVE_ROWS_SCANNED",
+    "SYSTEM_PEAK_BUFFER_MEMORY",
+    "SYSTEM_PEAK_TEMP_DIR_SIZE",
+    "BLOCKED_THREAD_TIME",
+    "TOTAL_BYTES_READ",
+    "TOTAL_BYTES_WRITTEN",
+)
+_PROFILE_SETTINGS_JSON = json.dumps({m: "true" for m in _PROFILE_METRICS})
 
 # Fixed identifiers for the per-connection iceberg secret and attached catalog.
 _ICEBERG_SECRET = "dh_iceberg"
@@ -163,6 +189,54 @@ def _attach_polaris(
     conn.execute(f'USE {_CATALOG_ALIAS}."{schema}"')
 
 
+def open_and_attach(
+    *,
+    backend: dict[str, Any] | None = None,
+    workspace_slug: str | None = None,
+    polaris: dict[str, Any] | None = None,
+    default_schema: str | None = None,
+) -> duckdb.DuckDBPyConnection:
+    """Open a DuckDB connection, load the storage IO extension, and ATTACH the
+    workspace's Polaris catalog so table names bind.
+
+    Shared by the cost estimator (pre-execution EXPLAIN) and the runner: in the
+    ``auto`` profile a single connection is opened here, estimated against, then
+    handed to ``run_query_sync`` for execution + profiling (one attach / one
+    OAuth exchange).
+    """
+    conn = duckdb.connect()
+    backend_kind = (backend or {}).get("kind")
+    if (io_ext := _BACKEND_IO_EXTENSION.get(backend_kind or "")) is not None:
+        _safe_install_load(conn, io_ext)
+    if workspace_slug and polaris and _safe_install_load(conn, "iceberg"):
+        delegation = "vended_credentials" if backend_kind in _VENDED_BACKENDS else "none"
+        try:
+            _attach_polaris(
+                conn,
+                warehouse=workspace_slug,
+                polaris=polaris,
+                delegation_mode=delegation,
+                default_schema=default_schema or _DEFAULT_NAMESPACE,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Polaris ATTACH failed for %s: %s", workspace_slug, exc)
+    return conn
+
+
+def _capture_profile(conn: duckdb.DuckDBPyConnection, profile_path: Path) -> dict[str, Any] | None:
+    """Read + normalize the DuckDB JSON profile written to ``profile_path``.
+
+    Best-effort (mirrors ``_iceberg_metadata``): any failure returns ``None``.
+    """
+    try:
+        raw = json.loads(profile_path.read_text())
+        summary, tree = parse_profile(raw)
+        return {"summary": summary.to_dict(), "tree": tree.to_dict()}
+    except Exception as exc:  # noqa: BLE001 - profiling is best-effort
+        logger.warning("Profile capture failed: %s", exc)
+        return None
+
+
 def run_query_sync(
     sql: str,
     result_path: Path,
@@ -174,6 +248,8 @@ def run_query_sync(
     polaris: dict[str, Any] | None = None,
     default_schema: str | None = None,
     stats_for: dict[str, str] | None = None,
+    conn: duckdb.DuckDBPyConnection | None = None,
+    enable_profiling: bool = True,
     on_connect: Callable[[duckdb.DuckDBPyConnection], None] | None = None,
 ) -> dict[str, Any]:
     """Run a query through DuckDB.
@@ -188,12 +264,25 @@ def run_query_sync(
     - `polaris`: `{endpoint, client_id, client_secret}`. When set together
       with `workspace_slug`, ATTACH the workspace's Polaris catalog before
       running the user SQL.
-    - `on_connect`: called with the freshly-opened connection so the
-      supervisor can `interrupt()` it on timeout/cancel (G-D2-a).
+    - `conn`: a pre-opened+attached connection (the `auto` profile reuses the
+      one it ran EXPLAIN on). When omitted, the runner opens and attaches its own.
+    - `enable_profiling`: capture DuckDB's JSON profile for a materialized SELECT
+      and return it under `result["profile"]` (best-effort).
+    - `on_connect`: called with the connection so the supervisor can
+      `interrupt()` it on timeout/cancel (G-D2-a).
     """
-    conn = duckdb.connect()
+    if conn is None:
+        conn = open_and_attach(
+            backend=backend,
+            workspace_slug=workspace_slug,
+            polaris=polaris,
+            default_schema=default_schema,
+        )
     if on_connect is not None:
         on_connect(conn)
+    # Sibling of the result file; retention only sweeps `*.parquet`, so we own
+    # this file's lifecycle and unlink it ourselves.
+    profile_path = result_path.with_suffix(".profile.json")
     try:
         # The admission manager sizes each query's slice of the agent's budget
         # (memory_bytes + threads) so concurrent sessions never oversubscribe the
@@ -203,41 +292,36 @@ def run_query_sync(
         conn.execute(f"SET memory_limit='{mem_gb}GB'")
         conn.execute(f"SET threads={threads}")
 
-        backend_kind = (backend or {}).get("kind")
-
-        # Load the storage-IO extension so DuckDB can read/write the object
-        # store with the credentials Polaris vends.
-        if (io_ext := _BACKEND_IO_EXTENSION.get(backend_kind or "")) is not None:
-            _safe_install_load(conn, io_ext)
-
-        # Attach the workspace's Polaris catalog so the user's SQL can
-        # reference tables by name (e.g. SELECT * FROM main.events).
-        if workspace_slug and polaris:
-            if _safe_install_load(conn, "iceberg"):
-                delegation = "vended_credentials" if backend_kind in _VENDED_BACKENDS else "none"
-                try:
-                    _attach_polaris(
-                        conn,
-                        warehouse=workspace_slug,
-                        polaris=polaris,
-                        delegation_mode=delegation,
-                        default_schema=default_schema or _DEFAULT_NAMESPACE,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("Polaris ATTACH failed for %s: %s", workspace_slug, exc)
-
         start = time.monotonic()
         wrote_result = _is_single_select(sql)
         result_bytes: int | None = None
+        profile: dict[str, Any] | None = None
         if wrote_result:
             # A single SELECT is materialized to Parquet so the control plane can
-            # page through its rows.
+            # page through its rows. Profile only this path so DDL/DML carry no
+            # profile (the UI shows a no-profile state for them).
+            if enable_profiling:
+                conn.execute("PRAGMA enable_profiling='json'")
+                conn.execute(f"PRAGMA profiling_output='{profile_path}'")
+                conn.execute(f"PRAGMA custom_profiling_settings='{_PROFILE_SETTINGS_JSON}'")
             conn.execute(f"COPY ({sql}) TO '{result_path}' (FORMAT PARQUET)")
             duration_ms = int((time.monotonic() - start) * 1000)
+            if enable_profiling:
+                conn.execute("PRAGMA disable_profiling")
+                profile = _capture_profile(conn, profile_path)
             row_count_result = conn.execute(
                 f"SELECT count(*) FROM read_parquet('{result_path}')"
             ).fetchone()
             row_count = row_count_result[0] if row_count_result else 0
+            # DuckDB's profile reports the COPY's returned-row count (1), not the
+            # SELECT's result size. Surface the real result row count so the UI's
+            # summary and the scan-blow-up heuristic compare against it. Also
+            # record the admission reservation this query ran under so the UI can
+            # show actual peak/spill against what it was granted.
+            if profile is not None:
+                profile["summary"]["rows_returned"] = row_count
+                profile["summary"]["reserved_memory_bytes"] = memory_bytes
+                profile["summary"]["reserved_threads"] = threads
             # Size of the materialized result so the UI can show how large it is.
             if result_path.exists():
                 result_bytes = result_path.stat().st_size
@@ -253,6 +337,7 @@ def run_query_sync(
             "duration_ms": duration_ms,
             "wrote_result": wrote_result,
             "result_bytes": result_bytes,
+            "profile": profile,
         }
 
         # When asked, compute true table stats on the same attached connection.
@@ -275,3 +360,4 @@ def run_query_sync(
         return result
     finally:
         conn.close()
+        profile_path.unlink(missing_ok=True)

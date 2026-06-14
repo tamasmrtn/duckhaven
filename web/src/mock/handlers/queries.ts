@@ -1,5 +1,9 @@
 import { http, HttpResponse } from "msw";
-import { QUERY_HISTORY, SAVED_QUERIES } from "../fixtures/queries";
+import {
+  QUERY_HISTORY,
+  SAMPLE_PROFILE,
+  SAVED_QUERIES,
+} from "../fixtures/queries";
 import { findWorkspace } from "../fixtures/workspaces";
 import { CURRENT_USER } from "../fixtures/users";
 import { nextId } from "../lib/seed";
@@ -103,6 +107,20 @@ export const queryHandlers = [
     const hist = QUERY_HISTORY.find((q) => q.id === params.id);
     if (hist) return HttpResponse.json(hist);
     return httpError(404, "Query not found");
+  }),
+
+  http.get("/api/queries/:id/profile", ({ params }) => {
+    const id = params.id as string;
+    const live = liveQueries[id];
+    const hist = QUERY_HISTORY.find((q) => q.id === id);
+    if (!live && !hist) return httpError(404, "Query not found");
+    const status: QueryStatus = live ? live.status : (hist?.status ?? "done");
+    const sql = live ? live.sql : (hist?.sql ?? "");
+    // Only SELECTs carry a profile; DDL/failed queries return null.
+    if (status === "done" && sql.toLowerCase().includes("select")) {
+      return HttpResponse.json(SAMPLE_PROFILE);
+    }
+    return HttpResponse.json(null);
   }),
 
   http.get("/api/queries/:id/rows", ({ params, request }) => {

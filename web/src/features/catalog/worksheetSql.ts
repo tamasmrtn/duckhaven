@@ -22,6 +22,31 @@ export function takePendingSql(ws: string): string | null {
   }
 }
 
+// History → worksheet hand-off: stash the clicked query id (same sessionStorage
+// key the worksheet seeds `activeQueryId` from) plus a flag telling it to open
+// the Profile tab on mount.
+const activeQueryKey = (ws: string) => `dh-active-query-${ws}`;
+const openProfileKey = (ws: string) => `dh-open-profile-${ws}`;
+
+export function stashHistoryProfile(ws: string, queryId: string): void {
+  try {
+    sessionStorage.setItem(activeQueryKey(ws), queryId);
+    sessionStorage.setItem(openProfileKey(ws), "1");
+  } catch {
+    // ignore unavailable storage
+  }
+}
+
+export function takeOpenProfile(ws: string): boolean {
+  try {
+    const flag = sessionStorage.getItem(openProfileKey(ws));
+    if (flag) sessionStorage.removeItem(openProfileKey(ws));
+    return flag === "1";
+  } catch {
+    return false;
+  }
+}
+
 const quote = (ident: string) => `"${ident.replace(/"/g, '""')}"`;
 
 export function selectTemplate(schema: string, table: string): string {

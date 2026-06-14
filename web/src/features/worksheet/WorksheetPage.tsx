@@ -46,7 +46,11 @@ import { AgentPicker } from "@/components/app/AgentPicker";
 import { StatusPill } from "@/components/app/StatusPill";
 import { StorageLabel } from "@/components/app/StorageIcon";
 import { CatalogTree } from "./CatalogTree";
-import { takePendingSql } from "@/features/catalog/worksheetSql";
+import {
+  takePendingSql,
+  takeOpenProfile,
+} from "@/features/catalog/worksheetSql";
+import { ProfilePanel } from "@/features/worksheet/profile/ProfilePanel";
 import { SqlEditor, type SqlEditorHandle } from "./SqlEditor";
 import { splitStatements } from "./statements";
 import { queriesApi } from "@/api/queries";
@@ -128,6 +132,11 @@ export function WorksheetPage() {
   // mid-execution recovers the running/completed query.
   const [activeQueryId, setActiveQueryId] = useState<string | null>(() =>
     loadActiveQueryId(ws),
+  );
+  // Results-area tab. Opens on "Profile" when arriving from the history view
+  // (it stashes the query id + a flag); otherwise defaults to the data grid.
+  const [resultsTab, setResultsTab] = useState<"results" | "profile">(() =>
+    takeOpenProfile(ws) ? "profile" : "results",
   );
 
   // On first render and whenever the workspace changes, (re)load that
@@ -594,9 +603,25 @@ export function WorksheetPage() {
           <div className="flex flex-1 flex-col overflow-hidden border-t border-[var(--border-subtle)]">
             {/* Results header */}
             <div className="flex items-center gap-3 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-1.5 shrink-0">
-              <span className="text-xs font-medium text-text-secondary">
-                Results
-              </span>
+              <div className="flex items-center gap-0.5" role="tablist">
+                {(["results", "profile"] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    role="tab"
+                    aria-selected={resultsTab === tab}
+                    onClick={() => setResultsTab(tab)}
+                    className={cn(
+                      "rounded px-2 py-0.5 text-xs font-medium capitalize",
+                      resultsTab === tab
+                        ? "bg-[var(--bg-elevated)] text-text-primary"
+                        : "text-text-secondary hover:text-text-primary",
+                    )}
+                  >
+                    {tab}
+                  </button>
+                ))}
+              </div>
               {dispatchError && (
                 <span
                   className="text-xs text-[var(--status-failed)] truncate max-w-md"
@@ -648,17 +673,24 @@ export function WorksheetPage() {
             </div>
 
             <div className="flex-1 overflow-hidden">
-              <ResultsTable
-                columns={queryRows.columns}
-                rows={queryRows.rows}
-                total={queryRows.total}
-                isLoading={
-                  queryRows.isLoading && queryData?.status === "running"
-                }
-                onLoadMore={queryRows.fetchNextPage}
-                hasMore={queryRows.hasNextPage}
-                isLoadingMore={queryRows.isFetchingNextPage}
-              />
+              {resultsTab === "profile" ? (
+                <ProfilePanel
+                  queryId={activeQueryId}
+                  enabled={queryData?.status === "done"}
+                />
+              ) : (
+                <ResultsTable
+                  columns={queryRows.columns}
+                  rows={queryRows.rows}
+                  total={queryRows.total}
+                  isLoading={
+                    queryRows.isLoading && queryData?.status === "running"
+                  }
+                  onLoadMore={queryRows.fetchNextPage}
+                  hasMore={queryRows.hasNextPage}
+                  isLoadingMore={queryRows.isFetchingNextPage}
+                />
+              )}
             </div>
           </div>
         </div>

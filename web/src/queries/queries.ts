@@ -19,6 +19,14 @@ export function useQuery_(id: string | null) {
   });
 }
 
+export function useQueryProfile(id: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ["query", id, "profile"],
+    queryFn: () => queriesApi.profile(id!),
+    enabled: !!id && enabled,
+  });
+}
+
 export function useQueryRows(id: string | null, enabled = true) {
   const query = useInfiniteQuery({
     queryKey: ["query", id, "rows"],

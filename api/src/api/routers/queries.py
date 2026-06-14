@@ -172,6 +172,25 @@ async def get_query(
     return query
 
 
+@router.get("/queries/{query_id}/profile")
+async def get_query_profile(
+    query_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict | None:
+    """The normalized post-execution profile, or null when none was captured.
+
+    Kept off ``QueryOut`` so list/history stay lean; the worksheet fetches it on
+    demand when a query is done.
+    """
+    result = await db.execute(select(Query).where(Query.id == query_id))
+    query = result.scalar_one_or_none()
+    if query is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    await assert_workspace_member(db, query.workspace_id, user.id)
+    return query.profile
+
+
 @router.delete("/queries/{query_id}", status_code=204)
 async def cancel_query(
     query_id: uuid.UUID,

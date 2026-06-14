@@ -31,7 +31,7 @@ class MetricsSampleOut(BaseModel):
     memory_percent: float
     running_queries: int = 0
     queued_queries: int = 0
-    active_profile: str = "decaying_3"
+    active_profile: str = "auto"
     sampled_at: datetime
 
 

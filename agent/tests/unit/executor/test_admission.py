@@ -4,7 +4,12 @@ import asyncio
 
 import pytest
 
-from agent.executor.admission import Admission, QueuedTimeout, QueueFull
+from agent.executor.admission import (
+    Admission,
+    QueuedTimeout,
+    QueueFull,
+    ReservationRequest,
+)
 
 # A 12-unit budget with no headroom makes the weighted slot maths exact:
 # decaying_3 [3,2,1] -> slots of 6, 4, 2 (sum 12); cores 6 -> threads 3, 2, 1.
@@ -162,3 +167,69 @@ async def test_cancel_while_queued_does_not_disturb_running():
 def test_unknown_profile_rejected():
     with pytest.raises(ValueError, match="Unknown concurrency profile"):
         _admission(profile="nonsense")
+
+
+# -- auto profile (estimate-driven reservations) --------------------------
+
+
+def _auto(**kwargs):
+    # floor 1, ceiling = full budget so requests map 1:1 for exact assertions.
+    return _admission(profile="auto", floor_bytes=1, ceiling_fraction=1.0, **kwargs)
+
+
+def _req(memory_bytes, threads=1):
+    return ReservationRequest(memory_bytes=memory_bytes, threads=threads)
+
+
+async def test_auto_admits_requested_size():
+    adm = _auto()
+    assert adm.is_auto
+    r = await adm.acquire(_req(5, threads=2))
+    assert r.memory_bytes == 5
+    assert r.threads == 2
+    assert r.slot is None
+
+
+async def test_auto_heterogeneous_never_exceeds_budget():
+    adm = _auto()
+    r1 = await adm.acquire(_req(7))  # committed 7
+    r2 = await adm.acquire(_req(5))  # committed 12 (== budget)
+    assert sum(r.memory_bytes for r in (r1, r2)) <= BUDGET
+    # A third request does not fit -> queues.
+    pending = asyncio.create_task(adm.acquire(_req(4)))
+    await asyncio.sleep(0)
+    assert adm.queued_count == 1
+    assert not pending.done()
+    # Freeing the small one still leaves only 5 free (< 4 fits now).
+    adm.release(r2)
+    await asyncio.sleep(0)
+    assert (await pending).memory_bytes == 4
+
+
+async def test_auto_clamps_to_floor_and_ceiling():
+    adm = _admission(profile="auto", floor_bytes=3, ceiling_fraction=0.5)  # ceiling = 6
+    small = await adm.acquire(_req(1))  # clamped up to floor 3
+    assert small.memory_bytes == 3
+    big = await adm.acquire(_req(BUDGET * 10))  # clamped down to ceiling 6
+    assert big.memory_bytes == 6
+
+
+async def test_auto_head_of_line_blocks_smaller_behind():
+    """A queued large query is not skipped to admit a smaller one behind it."""
+    adm = _auto()
+    await adm.acquire(_req(6))
+    r2 = await adm.acquire(_req(6))  # budget full
+    big = asyncio.create_task(adm.acquire(_req(8)))
+    await asyncio.sleep(0)
+    small = asyncio.create_task(adm.acquire(_req(2)))
+    await asyncio.sleep(0)
+    assert adm.queued_count == 2
+
+    adm.release(r2)  # frees 6: big (8) still does not fit; small (2) is behind it
+    await asyncio.sleep(0)
+    assert not big.done() and not small.done()
+
+    for task in (big, small):
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task

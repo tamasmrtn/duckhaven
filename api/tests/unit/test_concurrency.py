@@ -12,6 +12,7 @@ from duckhaven_shared.concurrency import DEFAULT_PROFILE, parse_set_concurrency
         ("set duckhaven_concurrency='equal_2'", "equal_2"),
         ("  SET   duckhaven_concurrency = decaying_2 ;  ", "decaying_2"),
         ("SET duckhaven_concurrency = 'decaying_3'", "decaying_3"),
+        ("SET duckhaven_concurrency = 'auto'", "auto"),
         ("RESET duckhaven_concurrency", DEFAULT_PROFILE),
     ],
 )

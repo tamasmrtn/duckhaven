@@ -30,6 +30,10 @@ export interface QueryProfileSummary {
   spill_bytes: number;
   bytes_read: number;
   bytes_written: number;
+  // The admission reservation the query ran under. Optional: profiles captured
+  // before this was recorded omit them.
+  reserved_memory_bytes?: number;
+  reserved_threads?: number;
 }
 
 export interface QueryProfileNode {

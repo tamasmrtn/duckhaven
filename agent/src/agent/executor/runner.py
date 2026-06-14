@@ -315,9 +315,13 @@ def run_query_sync(
             row_count = row_count_result[0] if row_count_result else 0
             # DuckDB's profile reports the COPY's returned-row count (1), not the
             # SELECT's result size. Surface the real result row count so the UI's
-            # summary and the scan-blow-up heuristic compare against it.
+            # summary and the scan-blow-up heuristic compare against it. Also
+            # record the admission reservation this query ran under so the UI can
+            # show actual peak/spill against what it was granted.
             if profile is not None:
                 profile["summary"]["rows_returned"] = row_count
+                profile["summary"]["reserved_memory_bytes"] = memory_bytes
+                profile["summary"]["reserved_threads"] = threads
             # Size of the materialized result so the UI can show how large it is.
             if result_path.exists():
                 result_bytes = result_path.stat().st_size

@@ -1,5 +1,6 @@
 import { useQueryProfile } from "@/queries/queries";
 import { Skeleton } from "@/components/ui/skeleton";
+import { formatBytes } from "@/utils";
 import { ProfileSummary } from "./ProfileSummary";
 import { ProfileTree } from "./ProfileTree";
 import { BADGE_LABELS, isSpilled } from "./highlights";
@@ -46,8 +47,12 @@ export function ProfilePanel({
       <ProfileSummary summary={profile.summary} />
       {isSpilled(profile.summary) && (
         <div className="border-b border-[var(--border-subtle)] bg-[var(--status-failed)]/10 px-4 py-1.5 text-2xs text-[var(--status-failed)]">
-          {BADGE_LABELS.spill}: this query spilled to disk — consider a larger
-          reservation or reducing intermediate result size.
+          {BADGE_LABELS.spill}: {formatBytes(profile.summary.spill_bytes)}{" "}
+          spilled
+          {profile.summary.reserved_memory_bytes != null
+            ? ` over a ${formatBytes(profile.summary.reserved_memory_bytes)} reservation`
+            : ""}{" "}
+          — give it more memory or reduce intermediate result size.
         </div>
       )}
       <div className="flex items-center gap-2 border-b border-[var(--border-subtle)] px-4 py-1 text-2xs uppercase tracking-wide text-text-tertiary">

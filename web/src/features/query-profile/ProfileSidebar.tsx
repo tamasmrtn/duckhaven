@@ -166,11 +166,12 @@ function Diagnostics({
 }) {
   const issues: { id: string | null; label: string; detail: string }[] = [];
   if (isSpilled(summary)) {
-    issues.push({
-      id: null,
-      label: BADGE_LABELS.spill,
-      detail: `${formatBytes(summary.spill_bytes)} spilled — consider a larger reservation.`,
-    });
+    const reserved = summary.reserved_memory_bytes;
+    const detail =
+      reserved != null
+        ? `${formatBytes(summary.spill_bytes)} spilled over a ${formatBytes(reserved)} reservation — give it more memory (e.g. SET duckhaven_concurrency='single').`
+        : `${formatBytes(summary.spill_bytes)} spilled — consider a larger reservation.`;
+    issues.push({ id: null, label: BADGE_LABELS.spill, detail });
   }
   for (const gn of layout.nodes) {
     for (const b of nodeBadges(gn.node, summary) as NodeBadge[]) {

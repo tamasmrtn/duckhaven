@@ -132,6 +132,8 @@ export const SAMPLE_PROFILE = {
     spill_bytes: 79495168,
     bytes_read: 134217728,
     bytes_written: 0,
+    reserved_memory_bytes: 357913941,
+    reserved_threads: 2,
   },
   tree: {
     type: "ORDER_BY",

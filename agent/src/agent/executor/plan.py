@@ -57,7 +57,12 @@ class NormalizedNode:
 
 @dataclass
 class QuerySummary:
-    """Query-level actuals from the profile root (QUERY_ROOT)."""
+    """Query-level actuals from the profile root (QUERY_ROOT).
+
+    ``reserved_memory_bytes``/``reserved_threads`` are not part of DuckDB's
+    profile — they are the admission reservation the runner ran under, injected
+    so the UI can compare actual peak/spill against what the query was given.
+    """
 
     latency_ms: float
     cpu_time_ms: float
@@ -67,6 +72,8 @@ class QuerySummary:
     spill_bytes: int
     bytes_read: int
     bytes_written: int
+    reserved_memory_bytes: int = 0
+    reserved_threads: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -78,6 +85,8 @@ class QuerySummary:
             "spill_bytes": self.spill_bytes,
             "bytes_read": self.bytes_read,
             "bytes_written": self.bytes_written,
+            "reserved_memory_bytes": self.reserved_memory_bytes,
+            "reserved_threads": self.reserved_threads,
         }
 
 

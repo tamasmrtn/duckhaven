@@ -199,6 +199,9 @@ def test_select_captures_normalized_profile(tmp_path):
     # rows_returned reflects the real result size (10 groups), not the COPY's
     # returned-row count of 1.
     assert summary["rows_returned"] == 10 == stats["row_count"]
+    # The admission reservation the query ran under is recorded on the summary.
+    assert summary["reserved_memory_bytes"] == _MEM
+    assert summary["reserved_threads"] == _THREADS
     assert profile["tree"]["type"]  # operator tree present
 
 

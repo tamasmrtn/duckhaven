@@ -31,6 +31,20 @@ export function ProfileSummary({ summary }: { summary: QueryProfileSummary }) {
         label="Peak memory"
         value={formatBytes(summary.peak_memory_bytes)}
       />
+      {summary.reserved_memory_bytes != null && (
+        <Stat
+          label="Reserved mem"
+          value={formatBytes(summary.reserved_memory_bytes)}
+        />
+      )}
+      {summary.reserved_threads != null && summary.reserved_threads > 0 && (
+        <Stat
+          label="Reserved CPU"
+          value={`${summary.reserved_threads} ${
+            summary.reserved_threads === 1 ? "thread" : "threads"
+          }`}
+        />
+      )}
       <div className="flex flex-col gap-0.5">
         <span className="text-2xs uppercase tracking-wide text-text-tertiary">
           Spill

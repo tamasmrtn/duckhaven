@@ -39,10 +39,19 @@ describe("QueryProfilePage", () => {
     expect(screen.getByRole("button", { name: /SEQ_SCAN/, pressed: true })).toBeInTheDocument();
   });
 
-  it("flags spill and scan blow-up in diagnostics", async () => {
+  it("surfaces the reserved memory and CPU in the stats header", async () => {
+    renderWithProviders({ initialRoute: ROUTE });
+    expect(await screen.findByText("Reserved mem")).toBeInTheDocument();
+    expect(screen.getByText("Reserved CPU")).toBeInTheDocument();
+    expect(screen.getByText("2 threads")).toBeInTheDocument();
+  });
+
+  it("flags spill and scan blow-up in diagnostics, citing the reservation", async () => {
     renderWithProviders({ initialRoute: ROUTE });
     expect(await screen.findByText(/Spilled to disk/i)).toBeInTheDocument();
     expect(screen.getByText(/Scan blow-up/i)).toBeInTheDocument();
+    // The spill diagnostic cites the reservation it spilled over.
+    expect(screen.getByText(/spilled over a .* reservation/i)).toBeInTheDocument();
   });
 
   it("shows a no-profile state when the profile is null", async () => {

@@ -219,7 +219,8 @@ query and served from `GET /queries/{id}/profile`. There are two ways to view it
 Both surface:
 
 - a summary strip — latency, CPU time, rows returned, result size, **peak
-  memory**, **spill to disk**, and bytes read/written;
+  memory**, the **reserved memory + CPU** the query ran under, **spill to disk**,
+  and bytes read/written (so a spill is read against what was reserved);
 - per-operator metrics — rows scanned → produced, bytes, a time-share bar, and
   the operator's `EXTRA_INFO` (join conditions, filters, group keys);
 - **inefficiency highlights** computed from the profile — spilled queries

@@ -50,7 +50,7 @@ test("DDL shows the no-profile state", async ({ page, worksheetPage }) => {
   await worksheetPage.run(`DROP TABLE ${table}`);
 });
 
-test("clicking a history row opens the worksheet with the Profile tab", async ({
+test("clicking a history row opens the dedicated query-profile page", async ({
   page,
   worksheetPage,
 }) => {
@@ -63,8 +63,23 @@ test("clicking a history row opens the worksheet with the Profile tab", async ({
   await expect(page).toHaveURL(/\/history/);
   await page.locator("table tbody tr").first().click();
 
-  // Back in the worksheet, the Profile tab is selected and showing the summary.
-  await expect(page).toHaveURL(/\/worksheets/);
-  await expect(worksheetPage.profileTab).toHaveAttribute("aria-selected", "true");
+  // A dedicated /$ws/queries/$id page with the operator graph + stats + panels.
+  await expect(page).toHaveURL(/\/queries\//);
+  await expect(page.getByText("Query profile")).toBeVisible();
   await expect(page.getByText("Latency", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: /GROUP_BY/ }).first()).toBeVisible();
+  await expect(page.getByText("Most expensive operators")).toBeVisible();
+});
+
+test("the worksheet Profile tab links to the full profile page", async ({
+  page,
+  worksheetPage,
+}) => {
+  await worksheetPage.goto();
+  await worksheetPage.run(HEAVY_SQL);
+  await worksheetPage.openProfile();
+
+  await page.getByRole("link", { name: /Open full profile/i }).click();
+  await expect(page).toHaveURL(/\/queries\//);
+  await expect(page.getByText("Query profile")).toBeVisible();
 });

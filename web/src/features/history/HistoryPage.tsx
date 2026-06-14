@@ -4,7 +4,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { StatusPill } from "@/components/app/StatusPill";
 import { useWorkspaceQueries } from "@/queries/queries";
 import { useAgents } from "@/queries/agents";
-import { stashHistoryProfile } from "@/features/catalog/worksheetSql";
 import { cn, shortId } from "@/utils";
 
 function formatDuration(ms: number | null) {
@@ -21,8 +20,7 @@ export function HistoryPage() {
   const agentName = new Map(agents.map((a) => [a.id, a.name]));
 
   function openProfile(queryId: string) {
-    stashHistoryProfile(ws, queryId);
-    navigate({ to: "/$ws/worksheets", params: { ws } });
+    navigate({ to: "/$ws/queries/$queryId", params: { ws, queryId } });
   }
 
   return (

@@ -46,10 +46,7 @@ import { AgentPicker } from "@/components/app/AgentPicker";
 import { StatusPill } from "@/components/app/StatusPill";
 import { StorageLabel } from "@/components/app/StorageIcon";
 import { CatalogTree } from "./CatalogTree";
-import {
-  takePendingSql,
-  takeOpenProfile,
-} from "@/features/catalog/worksheetSql";
+import { takePendingSql } from "@/features/catalog/worksheetSql";
 import { ProfilePanel } from "@/features/worksheet/profile/ProfilePanel";
 import { SqlEditor, type SqlEditorHandle } from "./SqlEditor";
 import { splitStatements } from "./statements";
@@ -133,10 +130,9 @@ export function WorksheetPage() {
   const [activeQueryId, setActiveQueryId] = useState<string | null>(() =>
     loadActiveQueryId(ws),
   );
-  // Results-area tab. Opens on "Profile" when arriving from the history view
-  // (it stashes the query id + a flag); otherwise defaults to the data grid.
-  const [resultsTab, setResultsTab] = useState<"results" | "profile">(() =>
-    takeOpenProfile(ws) ? "profile" : "results",
+  // Results-area tab: the data grid or the inline profile panel.
+  const [resultsTab, setResultsTab] = useState<"results" | "profile">(
+    "results",
   );
 
   // On first render and whenever the workspace changes, (re)load that
@@ -670,6 +666,17 @@ export function WorksheetPage() {
                     )}
                 </>
               )}
+              {resultsTab === "profile" &&
+                activeQueryId &&
+                queryData?.status === "done" && (
+                  <Link
+                    to="/$ws/queries/$queryId"
+                    params={{ ws, queryId: activeQueryId }}
+                    className="ml-auto text-2xs text-text-secondary hover:text-text-primary"
+                  >
+                    Open full profile ↗
+                  </Link>
+                )}
             </div>
 
             <div className="flex-1 overflow-hidden">

@@ -258,13 +258,18 @@ tasks (`src/agent/main.py` gathers them):
 
 | Module | Responsibility |
 |---|---|
-| `executor/admission.py` | `Admission`: memory-budget admission control with a FIFO queue. The cgroup-aware budget (`effective_memory_bytes() × (1 − headroom)`) is split into a weighted slot ladder (profiles in `duckhaven_shared.concurrency`); a new query takes the largest free slot, the rest queue. Enforces the invariant `Σ running memory_limit ≤ budget` so the agent never OOM-kills. Exposes live running/queued counts and the active profile, switchable at runtime via the `set_concurrency` frame. |
-| `executor/runner.py` | `run_query_sync`: the synchronous DuckDB path. Sets `memory_limit`/`threads` to the slice the admission manager granted, loads `iceberg` (+ `httpfs`/`azure` for cloud), creates a connection-scoped iceberg OAuth2 `SECRET` from agent config and `ATTACH`es the workspace's Polaris catalog (warehouse = workspace slug; `vended_credentials` for every backend, since all are object storage), then `COPY (sql) TO '<uuid>.parquet'`. When the dispatch carries `stats_for`, it also returns the target table's `COUNT(*)` for the catalog sidecar. |
+| `executor/admission.py` | `Admission`: memory-budget admission control with a FIFO queue. The cgroup-aware budget (`effective_memory_bytes() × (1 − headroom)`) is split into a weighted slot ladder (profiles in `duckhaven_shared.concurrency`); a new query takes the largest free slot, the rest queue. In the default `auto` profile it instead admits a per-query *requested* reservation (sized from the estimate) clamped to `[floor, ceiling×budget]`. Enforces the invariant `Σ running memory_limit ≤ budget` so the agent never OOM-kills. Exposes live running/queued counts and the active profile, switchable at runtime via the `set_concurrency` frame. |
+| `executor/plan.py` | Shared DuckDB plan/profile tree-walker: one recursive walker, two extractors. `parse_explain` reads estimated cardinality from `EXPLAIN (FORMAT json)` (pre-execution); `parse_profile` reads actual per-operator metrics + a query-level summary from the JSON profile (post-execution). Consumed by both the estimator and the profiler. |
+| `executor/estimator.py` | `estimate_memory_bytes`: runs `EXPLAIN` on the attached connection and approximates peak memory as `Σ` over blocking operators (joins, group-bys, sorts) of `estimated_cardinality × row_width × safety`; `bucket_for` snaps it to a T-shirt bucket of the budget. Best-effort — returns `None` (caller uses the fallback bucket) on any failure. |
+| `executor/runner.py` | `run_query_sync`: the synchronous DuckDB path. Sets `memory_limit`/`threads` to the slice the admission manager granted, loads `iceberg` (+ `httpfs`/`azure` for cloud), creates a connection-scoped iceberg OAuth2 `SECRET` from agent config and `ATTACH`es the workspace's Polaris catalog (warehouse = workspace slug; `vended_credentials` for every backend, since all are object storage), then `COPY (sql) TO '<uuid>.parquet'`. Around execution it enables DuckDB JSON profiling and normalizes the result into `stats["profile"]` (best-effort; the `auto` path reuses the connection it ran `EXPLAIN` on). When the dispatch carries `stats_for`, it also returns the target table's `COUNT(*)` for the catalog sidecar. |
 | `executor/supervisor.py` | `run_query`: runs `run_query_sync` on a thread executor with a wall-clock timeout. Uses DuckDB's thread-safe `conn.interrupt()` (via `loop.call_later` and on cancel) to actually stop a running query. |
 
 `config.py` holds the operator timeout ceiling (`max_timeout_s`, per-query
-requests clamp to it) and the admission knobs (`max_concurrency_profile`,
-`memory_headroom_fraction`, `max_queue_depth`, `queued_timeout_s`).
+requests clamp to it), the admission knobs (`max_concurrency_profile` — default
+`auto` — `memory_headroom_fraction`, `max_queue_depth`, `queued_timeout_s`), the
+estimator knobs (`estimate_safety_multiplier`, `estimate_floor_bytes`,
+`estimate_ceiling_fraction`, `explain_timeout_s`, `estimate_fallback_bucket`),
+and the profiling kill-switch (`profiling_enabled`, default on).
 
 ### 6.4 `web/` — the React SPA
 
@@ -371,6 +376,7 @@ erDiagram
         int row_count
         json progress
         string result_path
+        jsonb profile
     }
     saved_queries {
         uuid id
@@ -490,6 +496,15 @@ Key properties:
 
 - **Dispatch is a direct socket push**, not a queue. If the chosen agent is
   not connected, the request fails fast (`503`).
+- **The reservation is sized before execution** (default `auto` profile). The
+  agent runs `EXPLAIN` on the attached connection, estimates peak memory, and
+  acquires a proportional reservation (queueing if the budget is full) — then
+  reuses that same connection to execute and read the profile.
+- **The execution profile is captured after the run.** The agent normalizes
+  DuckDB's JSON profile (query summary + operator tree) and returns it on the
+  `query_done` frame; the API persists it on `Query.profile` and serves it from
+  `GET /queries/{id}/profile` for the worksheet's Profile tab. Best-effort, so a
+  profiling failure never fails the query.
 - **Results are materialized where they are produced** — Parquet on the
   executing agent. The control plane fetches that Parquet and decodes the
   requested page to JSON (`RowsPageOut`) with `duckdb`; `total` comes from the

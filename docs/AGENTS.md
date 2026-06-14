@@ -20,6 +20,14 @@ runs DuckDB.
 | `RESULTS_DIR` | No | `/var/duckhaven-agent/results` | Directory for materialized query results |
 | `RESULTS_HTTP_PORT` | No | `8001` | Port for the local HTTP result server |
 | `MEMORY_LIMIT_BYTES` | No | `6442450944` (6 GB) | Per-query memory ceiling |
+| `MAX_CONCURRENCY_PROFILE` | No | `auto` | Reservation sizing: `auto` (EXPLAIN-estimated per query) or a static slot ladder (`single`/`equal_2`/`decaying_2`/`decaying_3`). See [RUNBOOK §6](RUNBOOK.md#6-query-queueing--concurrency). |
+| `PROFILING_ENABLED` | No | `true` | Capture DuckDB's post-execution query profile and return it on `query_done`. Set `false` to disable. |
+
+The `auto` profile has additional best-effort estimator knobs
+(`ESTIMATE_SAFETY_MULTIPLIER`, `ESTIMATE_FLOOR_BYTES`,
+`ESTIMATE_CEILING_FRACTION`, `EXPLAIN_TIMEOUT_S`, `ESTIMATE_FALLBACK_BUCKET`) and
+the queueing knobs (`MEMORY_HEADROOM_FRACTION`, `MAX_QUEUE_DEPTH`,
+`QUEUED_TIMEOUT_S`); see [RUNBOOK §6](RUNBOOK.md#6-query-queueing--concurrency).
 
 ## Extensions and Backend Compatibility
 

@@ -52,6 +52,13 @@ trail — with data sovereignty, network privacy, and no SaaS lock-in.
   integration, and a full audit trail of who ran what.
 - **Transparent Compute** — You pick the DuckDB agent per query. No opaque
   optimizer, no surprise costs, no hidden resource allocation.
+- **Right-Sized Memory** — Each query's memory reservation is estimated from
+  DuckDB's optimizer plan (`EXPLAIN`), so cheap queries pack in while heavy ones
+  reserve more (and queue when the agent is busy). The agent never oversubscribes
+  its memory budget.
+- **Query Profiles** — After a query runs, inspect a per-operator profile: rows
+  in → out, bytes, and timing per step, with automatic flags for spills to disk,
+  scan blow-ups, and bad cardinality estimates.
 - **Self-Hosted** — Docker Compose on your network. Your data never leaves your infrastructure.
 - **Short-Lived Credentials** — Polaris vends temporary storage credentials per query. No long-lived secrets on agents.
 
@@ -159,7 +166,8 @@ cutting a new release see [docs/RELEASING.md](docs/RELEASING.md).
   retention sweep, multi-agent dispatch, live agent CPU/memory utilization,
   published agent and API images (GHCR), server-side backend compatibility
   checks, Iceberg snapshot history browsing with "query at this snapshot"
-  time travel.
+  time travel, EXPLAIN-based per-query memory sizing (the `auto` concurrency
+  profile), and post-execution query profiles with inefficiency highlights.
 - **In progress** — External cloud-backend (S3 / ADLS Gen 2) credential wiring.
 - **Future** — Notebook UI, heterogeneous engines (Spark, Trino, Polars),
   per-table backend override, Polaris RBAC permission mirroring, control-plane

@@ -799,6 +799,82 @@ async def test_second_query_stays_queued_until_first_finishes(tmp_path, monkeypa
     await t2
 
 
+async def test_auto_mode_estimates_then_sizes(tmp_path, monkeypatch):
+    """In the `auto` profile the channel opens+attaches a connection, estimates
+    via EXPLAIN, sizes the reservation from a bucket, and reuses that connection."""
+    import agent.control.channel as ch_module
+
+    captured: dict[str, object] = {}
+
+    async def fake_run_query(sql, result_path, timeout_s, **kwargs):
+        captured["memory_bytes"] = kwargs["memory_bytes"]
+        captured["conn"] = kwargs.get("conn")
+        result_path.write_bytes(b"PAR1fake")
+        return {"row_count": 0, "duration_ms": 0, "wrote_result": True, "profile": None}
+
+    monkeypatch.setattr(ch_module, "run_query", fake_run_query)
+    admission = _admission(profile="auto", floor_bytes=1, ceiling_fraction=1.0)
+
+    ws = _FakeWS()
+    await ch_module._handle_dispatch(ws, {"query_id": "q", "sql": "SELECT 1"}, tmp_path, admission)
+
+    # The auto path opened a connection (for EXPLAIN) and handed it to the runner.
+    assert captured["conn"] is not None
+    # SELECT 1 has no blocking operator -> smallest (XS) bucket = budget/12.
+    assert captured["memory_bytes"] == int(admission.budget_bytes * (1 / 12))
+    done = Frame.model_validate_json(ws.sent[-1])
+    assert done.payload["status"] == "done"
+
+
+async def test_auto_estimate_failure_falls_back_without_dropping(tmp_path, monkeypatch):
+    """If estimation fails, the channel uses the fallback bucket and still runs
+    the query (never drops it)."""
+    import agent.control.channel as ch_module
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("estimate exploded")
+
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", boom)
+    monkeypatch.setattr(ch_module.settings, "estimate_fallback_bucket", "M")
+
+    captured: dict[str, object] = {}
+
+    async def fake_run_query(sql, result_path, timeout_s, **kwargs):
+        captured["memory_bytes"] = kwargs["memory_bytes"]
+        result_path.write_bytes(b"PAR1fake")
+        return {"row_count": 0, "duration_ms": 0, "wrote_result": True, "profile": None}
+
+    monkeypatch.setattr(ch_module, "run_query", fake_run_query)
+    admission = _admission(profile="auto", floor_bytes=1, ceiling_fraction=1.0)
+
+    ws = _FakeWS()
+    await ch_module._handle_dispatch(ws, {"query_id": "q", "sql": "SELECT 1"}, tmp_path, admission)
+
+    # Fallback bucket M = budget/3.
+    assert captured["memory_bytes"] == int(admission.budget_bytes * (1 / 3))
+    done = Frame.model_validate_json(ws.sent[-1])
+    assert done.payload["status"] == "done"
+
+
+async def test_static_profile_opens_no_estimate_connection(tmp_path, monkeypatch):
+    """Static profiles are unchanged: no pre-acquire connection; runner opens its own."""
+    import agent.control.channel as ch_module
+
+    captured: dict[str, object] = {}
+
+    async def fake_run_query(sql, result_path, timeout_s, **kwargs):
+        captured["conn"] = kwargs.get("conn")
+        result_path.write_bytes(b"PAR1fake")
+        return {"row_count": 0, "duration_ms": 0, "wrote_result": True, "profile": None}
+
+    monkeypatch.setattr(ch_module, "run_query", fake_run_query)
+    admission = _admission(profile="single")
+
+    ws = _FakeWS()
+    await ch_module._handle_dispatch(ws, {"query_id": "q", "sql": "SELECT 1"}, tmp_path, admission)
+    assert captured["conn"] is None
+
+
 async def test_queue_full_returns_failed_frame(tmp_path, monkeypatch):
     """When the slot is busy and the queue is at capacity, a new dispatch fails
     fast with a 'queue full' QUERY_DONE rather than oversubscribing."""

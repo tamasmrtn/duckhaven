@@ -1,4 +1,4 @@
-"""Tier-2 query cost estimation.
+"""EXPLAIN-based query memory estimation.
 
 Sizes a query's memory reservation from DuckDB's optimizer estimate (``EXPLAIN``)
 instead of a fixed slot. Peak memory is approximated as the sum, over *blocking*

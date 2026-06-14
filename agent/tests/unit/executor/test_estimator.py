@@ -1,4 +1,4 @@
-"""Tier-2 cost estimation: memory estimate, bucket mapping, unestimable input."""
+"""EXPLAIN-based cost estimation: memory estimate, bucket mapping, unestimable input."""
 
 from __future__ import annotations
 

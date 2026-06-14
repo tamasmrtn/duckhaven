@@ -45,8 +45,8 @@ class Settings(BaseSettings):
     max_queue_depth: int = 100
     queued_timeout_s: float = 0.0
 
-    # Tier-2 cost estimation (the `auto` profile). Each query's reservation is
-    # sized from its EXPLAIN estimate * safety, snapped to a T-shirt bucket, and
+    # EXPLAIN-based cost estimation (the `auto` profile). Each query's reservation
+    # is sized from its EXPLAIN estimate * safety, snapped to a T-shirt bucket, and
     # clamped to [floor, ceiling*budget]. Unestimable queries (DDL/DML,
     # multi-statement, EXPLAIN failure, timeout) fall back to `estimate_fallback_bucket`.
     estimate_safety_multiplier: float = 1.5

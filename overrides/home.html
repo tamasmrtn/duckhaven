@@ -1,0 +1,43 @@
+{% extends "main.html" %}
+
+{#
+  Custom landing page for DuckHaven. The hero is injected into the `tabs` block
+  (between the header and the page content) so the top navigation tabs still
+  render above it; the Markdown body of docs/index.md renders below the hero.
+#}
+
+{% block tabs %}
+  {{ super() }}
+  <section class="dh-hero">
+    <div class="dh-hero__inner">
+      <div class="dh-hero__copy">
+        <p class="dh-hero__eyebrow">Self-hosted &middot; open source &middot; DuckDB-native</p>
+        <h1>A collaborative SQL workspace for DuckDB teams</h1>
+        <p class="dh-hero__lead">
+          Browser worksheets, an Apache Iceberg catalog governed by Apache Polaris, and multi-agent
+          DuckDB compute &mdash; lightweight enough for a homelab, governed enough for a team. No cloud
+          warehouse lock-in, no Kubernetes, no platform team required.
+        </p>
+        <div class="dh-hero__cta">
+          <a href="{{ 'getting-started/quickstart/' | url }}" class="md-button md-button--primary">
+            Get started
+          </a>
+          <a href="{{ 'concepts/architecture/' | url }}" class="md-button">
+            How it works
+          </a>
+        </div>
+      </div>
+      <div class="dh-hero__art">
+        <img src="{{ 'images/worksheet-dark.png' | url }}" alt="DuckHaven SQL worksheet" loading="lazy">
+      </div>
+    </div>
+  </section>
+{% endblock %}
+
+{# Wrap the page body so the auto-injected page title (an empty-content H1) can
+   be hidden on the landing page only — the hero already carries the H1. #}
+{% block content %}
+  <div class="dh-home">
+    {{ super() }}
+  </div>
+{% endblock %}

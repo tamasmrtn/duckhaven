@@ -7,3 +7,5 @@ exclude_rule "first-line-h1"        # MD041
 # 120-char lines; tables are wide reference grids that can't be wrapped.
 rule "MD013", line_length: 120, tables: false
 rule "MD029", style: :ordered
+# Allow question-mark headings (e.g. "What is DuckHaven?").
+rule "MD026", punctuation: ".,;:!"

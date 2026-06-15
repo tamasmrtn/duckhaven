@@ -117,7 +117,7 @@ flowchart TB
   recommended); there is no public ingress.
 
 For the full architecture, see [docs/concepts/architecture.md](docs/concepts/architecture.md). For
-the UI design system, see [docs/contributing/design-system.md](docs/contributing/design-system.md).
+the UI design system, see [docs/developer/design-system.md](docs/developer/design-system.md).
 
 ## Tech Stack
 
@@ -157,8 +157,8 @@ inside the api container, the first admin is created from the browser.
 - [Add an agent](docs/deployment/add-agent.md)
 
 For local development (running the API and Vite dev server against a
-compose-managed Postgres) see [docs/contributing/development.md](docs/contributing/development.md). For
-cutting a new release see [docs/contributing/releasing.md](docs/contributing/releasing.md).
+compose-managed Postgres) see [docs/developer/development.md](docs/developer/development.md). For
+cutting a new release see [docs/developer/releasing.md](docs/developer/releasing.md).
 
 ## Roadmap
 

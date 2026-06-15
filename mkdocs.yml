@@ -85,21 +85,50 @@ extra:
 nav:
   - Home: index.md
   - Getting started:
+      - Installation: getting-started/installation.md
       - Quickstart: getting-started/quickstart.md
+      - Your first workspace: getting-started/first-workspace.md
+      - Your first query: getting-started/first-query.md
   - Concepts:
+      - What is DuckHaven?: concepts/what-is-duckhaven.md
       - Architecture: concepts/architecture.md
+      - Workspaces: concepts/workspaces.md
+      - Catalogs & Polaris: concepts/catalogs.md
+      - Tables & Iceberg: concepts/tables.md
+      - Agents: concepts/agents.md
+      - Storage backends: concepts/storage-backends.md
+      - Query execution: concepts/query-execution.md
+      - Permissions: concepts/permissions.md
+      - Metadata: concepts/metadata.md
   - Deployment:
-      - Install: deployment/install.md
+      - Docker Compose: deployment/install.md
       - Add an agent: deployment/add-agent.md
-      - Reverse proxy + TLS: deployment/reverse-proxy-tls.md
+      - Configure storage: deployment/storage.md
+      - Reverse proxy & TLS: deployment/reverse-proxy-tls.md
       - Updating: deployment/updating.md
       - Backup & restore: deployment/backup-restore.md
-  - Administration:
-      - Operator runbook: administration/runbook.md
-      - Agent reference: administration/agents.md
+  - Guides:
+      - Run queries: guides/run-queries.md
+      - Manage catalogs: guides/manage-catalogs.md
+      - Snapshots & time travel: guides/snapshots-time-travel.md
+      - Read query profiles: guides/query-profiles.md
+      - Saved queries: guides/saved-queries.md
+      - Manage users & access: guides/users-access.md
+  - Operations:
+      - Operator runbook: operations/runbook.md
+      - Monitoring: operations/monitoring.md
+      - Scaling compute: operations/scaling.md
+      - Troubleshooting: operations/troubleshooting.md
   - Reference:
       - Configuration: reference/configuration.md
-  - Contributing:
-      - Development: contributing/development.md
-      - Releasing: contributing/releasing.md
-      - Design system: contributing/design-system.md
+      - SQL support: reference/sql-support.md
+      - Agent reference: reference/agent-reference.md
+      - REST API: reference/rest-api.md
+      - Operator scripts: reference/operator-scripts.md
+  - Developer:
+      - Local development: developer/development.md
+      - Contributing: developer/contributing.md
+      - Testing: developer/testing.md
+      - Releasing: developer/releasing.md
+      - Design system: developer/design-system.md
+  - Release notes: release-notes/index.md

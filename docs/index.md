@@ -86,7 +86,7 @@ hide:
 
     Day-2 operations: query queueing and concurrency, agent management, and the operator runbook.
 
-    [:octicons-arrow-right-24: Operate a cluster](administration/runbook.md)
+    [:octicons-arrow-right-24: Operate a cluster](operations/runbook.md)
 
 -   :material-cog:{ .lg .middle } __Configuration__
 
@@ -102,6 +102,6 @@ hide:
 
     Local development, the four-layer test architecture, the design system, and cutting a release.
 
-    [:octicons-arrow-right-24: Start contributing](contributing/development.md)
+    [:octicons-arrow-right-24: Start contributing](developer/development.md)
 
 </div>

@@ -5,8 +5,8 @@ file (all values are optional — the stack auto-generates persistent secrets on
 through their own environment.
 
 For task-oriented guidance see [Install](../deployment/install.md) and the
-[Operator runbook](../administration/runbook.md); for the canonical agent details see the
-[Agent reference](../administration/agents.md).
+[Operator runbook](../operations/runbook.md); for the canonical agent details see the
+[Agent reference](agent-reference.md).
 
 ## Control plane (Compose `.env`)
 
@@ -34,7 +34,7 @@ boot, so every variable below is optional.
 
 ## Agent
 
-Source of truth: the [Agent reference](../administration/agents.md). An agent needs only `CONTROL_PLANE_URL` and a
+Source of truth: the [Agent reference](agent-reference.md). An agent needs only `CONTROL_PLANE_URL` and a
 `BOOTSTRAP_TOKEN`; everything else has a working default.
 
 | Variable | Required | Default | Description |
@@ -44,13 +44,13 @@ Source of truth: the [Agent reference](../administration/agents.md). An agent ne
 | `RESULTS_DIR` | No | `/var/duckhaven-agent/results` | Directory for materialized query results. |
 | `RESULTS_HTTP_PORT` | No | `8001` | Port for the local HTTP result server. |
 | `MEMORY_LIMIT_BYTES` | No | `6442450944` (6 GB) | Per-query memory ceiling. |
-| `MAX_CONCURRENCY_PROFILE` | No | `auto` | Reservation sizing: `auto` (EXPLAIN-estimated per query) or a static slot ladder (`single`/`equal_2`/`decaying_2`/`decaying_3`). See [Runbook §6](../administration/runbook.md#6-query-queueing-concurrency). |
+| `MAX_CONCURRENCY_PROFILE` | No | `auto` | Reservation sizing: `auto` (EXPLAIN-estimated per query) or a static slot ladder (`single`/`equal_2`/`decaying_2`/`decaying_3`). See [Runbook §6](../operations/runbook.md#6-query-queueing-concurrency). |
 | `PROFILING_ENABLED` | No | `true` | Capture DuckDB's post-execution query profile and return it on `query_done`. Set `false` to disable. |
 
 ### `auto` estimator knobs
 
 Best-effort knobs that only apply under the `auto` profile. See
-[Runbook §6](../administration/runbook.md#6-query-queueing-concurrency).
+[Runbook §6](../operations/runbook.md#6-query-queueing-concurrency).
 
 | Variable | Default | Description |
 |---|---|---|
@@ -71,7 +71,7 @@ Best-effort knobs that only apply under the `auto` profile. See
 ### Operator ceilings
 
 Operator-set ceilings that per-query requests cannot exceed — see the
-[Operator runbook](../administration/runbook.md#2-register-two-agents-multi-agent-m4-target).
+[Operator runbook](../operations/runbook.md#2-register-two-agents-multi-agent-m4-target).
 
 | Variable | Example | Description |
 |---|---|---|

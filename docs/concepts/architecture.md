@@ -8,7 +8,7 @@ sitting by a new contributor or a coding agent before touching the code.
 It deliberately describes *stable structure and invariants*, not progress.
 For roadmap and milestone status see the [README](https://github.com/tamasmrtn/duckhaven#roadmap) and
 the issue tracker. For setup and operations see
-[Development](../contributing/development.md), [the Runbook](../administration/runbook.md), and
+[Development](../developer/development.md), [the Runbook](../operations/runbook.md), and
 the [Deployment guides](../deployment/install.md).
 
 ---

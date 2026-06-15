@@ -14,6 +14,8 @@ Polaris governance — lightweight enough for a homelab, serious enough for a te
 No cloud warehouse lock-in, no Kubernetes, no opaque billing, no platform team
 required.
 
+**Documentation:** <https://tamasmrtn.github.io/duckhaven/>
+
 ## Alternatives
 
 DuckHaven is not the only way to run SQL over DuckDB. Pick the tool that fits
@@ -114,8 +116,8 @@ flowchart TB
 - The API is exposed directly on port 8000 over a private network (Tailscale
   recommended); there is no public ingress.
 
-For the full architecture, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For
-the UI design system, see [docs/UI-DESIGN.md](docs/UI-DESIGN.md).
+For the full architecture, see [docs/concepts/architecture.md](docs/concepts/architecture.md). For
+the UI design system, see [docs/contributing/design-system.md](docs/contributing/design-system.md).
 
 ## Tech Stack
 
@@ -148,15 +150,15 @@ inside the api container, the first admin is created from the browser.
 
 ## Self-hosting docs
 
-- [Install](docs/self-hosting/install.md)
-- [Update](docs/self-hosting/update.md)
-- [Reverse proxy + TLS (Caddy)](docs/self-hosting/reverse-proxy.md)
-- [Backup & restore](docs/self-hosting/backup-restore.md)
-- [Add an agent](docs/self-hosting/add-agent.md)
+- [Install](docs/deployment/install.md)
+- [Update](docs/deployment/updating.md)
+- [Reverse proxy + TLS (Caddy)](docs/deployment/reverse-proxy-tls.md)
+- [Backup & restore](docs/deployment/backup-restore.md)
+- [Add an agent](docs/deployment/add-agent.md)
 
 For local development (running the API and Vite dev server against a
-compose-managed Postgres) see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). For
-cutting a new release see [docs/RELEASING.md](docs/RELEASING.md).
+compose-managed Postgres) see [docs/contributing/development.md](docs/contributing/development.md). For
+cutting a new release see [docs/contributing/releasing.md](docs/contributing/releasing.md).
 
 ## Roadmap
 
@@ -175,7 +177,7 @@ cutting a new release see [docs/RELEASING.md](docs/RELEASING.md).
   HA, Prometheus metrics + Grafana dashboards, off-box result durability / DR
   automation.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §13 for the gap tracker.
+See [docs/concepts/architecture.md](docs/concepts/architecture.md) §13 for the gap tracker.
 
 ## Contributing
 

@@ -48,6 +48,6 @@ Agents are deployed to separate hosts. See [add-agent.md](./add-agent.md).
 
 ## Next steps
 
-- [Update](./update.md) — pull a new release.
-- [Reverse proxy + TLS](./reverse-proxy.md) — front the stack with Caddy.
+- [Update](./updating.md) — pull a new release.
+- [Reverse proxy + TLS](./reverse-proxy-tls.md) — front the stack with Caddy.
 - [Backup and restore](./backup-restore.md) — protecting Postgres.

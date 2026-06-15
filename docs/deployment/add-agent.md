@@ -61,6 +61,6 @@ results volume name.
 
 ## Troubleshooting
 
-See [docs/AGENTS.md](../AGENTS.md#troubleshooting) for capability detection,
+See [the agent reference](../administration/agents.md#troubleshooting) for capability detection,
 extension errors, NAT / MTU pitfalls, and the result-server reachability
 check.

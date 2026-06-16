@@ -1,0 +1,295 @@
+/*
+ * DuckHaven brand alignment for the docs site.
+ * Maps the design-system tokens (see contributing/design-system.md §2.1) onto
+ * MkDocs Material: DuckDB lemon yellow as a sparse brand anchor + CTA accent,
+ * slate-blue for interaction/links, slate neutrals, dark canvas in dark mode.
+ */
+
+:root {
+  --dh-yellow: #fff100;
+  --dh-yellow-deep: #ffd500;
+  --dh-orange: #ff6900;
+  --dh-slate-blue: #7d66ff;
+  --dh-ink: #0b0f19;
+  --dh-surface: #111827; /* web app dark surface (--bg-surface) */
+
+  /* Slate-blue is the interaction / link / selection color (design §2.1). */
+  --md-accent-fg-color: var(--dh-slate-blue);
+  --md-typeset-a-color: var(--dh-slate-blue);
+}
+
+/* Header + tabs use the web app's dark-blue surface in both schemes. Material
+ * defines --md-primary-fg-color on <body> (via data-md-color-primary), so the
+ * override has to live here to win over it. */
+[data-md-color-primary] {
+  --md-primary-fg-color: var(--dh-surface);
+  --md-primary-fg-color--light: var(--dh-surface);
+  --md-primary-fg-color--dark: var(--dh-surface);
+}
+
+/* The `black` primary sets the header/tabs background with a rule more specific
+ * than the variable, so override the background directly. */
+body[data-md-color-primary] .md-header,
+body[data-md-color-primary] .md-tabs {
+  background-color: var(--dh-surface);
+}
+
+/* Light mode: slate-600 secondary text to match the neutral ramp. */
+[data-md-color-scheme="default"] {
+  --md-default-fg-color--light: #475569;
+}
+
+/* Dark mode: DuckDB-canvas background, lighter slate-blue links; the design
+ * system prefers borders over shadows on this near-black canvas (design §7). */
+[data-md-color-scheme="slate"] {
+  --md-default-bg-color: var(--dh-ink);
+  --md-accent-fg-color: #9c8aff;
+  --md-typeset-a-color: #9c8aff;
+}
+
+/* Sparse brand-yellow rule under the near-black header — yellow stays on <2% of
+ * pixels and never becomes a background field (design §2.1). */
+.md-header {
+  border-bottom: 2px solid var(--dh-yellow);
+}
+
+/* The logo is the full DuckHaven wordmark lockup, so size it up and hide the
+ * redundant site-name text — but keep the page title that appears on scroll. */
+.md-header__button.md-logo img,
+.md-header__button.md-logo svg {
+  height: 1.7rem;
+  width: auto;
+}
+
+.md-header__title .md-header__topic:first-child {
+  display: none;
+}
+
+/* ---------------------------------------------------------------------------
+ * Buttons
+ * ------------------------------------------------------------------------- */
+
+/* The one place yellow fills a surface: the primary call-to-action, with dark
+ * text (design §2.1: "primary CTA accent"). Yellow is never body text. */
+.md-typeset .md-button--primary {
+  background-color: var(--dh-yellow);
+  border-color: var(--dh-yellow);
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.md-typeset .md-button--primary:hover,
+.md-typeset .md-button--primary:focus {
+  background-color: var(--dh-yellow-deep);
+  border-color: var(--dh-yellow-deep);
+  color: #0f172a;
+}
+
+/* ---------------------------------------------------------------------------
+ * Hero (home page, injected by overrides/home.html)
+ * ------------------------------------------------------------------------- */
+
+.dh-hero {
+  background:
+    radial-gradient(60rem 30rem at 85% -10%, rgba(125, 102, 255, 0.28), transparent 60%),
+    radial-gradient(40rem 24rem at 5% 120%, rgba(255, 241, 0, 0.10), transparent 55%),
+    linear-gradient(160deg, #0b0f19 0%, #141a2e 60%, #1a1340 100%);
+  color: #f1f5f9;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.dh-hero__inner {
+  max-width: 64rem;
+  margin: 0 auto;
+  padding: 4.5rem 1.2rem 5rem;
+  display: grid;
+  grid-template-columns: 1.05fr 0.95fr;
+  gap: 3rem;
+  align-items: center;
+}
+
+.dh-hero__eyebrow {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dh-yellow);
+  margin: 0 0 0.9rem;
+}
+
+.dh-hero h1 {
+  font-size: 2.6rem;
+  line-height: 1.08;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: #ffffff;
+  margin: 0 0 1.1rem;
+}
+
+.dh-hero__lead {
+  font-size: 1.02rem;
+  line-height: 1.6;
+  color: #cbd5e1;
+  max-width: 34rem;
+  margin: 0 0 1.9rem;
+}
+
+.dh-hero__cta {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+/* The hero sits outside `.md-typeset`, so Material's `.md-button` base styles
+ * (padding, border, radius, sizing) don't reach it — style the buttons fully
+ * here so they render as proper pills. Ghost = light outline; primary = yellow. */
+.dh-hero .md-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0.62rem 1.45rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  color: #ffffff;
+  background-color: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 7px;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.dh-hero .md-button:hover,
+.dh-hero .md-button:focus {
+  background-color: rgba(255, 255, 255, 0.1);
+  border-color: #ffffff;
+  color: #ffffff;
+  transform: translateY(-1px);
+}
+
+.dh-hero .md-button--primary {
+  color: #0f172a;
+  background-color: var(--dh-yellow);
+  border-color: var(--dh-yellow);
+}
+
+.dh-hero .md-button--primary:hover,
+.dh-hero .md-button--primary:focus {
+  color: #0f172a;
+  background-color: var(--dh-yellow-deep);
+  border-color: var(--dh-yellow-deep);
+  box-shadow: 0 8px 22px rgba(255, 241, 0, 0.25);
+}
+
+.dh-hero__art img {
+  width: 100%;
+  height: auto;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+
+@media screen and (max-width: 59.9844em) {
+  .dh-hero__inner {
+    grid-template-columns: 1fr;
+    gap: 2.2rem;
+    padding: 3rem 1.2rem 3.5rem;
+    text-align: center;
+  }
+  .dh-hero__lead {
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .dh-hero__cta {
+    justify-content: center;
+  }
+  .dh-hero h1 {
+    font-size: 2.1rem;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Feature / section cards
+ * ------------------------------------------------------------------------- */
+
+.md-typeset .grid.cards > ul > li {
+  border-radius: 10px;
+  border-color: var(--md-default-fg-color--lightest);
+  padding: 1.1rem 1.2rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.md-typeset .grid.cards > ul > li:hover {
+  border-color: var(--dh-slate-blue);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.10);
+  transform: translateY(-2px);
+}
+
+[data-md-color-scheme="slate"] .md-typeset .grid.cards > ul > li:hover {
+  box-shadow: 0 0 0 1px var(--dh-slate-blue);
+}
+
+/* Tint the large card icons slate-blue for a cohesive, intentional accent. */
+.md-typeset .grid.cards .twemoji.lg svg {
+  fill: var(--dh-slate-blue);
+}
+
+[data-md-color-scheme="slate"] .md-typeset .grid.cards .twemoji.lg svg {
+  fill: #9c8aff;
+}
+
+/* The home page's first heading ("Explore the docs") gets a little air. */
+.md-typeset .grid.cards + h2 {
+  margin-top: 2.5rem;
+}
+
+/* Hide the auto-injected page title on the landing page — the hero carries it. */
+.dh-home > .md-content__inner > h1:first-child,
+.dh-home h1:first-child {
+  display: none;
+}
+
+/* ---------------------------------------------------------------------------
+ * Theme toggle (dark <-> light) — a single button in the header
+ * ------------------------------------------------------------------------- */
+
+.dh-theme {
+  display: flex;
+  align-items: center;
+}
+
+.dh-theme__trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  margin: 0 0.2rem;
+  padding: 0;
+  color: currentcolor;
+  background: transparent;
+  border: 0;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  opacity: 0.85;
+  transition:
+    opacity 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.dh-theme__trigger:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.dh-theme__trigger svg {
+  width: 1.1rem;
+  height: 1.1rem;
+}

@@ -175,4 +175,4 @@ Branch prefixes:
 - `refactor/` — behavior-preserving restructure
 - `test/` — test additions or corrections
 
-See [CLAUDE.md](../CLAUDE.md) for the full development guidelines.
+See [CLAUDE.md](https://github.com/tamasmrtn/duckhaven/blob/main/CLAUDE.md) for the full development guidelines.

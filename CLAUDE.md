@@ -152,6 +152,38 @@ If only one layer changed, scope the test command:
 - `make test-api` — Python API only
 - `make test-agent` — Python agent only
 
+## 7. Documentation
+
+**Every new feature, new concept, or change to an existing capability ships with a docs update — in the same PR as the
+code.**
+
+The documentation website lives in `docs/` (MkDocs Material). When behavior that a user, operator, or contributor can
+observe changes, update the page that describes it. Map the change to the right place:
+
+- New or changed **concept** (workspaces, catalogs, agents, storage, query execution, permissions, …) → `docs/concepts/`
+- New or changed **user task** → `docs/guides/`
+- New or changed **deploy or day-2 behavior** → `docs/deployment/` or `docs/operations/`
+- New or changed **config, SQL, API, or operator script** → `docs/reference/`
+- New first-run flow → `docs/getting-started/`
+
+How to write it:
+
+- **Surgical (§3).** Touch only the page(s) the change affects; match the existing structure, tone, and cross-links.
+  Don't restructure or rewrite unrelated docs.
+- **For humans, not the compiler.** These pages are read by people who don't know the code. Explain in plain prose
+  *what* the feature does and *why* it matters — enough to understand it without reading the source — not a terse
+  changelog line.
+- **Honest about scope (§2).** If something is partial, experimental, or not yet shipped, say so (an admonition works
+  well). Never document behavior that does not exist.
+
+**Every plan that changes observable behavior must include a documentation step:**
+
+```
+N. Update docs/<section>/<page>.md for the new behavior → verify: mkdocs build --strict
+```
+
+`mkdocs build --strict` must pass — no broken internal links or anchors.
+
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer

@@ -51,6 +51,9 @@ Thumbs.db
 # Logs
 *.log
 
+# MkDocs build output
+site/
+
 # Agent runtime results (not source)
 agent/results/
 

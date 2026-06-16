@@ -6,10 +6,10 @@ importantly — **where to make a change**. It is written to be read in one
 sitting by a new contributor or a coding agent before touching the code.
 
 It deliberately describes *stable structure and invariants*, not progress.
-For roadmap and milestone status see the [README](../README.md#roadmap) and
+For roadmap and milestone status see the [README](https://github.com/tamasmrtn/duckhaven#roadmap) and
 the issue tracker. For setup and operations see
-[DEVELOPMENT.md](DEVELOPMENT.md), [RUNBOOK.md](RUNBOOK.md), and
-[self-hosting/](self-hosting/).
+[Development](../developer/development.md), [the Runbook](../operations/runbook.md), and
+the [Deployment guides](../deployment/install.md).
 
 ---
 
@@ -672,7 +672,7 @@ Per project convention, **every change ships with tests** (pytest for
 ## 13. Known Technical Debt
 
 Honest, stable-enough caveats. The live, itemized list lives in the issue
-tracker and the [README roadmap](../README.md#roadmap); this section names
+tracker and the [README roadmap](https://github.com/tamasmrtn/duckhaven#roadmap); this section names
 the *categories* a contributor should be aware of.
 
 - **External cloud-backend storage config.** The `s3`/`adls_gen2` kinds

@@ -3,6 +3,9 @@ repos:
     rev: v5.0.0
     hooks:
       - id: check-yaml
+        # mkdocs.yml uses Python-object YAML tags (!!python/name:...) that the
+        # safe loader can't construct; mkdocs validates it on build instead.
+        exclude: ^mkdocs\.yml$
       - id: check-toml
       - id: check-json
       - id: check-merge-conflict
@@ -16,6 +19,9 @@ repos:
     rev: v0.17.0
     hooks:
       - id: markdownlint
+        # The docs landing page is an MkDocs Material template page that relies
+        # on inline HTML (grid cards) and YAML front matter; mdl can't parse it.
+        exclude: ^docs/index\.md$
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.13

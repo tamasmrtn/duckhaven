@@ -4,10 +4,10 @@ A release is cut by pushing a `vX.Y.Z` git tag. There is no version file to bump
 — the tag is the source of truth. Pushing the tag triggers two workflows that
 publish the artifacts:
 
-- [`.github/workflows/release.yml`](../.github/workflows/release.yml) — creates a
-  GitHub Release with an auto-generated changelog.
-- [`.github/workflows/build.yml`](../.github/workflows/build.yml) — builds and
-  publishes the `duckhaven-api` and `duckhaven-agent` container images to GHCR.
+- [`.github/workflows/release.yml`](https://github.com/tamasmrtn/duckhaven/blob/main/.github/workflows/release.yml)
+  creates a GitHub Release with an auto-generated changelog.
+- [`.github/workflows/build.yml`](https://github.com/tamasmrtn/duckhaven/blob/main/.github/workflows/build.yml)
+  builds and publishes the `duckhaven-api` and `duckhaven-agent` container images to GHCR.
 
 ## Versioning
 
@@ -63,4 +63,4 @@ Confirm the images appear under the repository's GHCR packages.
 ## Consuming a release
 
 Self-hosters pin a release via `DUCKHAVEN_IMAGE_TAG` in `.env`. See
-[Update DuckHaven](self-hosting/update.md).
+[Update DuckHaven](../deployment/updating.md).

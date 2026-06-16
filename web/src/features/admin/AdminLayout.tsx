@@ -10,6 +10,7 @@ const tabs = [
   { segment: "agents", label: "Agents" },
   { segment: "metrics", label: "Utilization" },
   { segment: "storage", label: "Storage backends" },
+  { segment: "maintenance", label: "Maintenance" },
   { segment: "users", label: "Users" },
   { segment: "audit", label: "Audit" },
 ];

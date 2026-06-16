@@ -1,5 +1,12 @@
 import { useRouterState, useNavigate } from "@tanstack/react-router";
-import { FileText, BookOpen, Database, Clock, Settings } from "lucide-react";
+import {
+  FileText,
+  BookOpen,
+  Database,
+  Clock,
+  Settings,
+  HeartPulse,
+} from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -39,6 +46,12 @@ const navItems: NavItem[] = [
     icon: Clock,
     label: "History",
     matchSegment: "history",
+  },
+  {
+    segment: "health",
+    icon: HeartPulse,
+    label: "Lakehouse health",
+    matchSegment: "health",
   },
   {
     segment: "admin/agents",

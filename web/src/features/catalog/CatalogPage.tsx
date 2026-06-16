@@ -25,6 +25,7 @@ import { useWorkspace } from "@/queries/workspaces";
 import { CatalogNodeMenu } from "@/features/catalog/CatalogNodeMenu";
 import { ConfirmDropDialog } from "@/features/catalog/ConfirmDropDialog";
 import { SnapshotHistoryPanel } from "@/features/catalog/SnapshotHistoryPanel";
+import { TableHealthPanel } from "@/features/health/TableHealthPanel";
 import {
   alterTemplate,
   selectTemplate,
@@ -333,6 +334,9 @@ function TableDetail({
             <TabsTrigger value="history" className="text-xs">
               History
             </TabsTrigger>
+            <TabsTrigger value="health" className="text-xs">
+              Health
+            </TabsTrigger>
           </TabsList>
           <TabsContent
             value="sample"
@@ -362,6 +366,12 @@ function TableDetail({
               table={table}
               onQuery={openInWorksheet}
             />
+          </TabsContent>
+          <TabsContent
+            value="health"
+            className="mt-0 flex flex-1 flex-col overflow-hidden border-t border-[var(--border-subtle)]"
+          >
+            <TableHealthPanel ws={ws} schema={schema} table={table} />
           </TabsContent>
         </Tabs>
       </div>

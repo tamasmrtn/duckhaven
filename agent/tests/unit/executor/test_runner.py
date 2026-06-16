@@ -256,6 +256,103 @@ def test_capture_profile_best_effort_on_missing_or_bad_file(tmp_path):
     assert _capture_profile(conn, bad) is None
 
 
+class _HealthConn:
+    """Routes the health probe's queries by inspecting the SQL text.
+
+    ``iceberg_metadata`` has both a ``LIMIT 0`` column-introspection call and an
+    aggregate call; ``glob`` lists the data directory for orphan detection.
+    """
+
+    def __init__(
+        self,
+        *,
+        files,
+        listed=None,
+        columns=("manifest_content", "file_path", "manifest_path", "file_size_in_bytes"),
+    ):
+        self.files = files  # list of (file_path, manifest_path, size) for DATA files
+        self.listed = listed or []
+        self._columns = columns
+        self._last = ""
+
+    def execute(self, sql, *args):
+        self._last = sql
+        if "LIMIT 0" in sql:
+            self.description = [(c,) for c in self._columns]
+        return self
+
+    def fetchone(self):
+        if "iceberg_snapshots" in self._last:
+            return (7,)
+        return None
+
+    def fetchall(self):
+        if "glob" in self._last:
+            return [(f,) for f in self.listed]
+        if "iceberg_metadata" in self._last:
+            return self.files
+        return []
+
+
+def test_collect_table_health_computes_distribution():
+    from agent.executor.runner import collect_table_health
+
+    files = [
+        ("s3://b/t/data/a.parquet", "m1", 10),
+        ("s3://b/t/data/b.parquet", "m1", 200 * 1024**2),
+        ("s3://b/t/data/c.parquet", "m2", 5),
+    ]
+    health = collect_table_health(
+        _HealthConn(files=files), "analytics", "events", target_file_bytes=128 * 1024**2
+    )
+    assert health["snapshot_count"] == 7
+    assert health["data_file_count"] == 3
+    assert health["manifest_count"] == 2
+    assert health["total_data_bytes"] == 10 + 200 * 1024**2 + 5
+    # two of three files are below the 128 MiB target.
+    assert health["small_file_ratio"] == round(2 / 3, 4)
+    # orphans not requested -> left null.
+    assert health["orphan_file_count"] is None
+
+
+def test_collect_table_health_orphan_estimate():
+    from agent.executor.runner import collect_table_health
+
+    files = [
+        ("s3://b/t/data/a.parquet", "m1", 100),
+        ("s3://b/t/data/b.parquet", "m1", 100),
+    ]
+    listed = [
+        "s3://b/t/data/a.parquet",
+        "s3://b/t/data/b.parquet",
+        "s3://b/t/data/orphan-1.parquet",
+        "s3://b/t/data/orphan-2.parquet",
+    ]
+    health = collect_table_health(
+        _HealthConn(files=files, listed=listed),
+        "analytics",
+        "events",
+        target_file_bytes=128 * 1024**2,
+        include_orphans=True,
+    )
+    assert health["orphan_file_count"] == 2
+    # estimated from the live average file size (100 bytes each).
+    assert health["orphan_bytes"] == 200
+
+
+def test_collect_table_health_best_effort_on_failure():
+    from agent.executor.runner import collect_table_health
+
+    class BoomConn:
+        def execute(self, sql, *args):
+            raise RuntimeError("no iceberg extension")
+
+    health = collect_table_health(BoomConn(), "analytics", "events", target_file_bytes=1)
+    assert health["schema"] == "analytics"
+    assert health["data_file_count"] is None
+    assert health["snapshot_count"] is None
+
+
 def test_stats_for_reports_table_row_count(tmp_path):
     """When asked, the runner reports the true table row count (size stays null)."""
     result_path = tmp_path / "out.parquet"

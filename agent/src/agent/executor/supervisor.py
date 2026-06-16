@@ -19,6 +19,7 @@ async def run_query(
     polaris: dict[str, Any] | None = None,
     default_schema: str | None = None,
     stats_for: dict[str, str] | None = None,
+    health_for: dict[str, Any] | None = None,
     conn: duckdb.DuckDBPyConnection | None = None,
     enable_profiling: bool = True,
 ) -> dict[str, Any]:
@@ -40,6 +41,7 @@ async def run_query(
             polaris=polaris,
             default_schema=default_schema,
             stats_for=stats_for,
+            health_for=health_for,
             conn=conn,
             enable_profiling=enable_profiling,
             on_connect=lambda c: conn_box.__setitem__("conn", c),

@@ -147,6 +147,116 @@ def _iceberg_metadata(conn: duckdb.DuckDBPyConnection, schema: str, table: str) 
     return meta
 
 
+def _iceberg_columns(conn: duckdb.DuckDBPyConnection, ident: str) -> list[str]:
+    """Column names exposed by ``iceberg_metadata`` for this extension version."""
+    return [
+        d[0] for d in conn.execute(f"SELECT * FROM iceberg_metadata({ident}) LIMIT 0").description
+    ]
+
+
+def collect_table_health(
+    conn: duckdb.DuckDBPyConnection,
+    schema: str,
+    table: str,
+    *,
+    target_file_bytes: int,
+    include_orphans: bool = False,
+) -> dict[str, Any]:
+    """Best-effort health metrics for one table in the attached catalog.
+
+    Sibling of ``_iceberg_metadata`` but richer: it derives file-size distribution,
+    snapshot/manifest counts, and (on the deep tier) an orphan-file estimate, all
+    from DuckDB's ``iceberg`` extension over the already-attached catalog. Every
+    field is independently best-effort — a probe failure degrades that field to
+    ``None`` rather than failing the scan. ``schema``/``table`` are echoed so the
+    control plane's frame handler can route the sample without extra state.
+
+    Orphan detection (``include_orphans``) lists the table's data directory with
+    ``glob`` and diffs against the live data-file set; it is expensive at scale and
+    only an estimate (in-flight writes look orphaned), so it runs on a slow cadence.
+    """
+    ident = f'{_CATALOG_ALIAS}."{schema}"."{table}"'
+    health: dict[str, Any] = {
+        "schema": schema,
+        "table": table,
+        "snapshot_count": None,
+        "data_file_count": None,
+        "manifest_count": None,
+        "total_data_bytes": None,
+        "avg_file_bytes": None,
+        "small_file_ratio": None,
+        "metadata_bytes": None,
+        "orphan_file_count": None,
+        "orphan_bytes": None,
+    }
+
+    try:
+        row = conn.execute(f"SELECT count(*) FROM iceberg_snapshots({ident})").fetchone()
+        health["snapshot_count"] = int(row[0]) if row else None
+    except Exception as exc:  # noqa: BLE001 - metadata is best-effort
+        logger.warning("iceberg_snapshots count failed for %s.%s: %s", schema, table, exc)
+
+    live_paths: list[str] = []
+    try:
+        columns = _iceberg_columns(conn, ident)
+        classify = "manifest_content" if "manifest_content" in columns else "content"
+        # The data-file size column name has varied across extension versions.
+        size_col = next(
+            (c for c in ("file_size_in_bytes", "file_size_bytes", "file_size") if c in columns),
+            None,
+        )
+        size_expr = size_col or "NULL"
+        rows = conn.execute(
+            f"SELECT file_path, manifest_path, {size_expr} AS sz "
+            f"FROM iceberg_metadata({ident}) WHERE {classify} = 'DATA'"
+        ).fetchall()
+        manifests = {r[1] for r in rows if r[1] is not None}
+        sizes = [int(r[2]) for r in rows if r[2] is not None]
+        live_paths = [r[0] for r in rows if r[0] is not None]
+        health["data_file_count"] = len(rows)
+        health["manifest_count"] = len(manifests) or None
+        if sizes:
+            total = sum(sizes)
+            health["total_data_bytes"] = total
+            health["avg_file_bytes"] = total // len(sizes)
+            small = sum(1 for s in sizes if s < target_file_bytes)
+            health["small_file_ratio"] = round(small / len(sizes), 4)
+    except Exception as exc:  # noqa: BLE001 - metadata is best-effort
+        logger.warning("iceberg_metadata aggregate failed for %s.%s: %s", schema, table, exc)
+
+    if include_orphans and live_paths:
+        health.update(_orphan_estimate(conn, live_paths, health.get("avg_file_bytes")))
+    return health
+
+
+def _orphan_estimate(
+    conn: duckdb.DuckDBPyConnection, live_paths: list[str], avg_file_bytes: int | None
+) -> dict[str, Any]:
+    """Count files under the data directory not referenced by current metadata.
+
+    Derives the data prefix from a live file path (no need to resolve the table
+    location separately), lists it with ``glob``, and subtracts the live set.
+    ``glob`` yields no sizes, so orphan bytes are estimated from the live average.
+    """
+    out: dict[str, Any] = {"orphan_file_count": None, "orphan_bytes": None}
+    sample = live_paths[0]
+    marker = "/data/"
+    if marker not in sample:
+        return out
+    data_dir = sample[: sample.index(marker) + len(marker)]
+    pattern = f"{data_dir}**".replace("'", "''")
+    try:
+        listed = {r[0] for r in conn.execute(f"SELECT file FROM glob('{pattern}')").fetchall()}
+    except Exception as exc:  # noqa: BLE001 - listing is best-effort
+        logger.warning("glob orphan scan failed for %s: %s", data_dir, exc)
+        return out
+    orphans = listed - set(live_paths)
+    out["orphan_file_count"] = len(orphans)
+    if avg_file_bytes:
+        out["orphan_bytes"] = len(orphans) * avg_file_bytes
+    return out
+
+
 def _attach_polaris(
     conn: duckdb.DuckDBPyConnection,
     *,
@@ -248,6 +358,7 @@ def run_query_sync(
     polaris: dict[str, Any] | None = None,
     default_schema: str | None = None,
     stats_for: dict[str, str] | None = None,
+    health_for: dict[str, Any] | None = None,
     conn: duckdb.DuckDBPyConnection | None = None,
     enable_profiling: bool = True,
     on_connect: Callable[[duckdb.DuckDBPyConnection], None] | None = None,
@@ -357,6 +468,23 @@ def run_query_sync(
                 # meaningful when a catalog is attached; best-effort throughout.
                 if workspace_slug and polaris:
                     result["iceberg"] = _iceberg_metadata(conn, schema, table)
+
+        # Maintenance health probe: richer Iceberg metrics on the same attached
+        # connection. Driven by the scanner; best-effort throughout.
+        if health_for and workspace_slug and polaris:
+            schema = health_for.get("schema")
+            table = health_for.get("table")
+            if schema and table:
+                try:
+                    result["health"] = collect_table_health(
+                        conn,
+                        schema,
+                        table,
+                        target_file_bytes=int(health_for.get("target_file_bytes", 128 * 1024**2)),
+                        include_orphans=bool(health_for.get("include_orphans", False)),
+                    )
+                except Exception as exc:  # noqa: BLE001 - health probe is best-effort
+                    logger.warning("Health probe failed for %s.%s: %s", schema, table, exc)
         return result
     finally:
         conn.close()

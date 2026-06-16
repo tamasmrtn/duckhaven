@@ -31,15 +31,13 @@ theme:
     - search.highlight
     - content.code.copy
     - content.code.annotate
-  # Two schemes; the built-in toggle is replaced by a custom Light/Dark/System
-  # switcher (javascripts/theme-switch.js) that mirrors the web app.
+  # Dark is the default (slate is listed first); a custom toggle
+  # (javascripts/theme-switch.js) switches between dark and light.
   palette:
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
+    - scheme: slate
       primary: black
       accent: deep purple
-    - media: "(prefers-color-scheme: dark)"
-      scheme: slate
+    - scheme: default
       primary: black
       accent: deep purple
 

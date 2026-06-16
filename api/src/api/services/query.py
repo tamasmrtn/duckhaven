@@ -30,6 +30,7 @@ async def dispatch_query(
     *,
     timeout_s: float = 600.0,
     stats_for: dict[str, str] | None = None,
+    health_for: dict[str, object] | None = None,
 ) -> None:
     if query.agent_id is None or registry.get(query.agent_id) is None:
         raise ValueError("Agent not connected")
@@ -54,6 +55,9 @@ async def dispatch_query(
     if stats_for is not None:
         # Ask the agent to also compute true table stats for this table.
         payload["stats_for"] = stats_for
+    if health_for is not None:
+        # Ask the agent to run the maintenance health probe for this table.
+        payload["health_for"] = health_for
 
     frame = Frame(type=FrameType.DISPATCH_QUERY, payload=payload)
     await registry.send(query.agent_id, frame.model_dump_json())
@@ -91,6 +95,13 @@ async def handle_agent_frame(db: AsyncSession, frame: Frame) -> None:
         await db.commit()
         if frame.payload.get("status", "done") == "done":
             await _upsert_table_stats(db, query_id, frame)
+            health = frame.payload.get("health")
+            if health:
+                from api.services.maintenance.ingest import record_health_sample
+
+                query = await db.get(Query, query_id)
+                if query is not None:
+                    await record_health_sample(db, query, health)
 
 
 async def _upsert_table_stats(db: AsyncSession, query_id: uuid.UUID, frame: Frame) -> None:

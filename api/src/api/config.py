@@ -45,5 +45,16 @@ class Settings(BaseSettings):
     agent_bootstrap_token: str | None = None
     agent_bootstrap_ttl_hours: int = 240
 
+    # Autonomous maintenance scanner. When enabled, a background loop in the API
+    # lifespan periodically scans tables for health metrics. The cadence
+    # (off/hourly/daily) is the runtime policy; this flag just gates the loop
+    # itself, and the tick is how often the loop wakes to check whether a scan
+    # is due. Single-scanner assumption: run one API replica with this enabled.
+    maintenance_scanner_enabled: bool = True
+    maintenance_scan_tick_s: float = 900.0
+    # How often the expensive orphan/glob tier runs (cheap metadata runs every
+    # due cycle); seconds. Default weekly.
+    maintenance_deep_scan_interval_s: float = 7 * 86400.0
+
 
 settings = Settings()

@@ -31,24 +31,23 @@ theme:
     - search.highlight
     - content.code.copy
     - content.code.annotate
+  # Two schemes; the built-in toggle is replaced by a custom Light/Dark/System
+  # switcher (javascripts/theme-switch.js) that mirrors the web app.
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
       primary: black
       accent: deep purple
-      toggle:
-        icon: material/weather-night
-        name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
       primary: black
       accent: deep purple
-      toggle:
-        icon: material/weather-sunny
-        name: Switch to light mode
 
 extra_css:
   - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/theme-switch.js
 
 plugins:
   - search

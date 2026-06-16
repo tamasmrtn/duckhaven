@@ -11,10 +11,28 @@
   --dh-orange: #ff6900;
   --dh-slate-blue: #7d66ff;
   --dh-ink: #0b0f19;
+  --dh-surface: #111827; /* web app dark surface (--bg-surface) */
+  --dh-elevated: #1f2937; /* web app dark elevated (--bg-elevated) */
 
   /* Slate-blue is the interaction / link / selection color (design §2.1). */
   --md-accent-fg-color: var(--dh-slate-blue);
   --md-typeset-a-color: var(--dh-slate-blue);
+}
+
+/* Header + tabs use the web app's dark-blue surface in both schemes. Material
+ * defines --md-primary-fg-color on <body> (via data-md-color-primary), so the
+ * override has to live here to win over it. */
+[data-md-color-primary] {
+  --md-primary-fg-color: var(--dh-surface);
+  --md-primary-fg-color--light: var(--dh-surface);
+  --md-primary-fg-color--dark: var(--dh-surface);
+}
+
+/* The `black` primary sets the header/tabs background with a rule more specific
+ * than the variable, so override the background directly. */
+body[data-md-color-primary] .md-header,
+body[data-md-color-primary] .md-tabs {
+  background-color: var(--dh-surface);
 }
 
 /* Light mode: slate-600 secondary text to match the neutral ramp. */
@@ -237,4 +255,102 @@
 .dh-home > .md-content__inner > h1:first-child,
 .dh-home h1:first-child {
   display: none;
+}
+
+/* ---------------------------------------------------------------------------
+ * Theme switcher (Light / Dark / System) — mirrors the web app's TopBar control
+ * ------------------------------------------------------------------------- */
+
+.dh-theme {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.dh-theme__trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  margin: 0 0.2rem;
+  padding: 0;
+  color: currentcolor;
+  background: transparent;
+  border: 0;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  opacity: 0.85;
+  transition:
+    opacity 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.dh-theme__trigger:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.dh-theme__trigger svg {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.dh-theme__menu {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  z-index: 100;
+  display: none;
+  min-width: 9rem;
+  padding: 0.3rem;
+  background: var(--md-default-bg-color);
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.6rem;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+}
+
+.dh-theme--open .dh-theme__menu {
+  display: block;
+}
+
+[data-md-color-scheme="slate"] .dh-theme__menu {
+  background: var(--dh-elevated);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.dh-theme__item {
+  display: flex;
+  gap: 0.55rem;
+  align-items: center;
+  width: 100%;
+  padding: 0.42rem 0.55rem;
+  font-size: 0.72rem;
+  color: var(--md-default-fg-color);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 0.4rem;
+  cursor: pointer;
+}
+
+.dh-theme__item svg {
+  width: 1rem;
+  height: 1rem;
+  opacity: 0.8;
+}
+
+.dh-theme__item:hover {
+  background: var(--md-default-fg-color--lightest);
+}
+
+.dh-theme__item[aria-checked="true"],
+.dh-theme__item[aria-checked="true"] svg {
+  color: var(--dh-slate-blue);
+  opacity: 1;
+}
+
+[data-md-color-scheme="slate"] .dh-theme__item[aria-checked="true"],
+[data-md-color-scheme="slate"] .dh-theme__item[aria-checked="true"] svg {
+  color: #9c8aff;
 }

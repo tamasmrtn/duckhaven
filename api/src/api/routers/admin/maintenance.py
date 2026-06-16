@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.deps import get_admin_user, get_db, get_polaris_client, get_session_factory
+from api.models.maintenance import MaintenancePolicy
 from api.models.user import User
 from api.schemas.maintenance import PolicyOut, PolicyUpdate, ScanResult
 from api.services.maintenance.policy import get_or_create_policy
@@ -18,7 +19,7 @@ router = APIRouter(prefix="/maintenance")
 _VALID_FREQUENCIES = {"off", "hourly", "daily"}
 
 
-def _policy_out(policy) -> PolicyOut:
+def _policy_out(policy: MaintenancePolicy) -> PolicyOut:
     return PolicyOut(
         scan_enabled=policy.scan_enabled,
         scan_frequency=policy.scan_frequency,

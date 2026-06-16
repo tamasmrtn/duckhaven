@@ -10,6 +10,7 @@ coverage via a persisted cursor, and graceful skips when no agent is connected.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -201,8 +202,6 @@ async def scanner_loop(
     Mirrors the agent's retention sweep loop. Each cycle is wrapped so one bad
     run never kills the loop.
     """
-    import asyncio
-
     logger.info("Maintenance scanner started (tick %.0fs)", settings.maintenance_scan_tick_s)
     while True:
         try:

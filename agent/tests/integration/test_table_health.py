@@ -86,8 +86,9 @@ async def test_collect_table_health_on_written_table(
 async def test_collect_table_health_deep_tier_estimates_orphans(
     polaris_base_url: str, polaris_creds, polaris_s3_catalog: tuple[str, str]
 ) -> None:
-    """The deep tier (``include_orphans``) lists the data directory and returns a
-    non-negative orphan estimate without affecting the live-file metrics."""
+    """The deep tier (``include_orphans``) lists the data directory for a
+    non-negative orphan estimate, and derives file sizes from the Parquet footers
+    when the iceberg extension exposes no size column."""
     catalog, ns = polaris_s3_catalog
     conn = duckdb.connect()
     try:
@@ -111,3 +112,9 @@ async def test_collect_table_health_deep_tier_estimates_orphans(
     # a few — either way it is only an estimate, never a deletion.
     assert health["orphan_file_count"] is not None
     assert health["orphan_file_count"] >= 0
+    # The deep tier resolves file sizes (Parquet-footer fallback when the iceberg
+    # extension exposes no size column), so the size-derived metrics populate even
+    # though the cheap tier left them None. The written files are tiny -> all small.
+    assert health["total_data_bytes"] is not None and health["total_data_bytes"] > 0
+    assert health["avg_file_bytes"] is not None and health["avg_file_bytes"] > 0
+    assert health["small_file_ratio"] == 1.0

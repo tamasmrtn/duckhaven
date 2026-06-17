@@ -269,10 +269,12 @@ class _HealthConn:
         files,
         listed=None,
         columns=("manifest_content", "file_path", "manifest_path", "file_size_in_bytes"),
+        parquet_sizes=None,
     ):
         self.files = files  # list of (file_path, manifest_path, size) for DATA files
         self.listed = listed or []
         self._columns = columns
+        self.parquet_sizes = parquet_sizes or []  # (file_name, size) from the footers
         self._last = ""
 
     def execute(self, sql, *args):
@@ -289,6 +291,8 @@ class _HealthConn:
     def fetchall(self):
         if "glob" in self._last:
             return [(f,) for f in self.listed]
+        if "parquet_metadata" in self._last:
+            return self.parquet_sizes
         if "iceberg_metadata" in self._last:
             return self.files
         return []
@@ -313,6 +317,52 @@ def test_collect_table_health_computes_distribution():
     assert health["small_file_ratio"] == round(2 / 3, 4)
     # orphans not requested -> left null.
     assert health["orphan_file_count"] is None
+
+
+def test_collect_table_health_size_fallback_via_parquet():
+    from agent.executor.runner import collect_table_health
+
+    # No size column in iceberg_metadata (the DuckDB <= 1.5.3 reality): on the deep
+    # tier, sizes are derived from the Parquet footers instead.
+    files = [
+        ("s3://b/t/data/a.parquet", "m1", None),
+        ("s3://b/t/data/b.parquet", "m1", None),
+        ("s3://b/t/data/c.parquet", "m2", None),
+    ]
+    conn = _HealthConn(
+        files=files,
+        listed=[f[0] for f in files],  # no orphans
+        columns=("manifest_content", "file_path", "manifest_path"),  # no size column
+        parquet_sizes=[
+            ("a.parquet", 10),
+            ("b.parquet", 200 * 1024**2),
+            ("c.parquet", 5),
+        ],
+    )
+    health = collect_table_health(
+        conn, "analytics", "events", target_file_bytes=128 * 1024**2, include_orphans=True
+    )
+    assert health["total_data_bytes"] == 10 + 200 * 1024**2 + 5
+    assert health["avg_file_bytes"] == (10 + 200 * 1024**2 + 5) // 3
+    # two of three files are below the 128 MiB target.
+    assert health["small_file_ratio"] == round(2 / 3, 4)
+
+
+def test_collect_table_health_size_fallback_is_deep_tier_only():
+    from agent.executor.runner import collect_table_health
+
+    # Without the deep tier, a missing size column leaves sizes unmeasured rather
+    # than paying the per-file footer reads on every cheap cycle.
+    files = [("s3://b/t/data/a.parquet", "m1", None)]
+    conn = _HealthConn(
+        files=files,
+        columns=("manifest_content", "file_path", "manifest_path"),
+        parquet_sizes=[("a.parquet", 10)],
+    )
+    health = collect_table_health(conn, "analytics", "events", target_file_bytes=128 * 1024**2)
+    assert health["data_file_count"] == 1
+    assert health["total_data_bytes"] is None
+    assert health["small_file_ratio"] is None
 
 
 def test_collect_table_health_orphan_estimate():

@@ -215,6 +215,12 @@ def collect_table_health(
         live_paths = [r[0] for r in rows if r[0] is not None]
         health["data_file_count"] = len(rows)
         health["manifest_count"] = len(manifests) or None
+        # DuckDB's iceberg extension (through 1.5.3) does not expose a data-file
+        # size column, so when it is absent fall back to the Parquet footers. This
+        # reads one footer per file, so it runs only on the deep tier alongside the
+        # orphan scan to keep the cheap cadence free of per-file object reads.
+        if not sizes and include_orphans and live_paths:
+            sizes = _parquet_file_sizes(conn, live_paths)
         if sizes:
             total = sum(sizes)
             health["total_data_bytes"] = total
@@ -227,6 +233,24 @@ def collect_table_health(
     if include_orphans and live_paths:
         health.update(_orphan_estimate(conn, live_paths, health.get("avg_file_bytes")))
     return health
+
+
+def _parquet_file_sizes(conn: duckdb.DuckDBPyConnection, paths: list[str]) -> list[int]:
+    """Per-file sizes read from the Parquet footers, for iceberg-extension versions
+    that don't surface a size column in ``iceberg_metadata``. One ranged read per
+    file (hence deep-tier only); ``total_compressed_size`` omits the footer/header
+    but is well within tolerance for small-file detection against the target size.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT file_name, sum(total_compressed_size) AS sz "
+            "FROM parquet_metadata($files) GROUP BY file_name",
+            {"files": paths},
+        ).fetchall()
+    except Exception as exc:  # noqa: BLE001 - the size probe is best-effort
+        logger.warning("parquet_metadata size probe failed: %s", exc)
+        return []
+    return [int(sz) for _, sz in rows if sz is not None]
 
 
 def _orphan_estimate(

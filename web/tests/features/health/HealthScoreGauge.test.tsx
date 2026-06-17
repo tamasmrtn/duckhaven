@@ -27,4 +27,17 @@ describe('HealthScoreGauge', () => {
       'Health score unknown of 100, No data',
     )
   })
+
+  // Regression: the band label used to share the donut's centred overlay, so the
+  // longest label ("Needs attention") overflowed the inner hole and overlapped
+  // the ring — most visibly at the smaller size=120 used in the table panel.
+  // Keeping the label outside the donut box is what guarantees no overlap at any
+  // size/zoom/breakpoint, so assert that structural separation here.
+  it('keeps the status label outside the donut visualization', () => {
+    render(<HealthScoreGauge score={58} band="attention" size={120} />)
+    const viz = screen.getByTestId('gauge-viz')
+    // The score stays inside the donut hole; the band label must not.
+    expect(viz).toContainElement(screen.getByText('58'))
+    expect(viz).not.toContainElement(screen.getByText('Needs attention'))
+  })
 })

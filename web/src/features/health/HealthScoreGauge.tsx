@@ -18,37 +18,45 @@ export function HealthScoreGauge({ score, band, size = 160 }: Props) {
   ];
   return (
     <div
-      className="relative shrink-0"
-      style={{ width: size, height: size }}
+      className="flex shrink-0 flex-col items-center gap-2"
       data-testid="health-gauge"
       role="img"
       aria-label={`Health score ${score ?? "unknown"} of 100, ${BAND_LABEL[band]}`}
     >
-      <ResponsiveContainer width="100%" height="100%">
-        <PieChart>
-          <Pie
-            data={data}
-            dataKey="value"
-            innerRadius="72%"
-            outerRadius="100%"
-            startAngle={90}
-            endAngle={-270}
-            stroke="none"
-            isAnimationActive={false}
-          >
-            <Cell fill={color} />
-            <Cell fill="var(--border-subtle)" />
-          </Pie>
-        </PieChart>
-      </ResponsiveContainer>
-      <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="font-mono text-3xl font-tabular" style={{ color }}>
-          {score ?? "—"}
-        </span>
-        <span className="text-2xs uppercase tracking-wide text-text-tertiary">
-          {BAND_LABEL[band]}
-        </span>
+      {/* Donut + score only. The score is short (≤3 chars), so it always fits the
+          hole; the band label lives below the chart so it can never overlap the
+          ring at any size, zoom, or breakpoint. */}
+      <div
+        className="relative"
+        style={{ width: size, height: size }}
+        data-testid="gauge-viz"
+      >
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={data}
+              dataKey="value"
+              innerRadius="72%"
+              outerRadius="100%"
+              startAngle={90}
+              endAngle={-270}
+              stroke="none"
+              isAnimationActive={false}
+            >
+              <Cell fill={color} />
+              <Cell fill="var(--border-subtle)" />
+            </Pie>
+          </PieChart>
+        </ResponsiveContainer>
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className="font-mono text-3xl font-tabular" style={{ color }}>
+            {score ?? "—"}
+          </span>
+        </div>
       </div>
+      <span className="max-w-full text-center text-2xs uppercase tracking-wide text-text-tertiary">
+        {BAND_LABEL[band]}
+      </span>
     </div>
   );
 }

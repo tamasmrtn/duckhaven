@@ -25,6 +25,8 @@ import { MetricsPage } from "@/features/admin/MetricsPage";
 import { StorageBackendsPage } from "@/features/admin/StorageBackendsPage";
 import { UsersPage } from "@/features/admin/UsersPage";
 import { AuditPage } from "@/features/admin/AuditPage";
+import { MaintenancePage } from "@/features/admin/MaintenancePage";
+import { LakehouseHealthPage } from "@/features/health/LakehouseHealthPage";
 
 const rootRoute = createRootRoute();
 
@@ -118,6 +120,12 @@ const queryProfileRoute = createRoute({
   component: QueryProfilePage,
 });
 
+const healthRoute = createRoute({
+  getParentRoute: () => wsRoute,
+  path: "/health",
+  component: LakehouseHealthPage,
+});
+
 const adminRoute = createRoute({
   getParentRoute: () => wsRoute,
   path: "/admin",
@@ -162,6 +170,12 @@ const auditRoute = createRoute({
   component: AuditPage,
 });
 
+const adminMaintenanceRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: "/maintenance",
+  component: MaintenancePage,
+});
+
 export const routeTree = rootRoute.addChildren([
   indexRoute,
   loginRoute,
@@ -174,6 +188,7 @@ export const routeTree = rootRoute.addChildren([
     savedQueriesRoute,
     historyRoute,
     queryProfileRoute,
+    healthRoute,
     adminRoute.addChildren([
       adminIndexRoute,
       agentsRoute,
@@ -181,6 +196,7 @@ export const routeTree = rootRoute.addChildren([
       storageRoute,
       usersRoute,
       auditRoute,
+      adminMaintenanceRoute,
     ]),
   ]),
 ]);

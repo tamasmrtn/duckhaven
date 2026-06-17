@@ -8,6 +8,7 @@ import { schemaHandlers } from "./handlers/schemas";
 import { queryHandlers } from "./handlers/queries";
 import { storageBackendHandlers } from "./handlers/storage-backends";
 import { userHandlers } from "./handlers/users";
+import { maintenanceHandlers } from "./handlers/maintenance";
 
 export const worker = setupWorker(
   ...authHandlers,
@@ -19,4 +20,5 @@ export const worker = setupWorker(
   ...queryHandlers,
   ...storageBackendHandlers,
   ...userHandlers,
+  ...maintenanceHandlers,
 );

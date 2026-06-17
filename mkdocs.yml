@@ -97,6 +97,7 @@ nav:
       - Query execution: concepts/query-execution.md
       - Permissions: concepts/permissions.md
       - Metadata: concepts/metadata.md
+      - Lakehouse maintenance: concepts/maintenance.md
   - Deployment:
       - Docker Compose: deployment/install.md
       - Add an agent: deployment/add-agent.md

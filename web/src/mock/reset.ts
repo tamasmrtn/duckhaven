@@ -9,6 +9,7 @@ import { resetQueries } from "./fixtures/queries";
 import { resetStorageBackends } from "./fixtures/storage-backends";
 import { resetAgents } from "./fixtures/agents";
 import { resetMetrics } from "./fixtures/metrics";
+import { resetMaintenance } from "./fixtures/maintenance";
 import { resetLiveQueries } from "./handlers/queries";
 import { resetSeed } from "./lib/seed";
 
@@ -19,6 +20,7 @@ export function resetMockState(): void {
   resetStorageBackends();
   resetAgents();
   resetMetrics();
+  resetMaintenance();
   resetLiveQueries();
   resetSeed();
 }

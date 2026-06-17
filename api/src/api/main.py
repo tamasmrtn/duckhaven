@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -10,9 +12,20 @@ from starlette.types import Scope
 
 from api.config import settings
 from api.db.session import async_session_factory
-from api.routers import agents, agents_ws, auth, health, queries, schemas, setup, workspaces
+from api.routers import (
+    agents,
+    agents_ws,
+    auth,
+    health,
+    maintenance,
+    queries,
+    schemas,
+    setup,
+    workspaces,
+)
 from api.routers.admin import agents as admin_agents
 from api.routers.admin import audit as admin_audit
+from api.routers.admin import maintenance as admin_maintenance
 from api.routers.admin import storage as admin_storage
 from api.routers.admin import users as admin_users
 from api.services.bootstrap import seed_agent_bootstrap_token
@@ -42,9 +55,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         principal=settings.polaris_principal,
         timeout_s=settings.polaris_http_timeout_s,
     )
+
+    scanner_task: asyncio.Task | None = None
+    if settings.maintenance_scanner_enabled:
+        from api.services.maintenance.scanner import scanner_loop
+
+        scanner_task = asyncio.create_task(
+            scanner_loop(async_session_factory, app.state.polaris_client)
+        )
     try:
         yield
     finally:
+        if scanner_task is not None:
+            scanner_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await scanner_task
         await app.state.polaris_client.aclose()
 
 
@@ -83,10 +108,12 @@ api_app.include_router(workspaces.router, tags=["workspaces"])
 api_app.include_router(schemas.router, tags=["catalog"])
 api_app.include_router(queries.router, tags=["queries"])
 api_app.include_router(agents.router, tags=["agents"])
+api_app.include_router(maintenance.router, tags=["maintenance"])
 api_app.include_router(admin_agents.router, prefix="/admin", tags=["admin"])
 api_app.include_router(admin_storage.router, prefix="/admin", tags=["admin"])
 api_app.include_router(admin_audit.router, prefix="/admin", tags=["admin"])
 api_app.include_router(admin_users.router, prefix="/admin", tags=["admin"])
+api_app.include_router(admin_maintenance.router, prefix="/admin", tags=["admin"])
 
 
 class SPAStaticFiles(StaticFiles):

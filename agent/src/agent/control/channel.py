@@ -131,6 +131,7 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
         "client_secret": settings.polaris_client_secret,
     }
     stats_for = payload.get("stats_for")
+    health_for = payload.get("health_for")
     result_path = results_dir / f"{query_id}.parquet"
 
     # Admission gate: wait in the FIFO queue until the agent has capacity. While
@@ -189,6 +190,7 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
             polaris=polaris,
             default_schema=default_schema,
             stats_for=stats_for,
+            health_for=health_for,
             conn=conn,
             enable_profiling=settings.profiling_enabled,
         )
@@ -212,6 +214,8 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
             done_payload["table_row_count"] = stats.get("table_row_count")
             done_payload["table_size_bytes"] = stats.get("table_size_bytes")
             done_payload["iceberg"] = stats.get("iceberg")
+        if health_for:
+            done_payload["health"] = stats.get("health")
         done = Frame(type=FrameType.QUERY_DONE, payload=done_payload)
     except TimeoutError:
         done = Frame(

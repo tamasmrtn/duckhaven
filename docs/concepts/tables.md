@@ -19,9 +19,10 @@ Each table keeps an Iceberg **snapshot history**. DuckHaven reads it live from P
 you open a worksheet pinned to a past snapshot using DuckDB's time-travel syntax. See
 [Snapshots & time travel](../guides/snapshots-time-travel.md).
 
-!!! note "No snapshot expiration yet"
-    DuckHaven browses and queries snapshot history but does **not** currently expire or compact old snapshots — that is
-    a roadmap item, not a shipped feature.
+!!! note "Snapshot expiration is recommended, not yet applied"
+    The [maintenance advisor](maintenance.md) detects snapshot bloat, fragmentation, and orphaned files and recommends
+    expiring or compacting, with a remediation command for an external engine. It does **not** yet perform these
+    operations itself; in-app apply requires native support in the DuckDB `iceberg` extension.
 
 ## Dropping tables
 

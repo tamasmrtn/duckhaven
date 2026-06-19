@@ -1,0 +1,54 @@
+# DuckHaven documentation — https://tamasmrtn.github.io/duckhaven/
+# Note: these directives are advisory; only well-behaved crawlers honor them.
+
+# Default: allow general search engines (Googlebot, Bingbot, etc.).
+User-agent: *
+Allow: /
+
+# AI answer / live-search bots — explicitly allowed so DuckHaven can appear
+# in AI-generated answers with attribution.
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Perplexity-User
+Allow: /
+
+User-agent: Claude-User
+Allow: /
+
+User-agent: Claude-SearchBot
+Allow: /
+
+# AI training crawlers — disallowed (content should not be scraped for model
+# training). ClaudeBot is treated as a training crawler here.
+User-agent: GPTBot
+Disallow: /
+
+User-agent: CCBot
+Disallow: /
+
+User-agent: Google-Extended
+Disallow: /
+
+User-agent: Bytespider
+Disallow: /
+
+User-agent: anthropic-ai
+Disallow: /
+
+User-agent: ClaudeBot
+Disallow: /
+
+User-agent: meta-externalagent
+Disallow: /
+
+User-agent: Applebot-Extended
+Disallow: /
+
+Sitemap: https://tamasmrtn.github.io/duckhaven/sitemap.xml

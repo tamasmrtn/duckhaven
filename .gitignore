@@ -53,6 +53,7 @@ Thumbs.db
 
 # MkDocs build output
 site/
+.cache/
 
 # Agent runtime results (not source)
 agent/results/

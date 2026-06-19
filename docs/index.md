@@ -1,5 +1,5 @@
 ---
-title: Home
+title: Self-hosted SQL workspace for DuckDB teams
 template: home.html
 hide:
   - navigation

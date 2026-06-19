@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{#
+  Adds Schema.org JSON-LD structured data to every page so search engines and
+  AI answer engines can categorise DuckHaven. The homepage additionally emits a
+  SoftwareApplication entity. Dynamic values are passed through `tojson` so they
+  are safely escaped inside the <script> block.
+#}
+
+{% block extrahead %}
+  {{ super() }}
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "name": {{ config.site_name | tojson }},
+    "url": {{ config.site_url | tojson }},
+    "description": {{ config.site_description | tojson }},
+    "publisher": {
+      "@type": "Organization",
+      "name": "DuckHaven Contributors",
+      "url": {{ config.repo_url | tojson }}
+    }
+  }
+  </script>
+  {% if page.is_homepage %}
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": {{ config.site_name | tojson }},
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "Linux, Docker",
+    "description": {{ config.site_description | tojson }},
+    "url": {{ config.site_url | tojson }},
+    "softwareHelp": {{ config.site_url | tojson }},
+    "codeRepository": {{ config.repo_url | tojson }},
+    "license": "https://opensource.org/licenses/MIT",
+    "isAccessibleForFree": true,
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    }
+  }
+  </script>
+  {% endif %}
+{% endblock %}

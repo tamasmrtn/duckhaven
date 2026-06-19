@@ -49,6 +49,10 @@ extra_javascript:
 
 plugins:
   - search
+  - social:
+      cards_layout_options:
+        background_color: "#0b0f19"
+        color: "#ffffff"
 
 markdown_extensions:
   - admonition

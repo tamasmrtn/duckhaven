@@ -1,0 +1,47 @@
+# DuckHaven
+
+> DuckHaven is a self-hosted, browser-based SQL workspace for DuckDB teams. It pairs
+> collaborative worksheets with an Apache Iceberg catalog governed by Apache Polaris and
+> multi-agent DuckDB compute, all running on your own infrastructure — no cloud warehouse
+> lock-in, no Kubernetes, no platform team required.
+
+## Getting started
+
+- [Installation](https://tamasmrtn.github.io/duckhaven/getting-started/installation/): Prerequisites and how to install the stack.
+- [Quickstart](https://tamasmrtn.github.io/duckhaven/getting-started/quickstart/): Stand up the full stack with one `docker compose` command and run your first query.
+- [Your first workspace](https://tamasmrtn.github.io/duckhaven/getting-started/first-workspace/): Create a workspace and invite collaborators.
+- [Your first query](https://tamasmrtn.github.io/duckhaven/getting-started/first-query/): Write and run a query in a browser worksheet.
+
+## Concepts
+
+- [What is DuckHaven?](https://tamasmrtn.github.io/duckhaven/concepts/what-is-duckhaven/): Overview of the product and who it is for.
+- [Architecture](https://tamasmrtn.github.io/duckhaven/concepts/architecture/): The control-plane / compute split and data flow — the defining idea behind DuckHaven.
+- [Workspaces](https://tamasmrtn.github.io/duckhaven/concepts/workspaces/): How workspaces isolate queries, permissions, and history.
+- [Catalogs & Polaris](https://tamasmrtn.github.io/duckhaven/concepts/catalogs/): The shared Iceberg catalog governed by Apache Polaris.
+- [Tables & Iceberg](https://tamasmrtn.github.io/duckhaven/concepts/tables/): Iceberg-native tables, snapshots, and time travel.
+- [Agents](https://tamasmrtn.github.io/duckhaven/concepts/agents/): DuckDB compute agents you pick per query.
+- [Query execution](https://tamasmrtn.github.io/duckhaven/concepts/query-execution/): Queueing, memory estimation, and concurrency.
+- [Permissions](https://tamasmrtn.github.io/duckhaven/concepts/permissions/): Per-workspace access control and audit trail.
+
+## Deployment
+
+- [Docker Compose](https://tamasmrtn.github.io/duckhaven/deployment/install/): Deploy the full stack with Docker Compose.
+- [Add an agent](https://tamasmrtn.github.io/duckhaven/deployment/add-agent/): Scale compute by adding DuckDB agents.
+- [Configure storage](https://tamasmrtn.github.io/duckhaven/deployment/storage/): Point DuckHaven at your object storage backend.
+- [Reverse proxy & TLS](https://tamasmrtn.github.io/duckhaven/deployment/reverse-proxy-tls/): Front the stack with a reverse proxy and TLS.
+- [Backup & restore](https://tamasmrtn.github.io/duckhaven/deployment/backup-restore/): Back up and restore DuckHaven data.
+
+## Guides
+
+- [Run queries](https://tamasmrtn.github.io/duckhaven/guides/run-queries/): Day-to-day querying in worksheets.
+- [Manage catalogs](https://tamasmrtn.github.io/duckhaven/guides/manage-catalogs/): Create and govern catalogs.
+- [Snapshots & time travel](https://tamasmrtn.github.io/duckhaven/guides/snapshots-time-travel/): Query tables at a past snapshot.
+- [Read query profiles](https://tamasmrtn.github.io/duckhaven/guides/query-profiles/): Inspect operator graphs, timing, and spills.
+- [Manage users & access](https://tamasmrtn.github.io/duckhaven/guides/users-access/): Administer users and permissions.
+
+## Reference
+
+- [Configuration](https://tamasmrtn.github.io/duckhaven/reference/configuration/): Every control-plane and agent environment variable.
+- [SQL support](https://tamasmrtn.github.io/duckhaven/reference/sql-support/): Supported SQL surface and DuckDB features.
+- [Agent reference](https://tamasmrtn.github.io/duckhaven/reference/agent-reference/): Agent configuration and behavior.
+- [REST API](https://tamasmrtn.github.io/duckhaven/reference/rest-api/): The control-plane REST API.

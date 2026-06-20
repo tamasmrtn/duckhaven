@@ -1,9 +1,21 @@
 import { useState } from "react";
-import { ChevronRight, ChevronDown, Table2, Layers } from "lucide-react";
+import { toast } from "sonner";
+import {
+  ChevronRight,
+  ChevronDown,
+  Table2,
+  Layers,
+  RefreshCw,
+  Plus,
+} from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useSchemas, useTables } from "@/queries/schemas";
+import { useSchemas, useTable, useTables } from "@/queries/schemas";
+import { useRefreshCatalogStats } from "@/queries/schemas.mutations";
 import { CatalogNodeMenu } from "@/features/catalog/CatalogNodeMenu";
+import { CreateSchemaDialog } from "@/features/catalog/CreateSchemaDialog";
+import { cn } from "@/utils";
+import type { CatalogTable } from "@/types/catalog";
 
 function formatRowCount(n: number | null) {
   if (n == null) return "";
@@ -11,6 +23,91 @@ function formatRowCount(n: number | null) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return String(n);
+}
+
+interface TableNodeProps {
+  ws: string;
+  schemaName: string;
+  table: CatalogTable;
+  onTableClick: (schema: string, table: string) => void;
+}
+
+function TableNode({ ws, schemaName, table, onTableClick }: TableNodeProps) {
+  const [open, setOpen] = useState(false);
+  // Columns aren't in the table-list payload (Polaris lists identifiers only),
+  // so fetch the table detail lazily on expand — sharing the detail view's cache.
+  const { data, isLoading } = useTable(ws, schemaName, open ? table.name : "");
+  const columns = data?.columns ?? [];
+
+  return (
+    <div>
+      <CatalogNodeMenu
+        ws={ws}
+        node={{ kind: "table", schema: schemaName, table: table.name }}
+      >
+        <div className="flex w-full items-center rounded text-text-secondary hover:bg-accent hover:text-text-primary">
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            className="shrink-0 rounded p-1 text-text-tertiary hover:text-text-primary focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+            aria-expanded={open}
+            aria-label={open ? "Hide columns" : "Show columns"}
+          >
+            {open ? (
+              <ChevronDown className="size-3" />
+            ) : (
+              <ChevronRight className="size-3" />
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => onTableClick(schemaName, table.name)}
+            className="flex min-w-0 flex-1 items-center gap-1.5 rounded py-1 pr-1.5 text-sm focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+          >
+            <Table2 className="size-3.5 shrink-0 text-text-tertiary" />
+            <span className="truncate">{table.name}</span>
+            {table.row_count != null && (
+              <span className="ml-auto font-mono text-2xs text-text-tertiary font-tabular">
+                {formatRowCount(table.row_count)}
+              </span>
+            )}
+          </button>
+        </div>
+      </CatalogNodeMenu>
+
+      {open && (
+        <div className="ml-4 border-l border-[var(--border-subtle)] pl-2">
+          {isLoading ? (
+            Array.from({ length: 3 }).map((_, i) => (
+              <Skeleton
+                key={i}
+                className="my-1 h-4 w-full animate-shimmer rounded"
+              />
+            ))
+          ) : columns.length === 0 ? (
+            <p className="px-1.5 py-1 text-2xs text-text-tertiary">
+              No columns.
+            </p>
+          ) : (
+            columns.map((col) => (
+              <div
+                key={col.name}
+                className="flex items-center gap-1.5 px-1.5 py-0.5 text-xs"
+                title={`${col.name} ${col.type}${col.nullable ? "" : " · not null"}`}
+              >
+                <span className="truncate font-mono text-text-secondary">
+                  {col.name}
+                </span>
+                <span className="ml-auto shrink-0 font-mono text-2xs text-[var(--brand-maya-blue)]">
+                  {col.type}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 interface SchemaNodeProps {
@@ -59,29 +156,13 @@ function SchemaNode({ ws, schemaName, filter, onTableClick }: SchemaNodeProps) {
                 />
               ))
             : filtered.map((table) => (
-                <CatalogNodeMenu
+                <TableNode
                   key={table.name}
                   ws={ws}
-                  node={{
-                    kind: "table",
-                    schema: schemaName,
-                    table: table.name,
-                  }}
-                >
-                  <button
-                    type="button"
-                    onClick={() => onTableClick(schemaName, table.name)}
-                    className="flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-sm text-text-secondary hover:bg-accent hover:text-text-primary focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
-                  >
-                    <Table2 className="size-3.5 shrink-0 text-text-tertiary" />
-                    <span className="truncate">{table.name}</span>
-                    {table.row_count != null && (
-                      <span className="ml-auto font-mono text-2xs text-text-tertiary font-tabular">
-                        {formatRowCount(table.row_count)}
-                      </span>
-                    )}
-                  </button>
-                </CatalogNodeMenu>
+                  schemaName={schemaName}
+                  table={table}
+                  onTableClick={onTableClick}
+                />
               ))}
         </div>
       )}
@@ -101,7 +182,19 @@ export function CatalogTree({
   onTableClick,
 }: CatalogTreeProps) {
   const [filter, setFilter] = useState("");
+  const [createSchemaOpen, setCreateSchemaOpen] = useState(false);
   const { data: schemas, isLoading } = useSchemas(ws);
+  const refreshStats = useRefreshCatalogStats(ws);
+
+  // Probe row counts for any tables that lack one (e.g. created from the
+  // worksheet), then re-read the tree (handled by the mutation's onSettled).
+  async function handleRefresh() {
+    try {
+      await refreshStats.mutateAsync();
+    } catch {
+      toast.error("Couldn't refresh row counts — no agent connected.");
+    }
+  }
 
   return (
     <div className="flex h-full flex-col gap-2 p-2">
@@ -114,13 +207,39 @@ export function CatalogTree({
       />
 
       <div className="flex-1 overflow-auto">
-        <CatalogNodeMenu ws={ws} node={{ kind: "catalog" }}>
-          <div className="mb-1 px-2 py-1">
-            <span className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
+        <div className="mb-1 flex items-center justify-between gap-1 px-2 py-1">
+          <CatalogNodeMenu ws={ws} node={{ kind: "catalog" }}>
+            <span className="truncate text-xs font-semibold text-text-secondary uppercase tracking-wide">
               {workspaceName}
             </span>
+          </CatalogNodeMenu>
+          <div className="flex shrink-0 items-center gap-0.5">
+            <button
+              type="button"
+              onClick={handleRefresh}
+              disabled={refreshStats.isPending}
+              title="Refresh catalog"
+              aria-label="Refresh catalog"
+              className="rounded p-1 text-text-secondary hover:bg-accent hover:text-text-primary focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+            >
+              <RefreshCw
+                className={cn(
+                  "size-3.5",
+                  refreshStats.isPending && "animate-spin",
+                )}
+              />
+            </button>
+            <button
+              type="button"
+              onClick={() => setCreateSchemaOpen(true)}
+              title="Add schema"
+              aria-label="Add schema"
+              className="rounded p-1 text-text-secondary hover:bg-accent hover:text-text-primary focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+            >
+              <Plus className="size-3.5" />
+            </button>
           </div>
-        </CatalogNodeMenu>
+        </div>
 
         {isLoading ? (
           <div className="space-y-1 px-1">
@@ -149,6 +268,12 @@ export function CatalogTree({
           </div>
         )}
       </div>
+
+      <CreateSchemaDialog
+        ws={ws}
+        open={createSchemaOpen}
+        onOpenChange={setCreateSchemaOpen}
+      />
     </div>
   );
 }

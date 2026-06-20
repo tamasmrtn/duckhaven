@@ -50,6 +50,29 @@ describe('CatalogPage', () => {
     })
   })
 
+  it('recounts a table via the table right-click menu', async () => {
+    let recounted = ''
+    server.use(
+      http.post(
+        '/api/workspaces/:ws/schemas/:schema/tables/:table/recount',
+        ({ params }) => {
+          recounted = `${params.schema}.${params.table}`
+          return HttpResponse.json({ row_count: 7 })
+        },
+      ),
+    )
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: CATALOG_ROUTE })
+
+    const eventsRow = await screen.findByRole('button', { name: /events/i })
+    fireEvent.contextMenu(eventsRow)
+    await user.click(
+      await screen.findByRole('menuitem', { name: /recount rows/i }),
+    )
+
+    await waitFor(() => expect(recounted).toBe('raw.events'))
+  })
+
   it('renders a schema with no tables and the selection placeholder', async () => {
     server.use(
       http.get('/api/workspaces/:ws/schemas/:schema/tables', () =>

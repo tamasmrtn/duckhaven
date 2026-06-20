@@ -338,6 +338,79 @@ async def test_list_workspace_queries_non_member_forbidden(
     assert resp.status_code == 403
 
 
+async def test_list_queries_all_workspaces_forbidden_for_non_admin(
+    authed_client: AsyncClient, workspace: Workspace
+):
+    """The cross-workspace view is admin-only; a member is rejected with 403."""
+    resp = await authed_client.get(f"/workspaces/{workspace.slug}/queries?all_workspaces=true")
+    assert resp.status_code == 403
+
+
+async def test_list_queries_user_filter_forbidden_for_non_admin(
+    authed_client: AsyncClient, workspace: Workspace, user: User
+):
+    """The audit filters are admin-only, even within one's own workspace."""
+    resp = await authed_client.get(f"/workspaces/{workspace.slug}/queries?user_id={user.id}")
+    assert resp.status_code == 403
+
+
+async def test_admin_can_list_all_workspaces_and_filter_by_user(
+    client: AsyncClient, workspace: Workspace, agent: Agent, db_session, user: User
+):
+    """An admin can read across workspaces and filter by user (the merged audit
+    view). The admin need not be a member of those workspaces."""
+    from api.models.query import Query
+
+    admin = User(
+        email="admin@queries.local",
+        password_hash=hash_password("pw"),
+        name="Admin",
+        role="admin",
+    )
+    db_session.add(admin)
+    await db_session.flush()
+
+    other_ws = Workspace(
+        slug="other-ws", name="Other", storage_backend_id=workspace.storage_backend_id
+    )
+    db_session.add(other_ws)
+    await db_session.flush()
+
+    db_session.add_all(
+        [
+            Query(
+                workspace_id=workspace.id,
+                agent_id=agent.id,
+                user_id=user.id,
+                sql="SELECT 'in_ws'",
+                status="done",
+            ),
+            Query(
+                workspace_id=other_ws.id,
+                agent_id=agent.id,
+                user_id=admin.id,
+                sql="SELECT 'in_other'",
+                status="done",
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    await client.post("/auth/login", json={"email": "admin@queries.local", "password": "pw"})
+
+    # Cross-workspace: both queries are visible.
+    resp = await client.get(f"/workspaces/{workspace.slug}/queries?all_workspaces=true")
+    assert resp.status_code == 200
+    assert {r["sql"] for r in resp.json()} == {"SELECT 'in_ws'", "SELECT 'in_other'"}
+
+    # Filtered by user: only that user's query, regardless of workspace.
+    resp = await client.get(
+        f"/workspaces/{workspace.slug}/queries?all_workspaces=true&user_id={user.id}"
+    )
+    assert resp.status_code == 200
+    assert [r["sql"] for r in resp.json()] == ["SELECT 'in_ws'"]
+
+
 # --- query status ---
 
 

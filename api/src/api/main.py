@@ -24,7 +24,6 @@ from api.routers import (
     workspaces,
 )
 from api.routers.admin import agents as admin_agents
-from api.routers.admin import audit as admin_audit
 from api.routers.admin import maintenance as admin_maintenance
 from api.routers.admin import storage as admin_storage
 from api.routers.admin import users as admin_users
@@ -111,7 +110,6 @@ api_app.include_router(agents.router, tags=["agents"])
 api_app.include_router(maintenance.router, tags=["maintenance"])
 api_app.include_router(admin_agents.router, prefix="/admin", tags=["admin"])
 api_app.include_router(admin_storage.router, prefix="/admin", tags=["admin"])
-api_app.include_router(admin_audit.router, prefix="/admin", tags=["admin"])
 api_app.include_router(admin_users.router, prefix="/admin", tags=["admin"])
 api_app.include_router(admin_maintenance.router, prefix="/admin", tags=["admin"])
 

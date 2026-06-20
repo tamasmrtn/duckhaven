@@ -132,29 +132,55 @@ async def _set_concurrency(
 @router.get("/workspaces/{ws}/queries", response_model=list[QueryOut])
 async def list_workspace_queries(
     ws: str,
+    all_workspaces: bool = QueryParam(default=False),
+    user_id: uuid.UUID | None = QueryParam(default=None),
+    agent_id: uuid.UUID | None = QueryParam(default=None),
+    since: datetime | None = QueryParam(default=None),
+    until: datetime | None = QueryParam(default=None),
     limit: int = QueryParam(default=100, le=1000),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[Query]:
-    """Query history for a workspace, newest first.
+    """Query log, newest first. Doubles as the admin audit trail.
 
-    Workspace-scoped (gated on membership) so non-admin members can view their
-    own history; the admin audit log lives separately under /admin/audit.
-    Internal queries (e.g. table-sample previews) are excluded, mirroring the
-    audit log.
+    A member sees their workspace (gated on membership). An admin can pass
+    ``all_workspaces`` to see every workspace, and the ``user_id``/``agent_id``/
+    ``since``/``until`` filters; those affordances are admin-only and rejected
+    with 403 for non-admins. Internal queries (e.g. table-sample previews) are
+    excluded.
     """
-    workspace = await get_workspace(db, ws)
-    if workspace is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
-    await assert_workspace_member(db, workspace.id, user.id)
+    is_admin = user.role == "admin"
 
-    result = await db.execute(
+    stmt = (
         select(Query)
-        .where(Query.workspace_id == workspace.id)
         .where(or_(Query.origin.is_(None), Query.origin != "sample"))
         .order_by(Query.started_at.desc())
         .limit(limit)
     )
+
+    if all_workspaces:
+        if not is_admin:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    else:
+        workspace = await get_workspace(db, ws)
+        if workspace is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+        await assert_workspace_member(db, workspace.id, user.id)
+        stmt = stmt.where(Query.workspace_id == workspace.id)
+
+    if any(f is not None for f in (user_id, agent_id, since, until)):
+        if not is_admin:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+        if user_id:
+            stmt = stmt.where(Query.user_id == user_id)
+        if agent_id:
+            stmt = stmt.where(Query.agent_id == agent_id)
+        if since:
+            stmt = stmt.where(Query.started_at >= since)
+        if until:
+            stmt = stmt.where(Query.started_at <= until)
+
+    result = await db.execute(stmt)
     return list(result.scalars().all())
 
 

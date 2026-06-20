@@ -158,11 +158,21 @@ export const queryHandlers = [
     return new HttpResponse(null, { status: 204 });
   }),
 
-  // Workspace-scoped query history (member-accessible), newest first.
-  http.get("/api/workspaces/:ws/queries", ({ params }) => {
-    const ws = findWorkspace(params.ws as string);
-    if (!ws) return httpError(404, "Workspace not found");
-    const rows = QUERY_HISTORY.filter((q) => q.workspace_id === ws.id)
+  // Query log, newest first. Doubles as the admin audit trail: an admin may
+  // pass `all_workspaces` (cross-workspace) and a `user_id` filter.
+  http.get("/api/workspaces/:ws/queries", ({ params, request }) => {
+    const url = new URL(request.url);
+    const allWorkspaces = url.searchParams.get("all_workspaces") === "true";
+    const userId = url.searchParams.get("user_id");
+
+    let pool = QUERY_HISTORY;
+    if (!allWorkspaces) {
+      const ws = findWorkspace(params.ws as string);
+      if (!ws) return httpError(404, "Workspace not found");
+      pool = pool.filter((q) => q.workspace_id === ws.id);
+    }
+    const rows = pool
+      .filter((q) => !userId || q.user_id === userId)
       .slice()
       .sort((a, b) => b.started_at.localeCompare(a.started_at));
     return HttpResponse.json(rows);
@@ -201,29 +211,4 @@ export const queryHandlers = [
       return HttpResponse.json(saved, { status: 201 });
     },
   ),
-
-  // Audit — supports the backend's filter params, ordered started_at DESC.
-  http.get("/api/admin/audit", ({ request }) => {
-    const url = new URL(request.url);
-    const workspaceId = url.searchParams.get("workspace_id");
-    const agentId = url.searchParams.get("agent_id");
-    const userId = url.searchParams.get("user_id");
-    const since = url.searchParams.get("since");
-    const until = url.searchParams.get("until");
-    const limit = parseInt(url.searchParams.get("limit") ?? "100");
-
-    const rows = QUERY_HISTORY.filter((q) => {
-      if (workspaceId && q.workspace_id !== workspaceId) return false;
-      if (agentId && q.agent_id !== agentId) return false;
-      if (userId && q.user_id !== userId) return false;
-      if (since && q.started_at < since) return false;
-      if (until && q.started_at > until) return false;
-      return true;
-    })
-      .slice()
-      .sort((a, b) => b.started_at.localeCompare(a.started_at))
-      .slice(0, limit);
-
-    return HttpResponse.json(rows);
-  }),
 ];

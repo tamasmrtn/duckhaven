@@ -15,7 +15,18 @@ export const queriesApi = {
       ...opts,
     }),
 
-  listForWorkspace: (ws: string) => get<Query[]>(`/workspaces/${ws}/queries`),
+  listForWorkspace: (
+    ws: string,
+    params?: { all_workspaces?: boolean; user_id?: string },
+  ) => {
+    const qs = new URLSearchParams();
+    if (params?.all_workspaces) qs.set("all_workspaces", "true");
+    if (params?.user_id) qs.set("user_id", params.user_id);
+    const suffix = qs.toString();
+    return get<Query[]>(
+      `/workspaces/${ws}/queries${suffix ? `?${suffix}` : ""}`,
+    );
+  },
 
   get: (id: string) => get<Query>(`/queries/${id}`),
 
@@ -35,11 +46,4 @@ export const queriesApi = {
     ws: string,
     data: { name: string; sql: string; default_agent_id?: string },
   ) => post<SavedQuery>(`/workspaces/${ws}/saved-queries`, data),
-
-  auditAll: (filters?: { user_id?: string }) => {
-    const params = new URLSearchParams();
-    if (filters?.user_id) params.set("user_id", filters.user_id);
-    const qs = params.toString();
-    return get<Query[]>(`/admin/audit${qs ? `?${qs}` : ""}`);
-  },
 };

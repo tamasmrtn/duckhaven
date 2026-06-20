@@ -8,8 +8,9 @@ import {
   useDispatchQuery,
   useSavedQueries,
   useSaveQuery,
+  useWorkspaceQueries,
 } from '@/queries/queries'
-import { SAVED_QUERIES } from '@/mock/fixtures/queries'
+import { SAVED_QUERIES, QUERY_HISTORY } from '@/mock/fixtures/queries'
 import { createWrapper } from '@tests/utils'
 
 describe('useQueryRows()', () => {
@@ -150,5 +151,29 @@ describe('useSaveQuery()', () => {
       expect.objectContaining({ queryKey: ['workspace', 'acme-analytics', 'saved-queries'] }),
     )
     queryClient.clear()
+  })
+})
+
+describe('useWorkspaceQueries()', () => {
+  it('scopes to one workspace by default', async () => {
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => useWorkspaceQueries('acme-analytics'), {
+      wrapper,
+    })
+    await waitFor(() => expect(result.current.data).toBeDefined())
+    const rows = result.current.data ?? []
+    expect(rows.length).toBeGreaterThan(0)
+    const workspaceIds = new Set(rows.map((r) => r.workspace_id))
+    expect(workspaceIds.size).toBe(1)
+  })
+
+  it('returns the full cross-workspace log with all_workspaces', async () => {
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(
+      () => useWorkspaceQueries('acme-analytics', { all_workspaces: true }),
+      { wrapper },
+    )
+    await waitFor(() => expect(result.current.data).toBeDefined())
+    expect(result.current.data).toHaveLength(QUERY_HISTORY.length)
   })
 })

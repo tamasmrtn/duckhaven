@@ -88,8 +88,11 @@ describe('queries contract', () => {
     expect(saved.id).toBe('sq-new-1')
   })
 
-  it('audit filters by user_id and orders started_at DESC', async () => {
-    const rows = await queriesApi.auditAll({ user_id: 'u-1' })
+  it('cross-workspace log filters by user_id and orders started_at DESC', async () => {
+    const rows = await queriesApi.listForWorkspace('acme-analytics', {
+      all_workspaces: true,
+      user_id: 'u-1',
+    })
     expect(rows.every((r) => r.user_id === 'u-1')).toBe(true)
     const times = rows.map((r) => r.started_at)
     expect(times).toEqual([...times].sort((a, b) => b.localeCompare(a)))

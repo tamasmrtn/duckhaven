@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { http, HttpResponse } from 'msw'
-import { screen } from '@testing-library/react'
+import { screen, fireEvent } from '@testing-library/react'
 import { renderWithProviders } from '@tests/utils'
 import { server } from '@tests/mock/server'
+import { CURRENT_USER } from '@/mock/fixtures/users'
 
 describe('HistoryPage', () => {
   it('lists the current workspace queries (regression: real UUID workspace ids)', async () => {
@@ -88,5 +89,69 @@ describe('HistoryPage', () => {
     expect(
       screen.queryByText('deadbeef-1111-2222-3333-444455556666'),
     ).not.toBeInTheDocument()
+  })
+
+  it('lets an admin switch to the cross-workspace view', async () => {
+    server.use(
+      http.get('/api/workspaces/:ws/queries', ({ request }) => {
+        const all =
+          new URL(request.url).searchParams.get('all_workspaces') === 'true'
+        return HttpResponse.json([
+          {
+            id: all ? 'q-cross' : 'q-scoped',
+            workspace_id: all
+              ? '137f7947-0000-4000-8000-000000000002'
+              : '137f7947-0000-4000-8000-000000000001',
+            agent_id: 'ag-1',
+            user_id: 'u-1',
+            sql: all ? 'SELECT cross_ws_marker' : 'SELECT scoped_marker',
+            status: 'done',
+            row_count: 1,
+            duration_ms: 5,
+            error: null,
+            progress: null,
+            started_at: '2026-05-15T10:00:00Z',
+            finished_at: '2026-05-15T10:00:00.005Z',
+          },
+        ])
+      }),
+    )
+    renderWithProviders({ initialRoute: '/acme-analytics/history' })
+    await screen.findByText('SELECT scoped_marker')
+    // No Workspace column while scoped to one workspace.
+    expect(screen.queryByText('Workspace')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('All workspaces'))
+    await screen.findByText('SELECT cross_ws_marker')
+    expect(screen.getByText('Workspace')).toBeInTheDocument()
+  })
+
+  it('hides the cross-workspace toggle from non-admins', async () => {
+    server.use(
+      http.get('/api/me', () =>
+        HttpResponse.json({ ...CURRENT_USER, role: 'user' }),
+      ),
+      http.get('/api/workspaces/:ws/queries', () =>
+        HttpResponse.json([
+          {
+            id: 'q-member',
+            workspace_id: '137f7947-0000-4000-8000-000000000001',
+            agent_id: 'ag-1',
+            user_id: 'u-2',
+            sql: 'SELECT member_marker',
+            status: 'done',
+            row_count: 1,
+            duration_ms: 5,
+            error: null,
+            progress: null,
+            started_at: '2026-05-15T10:00:00Z',
+            finished_at: '2026-05-15T10:00:00.005Z',
+          },
+        ]),
+      ),
+    )
+    renderWithProviders({ initialRoute: '/acme-analytics/history' })
+    await screen.findByText('SELECT member_marker')
+    expect(screen.queryByText('All workspaces')).not.toBeInTheDocument()
   })
 })

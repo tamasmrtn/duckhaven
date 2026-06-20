@@ -70,7 +70,7 @@ Repeat so at least two agents are registered (e.g. one S3-capable, one local).
    compatibility tags (✓ / ✗).
 2. Run several queries, switching the selected agent per worksheet. Confirm:
    - Each query is dispatched to the chosen agent (Admin → Agents shows query
-     counts per agent; **Admin → Audit** records agent/user/duration/rows).
+     counts per agent; **History** records agent/user/duration/rows).
    - Picking an agent that lacks the workspace backend's extension fails fast
      with an inline "missing `<ext>` extension" error (server-side check,
      G-D17-b).
@@ -191,7 +191,7 @@ RESET duckhaven_concurrency;           -- back to the default (auto)
 - It takes effect for **future** admissions; already-running queries keep their
   slot. The setting is held in memory and **resets to the default on agent
   restart**.
-- It is recorded in **Admin → Audit** like any query.
+- It is recorded in **History** like any query.
 
 ### Monitoring
 

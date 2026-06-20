@@ -5,9 +5,9 @@ it from the catalog browser or with SQL — both are Polaris-backed.
 
 ## Browse
 
-The catalog browser lists schemas and tables. Open a table to see its columns and types, owner, row count and size,
-last-write provenance, and Iceberg facts (latest snapshot, whether delete files are present). You can preview sample
-rows without writing a query.
+The catalog browser shows a searchable tree of schemas and tables — the same tree the worksheet sidebar uses. Open a
+table to see its columns and types, owner, row count and size, last-write provenance, and Iceberg facts (latest
+snapshot, whether delete files are present). You can preview sample rows without writing a query.
 
 ## Create
 

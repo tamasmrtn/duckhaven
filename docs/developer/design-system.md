@@ -255,8 +255,8 @@ expanded state is remembered per user.
 | 📝 (file-text) | Worksheets | Tabbed SQL editor — **default landing** |
 | 📚 (book-open) | Catalog | Workspace → schema → table browser, read-only details view |
 | 💾 (database) | Saved queries | Library of named queries, owned + shared |
-| 📊 (clock-history) | History | Personal query history, ↗ shortcut to full audit |
-| ⚙ (cog) | Admin | Storage backends, agents, users, audit (visible only to admins) |
+| 📊 (clock-history) | History | Workspace query log; admins get an All-workspaces audit toggle |
+| ⚙ (cog) | Admin | Storage backends, agents, users, maintenance (visible only to admins) |
 
 User menu (top-right): name, "Theme: light/dark/system", "Sign out".
 

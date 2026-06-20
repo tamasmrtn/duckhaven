@@ -1,28 +1,16 @@
 import { useState } from "react";
-import { useParams, Link, useNavigate } from "@tanstack/react-router";
-import {
-  ChevronRight,
-  Pencil,
-  ExternalLink,
-  Trash2,
-  Table2,
-} from "lucide-react";
+import { useParams, useNavigate } from "@tanstack/react-router";
+import { ChevronRight, Pencil, ExternalLink, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { EmptyState } from "@/components/app/EmptyState";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  useSchemas,
-  useTable,
-  useTableSample,
-  useTables,
-} from "@/queries/schemas";
+import { useTable, useTableSample } from "@/queries/schemas";
 import { useDeleteTable } from "@/queries/schemas.mutations";
 import { ResultsTable } from "@/features/worksheet/ResultsTable";
 import { StorageIcon } from "@/components/app/StorageIcon";
 import { useWorkspace } from "@/queries/workspaces";
-import { CatalogNodeMenu } from "@/features/catalog/CatalogNodeMenu";
+import { CatalogTree } from "@/features/catalog/CatalogTree";
 import { ConfirmDropDialog } from "@/features/catalog/ConfirmDropDialog";
 import { SnapshotHistoryPanel } from "@/features/catalog/SnapshotHistoryPanel";
 import { TableHealthPanel } from "@/features/health/TableHealthPanel";
@@ -31,7 +19,7 @@ import {
   selectTemplate,
   stashWorksheetSql,
 } from "@/features/catalog/worksheetSql";
-import { cn, formatBytes } from "@/utils";
+import { formatBytes } from "@/utils";
 import type { CatalogTable } from "@/types/catalog";
 
 function formatNumber(n: number | null) {
@@ -61,108 +49,6 @@ function IcebergMetaLine({ table }: { table: CatalogTable }) {
         </span>
       )}
     </p>
-  );
-}
-
-function SchemaList({ ws }: { ws: string }) {
-  const { data: schemas = [], isLoading } = useSchemas(ws);
-  const { data: workspace } = useWorkspace(ws);
-  const [selectedSchema, setSelectedSchema] = useState<string | null>(null);
-  const { data: tables = [] } = useTables(ws, selectedSchema ?? "");
-
-  return (
-    <div className="flex h-full gap-0">
-      {/* Schema list */}
-      <div className="w-56 shrink-0 border-r border-[var(--border-subtle)] bg-[var(--bg-surface)] p-2">
-        <CatalogNodeMenu ws={ws} node={{ kind: "catalog" }}>
-          <div className="mb-2 px-2">
-            <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
-              {workspace?.name ?? ws}
-            </p>
-            <p className="text-2xs text-text-tertiary">Right-click to manage</p>
-          </div>
-        </CatalogNodeMenu>
-        {isLoading ? (
-          <div className="space-y-1">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <Skeleton
-                key={i}
-                className="h-7 w-full animate-shimmer rounded"
-              />
-            ))}
-          </div>
-        ) : schemas.length === 0 ? (
-          <p className="px-2 text-sm text-text-tertiary">No schemas.</p>
-        ) : (
-          schemas.map((s) => (
-            <CatalogNodeMenu
-              key={s.name}
-              ws={ws}
-              node={{ kind: "schema", schema: s.name }}
-              onDropped={() => {
-                if (selectedSchema === s.name) setSelectedSchema(null);
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => setSelectedSchema(s.name)}
-                className={cn(
-                  "flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm",
-                  selectedSchema === s.name
-                    ? "bg-accent text-text-primary"
-                    : "text-text-secondary hover:bg-accent/50",
-                )}
-              >
-                <ChevronRight className="size-3.5" />
-                {s.name}
-              </button>
-            </CatalogNodeMenu>
-          ))
-        )}
-      </div>
-
-      {/* Table list */}
-      {selectedSchema && (
-        <div className="w-56 shrink-0 border-r border-[var(--border-subtle)] bg-[var(--bg-surface)] p-2">
-          <div className="mb-2 px-2">
-            <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
-              {selectedSchema}
-            </p>
-          </div>
-          {tables.length === 0 ? (
-            <EmptyState icon={Table2} title="No tables in this schema" />
-          ) : (
-            tables.map((t) => (
-              <CatalogNodeMenu
-                key={t.name}
-                ws={ws}
-                node={{ kind: "table", schema: selectedSchema, table: t.name }}
-              >
-                <Link
-                  to="/$ws/catalog/$schema/$table"
-                  params={{ ws, schema: selectedSchema, table: t.name }}
-                  className="flex w-full items-center justify-between rounded px-2 py-1.5 text-sm text-text-secondary hover:bg-accent/50 hover:text-text-primary"
-                >
-                  {t.name}
-                  <span className="font-mono text-2xs text-text-tertiary font-tabular">
-                    {t.row_count != null
-                      ? (t.row_count / 1_000_000).toFixed(1) + "M"
-                      : ""}
-                  </span>
-                </Link>
-              </CatalogNodeMenu>
-            ))
-          )}
-        </div>
-      )}
-
-      {/* Placeholder */}
-      {!selectedSchema && (
-        <div className="flex flex-1 items-center justify-center text-sm text-text-tertiary">
-          Select a schema to browse tables.
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -397,18 +283,38 @@ export function CatalogPage() {
   const ws = params.ws as string;
   const schema = params.schema as string | undefined;
   const table = params.table as string | undefined;
-
-  if (schema && table) {
-    return <TableDetail ws={ws} schema={schema} table={table} />;
-  }
+  const navigate = useNavigate();
+  const { data: workspace } = useWorkspace(ws);
 
   return (
     <div className="flex h-full flex-col">
       <div className="border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-4 shrink-0">
         <h1 className="text-md font-semibold">Catalog</h1>
       </div>
-      <div className="flex-1 overflow-hidden">
-        <SchemaList ws={ws} />
+      <div className="flex flex-1 overflow-hidden">
+        {/* Catalog tree — the same component the worksheet sidebar uses */}
+        <div className="w-64 shrink-0 overflow-hidden border-r border-[var(--border-subtle)] bg-[var(--bg-surface)]">
+          <CatalogTree
+            ws={ws}
+            workspaceName={workspace?.name ?? ws}
+            onTableClick={(s, t) =>
+              navigate({
+                to: "/$ws/catalog/$schema/$table",
+                params: { ws, schema: s, table: t },
+              })
+            }
+          />
+        </div>
+
+        <div className="flex-1 overflow-hidden">
+          {schema && table ? (
+            <TableDetail ws={ws} schema={schema} table={table} />
+          ) : (
+            <div className="flex h-full items-center justify-center text-sm text-text-tertiary">
+              Select a table to view its details.
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

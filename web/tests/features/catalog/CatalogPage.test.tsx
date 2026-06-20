@@ -15,7 +15,11 @@ describe('CatalogPage', () => {
     // The MSW fixture seeds raw + analytics under ws-1 (acme-analytics).
     await screen.findByText('raw')
 
-    fireEvent.contextMenu(screen.getByText(/right-click to manage/i))
+    // The catalog tree's workspace header is the catalog-level context node.
+    // (The TopBar shows the same name, but inside a button — pick the tree's.)
+    const headers = await screen.findAllByText('acme-analytics')
+    const treeHeader = headers.find((el) => !el.closest('button'))!
+    fireEvent.contextMenu(treeHeader)
     await user.click(
       await screen.findByRole('menuitem', { name: /create schema/i }),
     )
@@ -40,26 +44,23 @@ describe('CatalogPage', () => {
     await user.type(screen.getByLabelText(/column name/i), 'id')
     await user.click(screen.getByRole('button', { name: /^create$/i }))
 
-    // Open the schema to view its tables and confirm the new one shows.
-    await user.click(rawRow)
+    // The tree auto-expands schemas, so the new table appears on refetch.
     await waitFor(() => {
       expect(screen.getByText('pageviews')).toBeInTheDocument()
     })
   })
 
-  it('shows an empty state when a schema has no tables', async () => {
+  it('renders a schema with no tables and the selection placeholder', async () => {
     server.use(
       http.get('/api/workspaces/:ws/schemas/:schema/tables', () =>
         HttpResponse.json([]),
       ),
     )
-    const user = userEvent.setup()
     renderWithProviders({ initialRoute: CATALOG_ROUTE })
 
-    await user.click(await screen.findByRole('button', { name: /raw/i }))
-
+    await screen.findByRole('button', { name: /raw/i })
     expect(
-      await screen.findByText(/no tables in this schema/i),
+      screen.getByText(/select a table to view its details/i),
     ).toBeInTheDocument()
   })
 
@@ -102,7 +103,7 @@ describe('CatalogPage', () => {
     await user.click(within(dialog).getByRole('button', { name: /drop table/i }))
 
     expect(
-      await screen.findByRole('heading', { name: 'Catalog' }),
+      await screen.findByText(/select a table to view its details/i),
     ).toBeInTheDocument()
   })
 

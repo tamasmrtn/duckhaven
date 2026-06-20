@@ -2,20 +2,28 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from uuid import uuid4
+
 import pytest
 from fake_polaris import FakePolaris
 from httpx import AsyncClient
+from sqlalchemy import select
 
 from api.models.storage_backend import StorageBackend
+from api.models.table_metadata import TableMetadata
 from api.models.user import User
 from api.models.workspace import Workspace, WorkspaceMember
+from api.services import query as query_module
 from api.services.auth import hash_password
 from api.services.polaris import (
     PolarisBadRequestError,
     PolarisError,
     PolarisNotFoundError,
+    PolarisSchema,
     PolarisServerError,
     PolarisSnapshot,
+    PolarisTable,
 )
 
 
@@ -650,4 +658,175 @@ async def test_drop_table_requires_writer(
     await db_session.commit()
 
     resp = await auth_client.delete(f"/workspaces/{slug}/schemas/main/tables/events")
+    assert resp.status_code == 403
+
+
+# --- refresh stats (catalog Refresh button) ---
+
+
+def _seed_worksheet_table(fake_polaris: FakePolaris, slug: str, schema: str, table: str) -> None:
+    """A table that exists in Polaris but has no metadata sidecar — i.e. created
+    from the worksheet, not the create-table endpoint, so its row count is unknown."""
+    fake_polaris.schemas[(slug, schema)] = PolarisSchema(name=schema, catalog_name=slug)
+    fake_polaris.tables[(slug, schema, table)] = PolarisTable(
+        name=table, catalog_name=slug, schema_name=schema
+    )
+
+
+def _patch_probe(monkeypatch) -> list[tuple[str, str]]:
+    """Stand in for the agent stats probe: record each (schema, table) probed and
+    upsert the count the websocket handler would have written, returning 'done'."""
+    calls: list[tuple[str, str]] = []
+
+    async def fake_pick_agent_for(db, workspace):
+        return SimpleNamespace(id=uuid4())
+
+    async def fake_run_sync_query(db, *, workspace, user_id, stats_for, **kwargs):
+        calls.append((stats_for["schema"], stats_for["table"]))
+        # Upsert like the real websocket handler (a probed table may already have
+        # a sidecar row, e.g. one created via the create-table endpoint).
+        existing = (
+            await db.execute(
+                select(TableMetadata).where(
+                    TableMetadata.workspace_id == workspace.id,
+                    TableMetadata.schema_name == stats_for["schema"],
+                    TableMetadata.table_name == stats_for["table"],
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            existing = TableMetadata(
+                workspace_id=workspace.id,
+                schema_name=stats_for["schema"],
+                table_name=stats_for["table"],
+            )
+            db.add(existing)
+        existing.row_count = 99
+        await db.commit()
+        return SimpleNamespace(status="done")
+
+    monkeypatch.setattr(query_module, "pick_agent_for", fake_pick_agent_for)
+    monkeypatch.setattr(query_module, "run_sync_query", fake_run_sync_query)
+    return calls
+
+
+async def test_refresh_stats_probes_only_tables_missing_a_count(
+    auth_client: AsyncClient, backend: StorageBackend, fake_polaris: FakePolaris, monkeypatch
+):
+    slug = await _make_workspace(auth_client, backend, "alpha")
+    # A table created through the dialog already carries a (zero) count sidecar.
+    await auth_client.post(f"/workspaces/{slug}/schemas", json={"name": "main"})
+    await auth_client.post(
+        f"/workspaces/{slug}/schemas/main/tables",
+        json={"name": "dialog_tbl", "columns": [{"name": "id", "type": "INTEGER"}]},
+    )
+    # Two worksheet-created tables have no sidecar at all.
+    _seed_worksheet_table(fake_polaris, slug, "main", "ws_a")
+    _seed_worksheet_table(fake_polaris, slug, "main", "ws_b")
+
+    calls = _patch_probe(monkeypatch)
+    resp = await auth_client.post(f"/workspaces/{slug}/schemas/refresh-stats")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["probed"] == 2
+    # Only the two without a count are probed; the dialog table is left alone.
+    assert sorted(calls) == [("main", "ws_a"), ("main", "ws_b")]
+
+
+async def test_refresh_stats_noop_when_every_table_has_a_count(
+    auth_client: AsyncClient, backend: StorageBackend, fake_polaris: FakePolaris, monkeypatch
+):
+    slug = await _make_workspace(auth_client, backend, "alpha")
+    await auth_client.post(f"/workspaces/{slug}/schemas", json={"name": "main"})
+    await auth_client.post(
+        f"/workspaces/{slug}/schemas/main/tables",
+        json={"name": "dialog_tbl", "columns": [{"name": "id", "type": "INTEGER"}]},
+    )
+
+    calls = _patch_probe(monkeypatch)
+    resp = await auth_client.post(f"/workspaces/{slug}/schemas/refresh-stats")
+
+    assert resp.status_code == 200
+    assert resp.json()["probed"] == 0
+    assert calls == []  # nothing missing → no agent work issued
+
+
+async def test_refresh_stats_503_when_no_agent_connected(
+    auth_client: AsyncClient, backend: StorageBackend, fake_polaris: FakePolaris, monkeypatch
+):
+    slug = await _make_workspace(auth_client, backend, "alpha")
+    _seed_worksheet_table(fake_polaris, slug, "main", "ws_a")
+
+    async def no_agent(db, workspace):
+        return None
+
+    monkeypatch.setattr(query_module, "pick_agent_for", no_agent)
+    resp = await auth_client.post(f"/workspaces/{slug}/schemas/refresh-stats")
+    assert resp.status_code == 503
+
+
+async def test_refresh_stats_non_member_forbidden(
+    auth_client: AsyncClient, backend: StorageBackend, db_session
+):
+    ws = Workspace(slug="other", name="Other", storage_backend_id=backend.id)
+    db_session.add(ws)
+    await db_session.commit()
+
+    resp = await auth_client.post("/workspaces/other/schemas/refresh-stats")
+    assert resp.status_code == 403
+
+
+# --- recount a single table (right-click "Recount rows") ---
+
+
+async def test_recount_reprobes_even_an_already_counted_table(
+    auth_client: AsyncClient, backend: StorageBackend, fake_polaris: FakePolaris, monkeypatch
+):
+    """Recount re-measures regardless of the cached value — the freshness escape
+    hatch the workspace-wide refresh deliberately skips."""
+    slug = await _make_workspace(auth_client, backend, "alpha")
+    await auth_client.post(f"/workspaces/{slug}/schemas", json={"name": "main"})
+    await auth_client.post(
+        f"/workspaces/{slug}/schemas/main/tables",
+        json={"name": "events", "columns": [{"name": "id", "type": "INTEGER"}]},
+    )
+
+    calls = _patch_probe(monkeypatch)  # upserts row_count=99
+    resp = await auth_client.post(f"/workspaces/{slug}/schemas/main/tables/events/recount")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"row_count": 99}
+    assert calls == [("main", "events")]  # the already-counted table is re-probed
+
+
+async def test_recount_404_for_unknown_table(
+    auth_client: AsyncClient, backend: StorageBackend, fake_polaris: FakePolaris
+):
+    slug = await _make_workspace(auth_client, backend, "alpha")
+    resp = await auth_client.post(f"/workspaces/{slug}/schemas/main/tables/ghost/recount")
+    assert resp.status_code == 404
+
+
+async def test_recount_503_when_no_agent_connected(
+    auth_client: AsyncClient, backend: StorageBackend, fake_polaris: FakePolaris, monkeypatch
+):
+    slug = await _make_workspace(auth_client, backend, "alpha")
+    _seed_worksheet_table(fake_polaris, slug, "main", "events")
+
+    async def no_agent(db, workspace):
+        return None
+
+    monkeypatch.setattr(query_module, "pick_agent_for", no_agent)
+    resp = await auth_client.post(f"/workspaces/{slug}/schemas/main/tables/events/recount")
+    assert resp.status_code == 503
+
+
+async def test_recount_non_member_forbidden(
+    auth_client: AsyncClient, backend: StorageBackend, db_session
+):
+    ws = Workspace(slug="other", name="Other", storage_backend_id=backend.id)
+    db_session.add(ws)
+    await db_session.commit()
+
+    resp = await auth_client.post("/workspaces/other/schemas/main/tables/events/recount")
     assert resp.status_code == 403

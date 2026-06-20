@@ -1,6 +1,31 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { schemasApi, type ColumnSpec } from "@/api/schemas";
 
+export function useRefreshCatalogStats(ws: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => schemasApi.refreshStats(ws),
+    // Re-read on settle (even on failure, e.g. no agent) so the tree reflects
+    // any counts that were probed, plus schemas/tables created out-of-band.
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ["workspace", ws, "schemas"] });
+      qc.invalidateQueries({ queryKey: ["workspace", ws, "schema"] });
+    },
+  });
+}
+
+export function useRecountTable(ws: string, schema: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (table: string) => schemasApi.recountTable(ws, schema, table),
+    onSettled: () => {
+      qc.invalidateQueries({
+        queryKey: ["workspace", ws, "schema", schema, "tables"],
+      });
+    },
+  });
+}
+
 export function useCreateSchema(ws: string) {
   const qc = useQueryClient();
   return useMutation({

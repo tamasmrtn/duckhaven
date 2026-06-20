@@ -45,7 +45,7 @@ import {
 import { AgentPicker } from "@/components/app/AgentPicker";
 import { StatusPill } from "@/components/app/StatusPill";
 import { StorageLabel } from "@/components/app/StorageIcon";
-import { CatalogTree } from "./CatalogTree";
+import { CatalogTree } from "@/features/catalog/CatalogTree";
 import { takePendingSql } from "@/features/catalog/worksheetSql";
 import { ProfilePanel } from "@/features/worksheet/profile/ProfilePanel";
 import { SqlEditor, type SqlEditorHandle } from "./SqlEditor";

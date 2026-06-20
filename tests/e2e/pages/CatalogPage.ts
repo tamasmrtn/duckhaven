@@ -14,10 +14,17 @@ export class CatalogPage {
   }
 
   async expandWorkspace(ws = WS_SLUG): Promise<void> {
-    await this.page.getByRole("button", { name: ws }).click();
+    // The catalog tree auto-expands schema nodes, so only click to expand when
+    // the node is currently collapsed (clicking an open node would collapse it).
+    const node = this.page.getByRole("button", { name: ws });
+    if ((await node.getAttribute("aria-expanded")) === "false") {
+      await node.click();
+    }
   }
 
   tableLink(name: string): Locator {
-    return this.page.getByRole("link", { name });
+    // Tables in the shared catalog tree are buttons (click → open detail),
+    // not anchors.
+    return this.page.getByRole("button", { name });
   }
 }

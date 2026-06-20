@@ -306,6 +306,63 @@ async def create_schema(
     )
 
 
+@router.post("/refresh-stats")
+async def refresh_table_stats(
+    ws: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    polaris: PolarisClient = Depends(get_polaris_client),
+) -> dict[str, int]:
+    """Probe row counts for tables that have none yet.
+
+    Tables created from the worksheet (`CREATE TABLE ...`) never pass through the
+    create-table endpoint, so they have no metadata sidecar and show no row count
+    in the catalog tree. This backs the tree's Refresh button: it walks the
+    workspace and, for every table whose ``row_count`` is still unknown, dispatches
+    a one-off count probe (the same agent stats path the table preview uses) and
+    upserts the result. Tables that already have a count are skipped, so a repeat
+    refresh that finds nothing issues no agent work.
+    """
+    workspace = await _resolve_workspace(ws, user, db, min_role="reader")
+
+    missing: list[tuple[str, str]] = []
+    for s in await polaris.list_schemas(workspace.slug):
+        meta = await _load_table_meta(db, workspace.id, s.name)
+        for t in await polaris.list_tables(workspace.slug, s.name):
+            m = meta.get(t.name)
+            if m is None or m.row_count is None:
+                missing.append((s.name, t.name))
+
+    if not missing:
+        return {"probed": 0}
+
+    agent = await query_service.pick_agent_for(db, workspace)
+    if agent is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No compatible agent is connected to refresh stats.",
+        )
+
+    probed = 0
+    for schema_name, table_name in missing:
+        # A trivial main query keeps the dispatch cheap; stats_for is what makes
+        # the agent COUNT(*) the table and report it back for the metadata upsert.
+        # origin="sample" keeps these internal probes out of the query history.
+        query = await query_service.run_sync_query(
+            db,
+            workspace=workspace,
+            agent=agent,
+            user_id=user.id,
+            sql="SELECT 1",
+            origin="sample",
+            stats_for={"schema": schema_name, "table": table_name},
+        )
+        if query.status == "done":
+            probed += 1
+
+    return {"probed": probed}
+
+
 @router.delete("/{schema}", status_code=status.HTTP_204_NO_CONTENT)
 async def drop_schema(
     ws: str,
@@ -507,3 +564,54 @@ async def sample_table(
         )
     rows, columns = query_service.decode_parquet_page(upstream.content, _SAMPLE_LIMIT, 0)
     return RowsPageOut(rows=rows, columns=columns, cursor=None, total=query.row_count or len(rows))
+
+
+@router.post("/{schema}/tables/{table}/recount")
+async def recount_table(
+    ws: str,
+    schema: str,
+    table: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    polaris: PolarisClient = Depends(get_polaris_client),
+) -> dict[str, int | None]:
+    """Force a fresh row-count probe for a single table.
+
+    Backs the catalog tree's right-click "Recount rows" action. Unlike the
+    workspace-wide refresh (which only probes tables that have *no* count yet),
+    this re-measures unconditionally, so it picks up rows a worksheet ``INSERT``
+    added to an already-counted table. Returns the freshly measured count.
+    """
+    workspace = await _resolve_workspace(ws, user, db, min_role="reader")
+    try:
+        await polaris.get_table(workspace.slug, schema, table)
+    except PolarisNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
+
+    agent = await query_service.pick_agent_for(db, workspace)
+    if agent is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No compatible agent is connected to recount this table.",
+        )
+
+    # A trivial main query keeps the dispatch cheap; stats_for is what makes the
+    # agent COUNT(*) the table and report it for the metadata upsert. origin=sample
+    # keeps the internal probe out of the query history (as the table preview does).
+    query = await query_service.run_sync_query(
+        db,
+        workspace=workspace,
+        agent=agent,
+        user_id=user.id,
+        sql="SELECT 1",
+        origin="sample",
+        stats_for={"schema": schema, "table": table},
+    )
+    if query.status != "done":
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Recount did not complete in time.",
+        )
+
+    meta = (await _load_table_meta(db, workspace.id, schema)).get(table)
+    return {"row_count": meta.row_count if meta else None}

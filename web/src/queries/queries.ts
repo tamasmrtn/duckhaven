@@ -98,17 +98,19 @@ export function useSaveQuery(ws: string) {
   });
 }
 
-export function useWorkspaceQueries(ws: string) {
+export function useWorkspaceQueries(
+  ws: string,
+  opts?: { all_workspaces?: boolean; user_id?: string },
+) {
   return useQuery({
-    queryKey: ["workspace", ws, "queries"],
-    queryFn: () => queriesApi.listForWorkspace(ws),
+    queryKey: [
+      "workspace",
+      ws,
+      "queries",
+      opts?.all_workspaces ? "all" : "ws",
+      opts?.user_id ?? "",
+    ],
+    queryFn: () => queriesApi.listForWorkspace(ws, opts),
     enabled: !!ws,
-  });
-}
-
-export function useAuditLog(filters?: { user_id?: string }) {
-  return useQuery({
-    queryKey: ["admin", "audit", filters?.user_id ?? ""],
-    queryFn: () => queriesApi.auditAll(filters),
   });
 }

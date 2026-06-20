@@ -213,7 +213,7 @@ surface:
 
 | Directory | Responsibility |
 |---|---|
-| `routers/` | HTTP/WS endpoints. One module per resource: `auth`, `workspaces`, `schemas` (catalog DDL + table sample), `queries`, `agents`, `health`, `setup`, plus `agents_ws` (the agent WebSocket) and `admin/` (`agents`, `storage`, `audit`). |
+| `routers/` | HTTP/WS endpoints. One module per resource: `auth`, `workspaces`, `schemas` (catalog DDL + table sample), `queries`, `agents`, `health`, `setup`, plus `agents_ws` (the agent WebSocket) and `admin/` (`agents`, `storage`, `users`, `maintenance`). |
 | `services/` | Business logic, framework-free. The interesting code lives here (see below). |
 | `models/` | SQLAlchemy ORM models = the Postgres schema. |
 | `schemas/` | Pydantic request/response DTOs (distinct from ORM models). |
@@ -403,8 +403,10 @@ Notes that matter for changes:
 - **`agents.capabilities`** is the last advertised `AgentCapabilities` JSON;
   `result_host`/`result_port` tell the API where to fetch the result Parquet.
 - **`queries` is also the audit log** — there is no separate audit table.
-  `GET /admin/audit` reads filtered rows straight from `queries`, excluding
-  internal rows (`origin = "sample"`, used by the table-sample preview).
+  `GET /workspaces/{ws}/queries` reads rows straight from `queries`, excluding
+  internal rows (`origin = "sample"`, used by the table-sample preview). It is
+  workspace-scoped for members; an admin may pass `all_workspaces` (and the
+  `user_id`/`agent_id`/`since`/`until` filters) for the cross-workspace audit view.
 - **`table_metadata` is the catalog sidecar** — the only DuckHaven-owned table
   keyed by a Polaris schema/table name. It holds what Polaris does not track: `owner_id`,
   `last_write_*`, and agent-computed `row_count`/`size_bytes`. Populated on

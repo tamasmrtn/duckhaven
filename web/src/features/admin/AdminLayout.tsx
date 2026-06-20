@@ -12,7 +12,6 @@ const tabs = [
   { segment: "storage", label: "Storage backends" },
   { segment: "maintenance", label: "Maintenance" },
   { segment: "users", label: "Users" },
-  { segment: "audit", label: "Audit" },
 ];
 
 export function AdminLayout() {

@@ -24,7 +24,7 @@ list.
 | `catalog` | Schemas, tables, table detail, sample rows, snapshot history |
 | `queries` | Submit queries, page result rows, profiles, saved queries, history |
 | `agents` | List agents and capabilities |
-| `admin` | Agents (bootstrap/revoke), storage backends, users, audit |
+| `admin` | Agents (bootstrap/revoke), storage backends, users, maintenance |
 
 ## Authentication
 

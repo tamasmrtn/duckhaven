@@ -1,6 +1,13 @@
 import { type ReactNode, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { Plus, Table2, Pencil, Trash2, ExternalLink } from "lucide-react";
+import {
+  Plus,
+  Table2,
+  Pencil,
+  Trash2,
+  ExternalLink,
+  RefreshCw,
+} from "lucide-react";
 import { toast } from "sonner";
 import {
   ContextMenu,
@@ -9,7 +16,11 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { useDeleteTable, useDropSchema } from "@/queries/schemas.mutations";
+import {
+  useDeleteTable,
+  useDropSchema,
+  useRecountTable,
+} from "@/queries/schemas.mutations";
 import { CreateSchemaDialog } from "./CreateSchemaDialog";
 import { CreateTableDialog } from "./CreateTableDialog";
 import { ConfirmDropDialog } from "./ConfirmDropDialog";
@@ -48,10 +59,27 @@ export function CatalogNodeMenu({
     ws,
     node.kind === "table" ? node.schema : "",
   );
+  const recountTable = useRecountTable(
+    ws,
+    node.kind === "table" ? node.schema : "",
+  );
 
   function openInWorksheet(sql: string) {
     stashWorksheetSql(ws, sql);
     navigate({ to: "/$ws/worksheets", params: { ws } });
+  }
+
+  async function recount(table: string) {
+    try {
+      const { row_count } = await recountTable.mutateAsync(table);
+      toast.success(
+        row_count == null
+          ? `Recounted ${table}`
+          : `${table}: ${row_count.toLocaleString()} rows`,
+      );
+    } catch {
+      toast.error(`Couldn't recount ${table} — no agent connected.`);
+    }
   }
 
   return (
@@ -95,6 +123,10 @@ export function CatalogNodeMenu({
               >
                 <Pencil />
                 Alter table
+              </ContextMenuItem>
+              <ContextMenuItem onSelect={() => recount(node.table)}>
+                <RefreshCw />
+                Recount rows
               </ContextMenuItem>
               <ContextMenuSeparator />
               <ContextMenuItem destructive onSelect={() => setDropOpen(true)}>

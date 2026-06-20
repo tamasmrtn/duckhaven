@@ -41,6 +41,27 @@ export const schemaHandlers = [
     },
   ),
 
+  http.post("/api/workspaces/:ws/schemas/refresh-stats", ({ params }) => {
+    const ws = findWorkspace(params.ws as string);
+    if (!ws) return httpError(404, "Workspace not found");
+    // Fixture tables already carry row counts; nothing to probe.
+    return HttpResponse.json({ probed: 0 });
+  }),
+
+  http.post(
+    "/api/workspaces/:ws/schemas/:schema/tables/:table/recount",
+    ({ params }) => {
+      const ws = findWorkspace(params.ws as string);
+      if (!ws) return httpError(404, "Workspace not found");
+      const schema = (SCHEMAS[ws.id] ?? []).find(
+        (s) => s.name === params.schema,
+      );
+      const table = schema?.tables.find((t) => t.name === params.table);
+      if (!table) return httpError(404, "Table not found");
+      return HttpResponse.json({ row_count: table.row_count });
+    },
+  ),
+
   http.post("/api/workspaces/:ws/schemas", async ({ params, request }) => {
     const ws = findWorkspace(params.ws as string);
     if (!ws) return httpError(404, "Workspace not found");

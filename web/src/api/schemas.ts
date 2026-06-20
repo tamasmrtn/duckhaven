@@ -53,6 +53,18 @@ export const schemasApi = {
       name,
     }),
 
+  // Probe row counts for tables that don't have one yet (e.g. created from the
+  // worksheet). Returns how many tables were probed.
+  refreshStats: (ws: string) =>
+    post<{ probed: number }>(`/workspaces/${ws}/schemas/refresh-stats`, {}),
+
+  // Force a fresh row-count probe for one table, even if it already has a count.
+  recountTable: (ws: string, schema: string, table: string) =>
+    post<{ row_count: number | null }>(
+      `/workspaces/${ws}/schemas/${schema}/tables/${table}/recount`,
+      {},
+    ),
+
   dropSchema: (ws: string, schema: string, cascade = false) =>
     del(`/workspaces/${ws}/schemas/${schema}${cascade ? "?cascade=true" : ""}`),
 

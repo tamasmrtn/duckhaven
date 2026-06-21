@@ -6,7 +6,7 @@ choose.
 ## Worksheets and tabs
 
 Open multiple worksheets as tabs. Each worksheet remembers its selected agent, so you can run different work against
-different compute.
+different compute. **Double-click a tab to rename it**, and saving a worksheet names its tab after the saved query.
 
 ## Pick an agent
 
@@ -32,5 +32,6 @@ escapes (`ATTACH`, `COPY`, `LOAD`, `SET`, `PRAGMA`, …) are rejected. See [SQL 
 
 ## Save for later
 
-Save a frequently used query with a name and an optional default agent — see [Saved queries](saved-queries.md). Every
-run is recorded in the workspace [history and audit log](../operations/monitoring.md).
+Save a frequently used query with a name and an optional default agent — press **Ctrl+S** (or the **Save…** button) to
+name and save the current worksheet. See [Saved queries](saved-queries.md). Every run is recorded in the workspace
+[history and audit log](../operations/monitoring.md).

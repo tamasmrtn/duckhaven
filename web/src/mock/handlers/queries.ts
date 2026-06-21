@@ -5,7 +5,7 @@ import {
   SAVED_QUERIES,
 } from "../fixtures/queries";
 import { findWorkspace } from "../fixtures/workspaces";
-import { CURRENT_USER } from "../fixtures/users";
+import { CURRENT_USER, ALL_USERS } from "../fixtures/users";
 import { nextId } from "../lib/seed";
 import { httpError, validationError } from "../lib/errors";
 import type { Query, QueryStatus } from "@/types/query";
@@ -54,12 +54,22 @@ export const queryHandlers = [
     const ws = findWorkspace(params.ws as string);
     if (!ws) return httpError(404, "Workspace not found");
 
-    const body = (await request.json()) as { sql: string; agent_id: string };
+    const body = (await request.json()) as {
+      sql: string;
+      agent_id: string;
+      saved_query_id?: string;
+    };
     if (!sqlAllowed(body.sql)) {
       return validationError(
         "sql_not_allowed",
         "Only read-only SELECT/WITH statements are allowed.",
       );
+    }
+
+    // Mirror the backend: a run from a saved query stamps its last_run_at.
+    if (body.saved_query_id) {
+      const saved = SAVED_QUERIES.find((q) => q.id === body.saved_query_id);
+      if (saved) saved.last_run_at = new Date().toISOString();
     }
 
     const id = nextId("q");
@@ -183,7 +193,11 @@ export const queryHandlers = [
     const ws = findWorkspace(params.ws as string);
     if (!ws) return httpError(404, "Workspace not found");
     return HttpResponse.json(
-      SAVED_QUERIES.filter((q) => q.workspace_id === ws.id),
+      SAVED_QUERIES.filter((q) => q.workspace_id === ws.id).map((q) => ({
+        ...q,
+        created_by_name:
+          ALL_USERS.find((u) => u.id === q.created_by)?.name ?? null,
+      })),
     );
   }),
 
@@ -197,6 +211,15 @@ export const queryHandlers = [
         sql: string;
         default_agent_id?: string;
       };
+      // Overwrite by name: saving over an existing name updates that query.
+      const existing = SAVED_QUERIES.find(
+        (q) => q.workspace_id === ws.id && q.name === body.name,
+      );
+      if (existing) {
+        existing.sql = body.sql;
+        existing.default_agent_id = body.default_agent_id ?? null;
+        return HttpResponse.json(existing, { status: 200 });
+      }
       const saved = {
         id: nextId("sq"),
         name: body.name,
@@ -211,4 +234,37 @@ export const queryHandlers = [
       return HttpResponse.json(saved, { status: 201 });
     },
   ),
+
+  http.patch(
+    "/api/workspaces/:ws/saved-queries/:id",
+    async ({ params, request }) => {
+      const ws = findWorkspace(params.ws as string);
+      if (!ws) return httpError(404, "Workspace not found");
+      const saved = SAVED_QUERIES.find(
+        (q) => q.id === params.id && q.workspace_id === ws.id,
+      );
+      if (!saved) return httpError(404, "Saved query not found");
+      const body = (await request.json()) as {
+        name?: string;
+        sql?: string;
+        default_agent_id?: string;
+      };
+      if (body.name !== undefined) saved.name = body.name;
+      if (body.sql !== undefined) saved.sql = body.sql;
+      if (body.default_agent_id !== undefined)
+        saved.default_agent_id = body.default_agent_id;
+      return HttpResponse.json(saved);
+    },
+  ),
+
+  http.delete("/api/workspaces/:ws/saved-queries/:id", ({ params }) => {
+    const ws = findWorkspace(params.ws as string);
+    if (!ws) return httpError(404, "Workspace not found");
+    const idx = SAVED_QUERIES.findIndex(
+      (q) => q.id === params.id && q.workspace_id === ws.id,
+    );
+    if (idx === -1) return httpError(404, "Saved query not found");
+    SAVED_QUERIES.splice(idx, 1);
+    return new HttpResponse(null, { status: 204 });
+  }),
 ];

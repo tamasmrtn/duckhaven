@@ -14,6 +14,8 @@ interface SqlEditorProps {
   onChange: (value: string) => void;
   // Invoked by the Ctrl/Cmd+Enter command with the run payload.
   onRun?: (payload: string) => void;
+  // Invoked by the Ctrl/Cmd+S command to open the Save dialog.
+  onSave?: () => void;
   readOnly?: boolean;
 }
 
@@ -76,16 +78,20 @@ const DUCKHAVEN_LIGHT_THEME = {
 };
 
 export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
-  function SqlEditor({ value, onChange, onRun, readOnly }, ref) {
+  function SqlEditor({ value, onChange, onRun, onSave, readOnly }, ref) {
     const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
     const isDark = useIsDark();
 
-    // Monaco command callbacks are captured once at mount, so route onRun
-    // through a ref to always call the latest handler, not a stale closure.
+    // Monaco command callbacks are captured once at mount, so route onRun/onSave
+    // through refs to always call the latest handler, not a stale closure.
     const onRunRef = useRef(onRun);
     useEffect(() => {
       onRunRef.current = onRun;
     }, [onRun]);
+    const onSaveRef = useRef(onSave);
+    useEffect(() => {
+      onSaveRef.current = onSave;
+    }, [onSave]);
 
     // Reads the live editor: the selection if non-empty, else the single
     // statement under the cursor. Falls back to `value` only before the model
@@ -113,10 +119,17 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
     const handleMount: OnMount = (editor, monaco) => {
       editorRef.current = editor;
 
-      // Ctrl+S / Cmd+S: auto-format
+      // Ctrl+S / Cmd+S: open the Save dialog (the muscle-memory "save"). Format
+      // moves to Monaco's standard Shift+Alt+F.
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
-        void editor.getAction("editor.action.formatDocument")?.run();
+        onSaveRef.current?.();
       });
+      editor.addCommand(
+        monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.KeyF,
+        () => {
+          void editor.getAction("editor.action.formatDocument")?.run();
+        },
+      );
 
       // Ctrl+Enter / Cmd+Enter: run. A distinct chord from plain Enter, so the
       // suggestion widget (which consumes Enter) does not swallow it.

@@ -46,7 +46,7 @@ import { AgentPicker } from "@/components/app/AgentPicker";
 import { StatusPill } from "@/components/app/StatusPill";
 import { StorageLabel } from "@/components/app/StorageIcon";
 import { CatalogTree } from "@/features/catalog/CatalogTree";
-import { takePendingSql } from "@/features/catalog/worksheetSql";
+import { takePendingQuery } from "@/features/catalog/worksheetSql";
 import { ProfilePanel } from "@/features/worksheet/profile/ProfilePanel";
 import { SqlEditor, type SqlEditorHandle } from "./SqlEditor";
 import { splitStatements } from "./statements";
@@ -59,6 +59,9 @@ interface Tab {
   title: string;
   sql: string;
   dirty: boolean;
+  // Set when the tab was opened from a saved query, so a run can stamp its
+  // last_run_at on the backend.
+  savedQueryId?: string;
 }
 
 const DEFAULT_SQL = `SELECT
@@ -84,6 +87,18 @@ const activeQueryStorageKey = (ws: string) => `dh-active-query-${ws}`;
 function loadActiveQueryId(ws: string): string | null {
   try {
     return sessionStorage.getItem(activeQueryStorageKey(ws));
+  } catch {
+    return null;
+  }
+}
+
+// The active tab is persisted (per workspace) so leaving the worksheet for
+// another page and returning restores the same tab, not the first one.
+const activeTabStorageKey = (ws: string) => `dh-active-tab-${ws}`;
+
+function loadActiveTab(ws: string): string | null {
+  try {
+    return sessionStorage.getItem(activeTabStorageKey(ws));
   } catch {
     return null;
   }
@@ -123,7 +138,11 @@ export function WorksheetPage() {
   const { data: agents = [] } = useAgents();
 
   const [tabs, setTabs] = useState<Tab[]>(() => loadTabs(ws));
-  const [activeTab, setActiveTab] = useState("tab-1");
+  const [activeTab, setActiveTab] = useState(() => {
+    const stored = loadActiveTab(ws);
+    if (stored && tabs.some((t) => t.id === stored)) return stored;
+    return tabs[0]?.id ?? "tab-1";
+  });
   // Declared before the workspace-sync block below so that block can rehydrate
   // it on a workspace switch. Initialized from sessionStorage so a refresh
   // mid-execution recovers the running/completed query.
@@ -134,6 +153,9 @@ export function WorksheetPage() {
   const [resultsTab, setResultsTab] = useState<"results" | "profile">(
     "results",
   );
+  // Declared before the workspace-sync block so it can pre-select the agent a
+  // saved query was opened with.
+  const [agentId, setAgentId] = useState<string>(() => agents[0]?.id ?? "");
 
   // On first render and whenever the workspace changes, (re)load that
   // workspace's tabs and seed any SQL a catalog action stashed (e.g. Alter
@@ -142,15 +164,16 @@ export function WorksheetPage() {
   const [loadedWs, setLoadedWs] = useState<string | null>(null);
   if (loadedWs !== ws) {
     const base = loadedWs === null ? tabs : loadTabs(ws);
-    const pending = takePendingSql(ws);
+    const pending = takePendingQuery(ws);
     const next = pending
       ? [
           ...base,
           {
             id: `tab-seed-${ws}-${base.length}`,
-            title: "from catalog",
-            sql: pending,
+            title: pending.savedQueryId ? "saved query" : "from catalog",
+            sql: pending.sql,
             dirty: true,
+            savedQueryId: pending.savedQueryId,
           },
         ]
       : base;
@@ -161,9 +184,20 @@ export function WorksheetPage() {
     if (loadedWs !== null) {
       setActiveQueryId(loadActiveQueryId(ws));
     }
+    // A saved query carries its default agent — pre-select it.
+    if (pending?.agentId) {
+      setAgentId(pending.agentId);
+    }
     if (loadedWs !== null || pending) {
       setTabs(next);
-      setActiveTab(pending ? next[next.length - 1].id : next[0].id);
+      if (pending) {
+        setActiveTab(next[next.length - 1].id);
+      } else {
+        const stored = loadActiveTab(ws);
+        setActiveTab(
+          stored && next.some((t) => t.id === stored) ? stored : next[0].id,
+        );
+      }
     }
   }
 
@@ -175,6 +209,15 @@ export function WorksheetPage() {
       // ignore unavailable storage
     }
   }, [ws, tabs]);
+
+  // Persist the active tab so returning to the worksheet restores it.
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(activeTabStorageKey(ws), activeTab);
+    } catch {
+      // ignore unavailable storage
+    }
+  }, [ws, activeTab]);
 
   // Persist the active query id so a refresh mid-execution recovers it.
   useEffect(() => {
@@ -189,7 +232,6 @@ export function WorksheetPage() {
     }
   }, [ws, activeQueryId]);
 
-  const [agentId, setAgentId] = useState<string>(() => agents[0]?.id ?? "");
   const [timeout, setTimeout_] = useState(10);
   const [dispatchError, setDispatchError] = useState<string | null>(null);
   // Progress across a multi-statement run (selection spanning several `;`).
@@ -198,6 +240,9 @@ export function WorksheetPage() {
   );
   const [saveOpen, setSaveOpen] = useState(false);
   const [saveName, setSaveName] = useState("");
+  // Inline tab rename (double-click a tab): the tab being edited and its draft.
+  const [editingTabId, setEditingTabId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
   const [leftWidth, setLeftWidth] = useState(280);
   const [editorHeight, setEditorHeight] = useState(55); // percent
   const isMobile = useMediaQuery("(max-width: 767px)");
@@ -255,6 +300,20 @@ export function WorksheetPage() {
     });
   }
 
+  function startRename(tab: Tab) {
+    setEditingTabId(tab.id);
+    setEditingTitle(tab.title);
+  }
+
+  function commitRename() {
+    const id = editingTabId;
+    const title = editingTitle.trim();
+    setEditingTabId(null);
+    if (id && title) {
+      setTabs((prev) => prev.map((t) => (t.id === id ? { ...t, title } : t)));
+    }
+  }
+
   function insertTableSnippet(schema: string, table: string) {
     const snippet = `SELECT * FROM ${schema}.${table} LIMIT 100`;
     setTabs((prev) =>
@@ -303,7 +362,10 @@ export function WorksheetPage() {
         const result = await dispatchQuery.mutateAsync({
           sql: statements[i],
           agentId: resolvedAgentId,
-          opts: { timeout: timeout * 60 },
+          opts: {
+            timeout: timeout * 60,
+            savedQueryId: currentTab?.savedQueryId,
+          },
         });
         setActiveQueryId(result.id);
         // Wait for every statement but the last; abort the sequence if one
@@ -329,13 +391,30 @@ export function WorksheetPage() {
     await cancelQuery.mutateAsync(activeQueryId);
   }
 
+  // Open the Save dialog, pre-filling the name from the tab title unless it's a
+  // placeholder, so re-saving a named query overwrites it by name.
+  function openSaveDialog() {
+    const title = currentTab?.title ?? "";
+    const placeholder = ["untitled", "from catalog", "saved query"].includes(
+      title,
+    );
+    setSaveName(placeholder ? "" : title);
+    setSaveOpen(true);
+  }
+
   async function handleSave() {
-    if (!saveName.trim() || !currentTab) return;
+    const name = saveName.trim();
+    if (!name || !currentTab) return;
     await saveQuery.mutateAsync({
-      name: saveName,
+      name,
       sql: currentTab.sql,
       default_agent_id: resolvedAgentId || undefined,
     });
+    // Name the tab after the saved query and clear its unsaved marker.
+    const id = currentTab.id;
+    setTabs((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, title: name, dirty: false } : t)),
+    );
     setSaveOpen(false);
     setSaveName("");
   }
@@ -400,17 +479,36 @@ export function WorksheetPage() {
               <TabsTrigger
                 key={tab.id}
                 value={tab.id}
+                onDoubleClick={() => startRename(tab)}
                 className={cn(
                   "group h-7 gap-1.5 rounded-t-sm rounded-b-none border-b-2 px-3 text-xs data-[state=active]:border-[var(--brand-yellow)] data-[state=active]:bg-[var(--bg-canvas)] data-[state=inactive]:border-transparent",
                 )}
               >
-                {tab.dirty && (
+                {tab.dirty && editingTabId !== tab.id && (
                   <span
                     className="size-1.5 rounded-full bg-[var(--brand-orange)]"
                     aria-label="unsaved"
                   />
                 )}
-                {tab.title}
+                {editingTabId === tab.id ? (
+                  <input
+                    value={editingTitle}
+                    onChange={(e) => setEditingTitle(e.target.value)}
+                    onBlur={commitRename}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") commitRename();
+                      else if (e.key === "Escape") setEditingTabId(null);
+                      e.stopPropagation();
+                    }}
+                    // Don't let clicks bubble to the tab trigger while editing.
+                    onClick={(e) => e.stopPropagation()}
+                    autoFocus
+                    aria-label="Rename worksheet"
+                    className="w-24 bg-transparent text-xs outline-none border-b border-[var(--brand-yellow)]"
+                  />
+                ) : (
+                  tab.title
+                )}
                 <button
                   type="button"
                   onClick={(e) => closeTab(tab.id, e)}
@@ -553,7 +651,7 @@ export function WorksheetPage() {
                 variant="ghost"
                 size="sm"
                 className="h-8 text-xs"
-                onClick={() => setSaveOpen(true)}
+                onClick={openSaveDialog}
               >
                 <Save className="size-3.5 mr-1" />
                 Save…
@@ -585,6 +683,7 @@ export function WorksheetPage() {
               value={currentTab?.sql ?? ""}
               onChange={updateTabSql}
               onRun={runPayload}
+              onSave={openSaveDialog}
             />
           </div>
 

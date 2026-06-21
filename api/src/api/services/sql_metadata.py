@@ -31,6 +31,9 @@ SELECT function_name,
        any_value(array_to_string(examples, ' | '))       AS examples
 FROM duckdb_functions()
 WHERE function_type IN ('scalar', 'aggregate', 'macro')
+  -- Drop operator functions exposed under symbolic names (!, !~~, ||, @, …);
+  -- keep only callable identifiers a user would actually type.
+  AND regexp_full_match(function_name, '[a-zA-Z_][a-zA-Z0-9_]*')
 GROUP BY function_name
 ORDER BY function_name
 """

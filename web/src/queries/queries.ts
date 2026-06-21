@@ -58,7 +58,7 @@ export function useDispatchQuery(ws: string) {
     }: {
       sql: string;
       agentId: string;
-      opts?: { memory_limit?: number; timeout?: number };
+      opts?: { memory_limit?: number; timeout?: number; savedQueryId?: string };
     }) => queriesApi.dispatch(ws, sql, agentId, opts),
     onSuccess: ({ id }) => {
       qc.invalidateQueries({ queryKey: ["query", id] });
@@ -92,6 +92,32 @@ export function useSaveQuery(ws: string) {
       sql: string;
       default_agent_id?: string;
     }) => queriesApi.save(ws, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["workspace", ws, "saved-queries"] });
+    },
+  });
+}
+
+export function useUpdateSavedQuery(ws: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      data,
+    }: {
+      id: string;
+      data: { name?: string; sql?: string; default_agent_id?: string };
+    }) => queriesApi.updateSaved(ws, id, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["workspace", ws, "saved-queries"] });
+    },
+  });
+}
+
+export function useDeleteSavedQuery(ws: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => queriesApi.deleteSaved(ws, id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["workspace", ws, "saved-queries"] });
     },

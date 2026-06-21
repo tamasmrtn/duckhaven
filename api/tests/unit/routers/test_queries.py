@@ -941,3 +941,141 @@ async def test_create_saved_query_reader_role_rejected(
         json={"name": "Test", "sql": "SELECT 1"},
     )
     assert resp.status_code == 403
+
+
+async def test_list_saved_queries_includes_creator_name(
+    authed_client: AsyncClient, workspace: Workspace
+):
+    await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries",
+        json={"name": "Mine", "sql": "SELECT 1"},
+    )
+    resp = await authed_client.get(f"/workspaces/{workspace.slug}/saved-queries")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["created_by_name"] == "Querier"
+
+
+async def test_create_saved_query_overwrites_by_name(
+    authed_client: AsyncClient, workspace: Workspace
+):
+    """Saving over an existing name updates the row instead of duplicating."""
+    first = await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries",
+        json={"name": "Report", "sql": "SELECT 1"},
+    )
+    assert first.status_code == 201
+
+    second = await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries",
+        json={"name": "Report", "sql": "SELECT 2"},
+    )
+    assert second.status_code == 200
+    assert second.json()["id"] == first.json()["id"]
+    assert second.json()["sql"] == "SELECT 2"
+
+    listed = await authed_client.get(f"/workspaces/{workspace.slug}/saved-queries")
+    assert len(listed.json()) == 1
+
+
+async def test_saved_query_rename_and_delete_lifecycle(
+    authed_client: AsyncClient, workspace: Workspace
+):
+    created = await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries",
+        json={"name": "Original", "sql": "SELECT 1"},
+    )
+    sq_id = created.json()["id"]
+
+    renamed = await authed_client.patch(
+        f"/workspaces/{workspace.slug}/saved-queries/{sq_id}",
+        json={"name": "Renamed"},
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["name"] == "Renamed"
+    assert renamed.json()["sql"] == "SELECT 1"
+
+    deleted = await authed_client.delete(f"/workspaces/{workspace.slug}/saved-queries/{sq_id}")
+    assert deleted.status_code == 204
+
+    listed = await authed_client.get(f"/workspaces/{workspace.slug}/saved-queries")
+    assert listed.json() == []
+
+    missing = await authed_client.patch(
+        f"/workspaces/{workspace.slug}/saved-queries/{sq_id}",
+        json={"name": "Nope"},
+    )
+    assert missing.status_code == 404
+
+
+async def test_update_delete_saved_query_reader_rejected(
+    authed_client: AsyncClient, workspace: Workspace, db_session
+):
+    created = await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries",
+        json={"name": "Shared", "sql": "SELECT 1"},
+    )
+    sq_id = created.json()["id"]
+
+    reader = User(
+        email="reader2@queries.local",
+        password_hash=hash_password("pw"),
+        name="Reader Two",
+        role="user",
+    )
+    db_session.add(reader)
+    await db_session.flush()
+    db_session.add(WorkspaceMember(workspace_id=workspace.id, user_id=reader.id, role="reader"))
+    await db_session.commit()
+
+    await authed_client.post("/auth/logout")
+    await authed_client.post(
+        "/auth/login", json={"email": "reader2@queries.local", "password": "pw"}
+    )
+
+    patched = await authed_client.patch(
+        f"/workspaces/{workspace.slug}/saved-queries/{sq_id}",
+        json={"name": "Hijack"},
+    )
+    assert patched.status_code == 403
+
+    deleted = await authed_client.delete(f"/workspaces/{workspace.slug}/saved-queries/{sq_id}")
+    assert deleted.status_code == 403
+
+
+async def test_run_saved_query_stamps_last_run_at(
+    authed_client: AsyncClient, workspace: Workspace, connected_agent
+):
+    agent, _ = connected_agent
+    created = await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries",
+        json={"name": "Runnable", "sql": "SELECT 1"},
+    )
+    sq_id = created.json()["id"]
+    assert created.json()["last_run_at"] is None
+
+    run = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(agent.id), "saved_query_id": sq_id},
+    )
+    assert run.status_code == 202
+
+    listed = await authed_client.get(f"/workspaces/{workspace.slug}/saved-queries")
+    stamped = next(q for q in listed.json() if q["id"] == sq_id)
+    assert stamped["last_run_at"] is not None
+
+
+async def test_run_with_unknown_saved_query_id_still_runs(
+    authed_client: AsyncClient, workspace: Workspace, connected_agent
+):
+    agent, _ = connected_agent
+    run = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={
+            "sql": "SELECT 1",
+            "agent_id": str(agent.id),
+            "saved_query_id": str(uuid.uuid4()),
+        },
+    )
+    assert run.status_code == 202

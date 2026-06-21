@@ -49,6 +49,7 @@ import { CatalogTree } from "@/features/catalog/CatalogTree";
 import { takePendingQuery } from "@/features/catalog/worksheetSql";
 import { ProfilePanel } from "@/features/worksheet/profile/ProfilePanel";
 import { SqlEditor, type SqlEditorHandle } from "./SqlEditor";
+import { useSqlCompletion } from "./completion/useSqlCompletion";
 import { splitStatements } from "./statements";
 import { queriesApi } from "@/api/queries";
 import { ResultsTable } from "./ResultsTable";
@@ -136,6 +137,9 @@ export function WorksheetPage() {
   const { ws } = useParams({ from: "/$ws/worksheets" });
   const { data: workspace } = useWorkspace(ws);
   const { data: agents = [] } = useAgents();
+
+  // Feed catalog + DuckDB metadata to the editor's autocomplete providers.
+  useSqlCompletion(ws);
 
   const [tabs, setTabs] = useState<Tab[]>(() => loadTabs(ws));
   const [activeTab, setActiveTab] = useState(() => {

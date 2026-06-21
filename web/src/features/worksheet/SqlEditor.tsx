@@ -2,6 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { Editor, type OnMount, type BeforeMount } from "@monaco-editor/react";
 import { useIsDark } from "@/hooks/useIsDark";
 import { activeStatement } from "./statements";
+import { registerSqlProviders } from "./completion/provider";
 
 export interface SqlEditorHandle {
   // The SQL to run for the current cursor/selection: the selected text if any,
@@ -114,6 +115,9 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
     const handleBeforeMount: BeforeMount = (monaco) => {
       monaco.editor.defineTheme("duckhaven-dark", DUCKHAVEN_DARK_THEME);
       monaco.editor.defineTheme("duckhaven-light", DUCKHAVEN_LIGHT_THEME);
+      // Catalog- and DuckDB-aware completions + signature help. Registered once
+      // for the language; reads its data through a module-level context ref.
+      registerSqlProviders(monaco);
     };
 
     const handleMount: OnMount = (editor, monaco) => {
@@ -163,6 +167,9 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
           automaticLayout: true,
           suggest: { showKeywords: true },
           quickSuggestions: true,
+          // Our provider supplies catalog/function-aware suggestions; turn off
+          // Monaco's generic word-based ones so they don't add noise.
+          wordBasedSuggestions: "off",
           padding: { top: 12, bottom: 12 },
         }}
         loading={

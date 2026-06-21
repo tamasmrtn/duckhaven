@@ -13,6 +13,15 @@ export class WorksheetPage {
     return this.page.locator('[aria-label="New worksheet"]');
   }
 
+  /**
+   * The worksheet tab strip's tabs. The page has two tablists — the worksheet
+   * strip and the results/profile selector — so scope to the strip, which
+   * renders first.
+   */
+  get worksheetTabs(): Locator {
+    return this.page.getByRole("tablist").first().getByRole("tab");
+  }
+
   get profileTab(): Locator {
     return this.page.getByRole("tab", { name: "profile" });
   }

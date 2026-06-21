@@ -9,6 +9,9 @@ class QueryCreate(BaseModel):
     sql: str
     agent_id: uuid.UUID
     timeout_s: float = 600.0
+    # When the run originates from a saved query, its id is sent so the backend
+    # can stamp the saved query's last_run_at.
+    saved_query_id: uuid.UUID | None = None
 
 
 class QueryOut(BaseModel):
@@ -42,6 +45,12 @@ class SavedQueryCreate(BaseModel):
     default_agent_id: uuid.UUID | None = None
 
 
+class SavedQueryUpdate(BaseModel):
+    name: str | None = None
+    sql: str | None = None
+    default_agent_id: uuid.UUID | None = None
+
+
 class SavedQueryOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -51,5 +60,6 @@ class SavedQueryOut(BaseModel):
     sql: str
     default_agent_id: uuid.UUID | None
     created_by: uuid.UUID
+    created_by_name: str | None = None
     created_at: datetime
     last_run_at: datetime | None

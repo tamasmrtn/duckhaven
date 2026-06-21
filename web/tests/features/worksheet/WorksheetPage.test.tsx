@@ -39,6 +39,49 @@ describe('WorksheetPage tabs', () => {
     expect(screen.getByText('funnel-draft')).toBeInTheDocument()
   })
 
+  it('renames a tab on double-click', async () => {
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: WS_ROUTE })
+    const funnel = await screen.findByRole('tab', { name: /funnel-draft/ })
+
+    await user.dblClick(funnel)
+    const input = screen.getByRole('textbox', { name: 'Rename worksheet' })
+    await user.clear(input)
+    await user.type(input, 'my analysis')
+    await user.keyboard('{Enter}')
+
+    expect(
+      await screen.findByRole('tab', { name: /my analysis/ }),
+    ).toBeInTheDocument()
+    expect(screen.queryByText('funnel-draft')).not.toBeInTheDocument()
+  })
+
+  it('restores the active tab after navigating away and back', async () => {
+    const user = userEvent.setup()
+    const { router } = renderWithProviders({ initialRoute: WS_ROUTE })
+    await screen.findByText('events.sql')
+
+    // Switch to the second tab, then leave the worksheet and return.
+    await user.click(screen.getByRole('tab', { name: /funnel-draft/ }))
+    await waitFor(() =>
+      expect(screen.getByRole('tab', { name: /funnel-draft/ })).toHaveAttribute(
+        'data-state',
+        'active',
+      ),
+    )
+
+    await router.navigate({ to: '/acme-analytics/saved-queries' })
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(
+        '/acme-analytics/saved-queries',
+      ),
+    )
+    await router.navigate({ to: '/acme-analytics/worksheets' })
+
+    const funnelTab = await screen.findByRole('tab', { name: /funnel-draft/ })
+    expect(funnelTab).toHaveAttribute('data-state', 'active')
+  })
+
   it('opens a freshly created workspace with a single empty tab', async () => {
     // The route guard requires the workspace to exist.
     server.use(
@@ -400,5 +443,48 @@ describe('WorksheetPage save modal', () => {
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     })
+  })
+
+  it('names the active tab after the saved query', async () => {
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: WS_ROUTE })
+    await screen.findByText('events.sql')
+
+    await user.click(screen.getByRole('button', { name: /save…/i }))
+    const dialog = screen.getByRole('dialog')
+    await user.type(
+      within(dialog).getByPlaceholderText(/my query name/i),
+      'Daily report',
+    )
+    await user.click(within(dialog).getByRole('button', { name: /^save$/i }))
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    expect(
+      screen.getByRole('tab', { name: /Daily report/ }),
+    ).toBeInTheDocument()
+    expect(screen.queryByText('events.sql')).not.toBeInTheDocument()
+  })
+
+  it('saving over an existing name updates it instead of duplicating', async () => {
+    const user = userEvent.setup()
+    const { router } = renderWithProviders({ initialRoute: WS_ROUTE })
+    await screen.findByText('events.sql')
+
+    // Save using a name that already exists in this workspace ("Daily events").
+    await user.click(screen.getByRole('button', { name: /save…/i }))
+    const dialog = screen.getByRole('dialog')
+    const nameInput = within(dialog).getByPlaceholderText(/my query name/i)
+    await user.type(nameInput, 'Daily events')
+    await user.click(within(dialog).getByRole('button', { name: /^save$/i }))
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    // The saved-queries page should still show exactly one "Daily events".
+    await router.navigate({ to: '/acme-analytics/saved-queries' })
+    await screen.findByText('Funnel overview')
+    expect(screen.getAllByText('Daily events')).toHaveLength(1)
   })
 })

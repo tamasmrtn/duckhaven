@@ -84,6 +84,27 @@ async def test_paginate_thousand_rows(api_client, workspace, healthy_agent) -> N
     assert collected == list(range(1000))
 
 
+async def test_sql_metadata_from_live_agent(api_client, workspace, healthy_agent) -> None:
+    """The editor's autocomplete dictionary is sourced from the real agent.
+
+    Runs duckdb_functions()/duckdb_keywords()/duckdb_types() end to end and
+    asserts the shaped response is non-empty and well-formed.
+    """
+    resp = await api_client.get(f"/api/workspaces/{workspace}/sql-metadata")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["functions"], "expected DuckDB functions"
+    assert body["keywords"], "expected DuckDB keywords"
+    assert body["types"], "expected DuckDB types"
+
+    names = {f["name"] for f in body["functions"]}
+    assert {"count", "abs"} <= names
+    count = next(f for f in body["functions"] if f["name"] == "count")
+    assert count["signature"].startswith("count(")
+    assert {k["name"] for k in body["keywords"]} & {"select", "from", "where"}
+
+
 async def test_table_write_then_read(api_client, workspace, healthy_agent) -> None:
     agent_id = healthy_agent["id"]
     # Create the table through the control plane (real Polaris DDL).

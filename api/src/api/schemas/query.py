@@ -39,6 +39,30 @@ class RowsPageOut(BaseModel):
     total: int
 
 
+class SqlFunctionOut(BaseModel):
+    name: str
+    type: str
+    return_type: str | None
+    signature: str
+    examples: str | None = None
+
+
+class SqlKeywordOut(BaseModel):
+    name: str
+    category: str | None = None
+
+
+class SqlTypeOut(BaseModel):
+    name: str
+    category: str | None = None
+
+
+class SqlMetadataOut(BaseModel):
+    functions: list[SqlFunctionOut]
+    keywords: list[SqlKeywordOut]
+    types: list[SqlTypeOut]
+
+
 class SavedQueryCreate(BaseModel):
     name: str
     sql: str

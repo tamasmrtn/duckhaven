@@ -1079,3 +1079,11 @@ async def test_run_with_unknown_saved_query_id_still_runs(
         },
     )
     assert run.status_code == 202
+
+
+# --- sql metadata ---
+
+
+async def test_sql_metadata_no_agent_returns_503(authed_client: AsyncClient, workspace: Workspace):
+    resp = await authed_client.get(f"/workspaces/{workspace.slug}/sql-metadata")
+    assert resp.status_code == 503

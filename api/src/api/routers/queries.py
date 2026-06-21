@@ -19,8 +19,10 @@ from api.schemas.query import (
     SavedQueryCreate,
     SavedQueryOut,
     SavedQueryUpdate,
+    SqlMetadataOut,
 )
 from api.services import query as query_service
+from api.services import sql_metadata as sql_metadata_service
 from api.services.agent_capabilities import agent_supports_backend, required_extension
 from api.services.agent_registry import registry
 from api.services.sql_guard import SQLNotAllowed, assert_allowed
@@ -149,6 +151,38 @@ async def _set_concurrency(
     return query
 
 
+@router.get("/workspaces/{ws}/sql-metadata", response_model=SqlMetadataOut)
+async def get_sql_metadata(
+    ws: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> SqlMetadataOut:
+    """DuckDB function/keyword/type dictionary for editor autocomplete.
+
+    Sourced live from a connected agent (cached per DuckDB version). Returns 503
+    when no compatible agent is connected so the editor falls back to its static
+    keyword list rather than caching an empty dictionary.
+    """
+    workspace = await get_workspace(db, ws)
+    if workspace is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+    await assert_workspace_member(db, workspace.id, user.id)
+
+    agent = await query_service.pick_agent_for(db, workspace)
+    if agent is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No compatible agent is connected.",
+        )
+    try:
+        return await sql_metadata_service.fetch_metadata(db, workspace, agent, user.id)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Could not load SQL metadata from the agent.",
+        ) from exc
+
+
 @router.get("/workspaces/{ws}/queries", response_model=list[QueryOut])
 async def list_workspace_queries(
     ws: str,
@@ -173,7 +207,7 @@ async def list_workspace_queries(
 
     stmt = (
         select(Query)
-        .where(or_(Query.origin.is_(None), Query.origin != "sample"))
+        .where(or_(Query.origin.is_(None), Query.origin.notin_(("sample", "metadata"))))
         .order_by(Query.started_at.desc())
         .limit(limit)
     )

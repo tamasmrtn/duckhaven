@@ -31,14 +31,18 @@ What it offers depends on context:
 - after `schema.` — the **tables** in that schema;
 - after a table or alias and a dot (e.g. `s.` for `FROM sales s`) — that table's **columns**, with their types. Aliases
   are resolved from the statement's `FROM`/`JOIN`;
-- inside `SELECT`, `WHERE`, `GROUP BY`, `ORDER BY` and similar — **columns** from the tables in scope, plus DuckDB
-  **functions** and **keywords**;
+- inside `SELECT`, `WHERE`, `GROUP BY`, `ORDER BY` and similar — **columns** from every table in scope, including each
+  table in a `JOIN`. When more than one table is joined, each column shows the table it came from so identically-named
+  columns can be told apart. Columns come first; DuckDB **functions** and **keywords** are held back until you start
+  typing, so they don't bury the column list;
 - after `CAST(… AS` or in a column definition — DuckDB **data types**.
 
 Functions show their signature and, where DuckDB provides one, a usage example; typing the opening parenthesis brings up
 **parameter hints**. Function, keyword, and type suggestions are read from the agent you've selected, so a connected
-agent makes them richer — but keyword completion still works before an agent connects. Columns appear once their table's
-details have loaded (expanding it in the catalog, or referencing it in a query, fetches them).
+agent makes them richer — but keyword completion still works before an agent connects. Columns are fetched on demand the
+first time you reference a table and appear as soon as they load. Running a `CREATE`, `ALTER`, or `DROP` refreshes the
+catalog automatically, so a newly created or altered object is available to complete against right away — no manual
+catalog refresh needed.
 
 This release does autocomplete and signature help only; it does not flag SQL errors with red underlines.
 

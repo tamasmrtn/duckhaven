@@ -16,6 +16,21 @@ class AgentCapabilities(BaseModel):
     host: str | None = None
 
 
+class CatalogAttach(BaseModel):
+    """One catalog the agent should ATTACH for a dispatched query.
+
+    The control plane sends a list of these (plus an ``active_catalog`` slug) in
+    the DISPATCH_QUERY payload; the agent attaches each under its ``slug`` alias
+    and ``USE``s the active one. ``polaris_name`` is the Polaris warehouse name;
+    ``backend`` is the catalog's storage backend descriptor (``{kind, root_uri}``)
+    used to pick the DuckDB IO extension + credential-vending mode."""
+
+    slug: str
+    polaris_name: str
+    backend: dict[str, str | None]
+    default_schema: str
+
+
 class MetricsSample(BaseModel):
     """A single live-utilization sample pushed by an agent over METRICS_SAMPLE."""
 

@@ -136,7 +136,7 @@ def test_iceberg_metadata_parses_snapshot_and_deletes():
         def fetchall(self):  # iceberg_metadata grouped by manifest_content
             return [("DATA", 128), ("DELETE", 2)]
 
-    meta = _iceberg_metadata(FakeConn(), "analytics", "events")
+    meta = _iceberg_metadata(FakeConn(), "cat", "analytics", "events")
     assert meta["snapshot_id"] == 123456789
     assert meta["snapshot_at"].startswith("2024-")
     assert meta["data_file_count"] == 128
@@ -160,7 +160,7 @@ def test_iceberg_metadata_legacy_content_schema():
         def fetchall(self):
             return [("DATA", 5), ("POSITION_DELETES", 1)]
 
-    meta = _iceberg_metadata(FakeConn(), "analytics", "events")
+    meta = _iceberg_metadata(FakeConn(), "cat", "analytics", "events")
     assert meta["data_file_count"] == 5
     assert meta["has_deletes"] is True
 
@@ -173,7 +173,7 @@ def test_iceberg_metadata_best_effort_on_failure():
         def execute(self, sql):
             raise RuntimeError("no such function: iceberg_snapshots")
 
-    assert _iceberg_metadata(BoomConn(), "analytics", "events") == {
+    assert _iceberg_metadata(BoomConn(), "cat", "analytics", "events") == {
         "snapshot_id": None,
         "snapshot_at": None,
         "data_file_count": None,
@@ -307,7 +307,7 @@ def test_collect_table_health_computes_distribution():
         ("s3://b/t/data/c.parquet", "m2", 5),
     ]
     health = collect_table_health(
-        _HealthConn(files=files), "analytics", "events", target_file_bytes=128 * 1024**2
+        _HealthConn(files=files), "cat", "analytics", "events", target_file_bytes=128 * 1024**2
     )
     assert health["snapshot_count"] == 7
     assert health["data_file_count"] == 3
@@ -340,7 +340,7 @@ def test_collect_table_health_size_fallback_via_parquet():
         ],
     )
     health = collect_table_health(
-        conn, "analytics", "events", target_file_bytes=128 * 1024**2, include_orphans=True
+        conn, "cat", "analytics", "events", target_file_bytes=128 * 1024**2, include_orphans=True
     )
     assert health["total_data_bytes"] == 10 + 200 * 1024**2 + 5
     assert health["avg_file_bytes"] == (10 + 200 * 1024**2 + 5) // 3
@@ -359,7 +359,9 @@ def test_collect_table_health_size_fallback_is_deep_tier_only():
         columns=("manifest_content", "file_path", "manifest_path"),
         parquet_sizes=[("a.parquet", 10)],
     )
-    health = collect_table_health(conn, "analytics", "events", target_file_bytes=128 * 1024**2)
+    health = collect_table_health(
+        conn, "cat", "analytics", "events", target_file_bytes=128 * 1024**2
+    )
     assert health["data_file_count"] == 1
     assert health["total_data_bytes"] is None
     assert health["small_file_ratio"] is None
@@ -380,6 +382,7 @@ def test_collect_table_health_orphan_estimate():
     ]
     health = collect_table_health(
         _HealthConn(files=files, listed=listed),
+        "cat",
         "analytics",
         "events",
         target_file_bytes=128 * 1024**2,
@@ -397,7 +400,7 @@ def test_collect_table_health_best_effort_on_failure():
         def execute(self, sql, *args):
             raise RuntimeError("no iceberg extension")
 
-    health = collect_table_health(BoomConn(), "analytics", "events", target_file_bytes=1)
+    health = collect_table_health(BoomConn(), "cat", "analytics", "events", target_file_bytes=1)
     assert health["schema"] == "analytics"
     assert health["data_file_count"] is None
     assert health["snapshot_count"] is None
@@ -413,7 +416,7 @@ def test_stats_for_reports_table_row_count(tmp_path):
     stats = _run(
         "SELECT * FROM main.events",
         result_path,
-        stats_for={"schema": "main", "table": "events"},
+        stats_for={"catalog": "memory", "schema": "main", "table": "events"},
         on_connect=seed,
     )
     assert stats["row_count"] == 3

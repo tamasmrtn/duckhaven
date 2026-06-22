@@ -30,6 +30,9 @@ class CatalogSchemaCreate(BaseModel):
 
 class CatalogSchemaOut(BaseModel):
     name: str
+    # ``catalog`` is the catalog slug (DuckDB alias / addressing); ``catalog_name``
+    # is the Polaris warehouse name, retained for compatibility.
+    catalog: str
     catalog_name: str
     workspace_id: str
 
@@ -58,6 +61,8 @@ class TableColumnOut(BaseModel):
 class TableOut(BaseModel):
     name: str
     schema_name: str
+    # ``catalog`` is the catalog slug; ``catalog_name`` is the Polaris name.
+    catalog: str
     catalog_name: str
     workspace_id: str
     table_type: str

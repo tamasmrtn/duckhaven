@@ -19,6 +19,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import settings
+from api.models.catalog import Catalog, WorkspaceCatalog
 from api.models.maintenance import MaintenancePolicy, TableHealthSample
 from api.models.query import Query
 from api.models.workspace import Workspace
@@ -70,15 +71,15 @@ async def run_cycle(
         budget = ordered[: policy.max_tables_per_cycle]
 
         dispatched = 0
-        for ws, slug, schema, table in budget:
+        for catalog, ws, schema, table in budget:
             agent = await pick_agent_for(db, ws)
             if agent is None:
                 # No compatible agent connected; dispatch is fail-fast, so stop
                 # this cycle and try again next tick rather than erroring.
-                logger.info("Maintenance scan: no agent for workspace %s; skipping", slug)
+                logger.info("Maintenance scan: no agent for catalog %s; skipping", catalog.slug)
                 break
             await _dispatch_probe(
-                db, ws, agent.id, schema, table, target_file_bytes, include_orphans
+                db, catalog, ws, agent.id, schema, table, target_file_bytes, include_orphans
             )
             dispatched += 1
 
@@ -108,33 +109,49 @@ def _deep_scan_due(policy: MaintenancePolicy, now: datetime) -> bool:
 
 async def _candidate_tables(
     db: AsyncSession, polaris: PolarisClient
-) -> list[tuple[Workspace, str, str, str]]:
-    """Every (workspace, slug, schema, table) the catalog currently exposes."""
-    workspaces = (await db.execute(sa.select(Workspace))).scalars().all()
-    out: list[tuple[Workspace, str, str, str]] = []
-    for ws in workspaces:
+) -> list[tuple[Catalog, Workspace, str, str]]:
+    """Every (catalog, workspace, schema, table) currently exposed.
+
+    Catalogs are the unit of scanning; a catalog shared across workspaces is
+    enumerated once, with one representative workspace carried along to provide
+    dispatch context (agent selection runs over the workspace's bound catalogs).
+    """
+    rows = (
+        await db.execute(
+            sa.select(Catalog, Workspace)
+            .join(WorkspaceCatalog, WorkspaceCatalog.catalog_id == Catalog.id)
+            .join(Workspace, Workspace.id == WorkspaceCatalog.workspace_id)
+            .order_by(Catalog.slug)
+        )
+    ).all()
+    representative: dict[Any, tuple[Catalog, Workspace]] = {}
+    for catalog, ws in rows:
+        representative.setdefault(catalog.id, (catalog, ws))
+
+    out: list[tuple[Catalog, Workspace, str, str]] = []
+    for catalog, ws in representative.values():
         try:
-            schemas = await polaris.list_schemas(ws.slug)
+            schemas = await polaris.list_schemas(catalog.polaris_name)
             for schema in schemas:
-                tables = await polaris.list_tables(ws.slug, schema.name)
-                out.extend((ws, ws.slug, schema.name, t.name) for t in tables)
+                tables = await polaris.list_tables(catalog.polaris_name, schema.name)
+                out.extend((catalog, ws, schema.name, t.name) for t in tables)
         except PolarisError as exc:
-            logger.warning("Maintenance scan: enumerate failed for %s: %s", ws.slug, exc)
+            logger.warning("Maintenance scan: enumerate failed for %s: %s", catalog.slug, exc)
     return out
 
 
 async def _filter_stale(
     db: AsyncSession,
-    candidates: list[tuple[Workspace, str, str, str]],
+    candidates: list[tuple[Catalog, Workspace, str, str]],
     cutoff: datetime,
-) -> list[tuple[Workspace, str, str, str]]:
+) -> list[tuple[Catalog, Workspace, str, str]]:
     """Drop tables already sampled since ``cutoff`` (prioritize the stale ones)."""
     recent = {
         (row[0], row[1], row[2])
         for row in (
             await db.execute(
                 sa.select(
-                    TableHealthSample.workspace_id,
+                    TableHealthSample.catalog_id,
                     TableHealthSample.schema_name,
                     TableHealthSample.table_name,
                 ).where(TableHealthSample.scanned_at >= cutoff)
@@ -144,14 +161,14 @@ async def _filter_stale(
     return [c for c in candidates if (c[0].id, c[2], c[3]) not in recent]
 
 
-def _cursor_key(candidate: tuple[Workspace, str, str, str]) -> str:
-    ws, _slug, schema, table = candidate
-    return f"{ws.id}|{schema}|{table}"
+def _cursor_key(candidate: tuple[Catalog, Workspace, str, str]) -> str:
+    catalog, _ws, schema, table = candidate
+    return f"{catalog.id}|{schema}|{table}"
 
 
 def _rotate(
-    candidates: list[tuple[Workspace, str, str, str]], cursor: str | None
-) -> list[tuple[Workspace, str, str, str]]:
+    candidates: list[tuple[Catalog, Workspace, str, str]], cursor: str | None
+) -> list[tuple[Catalog, Workspace, str, str]]:
     """Round-robin: start just after the last table scanned last cycle."""
     ordered = sorted(candidates, key=_cursor_key)
     if not cursor:
@@ -163,6 +180,7 @@ def _rotate(
 
 async def _dispatch_probe(
     db: AsyncSession,
+    catalog: Catalog,
     workspace: Workspace,
     agent_id: Any,
     schema: str,
@@ -184,7 +202,9 @@ async def _dispatch_probe(
         db,
         query,
         timeout_s=120.0,
+        active_catalog=catalog.slug,
         health_for={
+            "catalog": catalog.slug,
             "schema": schema,
             "table": table,
             "target_file_bytes": target_file_bytes,

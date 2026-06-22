@@ -13,14 +13,18 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.models.agent import Agent
+from api.models.catalog import Catalog
 from api.models.query import Query
-from api.models.storage_backend import StorageBackend
 from api.models.table_metadata import TableMetadata
 from api.models.user import Credential
 from api.models.workspace import Workspace
 from api.services.agent_capabilities import agent_supports_backend
 from api.services.agent_registry import registry
-from api.services.workspace import DEFAULT_SCHEMA
+from api.services.workspace import (
+    DEFAULT_SCHEMA,
+    get_default_catalog,
+    resolve_workspace_catalogs,
+)
 from duckhaven_shared.protocol import Frame, FrameType
 
 
@@ -29,6 +33,7 @@ async def dispatch_query(
     query: Query,
     *,
     timeout_s: float = 600.0,
+    active_catalog: str | None = None,
     stats_for: dict[str, str] | None = None,
     health_for: dict[str, object] | None = None,
 ) -> None:
@@ -38,19 +43,34 @@ async def dispatch_query(
     workspace = await db.get(Workspace, query.workspace_id)
     if workspace is None:
         raise ValueError("Workspace missing for query")
-    backend = await db.get(StorageBackend, workspace.storage_backend_id)
-    if backend is None:
-        raise ValueError("Storage backend missing for workspace")
+    catalogs = await resolve_workspace_catalogs(db, workspace.id)
+    if not catalogs:
+        raise ValueError("Workspace has no catalogs attached")
 
-    # The agent attaches Polaris from its own config (endpoint + client creds)
-    # and uses the workspace slug as the warehouse; the control plane vends
-    # nothing and passes no catalog token.
+    # Eager multi-attach: the agent ATTACHes every catalog bound to the
+    # workspace (each under its slug) and `USE`s the active one for unqualified
+    # names. The control plane vends nothing — the agent's own config supplies
+    # the Polaris endpoint + client creds.
+    if active_catalog is None:
+        default = await get_default_catalog(db, workspace.id)
+        active_catalog = default.slug if default is not None else catalogs[0].slug
     payload: dict[str, object] = {
         "query_id": str(query.id),
         "sql": query.sql,
         "timeout_s": timeout_s,
-        "workspace": {"slug": workspace.slug, "default_schema": DEFAULT_SCHEMA},
-        "backend": {"kind": backend.kind, "root_uri": backend.root_uri},
+        "active_catalog": active_catalog,
+        "catalogs": [
+            {
+                "slug": c.slug,
+                "polaris_name": c.polaris_name,
+                "backend": {
+                    "kind": c.storage_backend.kind,
+                    "root_uri": c.storage_backend.root_uri,
+                },
+                "default_schema": DEFAULT_SCHEMA,
+            }
+            for c in catalogs
+        ],
     }
     if stats_for is not None:
         # Ask the agent to also compute true table stats for this table.
@@ -111,15 +131,21 @@ async def _upsert_table_stats(db: AsyncSession, query_id: uuid.UUID, frame: Fram
         return
     schema_name = stats.get("schema")
     table_name = stats.get("table")
-    if not schema_name or not table_name:
+    catalog_slug = stats.get("catalog")
+    if not schema_name or not table_name or not catalog_slug:
         return
     query = await db.get(Query, query_id)
     if query is None:
         return
+    catalog = (
+        await db.execute(sa.select(Catalog).where(Catalog.slug == catalog_slug))
+    ).scalar_one_or_none()
+    if catalog is None:
+        return
     existing = (
         await db.execute(
             sa.select(TableMetadata).where(
-                TableMetadata.workspace_id == query.workspace_id,
+                TableMetadata.catalog_id == catalog.id,
                 TableMetadata.schema_name == schema_name,
                 TableMetadata.table_name == table_name,
             )
@@ -127,7 +153,7 @@ async def _upsert_table_stats(db: AsyncSession, query_id: uuid.UUID, frame: Fram
     ).scalar_one_or_none()
     if existing is None:
         existing = TableMetadata(
-            workspace_id=query.workspace_id,
+            catalog_id=catalog.id,
             schema_name=schema_name,
             table_name=table_name,
         )
@@ -237,19 +263,20 @@ def decode_parquet_page(
 
 
 async def pick_agent_for(db: AsyncSession, workspace: Workspace) -> Agent | None:
-    """A connected agent whose capabilities support the workspace's backend."""
+    """A connected agent whose capabilities support *every* backend kind across
+    the workspace's catalogs (all are attached on each query)."""
     connected = registry.connected_ids()
     if not connected:
         return None
-    backend = await db.get(StorageBackend, workspace.storage_backend_id)
-    kind = backend.kind if backend is not None else "object_store"
+    catalogs = await resolve_workspace_catalogs(db, workspace.id)
+    kinds = {c.storage_backend.kind for c in catalogs} or {"object_store"}
     agents = (
         (await db.execute(sa.select(Agent).where(Agent.id.in_([uuid.UUID(c) for c in connected]))))
         .scalars()
         .all()
     )
     for agent in agents:
-        if agent_supports_backend(agent.capabilities, kind):
+        if all(agent_supports_backend(agent.capabilities, kind) for kind in kinds):
             return agent
     return None
 
@@ -262,6 +289,7 @@ async def run_sync_query(
     user_id: uuid.UUID,
     sql: str,
     origin: str | None = None,
+    active_catalog: str | None = None,
     stats_for: dict[str, str] | None = None,
     timeout_s: float = 30.0,
     poll_interval_s: float = 0.2,
@@ -281,7 +309,7 @@ async def run_sync_query(
     )
     db.add(query)
     await db.flush()
-    await dispatch_query(db, query, stats_for=stats_for)
+    await dispatch_query(db, query, active_catalog=active_catalog, stats_for=stats_for)
 
     deadline = asyncio.get_event_loop().time() + timeout_s
     while asyncio.get_event_loop().time() < deadline:

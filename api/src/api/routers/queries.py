@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.deps import get_current_user, get_db
 from api.models.agent import Agent
 from api.models.query import Query, SavedQuery
-from api.models.storage_backend import StorageBackend
 from api.models.user import User
 from api.schemas.query import (
     QueryCreate,
@@ -26,7 +25,11 @@ from api.services import sql_metadata as sql_metadata_service
 from api.services.agent_capabilities import agent_supports_backend, required_extension
 from api.services.agent_registry import registry
 from api.services.sql_guard import SQLNotAllowed, assert_allowed
-from api.services.workspace import assert_workspace_member, get_workspace
+from api.services.workspace import (
+    assert_workspace_member,
+    get_workspace,
+    resolve_workspace_catalogs,
+)
 from duckhaven_shared.concurrency import parse_set_concurrency
 from duckhaven_shared.protocol import Frame, FrameType
 
@@ -75,19 +78,23 @@ async def create_query(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Agent not connected"
         )
 
-    backend = await db.get(StorageBackend, workspace.storage_backend_id)
-    if backend is not None and not agent_supports_backend(agent.capabilities, backend.kind):
-        ext = required_extension(backend.kind)
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={
-                "error": "agent_incompatible",
-                "detail": (
-                    f"Agent '{agent.name}' is missing the '{ext}' extension required "
-                    f"by this workspace's {backend.kind} backend."
-                ),
-            },
-        )
+    # Every catalog bound to the workspace is attached on each query, so the
+    # agent must support every backend kind across them.
+    catalogs = await resolve_workspace_catalogs(db, workspace.id)
+    for catalog in catalogs:
+        kind = catalog.storage_backend.kind
+        if not agent_supports_backend(agent.capabilities, kind):
+            ext = required_extension(kind)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error": "agent_incompatible",
+                    "detail": (
+                        f"Agent '{agent.name}' is missing the '{ext}' extension required "
+                        f"by catalog '{catalog.slug}'s {kind} backend."
+                    ),
+                },
+            )
 
     # When the run came from a saved query, stamp its last_run_at. Ignore a
     # missing/foreign id so a run never fails over a deleted saved query.
@@ -114,6 +121,7 @@ async def create_query(
         db,
         query,
         timeout_s=body.timeout_s,
+        active_catalog=body.catalog,
     )
     return query
 

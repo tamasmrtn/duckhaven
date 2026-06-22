@@ -5,6 +5,7 @@ import {
   SAVED_QUERIES,
 } from "../fixtures/queries";
 import { findWorkspace } from "../fixtures/workspaces";
+import { SQL_METADATA } from "../fixtures/sqlMetadata";
 import { CURRENT_USER, ALL_USERS } from "../fixtures/users";
 import { nextId } from "../lib/seed";
 import { httpError, validationError } from "../lib/errors";
@@ -189,6 +190,12 @@ export const queryHandlers = [
   }),
 
   // Saved queries
+  http.get("/api/workspaces/:ws/sql-metadata", ({ params }) => {
+    const ws = findWorkspace(params.ws as string);
+    if (!ws) return httpError(404, "Workspace not found");
+    return HttpResponse.json(SQL_METADATA);
+  }),
+
   http.get("/api/workspaces/:ws/saved-queries", ({ params }) => {
     const ws = findWorkspace(params.ws as string);
     if (!ws) return httpError(404, "Workspace not found");

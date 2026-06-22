@@ -5,7 +5,11 @@ import { useSchemas } from "@/queries/schemas";
 import { useSqlMetadata } from "@/queries/sqlMetadata";
 import type { CatalogTable } from "@/types/catalog";
 import type { CatalogSnapshot, SnapshotColumn } from "./types";
-import { type ColumnRef, updateCompletionContext } from "./provider";
+import {
+  type ColumnRef,
+  retriggerSuggest,
+  updateCompletionContext,
+} from "./provider";
 
 // Feeds the worksheet's Monaco completion providers with the workspace catalog
 // (schemas + table names eagerly; columns fetched lazily on reference) and the
@@ -95,4 +99,29 @@ export function useSqlCompletion(ws: string): void {
       ensureColumns,
     });
   }, [snapshot, metadataQuery.data, ensureColumns]);
+
+  // Refresh an open suggest widget when lazily-fetched columns land, so a
+  // held-open Ctrl+Space fills in without the user having to type.
+  useEffect(() => {
+    retriggerSuggest();
+  }, [columnsByTable]);
+
+  // When the catalog is refetched (e.g. after a DDL run invalidates it), drop
+  // the lazy column cache so altered/created/dropped tables re-fetch fresh
+  // columns on the next completion instead of serving stale ones.
+  const catalogVersion = useMemo(
+    () =>
+      [
+        schemasQuery.dataUpdatedAt,
+        ...tableQueries.map((q) => q.dataUpdatedAt),
+      ].join(":"),
+    [schemasQuery.dataUpdatedAt, tableQueries],
+  );
+  const prevCatalogVersion = useRef(catalogVersion);
+  useEffect(() => {
+    if (prevCatalogVersion.current === catalogVersion) return;
+    prevCatalogVersion.current = catalogVersion;
+    requested.current.clear();
+    setColumnsByTable({});
+  }, [catalogVersion]);
 }

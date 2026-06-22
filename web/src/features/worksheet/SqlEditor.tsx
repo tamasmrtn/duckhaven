@@ -2,7 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { Editor, type OnMount, type BeforeMount } from "@monaco-editor/react";
 import { useIsDark } from "@/hooks/useIsDark";
 import { activeStatement } from "./statements";
-import { registerSqlProviders } from "./completion/provider";
+import { registerSqlProviders, setActiveEditor } from "./completion/provider";
 
 export interface SqlEditorHandle {
   // The SQL to run for the current cursor/selection: the selected text if any,
@@ -122,6 +122,9 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
 
     const handleMount: OnMount = (editor, monaco) => {
       editorRef.current = editor;
+      // Let the completion data layer refresh an open suggest widget once
+      // lazily-fetched columns arrive.
+      setActiveEditor(editor);
 
       // Ctrl+S / Cmd+S: open the Save dialog (the muscle-memory "save"). Format
       // moves to Monaco's standard Shift+Alt+F.
@@ -170,6 +173,10 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
           // Our provider supplies catalog/function-aware suggestions; turn off
           // Monaco's generic word-based ones so they don't add noise.
           wordBasedSuggestions: "off",
+          // Render the suggest/parameter-hint overflow widgets in the document
+          // body so the detail flyout isn't clipped by the editor container or
+          // the catalog sidebar.
+          fixedOverflowWidgets: true,
           padding: { top: 12, bottom: 12 },
         }}
         loading={

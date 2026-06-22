@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useParams, Link } from "@tanstack/react-router";
 import {
   Play,
@@ -51,6 +52,7 @@ import { ProfilePanel } from "@/features/worksheet/profile/ProfilePanel";
 import { SqlEditor, type SqlEditorHandle } from "./SqlEditor";
 import { useSqlCompletion } from "./completion/useSqlCompletion";
 import { splitStatements } from "./statements";
+import { isDdl } from "./ddl";
 import { queriesApi } from "@/api/queries";
 import { ResultsTable } from "./ResultsTable";
 import { cn, formatBytes } from "@/utils";
@@ -137,9 +139,21 @@ export function WorksheetPage() {
   const { ws } = useParams({ from: "/$ws/worksheets" });
   const { data: workspace } = useWorkspace(ws);
   const { data: agents = [] } = useAgents();
+  const qc = useQueryClient();
 
   // Feed catalog + DuckDB metadata to the editor's autocomplete providers.
   useSqlCompletion(ws);
+
+  // After a successful DDL run, refresh the catalog tree and the autocomplete
+  // caches so the new/altered/dropped object is usable without a manual refresh.
+  const refreshCatalog = useCallback(() => {
+    qc.invalidateQueries({ queryKey: ["workspace", ws, "schemas"] });
+    qc.invalidateQueries({ queryKey: ["workspace", ws, "schema"] });
+  }, [qc, ws]);
+  // The last dispatched statement streams to "done" via the reactive query
+  // hooks rather than being awaited in runPayload, so remember whether it was
+  // DDL and refresh once it completes (handled in an effect below).
+  const lastRunWasDdl = useRef(false);
 
   const [tabs, setTabs] = useState<Tab[]>(() => loadTabs(ws));
   const [activeTab, setActiveTab] = useState(() => {
@@ -266,6 +280,15 @@ export function WorksheetPage() {
   const { data: queryData } = useQuery_(activeQueryId);
   const queryRows = useQueryRows(activeQueryId, queryData?.status === "done");
 
+  // The final statement of a run streams to "done" here (not awaited in
+  // runPayload); refresh the catalog when that statement was DDL.
+  useEffect(() => {
+    if (queryData?.status === "done" && lastRunWasDdl.current) {
+      lastRunWasDdl.current = false;
+      refreshCatalog();
+    }
+  }, [queryData?.status, refreshCatalog]);
+
   const firstHealthyAgent = agents.find((a) => a.status === "healthy");
   const resolvedAgentId = agentId || firstHealthyAgent?.id || "";
   const resolvedAgent = agents.find((a) => a.id === resolvedAgentId);
@@ -360,6 +383,7 @@ export function WorksheetPage() {
     setDispatchError(null);
     const multi = statements.length > 1;
     setRunSeq(null);
+    lastRunWasDdl.current = false;
     try {
       for (let i = 0; i < statements.length; i++) {
         if (multi) setRunSeq({ index: i + 1, total: statements.length });
@@ -372,11 +396,15 @@ export function WorksheetPage() {
           },
         });
         setActiveQueryId(result.id);
+        lastRunWasDdl.current = isDdl(statements[i]);
         // Wait for every statement but the last; abort the sequence if one
         // does not complete cleanly. The last streams via the reactive hooks.
         if (i < statements.length - 1) {
           const status = await waitForTerminal(result.id);
           if (status !== "done") break;
+          // Refresh the catalog after each successful DDL statement (the last
+          // statement's refresh is handled by the effect watching queryData).
+          if (isDdl(statements[i])) refreshCatalog();
         }
       }
     } catch (err) {

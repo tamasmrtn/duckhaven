@@ -1,7 +1,7 @@
 import type { Monaco } from "@monaco-editor/react";
 import type { languages, editor, Position, IRange } from "monaco-editor";
 import { activeStatement } from "../statements";
-import { getCompletions } from "./engine";
+import { getCompletions, pendingColumns } from "./engine";
 import { referencedTables } from "./statementContext";
 import type { CatalogSnapshot, SuggestionKind } from "./types";
 import type { SqlMetadata } from "@/types/sqlMetadata";
@@ -33,6 +33,29 @@ const context: CompletionContext = {
 };
 
 let registered = false;
+
+// The live editor, captured on mount, so the data layer can refresh an open
+// suggest widget once lazily-fetched columns arrive (see retriggerSuggest).
+let activeEditor: editor.IStandaloneCodeEditor | null = null;
+
+export function setActiveEditor(ed: editor.IStandaloneCodeEditor | null): void {
+  activeEditor = ed;
+}
+
+// Re-run completion if the suggest widget is currently open. Called when the
+// catalog snapshot gains columns so a held-open Ctrl+Space fills in without the
+// user having to type. No-op when the widget is closed (so it never pops the
+// widget unprompted).
+export function retriggerSuggest(): void {
+  const ed = activeEditor;
+  if (!ed) return;
+  const controller = ed.getContribution("editor.contrib.suggestController") as {
+    model?: { state?: number };
+  } | null;
+  // state 0 = idle/closed; only refresh while the widget is actually showing.
+  if (!controller?.model || !controller.model.state) return;
+  ed.trigger("completion", "editor.action.triggerSuggest", {});
+}
 
 export function updateCompletionContext(
   next: Partial<CompletionContext>,
@@ -136,7 +159,11 @@ export function registerSqlProviders(monaco: Monaco): void {
         range,
       }));
 
-      return { suggestions };
+      // Mark the list incomplete while the columns/tables it depends on are
+      // still loading, so Monaco re-queries this provider once they arrive
+      // instead of caching a function-only (or empty) result.
+      const incomplete = pendingColumns(text, offset, context.snapshot);
+      return { suggestions, incomplete };
     },
   });
 

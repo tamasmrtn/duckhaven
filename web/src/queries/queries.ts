@@ -58,7 +58,12 @@ export function useDispatchQuery(ws: string) {
     }: {
       sql: string;
       agentId: string;
-      opts?: { memory_limit?: number; timeout?: number; savedQueryId?: string };
+      opts?: {
+        memory_limit?: number;
+        timeout?: number;
+        savedQueryId?: string;
+        catalog?: string;
+      };
     }) => queriesApi.dispatch(ws, sql, agentId, opts),
     onSuccess: ({ id }) => {
       qc.invalidateQueries({ queryKey: ["query", id] });

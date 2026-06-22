@@ -64,12 +64,39 @@ describe('CatalogTree', () => {
     expect(screen.getByText('event_type')).toBeInTheDocument()
   })
 
-  it('opens the new-catalog dialog from the add button', async () => {
+  it('opens the new-catalog dialog from the create dropdown', async () => {
     renderTree(() => {})
 
-    await userEvent.click(screen.getByRole('button', { name: /new catalog/i }))
+    await userEvent.click(screen.getByRole('button', { name: /^create$/i }))
+    await userEvent.click(
+      await screen.findByRole('menuitem', { name: /create catalog/i }),
+    )
 
     expect(await screen.findByText('New catalog')).toBeInTheDocument()
+  })
+
+  it('creates a schema in a chosen catalog from the create dropdown', async () => {
+    renderTree(() => {})
+    // Wait for the tree (and its catalogs) to load.
+    await screen.findByRole('button', { name: /events/i })
+
+    await userEvent.click(screen.getByRole('button', { name: /^create$/i }))
+    await userEvent.click(
+      await screen.findByRole('menuitem', { name: /create schema/i }),
+    )
+
+    // The dialog offers a catalog picker; it defaults to the default catalog.
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('New schema')).toBeInTheDocument()
+    expect(within(dialog).getByLabelText(/catalog/i)).toBeInTheDocument()
+
+    await userEvent.type(within(dialog).getByLabelText(/^name$/i), 'gold')
+    await userEvent.click(
+      within(dialog).getByRole('button', { name: /^create$/i }),
+    )
+
+    // The new schema appears under the (default) catalog node.
+    expect(await screen.findByText('gold')).toBeInTheDocument()
   })
 
   it('refetches the catalog when the refresh button is clicked', async () => {

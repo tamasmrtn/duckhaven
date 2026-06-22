@@ -19,6 +19,12 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useSchemas, useTable, useTables } from "@/queries/schemas";
 import { useRefreshCatalogStats } from "@/queries/schemas.mutations";
 import {
@@ -350,6 +356,7 @@ export function CatalogTree({
 }: CatalogTreeProps) {
   const [filter, setFilter] = useState("");
   const [createCatalogOpen, setCreateCatalogOpen] = useState(false);
+  const [createSchemaOpen, setCreateSchemaOpen] = useState(false);
   const [attachCatalogOpen, setAttachCatalogOpen] = useState(false);
   const { data: catalogs, isLoading } = useCatalogs(ws);
   const refreshStats = useRefreshCatalogStats(ws);
@@ -404,15 +411,28 @@ export function CatalogTree({
             >
               <Link2 className="size-3.5" />
             </button>
-            <button
-              type="button"
-              onClick={() => setCreateCatalogOpen(true)}
-              title="New catalog"
-              aria-label="New catalog"
-              className="rounded p-1 text-text-secondary hover:bg-accent hover:text-text-primary focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
-            >
-              <Plus className="size-3.5" />
-            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  title="Create"
+                  aria-label="Create"
+                  className="rounded p-1 text-text-secondary hover:bg-accent hover:text-text-primary focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+                >
+                  <Plus className="size-3.5" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => setCreateCatalogOpen(true)}>
+                  <Database className="size-3.5" />
+                  Create catalog
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setCreateSchemaOpen(true)}>
+                  <Layers className="size-3.5" />
+                  Create schema
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
 
@@ -449,6 +469,12 @@ export function CatalogTree({
         ws={ws}
         open={createCatalogOpen}
         onOpenChange={setCreateCatalogOpen}
+      />
+      <CreateSchemaDialog
+        ws={ws}
+        allowCatalogChoice
+        open={createSchemaOpen}
+        onOpenChange={setCreateSchemaOpen}
       />
       <AttachCatalogDialog
         ws={ws}

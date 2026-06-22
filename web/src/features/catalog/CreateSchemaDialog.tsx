@@ -14,16 +14,18 @@ import { useCreateSchema } from "@/queries/schemas.mutations";
 
 export function CreateSchemaDialog({
   ws,
+  catalog,
   open,
   onOpenChange,
 }: {
   ws: string;
+  catalog?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const create = useCreateSchema(ws);
+  const create = useCreateSchema(ws, catalog);
 
   function reset() {
     setName("");

@@ -40,11 +40,13 @@ export type CatalogNode =
 // the catalog page and the worksheet sidebar tree.
 export function CatalogNodeMenu({
   ws,
+  catalog,
   node,
   children,
   onDropped,
 }: {
   ws: string;
+  catalog?: string;
   node: CatalogNode;
   children: ReactNode;
   onDropped?: () => void;
@@ -54,13 +56,15 @@ export function CatalogNodeMenu({
   const [createTableOpen, setCreateTableOpen] = useState(false);
   const [dropOpen, setDropOpen] = useState(false);
 
-  const dropSchema = useDropSchema(ws);
+  const dropSchema = useDropSchema(ws, catalog);
   const deleteTable = useDeleteTable(
     ws,
+    catalog,
     node.kind === "table" ? node.schema : "",
   );
   const recountTable = useRecountTable(
     ws,
+    catalog,
     node.kind === "table" ? node.schema : "",
   );
 
@@ -110,7 +114,9 @@ export function CatalogNodeMenu({
             <>
               <ContextMenuItem
                 onSelect={() =>
-                  openInWorksheet(selectTemplate(node.schema, node.table))
+                  openInWorksheet(
+                    selectTemplate(node.schema, node.table, catalog),
+                  )
                 }
               >
                 <ExternalLink />
@@ -118,7 +124,9 @@ export function CatalogNodeMenu({
               </ContextMenuItem>
               <ContextMenuItem
                 onSelect={() =>
-                  openInWorksheet(alterTemplate(node.schema, node.table))
+                  openInWorksheet(
+                    alterTemplate(node.schema, node.table, catalog),
+                  )
                 }
               >
                 <Pencil />
@@ -141,6 +149,7 @@ export function CatalogNodeMenu({
       {node.kind === "catalog" && (
         <CreateSchemaDialog
           ws={ws}
+          catalog={catalog}
           open={createSchemaOpen}
           onOpenChange={setCreateSchemaOpen}
         />
@@ -149,6 +158,7 @@ export function CatalogNodeMenu({
         <>
           <CreateTableDialog
             ws={ws}
+            catalog={catalog}
             schema={node.schema}
             open={createTableOpen}
             onOpenChange={setCreateTableOpen}

@@ -24,13 +24,17 @@ function tableKey(snapshot: CatalogSnapshot, ref: TableRef): string | null {
 function columnSuggestions(
   snapshot: CatalogSnapshot,
   key: string | null,
+  // When several tables are in scope (a JOIN), show the source table in the row
+  // detail so identically-named columns can be told apart at a glance.
+  withSource = false,
 ): Suggestion[] {
   if (!key) return [];
   return (snapshot.columnsByTable[key] ?? []).map((c) => ({
     label: c.name,
     kind: "column" as const,
-    detail: c.type,
+    detail: withSource ? `${c.type} · ${key}` : c.type,
     documentation: `from ${key}`,
+    source: key,
   }));
 }
 
@@ -120,7 +124,12 @@ function rankAndFilter(
   const seen = new Set<string>();
   const out: Suggestion[] = [];
   for (const s of raw) {
-    const dedupKey = `${s.kind}:${s.label}`;
+    // Columns are deduped per source table so same-named columns from different
+    // joined tables both survive; everything else dedups by kind + label.
+    const dedupKey =
+      s.kind === "column"
+        ? `column:${s.label}:${s.source ?? ""}`
+        : `${s.kind}:${s.label}`;
     if (seen.has(dedupKey)) continue;
     const labelLower = s.label.toLowerCase();
     if (lower && !labelLower.includes(lower)) continue;
@@ -154,16 +163,65 @@ export function getCompletions(input: CompletionInput): Suggestion[] {
   } else if (ctx.clause === "type") {
     raw = typeSuggestions(metadata);
   } else {
-    // SELECT / WHERE / GROUP BY / … → columns + functions + keywords.
+    // SELECT / WHERE / GROUP BY / … → columns merged from every table in scope.
+    const multiTable = ctx.fromTables.length > 1;
     const columns = ctx.fromTables.flatMap((ref) =>
-      columnSuggestions(catalog, tableKey(catalog, ref)),
+      columnSuggestions(catalog, tableKey(catalog, ref), multiTable),
     );
-    raw = [
-      ...columns,
-      ...functionSuggestions(metadata),
-      ...keywordSuggestions(metadata),
-    ];
+    // When columns are in scope, don't bury them under the full function/keyword
+    // dump: only add those once the user starts typing a prefix to filter by.
+    const showFunctions = columns.length === 0 || ctx.wordPrefix.length > 0;
+    raw = showFunctions
+      ? [
+          ...columns,
+          ...functionSuggestions(metadata),
+          ...keywordSuggestions(metadata),
+        ]
+      : columns;
   }
 
   return rankAndFilter(raw, ctx.wordPrefix, ctx.clause);
+}
+
+// Whether the suggestions at this cursor depend on catalog data that has not
+// loaded yet (lazily-fetched columns, or a schema's table list). The Monaco
+// adapter uses this to mark the completion list `incomplete` so it re-queries
+// once the data arrives, instead of caching a function-only / empty result.
+export function pendingColumns(
+  text: string,
+  offset: number,
+  catalog: CatalogSnapshot,
+): boolean {
+  const ctx = getCursorContext(text, offset);
+
+  if (ctx.qualifier.length > 0) {
+    if (ctx.qualifier.length >= 2) {
+      const [schema, table] = ctx.qualifier.slice(-2);
+      return !(`${schema}.${table}` in catalog.columnsByTable);
+    }
+    const part = ctx.qualifier[0];
+    if (ctx.clause === "from") {
+      return (catalog.tablesBySchema[part] ?? []).length === 0;
+    }
+    const ref = ctx.fromTables.find(
+      (r) => r.alias === part || r.table === part,
+    );
+    if (ref) {
+      const key = tableKey(catalog, ref);
+      return !key || !(key in catalog.columnsByTable);
+    }
+    return (catalog.tablesBySchema[part] ?? []).length === 0;
+  }
+
+  if (
+    ctx.clause !== "start" &&
+    ctx.clause !== "from" &&
+    ctx.clause !== "type"
+  ) {
+    return ctx.fromTables.some((ref) => {
+      const key = tableKey(catalog, ref);
+      return !key || !(key in catalog.columnsByTable);
+    });
+  }
+  return false;
 }

@@ -57,10 +57,20 @@ function parseQualifier(text: string, start: number): string[] {
   return parts;
 }
 
+// Negative lookahead of clause/join keywords, so the optional alias group below
+// never swallows the keyword that starts the next table/clause (e.g. a bare
+// `FROM a JOIN b` must still parse `b` — without this the alias group eats
+// `JOIN` and `b` is dropped).
+const ALIAS_LOOKAHEAD = `(?!(?:${[...ALIAS_STOPWORDS].join("|")})\\b)`;
+
 // Tables referenced in the statement's FROM/JOIN/INTO/UPDATE, best-effort.
 export function referencedTables(statement: string): TableRef[] {
-  const re =
-    /\b(?:from|join|into|update)\s+("?[A-Za-z_$][\w$]*"?)(?:\s*\.\s*("?[A-Za-z_$][\w$]*"?))?(?:\s+(?:as\s+)?("?[A-Za-z_$][\w$]*"?))?/gi;
+  const re = new RegExp(
+    `\\b(?:from|join|into|update)\\s+("?[A-Za-z_$][\\w$]*"?)` +
+      `(?:\\s*\\.\\s*("?[A-Za-z_$][\\w$]*"?))?` +
+      `(?:\\s+(?:as\\s+)?${ALIAS_LOOKAHEAD}("?[A-Za-z_$][\\w$]*"?))?`,
+    "gi",
+  );
   const refs: TableRef[] = [];
   for (const m of statement.matchAll(re)) {
     const first = unquote(m[1]);

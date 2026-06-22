@@ -29,6 +29,9 @@ export interface Suggestion {
   documentation?: string;
   insertText?: string;
   sortText?: string;
+  // "schema.table" a column came from. Used to keep same-named columns from
+  // different joined tables distinct during dedup (not shown directly).
+  source?: string;
 }
 
 // A table referenced in the current statement's FROM/JOIN clause.

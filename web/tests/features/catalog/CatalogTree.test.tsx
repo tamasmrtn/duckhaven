@@ -6,7 +6,9 @@ import { CatalogTree } from '@/features/catalog/CatalogTree'
 import { createWrapper } from '@tests/utils'
 import { server } from '@tests/mock/server'
 
-function renderTree(onTableClick: (schema: string, table: string) => void) {
+function renderTree(
+  onTableClick: (catalog: string, schema: string, table: string) => void,
+) {
   const { wrapper: Wrapper } = createWrapper()
   return render(
     <CatalogTree
@@ -19,13 +21,13 @@ function renderTree(onTableClick: (schema: string, table: string) => void) {
 }
 
 describe('CatalogTree', () => {
-  it('reports the schema and table when a table row is clicked', async () => {
+  it('reports the catalog, schema and table when a table row is clicked', async () => {
     const onTableClick = vi.fn()
     renderTree(onTableClick)
 
     const events = await screen.findByRole('button', { name: /events/i })
     fireEvent.click(events)
-    expect(onTableClick).toHaveBeenCalledWith('raw', 'events')
+    expect(onTableClick).toHaveBeenCalledWith('acme_analytics', 'raw', 'events')
   })
 
   it('filters table rows by the search box', async () => {
@@ -62,12 +64,12 @@ describe('CatalogTree', () => {
     expect(screen.getByText('event_type')).toBeInTheDocument()
   })
 
-  it('opens the create-schema dialog from the add button', async () => {
+  it('opens the new-catalog dialog from the add button', async () => {
     renderTree(() => {})
 
-    await userEvent.click(screen.getByRole('button', { name: /add schema/i }))
+    await userEvent.click(screen.getByRole('button', { name: /new catalog/i }))
 
-    expect(await screen.findByText('New schema')).toBeInTheDocument()
+    expect(await screen.findByText('New catalog')).toBeInTheDocument()
   })
 
   it('refetches the catalog when the refresh button is clicked', async () => {
@@ -79,8 +81,10 @@ describe('CatalogTree', () => {
     // The catalog now reports a schema created out-of-band (e.g. from the
     // worksheet); the refresh button must surface it.
     server.use(
-      http.get('/api/workspaces/:ws/schemas', () =>
-        HttpResponse.json([{ name: 'fresh_schema', workspace_id: 'x' }]),
+      http.get('/api/workspaces/:ws/catalogs/:catalog/schemas', () =>
+        HttpResponse.json([
+          { name: 'fresh_schema', catalog: 'acme_analytics', workspace_id: 'x' },
+        ]),
       ),
     )
 

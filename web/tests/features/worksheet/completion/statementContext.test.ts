@@ -33,6 +33,15 @@ describe("referencedTables", () => {
       { table: "sales", alias: "s" },
     ]);
   });
+
+  it("parses a JOIN when the first table has no alias", () => {
+    expect(
+      referencedTables("SELECT * FROM s.a JOIN s.b ON s.a.id = s.b.id"),
+    ).toEqual([
+      { schema: "s", table: "a", alias: undefined },
+      { schema: "s", table: "b", alias: undefined },
+    ]);
+  });
 });
 
 describe("getCursorContext", () => {

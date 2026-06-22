@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { getCompletions } from "@/features/worksheet/completion/engine";
+import {
+  getCompletions,
+  pendingColumns,
+} from "@/features/worksheet/completion/engine";
 import type { CatalogSnapshot } from "@/features/worksheet/completion/types";
 import type { SqlMetadata } from "@/types/sqlMetadata";
 
@@ -80,14 +83,25 @@ describe("getCompletions", () => {
     expect(out.map((s) => s.label)).toEqual(["id", "amount"]);
   });
 
-  it("suggests columns, functions and keywords inside SELECT", () => {
-    const out = labels("SELECT | FROM analytics.sales");
-    expect(out).toEqual(expect.arrayContaining(["id", "amount", "sum", "SELECT"]));
+  it("suggests only columns inside SELECT before a prefix is typed", () => {
+    const out = complete("SELECT | FROM analytics.sales");
+    expect(out.map((s) => s.label)).toEqual(
+      expect.arrayContaining(["id", "amount"]),
+    );
+    // The full function/keyword dump stays hidden until the user types.
+    expect(out.some((s) => s.kind === "function")).toBe(false);
+    expect(out.some((s) => s.kind === "keyword")).toBe(false);
+  });
+
+  it("surfaces functions once a prefix is typed inside SELECT", () => {
+    expect(labels("SELECT su| FROM analytics.sales")).toContain("sum");
   });
 
   it("suggests columns inside WHERE", () => {
-    const out = labels("SELECT * FROM analytics.sales WHERE |");
-    expect(out).toEqual(expect.arrayContaining(["amount", "sum"]));
+    const out = complete("SELECT * FROM analytics.sales WHERE |");
+    const cols = out.filter((s) => s.kind === "column").map((s) => s.label);
+    expect(cols).toEqual(expect.arrayContaining(["id", "amount"]));
+    expect(out.some((s) => s.kind === "function")).toBe(false);
   });
 
   it("suggests data types in a CAST", () => {
@@ -105,9 +119,9 @@ describe("getCompletions", () => {
   });
 
   it("falls back to static keywords when metadata is not loaded", () => {
-    const out = labels("SELECT | FROM analytics.sales", null);
-    // Columns still resolve from the catalog; static keywords still appear.
-    expect(out).toEqual(expect.arrayContaining(["amount", "FROM"]));
+    // With a prefix typed, static keywords still surface without metadata.
+    const out = labels("SELECT fr| FROM analytics.sales", null);
+    expect(out).toContain("FROM");
     // No function suggestions without metadata.
     expect(out).not.toContain("sum");
   });
@@ -117,5 +131,65 @@ describe("getCompletions", () => {
     expect(out[0].label).toBe("amount");
     const labelsOut = out.map((s) => s.label);
     expect(new Set(labelsOut).size).toBe(labelsOut.length);
+  });
+});
+
+describe("multi-table (JOIN) completion", () => {
+  it("merges columns from every joined table, tagged by source", () => {
+    const out = complete(
+      "SELECT | FROM analytics.sales s JOIN analytics.orders o ON s.id = o.sale_id",
+    );
+    const cols = out.filter((s) => s.kind === "column");
+    expect(cols.map((c) => c.label)).toEqual(
+      expect.arrayContaining(["id", "amount", "order_id", "sale_id"]),
+    );
+    // The source table is shown in the detail row to disambiguate.
+    expect(cols.find((c) => c.label === "id")?.detail).toContain(
+      "analytics.sales",
+    );
+  });
+
+  it("keeps same-named columns from different tables distinct", () => {
+    const cat: CatalogSnapshot = {
+      schemas: ["s"],
+      tablesBySchema: { s: ["a", "b"] },
+      columnsByTable: {
+        "s.a": [{ name: "id", type: "BIGINT" }],
+        "s.b": [{ name: "id", type: "VARCHAR" }],
+      },
+    };
+    const text = "SELECT  FROM s.a JOIN s.b ON s.a.id = s.b.id";
+    const out = getCompletions({
+      text,
+      offset: "SELECT ".length,
+      catalog: cat,
+      metadata: null,
+    });
+    const ids = out.filter((c) => c.kind === "column" && c.label === "id");
+    expect(ids).toHaveLength(2);
+  });
+});
+
+describe("pendingColumns", () => {
+  it("is true when a referenced table's columns aren't loaded yet", () => {
+    const cat = { ...catalog, columnsByTable: {} };
+    const { text, offset } = at("SELECT | FROM analytics.sales");
+    expect(pendingColumns(text, offset, cat)).toBe(true);
+  });
+
+  it("is false once the referenced table's columns are present", () => {
+    const { text, offset } = at("SELECT | FROM analytics.sales");
+    expect(pendingColumns(text, offset, catalog)).toBe(false);
+  });
+
+  it("is true for an alias dot whose columns aren't loaded", () => {
+    const cat = { ...catalog, columnsByTable: {} };
+    const { text, offset } = at("SELECT s.| FROM analytics.sales s");
+    expect(pendingColumns(text, offset, cat)).toBe(true);
+  });
+
+  it("is false at statement start", () => {
+    const { text, offset } = at("|");
+    expect(pendingColumns(text, offset, catalog)).toBe(false);
   });
 });

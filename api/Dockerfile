@@ -17,6 +17,13 @@ FROM python:3.14-slim AS builder
 # uv is a build-time tool — copy the pinned binary instead of pip-installing it.
 COPY --from=ghcr.io/astral-sh/uv:0.8.22 /uv /usr/local/bin/uv
 
+# Build toolchain for source builds (pyiceberg's Cython avro extension has no
+# prebuilt wheel for this Python yet, so it compiles from sdist). Builder stage
+# only — the runtime image stays slim.
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 ENV UV_COMPILE_BYTECODE=1 \

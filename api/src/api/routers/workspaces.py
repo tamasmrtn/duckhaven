@@ -9,6 +9,7 @@ from api.models.user import User
 from api.models.workspace import Workspace, WorkspaceMember
 from api.schemas.workspace import AddMemberRequest, MemberOut, WorkspaceCreate, WorkspaceOut
 from api.services.polaris import PolarisClient
+from api.services.system_catalog.bootstrap import link_system_catalog
 from api.services.workspace import (
     assert_workspace_member,
     get_default_catalog,
@@ -66,6 +67,9 @@ async def create_workspace(
     await db.flush()
     member = WorkspaceMember(workspace_id=ws.id, user_id=user.id, role="owner")
     db.add(member)
+    # The built-in system catalog is attached to every workspace by default
+    # (no-op until it has been provisioned during admin setup).
+    await link_system_catalog(db, ws.id)
     await db.commit()
     await db.refresh(ws)
     return await _workspace_out(db, ws)

@@ -53,7 +53,13 @@ async def dispatch_query(
     # the Polaris endpoint + client creds.
     if active_catalog is None:
         default = await get_default_catalog(db, workspace.id)
-        active_catalog = default.slug if default is not None else catalogs[0].slug
+        if default is not None:
+            active_catalog = default.slug
+        else:
+            # Never `USE` the read-only system catalog as the active one; prefer
+            # a real user catalog (its namespaces aren't `analytics`).
+            user_catalogs = [c for c in catalogs if not c.is_system]
+            active_catalog = (user_catalogs or catalogs)[0].slug
     payload: dict[str, object] = {
         "query_id": str(query.id),
         "sql": query.sql,
@@ -68,6 +74,9 @@ async def dispatch_query(
                     "root_uri": c.storage_backend.root_uri,
                 },
                 "default_schema": DEFAULT_SCHEMA,
+                # The system catalog is attached read-only so the engine itself
+                # (not convention) rejects writes/DDL against it.
+                "read_only": c.is_system,
             }
             for c in catalogs
         ],

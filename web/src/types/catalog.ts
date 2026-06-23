@@ -18,6 +18,9 @@ export interface Catalog {
   created_at: string;
   is_default: boolean;
   attached_workspaces: number | null;
+  // The built-in system catalog: read-only, attached to every workspace, and
+  // not detachable/droppable. The browser badges it and hides those actions.
+  is_system: boolean;
 }
 
 export interface CatalogTable {

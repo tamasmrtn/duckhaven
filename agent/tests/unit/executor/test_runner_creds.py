@@ -155,6 +155,28 @@ def test_multi_attach_attaches_every_catalog_and_uses_active(fake_conn: FakeConn
     assert use_sql == 'USE "curated"."analytics"'
 
 
+def test_read_only_catalog_attaches_read_only(fake_conn: FakeConn, tmp_path: Path):
+    """A descriptor flagged read_only (the system catalog) is ATTACHed READ_ONLY;
+    a normal catalog is not."""
+    system = _catalog("duckhaven", "duckhaven", "object_store", "")
+    system["read_only"] = True
+    user_cat = _catalog("sales", "sales", "object_store", "file:///tmp/sales")
+    runner_module.run_query_sync(
+        "SELECT 1",
+        tmp_path / "out.parquet",
+        memory_bytes=1024**3,
+        threads=2,
+        catalogs=[user_cat, system],
+        active_catalog="sales",
+        polaris=POLARIS,
+    )
+    attaches = [c[0] for c in fake_conn.commands if c[0].startswith("ATTACH")]
+    system_attach = next(c for c in attaches if 'AS "duckhaven"' in c)
+    user_attach = next(c for c in attaches if 'AS "sales"' in c)
+    assert "READ_ONLY" in system_attach
+    assert "READ_ONLY" not in user_attach
+
+
 def test_no_polaris_means_no_attach(fake_conn: FakeConn, tmp_path: Path):
     runner_module.run_query_sync(
         "SELECT 1",

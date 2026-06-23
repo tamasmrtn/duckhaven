@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -56,20 +57,46 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         timeout_s=settings.polaris_http_timeout_s,
     )
 
-    scanner_task: asyncio.Task | None = None
+    # Self-heal the system catalog (no-op until admin setup provisions it):
+    # re-assert its Polaris namespaces and workspace links. Best-effort so a
+    # Polaris hiccup never blocks startup.
+    from api.services.system_catalog.bootstrap import ensure_system_catalog
+
+    async with async_session_factory() as db:
+        try:
+            await ensure_system_catalog(db, app.state.polaris_client)
+        except Exception:  # noqa: BLE001 - startup must survive a provisioning failure
+            logging.getLogger(__name__).exception("System catalog self-heal failed")
+
+    background_tasks: list[asyncio.Task] = []
     if settings.maintenance_scanner_enabled:
         from api.services.maintenance.scanner import scanner_loop
 
-        scanner_task = asyncio.create_task(
-            scanner_loop(async_session_factory, app.state.polaris_client)
+        background_tasks.append(
+            asyncio.create_task(scanner_loop(async_session_factory, app.state.polaris_client))
+        )
+    if settings.system_catalog_sync_enabled:
+        from api.services.system_catalog.materialize import materializer_loop
+        from api.services.system_catalog.writer import IcebergSystemCatalogWriter
+
+        writer = IcebergSystemCatalogWriter(
+            base_url=settings.polaris_base_url,
+            realm=settings.polaris_realm,
+            client_id=settings.polaris_client_id,
+            client_secret=settings.polaris_client_secret,
+        )
+        background_tasks.append(
+            asyncio.create_task(
+                materializer_loop(async_session_factory, app.state.polaris_client, writer)
+            )
         )
     try:
         yield
     finally:
-        if scanner_task is not None:
-            scanner_task.cancel()
+        for task in background_tasks:
+            task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await scanner_task
+                await task
         await app.state.polaris_client.aclose()
 
 

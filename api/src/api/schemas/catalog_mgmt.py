@@ -35,3 +35,6 @@ class CatalogOut(BaseModel):
     # default catalog and whether it is shared with other workspaces.
     is_default: bool = False
     attached_workspaces: int | None = None
+    # The built-in system catalog: read-only, attached everywhere, not
+    # detachable/droppable. The UI badges it and hides detach/drop actions.
+    is_system: bool = False

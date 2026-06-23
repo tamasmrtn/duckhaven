@@ -23,6 +23,7 @@ function makeCatalogs(): MockCatalog[] {
       created_at: "2026-01-01T00:00:00Z",
       is_default: true,
       attached_workspaces: 1,
+      is_system: false,
       workspace_ids: ["ws-1"],
     },
     {
@@ -35,6 +36,7 @@ function makeCatalogs(): MockCatalog[] {
       created_at: "2026-02-01T00:00:00Z",
       is_default: false,
       attached_workspaces: 1,
+      is_system: false,
       workspace_ids: ["ws-1"],
     },
     {
@@ -47,6 +49,7 @@ function makeCatalogs(): MockCatalog[] {
       created_at: "2026-01-15T00:00:00Z",
       is_default: true,
       attached_workspaces: 1,
+      is_system: false,
       workspace_ids: ["ws-2"],
     },
     {
@@ -59,6 +62,7 @@ function makeCatalogs(): MockCatalog[] {
       created_at: "2026-01-01T00:00:00Z",
       is_default: true,
       attached_workspaces: 1,
+      is_system: false,
       workspace_ids: ["ws-3"],
     },
     {
@@ -71,6 +75,7 @@ function makeCatalogs(): MockCatalog[] {
       created_at: "2026-02-01T00:00:00Z",
       is_default: true,
       attached_workspaces: 1,
+      is_system: false,
       workspace_ids: ["ws-4"],
     },
   ];

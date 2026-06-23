@@ -25,9 +25,14 @@ existing one**. The first catalog attached becomes the workspace's default. See
     Because a catalog can be attached to multiple workspaces, members of any attaching workspace can reach it. This is
     the intended sharing semantic; a catalog cannot be dropped while any workspace still has it attached.
 
+Every workspace additionally sees the built-in, read-only [system catalog](system-catalog.md) (`duckhaven`) — query
+history, audit, and a cross-workspace object inventory — attached automatically. It is not counted among the catalogs an
+owner manages and cannot be detached.
+
 ## Related
 
 - [Catalogs & Polaris](catalogs.md) — how catalogs are governed and shared.
+- [System catalog](system-catalog.md) — the built-in read-only catalog every workspace sees.
 - [Permissions](permissions.md) — what each role can do.
 - [Manage catalogs](../guides/manage-catalogs.md) — create, attach, detach, and drop catalogs.
 - [Manage users & access](../guides/users-access.md) — add members and assign roles.

@@ -301,6 +301,22 @@ class PolarisClient:
     _RW_CATALOG_ROLE = "duckhaven_rw"
     _PRINCIPAL_ROLE = "duckhaven"
 
+    async def delete_catalog_access(self, catalog: str) -> None:
+        """Remove the RW catalog role created by ``ensure_catalog_access``.
+
+        Polaris refuses to drop a catalog that still holds non-default catalog
+        roles, so the role must go before ``delete_catalog``. Idempotent: a
+        missing role (already removed, or a never-granted catalog) is success.
+        """
+        resp = await self._http.delete(
+            f"{self.MGMT_PATH}/catalogs/{catalog}/catalog-roles/{self._RW_CATALOG_ROLE}",
+            headers=await self._auth_headers(),
+        )
+        try:
+            self._raise_for_status(resp)
+        except PolarisNotFoundError:
+            pass
+
     # Catalog-level privileges granted to the RW role so the service principal
     # fully owns each DuckHaven catalog: manage content (tables/namespaces +
     # data), metadata, and access (grants).

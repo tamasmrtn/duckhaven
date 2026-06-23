@@ -12,12 +12,14 @@ import logging
 import uuid
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from api.models.catalog import Catalog, WorkspaceCatalog
+from api.models.maintenance import MaintenanceRecommendation, TableHealthSample
 from api.models.storage_backend import StorageBackend
+from api.models.table_metadata import TableMetadata
 from api.models.workspace import Workspace
 from api.services.polaris import PolarisClient, PolarisError, PolarisNotFoundError
 from api.services.workspace import (
@@ -165,7 +167,20 @@ async def drop_catalog(db: AsyncSession, polaris: PolarisClient, *, catalog: Cat
                 "Detach it everywhere before dropping."
             ),
         )
+    # Polaris refuses to delete a catalog that still holds namespaces, so purge
+    # its tables + schemas first (drop-with-purge reclaims data files), then the
+    # catalog. Best-effort on NotFound so a partially-provisioned catalog still
+    # drops cleanly.
     try:
+        for schema in await polaris.list_schemas(catalog.polaris_name):
+            for table in await polaris.list_tables(catalog.polaris_name, schema.name):
+                await polaris.delete_table(
+                    catalog.polaris_name, schema.name, table.name, purge=True
+                )
+            await polaris.delete_schema(catalog.polaris_name, schema.name)
+        # Polaris also refuses to drop a catalog that still has custom catalog
+        # roles, so remove the RW role this catalog was created with.
+        await polaris.delete_catalog_access(catalog.polaris_name)
         await polaris.delete_catalog(catalog.polaris_name)
     except PolarisNotFoundError:
         pass
@@ -174,6 +189,10 @@ async def drop_catalog(db: AsyncSession, polaris: PolarisClient, *, catalog: Cat
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Polaris catalog deletion failed: {exc}",
         ) from exc
+
+    # Drop the catalog's control-plane sidecars (intrinsic per-catalog rows).
+    for model in (TableMetadata, TableHealthSample, MaintenanceRecommendation):
+        await db.execute(delete(model).where(model.catalog_id == catalog.id))
     await db.delete(catalog)
     await db.flush()
 

@@ -5,9 +5,28 @@ export interface TableColumn {
   nullable: boolean;
 }
 
+// A decoupled catalog (data domain) attached to a workspace. The same catalog
+// can be attached to multiple workspaces (M:N) — `attached_workspaces` counts
+// them, which gates the drop affordance.
+export interface Catalog {
+  id: string;
+  slug: string;
+  name: string;
+  polaris_name: string;
+  storage_backend_id: string;
+  storage_backend_kind: string;
+  created_at: string;
+  is_default: boolean;
+  attached_workspaces: number | null;
+}
+
 export interface CatalogTable {
   name: string;
   schema_name: string;
+  // The catalog slug this table belongs to (api TableOut.catalog). Optional so
+  // fixtures/legacy payloads omitting it still type-check; the browser UI gets
+  // the catalog from the tree context rather than the row.
+  catalog?: string;
   workspace_id: string;
   row_count: number | null;
   size_bytes: number | null;
@@ -27,6 +46,7 @@ export interface CatalogTable {
 
 export interface CatalogSchema {
   name: string;
+  catalog?: string;
   workspace_id: string;
   tables: CatalogTable[];
 }

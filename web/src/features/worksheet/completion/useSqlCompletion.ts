@@ -11,12 +11,13 @@ import {
   updateCompletionContext,
 } from "./provider";
 
-// Feeds the worksheet's Monaco completion providers with the workspace catalog
-// (schemas + table names eagerly; columns fetched lazily on reference) and the
-// DuckDB function/keyword/type dictionary. Mounted once by WorksheetPage.
-export function useSqlCompletion(ws: string): void {
+// Feeds the worksheet's Monaco completion providers with the active catalog's
+// schemas + table names (eagerly; columns fetched lazily on reference) and the
+// DuckDB function/keyword/type dictionary. Mounted once by WorksheetPage; the
+// catalog is the worksheet's active catalog (undefined → default catalog).
+export function useSqlCompletion(ws: string, catalog?: string): void {
   const qc = useQueryClient();
-  const schemasQuery = useSchemas(ws);
+  const schemasQuery = useSchemas(ws, catalog);
   const metadataQuery = useSqlMetadata(ws);
 
   const schemaNames = useMemo(
@@ -26,8 +27,16 @@ export function useSqlCompletion(ws: string): void {
 
   const tableQueries = useQueries({
     queries: schemaNames.map((schema) => ({
-      queryKey: ["workspace", ws, "schema", schema, "tables"],
-      queryFn: () => schemasApi.listTables(ws, schema),
+      queryKey: [
+        "workspace",
+        ws,
+        "catalog",
+        catalog,
+        "schema",
+        schema,
+        "tables",
+      ],
+      queryFn: () => schemasApi.listTables(ws, catalog, schema),
       enabled: !!ws && !!schema,
     })),
   });
@@ -70,8 +79,17 @@ export function useSqlCompletion(ws: string): void {
         if (requested.current.has(key)) continue;
         requested.current.add(key);
         qc.ensureQueryData<CatalogTable>({
-          queryKey: ["workspace", ws, "schema", schema, "table", ref.table],
-          queryFn: () => schemasApi.getTable(ws, schema, ref.table),
+          queryKey: [
+            "workspace",
+            ws,
+            "catalog",
+            catalog,
+            "schema",
+            schema,
+            "table",
+            ref.table,
+          ],
+          queryFn: () => schemasApi.getTable(ws, catalog, schema, ref.table),
         })
           .then((table) => {
             setColumnsByTable((prev) =>
@@ -89,7 +107,7 @@ export function useSqlCompletion(ws: string): void {
           .catch(() => requested.current.delete(key));
       }
     },
-    [qc, ws],
+    [qc, ws, catalog],
   );
 
   useEffect(() => {

@@ -7,13 +7,15 @@ export const queriesApi = {
     ws: string,
     sql: string,
     agentId: string,
-    opts?: { timeout?: number; savedQueryId?: string },
+    opts?: { timeout?: number; savedQueryId?: string; catalog?: string },
   ) =>
     post<Query>(`/workspaces/${ws}/queries`, {
       sql,
       agent_id: agentId,
       timeout: opts?.timeout,
       saved_query_id: opts?.savedQueryId,
+      // The worksheet's active catalog — USEd for unqualified table names.
+      catalog: opts?.catalog,
     }),
 
   listForWorkspace: (

@@ -330,10 +330,17 @@ def spawn_agent(stack: Stack, tmp_path_factory) -> Iterator[Callable[[], subproc
 
 @pytest_asyncio.fixture
 async def workspace(api_client) -> str:
-    """A freshly created workspace slug (provisions a real Polaris catalog)."""
+    """A freshly created workspace slug with a default catalog.
+
+    Workspaces no longer auto-create a catalog, so attach one (which provisions
+    a real Polaris catalog + default namespace) for queries to run against."""
     import uuid
 
     slug = f"xc-{uuid.uuid4().hex[:8]}"
     r = await api_client.post("/api/workspaces", json={"slug": slug, "name": "XC"})
     r.raise_for_status()
+    c = await api_client.post(
+        f"/api/workspaces/{slug}/catalogs", json={"name": f"c_{slug.replace('-', '_')}"}
+    )
+    c.raise_for_status()
     return slug

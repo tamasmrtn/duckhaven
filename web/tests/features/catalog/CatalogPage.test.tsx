@@ -12,14 +12,14 @@ describe('CatalogPage', () => {
     const user = userEvent.setup()
     renderWithProviders({ initialRoute: CATALOG_ROUTE })
 
-    // The MSW fixture seeds raw + analytics under ws-1 (acme-analytics).
+    // The MSW fixture seeds raw + analytics under ws-1's default catalog.
     await screen.findByText('raw')
 
-    // The catalog tree's workspace header is the catalog-level context node.
-    // (The TopBar shows the same name, but inside a button — pick the tree's.)
-    const headers = await screen.findAllByText('acme-analytics')
-    const treeHeader = headers.find((el) => !el.closest('button'))!
-    fireEvent.contextMenu(treeHeader)
+    // "Create schema" lives on the catalog node's context menu.
+    const catalogNode = await screen.findByRole('button', {
+      name: /acme_analytics/i,
+    })
+    fireEvent.contextMenu(catalogNode)
     await user.click(
       await screen.findByRole('menuitem', { name: /create schema/i }),
     )
@@ -54,7 +54,7 @@ describe('CatalogPage', () => {
     let recounted = ''
     server.use(
       http.post(
-        '/api/workspaces/:ws/schemas/:schema/tables/:table/recount',
+        '/api/workspaces/:ws/catalogs/:catalog/schemas/:schema/tables/:table/recount',
         ({ params }) => {
           recounted = `${params.schema}.${params.table}`
           return HttpResponse.json({ row_count: 7 })
@@ -115,7 +115,7 @@ describe('CatalogPage', () => {
 
   it('drops a table from the detail view and returns to the catalog', async () => {
     const user = userEvent.setup()
-    renderWithProviders({ initialRoute: '/acme-analytics/catalog/raw/events' })
+    renderWithProviders({ initialRoute: '/acme-analytics/catalog/acme_analytics/raw/events' })
 
     await user.click(await screen.findByRole('button', { name: /^drop$/i }))
     const dialog = await screen.findByRole('dialog')
@@ -131,7 +131,7 @@ describe('CatalogPage', () => {
   })
 
   it('surfaces Iceberg-native metadata on the table detail view', async () => {
-    renderWithProviders({ initialRoute: '/acme-analytics/catalog/raw/events' })
+    renderWithProviders({ initialRoute: '/acme-analytics/catalog/acme_analytics/raw/events' })
 
     // The events fixture carries format version, snapshot, file count, deletes.
     expect(await screen.findByText(/Iceberg v2/)).toBeInTheDocument()
@@ -144,7 +144,7 @@ describe('CatalogPage', () => {
 
   it('routes "Alter table" into a worksheet seeded with ALTER SQL', async () => {
     const user = userEvent.setup()
-    renderWithProviders({ initialRoute: '/acme-analytics/catalog/raw/events' })
+    renderWithProviders({ initialRoute: '/acme-analytics/catalog/acme_analytics/raw/events' })
 
     await user.click(await screen.findByRole('button', { name: /alter table/i }))
 
@@ -154,7 +154,7 @@ describe('CatalogPage', () => {
 
   it('lists snapshot history under the History tab', async () => {
     const user = userEvent.setup()
-    renderWithProviders({ initialRoute: '/acme-analytics/catalog/raw/events' })
+    renderWithProviders({ initialRoute: '/acme-analytics/catalog/acme_analytics/raw/events' })
 
     await user.click(await screen.findByRole('tab', { name: /history/i }))
 
@@ -169,7 +169,7 @@ describe('CatalogPage', () => {
   it('shows an empty state for a table with no snapshot history', async () => {
     const user = userEvent.setup()
     // The `users` fixture has snapshot_id === null → no history.
-    renderWithProviders({ initialRoute: '/acme-analytics/catalog/raw/users' })
+    renderWithProviders({ initialRoute: '/acme-analytics/catalog/acme_analytics/raw/users' })
 
     await user.click(await screen.findByRole('tab', { name: /history/i }))
 
@@ -180,7 +180,7 @@ describe('CatalogPage', () => {
 
   it('routes "Query at this snapshot" into a worksheet seeded with time-travel SQL', async () => {
     const user = userEvent.setup()
-    renderWithProviders({ initialRoute: '/acme-analytics/catalog/raw/events' })
+    renderWithProviders({ initialRoute: '/acme-analytics/catalog/acme_analytics/raw/events' })
 
     await user.click(await screen.findByRole('tab', { name: /history/i }))
     const buttons = await screen.findAllByRole('button', {

@@ -10,8 +10,19 @@ executes user SQL) before dispatching it to an [agent](../concepts/agents.md).
 | Data | `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `MERGE` |
 | Catalog DDL | `CREATE`, `ALTER`, `DROP` (schemas and tables) |
 
-These run on the agent against the workspace's attached Polaris REST catalog. A single `SELECT` is materialized to
+These run on the agent against the workspace's attached Polaris REST catalogs. A single `SELECT` is materialized to
 Parquet and returned as a result grid; other statements run and report status without a grid.
+
+### Addressing catalogs
+
+Every catalog attached to the workspace is available in a query. Unqualified names (`schema.table`) resolve against the
+worksheet's **active catalog**; reference another catalog — or join across catalogs — with a fully-qualified
+`catalog.schema.table`:
+
+```sql
+SELECT * FROM raw.analytics.events e
+JOIN curated.analytics.users u ON e.user_id = u.id;
+```
 
 ## Rejected statements
 

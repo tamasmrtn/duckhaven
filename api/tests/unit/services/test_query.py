@@ -7,14 +7,13 @@ import tempfile
 
 import duckdb
 import pytest
+from conftest import seed_workspace
 from sqlalchemy import select
 
 from api.models.agent import Agent
 from api.models.query import Query
-from api.models.storage_backend import StorageBackend
 from api.models.table_metadata import TableMetadata
 from api.models.user import User
-from api.models.workspace import Workspace
 from api.services import query as query_service
 from api.services.agent_registry import registry
 from api.services.auth import hash_password
@@ -45,22 +44,15 @@ def test_decode_parquet_page_json_coerces_types():
     assert rows == [{"d": "2026-01-02", "amt": 1.5}]
 
 
-async def _make_workspace(db_session) -> Workspace:
+async def _make_workspace(db_session):
     user = User(email="svc@test.local", password_hash=hash_password("pw"), name="Svc", role="user")
     db_session.add(user)
     await db_session.flush()
-    sb = StorageBackend(kind="object_store", name="s", root_uri="/tmp/s", created_by=user.id)
-    db_session.add(sb)
-    await db_session.flush()
-    ws = Workspace(slug="svc-ws", name="Svc WS", storage_backend_id=sb.id)
-    db_session.add(ws)
-    await db_session.commit()
-    await db_session.refresh(ws)
-    return ws
+    return await seed_workspace(db_session, user_id=user.id, slug="svc-ws", name="Svc WS")
 
 
 async def test_query_done_upserts_table_stats(db_session):
-    ws = await _make_workspace(db_session)
+    ws, catalog = await _make_workspace(db_session)
     query = Query(workspace_id=ws.id, sql="SELECT 1", status="running", origin="sample")
     db_session.add(query)
     await db_session.commit()
@@ -72,7 +64,7 @@ async def test_query_done_upserts_table_stats(db_session):
             "query_id": str(query.id),
             "status": "done",
             "row_count": 20,
-            "stats_table": {"schema": "main", "table": "events"},
+            "stats_table": {"catalog": catalog.slug, "schema": "main", "table": "events"},
             "table_row_count": 42,
             "table_size_bytes": None,
         },
@@ -82,7 +74,7 @@ async def test_query_done_upserts_table_stats(db_session):
     meta = (
         await db_session.execute(
             select(TableMetadata).where(
-                TableMetadata.workspace_id == ws.id,
+                TableMetadata.catalog_id == catalog.id,
                 TableMetadata.schema_name == "main",
                 TableMetadata.table_name == "events",
             )
@@ -93,7 +85,7 @@ async def test_query_done_upserts_table_stats(db_session):
 
 
 async def test_query_done_persists_profile(db_session):
-    ws = await _make_workspace(db_session)
+    ws, _catalog = await _make_workspace(db_session)
     query = Query(workspace_id=ws.id, sql="SELECT 1", status="running")
     db_session.add(query)
     await db_session.commit()
@@ -113,7 +105,7 @@ async def test_query_done_persists_profile(db_session):
 
 
 async def test_query_done_without_profile_stays_null(db_session):
-    ws = await _make_workspace(db_session)
+    ws, _catalog = await _make_workspace(db_session)
     query = Query(workspace_id=ws.id, sql="CREATE TABLE t (x INT)", status="running")
     db_session.add(query)
     await db_session.commit()
@@ -129,7 +121,7 @@ async def test_query_done_without_profile_stays_null(db_session):
 
 
 async def test_pick_agent_for(db_session):
-    ws = await _make_workspace(db_session)
+    ws, _catalog = await _make_workspace(db_session)
     agent = Agent(name="a", status="healthy", capabilities={"extensions": ["iceberg", "httpfs"]})
     db_session.add(agent)
     await db_session.commit()

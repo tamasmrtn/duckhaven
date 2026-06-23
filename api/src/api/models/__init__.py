@@ -1,4 +1,5 @@
 from api.models.agent import Agent
+from api.models.catalog import Catalog, WorkspaceCatalog
 from api.models.maintenance import (
     MaintenancePolicy,
     MaintenanceRecommendation,
@@ -12,6 +13,7 @@ from api.models.workspace import Workspace, WorkspaceMember
 
 __all__ = [
     "Agent",
+    "Catalog",
     "Credential",
     "MaintenancePolicy",
     "MaintenanceRecommendation",
@@ -22,5 +24,6 @@ __all__ = [
     "TableMetadata",
     "User",
     "Workspace",
+    "WorkspaceCatalog",
     "WorkspaceMember",
 ]

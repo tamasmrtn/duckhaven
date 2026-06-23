@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import pytest
+from conftest import seed_workspace
 from sqlalchemy import select
 
 from api.models.maintenance import MaintenanceRecommendation, TableHealthSample
 from api.models.query import Query
-from api.models.storage_backend import StorageBackend
 from api.models.user import User
 from api.models.workspace import Workspace
 from api.services.auth import hash_password
@@ -18,13 +18,7 @@ async def _workspace(db) -> Workspace:
     user = User(email="m@test.local", password_hash=hash_password("pw"), name="M", role="user")
     db.add(user)
     await db.flush()
-    sb = StorageBackend(kind="object_store", name="s", root_uri="", created_by=user.id)
-    db.add(sb)
-    await db.flush()
-    ws = Workspace(slug="mws", name="MWS", storage_backend_id=sb.id)
-    db.add(ws)
-    await db.commit()
-    await db.refresh(ws)
+    ws, _catalog = await seed_workspace(db, user_id=user.id, slug="mws", name="MWS")
     return ws
 
 
@@ -38,6 +32,7 @@ async def _query(db, ws) -> Query:
 
 def _unhealthy(**over):
     base = {
+        "catalog": "mws",
         "schema": "analytics",
         "table": "events",
         "small_file_ratio": 0.85,

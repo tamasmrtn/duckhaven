@@ -11,6 +11,10 @@ export const BASE_URL = process.env.DH_BASE_URL ?? "http://localhost:8000";
 export const ADMIN_EMAIL = process.env.DH_ADMIN_EMAIL ?? "admin@admin.com";
 export const ADMIN_PASSWORD = process.env.DH_ADMIN_PASSWORD ?? "TestPassword123";
 export const WS_SLUG = process.env.DH_WS_SLUG ?? "analytics";
+// The analytics workspace's default catalog + namespace, provisioned by
+// global-setup (workspaces no longer auto-create a catalog).
+export const DEFAULT_CATALOG = process.env.DH_CATALOG ?? "analytics";
+export const DEFAULT_SCHEMA = "analytics";
 
 // Where the `setup` project saves the authenticated admin storage state, reused
 // by the `authenticated` project. Resolved relative to the Playwright cwd

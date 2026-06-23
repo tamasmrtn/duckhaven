@@ -15,6 +15,55 @@ from api.config import settings  # noqa: E402
 from api.db.base import Base  # noqa: E402
 from api.deps import get_db, get_polaris_client, get_session_factory  # noqa: E402
 from api.main import api_app, app  # noqa: E402
+from api.models.catalog import Catalog, WorkspaceCatalog  # noqa: E402
+from api.models.storage_backend import StorageBackend  # noqa: E402
+from api.models.workspace import Workspace, WorkspaceMember  # noqa: E402
+
+
+async def seed_workspace(
+    db,
+    *,
+    user_id,
+    slug: str = "test-ws",
+    name: str = "Test WS",
+    role: str | None = "owner",
+    backend_kind: str = "object_store",
+    catalog_slug: str | None = None,
+):
+    """Seed a workspace with one default catalog (its own backend) and, when
+    ``role`` is set, a membership row. Returns ``(workspace, catalog)``.
+
+    Mirrors the decoupled M:N model: storage lives on the catalog, and the
+    workspace reaches tables through a ``WorkspaceCatalog`` binding."""
+    backend = StorageBackend(
+        kind=backend_kind, name=f"{slug}-store", root_uri="/tmp/test", created_by=user_id
+    )
+    db.add(backend)
+    await db.flush()
+    catalog = Catalog(
+        slug=catalog_slug or slug.replace("-", "_"),
+        name=name,
+        polaris_name=slug,
+        storage_backend_id=backend.id,
+        created_by=user_id,
+    )
+    db.add(catalog)
+    await db.flush()
+    ws = Workspace(slug=slug, name=name)
+    db.add(ws)
+    await db.flush()
+    db.add(
+        WorkspaceCatalog(
+            workspace_id=ws.id, catalog_id=catalog.id, is_default=True, attached_by=user_id
+        )
+    )
+    if role is not None:
+        db.add(WorkspaceMember(workspace_id=ws.id, user_id=user_id, role=role))
+    await db.commit()
+    await db.refresh(ws)
+    await db.refresh(catalog)
+    return ws, catalog
+
 
 # Disable secure cookies in tests (plain HTTP transport)
 settings.cookie_secure = False

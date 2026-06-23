@@ -47,6 +47,7 @@ import { AgentPicker } from "@/components/app/AgentPicker";
 import { StatusPill } from "@/components/app/StatusPill";
 import { StorageLabel } from "@/components/app/StorageIcon";
 import { CatalogTree } from "@/features/catalog/CatalogTree";
+import { useCatalogs } from "@/queries/catalogs";
 import { takePendingQuery } from "@/features/catalog/worksheetSql";
 import { ProfilePanel } from "@/features/worksheet/profile/ProfilePanel";
 import { SqlEditor, type SqlEditorHandle } from "./SqlEditor";
@@ -141,14 +142,24 @@ export function WorksheetPage() {
   const { data: agents = [] } = useAgents();
   const qc = useQueryClient();
 
-  // Feed catalog + DuckDB metadata to the editor's autocomplete providers.
-  useSqlCompletion(ws);
+  // Active catalog: the one USEd for unqualified names + fed to completion.
+  // Defaults to the workspace's default catalog; the user can switch it.
+  const { data: catalogs = [] } = useCatalogs(ws);
+  const [activeCatalog, setActiveCatalog] = useState<string | undefined>(
+    undefined,
+  );
+  const resolvedCatalog =
+    activeCatalog ??
+    catalogs.find((c) => c.is_default)?.slug ??
+    catalogs[0]?.slug;
+
+  // Feed the active catalog + DuckDB metadata to the editor's autocomplete.
+  useSqlCompletion(ws, resolvedCatalog);
 
   // After a successful DDL run, refresh the catalog tree and the autocomplete
   // caches so the new/altered/dropped object is usable without a manual refresh.
   const refreshCatalog = useCallback(() => {
-    qc.invalidateQueries({ queryKey: ["workspace", ws, "schemas"] });
-    qc.invalidateQueries({ queryKey: ["workspace", ws, "schema"] });
+    qc.invalidateQueries({ queryKey: ["workspace", ws, "catalog"] });
   }, [qc, ws]);
   // The last dispatched statement streams to "done" via the reactive query
   // hooks rather than being awaited in runPayload, so remember whether it was
@@ -341,8 +352,9 @@ export function WorksheetPage() {
     }
   }
 
-  function insertTableSnippet(schema: string, table: string) {
-    const snippet = `SELECT * FROM ${schema}.${table} LIMIT 100`;
+  function insertTableSnippet(catalog: string, schema: string, table: string) {
+    // Fully qualify so the snippet resolves regardless of the active catalog.
+    const snippet = `SELECT * FROM ${catalog}.${schema}.${table} LIMIT 100`;
     setTabs((prev) =>
       prev.map((t) =>
         t.id === activeTab ? { ...t, sql: snippet, dirty: true } : t,
@@ -393,6 +405,7 @@ export function WorksheetPage() {
           opts: {
             timeout: timeout * 60,
             savedQueryId: currentTab?.savedQueryId,
+            catalog: resolvedCatalog,
           },
         });
         setActiveQueryId(result.id);
@@ -614,8 +627,8 @@ export function WorksheetPage() {
                     <CatalogTree
                       ws={ws}
                       workspaceName={workspace?.name ?? ws}
-                      onTableClick={(schema, table) => {
-                        insertTableSnippet(schema, table);
+                      onTableClick={(catalog, schema, table) => {
+                        insertTableSnippet(catalog, schema, table);
                         setCatalogOpen(false);
                       }}
                     />
@@ -626,8 +639,25 @@ export function WorksheetPage() {
             <AgentPicker
               value={resolvedAgentId}
               onChange={setAgentId}
-              workspaceBackend={workspace?.storage_backend_kind}
+              workspaceBackend={workspace?.storage_backend_kind ?? undefined}
             />
+
+            {catalogs.length > 0 && (
+              <select
+                aria-label="Active catalog"
+                value={resolvedCatalog ?? ""}
+                onChange={(e) => setActiveCatalog(e.target.value)}
+                className="h-8 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 text-xs text-text-primary"
+                title="Active catalog (USEd for unqualified table names)"
+              >
+                {catalogs.map((c) => (
+                  <option key={c.id} value={c.slug}>
+                    {c.slug}
+                    {c.is_default ? " (default)" : ""}
+                  </option>
+                ))}
+              </select>
+            )}
 
             <Popover>
               <PopoverTrigger asChild>

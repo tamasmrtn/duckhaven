@@ -9,7 +9,7 @@ describe('useTableSnapshots()', () => {
   it('loads newest-first snapshot history for a written table', async () => {
     const { queryClient, wrapper } = createWrapper()
     const { result } = renderHook(
-      () => useTableSnapshots('acme-analytics', 'raw', 'events'),
+      () => useTableSnapshots('acme-analytics', 'acme_analytics', 'raw', 'events'),
       { wrapper },
     )
 
@@ -27,7 +27,7 @@ describe('useTableSnapshots()', () => {
     const { queryClient, wrapper } = createWrapper()
     const { result } = renderHook(
       // The `users` fixture has snapshot_id === null.
-      () => useTableSnapshots('acme-analytics', 'raw', 'users'),
+      () => useTableSnapshots('acme-analytics', 'acme_analytics', 'raw', 'users'),
       { wrapper },
     )
 
@@ -40,13 +40,13 @@ describe('useTableSnapshots()', () => {
   it('surfaces a 404 for an unknown table', async () => {
     server.use(
       http.get(
-        '/api/workspaces/:ws/schemas/:schema/tables/:table/snapshots',
+        '/api/workspaces/:ws/catalogs/:catalog/schemas/:schema/tables/:table/snapshots',
         () => HttpResponse.json({ detail: 'Table not found' }, { status: 404 }),
       ),
     )
     const { queryClient, wrapper } = createWrapper()
     const { result } = renderHook(
-      () => useTableSnapshots('acme-analytics', 'raw', 'ghost'),
+      () => useTableSnapshots('acme-analytics', 'acme_analytics', 'raw', 'ghost'),
       { wrapper },
     )
 

@@ -23,4 +23,4 @@ class StorageBackend(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
-    workspaces: Mapped[list[Workspace]] = relationship(back_populates="storage_backend")
+    catalogs: Mapped[list[Catalog]] = relationship(back_populates="storage_backend")

@@ -1,6 +1,6 @@
 import { type Locator, type Page } from "@playwright/test";
 
-import { BASE_URL, WS_SLUG } from "../helpers";
+import { BASE_URL, DEFAULT_CATALOG, WS_SLUG } from "../helpers";
 
 export class CatalogPage {
   constructor(private readonly page: Page) {}
@@ -9,14 +9,16 @@ export class CatalogPage {
     await this.page.goto(`${BASE_URL}/${ws}/catalog`);
   }
 
-  async gotoTable(schema: string, table: string, ws = WS_SLUG): Promise<void> {
-    await this.page.goto(`${BASE_URL}/${ws}/catalog/${schema}/${table}`);
+  /** Open a table's detail view. The route is catalog-scoped:
+   * `/$ws/catalog/$catalog/$schema/$table`. */
+  async gotoTable(catalog: string, schema: string, table: string, ws = WS_SLUG): Promise<void> {
+    await this.page.goto(`${BASE_URL}/${ws}/catalog/${catalog}/${schema}/${table}`);
   }
 
-  async expandWorkspace(ws = WS_SLUG): Promise<void> {
-    // The catalog tree auto-expands schema nodes, so only click to expand when
-    // the node is currently collapsed (clicking an open node would collapse it).
-    const node = this.page.getByRole("button", { name: ws });
+  /** Ensure the catalog node is expanded so its schemas/tables are revealed.
+   * The default catalog auto-expands, so this only clicks when collapsed. */
+  async expandCatalog(catalog = DEFAULT_CATALOG): Promise<void> {
+    const node = this.page.getByRole("button", { name: catalog }).first();
     if ((await node.getAttribute("aria-expanded")) === "false") {
       await node.click();
     }

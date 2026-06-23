@@ -12,6 +12,9 @@ class QueryCreate(BaseModel):
     # When the run originates from a saved query, its id is sent so the backend
     # can stamp the saved query's last_run_at.
     saved_query_id: uuid.UUID | None = None
+    # The worksheet's active catalog (slug) — `USE`d for unqualified table names.
+    # When omitted the workspace's default catalog is used.
+    catalog: str | None = None
 
 
 class QueryOut(BaseModel):

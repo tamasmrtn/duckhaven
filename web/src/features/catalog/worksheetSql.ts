@@ -44,12 +44,29 @@ export function takePendingQuery(ws: string): PendingQuery | null {
 
 const quote = (ident: string) => `"${ident.replace(/"/g, '""')}"`;
 
-export function selectTemplate(schema: string, table: string): string {
-  return `SELECT * FROM ${quote(schema)}.${quote(table)} LIMIT 100;`;
+// Fully-qualify a table reference. With a catalog it emits
+// `"catalog"."schema"."table"` so the SQL resolves regardless of the
+// worksheet's active catalog (cross-catalog safe); without one it stays
+// `"schema"."table"` and binds against the active catalog.
+function ref(schema: string, table: string, catalog?: string): string {
+  const tail = `${quote(schema)}.${quote(table)}`;
+  return catalog ? `${quote(catalog)}.${tail}` : tail;
 }
 
-export function alterTemplate(schema: string, table: string): string {
-  return `ALTER TABLE ${quote(schema)}.${quote(table)} ADD COLUMN new_column VARCHAR;`;
+export function selectTemplate(
+  schema: string,
+  table: string,
+  catalog?: string,
+): string {
+  return `SELECT * FROM ${ref(schema, table, catalog)} LIMIT 100;`;
+}
+
+export function alterTemplate(
+  schema: string,
+  table: string,
+  catalog?: string,
+): string {
+  return `ALTER TABLE ${ref(schema, table, catalog)} ADD COLUMN new_column VARCHAR;`;
 }
 
 // Iceberg time-travel ("query at this snapshot"). DuckDB's `AT (...)` clause
@@ -60,15 +77,17 @@ export function snapshotByVersionTemplate(
   schema: string,
   table: string,
   snapshotId: string,
+  catalog?: string,
 ): string {
-  return `SELECT * FROM ${quote(schema)}.${quote(table)} AT (VERSION => ${snapshotId}) LIMIT 100;`;
+  return `SELECT * FROM ${ref(schema, table, catalog)} AT (VERSION => ${snapshotId}) LIMIT 100;`;
 }
 
 export function snapshotByTimestampTemplate(
   schema: string,
   table: string,
   isoTimestamp: string,
+  catalog?: string,
 ): string {
   const ts = isoTimestamp.replace(/'/g, "''");
-  return `SELECT * FROM ${quote(schema)}.${quote(table)} AT (TIMESTAMP => '${ts}') LIMIT 100;`;
+  return `SELECT * FROM ${ref(schema, table, catalog)} AT (TIMESTAMP => '${ts}') LIMIT 100;`;
 }

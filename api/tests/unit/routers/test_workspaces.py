@@ -43,102 +43,45 @@ async def test_list_workspaces_empty(auth_client: AsyncClient):
     assert resp.json() == []
 
 
-async def test_create_and_list_workspace(
-    auth_client: AsyncClient, backend: StorageBackend, fake_polaris
-):
-    resp = await auth_client.post(
-        "/workspaces",
-        json={"slug": "myws", "name": "My WS", "storage_backend_id": str(backend.id)},
-    )
+async def test_create_and_list_workspace(auth_client: AsyncClient, fake_polaris):
+    resp = await auth_client.post("/workspaces", json={"slug": "myws", "name": "My WS"})
     assert resp.status_code == 201
     data = resp.json()
     assert data["slug"] == "myws"
-    # WorkspaceOut surfaces the backend kind (the web UI renders it).
-    assert data["storage_backend_kind"] == "object_store"
+    # A new workspace starts with no catalog, so no default storage to surface.
+    assert data["default_catalog"] is None
+    assert data["storage_backend_kind"] is None
 
     list_resp = await auth_client.get("/workspaces")
     listed = list_resp.json()
     assert len(listed) == 1
-    assert listed[0]["storage_backend_kind"] == "object_store"
+    assert listed[0]["default_catalog"] is None
 
     detail_resp = await auth_client.get("/workspaces/myws")
     assert detail_resp.status_code == 200
-    assert detail_resp.json()["storage_backend_kind"] == "object_store"
-    # Eager UC provisioning ran: catalog + default `main` schema both exist.
-    assert "myws" in fake_polaris.catalogs
-    assert ("myws", "analytics") in fake_polaris.schemas
-    # object_store is backed by the bundled MinIO bucket, scoped per workspace by
-    # slug, with the vended/internal endpoints in extra_storage.
-    args = fake_polaris.created_catalog_args[-1]
-    assert args["storage_type"] == "S3"
-    assert args["base_location"] == "s3://warehouse/myws"
-    assert args["extra_storage"]["endpoint"] == "http://localhost:9000"
-    assert args["extra_storage"]["endpointInternal"] == "http://minio:9000"
+    assert detail_resp.json()["default_catalog"] is None
 
 
-async def test_create_workspace_auto_provisions_object_store(
-    auth_client: AsyncClient, user: User, fake_polaris, db_session
+async def test_create_workspace_creates_no_catalog(
+    auth_client: AsyncClient, fake_polaris, db_session
 ):
-    """The common case: no storage_backend_id → a bundled object_store backend
-    is auto-provisioned and the catalog lands at the bucket root scoped by slug."""
+    """Workspace creation provisions nothing else: no catalog, no storage
+    backend, and no Polaris call. Catalogs are created/attached afterward."""
     from sqlalchemy import select
 
-    resp = await auth_client.post(
-        "/workspaces",
-        json={"slug": "auto", "name": "Auto"},
-    )
+    from api.models.catalog import Catalog, WorkspaceCatalog
+
+    resp = await auth_client.post("/workspaces", json={"slug": "empty", "name": "Empty"})
     assert resp.status_code == 201
-    assert resp.json()["storage_backend_kind"] == "object_store"
 
-    backends = (await db_session.execute(select(StorageBackend))).scalars().all()
-    assert len(backends) == 1
-    assert backends[0].kind == "object_store"
-    assert backends[0].root_uri == ""
-
-    args = fake_polaris.created_catalog_args[-1]
-    assert args["base_location"] == "s3://warehouse/auto"
-
-
-async def test_auto_provisioned_backend_rolls_back_on_failure(
-    auth_client: AsyncClient, user: User, fake_polaris, db_session
-):
-    """If Polaris fails on a name-only create, the auto-provisioned backend is
-    rolled back too — a failed create leaves nothing behind."""
-    from sqlalchemy import select
-
-    from api.models.workspace import Workspace, WorkspaceMember
-
-    fake_polaris.fail_create_catalog = True
-    resp = await auth_client.post(
-        "/workspaces",
-        json={"slug": "auto-broken", "name": "Auto Broken"},
-    )
-    assert resp.status_code == 502
-    assert (await db_session.execute(select(Workspace))).all() == []
-    assert (await db_session.execute(select(WorkspaceMember))).all() == []
+    assert (await db_session.execute(select(Catalog))).all() == []
+    assert (await db_session.execute(select(WorkspaceCatalog))).all() == []
     assert (await db_session.execute(select(StorageBackend))).all() == []
+    assert fake_polaris.catalogs == {}
 
-
-async def test_create_workspace_rolls_back_on_uc_failure(
-    auth_client: AsyncClient, backend: StorageBackend, fake_polaris, db_session
-):
-    """If UC is unhealthy when the workspace is created, both the pg row
-    and the owner membership are rolled back so the caller can retry."""
-    from sqlalchemy import select
-
-    from api.models.workspace import Workspace, WorkspaceMember
-
-    fake_polaris.fail_create_catalog = True
-    resp = await auth_client.post(
-        "/workspaces",
-        json={"slug": "broken", "name": "Broken", "storage_backend_id": str(backend.id)},
-    )
-    assert resp.status_code == 502
-    # Neither the workspace nor any membership for it lingers in pg.
-    ws_rows = (await db_session.execute(select(Workspace).where(Workspace.slug == "broken"))).all()
-    assert ws_rows == []
-    mem_rows = (await db_session.execute(select(WorkspaceMember))).all()
-    assert mem_rows == []
+    # Browsing schemas before any catalog exists yields a clean 404, not a 500.
+    schemas = await auth_client.get("/workspaces/empty/schemas")
+    assert schemas.status_code == 404
 
 
 async def test_create_duplicate_slug(auth_client: AsyncClient, backend: StorageBackend):

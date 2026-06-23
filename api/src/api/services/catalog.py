@@ -33,51 +33,41 @@ async def create_catalog(
     db: AsyncSession,
     polaris: PolarisClient,
     *,
-    slug: str,
     name: str,
     backend: StorageBackend,
     created_by: uuid.UUID,
-    polaris_name: str | None = None,
 ) -> Catalog:
     """Provision a new catalog's Polaris catalog + default namespace and persist
-    its record. ``polaris_name`` defaults to the (globally-unique, identifier-safe)
-    slug; a workspace's default catalog overrides it to the workspace slug so the
-    Polaris catalog is named after the workspace (legacy parity). Rolls back the
-    pg row if Polaris provisioning fails (D7)."""
-    validate_catalog_slug(slug)
-    existing = await db.execute(select(Catalog).where(Catalog.slug == slug))
+    its record. A catalog has a single identifier-safe ``name`` that doubles as
+    its slug and Polaris name. Rolls back the pg row if Polaris provisioning
+    fails (D7)."""
+    validate_catalog_slug(name)
+    existing = await db.execute(select(Catalog).where(Catalog.slug == name))
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=f"Catalog slug '{slug}' already taken"
+            status_code=status.HTTP_409_CONFLICT, detail=f"Catalog '{name}' already taken"
         )
 
-    polaris_name = polaris_name or slug
-    dupe_name = await db.execute(select(Catalog).where(Catalog.polaris_name == polaris_name))
-    if dupe_name.scalar_one_or_none() is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Catalog name '{polaris_name}' already taken",
-        )
     storage_type, base_location, extra_storage = polaris_storage(backend.kind, backend.root_uri)
     try:
         await ensure_polaris_catalog(
             polaris,
-            polaris_name,
+            name,
             storage_type=storage_type,
             base_location=base_location,
             extra_storage=extra_storage,
         )
     except PolarisError as exc:
-        logger.warning("Polaris provisioning failed for catalog=%s: %s", slug, exc)
+        logger.warning("Polaris provisioning failed for catalog=%s: %s", name, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Polaris provisioning failed: {exc}",
         ) from exc
 
     catalog = Catalog(
-        slug=slug,
+        slug=name,
         name=name,
-        polaris_name=polaris_name,
+        polaris_name=name,
         storage_backend_id=backend.id,
         created_by=created_by,
     )

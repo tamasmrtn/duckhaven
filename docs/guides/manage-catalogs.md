@@ -18,9 +18,11 @@ new catalog. **Create schema** lives on each catalog node's right-click menu.
 
 ## Catalogs
 
-- **Create a catalog** — the **+** button provisions a new catalog (its own Polaris catalog + storage) and attaches it
-  to the workspace. Give it an identifier-safe slug (lowercase letters, digits, underscores) used in
-  `catalog.schema.table` SQL.
+- **Create a catalog** — the **+ → Create catalog** provisions a new catalog (its own Polaris catalog + storage) and
+  attaches it to the workspace. Give it a **name** — identifier-safe (lowercase letters, digits, underscores; the name
+  is also the slug used in `catalog.schema.table` SQL) — and **choose its storage backend** right in the dialog: the
+  bundled object store, an existing backend, or a new external S3/ADLS one. (Storage is a per-catalog choice; there is
+  no separate workspace storage.)
 - **Attach an existing catalog** — the **link** button binds a catalog that already exists (possibly created in another
   workspace) to this one. The same catalog can be attached to several workspaces.
 - **Detach** — right-click a catalog node → *Detach from workspace*. The catalog survives for any other workspace it is

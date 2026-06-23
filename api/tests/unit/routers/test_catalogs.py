@@ -29,9 +29,7 @@ async def auth_client(client: AsyncClient, owner: User) -> AsyncClient:
 async def test_create_catalog_and_list(auth_client, owner, db_session, fake_polaris: FakePolaris):
     await seed_workspace(db_session, user_id=owner.id, slug="dev", name="Dev")
 
-    resp = await auth_client.post(
-        "/workspaces/dev/catalogs", json={"slug": "curated", "name": "Curated"}
-    )
+    resp = await auth_client.post("/workspaces/dev/catalogs", json={"name": "curated"})
     assert resp.status_code == 201, resp.text
     assert resp.json()["slug"] == "curated"
     # The new catalog was provisioned in Polaris under its own name.
@@ -48,15 +46,13 @@ async def test_create_catalog_and_list(auth_client, owner, db_session, fake_pola
 
 async def test_create_requires_owner(auth_client, owner, db_session):
     await seed_workspace(db_session, user_id=owner.id, slug="ro", name="RO", role="reader")
-    resp = await auth_client.post("/workspaces/ro/catalogs", json={"slug": "c", "name": "C"})
+    resp = await auth_client.post("/workspaces/ro/catalogs", json={"name": "c"})
     assert resp.status_code == 403
 
 
 async def test_invalid_slug_rejected(auth_client, owner, db_session):
     await seed_workspace(db_session, user_id=owner.id, slug="dev", name="Dev")
-    resp = await auth_client.post(
-        "/workspaces/dev/catalogs", json={"slug": "Bad-Slug", "name": "X"}
-    )
+    resp = await auth_client.post("/workspaces/dev/catalogs", json={"name": "Bad-Slug"})
     assert resp.status_code == 422
 
 
@@ -65,9 +61,7 @@ async def test_attach_same_catalog_to_two_workspaces(auth_client, owner, db_sess
     await seed_workspace(db_session, user_id=owner.id, slug="dev", name="Dev")
     await seed_workspace(db_session, user_id=owner.id, slug="prod", name="Prod")
 
-    created = await auth_client.post(
-        "/workspaces/dev/catalogs", json={"slug": "shared", "name": "Shared"}
-    )
+    created = await auth_client.post("/workspaces/dev/catalogs", json={"name": "shared"})
     catalog_id = created.json()["id"]
 
     attach = await auth_client.post(
@@ -84,9 +78,7 @@ async def test_drop_blocked_while_attached_then_succeeds(
     auth_client, owner, db_session, fake_polaris
 ):
     await seed_workspace(db_session, user_id=owner.id, slug="dev", name="Dev")
-    created = await auth_client.post(
-        "/workspaces/dev/catalogs", json={"slug": "temp", "name": "Temp"}
-    )
+    created = await auth_client.post("/workspaces/dev/catalogs", json={"name": "temp"})
     catalog_id = created.json()["id"]
 
     # Still attached to 'dev' → drop is refused.
@@ -103,7 +95,7 @@ async def test_drop_blocked_while_attached_then_succeeds(
 
 async def test_detach_default_promotes_another(auth_client, owner, db_session, fake_polaris):
     await seed_workspace(db_session, user_id=owner.id, slug="dev", name="Dev")
-    await auth_client.post("/workspaces/dev/catalogs", json={"slug": "second", "name": "Second"})
+    await auth_client.post("/workspaces/dev/catalogs", json={"name": "second"})
 
     # Detach the default ('dev'); the remaining catalog must become default.
     detach = await auth_client.delete("/workspaces/dev/catalogs/dev")

@@ -73,11 +73,7 @@ async def _make_workspace(
     # legacy default-catalog schema routes these tests exercise resolve.
     cat = await auth_client.post(
         f"/workspaces/{slug}/catalogs",
-        json={
-            "slug": slug.replace("-", "_"),
-            "name": slug.title(),
-            "storage_backend_id": str(backend.id),
-        },
+        json={"name": slug.replace("-", "_"), "storage_backend_id": str(backend.id)},
     )
     assert cat.status_code == 201, cat.text
     return resp.json()["slug"]

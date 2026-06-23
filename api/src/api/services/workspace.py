@@ -177,22 +177,6 @@ def validate_catalog_slug(slug: str) -> str:
     return slug
 
 
-async def derive_catalog_slug(db: AsyncSession, base: str) -> str:
-    """Turn an arbitrary label (e.g. a workspace slug with hyphens) into a
-    globally-unique, identifier-safe catalog slug, suffixing on collision."""
-    sanitized = re.sub(r"[^a-z0-9_]", "_", base.lower())
-    if not sanitized or not sanitized[0].isalpha():
-        sanitized = f"c_{sanitized}".rstrip("_")
-    sanitized = sanitized[:240] or "catalog"
-    candidate, n = sanitized, 1
-    while (
-        await db.execute(select(Catalog).where(Catalog.slug == candidate))
-    ).scalar_one_or_none() is not None:
-        n += 1
-        candidate = f"{sanitized}_{n}"
-    return candidate
-
-
 async def resolve_workspace_catalogs(db: AsyncSession, workspace_id: uuid.UUID) -> list[Catalog]:
     """All catalogs attached to a workspace, each with its storage backend loaded."""
     rows = await db.execute(

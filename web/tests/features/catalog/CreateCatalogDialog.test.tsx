@@ -31,14 +31,14 @@ describe('CreateCatalogDialog', () => {
     )
     renderDialog()
 
-    await user.type(await screen.findByLabelText('Slug'), 'staging')
-    await user.type(screen.getByLabelText('Name'), 'Staging')
+    await user.type(await screen.findByLabelText('Name'), 'staging')
     await user.click(screen.getByRole('button', { name: /^create$/i }))
 
     await vi.waitFor(() => expect(body).toBeDefined())
-    // Default flow omits the backend → API auto-provisions bundled object storage.
+    // Storage defaults to bundled object storage → no backend id sent.
     expect(body!.storage_backend_id).toBeUndefined()
-    expect(body).toMatchObject({ slug: 'staging', name: 'Staging' })
+    expect(body).toMatchObject({ name: 'staging' })
+    expect(body).not.toHaveProperty('slug')
   })
 
   it('advanced flow creates an external backend then the catalog on it', async () => {
@@ -73,9 +73,9 @@ describe('CreateCatalogDialog', () => {
     )
     renderDialog()
 
-    await user.type(await screen.findByLabelText('Slug'), 'archive')
-    await user.type(screen.getByLabelText('Name'), 'Archive')
-    await user.click(screen.getByRole('button', { name: /advanced/i }))
+    await user.type(await screen.findByLabelText('Name'), 'archive')
+    // The storage picker is shown up front (not behind Advanced); pick a new
+    // external backend and fill its details.
     await user.selectOptions(
       await screen.findByLabelText('Storage backend'),
       '__new',
@@ -91,7 +91,7 @@ describe('CreateCatalogDialog', () => {
       root_uri: 's3://acme/duckhaven/',
     })
     expect(catalogBody).toMatchObject({
-      slug: 'archive',
+      name: 'archive',
       storage_backend_id: 'sb-ext',
     })
   })

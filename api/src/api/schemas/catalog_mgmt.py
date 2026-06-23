@@ -9,10 +9,12 @@ from pydantic import BaseModel, Field
 
 
 class CatalogCreate(BaseModel):
-    slug: str = Field(min_length=1, max_length=255)
+    # A catalog has a single identifier-safe name (it is also the slug used in
+    # `catalog.schema.table` SQL). Validated against ^[a-z][a-z0-9_]*$ by the
+    # service layer.
     name: str = Field(min_length=1, max_length=255)
     # Storage backend for the new catalog. When omitted a bundled object-store
-    # backend is auto-provisioned (mirrors workspace creation).
+    # backend is auto-provisioned.
     storage_backend_id: uuid.UUID | None = None
 
 

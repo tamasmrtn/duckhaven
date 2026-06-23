@@ -26,7 +26,7 @@ describe('catalog hooks', () => {
     const { wrapper } = createWrapper()
     const create = renderHook(() => useCreateCatalog('home-lab'), { wrapper })
     await act(async () => {
-      await create.result.current.mutateAsync({ slug: 'staging', name: 'Staging' })
+      await create.result.current.mutateAsync({ name: 'staging' })
     })
     const list = renderHook(() => useCatalogs('home-lab'), { wrapper })
     await waitFor(() => expect(list.result.current.isSuccess).toBe(true))

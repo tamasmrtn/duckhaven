@@ -130,7 +130,7 @@ async def create_workspace_catalog(
             )
 
     catalog = await catalog_service.create_catalog(
-        db, polaris, slug=body.slug, name=body.name, backend=backend, created_by=user.id
+        db, polaris, name=body.name, backend=backend, created_by=user.id
     )
     link = await catalog_service.attach_catalog(
         db, workspace=workspace, catalog=catalog, attached_by=user.id

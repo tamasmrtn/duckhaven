@@ -15,9 +15,9 @@ storage and gets a default `analytics` schema, so you can start querying immedia
 required. The first catalog you attach becomes the workspace's default (used for unqualified table names).
 
 !!! tip "Using external storage"
-    To back a catalog with your own S3 bucket or Azure Data Lake instead of the bundled object store, choose
-    **Advanced** in the create-catalog dialog and register or select that [storage backend](../deployment/storage.md).
-    A catalog's backend is **immutable** after creation.
+    To back a catalog with your own S3 bucket or Azure Data Lake instead of the bundled object store, pick or register
+    that [storage backend](../deployment/storage.md) in the create-catalog dialog's **Storage backend** selector. A
+    catalog's backend is **immutable** after creation.
 
 ## Add members
 

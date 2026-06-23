@@ -35,22 +35,22 @@ export const catalogHandlers = [
     const ws = findWorkspace(params.ws as string);
     if (!ws) return httpError(404, "Workspace not found");
     const body = (await request.json()) as {
-      slug: string;
       name: string;
       storage_backend_id?: string;
     };
-    if (!/^[a-z][a-z0-9_]*$/.test(body.slug)) {
-      return httpError(422, "Invalid catalog slug");
+    // A catalog's name is also its slug — identifier-safe.
+    if (!/^[a-z][a-z0-9_]*$/.test(body.name)) {
+      return httpError(422, "Invalid catalog name");
     }
-    if (CATALOGS.some((c) => c.slug === body.slug)) {
-      return httpError(409, "Catalog slug already taken");
+    if (CATALOGS.some((c) => c.slug === body.name)) {
+      return httpError(409, "Catalog name already taken");
     }
     const first = catalogsForWorkspace(ws.id).length === 0;
     const created = {
-      id: `cat-${body.slug}`,
-      slug: body.slug,
+      id: `cat-${body.name}`,
+      slug: body.name,
       name: body.name,
-      polaris_name: body.slug,
+      polaris_name: body.name,
       // Chosen backend, else a bundled object store (matches the API default).
       storage_backend_id: body.storage_backend_id ?? "sb-bundled",
       storage_backend_kind: "object_store" as const,

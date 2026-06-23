@@ -16,10 +16,10 @@ relevant to it.
 
 ## Creating a workspace
 
-Workspaces can be created name-only: DuckHaven auto-provisions a **default catalog** on the bundled object store with a
-default `analytics` schema, so a new team can start querying immediately. From there an owner can create additional
-catalogs or attach existing ones. To put a catalog on external S3 or ADLS storage, register that
-[storage backend](storage-backends.md) first and select it when creating the catalog.
+Workspaces are created **name-only** and start **empty** — no catalog, no storage. An owner then **creates a catalog**
+(its own Polaris catalog + storage; bundled object storage by default, or an external S3/ADLS backend) or **attaches an
+existing one**. The first catalog attached becomes the workspace's default. See
+[Manage catalogs](../guides/manage-catalogs.md).
 
 !!! note "Shared catalogs"
     Because a catalog can be attached to multiple workspaces, members of any attaching workspace can reach it. This is

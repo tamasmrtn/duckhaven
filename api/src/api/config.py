@@ -56,5 +56,14 @@ class Settings(BaseSettings):
     # due cycle); seconds. Default weekly.
     maintenance_deep_scan_interval_s: float = 7 * 86400.0
 
+    # System-catalog materializer. When enabled, a background loop in the API
+    # lifespan periodically copies query history/audit and an object-metadata
+    # snapshot into the read-only ``duckhaven`` Iceberg catalog. The interval is
+    # the latency contract for ``duckhaven.query.history`` (Postgres remains the
+    # source of truth). Single-writer assumption: run one API replica with this
+    # enabled.
+    system_catalog_sync_enabled: bool = True
+    system_catalog_sync_interval_s: float = 60.0
+
 
 settings = Settings()

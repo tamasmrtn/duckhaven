@@ -14,6 +14,8 @@ dependencies = [
     "duckhaven-shared",
     "httpx>=0.28",
     "duckdb>=1.5",
+    "pyiceberg>=0.8",
+    "pyarrow>=17",
 ]
 
 [tool.uv.sources]

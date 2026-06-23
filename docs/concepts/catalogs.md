@@ -29,6 +29,13 @@ JOIN curated.analytics.users u ON e.user_id = u.id;
 
 The active catalog is chosen per worksheet; existing single-catalog SQL keeps working unchanged.
 
+## The built-in system catalog
+
+Every workspace also sees a built-in, **read-only** catalog named `duckhaven` — the
+[system catalog](system-catalog.md) — that exposes query history, audit events, and a
+cross-workspace object inventory. It is attached automatically, cannot be detached or
+dropped, and rejects writes at the engine layer. The browser badges it `system · read-only`.
+
 ## Polaris owns structure; Postgres does not
 
 DuckHaven never shadows catalog *structure* (schemas, tables, columns) in its own database. Polaris is the source of
@@ -50,4 +57,5 @@ long-lived storage secrets are stored on agents. See [Storage backends](storage-
 ## Related
 
 - [Tables & Iceberg](tables.md) — what lives inside a catalog.
+- [System catalog](system-catalog.md) — the built-in read-only `duckhaven` catalog.
 - [Manage catalogs](../guides/manage-catalogs.md) — create, attach, detach, and drop catalogs and their schemas/tables.

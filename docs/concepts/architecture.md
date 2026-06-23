@@ -232,6 +232,7 @@ surface:
 | `services/sql_guard.py` | The SQL allowlist. Uses `duckdb.extract_statements` to **parse only** and allow data + catalog DDL statements (`SELECT`/`INSERT`/`UPDATE`/`DELETE`/`MERGE`/`CREATE`/`ALTER`/`DROP`), rejecting sandbox-escaping ones (`ATTACH`, `COPY`, `LOAD`, `SET`, …). No connection, no execution. | `routers/queries.py` |
 | `services/agent_capabilities.py` | Maps a backend kind to its required DuckDB extension and checks an agent's advertised capabilities at dispatch time. | `routers/queries.py` |
 | `services/workspace.py` | Membership/role checks (`assert_workspace_member`), workspace lookup, lazy Polaris catalog creation (`ensure_polaris_catalog`), backend→storage mapping (`polaris_storage`). | Polaris, the `Workspace`/`WorkspaceMember` models |
+| `services/system_catalog/` | The built-in read-only **system catalog** (`duckhaven`): provisioning + per-workspace auto-attach (`bootstrap.py`) and the periodic **materializer** (`materialize.py`) that copies query history/audit and an object-metadata snapshot into its Iceberg tables via PyIceberg (`writer.py`). The control plane's only object-store writer. | Polaris (PyIceberg), the `Query`/`Catalog`/`TableMetadata` models |
 | `services/auth.py` | bcrypt password hashing/verification and session-cookie handling. | `routers/auth.py`, `routers/setup.py` |
 
 ### 6.3 `agent/` — `duckhaven-agent` (compute)
@@ -423,6 +424,12 @@ Notes that matter for changes:
   Polaris catalog + storage backend); `workspace_catalogs` binds catalogs to
   workspaces many-to-many, with exactly one `is_default` per workspace. Storage
   is catalog-scoped — a backend cannot be deleted while any catalog references it.
+- **The system catalog is built in and read-only.** A DuckHaven-owned Iceberg
+  catalog (`duckhaven`) is attached to every workspace and exposes query history,
+  audit events, and a cross-workspace object inventory. Postgres remains the
+  source of truth for query history; the system catalog is a bounded-latency
+  derived copy written by the `services/system_catalog` materializer. See the
+  [System catalog](system-catalog.md) page.
 - **`table_metadata` is the catalog sidecar** — keyed by `catalog_id` (the table's
   true home; a shared catalog has one ownership/stats row). It holds what Polaris
   does not track: `owner_id`, `last_write_*`, and agent-computed
@@ -627,7 +634,10 @@ it explicitly rather than working around it.
   DuckDB object only to parse (`sql_guard`) and to decode a result Parquet
   file into JSON rows (`services/query.py`, a fixed `read_parquet` over bytes
   fetched from the agent). It must never `ATTACH` storage, load extensions, or
-  `.execute()` user SQL. All user-query execution happens on agents.
+  `.execute()` user SQL. All user-query execution happens on agents. The one
+  control-plane object-store writer is the system-catalog materializer, which
+  writes DuckHaven's *own* internal Iceberg catalog via PyIceberg/Polaris (no
+  DuckDB, no user SQL).
 - **I2 — Agents initiate the control connection; the control plane does
   not.** The control plane holds no static agent inventory and never dials an
   agent's control channel. Its only outbound reach to an agent is the HTTP

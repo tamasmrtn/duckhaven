@@ -43,6 +43,8 @@ these variables only control the loop itself. The scanner assumes a single API r
 | `MAINTENANCE_SCANNER_ENABLED` | `true` | Master switch for the background scanner loop. Set `false` to disable scanning entirely (e.g. when running multiple API replicas). |
 | `MAINTENANCE_SCAN_TICK_S` | `900` | How often (seconds) the loop wakes to check whether a scan is due per the runtime cadence. |
 | `MAINTENANCE_DEEP_SCAN_INTERVAL_S` | `604800` (7 days) | How often the expensive orphan/storage tier runs; cheap metadata probes run every due cycle. |
+| `SYSTEM_CATALOG_SYNC_ENABLED` | `true` | Master switch for the [system catalog](system-catalog.md) materializer loop. Set `false` to disable it (e.g. when running multiple API replicas — keep it on exactly one). |
+| `SYSTEM_CATALOG_SYNC_INTERVAL_S` | `60` | How often (seconds) query history/audit are copied into the system catalog — its freshness/latency contract. |
 
 ## Agent
 

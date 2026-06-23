@@ -95,6 +95,7 @@ nav:
       - Architecture: concepts/architecture.md
       - Workspaces: concepts/workspaces.md
       - Catalogs & Polaris: concepts/catalogs.md
+      - System catalog: concepts/system-catalog.md
       - Tables & Iceberg: concepts/tables.md
       - Agents: concepts/agents.md
       - Storage backends: concepts/storage-backends.md
@@ -123,6 +124,7 @@ nav:
       - Troubleshooting: operations/troubleshooting.md
   - Reference:
       - Configuration: reference/configuration.md
+      - System catalog: reference/system-catalog.md
       - SQL support: reference/sql-support.md
       - Agent reference: reference/agent-reference.md
       - REST API: reference/rest-api.md

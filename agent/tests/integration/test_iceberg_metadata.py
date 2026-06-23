@@ -25,16 +25,22 @@ def _attach(
     ns: str,
     creds,
 ) -> None:
-    runner._attach_polaris(
+    runner._attach_catalogs(
         conn,
-        warehouse=warehouse,
+        catalogs=[
+            {
+                "slug": warehouse,
+                "polaris_name": warehouse,
+                "backend": {"kind": "s3"},
+                "default_schema": ns,
+            }
+        ],
+        active_catalog=warehouse,
         polaris={
             "endpoint": base_url,
             "client_id": creds[0],
             "client_secret": creds[1],
         },
-        delegation_mode="vended_credentials",
-        default_schema=ns,
     )
 
 
@@ -50,7 +56,7 @@ async def test_iceberg_metadata_on_written_table(
         conn.execute("LOAD httpfs")
         _attach(conn, polaris_base_url, catalog, ns, polaris_creds)
         conn.execute("INSERT INTO events VALUES (1, 'one'), (2, 'two')")
-        meta = runner._iceberg_metadata(conn, ns, "events")
+        meta = runner._iceberg_metadata(conn, catalog, ns, "events")
     finally:
         conn.close()
 

@@ -13,9 +13,16 @@ pytestmark = pytest.mark.integration
 
 
 @pytest_asyncio.fixture
-async def workspace_slug(workspace_factory) -> str:
+async def workspace_slug(admin_client, workspace_factory) -> str:
     ws = await workspace_factory(name="Catalog Ops")
-    return ws["slug"]
+    slug = ws["slug"]
+    # Workspaces no longer auto-create a catalog; attach a default one so the
+    # legacy default-catalog schema/table routes these tests use resolve.
+    created = await admin_client.post(
+        f"/workspaces/{slug}/catalogs", json={"name": f"c_{slug.replace('-', '_')}"}
+    )
+    assert created.status_code == 201, created.text
+    return slug
 
 
 async def test_schema_create_list_drop(admin_client, workspace_slug) -> None:

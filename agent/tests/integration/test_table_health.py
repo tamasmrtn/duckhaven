@@ -30,16 +30,22 @@ def _attach(
     ns: str,
     creds,
 ) -> None:
-    runner._attach_polaris(
+    runner._attach_catalogs(
         conn,
-        warehouse=warehouse,
+        catalogs=[
+            {
+                "slug": warehouse,
+                "polaris_name": warehouse,
+                "backend": {"kind": "s3"},
+                "default_schema": ns,
+            }
+        ],
+        active_catalog=warehouse,
         polaris={
             "endpoint": base_url,
             "client_id": creds[0],
             "client_secret": creds[1],
         },
-        delegation_mode="vended_credentials",
-        default_schema=ns,
     )
 
 
@@ -60,7 +66,7 @@ async def test_collect_table_health_on_written_table(
         conn.execute("INSERT INTO events VALUES (2, 'two')")
         conn.execute("INSERT INTO events VALUES (3, 'three')")
         health = runner.collect_table_health(
-            conn, ns, "events", target_file_bytes=_TARGET_FILE_BYTES
+            conn, catalog, ns, "events", target_file_bytes=_TARGET_FILE_BYTES
         )
     finally:
         conn.close()
@@ -98,6 +104,7 @@ async def test_collect_table_health_deep_tier_estimates_orphans(
         conn.execute("INSERT INTO events VALUES (1, 'one'), (2, 'two')")
         health = runner.collect_table_health(
             conn,
+            catalog,
             ns,
             "events",
             target_file_bytes=_TARGET_FILE_BYTES,

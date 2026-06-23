@@ -9,8 +9,10 @@ export const catalogsApi = {
   // Every catalog in the deployment — the attach picker's source.
   listAll: () => get<Catalog[]>(`/catalogs`),
 
-  create: (ws: string, body: { slug: string; name: string }) =>
-    post<Catalog>(`/workspaces/${ws}/catalogs`, body),
+  create: (
+    ws: string,
+    body: { slug: string; name: string; storage_backend_id?: string },
+  ) => post<Catalog>(`/workspaces/${ws}/catalogs`, body),
 
   // Attach an existing catalog to a workspace (M:N sharing).
   attach: (ws: string, catalogId: string, makeDefault = false) =>

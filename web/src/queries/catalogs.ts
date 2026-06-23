@@ -19,8 +19,11 @@ export function useAllCatalogs() {
 export function useCreateCatalog(ws: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { slug: string; name: string }) =>
-      catalogsApi.create(ws, body),
+    mutationFn: (body: {
+      slug: string;
+      name: string;
+      storage_backend_id?: string;
+    }) => catalogsApi.create(ws, body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["workspace", ws, "catalogs"] });
       qc.invalidateQueries({ queryKey: ["catalogs"] });

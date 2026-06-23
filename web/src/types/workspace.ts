@@ -6,8 +6,11 @@ export interface Workspace {
   id: string;
   slug: string;
   name: string;
-  storage_backend_id: string;
-  storage_backend_kind: BackendKind;
+  // Storage lives on catalogs now; these summarize the workspace's default
+  // catalog and are null when the workspace has no catalog attached yet.
+  default_catalog: string | null;
+  storage_backend_id: string | null;
+  storage_backend_kind: BackendKind | null;
   created_at: string;
 }
 

@@ -17,11 +17,30 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { StorageIcon } from "@/components/app/StorageIcon";
 import {
   useAllCatalogs,
   useAttachCatalog,
   useCreateCatalog,
 } from "@/queries/catalogs";
+import {
+  useCreateStorageBackend,
+  useStorageBackends,
+} from "@/queries/storage-backends";
+import { cn } from "@/utils";
+
+// External, operator-owned stores only. Bundled object storage (MinIO) needs no
+// configuration — it is auto-provisioned when no backend is chosen.
+const EXTERNAL_KINDS = ["s3", "adls_gen2"] as const;
+type ExternalKind = (typeof EXTERNAL_KINDS)[number];
+const KIND_LABELS: Record<ExternalKind, string> = {
+  s3: "S3",
+  adls_gen2: "ADLS Gen 2",
+};
+const KIND_URI_PLACEHOLDER: Record<ExternalKind, string> = {
+  s3: "s3://my-bucket/duckhaven/",
+  adls_gen2: "abfss://container@account.dfs.core.windows.net/duckhaven/",
+};
 
 export function CreateCatalogDialog({
   ws,
@@ -35,12 +54,32 @@ export function CreateCatalogDialog({
   const [slug, setSlug] = useState("");
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  // Storage selection (moved here from workspace creation): default to bundled
+  // object storage; advanced lets the user pick an existing or external backend.
+  const { data: backends = [] } = useStorageBackends();
+  const createBackend = useCreateStorageBackend();
+  const [advanced, setAdvanced] = useState(false);
+  const [pickNew, setPickNew] = useState(false);
+  const [selectedBackendId, setSelectedBackendId] = useState("");
+  const [kind, setKind] = useState<ExternalKind>("s3");
+  const [backendName, setBackendName] = useState("");
+  const [rootUri, setRootUri] = useState("");
+
   const create = useCreateCatalog(ws);
+  const creatingBackend = pickNew || (advanced && backends.length === 0);
+  const pending = create.isPending || createBackend.isPending;
 
   function reset() {
     setSlug("");
     setName("");
     setError(null);
+    setAdvanced(false);
+    setPickNew(false);
+    setSelectedBackendId("");
+    setKind("s3");
+    setBackendName("");
+    setRootUri("");
   }
 
   async function handleCreate() {
@@ -49,7 +88,26 @@ export function CreateCatalogDialog({
       return;
     }
     try {
-      await create.mutateAsync({ slug: slug.trim(), name: name.trim() });
+      // Default: omit the backend so the API auto-provisions bundled object
+      // storage (MinIO). Advanced picks an existing or external backend.
+      let storage_backend_id: string | undefined;
+      if (advanced && creatingBackend) {
+        const sb = await createBackend.mutateAsync({
+          kind,
+          name: backendName,
+          root_uri: rootUri,
+        });
+        storage_backend_id = sb.id;
+      } else if (advanced) {
+        const sb =
+          backends.find((b) => b.id === selectedBackendId) ?? backends[0];
+        storage_backend_id = sb?.id;
+      }
+      await create.mutateAsync({
+        slug: slug.trim(),
+        name: name.trim(),
+        storage_backend_id,
+      });
       reset();
       onOpenChange(false);
     } catch (err) {
@@ -97,14 +155,110 @@ export function CreateCatalogDialog({
               placeholder="Curated"
             />
           </div>
+
+          <div className="space-y-2">
+            {!advanced && (
+              <p className="text-2xs text-text-tertiary">
+                Tables live in the bundled object storage (MinIO).
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={() => setAdvanced((v) => !v)}
+              className="text-2xs text-text-tertiary underline-offset-2 hover:text-text-secondary hover:underline"
+            >
+              {advanced
+                ? "Use bundled object storage"
+                : "Advanced: use an existing or external store"}
+            </button>
+
+            {advanced && (
+              <div className="space-y-1.5">
+                <Label htmlFor="catalog-backend">Storage backend</Label>
+                {backends.length > 0 && (
+                  <select
+                    id="catalog-backend"
+                    value={creatingBackend ? "__new" : selectedBackendId}
+                    onChange={(e) => {
+                      if (e.target.value === "__new") {
+                        setPickNew(true);
+                      } else {
+                        setPickNew(false);
+                        setSelectedBackendId(e.target.value);
+                      }
+                    }}
+                    className="h-9 w-full rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 text-sm"
+                  >
+                    <option value="" disabled>
+                      Select a backend…
+                    </option>
+                    {backends.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name} (
+                        {b.kind === "object_store"
+                          ? "Object storage"
+                          : KIND_LABELS[b.kind as ExternalKind]}
+                        )
+                      </option>
+                    ))}
+                    <option value="__new">+ New external backend…</option>
+                  </select>
+                )}
+
+                {creatingBackend && (
+                  <div className="space-y-3 rounded-md border border-[var(--border-subtle)] p-3">
+                    <div className="grid grid-cols-2 gap-2">
+                      {EXTERNAL_KINDS.map((k) => (
+                        <button
+                          key={k}
+                          type="button"
+                          onClick={() => setKind(k)}
+                          className={cn(
+                            "flex items-center gap-2 rounded-md border p-2 text-sm transition-colors",
+                            kind === k
+                              ? "border-[var(--brand-slate-blue)] bg-accent text-text-primary"
+                              : "border-[var(--border-subtle)] text-text-secondary hover:border-[var(--border-strong)]",
+                          )}
+                        >
+                          <StorageIcon kind={k} />
+                          {KIND_LABELS[k]}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="catalog-sb-name">Backend name</Label>
+                      <Input
+                        id="catalog-sb-name"
+                        value={backendName}
+                        onChange={(e) => setBackendName(e.target.value)}
+                        placeholder="primary-store"
+                        className="h-9"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="catalog-sb-uri">Root URI</Label>
+                      <Input
+                        id="catalog-sb-uri"
+                        value={rootUri}
+                        onChange={(e) => setRootUri(e.target.value)}
+                        placeholder={KIND_URI_PLACEHOLDER[kind]}
+                        className="h-9 font-mono text-xs"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           {error && <p className="text-xs text-red-500">{error}</p>}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={handleCreate} disabled={create.isPending}>
-            {create.isPending ? "Creating…" : "Create"}
+          <Button onClick={handleCreate} disabled={pending}>
+            {pending ? "Creating…" : "Create"}
           </Button>
         </DialogFooter>
       </DialogContent>

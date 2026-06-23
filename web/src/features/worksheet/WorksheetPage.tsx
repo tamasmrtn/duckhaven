@@ -639,7 +639,7 @@ export function WorksheetPage() {
             <AgentPicker
               value={resolvedAgentId}
               onChange={setAgentId}
-              workspaceBackend={workspace?.storage_backend_kind}
+              workspaceBackend={workspace?.storage_backend_kind ?? undefined}
             />
 
             {catalogs.length > 0 && (

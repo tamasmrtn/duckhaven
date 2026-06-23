@@ -6,7 +6,8 @@ export const workspacesApi = {
 
   get: (ws: string) => get<Workspace>(`/workspaces/${ws}`),
 
-  create: (data: { slug: string; name: string; storage_backend_id?: string }) =>
+  // A new workspace starts with no catalog; storage is chosen per catalog.
+  create: (data: { slug: string; name: string }) =>
     post<Workspace>("/workspaces", data),
 
   members: (ws: string) => get<WorkspaceMember[]>(`/workspaces/${ws}/members`),

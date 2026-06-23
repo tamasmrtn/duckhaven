@@ -34,7 +34,11 @@ export const catalogHandlers = [
   http.post("/api/workspaces/:ws/catalogs", async ({ params, request }) => {
     const ws = findWorkspace(params.ws as string);
     if (!ws) return httpError(404, "Workspace not found");
-    const body = (await request.json()) as { slug: string; name: string };
+    const body = (await request.json()) as {
+      slug: string;
+      name: string;
+      storage_backend_id?: string;
+    };
     if (!/^[a-z][a-z0-9_]*$/.test(body.slug)) {
       return httpError(422, "Invalid catalog slug");
     }
@@ -47,8 +51,9 @@ export const catalogHandlers = [
       slug: body.slug,
       name: body.name,
       polaris_name: body.slug,
-      storage_backend_id: ws.storage_backend_id,
-      storage_backend_kind: ws.storage_backend_kind,
+      // Chosen backend, else a bundled object store (matches the API default).
+      storage_backend_id: body.storage_backend_id ?? "sb-bundled",
+      storage_backend_kind: "object_store" as const,
       created_at: new Date().toISOString(),
       is_default: first,
       attached_workspaces: 1,

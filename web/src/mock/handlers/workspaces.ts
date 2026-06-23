@@ -4,7 +4,6 @@ import {
   WORKSPACE_MEMBERS,
   findWorkspace,
 } from "../fixtures/workspaces";
-import { STORAGE_BACKENDS } from "../fixtures/storage-backends";
 import { nextId } from "../lib/seed";
 import { httpError } from "../lib/errors";
 import type { WorkspaceMemberRole } from "@/types/workspace";
@@ -15,36 +14,15 @@ export const workspaceHandlers = [
   }),
 
   http.post("/api/workspaces", async ({ request }) => {
-    const body = (await request.json()) as {
-      slug: string;
-      name: string;
-      storage_backend_id?: string;
-    };
-    let backend;
-    if (body.storage_backend_id == null) {
-      // Mirror the API: auto-provision a bundled object-store backend.
-      backend = {
-        id: nextId("sb"),
-        kind: "object_store" as const,
-        name: body.name,
-        root_uri: "",
-        uc_storage_credential_id: null,
-        uc_credential_valid: null,
-        workspace_count: 0,
-        created_by: "u-1",
-        created_at: new Date().toISOString(),
-      };
-      STORAGE_BACKENDS.push(backend);
-    } else {
-      backend = STORAGE_BACKENDS.find((b) => b.id === body.storage_backend_id);
-      if (!backend) return httpError(404, "Storage backend not found");
-    }
+    const body = (await request.json()) as { slug: string; name: string };
+    // Mirror the API: a new workspace starts with no catalog and no storage.
     const ws = {
       id: nextId("ws"),
       slug: body.slug,
       name: body.name,
-      storage_backend_id: backend.id,
-      storage_backend_kind: backend.kind,
+      default_catalog: null,
+      storage_backend_id: null,
+      storage_backend_kind: null,
       created_at: new Date().toISOString(),
     };
     WORKSPACES.push(ws);

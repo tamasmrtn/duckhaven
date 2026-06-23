@@ -5,16 +5,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user, get_db, get_polaris_client
-from api.models.storage_backend import StorageBackend
 from api.models.user import User
 from api.models.workspace import Workspace, WorkspaceMember
 from api.schemas.workspace import AddMemberRequest, MemberOut, WorkspaceCreate, WorkspaceOut
-from api.services import catalog as catalog_service
-from api.services.polaris import PolarisClient, PolarisError
+from api.services.polaris import PolarisClient
 from api.services.workspace import (
     assert_workspace_member,
-    default_object_store_backend,
-    derive_catalog_slug,
     get_default_catalog,
     get_workspace,
     mirror_member_grant,
@@ -58,59 +54,18 @@ async def create_workspace(
     body: WorkspaceCreate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    polaris: PolarisClient = Depends(get_polaris_client),
 ) -> WorkspaceOut:
+    """Create a workspace with its owner. A workspace starts with **no catalog** —
+    the owner creates or attaches catalogs afterward (catalogs are decoupled,
+    M:N). No storage backend or Polaris provisioning happens here."""
     existing = await db.execute(select(Workspace).where(Workspace.slug == body.slug))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Slug already taken")
-    # No backend chosen → auto-provision a bundled object-store backend so the
-    # common case needs only a workspace name. A Polaris failure below rolls the
-    # whole transaction back (this backend included).
-    if body.storage_backend_id is None:
-        backend = default_object_store_backend(body.name, user.id)
-        db.add(backend)
-        await db.flush()
-    else:
-        backend = await db.get(StorageBackend, body.storage_backend_id)
-        if backend is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unknown storage backend"
-            )
     ws = Workspace(slug=body.slug, name=body.name)
     db.add(ws)
     await db.flush()
     member = WorkspaceMember(workspace_id=ws.id, user_id=user.id, role="owner")
     db.add(member)
-    await db.flush()
-
-    # Eagerly provision the workspace's default catalog (Polaris catalog named
-    # after the workspace slug, for legacy parity) and attach it as default. If
-    # Polaris is unreachable the whole transaction rolls back so the caller can
-    # retry once Polaris is healthy (D7).
-    try:
-        catalog = await catalog_service.create_catalog(
-            db,
-            polaris,
-            slug=await derive_catalog_slug(db, body.slug),
-            name=body.name,
-            backend=backend,
-            created_by=user.id,
-            polaris_name=body.slug,
-        )
-        await catalog_service.attach_catalog(
-            db, workspace=ws, catalog=catalog, attached_by=user.id, make_default=True
-        )
-    except HTTPException:
-        await db.rollback()
-        raise
-    except PolarisError as exc:
-        logger.warning("Polaris provisioning failed for ws=%s; rolling back: %s", ws.slug, exc)
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Polaris provisioning failed: {exc}",
-        ) from exc
-
     await db.commit()
     await db.refresh(ws)
     return await _workspace_out(db, ws)

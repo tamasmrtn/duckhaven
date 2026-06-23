@@ -66,11 +66,20 @@ async def auth_client(client: AsyncClient, owner: User) -> AsyncClient:
 async def _make_workspace(
     auth_client: AsyncClient, backend: StorageBackend, slug: str = "alpha"
 ) -> str:
-    resp = await auth_client.post(
-        "/workspaces",
-        json={"slug": slug, "name": slug.title(), "storage_backend_id": str(backend.id)},
-    )
+    resp = await auth_client.post("/workspaces", json={"slug": slug, "name": slug.title()})
     assert resp.status_code == 201, resp.text
+    # Workspaces no longer auto-create a catalog; attach a default one (its
+    # polaris_name defaults to the catalog slug == the workspace slug) so the
+    # legacy default-catalog schema routes these tests exercise resolve.
+    cat = await auth_client.post(
+        f"/workspaces/{slug}/catalogs",
+        json={
+            "slug": slug.replace("-", "_"),
+            "name": slug.title(),
+            "storage_backend_id": str(backend.id),
+        },
+    )
+    assert cat.status_code == 201, cat.text
     return resp.json()["slug"]
 
 

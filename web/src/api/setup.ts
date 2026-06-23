@@ -2,10 +2,20 @@ import type { User } from "@/types/auth";
 
 export type SetupStatus = { needs_admin: boolean };
 
+export type SystemStorageKind = "object_store" | "s3" | "adls_gen2";
+
+// Storage backend for the built-in system catalog, chosen during setup.
+export type SystemStorageChoice = {
+  kind: SystemStorageKind;
+  name?: string;
+  root_uri?: string;
+};
+
 export type FirstAdminInput = {
   email: string;
   password: string;
   name?: string;
+  system_storage?: SystemStorageChoice;
 };
 
 export const setupApi = {

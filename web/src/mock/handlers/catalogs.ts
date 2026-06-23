@@ -19,6 +19,7 @@ function out(c: (typeof CATALOGS)[number]): Catalog {
     created_at: c.created_at,
     is_default: c.is_default,
     attached_workspaces: c.workspace_ids.length,
+    is_system: c.is_system,
   };
 }
 
@@ -57,6 +58,7 @@ export const catalogHandlers = [
       created_at: new Date().toISOString(),
       is_default: first,
       attached_workspaces: 1,
+      is_system: false,
       workspace_ids: [ws.id],
     };
     CATALOGS.push(created);

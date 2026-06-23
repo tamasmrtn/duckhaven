@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useSetupStatus, useCreateFirstAdmin } from "@/queries/setup";
+import type { SystemStorageKind } from "@/api/setup";
 
 export function SetupPage() {
   const navigate = useNavigate();
@@ -16,6 +17,9 @@ export function SetupPage() {
   const [name, setName] = useState("Admin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [storageKind, setStorageKind] =
+    useState<SystemStorageKind>("object_store");
+  const [storageUri, setStorageUri] = useState("");
   const [error, setError] = useState("");
 
   // If setup is already complete, bounce to /login. Deep-linkers and refresh
@@ -32,7 +36,16 @@ export function SetupPage() {
     try {
       await createAdmin.mutateAsync({
         token: token.trim(),
-        input: { email, password, name },
+        input: {
+          email,
+          password,
+          name,
+          system_storage: {
+            kind: storageKind,
+            name: "System",
+            root_uri: storageKind === "object_store" ? "" : storageUri.trim(),
+          },
+        },
       });
       void navigate({ to: "/welcome" });
     } catch (err) {
@@ -123,6 +136,44 @@ export function SetupPage() {
               required
               className="h-9"
             />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="system-storage" className="text-sm">
+              System catalog storage
+            </Label>
+            <p className="text-2xs text-text-secondary">
+              Where the built-in, read-only system catalog (query history,
+              audit, object metadata) stores its data.
+            </p>
+            <select
+              id="system-storage"
+              value={storageKind}
+              onChange={(e) =>
+                setStorageKind(e.target.value as SystemStorageKind)
+              }
+              className="h-9 w-full rounded-md border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2 text-sm"
+            >
+              <option value="object_store">Bundled object store (MinIO)</option>
+              <option value="s3">Amazon S3</option>
+              <option value="adls_gen2">Azure Data Lake Gen2</option>
+            </select>
+            {storageKind !== "object_store" && (
+              <Input
+                id="system-storage-uri"
+                type="text"
+                placeholder={
+                  storageKind === "s3"
+                    ? "s3://bucket/prefix"
+                    : "abfss://container@account.dfs.core.windows.net/prefix"
+                }
+                value={storageUri}
+                onChange={(e) => setStorageUri(e.target.value)}
+                required
+                className="h-9 font-mono text-xs"
+                aria-label="System catalog storage URI"
+              />
+            )}
           </div>
 
           {error && (

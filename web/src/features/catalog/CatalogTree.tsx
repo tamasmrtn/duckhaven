@@ -245,6 +245,8 @@ function CatalogNode({
   const drop = useDropCatalog(ws);
   // A catalog attached to more than this workspace cannot be dropped from here.
   const shared = (catalog.attached_workspaces ?? 1) > 1;
+  // The built-in system catalog is read-only and built in: no create/detach/drop.
+  const isSystem = catalog.is_system;
 
   async function handleDetach() {
     try {
@@ -283,27 +285,45 @@ function CatalogNode({
             )}
             <Database className="size-3.5 shrink-0 text-[var(--brand-slate-blue)]" />
             <span className="truncate">{catalog.slug}</span>
-            {catalog.is_default && (
+            {isSystem ? (
               <span className="ml-1 rounded bg-accent px-1 text-2xs text-text-tertiary">
-                default
+                system · read-only
               </span>
+            ) : (
+              catalog.is_default && (
+                <span className="ml-1 rounded bg-accent px-1 text-2xs text-text-tertiary">
+                  default
+                </span>
+              )
             )}
           </button>
         </ContextMenuTrigger>
         <ContextMenuContent>
-          <ContextMenuItem onSelect={() => setCreateSchemaOpen(true)}>
-            <Plus />
-            Create schema
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem onSelect={handleDetach}>
-            <Link2 />
-            Detach from workspace
-          </ContextMenuItem>
-          <ContextMenuItem destructive disabled={shared} onSelect={handleDrop}>
-            <Table2 />
-            {shared ? "Drop (shared — detach first)" : "Drop catalog"}
-          </ContextMenuItem>
+          {isSystem ? (
+            <ContextMenuItem disabled>
+              Built-in read-only catalog
+            </ContextMenuItem>
+          ) : (
+            <>
+              <ContextMenuItem onSelect={() => setCreateSchemaOpen(true)}>
+                <Plus />
+                Create schema
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem onSelect={handleDetach}>
+                <Link2 />
+                Detach from workspace
+              </ContextMenuItem>
+              <ContextMenuItem
+                destructive
+                disabled={shared}
+                onSelect={handleDrop}
+              >
+                <Table2 />
+                {shared ? "Drop (shared — detach first)" : "Drop catalog"}
+              </ContextMenuItem>
+            </>
+          )}
         </ContextMenuContent>
       </ContextMenu>
 

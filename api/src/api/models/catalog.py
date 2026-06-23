@@ -30,7 +30,12 @@ class Catalog(Base):
     storage_backend_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("storage_backends.id"), nullable=False
     )
-    created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    # The built-in system catalog is DuckHaven-owned and read-only: attached to
+    # every workspace by default, never detachable/droppable, and (I8) never
+    # writable through the query path. It has no human creator, so ``created_by``
+    # is nullable.
+    is_system: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

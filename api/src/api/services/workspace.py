@@ -12,6 +12,7 @@ from api.models.catalog import Catalog, WorkspaceCatalog
 from api.models.storage_backend import StorageBackend
 from api.models.workspace import Workspace, WorkspaceMember
 from api.services.polaris import PolarisClient, PolarisConflictError
+from api.services.system_catalog.constants import RESERVED_CATALOG_SLUGS
 
 logger = logging.getLogger(__name__)
 
@@ -165,7 +166,7 @@ _CATALOG_SLUG_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 def validate_catalog_slug(slug: str) -> str:
-    """Return ``slug`` if it is identifier-safe, else raise 422."""
+    """Return ``slug`` if it is identifier-safe and not reserved, else raise 422."""
     if not _CATALOG_SLUG_RE.match(slug) or len(slug) > 255:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -173,6 +174,11 @@ def validate_catalog_slug(slug: str) -> str:
                 "Catalog slug must match ^[a-z][a-z0-9_]*$ (lowercase, "
                 "start with a letter, only letters/digits/underscores)."
             ),
+        )
+    if slug in RESERVED_CATALOG_SLUGS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Catalog slug '{slug}' is reserved for a built-in catalog.",
         )
     return slug
 

@@ -57,6 +57,7 @@ def _catalog_out(
         created_at=catalog.created_at,
         is_default=is_default,
         attached_workspaces=attached_workspaces,
+        is_system=catalog.is_system,
     )
 
 

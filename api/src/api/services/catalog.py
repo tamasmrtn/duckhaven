@@ -123,6 +123,11 @@ async def attach_catalog(
 async def detach_catalog(db: AsyncSession, *, workspace: Workspace, catalog: Catalog) -> None:
     """Unbind ``catalog`` from ``workspace``. If it was the default, promote the
     next remaining catalog (by slug) so the workspace keeps a default."""
+    if catalog.is_system:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The system catalog is built in and cannot be detached.",
+        )
     link = (
         await db.execute(
             select(WorkspaceCatalog).where(
@@ -154,6 +159,11 @@ async def detach_catalog(db: AsyncSession, *, workspace: Workspace, catalog: Cat
 async def drop_catalog(db: AsyncSession, polaris: PolarisClient, *, catalog: Catalog) -> None:
     """Permanently delete a catalog. Refused while it is attached to any
     workspace, so a shared catalog is never dropped out from under a peer."""
+    if catalog.is_system:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The system catalog is built in and cannot be dropped.",
+        )
     bindings = await db.scalar(
         select(func.count())
         .select_from(WorkspaceCatalog)
@@ -198,9 +208,13 @@ async def drop_catalog(db: AsyncSession, polaris: PolarisClient, *, catalog: Cat
 
 
 async def list_attachable(db: AsyncSession) -> list[Catalog]:
-    """Every catalog in the deployment (the attach picker's source)."""
+    """User-attachable catalogs (the attach picker's source). Excludes the system
+    catalog, which is built in and attached to every workspace automatically."""
     rows = await db.execute(
-        select(Catalog).options(selectinload(Catalog.storage_backend)).order_by(Catalog.slug)
+        select(Catalog)
+        .where(Catalog.is_system.is_(False))
+        .options(selectinload(Catalog.storage_backend))
+        .order_by(Catalog.slug)
     )
     return list(rows.scalars().all())
 

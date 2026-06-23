@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -55,6 +56,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         principal=settings.polaris_principal,
         timeout_s=settings.polaris_http_timeout_s,
     )
+
+    # Self-heal the system catalog (no-op until admin setup provisions it):
+    # re-assert its Polaris namespaces and workspace links. Best-effort so a
+    # Polaris hiccup never blocks startup.
+    from api.services.system_catalog.bootstrap import ensure_system_catalog
+
+    async with async_session_factory() as db:
+        try:
+            await ensure_system_catalog(db, app.state.polaris_client)
+        except Exception:  # noqa: BLE001 - startup must survive a provisioning failure
+            logging.getLogger(__name__).exception("System catalog self-heal failed")
 
     scanner_task: asyncio.Task | None = None
     if settings.maintenance_scanner_enabled:

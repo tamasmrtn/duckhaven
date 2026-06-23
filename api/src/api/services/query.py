@@ -74,6 +74,9 @@ async def dispatch_query(
                     "root_uri": c.storage_backend.root_uri,
                 },
                 "default_schema": DEFAULT_SCHEMA,
+                # The system catalog is attached read-only so the engine itself
+                # (not convention) rejects writes/DDL against it.
+                "read_only": c.is_system,
             }
             for c in catalogs
         ],

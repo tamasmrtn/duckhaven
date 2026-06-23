@@ -83,6 +83,9 @@ def _api_env(db_url: str, setup_token_file: Path) -> dict[str, str]:
             "SETUP_TOKEN_PATH": str(setup_token_file),
             "SECRET_KEY": "xc-test-secret",
             "COOKIE_SECURE": "false",
+            # Run the system-catalog materializer on a tight interval so its
+            # Iceberg tables appear quickly for the system-catalog test.
+            "SYSTEM_CATALOG_SYNC_INTERVAL_S": "2",
         }
     )
     if endpoint := os.getenv("POLARIS_S3_ENDPOINT"):

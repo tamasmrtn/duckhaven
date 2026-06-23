@@ -323,11 +323,15 @@ def _attach_catalogs(
         delegation = "vended_credentials" if kind in _VENDED_BACKENDS else "none"
         wh = str(cat["polaris_name"]).replace("'", "''")
         alias = slug.replace('"', '""')
+        # The read-only system catalog is attached READ_ONLY so DuckDB's binder
+        # rejects writes/DDL against it (while still allowing reads, including
+        # `INSERT INTO usercat.t SELECT ... FROM duckhaven.…`).
+        read_only = ", READ_ONLY" if cat.get("read_only") else ""
         try:
             conn.execute(
                 f"ATTACH '{wh}' AS \"{alias}\" "
                 f"(TYPE ICEBERG, SECRET {_ICEBERG_SECRET}, ENDPOINT '{cat_endpoint}', "
-                f"ACCESS_DELEGATION_MODE '{delegation}')"
+                f"ACCESS_DELEGATION_MODE '{delegation}'{read_only})"
             )
         except Exception as exc:  # noqa: BLE001 - one bad catalog must not fail the query
             logger.warning("Polaris ATTACH failed for catalog %s: %s", slug, exc)

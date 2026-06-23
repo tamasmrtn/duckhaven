@@ -171,6 +171,7 @@ async def test_create_query_dispatches(
             "polaris_name": "test-ws",
             "backend": {"kind": "object_store", "root_uri": "/tmp/test"},
             "default_schema": "analytics",
+            "read_only": False,
         }
     ]
     assert "storage_credentials" not in frame["payload"]
@@ -211,9 +212,40 @@ async def test_dispatch_payload_carries_backend_and_no_credentials(
             "polaris_name": "s3-ws",
             "backend": {"kind": "s3", "root_uri": "/tmp/test"},
             "default_schema": "analytics",
+            "read_only": False,
         }
     ]
     assert "storage_credentials" not in payload
+
+
+async def test_dispatch_marks_system_catalog_read_only(
+    authed_client: AsyncClient, db_session, user: User, connected_agent, fake_polaris
+):
+    """When the system catalog is attached, its descriptor is read_only and it is
+    never chosen as the active (USE'd) catalog."""
+    import json
+
+    from api.models.storage_backend import StorageBackend
+    from api.services.system_catalog.bootstrap import provision_system_catalog
+
+    agent, mock_ws = connected_agent
+    await seed_workspace(
+        db_session, user_id=user.id, slug="sysws", name="Sys", catalog_slug="user_cat"
+    )
+    backend = StorageBackend(kind="object_store", name="System", root_uri="", created_by=user.id)
+    # provision_system_catalog backfills a link to every workspace, incl. sysws.
+    await provision_system_catalog(db_session, fake_polaris, backend=backend, created_by=user.id)
+
+    resp = await authed_client.post(
+        "/workspaces/sysws/queries", json={"sql": "SELECT 1", "agent_id": str(agent.id)}
+    )
+    assert resp.status_code == 202, resp.text
+
+    payload = json.loads(mock_ws.sent[-1])["payload"]
+    catalogs = {c["slug"]: c for c in payload["catalogs"]}
+    assert catalogs["duckhaven"]["read_only"] is True
+    assert catalogs["user_cat"]["read_only"] is False
+    assert payload["active_catalog"] == "user_cat"
 
 
 async def test_dispatch_rejects_agent_missing_extension(

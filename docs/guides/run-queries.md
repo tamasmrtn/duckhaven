@@ -59,13 +59,17 @@ escapes (`ATTACH`, `COPY`, `LOAD`, `SET`, `PRAGMA`, …) are rejected. See [SQL 
 
 ## Inspect your tables
 
-Beyond the catalog tree, every catalog has a built-in, read-only `information_schema` you can query like any other
-table — list what's in a catalog, then `DESCRIBE` a table to see its columns:
+Every catalog has a built-in, read-only `information_schema` you can query like any other table — list what's in a
+catalog, then `DESCRIBE` a table to see its columns:
 
 ```sql
 SELECT table_schema, table_name FROM information_schema.tables WHERE table_catalog = 'analytics';
 DESCRIBE analytics.analytics.events;
 ```
+
+In the catalog tree it appears under each catalog as a lock-marked **`information_schema`** node badged *read-only*;
+expand it to see the supported views, and click one to drop a scoped query into the editor. It is not a stored schema —
+it never appears in Polaris and cannot be written to.
 
 See [Inspecting metadata](../reference/sql-support.md#inspecting-metadata-information_schema) for the full surface.
 

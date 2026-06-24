@@ -362,6 +362,19 @@ export function WorksheetPage() {
     );
   }
 
+  function insertMetaViewSnippet(catalog: string, view: string) {
+    // information_schema is DuckDB's global view set (not per-catalog), so scope
+    // it by catalog. schemata keys on catalog_name; tables/columns/views on
+    // table_catalog.
+    const col = view === "schemata" ? "catalog_name" : "table_catalog";
+    const snippet = `SELECT * FROM information_schema.${view} WHERE ${col} = '${catalog}' LIMIT 100`;
+    setTabs((prev) =>
+      prev.map((t) =>
+        t.id === activeTab ? { ...t, sql: snippet, dirty: true } : t,
+      ),
+    );
+  }
+
   // Run button: run the editor's selection, else the statement under the cursor.
   function runQuery() {
     void runPayload(
@@ -590,6 +603,7 @@ export function WorksheetPage() {
                   ws={ws}
                   workspaceName={workspace?.name ?? ws}
                   onTableClick={insertTableSnippet}
+                  onMetaViewClick={insertMetaViewSnippet}
                 />
               </div>
             </div>

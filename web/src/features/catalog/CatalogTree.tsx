@@ -5,7 +5,7 @@ import {
   ChevronDown,
   Table2,
   Layers,
-  Database,
+  Book,
   RefreshCw,
   Plus,
   Link2,
@@ -281,7 +281,7 @@ function CatalogNode({
             ) : (
               <ChevronRight className="size-3.5 shrink-0 text-text-secondary" />
             )}
-            <Database className="size-3.5 shrink-0 text-[var(--brand-slate-blue)]" />
+            <Book className="size-3.5 shrink-0 text-[var(--brand-slate-blue)]" />
             <span className="truncate">{catalog.slug}</span>
             {catalog.is_default && (
               <span className="ml-1 rounded bg-accent px-1 text-2xs text-text-tertiary">
@@ -424,7 +424,7 @@ export function CatalogTree({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem onSelect={() => setCreateCatalogOpen(true)}>
-                  <Database className="size-3.5" />
+                  <Book className="size-3.5" />
                   Create catalog
                 </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => setCreateSchemaOpen(true)}>

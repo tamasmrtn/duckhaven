@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import {
-  Database,
+  BookMarked,
   Clock,
   ExternalLink,
   Pencil,
@@ -61,7 +61,7 @@ export function SavedQueriesPage() {
           </div>
         ) : queries.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-            <Database className="size-8 text-text-tertiary" />
+            <BookMarked className="size-8 text-text-tertiary" />
             <p className="text-md font-medium text-text-secondary">
               Save a worksheet to keep it here.
             </p>

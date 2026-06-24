@@ -64,6 +64,14 @@ describe('CatalogTree', () => {
     expect(screen.getByText('event_type')).toBeInTheDocument()
   })
 
+  it('renders the catalog node with a closed-book icon, not a database glyph', async () => {
+    renderTree(() => {})
+
+    const catalog = await screen.findByRole('button', { name: /acme_analytics/i })
+    expect(catalog.querySelector('svg.lucide-book')).toBeTruthy()
+    expect(catalog.querySelector('svg.lucide-database')).toBeNull()
+  })
+
   it('opens the new-catalog dialog from the create dropdown', async () => {
     renderTree(() => {})
 

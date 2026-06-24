@@ -264,7 +264,7 @@ function InformationSchemaNode({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-sm font-medium text-text-secondary hover:bg-accent focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+        className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-sm font-medium text-text-primary hover:bg-accent focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
         aria-expanded={open}
         title="Built-in, read-only metadata schema"
       >
@@ -273,8 +273,8 @@ function InformationSchemaNode({
         ) : (
           <ChevronRight className="size-3.5 shrink-0 text-text-secondary" />
         )}
-        <Lock className="size-3.5 shrink-0 text-text-tertiary" />
-        <span className="truncate italic">{INFORMATION_SCHEMA}</span>
+        <Layers className="size-3.5 shrink-0 text-[var(--brand-maya-blue)]" />
+        <span className="truncate">{INFORMATION_SCHEMA}</span>
         <span className="ml-1 flex items-center gap-0.5 rounded bg-accent px-1 text-2xs text-text-tertiary">
           <Lock className="size-2.5" />
           read-only

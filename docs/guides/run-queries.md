@@ -57,6 +57,18 @@ This release does autocomplete and signature help only; it does not flag SQL err
 Worksheets accept `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `MERGE` and catalog DDL (`CREATE`, `ALTER`, `DROP`). Sandbox
 escapes (`ATTACH`, `COPY`, `LOAD`, `SET`, `PRAGMA`, …) are rejected. See [SQL support](../reference/sql-support.md).
 
+## Inspect your tables
+
+Beyond the catalog tree, every catalog has a built-in, read-only `information_schema` you can query like any other
+table — list what's in a catalog, then `DESCRIBE` a table to see its columns:
+
+```sql
+SELECT table_schema, table_name FROM information_schema.tables WHERE table_catalog = 'analytics';
+DESCRIBE analytics.analytics.events;
+```
+
+See [Inspecting metadata](../reference/sql-support.md#inspecting-metadata-information_schema) for the full surface.
+
 ## Save for later
 
 Save a frequently used query with a name and an optional default agent — press **Ctrl+S** (or the **Save…** button) to

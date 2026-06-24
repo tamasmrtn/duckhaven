@@ -22,7 +22,16 @@ schema/table name:
 The sidecar is populated when a table is created and refreshed when sample/stats run. Polaris always remains the source
 of truth for catalog structure — the sidecar never becomes a catalog cache.
 
+## Querying metadata as SQL
+
+The same structure is queryable read-only from a worksheet through each catalog's built-in `information_schema`. This is
+not a second copy of the metadata: it is DuckDB's native, live projection of the catalogs attached to your query —
+computed per query, never cached — so Polaris stays the single source of truth. See
+[Inspecting metadata](../reference/sql-support.md#inspecting-metadata-information_schema) for the supported views
+and the `DESCRIBE` path for columns.
+
 ## Related
 
 - [Catalogs & Polaris](catalogs.md) — the structure authority.
 - [Tables & Iceberg](tables.md) — what the sidecar describes.
+- [SQL support](../reference/sql-support.md) — querying metadata with `information_schema`.

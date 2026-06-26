@@ -3,6 +3,7 @@
         test-integration test-integration-api test-integration-agent \
         test-cross-component test-e2e \
         polaris-dev polaris-dev-s3 polaris-dev-down \
+        idp-dev idp-dev-down \
         lint format \
         migrate migrate-new migrate-down \
         compose-up compose-down compose-logs compose-pull \
@@ -127,6 +128,41 @@ polaris-dev-s3: polaris-dev
 polaris-dev-down:
 	docker rm -f dh-polaris-dev dh-minio-dev >/dev/null 2>&1 || true
 	docker network rm dh-polaris-net >/dev/null 2>&1 || true
+
+# ── Local IdP + LDAP (for SSO/LDAP integration tests) ─────────────────────────
+# Brings up Keycloak (realm imported from deploy/keycloak) and OpenLDAP (seeded
+# from deploy/openldap/bootstrap, with the memberof overlay). Both are env-gated
+# in the test suite, so integration tests skip cleanly when these aren't up.
+KEYCLOAK_IMAGE_TAG ?= 26.0
+OPENLDAP_IMAGE_TAG ?= 1.5.0
+
+idp-dev:
+	docker rm -f dh-keycloak-dev dh-openldap-dev >/dev/null 2>&1 || true
+	docker run -d --name dh-keycloak-dev -p 8080:8080 \
+		-e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD=admin \
+		-v $(PWD)/deploy/keycloak/duckhaven-realm.json:/opt/keycloak/data/import/duckhaven-realm.json:ro \
+		quay.io/keycloak/keycloak:$(KEYCLOAK_IMAGE_TAG) start-dev --import-realm
+	docker run -d --name dh-openldap-dev -p 389:389 \
+		-e LDAP_ORGANISATION="DuckHaven" -e LDAP_DOMAIN="duckhaven.test" \
+		-e LDAP_ADMIN_PASSWORD="admin" \
+		-v $(PWD)/deploy/openldap/bootstrap:/container/service/slapd/assets/config/bootstrap/ldif/custom:ro \
+		osixia/openldap:$(OPENLDAP_IMAGE_TAG) --copy-service
+	@echo "Waiting for Keycloak..."
+	@for i in $$(seq 1 60); do \
+		curl -sf http://localhost:8080/realms/duckhaven/.well-known/openid-configuration >/dev/null 2>&1 \
+			&& { echo "Keycloak is up."; break; }; sleep 2; \
+	done
+	@echo ""
+	@echo "Keycloak + OpenLDAP ready. Run SSO/LDAP integration tests with:"
+	@echo "  OIDC_SERVER_METADATA_URL=http://localhost:8080/realms/duckhaven/.well-known/openid-configuration \\"
+	@echo "  OIDC_CLIENT_ID=duckhaven-api OIDC_CLIENT_SECRET=duckhaven-secret \\"
+	@echo "  LDAP_SERVER_URI=ldap://localhost:389 \\"
+	@echo "  LDAP_BIND_DN='cn=admin,dc=duckhaven,dc=test' LDAP_BIND_PASSWORD=admin \\"
+	@echo "  LDAP_USER_SEARCH_BASE='ou=people,dc=duckhaven,dc=test' \\"
+	@echo "  make test-integration-api"
+
+idp-dev-down:
+	docker rm -f dh-keycloak-dev dh-openldap-dev >/dev/null 2>&1 || true
 
 # ── Lint / Format ─────────────────────────────────────────────────────────────
 lint:

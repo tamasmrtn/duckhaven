@@ -1,0 +1,24 @@
+# Seed data for the LDAP integration test: an org tree, a user, and an admin
+# group containing that user. With the memberof overlay above, the user entry
+# gains memberOf: cn=dh-admins,... which maps to the DuckHaven admin role.
+dn: ou=people,dc=duckhaven,dc=test
+objectClass: organizationalUnit
+ou: people
+
+dn: ou=groups,dc=duckhaven,dc=test
+objectClass: organizationalUnit
+ou: groups
+
+dn: uid=ldapadmin,ou=people,dc=duckhaven,dc=test
+objectClass: inetOrgPerson
+cn: LDAP Admin
+sn: Admin
+uid: ldapadmin
+displayName: LDAP Admin
+mail: ldap-admin@duckhaven.test
+userPassword: ldap-pass
+
+dn: cn=dh-admins,ou=groups,dc=duckhaven,dc=test
+objectClass: groupOfNames
+cn: dh-admins
+member: uid=ldapadmin,ou=people,dc=duckhaven,dc=test

@@ -96,7 +96,11 @@ services:
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
       AWS_REGION: ${S3_REGION:-us-east-1}
       polaris.features."ALLOW_INSECURE_STORAGE_TYPES": "true"
-      polaris.features."SUPPORTED_CATALOG_STORAGE_TYPES": "[\"S3\"]"
+      # S3 backs the bundled MinIO and external AWS S3; AZURE enables external
+      # ADLS Gen2 backends. The credentials above are only used to reach MinIO;
+      # external backends vend their own short-lived creds via assume-role /
+      # managed-identity configured on the storage backend.
+      polaris.features."SUPPORTED_CATALOG_STORAGE_TYPES": "[\"S3\",\"AZURE\"]"
       polaris.readiness.ignore-severe-issues: "true"
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8182/q/health"]

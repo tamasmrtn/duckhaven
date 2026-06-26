@@ -86,14 +86,21 @@ async def test_delete_unused_backend(admin_client: AsyncClient):
 
 
 async def test_delete_used_backend_fails(admin_client: AsyncClient, admin: User, db_session):
+    from api.models.catalog import Catalog
     from api.models.storage_backend import StorageBackend
-    from api.models.workspace import Workspace
 
     sb = StorageBackend(kind="object_store", name="used", root_uri="used/", created_by=admin.id)
     db_session.add(sb)
     await db_session.flush()
-    ws = Workspace(slug="occupied", name="Occupied", storage_backend_id=sb.id)
-    db_session.add(ws)
+    # A backend is "in use" when a catalog references it.
+    cat = Catalog(
+        slug="occupied",
+        name="Occupied",
+        polaris_name="occupied",
+        storage_backend_id=sb.id,
+        created_by=admin.id,
+    )
+    db_session.add(cat)
     await db_session.commit()
 
     resp = await admin_client.delete(f"/admin/storage-backends/{sb.id}")

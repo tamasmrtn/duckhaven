@@ -4,6 +4,7 @@
 // Intentionally NOT covered: the agents WebSocket (/agents/connect) and
 // GET /healthz — neither is consumed by the browser SPA.
 import { resetWorkspaces } from "./fixtures/workspaces";
+import { resetCatalogs } from "./fixtures/catalogs";
 import { resetSchemas } from "./fixtures/schemas";
 import { resetQueries } from "./fixtures/queries";
 import { resetStorageBackends } from "./fixtures/storage-backends";
@@ -15,6 +16,7 @@ import { resetSeed } from "./lib/seed";
 
 export function resetMockState(): void {
   resetWorkspaces();
+  resetCatalogs();
   resetSchemas();
   resetQueries();
   resetStorageBackends();

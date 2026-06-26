@@ -2,6 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { Editor, type OnMount, type BeforeMount } from "@monaco-editor/react";
 import { useIsDark } from "@/hooks/useIsDark";
 import { activeStatement } from "./statements";
+import { registerSqlProviders, setActiveEditor } from "./completion/provider";
 
 export interface SqlEditorHandle {
   // The SQL to run for the current cursor/selection: the selected text if any,
@@ -14,6 +15,8 @@ interface SqlEditorProps {
   onChange: (value: string) => void;
   // Invoked by the Ctrl/Cmd+Enter command with the run payload.
   onRun?: (payload: string) => void;
+  // Invoked by the Ctrl/Cmd+S command to open the Save dialog.
+  onSave?: () => void;
   readOnly?: boolean;
 }
 
@@ -76,16 +79,20 @@ const DUCKHAVEN_LIGHT_THEME = {
 };
 
 export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
-  function SqlEditor({ value, onChange, onRun, readOnly }, ref) {
+  function SqlEditor({ value, onChange, onRun, onSave, readOnly }, ref) {
     const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
     const isDark = useIsDark();
 
-    // Monaco command callbacks are captured once at mount, so route onRun
-    // through a ref to always call the latest handler, not a stale closure.
+    // Monaco command callbacks are captured once at mount, so route onRun/onSave
+    // through refs to always call the latest handler, not a stale closure.
     const onRunRef = useRef(onRun);
     useEffect(() => {
       onRunRef.current = onRun;
     }, [onRun]);
+    const onSaveRef = useRef(onSave);
+    useEffect(() => {
+      onSaveRef.current = onSave;
+    }, [onSave]);
 
     // Reads the live editor: the selection if non-empty, else the single
     // statement under the cursor. Falls back to `value` only before the model
@@ -108,15 +115,28 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
     const handleBeforeMount: BeforeMount = (monaco) => {
       monaco.editor.defineTheme("duckhaven-dark", DUCKHAVEN_DARK_THEME);
       monaco.editor.defineTheme("duckhaven-light", DUCKHAVEN_LIGHT_THEME);
+      // Catalog- and DuckDB-aware completions + signature help. Registered once
+      // for the language; reads its data through a module-level context ref.
+      registerSqlProviders(monaco);
     };
 
     const handleMount: OnMount = (editor, monaco) => {
       editorRef.current = editor;
+      // Let the completion data layer refresh an open suggest widget once
+      // lazily-fetched columns arrive.
+      setActiveEditor(editor);
 
-      // Ctrl+S / Cmd+S: auto-format
+      // Ctrl+S / Cmd+S: open the Save dialog (the muscle-memory "save"). Format
+      // moves to Monaco's standard Shift+Alt+F.
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
-        void editor.getAction("editor.action.formatDocument")?.run();
+        onSaveRef.current?.();
       });
+      editor.addCommand(
+        monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.KeyF,
+        () => {
+          void editor.getAction("editor.action.formatDocument")?.run();
+        },
+      );
 
       // Ctrl+Enter / Cmd+Enter: run. A distinct chord from plain Enter, so the
       // suggestion widget (which consumes Enter) does not swallow it.
@@ -150,6 +170,13 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
           automaticLayout: true,
           suggest: { showKeywords: true },
           quickSuggestions: true,
+          // Our provider supplies catalog/function-aware suggestions; turn off
+          // Monaco's generic word-based ones so they don't add noise.
+          wordBasedSuggestions: "off",
+          // Render the suggest/parameter-hint overflow widgets in the document
+          // body so the detail flyout isn't clipped by the editor container or
+          // the catalog sidebar.
+          fixedOverflowWidgets: true,
           padding: { top: 12, bottom: 12 },
         }}
         loading={

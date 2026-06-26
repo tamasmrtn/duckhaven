@@ -16,23 +16,18 @@ class Workspace(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     slug: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    storage_backend_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("storage_backends.id"), nullable=False
-    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
-    storage_backend: Mapped[StorageBackend] = relationship(back_populates="workspaces")
+    # Storage now belongs to catalogs (M:N, I4 catalog-scoped); a workspace's
+    # storage is the union of its attached catalogs' backends.
+    catalog_links: Mapped[list[WorkspaceCatalog]] = relationship(
+        back_populates="workspace", cascade="all, delete-orphan"
+    )
     members: Mapped[list[WorkspaceMember]] = relationship(back_populates="workspace")
     queries: Mapped[list[Query]] = relationship(back_populates="workspace")
     saved_queries: Mapped[list[SavedQuery]] = relationship(back_populates="workspace")
-
-    @property
-    def storage_backend_kind(self) -> str:
-        """Backend kind surfaced in WorkspaceOut. Requires `storage_backend`
-        to be eager-loaded by the caller (see workspaces router/service)."""
-        return self.storage_backend.kind
 
 
 class WorkspaceMember(Base):

@@ -27,11 +27,8 @@ export function useWorkspaceMembers(ws: string) {
 export function useCreateWorkspace() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: {
-      slug: string;
-      name: string;
-      storage_backend_id?: string;
-    }) => workspacesApi.create(data),
+    mutationFn: (data: { slug: string; name: string }) =>
+      workspacesApi.create(data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["workspaces"] });
     },

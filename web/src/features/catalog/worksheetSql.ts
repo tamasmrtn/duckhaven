@@ -4,19 +4,39 @@
 
 const pendingKey = (ws: string) => `dh-pending-sql-${ws}`;
 
+// A worksheet hand-off carries the SQL plus, when opened from a saved query, the
+// saved default agent and the saved query id (so a run can stamp last_run_at).
+export interface PendingQuery {
+  sql: string;
+  agentId?: string;
+  savedQueryId?: string;
+}
+
+// Catalog actions stash plain SQL; saved queries use stashWorksheetQuery below.
 export function stashWorksheetSql(ws: string, sql: string): void {
+  stashWorksheetQuery(ws, { sql });
+}
+
+export function stashWorksheetQuery(ws: string, payload: PendingQuery): void {
   try {
-    localStorage.setItem(pendingKey(ws), sql);
+    localStorage.setItem(pendingKey(ws), JSON.stringify(payload));
   } catch {
     // ignore unavailable storage
   }
 }
 
-export function takePendingSql(ws: string): string | null {
+export function takePendingQuery(ws: string): PendingQuery | null {
   try {
-    const sql = localStorage.getItem(pendingKey(ws));
-    if (sql) localStorage.removeItem(pendingKey(ws));
-    return sql;
+    const raw = localStorage.getItem(pendingKey(ws));
+    if (!raw) return null;
+    localStorage.removeItem(pendingKey(ws));
+    try {
+      const parsed = JSON.parse(raw) as PendingQuery;
+      if (parsed && typeof parsed.sql === "string") return parsed;
+    } catch {
+      // tolerate a legacy plain-string value
+    }
+    return { sql: raw };
   } catch {
     return null;
   }
@@ -24,12 +44,29 @@ export function takePendingSql(ws: string): string | null {
 
 const quote = (ident: string) => `"${ident.replace(/"/g, '""')}"`;
 
-export function selectTemplate(schema: string, table: string): string {
-  return `SELECT * FROM ${quote(schema)}.${quote(table)} LIMIT 100;`;
+// Fully-qualify a table reference. With a catalog it emits
+// `"catalog"."schema"."table"` so the SQL resolves regardless of the
+// worksheet's active catalog (cross-catalog safe); without one it stays
+// `"schema"."table"` and binds against the active catalog.
+function ref(schema: string, table: string, catalog?: string): string {
+  const tail = `${quote(schema)}.${quote(table)}`;
+  return catalog ? `${quote(catalog)}.${tail}` : tail;
 }
 
-export function alterTemplate(schema: string, table: string): string {
-  return `ALTER TABLE ${quote(schema)}.${quote(table)} ADD COLUMN new_column VARCHAR;`;
+export function selectTemplate(
+  schema: string,
+  table: string,
+  catalog?: string,
+): string {
+  return `SELECT * FROM ${ref(schema, table, catalog)} LIMIT 100;`;
+}
+
+export function alterTemplate(
+  schema: string,
+  table: string,
+  catalog?: string,
+): string {
+  return `ALTER TABLE ${ref(schema, table, catalog)} ADD COLUMN new_column VARCHAR;`;
 }
 
 // Iceberg time-travel ("query at this snapshot"). DuckDB's `AT (...)` clause
@@ -40,15 +77,17 @@ export function snapshotByVersionTemplate(
   schema: string,
   table: string,
   snapshotId: string,
+  catalog?: string,
 ): string {
-  return `SELECT * FROM ${quote(schema)}.${quote(table)} AT (VERSION => ${snapshotId}) LIMIT 100;`;
+  return `SELECT * FROM ${ref(schema, table, catalog)} AT (VERSION => ${snapshotId}) LIMIT 100;`;
 }
 
 export function snapshotByTimestampTemplate(
   schema: string,
   table: string,
   isoTimestamp: string,
+  catalog?: string,
 ): string {
   const ts = isoTimestamp.replace(/'/g, "''");
-  return `SELECT * FROM ${quote(schema)}.${quote(table)} AT (TIMESTAMP => '${ts}') LIMIT 100;`;
+  return `SELECT * FROM ${ref(schema, table, catalog)} AT (TIMESTAMP => '${ts}') LIMIT 100;`;
 }

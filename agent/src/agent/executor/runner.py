@@ -1,11 +1,12 @@
 """DuckDB query runner.
 
-`run_query_sync` accepts the workspace's backend descriptor, the
-workspace slug (used as the Polaris warehouse), and the Polaris
-connection info to ATTACH. DuckDB's `iceberg` extension performs the
-OAuth2 client-credentials exchange itself and, for cloud backends,
-obtains short-lived storage credentials from Polaris via access
-delegation — so the runner injects no storage secrets of its own.
+`run_query_sync` accepts the workspace's catalog descriptors (each carrying its
+Polaris warehouse name + storage backend) and the Polaris connection info, and
+ATTACHes every catalog under its slug alias (multi-attach) so queries can join
+across `catalog.schema.table`. DuckDB's `iceberg` extension performs the OAuth2
+client-credentials exchange itself and, for cloud backends, obtains short-lived
+storage credentials from Polaris via access delegation — so the runner injects
+no storage secrets of its own.
 """
 
 from __future__ import annotations
@@ -47,9 +48,9 @@ _PROFILE_METRICS = (
 )
 _PROFILE_SETTINGS_JSON = json.dumps({m: "true" for m in _PROFILE_METRICS})
 
-# Fixed identifiers for the per-connection iceberg secret and attached catalog.
+# Fixed identifier for the per-connection iceberg OAuth2 secret. Each catalog is
+# ATTACHed under its own slug alias (multi-attach), not a single fixed alias.
 _ICEBERG_SECRET = "dh_iceberg"
-_CATALOG_ALIAS = "dh_catalog"
 # Default namespace to `USE`. Must match the API's default (see
 # api/services/workspace.DEFAULT_SCHEMA). `USE <catalog>.<schema>` sets both the
 # default catalog and schema; a bare `USE <catalog>` does not reliably resolve
@@ -90,7 +91,9 @@ def _safe_install_load(conn: duckdb.DuckDBPyConnection, name: str) -> bool:
         return False
 
 
-def _iceberg_metadata(conn: duckdb.DuckDBPyConnection, schema: str, table: str) -> dict[str, Any]:
+def _iceberg_metadata(
+    conn: duckdb.DuckDBPyConnection, catalog: str, schema: str, table: str
+) -> dict[str, Any]:
     """Best-effort Iceberg-native metadata for a table in the attached catalog.
 
     Returns the current snapshot id + timestamp, the data-file count, and a
@@ -98,9 +101,9 @@ def _iceberg_metadata(conn: duckdb.DuckDBPyConnection, schema: str, table: str) 
     — the same probe the future merge-on-read read guard will use). Each field is
     independently best-effort: a probe failure (e.g. an older `iceberg` extension
     lacking a function) degrades that field to None rather than failing the
-    query. The catalog must already be ATTACHed.
+    query. The catalog must already be ATTACHed (under its slug alias).
     """
-    ident = f'{_CATALOG_ALIAS}."{schema}"."{table}"'
+    ident = f'"{catalog}"."{schema}"."{table}"'
     meta: dict[str, Any] = {
         "snapshot_id": None,
         "snapshot_at": None,
@@ -156,6 +159,7 @@ def _iceberg_columns(conn: duckdb.DuckDBPyConnection, ident: str) -> list[str]:
 
 def collect_table_health(
     conn: duckdb.DuckDBPyConnection,
+    catalog: str,
     schema: str,
     table: str,
     *,
@@ -175,8 +179,9 @@ def collect_table_health(
     ``glob`` and diffs against the live data-file set; it is expensive at scale and
     only an estimate (in-flight writes look orphaned), so it runs on a slow cadence.
     """
-    ident = f'{_CATALOG_ALIAS}."{schema}"."{table}"'
+    ident = f'"{catalog}"."{schema}"."{table}"'
     health: dict[str, Any] = {
+        "catalog": catalog,
         "schema": schema,
         "table": table,
         "snapshot_count": None,
@@ -281,18 +286,21 @@ def _orphan_estimate(
     return out
 
 
-def _attach_polaris(
+def _attach_catalogs(
     conn: duckdb.DuckDBPyConnection,
     *,
-    warehouse: str,
+    catalogs: list[dict[str, Any]],
+    active_catalog: str | None,
     polaris: dict[str, Any],
-    delegation_mode: str,
-    default_schema: str,
 ) -> None:
-    """Create the iceberg OAuth2 secret and ATTACH the Polaris catalog.
+    """Create the iceberg OAuth2 secret and ATTACH every catalog (multi-attach).
 
-    DuckDB exchanges the client credentials for a token itself; with
-    `vended_credentials` Polaris also vends scoped storage creds on access.
+    Each catalog is attached under its slug alias so the user's SQL can address
+    `catalog.schema.table` and join across catalogs; the active catalog is then
+    `USE`d so unqualified names resolve. DuckDB exchanges the client credentials
+    for a token itself; with `vended_credentials` Polaris also vends scoped
+    storage creds on access. Per-catalog ATTACH is best-effort: one bad catalog
+    is logged and skipped rather than failing the whole query.
     """
     endpoint = str(polaris["endpoint"]).rstrip("/")
     conn.execute(
@@ -304,56 +312,67 @@ def _attach_polaris(
             f"{endpoint}/api/catalog/v1/oauth/tokens",
         ],
     )
-    # ATTACH does not accept bind parameters, so inline the warehouse and
-    # endpoint as quoted literals (single quotes escaped). The warehouse is the
-    # workspace slug and the endpoint comes from agent config — neither is
-    # user-supplied SQL.
-    wh = warehouse.replace("'", "''")
+    # ATTACH does not accept bind parameters, so inline the warehouse name, alias
+    # and endpoint as quoted literals (quotes escaped). None are user-supplied SQL
+    # (slug/polaris_name come from the control plane; endpoint from agent config).
     cat_endpoint = f"{endpoint}/api/catalog".replace("'", "''")
-    conn.execute(
-        f"ATTACH '{wh}' AS {_CATALOG_ALIAS} "
-        f"(TYPE ICEBERG, SECRET {_ICEBERG_SECRET}, ENDPOINT '{cat_endpoint}', "
-        f"ACCESS_DELEGATION_MODE '{delegation_mode}')"
-    )
-    # `USE <catalog>.<schema>` sets the default catalog (so the user's
-    # schema-qualified SQL resolves) and a default schema (for unqualified
-    # names). A bare `USE <catalog>` does not reliably resolve the attached
-    # Iceberg catalog's namespaces.
-    schema = (default_schema or _DEFAULT_NAMESPACE).replace('"', '""')
-    conn.execute(f'USE {_CATALOG_ALIAS}."{schema}"')
+    active = None
+    for cat in catalogs:
+        slug = cat["slug"]
+        kind = (cat.get("backend") or {}).get("kind")
+        delegation = "vended_credentials" if kind in _VENDED_BACKENDS else "none"
+        wh = str(cat["polaris_name"]).replace("'", "''")
+        alias = slug.replace('"', '""')
+        try:
+            conn.execute(
+                f"ATTACH '{wh}' AS \"{alias}\" "
+                f"(TYPE ICEBERG, SECRET {_ICEBERG_SECRET}, ENDPOINT '{cat_endpoint}', "
+                f"ACCESS_DELEGATION_MODE '{delegation}')"
+            )
+        except Exception as exc:  # noqa: BLE001 - one bad catalog must not fail the query
+            logger.warning("Polaris ATTACH failed for catalog %s: %s", slug, exc)
+            continue
+        if slug == active_catalog:
+            active = cat
+    # `USE <catalog>.<schema>` sets the default catalog (so unqualified SQL
+    # resolves) and a default schema. A bare `USE <catalog>` does not reliably
+    # resolve the attached Iceberg catalog's namespaces.
+    if active is None and catalogs:
+        active = catalogs[0]
+    if active is not None:
+        schema = (active.get("default_schema") or _DEFAULT_NAMESPACE).replace('"', '""')
+        aslug = active["slug"].replace('"', '""')
+        conn.execute(f'USE "{aslug}"."{schema}"')
 
 
 def open_and_attach(
     *,
-    backend: dict[str, Any] | None = None,
-    workspace_slug: str | None = None,
+    catalogs: list[dict[str, Any]] | None = None,
+    active_catalog: str | None = None,
     polaris: dict[str, Any] | None = None,
-    default_schema: str | None = None,
 ) -> duckdb.DuckDBPyConnection:
-    """Open a DuckDB connection, load the storage IO extension, and ATTACH the
-    workspace's Polaris catalog so table names bind.
+    """Open a DuckDB connection, load the storage IO extensions, and ATTACH every
+    catalog bound to the workspace so table names bind.
 
-    Shared by the cost estimator (pre-execution EXPLAIN) and the runner: in the
-    ``auto`` profile a single connection is opened here, estimated against, then
-    handed to ``run_query_sync`` for execution + profiling (one attach / one
-    OAuth exchange).
+    Loads the union of IO extensions across the catalogs' backends (a workspace
+    may mix S3 and ADLS catalogs). Shared by the cost estimator (pre-execution
+    EXPLAIN) and the runner: in the ``auto`` profile a single connection is opened
+    here, estimated against, then handed to ``run_query_sync`` for execution +
+    profiling (one attach / one OAuth exchange).
     """
     conn = duckdb.connect()
-    backend_kind = (backend or {}).get("kind")
-    if (io_ext := _BACKEND_IO_EXTENSION.get(backend_kind or "")) is not None:
-        _safe_install_load(conn, io_ext)
-    if workspace_slug and polaris and _safe_install_load(conn, "iceberg"):
-        delegation = "vended_credentials" if backend_kind in _VENDED_BACKENDS else "none"
+    catalogs = catalogs or []
+    backend_kinds = {(cat.get("backend") or {}).get("kind") for cat in catalogs}
+    for kind in backend_kinds:
+        if (io_ext := _BACKEND_IO_EXTENSION.get(kind or "")) is not None:
+            _safe_install_load(conn, io_ext)
+    if catalogs and polaris and _safe_install_load(conn, "iceberg"):
         try:
-            _attach_polaris(
-                conn,
-                warehouse=workspace_slug,
-                polaris=polaris,
-                delegation_mode=delegation,
-                default_schema=default_schema or _DEFAULT_NAMESPACE,
+            _attach_catalogs(
+                conn, catalogs=catalogs, active_catalog=active_catalog, polaris=polaris
             )
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Polaris ATTACH failed for %s: %s", workspace_slug, exc)
+            logger.warning("Polaris ATTACH failed: %s", exc)
     return conn
 
 
@@ -377,10 +396,9 @@ def run_query_sync(
     *,
     memory_bytes: int,
     threads: int,
-    backend: dict[str, Any] | None = None,
-    workspace_slug: str | None = None,
+    catalogs: list[dict[str, Any]] | None = None,
+    active_catalog: str | None = None,
     polaris: dict[str, Any] | None = None,
-    default_schema: str | None = None,
     stats_for: dict[str, str] | None = None,
     health_for: dict[str, Any] | None = None,
     conn: duckdb.DuckDBPyConnection | None = None,
@@ -394,11 +412,11 @@ def run_query_sync(
     directly with no result file (`wrote_result=False`).
 
     Optional kwargs (passed by the control plane):
-    - `backend`: workspace storage backend descriptor `{kind, root_uri}`.
-    - `workspace_slug`: used as the Polaris warehouse (catalog) name.
-    - `polaris`: `{endpoint, client_id, client_secret}`. When set together
-      with `workspace_slug`, ATTACH the workspace's Polaris catalog before
-      running the user SQL.
+    - `catalogs`: the workspace's catalog descriptors (each `{slug, polaris_name,
+      backend, default_schema}`); all are ATTACHed (multi-attach).
+    - `active_catalog`: slug `USE`d for unqualified table names.
+    - `polaris`: `{endpoint, client_id, client_secret}`. When set together with
+      `catalogs`, ATTACH them before running the user SQL.
     - `conn`: a pre-opened+attached connection (the `auto` profile reuses the
       one it ran EXPLAIN on). When omitted, the runner opens and attaches its own.
     - `enable_profiling`: capture DuckDB's JSON profile for a materialized SELECT
@@ -408,10 +426,9 @@ def run_query_sync(
     """
     if conn is None:
         conn = open_and_attach(
-            backend=backend,
-            workspace_slug=workspace_slug,
+            catalogs=catalogs,
+            active_catalog=active_catalog,
             polaris=polaris,
-            default_schema=default_schema,
         )
     if on_connect is not None:
         on_connect(conn)
@@ -478,30 +495,37 @@ def run_query_sync(
         # When asked, compute true table stats on the same attached connection.
         # size_bytes has no reliable cross-backend source yet, so it stays null.
         if stats_for:
+            catalog = stats_for.get("catalog")
             schema = stats_for.get("schema")
             table = stats_for.get("table")
-            if schema and table:
+            if catalog and schema and table:
                 try:
-                    cnt = conn.execute(f'SELECT count(*) FROM "{schema}"."{table}"').fetchone()
+                    cnt = conn.execute(
+                        f'SELECT count(*) FROM "{catalog}"."{schema}"."{table}"'
+                    ).fetchone()
                     result["table_row_count"] = cnt[0] if cnt else None
                 except Exception as exc:  # noqa: BLE001 - stats are best-effort
-                    logger.warning("Table stats failed for %s.%s: %s", schema, table, exc)
+                    logger.warning(
+                        "Table stats failed for %s.%s.%s: %s", catalog, schema, table, exc
+                    )
                     result["table_row_count"] = None
                 result["table_size_bytes"] = None
                 # Iceberg-native metadata for the table-detail page. Only
                 # meaningful when a catalog is attached; best-effort throughout.
-                if workspace_slug and polaris:
-                    result["iceberg"] = _iceberg_metadata(conn, schema, table)
+                if catalogs and polaris:
+                    result["iceberg"] = _iceberg_metadata(conn, catalog, schema, table)
 
         # Maintenance health probe: richer Iceberg metrics on the same attached
         # connection. Driven by the scanner; best-effort throughout.
-        if health_for and workspace_slug and polaris:
+        if health_for and catalogs and polaris:
+            catalog = health_for.get("catalog")
             schema = health_for.get("schema")
             table = health_for.get("table")
-            if schema and table:
+            if catalog and schema and table:
                 try:
                     result["health"] = collect_table_health(
                         conn,
+                        catalog,
                         schema,
                         table,
                         target_file_bytes=int(health_for.get("target_file_bytes", 128 * 1024**2)),

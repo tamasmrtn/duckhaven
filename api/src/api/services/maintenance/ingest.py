@@ -15,6 +15,7 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.models.catalog import Catalog
 from api.models.maintenance import MaintenanceRecommendation, TableHealthSample
 from api.models.query import Query
 from api.services.maintenance import recommend, scoring
@@ -41,7 +42,13 @@ _METRIC_FIELDS = (
 async def record_health_sample(db: AsyncSession, query: Query, health: dict[str, Any]) -> None:
     schema = health.get("schema")
     table = health.get("table")
-    if not schema or not table:
+    catalog_slug = health.get("catalog")
+    if not schema or not table or not catalog_slug:
+        return
+    catalog = (
+        await db.execute(sa.select(Catalog).where(Catalog.slug == catalog_slug))
+    ).scalar_one_or_none()
+    if catalog is None:
         return
 
     policy = await get_or_create_policy(db)
@@ -50,6 +57,7 @@ async def record_health_sample(db: AsyncSession, query: Query, health: dict[str,
 
     sample = TableHealthSample(
         workspace_id=query.workspace_id,
+        catalog_id=catalog.id,
         schema_name=schema,
         table_name=table,
         score=score,
@@ -58,20 +66,20 @@ async def record_health_sample(db: AsyncSession, query: Query, health: dict[str,
     )
     db.add(sample)
 
-    history = await _growth_history(db, query.workspace_id, schema, table)
+    history = await _growth_history(db, catalog.id, schema, table)
     recs = recommend.generate(health, thresholds, history=history)
-    await _sync_recommendations(db, query.workspace_id, schema, table, recs)
+    await _sync_recommendations(db, query.workspace_id, catalog.id, schema, table, recs)
     await db.commit()
 
 
 async def _growth_history(
-    db: AsyncSession, workspace_id: uuid.UUID, schema: str, table: str
+    db: AsyncSession, catalog_id: uuid.UUID, schema: str, table: str
 ) -> list[dict[str, Any]]:
     cutoff = datetime.now(tz=UTC) - timedelta(days=_GROWTH_WINDOW_DAYS)
     rows = (
         await db.execute(
             sa.select(TableHealthSample.total_data_bytes).where(
-                TableHealthSample.workspace_id == workspace_id,
+                TableHealthSample.catalog_id == catalog_id,
                 TableHealthSample.schema_name == schema,
                 TableHealthSample.table_name == table,
                 TableHealthSample.scanned_at >= cutoff,
@@ -84,22 +92,23 @@ async def _growth_history(
 async def _sync_recommendations(
     db: AsyncSession,
     workspace_id: uuid.UUID,
+    catalog_id: uuid.UUID,
     schema: str,
     table: str,
     recs: list[dict[str, Any]],
 ) -> None:
     """Upsert generated recommendations and resolve ones that no longer apply.
 
-    At most one row per (table, kind). A regenerated rec reopens unless it was
-    dismissed — a dismissed rec only reappears if its severity has increased
-    ("worsens again"). Kinds no longer generated are auto-resolved.
+    At most one row per (catalog, table, kind). A regenerated rec reopens unless
+    it was dismissed — a dismissed rec only reappears if its severity has
+    increased ("worsens again"). Kinds no longer generated are auto-resolved.
     """
     existing = {
         r.kind: r
         for r in (
             await db.execute(
                 sa.select(MaintenanceRecommendation).where(
-                    MaintenanceRecommendation.workspace_id == workspace_id,
+                    MaintenanceRecommendation.catalog_id == catalog_id,
                     MaintenanceRecommendation.schema_name == schema,
                     MaintenanceRecommendation.table_name == table,
                 )
@@ -119,6 +128,7 @@ async def _sync_recommendations(
             db.add(
                 MaintenanceRecommendation(
                     workspace_id=workspace_id,
+                    catalog_id=catalog_id,
                     schema_name=schema,
                     table_name=table,
                     status="open",

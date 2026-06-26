@@ -6,13 +6,13 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
+from conftest import seed_workspace
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from api.models.agent import Agent
 from api.models.maintenance import MaintenancePolicy
 from api.models.query import Query
-from api.models.storage_backend import StorageBackend
 from api.models.user import User
 from api.models.workspace import Workspace
 from api.services.agent_registry import registry
@@ -44,12 +44,7 @@ async def _seed(db, fake_polaris, *, connect_agent: bool = True) -> tuple[Worksp
     user = User(email="s@test.local", password_hash=hash_password("pw"), name="S", role="user")
     db.add(user)
     await db.flush()
-    sb = StorageBackend(kind="object_store", name="s", root_uri="", created_by=user.id)
-    db.add(sb)
-    await db.flush()
-    ws = Workspace(slug="scan-ws", name="Scan", storage_backend_id=sb.id)
-    db.add(ws)
-    await db.flush()
+    ws, catalog = await seed_workspace(db, user_id=user.id, slug="scan-ws", name="Scan")
 
     ws_obj = FakeWS()
     if connect_agent:
@@ -61,10 +56,11 @@ async def _seed(db, fake_polaris, *, connect_agent: bool = True) -> tuple[Worksp
         registry.register(agent.id, ws_obj)  # type: ignore[arg-type]
     await db.commit()
 
-    # Seed the catalog the scanner enumerates via Polaris.
-    await fake_polaris.create_catalog(ws.slug, storage_type="S3", base_location="s3://b")
-    await fake_polaris.create_schema(ws.slug, "analytics")
-    await fake_polaris.create_table(catalog=ws.slug, schema="analytics", name="events", columns=[])
+    # Seed the catalog the scanner enumerates via Polaris (by polaris_name).
+    pname = catalog.polaris_name
+    await fake_polaris.create_catalog(pname, storage_type="S3", base_location="s3://b")
+    await fake_polaris.create_schema(pname, "analytics")
+    await fake_polaris.create_table(catalog=pname, schema="analytics", name="events", columns=[])
     return ws, (ws_obj if connect_agent else None)
 
 

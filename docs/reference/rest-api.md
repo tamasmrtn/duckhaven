@@ -21,7 +21,7 @@ list.
 | `auth` | Sign in / out, current user (`/api/auth/*`, `/api/me`) |
 | `setup` | First-admin creation from the setup token |
 | `workspaces` | Create and list workspaces and members |
-| `catalog` | Schemas, tables, table detail, sample rows, snapshot history |
+| `catalog` | Catalogs (create/attach/detach/drop), schemas, tables, table detail, sample rows, snapshot history |
 | `queries` | Submit queries, page result rows, profiles, saved queries, history |
 | `agents` | List agents and capabilities |
 | `admin` | Agents (bootstrap/revoke), storage backends, users, maintenance |

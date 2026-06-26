@@ -1,4 +1,5 @@
 import logging
+import re
 import uuid
 
 from fastapi import HTTPException, status
@@ -7,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from api.config import settings
+from api.models.catalog import Catalog, WorkspaceCatalog
 from api.models.storage_backend import StorageBackend
 from api.models.workspace import Workspace, WorkspaceMember
 from api.services.polaris import PolarisClient, PolarisConflictError
@@ -104,7 +106,7 @@ async def assert_workspace_member(
 
 
 async def get_workspace(db: AsyncSession, slug_or_id: str) -> Workspace | None:
-    stmt = select(Workspace).options(selectinload(Workspace.storage_backend))
+    stmt = select(Workspace)
     try:
         ws_id = uuid.UUID(slug_or_id)
         result = await db.execute(stmt.where(Workspace.id == ws_id))
@@ -121,27 +123,28 @@ DEFAULT_SCHEMA = "analytics"
 
 async def ensure_polaris_catalog(
     polaris: PolarisClient,
-    slug: str,
+    polaris_name: str,
     *,
     storage_type: str,
     base_location: str,
     extra_storage: dict | None = None,
     default_schema: str = DEFAULT_SCHEMA,
 ) -> None:
-    """Lazily create the workspace's Polaris catalog and default namespace,
-    and grant the service principal data access on it.
+    """Lazily create a catalog's Polaris catalog and default namespace, and
+    grant the service principal data access on it.
 
-    The catalog's base location is scoped per workspace (a `/{slug}` suffix) so
-    workspaces sharing a backend never collide on object-store paths.
-    Idempotent: any PolarisConflictError from create is treated as success.
-    Used both by the eager `POST /workspaces` path (where the catalog won't
-    exist yet) and as a self-heal for catalog browsing.
+    The catalog's base location is scoped per catalog (a `/{polaris_name}`
+    suffix) so catalogs sharing a backend never collide on object-store paths.
+    For catalogs migrated from the legacy 1:1 model `polaris_name` equals the
+    originating workspace slug, so the location stays byte-identical (no Polaris
+    rename). Idempotent: any PolarisConflictError from create is treated as
+    success. Used by the catalog-create path and as a self-heal for browsing.
     """
-    scoped_location = f"{base_location.rstrip('/')}/{slug}"
-    if not await polaris.catalog_exists(slug):
+    scoped_location = f"{base_location.rstrip('/')}/{polaris_name}"
+    if not await polaris.catalog_exists(polaris_name):
         try:
             await polaris.create_catalog(
-                slug,
+                polaris_name,
                 storage_type=storage_type,
                 base_location=scoped_location,
                 extra_storage=extra_storage,
@@ -149,8 +152,72 @@ async def ensure_polaris_catalog(
         except PolarisConflictError:
             pass
     # Wire data-access grants so the agent's DuckDB can read/write tables.
-    await polaris.ensure_catalog_access(slug)
+    await polaris.ensure_catalog_access(polaris_name)
     try:
-        await polaris.create_schema(slug, default_schema)
+        await polaris.create_schema(polaris_name, default_schema)
     except PolarisConflictError:
         pass
+
+
+# Catalog slugs double as DuckDB ATTACH aliases and appear in
+# `catalog.schema.table` SQL, so they must be identifier-safe.
+_CATALOG_SLUG_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+def validate_catalog_slug(slug: str) -> str:
+    """Return ``slug`` if it is identifier-safe, else raise 422."""
+    if not _CATALOG_SLUG_RE.match(slug) or len(slug) > 255:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "Catalog slug must match ^[a-z][a-z0-9_]*$ (lowercase, "
+                "start with a letter, only letters/digits/underscores)."
+            ),
+        )
+    return slug
+
+
+async def resolve_workspace_catalogs(db: AsyncSession, workspace_id: uuid.UUID) -> list[Catalog]:
+    """All catalogs attached to a workspace, each with its storage backend loaded."""
+    rows = await db.execute(
+        select(Catalog)
+        .join(WorkspaceCatalog, WorkspaceCatalog.catalog_id == Catalog.id)
+        .where(WorkspaceCatalog.workspace_id == workspace_id)
+        .options(selectinload(Catalog.storage_backend))
+        .order_by(Catalog.slug)
+    )
+    return list(rows.scalars().all())
+
+
+async def get_default_catalog(db: AsyncSession, workspace_id: uuid.UUID) -> Catalog | None:
+    """The workspace's default catalog (the one `USE`d for unqualified names)."""
+    row = await db.execute(
+        select(Catalog)
+        .join(WorkspaceCatalog, WorkspaceCatalog.catalog_id == Catalog.id)
+        .where(
+            WorkspaceCatalog.workspace_id == workspace_id,
+            WorkspaceCatalog.is_default.is_(True),
+        )
+        .options(selectinload(Catalog.storage_backend))
+    )
+    return row.scalar_one_or_none()
+
+
+async def resolve_catalog(db: AsyncSession, workspace_id: uuid.UUID, catalog_slug: str) -> Catalog:
+    """Resolve a catalog by slug that is attached to ``workspace_id``; 404 otherwise."""
+    row = await db.execute(
+        select(Catalog)
+        .join(WorkspaceCatalog, WorkspaceCatalog.catalog_id == Catalog.id)
+        .where(
+            WorkspaceCatalog.workspace_id == workspace_id,
+            Catalog.slug == catalog_slug,
+        )
+        .options(selectinload(Catalog.storage_backend))
+    )
+    catalog = row.scalar_one_or_none()
+    if catalog is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Catalog '{catalog_slug}' is not attached to this workspace.",
+        )
+    return catalog

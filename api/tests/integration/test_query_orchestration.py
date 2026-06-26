@@ -19,9 +19,16 @@ pytestmark = pytest.mark.integration
 
 
 @pytest_asyncio.fixture
-async def workspace_slug(workspace_factory) -> str:
+async def workspace_slug(admin_client, workspace_factory) -> str:
     ws = await workspace_factory(name="Query Orchestration")
-    return ws["slug"]
+    slug = ws["slug"]
+    # Workspaces no longer auto-create a catalog; attach a default one so queries
+    # have a catalog to run against.
+    created = await admin_client.post(
+        f"/workspaces/{slug}/catalogs", json={"name": f"c_{slug.replace('-', '_')}"}
+    )
+    assert created.status_code == 201, created.text
+    return slug
 
 
 async def test_valid_query_is_dispatched(admin_client, workspace_slug, connected_agent) -> None:
@@ -36,13 +43,16 @@ async def test_valid_query_is_dispatched(admin_client, workspace_slug, connected
     # QUERY_PROGRESS; the agent may hold it in its admission queue first.
     assert body["status"] == "queued"
 
-    # The agent received exactly one DISPATCH_QUERY frame for this query.
+    # The agent received exactly one DISPATCH_QUERY frame for this query, carrying
+    # the workspace's catalog descriptors + the active catalog (multi-attach).
     assert len(stub.sent) == 1
     frame = json.loads(stub.sent[0])
     assert frame["type"] == "dispatch_query"
     assert frame["payload"]["sql"] == "SELECT 1"
-    assert frame["payload"]["workspace"]["slug"] == workspace_slug
-    assert frame["payload"]["backend"]["kind"] == "object_store"
+    cats = frame["payload"]["catalogs"]
+    assert len(cats) == 1
+    assert cats[0]["backend"]["kind"] == "object_store"
+    assert frame["payload"]["active_catalog"] == cats[0]["slug"]
 
     got = await admin_client.get(f"/queries/{body['id']}")
     assert got.status_code == 200

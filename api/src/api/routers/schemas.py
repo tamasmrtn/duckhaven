@@ -1,16 +1,22 @@
 """Schemas + tables endpoints (M3, G-D8-b, G-D9-a).
 
-All endpoints are workspace-scoped and gated by `assert_workspace_member`.
-list operations require `reader`; creates require `writer`. UC is the
-authority — we never write schema/table state into pg.
+Endpoints are catalog-scoped and gated by `assert_workspace_member`. Each is
+exposed twice: the canonical
+``/workspaces/{ws}/catalogs/{catalog}/schemas/...`` form, and a legacy
+``/workspaces/{ws}/schemas/...`` shim that resolves the workspace's *default*
+catalog (backward compatibility for pre-multi-catalog clients). list operations
+require `reader`; creates/drops require `writer`. Polaris is the authority — we
+never write schema/table state into pg.
 """
 
 from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -18,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user, get_db, get_polaris_client
 from api.models.agent import Agent
-from api.models.storage_backend import StorageBackend
+from api.models.catalog import Catalog
 from api.models.table_metadata import TableMetadata
 from api.models.user import User
 from api.models.workspace import Workspace
@@ -44,8 +50,10 @@ from api.services.polaris import (
 from api.services.workspace import (
     assert_workspace_member,
     ensure_polaris_catalog,
+    get_default_catalog,
     get_workspace,
     polaris_storage,
+    resolve_catalog,
 )
 
 logger = logging.getLogger(__name__)
@@ -68,14 +76,14 @@ class _TableMeta:
 
 
 async def _load_table_meta(
-    db: AsyncSession, workspace_id: uuid.UUID, schema_name: str
+    db: AsyncSession, catalog_id: uuid.UUID, schema_name: str
 ) -> dict[str, _TableMeta]:
     """Load TableMetadata for a schema, resolving owner/writer/agent to display names."""
     rows = list(
         (
             await db.execute(
                 select(TableMetadata).where(
-                    TableMetadata.workspace_id == workspace_id,
+                    TableMetadata.catalog_id == catalog_id,
                     TableMetadata.schema_name == schema_name,
                 )
             )
@@ -123,13 +131,13 @@ async def _load_table_meta(
 
 
 async def _delete_table_meta(
-    db: AsyncSession, workspace_id: uuid.UUID, schema_name: str, table_name: str
+    db: AsyncSession, catalog_id: uuid.UUID, schema_name: str, table_name: str
 ) -> None:
     """Remove the TableMetadata sidecar row for a dropped table, if present."""
     existing = (
         await db.execute(
             select(TableMetadata).where(
-                TableMetadata.workspace_id == workspace_id,
+                TableMetadata.catalog_id == catalog_id,
                 TableMetadata.schema_name == schema_name,
                 TableMetadata.table_name == table_name,
             )
@@ -137,9 +145,6 @@ async def _delete_table_meta(
     ).scalar_one_or_none()
     if existing is not None:
         await db.delete(existing)
-
-
-router = APIRouter(prefix="/workspaces/{ws}/schemas")
 
 
 # Map the small set of allowed scalar types to Iceberg primitive type strings.
@@ -166,12 +171,16 @@ def _column_for_iceberg(spec: ColumnSpec, field_id: int) -> dict[str, object]:
 
 
 def _table_to_out(
-    table: PolarisTable, workspace_id: uuid.UUID, meta: _TableMeta | None = None
+    table: PolarisTable,
+    catalog: Catalog,
+    workspace_id: uuid.UUID,
+    meta: _TableMeta | None = None,
 ) -> TableOut:
     props = table.properties or {}
     return TableOut(
         name=table.name,
         schema_name=table.schema_name,
+        catalog=catalog.slug,
         catalog_name=table.catalog_name,
         workspace_id=str(workspace_id),
         table_type=table.table_type,
@@ -199,9 +208,6 @@ def _table_to_out(
         last_write_at=meta.last_write_at if meta else None,
         last_write_by=meta.last_write_by if meta else None,
         last_write_agent=meta.last_write_agent if meta else None,
-        # Iceberg-native metadata: format version from Polaris; the rest from the
-        # control-plane sidecar (agent probe). snapshot_id is serialized as a
-        # string — Iceberg 64-bit ids exceed JS's safe-integer range.
         format_version=table.format_version,
         snapshot_id=(str(meta.snapshot_id) if meta and meta.snapshot_id is not None else None),
         snapshot_at=meta.snapshot_at if meta else None,
@@ -239,96 +245,120 @@ def _snapshot_to_out(snap: PolarisSnapshot) -> SnapshotOut:
     )
 
 
-async def _resolve_workspace(ws: str, user: User, db: AsyncSession, min_role: str) -> Workspace:
-    workspace = await get_workspace(db, ws)
-    if workspace is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-    await assert_workspace_member(db, workspace.id, user.id, min_role=min_role)
-    return workspace
+@dataclass
+class _Target:
+    """The (workspace, catalog) a schemas/tables request resolved to."""
+
+    workspace: Workspace
+    catalog: Catalog
 
 
-async def _polaris_storage_args(
-    db: AsyncSession, workspace: Workspace
-) -> tuple[str, str, dict | None]:
-    """Resolve (storage_type, base_location, extra_storage) for the workspace's backend."""
-    backend = await db.get(StorageBackend, workspace.storage_backend_id)
+def target_catalog(
+    min_role: str,
+) -> Callable[..., Coroutine[Any, Any, _Target]]:
+    """Dependency factory resolving the request's target catalog.
+
+    On the canonical route ``catalog`` is a path param; on the legacy shim it is
+    absent and the workspace's default catalog is used. Membership is enforced at
+    ``min_role``.
+    """
+
+    async def _dep(
+        ws: str,
+        catalog: str | None = None,
+        user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db),
+    ) -> _Target:
+        workspace = await get_workspace(db, ws)
+        if workspace is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+        await assert_workspace_member(db, workspace.id, user.id, min_role=min_role)
+        if catalog is None:
+            resolved = await get_default_catalog(db, workspace.id)
+            if resolved is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Workspace has no catalogs attached.",
+                )
+        else:
+            resolved = await resolve_catalog(db, workspace.id, catalog)
+        return _Target(workspace=workspace, catalog=resolved)
+
+    return _dep
+
+
+async def _ensure_catalog(db: AsyncSession, polaris: PolarisClient, catalog: Catalog) -> None:
+    backend = catalog.storage_backend
     if backend is None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Workspace points to a missing storage backend",
+            detail="Catalog points to a missing storage backend",
         )
-    return polaris_storage(backend.kind, backend.root_uri)
-
-
-async def _ensure_catalog(db: AsyncSession, polaris: PolarisClient, workspace: Workspace) -> None:
-    storage_type, base_location, extra_storage = await _polaris_storage_args(db, workspace)
+    storage_type, base_location, extra_storage = polaris_storage(backend.kind, backend.root_uri)
     await ensure_polaris_catalog(
         polaris,
-        workspace.slug,
+        catalog.polaris_name,
         storage_type=storage_type,
         base_location=base_location,
         extra_storage=extra_storage,
     )
 
 
-@router.get("", response_model=list[CatalogSchemaOut])
+# --- Handlers (registered on both the catalog-scoped and legacy routers) ---
+
+
 async def list_schemas(
-    ws: str,
-    user: User = Depends(get_current_user),
+    target: _Target = Depends(target_catalog("reader")),
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> list[CatalogSchemaOut]:
-    workspace = await _resolve_workspace(ws, user, db, min_role="reader")
-    await _ensure_catalog(db, polaris, workspace)
-    schemas = await polaris.list_schemas(workspace.slug)
+    cat = target.catalog
+    await _ensure_catalog(db, polaris, cat)
+    schemas = await polaris.list_schemas(cat.polaris_name)
     return [
-        CatalogSchemaOut(name=s.name, catalog_name=s.catalog_name, workspace_id=str(workspace.id))
+        CatalogSchemaOut(
+            name=s.name,
+            catalog=cat.slug,
+            catalog_name=s.catalog_name,
+            workspace_id=str(target.workspace.id),
+        )
         for s in schemas
     ]
 
 
-@router.post("", response_model=CatalogSchemaOut, status_code=status.HTTP_201_CREATED)
 async def create_schema(
-    ws: str,
     body: CatalogSchemaCreate,
-    user: User = Depends(get_current_user),
+    target: _Target = Depends(target_catalog("writer")),
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> CatalogSchemaOut:
-    workspace = await _resolve_workspace(ws, user, db, min_role="writer")
-    await _ensure_catalog(db, polaris, workspace)
+    cat = target.catalog
+    await _ensure_catalog(db, polaris, cat)
     try:
-        sc = await polaris.create_schema(workspace.slug, body.name)
+        sc = await polaris.create_schema(cat.polaris_name, body.name)
     except PolarisConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return CatalogSchemaOut(
-        name=sc.name, catalog_name=sc.catalog_name, workspace_id=str(workspace.id)
+        name=sc.name,
+        catalog=cat.slug,
+        catalog_name=sc.catalog_name,
+        workspace_id=str(target.workspace.id),
     )
 
 
-@router.post("/refresh-stats")
 async def refresh_table_stats(
-    ws: str,
+    target: _Target = Depends(target_catalog("reader")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> dict[str, int]:
-    """Probe row counts for tables that have none yet.
-
-    Tables created from the worksheet (`CREATE TABLE ...`) never pass through the
-    create-table endpoint, so they have no metadata sidecar and show no row count
-    in the catalog tree. This backs the tree's Refresh button: it walks the
-    workspace and, for every table whose ``row_count`` is still unknown, dispatches
-    a one-off count probe (the same agent stats path the table preview uses) and
-    upserts the result. Tables that already have a count are skipped, so a repeat
-    refresh that finds nothing issues no agent work.
-    """
-    workspace = await _resolve_workspace(ws, user, db, min_role="reader")
+    """Probe row counts for tables in this catalog that have none yet."""
+    workspace, cat = target.workspace, target.catalog
 
     missing: list[tuple[str, str]] = []
-    for s in await polaris.list_schemas(workspace.slug):
-        meta = await _load_table_meta(db, workspace.id, s.name)
-        for t in await polaris.list_tables(workspace.slug, s.name):
+    for s in await polaris.list_schemas(cat.polaris_name):
+        meta = await _load_table_meta(db, cat.id, s.name)
+        for t in await polaris.list_tables(cat.polaris_name, s.name):
             m = meta.get(t.name)
             if m is None or m.row_count is None:
                 missing.append((s.name, t.name))
@@ -345,9 +375,6 @@ async def refresh_table_stats(
 
     probed = 0
     for schema_name, table_name in missing:
-        # A trivial main query keeps the dispatch cheap; stats_for is what makes
-        # the agent COUNT(*) the table and report it back for the metadata upsert.
-        # origin="sample" keeps these internal probes out of the query history.
         query = await query_service.run_sync_query(
             db,
             workspace=workspace,
@@ -355,7 +382,8 @@ async def refresh_table_stats(
             user_id=user.id,
             sql="SELECT 1",
             origin="sample",
-            stats_for={"schema": schema_name, "table": table_name},
+            active_catalog=cat.slug,
+            stats_for={"catalog": cat.slug, "schema": schema_name, "table": table_name},
         )
         if query.status == "done":
             probed += 1
@@ -363,20 +391,17 @@ async def refresh_table_stats(
     return {"probed": probed}
 
 
-@router.delete("/{schema}", status_code=status.HTTP_204_NO_CONTENT)
 async def drop_schema(
-    ws: str,
     schema: str,
     cascade: bool = False,
-    user: User = Depends(get_current_user),
+    target: _Target = Depends(target_catalog("writer")),
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> None:
-    """Drop a schema. Fails if it still holds tables unless `cascade=true`, in
-    which case its tables are dropped first."""
-    workspace = await _resolve_workspace(ws, user, db, min_role="writer")
+    """Drop a schema. Fails if it still holds tables unless `cascade=true`."""
+    cat = target.catalog
     try:
-        tables = await polaris.list_tables(workspace.slug, schema)
+        tables = await polaris.list_tables(cat.polaris_name, schema)
     except PolarisNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
     if tables and not cascade:
@@ -389,88 +414,74 @@ async def drop_schema(
             ),
         )
     for t in tables:
-        await polaris.delete_table(workspace.slug, schema, t.name, purge=True)
-        await _delete_table_meta(db, workspace.id, schema, t.name)
+        await polaris.delete_table(cat.polaris_name, schema, t.name, purge=True)
+        await _delete_table_meta(db, cat.id, schema, t.name)
     try:
-        await polaris.delete_schema(workspace.slug, schema)
+        await polaris.delete_schema(cat.polaris_name, schema)
     except PolarisNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
     await db.commit()
 
 
-@router.get("/{schema}/tables", response_model=list[TableOut])
 async def list_tables(
-    ws: str,
     schema: str,
-    user: User = Depends(get_current_user),
+    target: _Target = Depends(target_catalog("reader")),
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> list[TableOut]:
-    workspace = await _resolve_workspace(ws, user, db, min_role="reader")
-    tables = await polaris.list_tables(workspace.slug, schema)
-    meta = await _load_table_meta(db, workspace.id, schema)
-    return [_table_to_out(t, workspace.id, meta.get(t.name)) for t in tables]
+    cat = target.catalog
+    tables = await polaris.list_tables(cat.polaris_name, schema)
+    meta = await _load_table_meta(db, cat.id, schema)
+    return [_table_to_out(t, cat, target.workspace.id, meta.get(t.name)) for t in tables]
 
 
-@router.get("/{schema}/tables/{table}", response_model=TableOut)
 async def get_table(
-    ws: str,
     schema: str,
     table: str,
-    user: User = Depends(get_current_user),
+    target: _Target = Depends(target_catalog("reader")),
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> TableOut:
-    workspace = await _resolve_workspace(ws, user, db, min_role="reader")
+    cat = target.catalog
     try:
-        t = await polaris.get_table(workspace.slug, schema, table)
+        t = await polaris.get_table(cat.polaris_name, schema, table)
     except PolarisNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
-    meta = await _load_table_meta(db, workspace.id, schema)
-    return _table_to_out(t, workspace.id, meta.get(t.name))
+    meta = await _load_table_meta(db, cat.id, schema)
+    return _table_to_out(t, cat, target.workspace.id, meta.get(table))
 
 
-@router.get("/{schema}/tables/{table}/snapshots", response_model=list[SnapshotOut])
 async def list_snapshots(
-    ws: str,
     schema: str,
     table: str,
-    user: User = Depends(get_current_user),
+    target: _Target = Depends(target_catalog("reader")),
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> list[SnapshotOut]:
-    """Iceberg snapshot history for a table, newest first. Read live from
-    Polaris (never persisted); a table with no snapshots returns []."""
-    workspace = await _resolve_workspace(ws, user, db, min_role="reader")
+    """Iceberg snapshot history for a table, newest first (live from Polaris)."""
+    cat = target.catalog
     try:
-        snapshots = await polaris.list_snapshots(workspace.slug, schema, table)
+        snapshots = await polaris.list_snapshots(cat.polaris_name, schema, table)
     except PolarisNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
     return [_snapshot_to_out(s) for s in snapshots]
 
 
-@router.post(
-    "/{schema}/tables",
-    response_model=TableOut,
-    status_code=status.HTTP_201_CREATED,
-)
 async def create_table(
-    ws: str,
     schema: str,
     body: TableCreate,
+    target: _Target = Depends(target_catalog("writer")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> TableOut:
-    workspace = await _resolve_workspace(ws, user, db, min_role="writer")
-    # Iceberg schema fields use 1-based, unique field ids; Polaris places the
-    # table under the catalog's base location, so we pass no storage location.
+    cat = target.catalog
     columns = [_column_for_iceberg(spec, idx + 1) for idx, spec in enumerate(body.columns)]
 
-    await _ensure_catalog(db, polaris, workspace)
+    await _ensure_catalog(db, polaris, cat)
     try:
         t = await polaris.create_table(
-            catalog=workspace.slug,
+            catalog=cat.polaris_name,
             schema=schema,
             name=body.name,
             columns=columns,
@@ -478,10 +489,9 @@ async def create_table(
     except PolarisConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
-    # Record ownership + initial (empty) stats. The creator is owner + last writer.
     db.add(
         TableMetadata(
-            workspace_id=workspace.id,
+            catalog_id=cat.id,
             schema_name=schema,
             table_name=body.name,
             owner_id=user.id,
@@ -492,25 +502,23 @@ async def create_table(
         )
     )
     await db.commit()
-    meta = await _load_table_meta(db, workspace.id, schema)
-    return _table_to_out(t, workspace.id, meta.get(body.name))
+    meta = await _load_table_meta(db, cat.id, schema)
+    return _table_to_out(t, cat, target.workspace.id, meta.get(body.name))
 
 
-@router.delete("/{schema}/tables/{table}", status_code=status.HTTP_204_NO_CONTENT)
 async def drop_table(
-    ws: str,
     schema: str,
     table: str,
-    user: User = Depends(get_current_user),
+    target: _Target = Depends(target_catalog("writer")),
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> None:
-    workspace = await _resolve_workspace(ws, user, db, min_role="writer")
+    cat = target.catalog
     try:
-        await polaris.delete_table(workspace.slug, schema, table, purge=True)
+        await polaris.delete_table(cat.polaris_name, schema, table, purge=True)
     except PolarisNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
-    await _delete_table_meta(db, workspace.id, schema, table)
+    await _delete_table_meta(db, cat.id, schema, table)
     await db.commit()
 
 
@@ -518,18 +526,17 @@ async def drop_table(
 _SAMPLE_LIMIT = 20
 
 
-@router.get("/{schema}/tables/{table}/sample", response_model=RowsPageOut)
 async def sample_table(
-    ws: str,
     schema: str,
     table: str,
+    target: _Target = Depends(target_catalog("reader")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> RowsPageOut:
-    workspace = await _resolve_workspace(ws, user, db, min_role="reader")
+    workspace, cat = target.workspace, target.catalog
     try:
-        await polaris.get_table(workspace.slug, schema, table)
+        await polaris.get_table(cat.polaris_name, schema, table)
     except PolarisNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
 
@@ -540,7 +547,7 @@ async def sample_table(
             detail="No compatible agent is connected to preview this table.",
         )
 
-    sql = f'SELECT * FROM "{schema}"."{table}" LIMIT {_SAMPLE_LIMIT}'
+    sql = f'SELECT * FROM "{cat.slug}"."{schema}"."{table}" LIMIT {_SAMPLE_LIMIT}'
     query = await query_service.run_sync_query(
         db,
         workspace=workspace,
@@ -548,7 +555,8 @@ async def sample_table(
         user_id=user.id,
         sql=sql,
         origin="sample",
-        stats_for={"schema": schema, "table": table},
+        active_catalog=cat.slug,
+        stats_for={"catalog": cat.slug, "schema": schema, "table": table},
     )
     if query.status != "done" or query.result_path is None:
         raise HTTPException(
@@ -566,25 +574,18 @@ async def sample_table(
     return RowsPageOut(rows=rows, columns=columns, cursor=None, total=query.row_count or len(rows))
 
 
-@router.post("/{schema}/tables/{table}/recount")
 async def recount_table(
-    ws: str,
     schema: str,
     table: str,
+    target: _Target = Depends(target_catalog("reader")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> dict[str, int | None]:
-    """Force a fresh row-count probe for a single table.
-
-    Backs the catalog tree's right-click "Recount rows" action. Unlike the
-    workspace-wide refresh (which only probes tables that have *no* count yet),
-    this re-measures unconditionally, so it picks up rows a worksheet ``INSERT``
-    added to an already-counted table. Returns the freshly measured count.
-    """
-    workspace = await _resolve_workspace(ws, user, db, min_role="reader")
+    """Force a fresh row-count probe for a single table."""
+    workspace, cat = target.workspace, target.catalog
     try:
-        await polaris.get_table(workspace.slug, schema, table)
+        await polaris.get_table(cat.polaris_name, schema, table)
     except PolarisNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
 
@@ -595,9 +596,6 @@ async def recount_table(
             detail="No compatible agent is connected to recount this table.",
         )
 
-    # A trivial main query keeps the dispatch cheap; stats_for is what makes the
-    # agent COUNT(*) the table and report it for the metadata upsert. origin=sample
-    # keeps the internal probe out of the query history (as the table preview does).
     query = await query_service.run_sync_query(
         db,
         workspace=workspace,
@@ -605,7 +603,8 @@ async def recount_table(
         user_id=user.id,
         sql="SELECT 1",
         origin="sample",
-        stats_for={"schema": schema, "table": table},
+        active_catalog=cat.slug,
+        stats_for={"catalog": cat.slug, "schema": schema, "table": table},
     )
     if query.status != "done":
         raise HTTPException(
@@ -613,5 +612,37 @@ async def recount_table(
             detail="Recount did not complete in time.",
         )
 
-    meta = (await _load_table_meta(db, workspace.id, schema)).get(table)
+    meta = (await _load_table_meta(db, cat.id, schema)).get(table)
     return {"row_count": meta.row_count if meta else None}
+
+
+# --- Route registration: canonical (catalog-scoped) + legacy (default catalog) ---
+
+router = APIRouter()
+
+_CANON = "/workspaces/{ws}/catalogs/{catalog}/schemas"
+_LEGACY = "/workspaces/{ws}/schemas"
+
+# (suffix, handler, methods, extra kwargs)
+_ROUTES: list[tuple[str, Callable[..., Any], list[str], dict[str, Any]]] = [
+    ("", list_schemas, ["GET"], {"response_model": list[CatalogSchemaOut]}),
+    ("", create_schema, ["POST"], {"response_model": CatalogSchemaOut, "status_code": 201}),
+    ("/refresh-stats", refresh_table_stats, ["POST"], {}),
+    ("/{schema}", drop_schema, ["DELETE"], {"status_code": 204}),
+    ("/{schema}/tables", list_tables, ["GET"], {"response_model": list[TableOut]}),
+    ("/{schema}/tables", create_table, ["POST"], {"response_model": TableOut, "status_code": 201}),
+    ("/{schema}/tables/{table}", get_table, ["GET"], {"response_model": TableOut}),
+    ("/{schema}/tables/{table}", drop_table, ["DELETE"], {"status_code": 204}),
+    (
+        "/{schema}/tables/{table}/snapshots",
+        list_snapshots,
+        ["GET"],
+        {"response_model": list[SnapshotOut]},
+    ),
+    ("/{schema}/tables/{table}/sample", sample_table, ["GET"], {"response_model": RowsPageOut}),
+    ("/{schema}/tables/{table}/recount", recount_table, ["POST"], {}),
+]
+
+for _suffix, _fn, _methods, _kw in _ROUTES:
+    router.add_api_route(_CANON + _suffix, _fn, methods=_methods, **_kw)
+    router.add_api_route(_LEGACY + _suffix, _fn, methods=_methods, **_kw)

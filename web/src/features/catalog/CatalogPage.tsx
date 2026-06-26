@@ -54,22 +54,25 @@ function IcebergMetaLine({ table }: { table: CatalogTable }) {
 
 function TableDetail({
   ws,
+  catalog,
   schema,
   table,
 }: {
   ws: string;
+  catalog: string;
   schema: string;
   table: string;
 }) {
-  const { data: tableData, isLoading } = useTable(ws, schema, table);
+  const { data: tableData, isLoading } = useTable(ws, catalog, schema, table);
   const { data: sampleData, isLoading: sampleLoading } = useTableSample(
     ws,
+    catalog,
     schema,
     table,
   );
   const { data: workspace } = useWorkspace(ws);
   const navigate = useNavigate();
-  const deleteTable = useDeleteTable(ws, schema);
+  const deleteTable = useDeleteTable(ws, catalog, schema);
   const [dropOpen, setDropOpen] = useState(false);
 
   function openInWorksheet(sql: string) {
@@ -95,6 +98,8 @@ function TableDetail({
       <div className="border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-4 shrink-0">
         <div className="flex items-center gap-2 text-xs text-text-secondary">
           <span className="font-medium text-text-primary">{ws}</span>
+          <ChevronRight className="size-3" />
+          <span>{catalog}</span>
           <ChevronRight className="size-3" />
           <span>{schema}</span>
           <ChevronRight className="size-3" />
@@ -132,7 +137,9 @@ function TableDetail({
               variant="outline"
               size="sm"
               className="h-7 gap-1.5 text-xs"
-              onClick={() => openInWorksheet(alterTemplate(schema, table))}
+              onClick={() =>
+                openInWorksheet(alterTemplate(schema, table, catalog))
+              }
             >
               <Pencil className="size-3" />
               Alter table
@@ -141,7 +148,9 @@ function TableDetail({
               variant="outline"
               size="sm"
               className="h-7 gap-1.5 text-xs"
-              onClick={() => openInWorksheet(selectTemplate(schema, table))}
+              onClick={() =>
+                openInWorksheet(selectTemplate(schema, table, catalog))
+              }
             >
               <ExternalLink className="size-3" />
               Query this table
@@ -248,6 +257,7 @@ function TableDetail({
           >
             <SnapshotHistoryPanel
               ws={ws}
+              catalog={catalog}
               schema={schema}
               table={table}
               onQuery={openInWorksheet}
@@ -281,6 +291,7 @@ function TableDetail({
 export function CatalogPage() {
   const params = useParams({ strict: false });
   const ws = params.ws as string;
+  const catalog = params.catalog as string | undefined;
   const schema = params.schema as string | undefined;
   const table = params.table as string | undefined;
   const navigate = useNavigate();
@@ -297,18 +308,23 @@ export function CatalogPage() {
           <CatalogTree
             ws={ws}
             workspaceName={workspace?.name ?? ws}
-            onTableClick={(s, t) =>
+            onTableClick={(c, s, t) =>
               navigate({
-                to: "/$ws/catalog/$schema/$table",
-                params: { ws, schema: s, table: t },
+                to: "/$ws/catalog/$catalog/$schema/$table",
+                params: { ws, catalog: c, schema: s, table: t },
               })
             }
           />
         </div>
 
         <div className="flex-1 overflow-hidden">
-          {schema && table ? (
-            <TableDetail ws={ws} schema={schema} table={table} />
+          {catalog && schema && table ? (
+            <TableDetail
+              ws={ws}
+              catalog={catalog}
+              schema={schema}
+              table={table}
+            />
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-text-tertiary">
               Select a table to view its details.

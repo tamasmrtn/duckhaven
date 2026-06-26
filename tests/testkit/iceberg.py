@@ -40,3 +40,37 @@ def attach_catalog(
         f"ENDPOINT '{endpoint}', ACCESS_DELEGATION_MODE '{delegation}')"
     )
     conn.execute(f'USE dh_catalog."{namespace}"')
+
+
+def attach_catalogs(
+    conn: duckdb.DuckDBPyConnection,
+    base_url: str,
+    catalogs: list[tuple[str, str]],
+    active: str,
+    namespace: str,
+    creds: tuple[str, str],
+    *,
+    delegation: str = "vended_credentials",
+) -> None:
+    """Multi-attach: ATTACH every ``(alias, polaris_name)`` under its alias and
+    ``USE`` the active one — mirrors the agent runner's ``_attach_catalogs`` so
+    cross-catalog ``alias.schema.table`` joins resolve in integration tests."""
+    client_id, client_secret = creds
+    conn.execute("INSTALL iceberg")
+    conn.execute("LOAD iceberg")
+    conn.execute("INSTALL httpfs")
+    conn.execute("LOAD httpfs")
+    conn.execute(
+        "CREATE SECRET dh_iceberg "
+        "(TYPE ICEBERG, CLIENT_ID ?, CLIENT_SECRET ?, OAUTH2_SERVER_URI ?)",
+        [client_id, client_secret, f"{base_url}/api/catalog/v1/oauth/tokens"],
+    )
+    endpoint = f"{base_url}/api/catalog".replace("'", "''")
+    for alias, polaris_name in catalogs:
+        wh = polaris_name.replace("'", "''")
+        a = alias.replace('"', '""')
+        conn.execute(
+            f"ATTACH '{wh}' AS \"{a}\" (TYPE ICEBERG, SECRET dh_iceberg, "
+            f"ENDPOINT '{endpoint}', ACCESS_DELEGATION_MODE '{delegation}')"
+        )
+    conn.execute(f'USE "{active}"."{namespace}"')

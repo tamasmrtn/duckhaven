@@ -1,4 +1,4 @@
-import { get, post, del } from "./client";
+import { get, post, patch, del } from "./client";
 import type { Query, QueryProfile, QueryRowsPage } from "@/types/query";
 import type { SavedQuery } from "@/types/saved-query";
 
@@ -7,12 +7,15 @@ export const queriesApi = {
     ws: string,
     sql: string,
     agentId: string,
-    opts?: { timeout?: number },
+    opts?: { timeout?: number; savedQueryId?: string; catalog?: string },
   ) =>
     post<Query>(`/workspaces/${ws}/queries`, {
       sql,
       agent_id: agentId,
-      ...opts,
+      timeout: opts?.timeout,
+      saved_query_id: opts?.savedQueryId,
+      // The worksheet's active catalog — USEd for unqualified table names.
+      catalog: opts?.catalog,
     }),
 
   listForWorkspace: (
@@ -46,4 +49,13 @@ export const queriesApi = {
     ws: string,
     data: { name: string; sql: string; default_agent_id?: string },
   ) => post<SavedQuery>(`/workspaces/${ws}/saved-queries`, data),
+
+  updateSaved: (
+    ws: string,
+    id: string,
+    data: { name?: string; sql?: string; default_agent_id?: string },
+  ) => patch<SavedQuery>(`/workspaces/${ws}/saved-queries/${id}`, data),
+
+  deleteSaved: (ws: string, id: string) =>
+    del(`/workspaces/${ws}/saved-queries/${id}`),
 };

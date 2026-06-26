@@ -20,13 +20,10 @@ describe('workspaces contract', () => {
     }
   })
 
-  it('POST /workspaces derives storage_backend_kind from the backend FK', async () => {
-    const ws = await workspacesApi.create({
-      slug: 'new-ws',
-      name: 'new-ws',
-      storage_backend_id: 'sb-1', // s3
-    })
-    expect(ws.storage_backend_kind).toBe('s3')
+  it('POST /workspaces creates a name-only workspace with no catalog/storage', async () => {
+    const ws = await workspacesApi.create({ slug: 'new-ws', name: 'new-ws' })
+    expect(ws.default_catalog).toBeNull()
+    expect(ws.storage_backend_kind).toBeNull()
     expect(ws.id).toBe('ws-new-1') // deterministic id
   })
 

@@ -416,7 +416,6 @@ async def test_ws_query_done_visible_to_separate_session(ws_client, db_engine):
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
     from api.models.query import Query
-    from api.models.storage_backend import StorageBackend
     from api.models.user import User
     from api.models.workspace import Workspace
     from api.services.auth import hash_password
@@ -431,10 +430,7 @@ async def test_ws_query_done_visible_to_separate_session(ws_client, db_engine):
         )
         db.add(user)
         await db.flush()
-        sb = StorageBackend(kind="object_store", name="qd", root_uri="/tmp/qd", created_by=user.id)
-        db.add(sb)
-        await db.flush()
-        ws_row = Workspace(slug="qd-ws", name="QD WS", storage_backend_id=sb.id)
+        ws_row = Workspace(slug="qd-ws", name="QD WS")
         db.add(ws_row)
         await db.flush()
         query = Query(workspace_id=ws_row.id, sql="SELECT 1", status="running")

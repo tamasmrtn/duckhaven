@@ -13,7 +13,7 @@ def test_api_mounted_under_api_prefix():
 
 
 def test_agent_ws_route_stays_at_root():
-    assert "/agents/connect" in {getattr(r, "path", None) for r in app.routes}
+    assert app.url_path_for("agent_connect") == "/agents/connect"
 
 
 async def test_api_prefix_routes_reach_routers():

@@ -30,7 +30,39 @@ boot, so every variable below is optional.
 | `S3_ENDPOINT` | `http://minio:9000` | The MinIO URL Polaris vends to DuckDB. For agents on **other** hosts, set this to an address reachable from the agent host. |
 | `S3_ENDPOINT_INTERNAL` | `http://minio:9000` | The endpoint Polaris uses inside the Compose network; rarely needs changing. |
 | `COOKIE_SECURE` | `false` | Set `true` only when the API is served over HTTPS (a TLS terminator in front), so session cookies are `Secure`-flagged. |
+| `SESSION_MAX_AGE_SECONDS` | `604800` (7 days) | Session lifetime — drives both the server-side credential expiry and the cookie max-age. Lower it to shorten how long a sign-in lasts. |
 | `AGENT_BOOTSTRAP_TOKEN` | `dh_boot_localdev_seed` | Single-use token the API seeds on startup so the bundled in-stack agent auto-registers. Override in production. |
+
+### Identity & SSO
+
+Federated sign-in for [OIDC](../guides/connect-idp.md) and [LDAP/AD](../guides/connect-ldap.md). All optional and off
+by default; local accounts always work. Secrets here must never be committed — keep them in your `.env` / secret store.
+`SECRET_KEY` (above) also signs the short-lived cookie that holds the transient OIDC handshake state.
+
+| Variable | Default | Description |
+|---|---|---|
+| `OIDC_ENABLED` | `false` | Master switch for OIDC SSO. When `true`, the login page shows a "Sign in with SSO" button. |
+| `OIDC_LABEL` | `SSO` | Button label, e.g. `Okta` renders "Sign in with Okta". |
+| `OIDC_SERVER_METADATA_URL` | — | IdP discovery document, ending in `/.well-known/openid-configuration`. |
+| `OIDC_CLIENT_ID` | — | Confidential client ID registered in the IdP. |
+| `OIDC_CLIENT_SECRET` | — | Client secret for the confidential client. |
+| `OIDC_SCOPES` | `openid email profile groups` | Scopes requested from the IdP. |
+| `OIDC_GROUPS_CLAIM` | `groups` | ID-token claim holding the user's group memberships. |
+| `OIDC_GROUP_ROLE_MAP` | `{}` | JSON object mapping group value → global role, e.g. `{"dh-admins": "admin"}`. |
+| `OIDC_REDIRECT_BASE_URL` | derived | Public base URL (scheme+host) used to build the callback. Required behind a TLS proxy; must match the registered redirect URI's host. |
+| `LDAP_ENABLED` | `false` | Master switch for LDAP/AD bind authentication. |
+| `LDAP_SERVER_URI` | — | `ldaps://host` (port 636) or `ldap://host` (use with `LDAP_USE_START_TLS`). |
+| `LDAP_USE_START_TLS` | `false` | Upgrade an `ldap://` connection to TLS via STARTTLS. |
+| `LDAP_BIND_DN` | — | DN of the read-only service account used for the user search. |
+| `LDAP_BIND_PASSWORD` | — | Password for the service account. |
+| `LDAP_USER_SEARCH_BASE` | — | Base DN under which users are searched. |
+| `LDAP_USER_FILTER` | `(mail={email})` | Search filter; `{email}` is substituted (and escaped). AD often uses `(sAMAccountName={email})`. |
+| `LDAP_EMAIL_ATTR` | `mail` | Attribute read as the user's email. |
+| `LDAP_NAME_ATTR` | `displayName` | Attribute read as the user's display name. |
+| `LDAP_GROUP_ATTR` | `memberOf` | Attribute holding the user's group DNs. |
+| `LDAP_GROUP_ROLE_MAP` | `{}` | JSON object mapping group DN → global role. |
+| `LDAP_TLS_CA_CERT` | — | Path to a CA bundle validating the directory's TLS certificate. |
+| `LDAP_TIMEOUT_S` | `10` | Connection / receive timeout for directory operations, in seconds. |
 
 ### Maintenance advisor
 

@@ -24,7 +24,7 @@ def test_object_store_prefix_is_label_under_bucket():
     assert extra is not None and extra["endpoint"] == settings.s3_endpoint
 
 
-def test_s3_kind_is_external_unchanged():
+def test_s3_kind_without_config_injects_nothing():
     storage_type, base, extra = polaris_storage("s3", "s3://my-bucket/duckhaven/")
     assert storage_type == "S3"
     assert base == "s3://my-bucket/duckhaven"
@@ -32,10 +32,36 @@ def test_s3_kind_is_external_unchanged():
     assert extra is None
 
 
-def test_adls_kind_is_external_unchanged():
+def test_s3_kind_builds_storage_config_from_config():
     storage_type, base, extra = polaris_storage(
-        "adls_gen2", "abfss://c@acct.dfs.core.windows.net/duckhaven/"
+        "s3",
+        "s3://my-bucket/duckhaven/",
+        {
+            "role_arn": "arn:aws:iam::123456789012:role/duckhaven",
+            "external_id": "dh-acme",
+            "region": "us-east-1",
+            "path_style_access": False,
+        },
+    )
+    assert storage_type == "S3"
+    assert base == "s3://my-bucket/duckhaven"
+    assert extra == {
+        "roleArn": "arn:aws:iam::123456789012:role/duckhaven",
+        "region": "us-east-1",
+        "externalId": "dh-acme",
+        "pathStyleAccess": False,
+    }
+
+
+def test_adls_kind_builds_storage_config_from_config():
+    storage_type, base, extra = polaris_storage(
+        "adls_gen2",
+        "abfss://c@acct.dfs.core.windows.net/duckhaven/",
+        {"tenant_id": "00000000-0000-0000-0000-000000000000", "hierarchical": True},
     )
     assert storage_type == "AZURE"
     assert base == "abfss://c@acct.dfs.core.windows.net/duckhaven"
-    assert extra is None
+    assert extra == {
+        "tenantId": "00000000-0000-0000-0000-000000000000",
+        "hierarchical": True,
+    }

@@ -294,7 +294,9 @@ async def _ensure_catalog(db: AsyncSession, polaris: PolarisClient, catalog: Cat
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Catalog points to a missing storage backend",
         )
-    storage_type, base_location, extra_storage = polaris_storage(backend.kind, backend.root_uri)
+    storage_type, base_location, extra_storage = polaris_storage(
+        backend.kind, backend.root_uri, backend.config
+    )
     await ensure_polaris_catalog(
         polaris,
         catalog.polaris_name,

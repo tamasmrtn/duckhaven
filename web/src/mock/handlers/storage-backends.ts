@@ -3,7 +3,10 @@ import { STORAGE_BACKENDS } from "../fixtures/storage-backends";
 import { CURRENT_USER } from "../fixtures/users";
 import { nextId } from "../lib/seed";
 import { httpError } from "../lib/errors";
-import type { BackendKind } from "@/types/storage-backend";
+import type {
+  BackendKind,
+  StorageBackendConfig,
+} from "@/types/storage-backend";
 
 export const storageBackendHandlers = [
   http.get("/api/admin/storage-backends", () => {
@@ -15,21 +18,36 @@ export const storageBackendHandlers = [
       kind: BackendKind;
       name: string;
       root_uri: string;
-      uc_storage_credential_id?: string;
+      config?: StorageBackendConfig;
     };
     const backend = {
       id: nextId("sb"),
       kind: body.kind,
       name: body.name,
       root_uri: body.root_uri,
-      uc_storage_credential_id: body.uc_storage_credential_id ?? null,
-      uc_credential_valid: body.uc_storage_credential_id ? true : null,
+      config: body.config ?? null,
       workspace_count: 0,
       created_by: CURRENT_USER.id,
       created_at: new Date().toISOString(),
     };
     STORAGE_BACKENDS.push(backend);
     return HttpResponse.json(backend, { status: 201 });
+  }),
+
+  http.post("/api/admin/storage-backends/:id/health", ({ params }) => {
+    const backend = STORAGE_BACKENDS.find((b) => b.id === params.id);
+    if (!backend) return httpError(404, "Storage backend not found");
+    if (backend.kind === "object_store") {
+      return HttpResponse.json({
+        valid: true,
+        detail: "Bundled object store; no external credentials to validate.",
+      });
+    }
+    return HttpResponse.json({
+      valid: true,
+      detail:
+        "Vended credentials reached storage (1 object(s) under the probe path).",
+    });
   }),
 
   http.delete("/api/admin/storage-backends/:id", ({ params }) => {

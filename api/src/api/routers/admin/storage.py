@@ -4,12 +4,18 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_db, require_permission
+from api.deps import get_db, get_polaris_client, require_permission
 from api.models.catalog import Catalog
 from api.models.storage_backend import StorageBackend
 from api.models.user import User
-from api.schemas.storage_backend import StorageBackendCreate, StorageBackendOut
+from api.schemas.storage_backend import (
+    StorageBackendCreate,
+    StorageBackendHealth,
+    StorageBackendOut,
+)
 from api.services.permissions import Permission
+from api.services.polaris import PolarisClient
+from api.services.storage_health import validate_backend
 
 router = APIRouter(prefix="/storage-backends")
 
@@ -75,6 +81,21 @@ async def create_backend(
         created_at=sb.created_at,
         workspace_count=0,
     )
+
+
+@router.post("/{backend_id}/health", response_model=StorageBackendHealth)
+async def check_backend_health(
+    backend_id: uuid.UUID,
+    admin: User = Depends(require_permission(Permission.STORAGE_MANAGE)),
+    db: AsyncSession = Depends(get_db),
+    polaris: PolarisClient = Depends(get_polaris_client),
+) -> StorageBackendHealth:
+    """Validate that an external backend's vended credentials can reach storage."""
+    result = await db.execute(select(StorageBackend).where(StorageBackend.id == backend_id))
+    sb = result.scalar_one_or_none()
+    if sb is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    return await validate_backend(polaris, sb)
 
 
 @router.delete("/{backend_id}", status_code=status.HTTP_204_NO_CONTENT)

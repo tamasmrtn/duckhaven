@@ -168,7 +168,7 @@ def validate_catalog_slug(slug: str) -> str:
     """Return ``slug`` if it is identifier-safe, else raise 422."""
     if not _CATALOG_SLUG_RE.match(slug) or len(slug) > 255:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 "Catalog slug must match ^[a-z][a-z0-9_]*$ (lowercase, "
                 "start with a letter, only letters/digits/underscores)."

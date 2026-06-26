@@ -55,7 +55,7 @@ async def create_query(
         profile = parse_set_concurrency(body.sql)
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"error": "sql_not_allowed", "detail": str(exc)},
         ) from exc
     if profile is not None:
@@ -65,7 +65,7 @@ async def create_query(
         assert_allowed(body.sql)
     except SQLNotAllowed as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"error": "sql_not_allowed", "detail": str(exc)},
         ) from exc
 
@@ -86,7 +86,7 @@ async def create_query(
         if not agent_supports_backend(agent.capabilities, kind):
             ext = required_extension(kind)
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail={
                     "error": "agent_incompatible",
                     "detail": (

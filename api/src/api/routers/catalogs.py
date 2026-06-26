@@ -126,7 +126,7 @@ async def create_workspace_catalog(
         backend = await db.get(StorageBackend, body.storage_backend_id)
         if backend is None:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unknown storage backend"
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Unknown storage backend"
             )
 
     catalog = await catalog_service.create_catalog(

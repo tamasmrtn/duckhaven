@@ -56,5 +56,41 @@ class Settings(BaseSettings):
     # due cycle); seconds. Default weekly.
     maintenance_deep_scan_interval_s: float = 7 * 86400.0
 
+    # ── OIDC SSO (Part A) ─────────────────────────────────────────────────────
+    # When enabled, the login page shows a "Sign in with SSO" button and the
+    # /auth/oidc/* endpoints are live. Local accounts keep working regardless so
+    # the break-glass admin is never locked out if the IdP is down.
+    oidc_enabled: bool = False
+    oidc_label: str = "SSO"
+    # The IdP discovery document, e.g. https://idp.example.com/.well-known/openid-configuration
+    oidc_server_metadata_url: str | None = None
+    oidc_client_id: str | None = None
+    oidc_client_secret: str | None = None
+    oidc_scopes: str = "openid email profile groups"
+    # Claim in the ID token holding the user's group memberships.
+    oidc_groups_claim: str = "groups"
+    # Maps IdP group value -> DuckHaven global role (e.g. {"dh-admins": "admin"}).
+    # The highest-privilege matched role wins; unmatched users default to "user".
+    oidc_group_role_map: dict[str, str] = {}
+    # Public base URL the IdP redirects back to (scheme+host), used to build the
+    # callback. When unset, derived from the incoming request.
+    oidc_redirect_base_url: str | None = None
+
+    # ── LDAP / Active Directory (Part A, secondary) ───────────────────────────
+    ldap_enabled: bool = False
+    ldap_server_uri: str | None = None  # ldaps://dc.example.com or ldap://...
+    ldap_use_start_tls: bool = False
+    ldap_bind_dn: str | None = None  # service account for search
+    ldap_bind_password: str | None = None
+    ldap_user_search_base: str | None = None
+    ldap_user_filter: str = "(mail={email})"  # {email} is substituted, escaped
+    ldap_email_attr: str = "mail"
+    ldap_name_attr: str = "displayName"
+    ldap_group_attr: str = "memberOf"
+    # Maps a group DN -> DuckHaven global role.
+    ldap_group_role_map: dict[str, str] = {}
+    ldap_tls_ca_cert: str | None = None  # path to CA bundle for ldaps/STARTTLS
+    ldap_timeout_s: float = 10.0
+
 
 settings = Settings()

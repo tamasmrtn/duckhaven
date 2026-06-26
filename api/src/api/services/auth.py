@@ -3,13 +3,32 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import bcrypt
+from fastapi import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from api.config import settings
 from api.models.user import Credential, User
 
-SESSION_TTL = timedelta(days=7)
+# Session lifetime is operator-tunable via `session_max_age_seconds`; it drives
+# both the DB credential expiry and the cookie max-age so the two never diverge.
+SESSION_TTL = timedelta(seconds=settings.session_max_age_seconds)
+
+SESSION_COOKIE = "session"
+
+
+def set_session_cookie(response: Response, token: str) -> None:
+    """Set the session cookie with the standard hardened flags. Shared by every
+    path that establishes a session (local login, setup, OIDC, LDAP)."""
+    response.set_cookie(
+        key=SESSION_COOKIE,
+        value=token,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite="lax",
+        max_age=settings.session_max_age_seconds,
+    )
 
 
 def hash_password(plain: str) -> str:
@@ -23,6 +42,26 @@ def verify_password(plain: str, hashed: str) -> bool:
 async def get_user_by_email(db: AsyncSession, email: str) -> User | None:
     result = await db.execute(select(User).where(User.email == email))
     return result.scalar_one_or_none()
+
+
+async def authenticate_password(db: AsyncSession, email: str, password: str) -> User | None:
+    """Resolve a username/password submission to a user, or None.
+
+    Local-first: a user that holds a local password is always verified against it
+    — so the break-glass admin logs in even when the IdP/LDAP is unreachable. Only
+    when there is no matching local password do we fall back to an LDAP bind (for
+    federated or not-yet-provisioned accounts). OIDC is a separate redirect flow.
+    """
+    user = await get_user_by_email(db, email)
+    if user is not None and user.password_hash is not None:
+        if user.is_active and verify_password(password, user.password_hash):
+            return user
+        return None
+    if settings.ldap_enabled:
+        from api.services.ldap import authenticate_ldap
+
+        return await authenticate_ldap(db, email, password)
+    return None
 
 
 async def create_session(db: AsyncSession, user_id: uuid.UUID) -> str:

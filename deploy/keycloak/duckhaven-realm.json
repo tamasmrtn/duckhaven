@@ -1,0 +1,64 @@
+{
+  "realm": "duckhaven",
+  "enabled": true,
+  "sslRequired": "none",
+  "clients": [
+    {
+      "clientId": "duckhaven-api",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "duckhaven-secret",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": [
+        "http://test/api/auth/oidc/callback",
+        "http://localhost:8000/api/auth/oidc/callback",
+        "http://127.0.0.1:8000/api/auth/oidc/callback"
+      ],
+      "webOrigins": ["+"],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "groups": [{ "name": "dh-admins" }],
+  "users": [
+    {
+      "username": "sso-admin",
+      "enabled": true,
+      "email": "sso-admin@duckhaven.test",
+      "emailVerified": true,
+      "firstName": "SSO",
+      "lastName": "Admin",
+      "credentials": [
+        { "type": "password", "value": "sso-pass", "temporary": false }
+      ],
+      "groups": ["/dh-admins"]
+    },
+    {
+      "username": "sso-user",
+      "enabled": true,
+      "email": "sso-user@duckhaven.test",
+      "emailVerified": true,
+      "firstName": "SSO",
+      "lastName": "User",
+      "credentials": [
+        { "type": "password", "value": "sso-pass", "temporary": false }
+      ]
+    }
+  ]
+}

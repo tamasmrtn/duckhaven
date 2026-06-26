@@ -14,12 +14,16 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/utils";
+import { useMe } from "@/queries/auth";
 
 interface NavItem {
   segment: string;
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   matchSegment: string;
+  // When true, the item is only shown to users holding at least one global
+  // permission (the admin section is enforced server-side regardless).
+  requiresAdmin?: boolean;
 }
 
 const navItems: NavItem[] = [
@@ -58,6 +62,7 @@ const navItems: NavItem[] = [
     icon: Settings,
     label: "Admin",
     matchSegment: "admin",
+    requiresAdmin: true,
   },
 ];
 
@@ -69,6 +74,9 @@ export function LeftRail({ ws }: LeftRailProps) {
   const state = useRouterState();
   const pathname = state.location.pathname;
   const navigate = useNavigate();
+  const { data: me } = useMe();
+  const isAdmin = (me?.permissions?.length ?? 0) > 0;
+  const items = navItems.filter((item) => !item.requiresAdmin || isAdmin);
 
   return (
     <TooltipProvider delayDuration={400}>
@@ -76,7 +84,7 @@ export function LeftRail({ ws }: LeftRailProps) {
         className="flex flex-col items-center gap-1 py-2 w-12 shrink-0 border-r border-[var(--border-subtle)] bg-[var(--bg-surface)] relative"
         aria-label="Main navigation"
       >
-        {navItems.map(({ segment, icon: Icon, label, matchSegment }) => {
+        {items.map(({ segment, icon: Icon, label, matchSegment }) => {
           const active = pathname.includes(`/${matchSegment}`);
           return (
             <Tooltip key={segment}>

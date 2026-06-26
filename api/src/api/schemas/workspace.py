@@ -34,3 +34,20 @@ class MemberOut(BaseModel):
 class AddMemberRequest(BaseModel):
     user_id: uuid.UUID
     role: str = "reader"
+
+
+class AdminUserWorkspace(BaseModel):
+    """A workspace and the target user's role in it (``None`` = not a member).
+
+    Drives the admin "manage workspaces" view, which lists every workspace so an
+    admin can grant or change a user's membership in one place.
+    """
+
+    workspace_id: uuid.UUID
+    slug: str
+    name: str
+    role: str | None = None
+
+
+class SetMembershipRequest(BaseModel):
+    role: str

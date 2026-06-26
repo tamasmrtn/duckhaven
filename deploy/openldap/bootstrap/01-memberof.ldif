@@ -1,0 +1,17 @@
+# Enable the memberof overlay so users expose a memberOf attribute (mirrors how
+# Active Directory presents group membership, which is what the DuckHaven LDAP
+# integration reads). Applied to the config backend on first boot.
+dn: cn=module{0},cn=config
+changetype: modify
+add: olcModuleLoad
+olcModuleLoad: memberof
+
+dn: olcOverlay=memberof,olcDatabase={1}mdb,cn=config
+changetype: add
+objectClass: olcOverlayConfig
+objectClass: olcMemberOf
+olcOverlay: memberof
+olcMemberOfRefInt: TRUE
+olcMemberOfGroupOC: groupOfNames
+olcMemberOfMemberAD: member
+olcMemberOfMemberOfAD: memberOf

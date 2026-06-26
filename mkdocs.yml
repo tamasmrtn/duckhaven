@@ -116,10 +116,13 @@ nav:
       - Read query profiles: guides/query-profiles.md
       - Saved queries: guides/saved-queries.md
       - Manage users & access: guides/users-access.md
+      - Connect an IdP (SSO): guides/connect-idp.md
+      - Connect LDAP / AD: guides/connect-ldap.md
   - Operations:
       - Operator runbook: operations/runbook.md
       - Monitoring: operations/monitoring.md
       - Scaling compute: operations/scaling.md
+      - Offboarding & break-glass: operations/offboarding.md
       - Troubleshooting: operations/troubleshooting.md
   - Reference:
       - Configuration: reference/configuration.md

@@ -79,6 +79,31 @@ describe('LoginPage', () => {
     expect(alert).not.toHaveTextContent(/try any email and password/i)
   })
 
+  it('shows the SSO button when OIDC is enabled', async () => {
+    server.use(
+      http.get('/api/auth/methods', () =>
+        HttpResponse.json({
+          local: true,
+          ldap: false,
+          oidc: true,
+          oidc_label: 'Okta',
+        }),
+      ),
+    )
+    renderWithProviders({ initialRoute: '/login' })
+    expect(
+      await screen.findByRole('button', { name: /sign in with okta/i }),
+    ).toBeInTheDocument()
+  })
+
+  it('hides the SSO button when OIDC is disabled', async () => {
+    renderWithProviders({ initialRoute: '/login' })
+    await screen.findByLabelText(/email/i)
+    expect(
+      screen.queryByRole('button', { name: /sign in with/i }),
+    ).not.toBeInTheDocument()
+  })
+
   it('disables submit button while pending', async () => {
     server.use(
       http.post('/api/auth/login', async () => {

@@ -13,4 +13,13 @@ export const authHandlers = [
   http.get("/api/me", () => {
     return HttpResponse.json(CURRENT_USER);
   }),
+
+  http.get("/api/auth/methods", () => {
+    return HttpResponse.json({
+      local: true,
+      ldap: false,
+      oidc: false,
+      oidc_label: "SSO",
+    });
+  }),
 ];

@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
-from api.deps import get_admin_user, get_db
+from api.deps import get_db, require_permission
 from api.models.agent import Agent
 from api.models.user import Credential, User
 from api.schemas.agent import (
@@ -19,6 +19,7 @@ from api.schemas.agent import (
     MetricsSampleOut,
 )
 from api.services.agent_registry import registry
+from api.services.permissions import Permission
 
 router = APIRouter(prefix="/agents")
 
@@ -27,7 +28,7 @@ BOOTSTRAP_TTL = timedelta(hours=24)
 
 @router.get("", response_model=list[AgentOut])
 async def list_agents(
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require_permission(Permission.AGENTS_MANAGE)),
     db: AsyncSession = Depends(get_db),
 ) -> list[AgentOut]:
     result = await db.execute(select(Agent))
@@ -56,7 +57,7 @@ async def list_agents(
 
 @router.get("/metrics", response_model=list[AgentMetricsOut])
 async def list_metrics(
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require_permission(Permission.AGENTS_MANAGE)),
     db: AsyncSession = Depends(get_db),
 ) -> list[AgentMetricsOut]:
     """Recent live-utilization samples per connected agent (in-memory ring buffer)."""
@@ -97,7 +98,7 @@ def _agent_dial_url(request: Request) -> str:
 @router.post("/bootstrap", response_model=BootstrapTokenOut)
 async def bootstrap(
     request: Request,
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require_permission(Permission.AGENTS_MANAGE)),
     db: AsyncSession = Depends(get_db),
 ) -> BootstrapTokenOut:
     token = f"dh_boot_{secrets.token_urlsafe(16)}"
@@ -122,7 +123,7 @@ async def bootstrap(
 @router.delete("/{agent_id}/credential", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_agent(
     agent_id: uuid.UUID,
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require_permission(Permission.AGENTS_MANAGE)),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     result = await db.execute(select(Agent).where(Agent.id == agent_id))

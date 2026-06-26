@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -15,10 +15,18 @@ class User(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Null for federated (OIDC/LDAP) users, who never set a local password.
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(50), nullable=False, default="user")
     theme: Mapped[str] = mapped_column(String(50), nullable=False, default="system")
+    # How this account authenticates: "local" | "oidc" | "ldap". Guards against a
+    # federated login binding to an existing local account (and vice versa).
+    auth_provider: Mapped[str] = mapped_column(String(50), nullable=False, default="local")
+    # The IdP-side identifier (OIDC `sub` / LDAP DN) for audit and re-matching.
+    external_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Cleared on offboarding to block new sessions and reject live ones at once.
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

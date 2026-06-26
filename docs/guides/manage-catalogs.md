@@ -1,17 +1,47 @@
 # Manage catalogs
 
-Each [workspace](../concepts/workspaces.md) has one Apache Polaris catalog of schemas and Iceberg tables. You can manage
-it from the catalog browser or with SQL — both are Polaris-backed.
+A [workspace](../concepts/workspaces.md) attaches one or more [catalogs](../concepts/catalogs.md) — decoupled data
+domains, each its own Apache Polaris catalog of schemas and Iceberg tables. You can manage catalogs and their contents
+from the catalog browser or with SQL — both are Polaris-backed.
 
 ## Browse
 
-The catalog browser shows a searchable tree of schemas and tables — the same tree the worksheet sidebar uses. Expand a
-table to traverse its columns and their types inline, without leaving the tree. Open a table to see the full detail:
-its columns and types, owner, row count and size, last-write provenance, and Iceberg facts (latest snapshot, whether
-delete files are present). You can preview sample rows without writing a query.
+The catalog browser shows a searchable tree: **workspace → catalog → schema → table** — the same tree the worksheet
+sidebar uses. Each attached catalog is a top-level node (the default one is badged); expand it to reach its schemas and
+tables. Expand a table to traverse its columns and their types inline. Open a table to see the full detail: its columns
+and types, owner, row count and size, last-write provenance, and Iceberg facts (latest snapshot, whether delete files
+are present). You can preview sample rows without writing a query.
 
-Two buttons sit at the top of the tree: **refresh** re-reads the catalog from Polaris — use it after a worksheet
-`CREATE SCHEMA`/`CREATE TABLE` so the new objects appear — and **+** opens the new-schema dialog.
+Three buttons sit at the top of the tree: **refresh** re-reads the catalogs from Polaris — use it after a worksheet
+`CREATE SCHEMA`/`CREATE TABLE` so the new objects appear — **link** attaches an existing catalog, and **+** creates a
+new catalog. **Create schema** lives on each catalog node's right-click menu.
+
+## Catalogs
+
+- **Create a catalog** — the **+ → Create catalog** provisions a new catalog (its own Polaris catalog + storage) and
+  attaches it to the workspace. Give it a **name** — identifier-safe (lowercase letters, digits, underscores; the name
+  is also the slug used in `catalog.schema.table` SQL) — and **choose its storage backend** right in the dialog: the
+  bundled object store, an existing backend, or a new external S3/ADLS one. (Storage is a per-catalog choice; there is
+  no separate workspace storage.)
+- **Attach an existing catalog** — the **link** button binds a catalog that already exists (possibly created in another
+  workspace) to this one. The same catalog can be attached to several workspaces.
+- **Detach** — right-click a catalog node → *Detach from workspace*. The catalog survives for any other workspace it is
+  attached to; if you detach the default, another attached catalog is promoted.
+- **Drop** — right-click → *Drop catalog*. Refused while the catalog is still attached to any workspace, so a shared
+  catalog is never pulled out from under a peer. Drop everywhere (detach), then drop.
+
+Catalog create/attach/detach/drop require workspace `owner`. A global drop is allowed for the catalog's creator or an
+admin.
+
+### Querying across catalogs
+
+A worksheet has an **active catalog** (the selector in the toolbar) used for unqualified table names. Every catalog
+bound to the workspace is attached when a query runs, so you can join across them with fully-qualified references:
+
+```sql
+SELECT * FROM raw.analytics.events e
+JOIN curated.analytics.users u ON e.user_id = u.id;
+```
 
 Refresh also fills in row counts. A table's row count is measured by an agent and cached; tables created through the
 worksheet (rather than the create-table dialog) start out with no count and show blank in the tree. Refresh probes
@@ -46,5 +76,5 @@ extension version on the executing agent.
 
 ## Roles
 
-Browsing requires `reader`; creating, altering, and dropping require `writer` or `owner`. See
-[Permissions](../concepts/permissions.md).
+Browsing requires `reader`; creating/altering/dropping schemas and tables requires `writer` or `owner`; managing
+catalogs (create/attach/detach/drop) requires `owner`. See [Permissions](../concepts/permissions.md).

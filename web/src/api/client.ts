@@ -70,6 +70,13 @@ export function put<T>(path: string, body?: unknown) {
   });
 }
 
+export function patch<T>(path: string, body?: unknown) {
+  return request<T>(path, {
+    method: "PATCH",
+    body: body != null ? JSON.stringify(body) : undefined,
+  });
+}
+
 export function del(path: string) {
   return request<void>(path, { method: "DELETE" });
 }

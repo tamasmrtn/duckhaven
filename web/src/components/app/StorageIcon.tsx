@@ -3,7 +3,8 @@ import type { BackendKind } from "@/types/storage-backend";
 import { cn } from "@/utils";
 
 interface StorageIconProps {
-  kind: BackendKind;
+  // Null/undefined when a workspace has no catalog yet (no default storage).
+  kind: BackendKind | null | undefined;
   className?: string;
 }
 
@@ -23,10 +24,15 @@ const labels: Record<BackendKind, string> = {
 };
 
 export function StorageIcon({ kind, className }: StorageIconProps) {
-  const Icon = icons[kind];
-  return <Icon className={cn("size-4", className)} aria-label={labels[kind]} />;
+  const Icon = kind ? icons[kind] : Database;
+  const label = kind ? labels[kind] : "No storage";
+  return <Icon className={cn("size-4", className)} aria-label={label} />;
 }
 
-export function StorageLabel({ kind }: { kind: BackendKind }) {
-  return <span className="font-mono text-xs">{labels[kind]}</span>;
+export function StorageLabel({
+  kind,
+}: {
+  kind: BackendKind | null | undefined;
+}) {
+  return <span className="font-mono text-xs">{kind ? labels[kind] : "—"}</span>;
 }

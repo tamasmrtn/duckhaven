@@ -78,15 +78,23 @@ class FakePolaris:
         return name in self.catalogs
 
     async def delete_catalog(self, name: str) -> None:
+        if name not in self.catalogs:
+            raise PolarisNotFoundError(name)
+        # Real Polaris refuses to delete a catalog that still holds namespaces;
+        # the caller must purge schemas/tables first.
+        if any(c == name for (c, _) in self.schemas):
+            raise PolarisError(f"catalog {name} is not empty")
         self.catalogs.pop(name, None)
-        for key in [k for k in self.schemas if k[0] == name]:
-            self.schemas.pop(key, None)
         for key in [k for k in self.tables if k[0] == name]:
             self.tables.pop(key, None)
 
     async def ensure_catalog_access(self, catalog: str) -> None:
         # Grants are a real-Polaris concern; nothing to model in-memory.
         self.granted_catalogs.append(catalog)
+
+    async def delete_catalog_access(self, catalog: str) -> None:
+        # Mirrors the real client: roles are a Polaris concern. No-op here.
+        return None
 
     # --- Namespaces ---
 

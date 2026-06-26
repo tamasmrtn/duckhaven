@@ -1,10 +1,10 @@
 import uuid
 
 import pytest_asyncio
+from conftest import seed_workspace
 from httpx import AsyncClient
 
 from api.models.agent import Agent
-from api.models.storage_backend import StorageBackend
 from api.models.user import User
 from api.models.workspace import Workspace, WorkspaceMember
 from api.services.agent_registry import registry
@@ -41,23 +41,7 @@ async def authed_client(client: AsyncClient, user: User):
 
 @pytest_asyncio.fixture
 async def workspace(db_session, user: User):
-    backend = StorageBackend(
-        kind="object_store",
-        name="test-store",
-        root_uri="/tmp/test",
-        created_by=user.id,
-    )
-    db_session.add(backend)
-    await db_session.flush()
-
-    ws = Workspace(slug="test-ws", name="Test WS", storage_backend_id=backend.id)
-    db_session.add(ws)
-    await db_session.flush()
-
-    member = WorkspaceMember(workspace_id=ws.id, user_id=user.id, role="owner")
-    db_session.add(member)
-    await db_session.commit()
-    await db_session.refresh(ws)
+    ws, _catalog = await seed_workspace(db_session, user_id=user.id)
     return ws
 
 
@@ -178,38 +162,40 @@ async def test_create_query_dispatches(
     frame = json.loads(mock_ws.sent[0])
     assert frame["type"] == FrameType.DISPATCH_QUERY
     assert frame["payload"]["sql"] == "SELECT 42"
-    # Dispatch payload carries the workspace backend descriptor; the agent
-    # resolves storage handling from the kind (object_store is MinIO-backed).
-    assert frame["payload"]["backend"] == {"kind": "object_store", "root_uri": "/tmp/test"}
-    assert frame["payload"]["workspace"] == {"slug": "test-ws", "default_schema": "analytics"}
+    # Dispatch payload carries the workspace's catalog descriptors (each with its
+    # backend) and the active catalog; the agent attaches them all.
+    assert frame["payload"]["active_catalog"] == "test_ws"
+    assert frame["payload"]["catalogs"] == [
+        {
+            "slug": "test_ws",
+            "polaris_name": "test-ws",
+            "backend": {"kind": "object_store", "root_uri": "/tmp/test"},
+            "default_schema": "analytics",
+        }
+    ]
     assert "storage_credentials" not in frame["payload"]
 
 
 async def test_dispatch_payload_carries_backend_and_no_credentials(
     authed_client: AsyncClient, db_session, user: User, connected_agent
 ):
-    """The dispatch frame carries the backend descriptor and the workspace
-    slug, but no storage credentials or catalog endpoint — the agent attaches
-    Polaris from its own config and Polaris vends storage creds on attach."""
+    """The dispatch frame carries the catalog descriptors (each with its backend)
+    but no storage credentials or catalog endpoint — the agent attaches Polaris
+    from its own config and Polaris vends storage creds on attach."""
     import json
-
-    from api.models.storage_backend import StorageBackend
-    from api.models.workspace import Workspace, WorkspaceMember
 
     agent, mock_ws = connected_agent
     agent.capabilities = {"extensions": ["httpfs"]}  # required for s3 (G-D17-b)
     db_session.add(agent)
 
-    sb = StorageBackend(
-        kind="s3", name="s3-store", root_uri="s3://bucket/prefix", created_by=user.id
+    await seed_workspace(
+        db_session,
+        user_id=user.id,
+        slug="s3-ws",
+        name="S3 WS",
+        backend_kind="s3",
+        catalog_slug="s3_cat",
     )
-    db_session.add(sb)
-    await db_session.flush()
-    ws = Workspace(slug="s3-ws", name="S3 WS", storage_backend_id=sb.id)
-    db_session.add(ws)
-    await db_session.flush()
-    db_session.add(WorkspaceMember(workspace_id=ws.id, user_id=user.id, role="owner"))
-    await db_session.commit()
 
     resp = await authed_client.post(
         "/workspaces/s3-ws/queries",
@@ -218,10 +204,16 @@ async def test_dispatch_payload_carries_backend_and_no_credentials(
     assert resp.status_code == 202, resp.text
 
     payload = json.loads(mock_ws.sent[-1])["payload"]
-    assert payload["backend"] == {"kind": "s3", "root_uri": "s3://bucket/prefix"}
-    assert payload["workspace"] == {"slug": "s3-ws", "default_schema": "analytics"}
+    assert payload["active_catalog"] == "s3_cat"
+    assert payload["catalogs"] == [
+        {
+            "slug": "s3_cat",
+            "polaris_name": "s3-ws",
+            "backend": {"kind": "s3", "root_uri": "/tmp/test"},
+            "default_schema": "analytics",
+        }
+    ]
     assert "storage_credentials" not in payload
-    assert "catalog" not in payload
 
 
 async def test_dispatch_rejects_agent_missing_extension(
@@ -229,23 +221,18 @@ async def test_dispatch_rejects_agent_missing_extension(
 ):
     """A cloud-backed workspace cannot dispatch to an agent that lacks the
     required DuckDB extension; the query is never created or sent (G-D17-b)."""
-    from api.models.storage_backend import StorageBackend
-    from api.models.workspace import Workspace, WorkspaceMember
-
     agent, mock_ws = connected_agent
     agent.capabilities = {"extensions": ["httpfs", "iceberg"]}  # no azure
     db_session.add(agent)
 
-    sb = StorageBackend(
-        kind="adls_gen2", name="adls", root_uri="abfss://c@acct/", created_by=user.id
+    await seed_workspace(
+        db_session,
+        user_id=user.id,
+        slug="adls-ws",
+        name="ADLS WS",
+        backend_kind="adls_gen2",
+        catalog_slug="adls_cat",
     )
-    db_session.add(sb)
-    await db_session.flush()
-    ws = Workspace(slug="adls-ws", name="ADLS WS", storage_backend_id=sb.id)
-    db_session.add(ws)
-    await db_session.flush()
-    db_session.add(WorkspaceMember(workspace_id=ws.id, user_id=user.id, role="owner"))
-    await db_session.commit()
 
     resp = await authed_client.post(
         "/workspaces/adls-ws/queries",
@@ -297,11 +284,9 @@ async def test_list_workspace_queries_scoped_and_ordered(
         ]
     )
     # A query in a different workspace must not leak in.
-    other_ws = Workspace(
-        slug="other-ws", name="Other", storage_backend_id=workspace.storage_backend_id
+    other_ws, _ = await seed_workspace(
+        db_session, user_id=user.id, slug="other-ws", name="Other", role=None
     )
-    db_session.add(other_ws)
-    await db_session.flush()
     db_session.add(
         Query(
             workspace_id=other_ws.id,
@@ -370,11 +355,9 @@ async def test_admin_can_list_all_workspaces_and_filter_by_user(
     db_session.add(admin)
     await db_session.flush()
 
-    other_ws = Workspace(
-        slug="other-ws", name="Other", storage_backend_id=workspace.storage_backend_id
+    other_ws, _ = await seed_workspace(
+        db_session, user_id=user.id, slug="other-ws", name="Other", role=None
     )
-    db_session.add(other_ws)
-    await db_session.flush()
 
     db_session.add_all(
         [
@@ -941,3 +924,149 @@ async def test_create_saved_query_reader_role_rejected(
         json={"name": "Test", "sql": "SELECT 1"},
     )
     assert resp.status_code == 403
+
+
+async def test_list_saved_queries_includes_creator_name(
+    authed_client: AsyncClient, workspace: Workspace
+):
+    await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries",
+        json={"name": "Mine", "sql": "SELECT 1"},
+    )
+    resp = await authed_client.get(f"/workspaces/{workspace.slug}/saved-queries")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["created_by_name"] == "Querier"
+
+
+async def test_create_saved_query_overwrites_by_name(
+    authed_client: AsyncClient, workspace: Workspace
+):
+    """Saving over an existing name updates the row instead of duplicating."""
+    first = await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries",
+        json={"name": "Report", "sql": "SELECT 1"},
+    )
+    assert first.status_code == 201
+
+    second = await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries",
+        json={"name": "Report", "sql": "SELECT 2"},
+    )
+    assert second.status_code == 200
+    assert second.json()["id"] == first.json()["id"]
+    assert second.json()["sql"] == "SELECT 2"
+
+    listed = await authed_client.get(f"/workspaces/{workspace.slug}/saved-queries")
+    assert len(listed.json()) == 1
+
+
+async def test_saved_query_rename_and_delete_lifecycle(
+    authed_client: AsyncClient, workspace: Workspace
+):
+    created = await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries",
+        json={"name": "Original", "sql": "SELECT 1"},
+    )
+    sq_id = created.json()["id"]
+
+    renamed = await authed_client.patch(
+        f"/workspaces/{workspace.slug}/saved-queries/{sq_id}",
+        json={"name": "Renamed"},
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["name"] == "Renamed"
+    assert renamed.json()["sql"] == "SELECT 1"
+
+    deleted = await authed_client.delete(f"/workspaces/{workspace.slug}/saved-queries/{sq_id}")
+    assert deleted.status_code == 204
+
+    listed = await authed_client.get(f"/workspaces/{workspace.slug}/saved-queries")
+    assert listed.json() == []
+
+    missing = await authed_client.patch(
+        f"/workspaces/{workspace.slug}/saved-queries/{sq_id}",
+        json={"name": "Nope"},
+    )
+    assert missing.status_code == 404
+
+
+async def test_update_delete_saved_query_reader_rejected(
+    authed_client: AsyncClient, workspace: Workspace, db_session
+):
+    created = await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries",
+        json={"name": "Shared", "sql": "SELECT 1"},
+    )
+    sq_id = created.json()["id"]
+
+    reader = User(
+        email="reader2@queries.local",
+        password_hash=hash_password("pw"),
+        name="Reader Two",
+        role="user",
+    )
+    db_session.add(reader)
+    await db_session.flush()
+    db_session.add(WorkspaceMember(workspace_id=workspace.id, user_id=reader.id, role="reader"))
+    await db_session.commit()
+
+    await authed_client.post("/auth/logout")
+    await authed_client.post(
+        "/auth/login", json={"email": "reader2@queries.local", "password": "pw"}
+    )
+
+    patched = await authed_client.patch(
+        f"/workspaces/{workspace.slug}/saved-queries/{sq_id}",
+        json={"name": "Hijack"},
+    )
+    assert patched.status_code == 403
+
+    deleted = await authed_client.delete(f"/workspaces/{workspace.slug}/saved-queries/{sq_id}")
+    assert deleted.status_code == 403
+
+
+async def test_run_saved_query_stamps_last_run_at(
+    authed_client: AsyncClient, workspace: Workspace, connected_agent
+):
+    agent, _ = connected_agent
+    created = await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries",
+        json={"name": "Runnable", "sql": "SELECT 1"},
+    )
+    sq_id = created.json()["id"]
+    assert created.json()["last_run_at"] is None
+
+    run = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(agent.id), "saved_query_id": sq_id},
+    )
+    assert run.status_code == 202
+
+    listed = await authed_client.get(f"/workspaces/{workspace.slug}/saved-queries")
+    stamped = next(q for q in listed.json() if q["id"] == sq_id)
+    assert stamped["last_run_at"] is not None
+
+
+async def test_run_with_unknown_saved_query_id_still_runs(
+    authed_client: AsyncClient, workspace: Workspace, connected_agent
+):
+    agent, _ = connected_agent
+    run = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={
+            "sql": "SELECT 1",
+            "agent_id": str(agent.id),
+            "saved_query_id": str(uuid.uuid4()),
+        },
+    )
+    assert run.status_code == 202
+
+
+# --- sql metadata ---
+
+
+async def test_sql_metadata_no_agent_returns_503(authed_client: AsyncClient, workspace: Workspace):
+    resp = await authed_client.get(f"/workspaces/{workspace.slug}/sql-metadata")
+    assert resp.status_code == 503

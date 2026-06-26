@@ -2,7 +2,7 @@ import uuid
 from datetime import UTC, datetime
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi import Query as QueryParam
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,14 +10,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.deps import get_current_user, get_db
 from api.models.agent import Agent
 from api.models.query import Query, SavedQuery
-from api.models.storage_backend import StorageBackend
 from api.models.user import User
-from api.schemas.query import QueryCreate, QueryOut, RowsPageOut, SavedQueryCreate, SavedQueryOut
+from api.schemas.query import (
+    QueryCreate,
+    QueryOut,
+    RowsPageOut,
+    SavedQueryCreate,
+    SavedQueryOut,
+    SavedQueryUpdate,
+    SqlMetadataOut,
+)
 from api.services import query as query_service
+from api.services import sql_metadata as sql_metadata_service
 from api.services.agent_capabilities import agent_supports_backend, required_extension
 from api.services.agent_registry import registry
 from api.services.sql_guard import SQLNotAllowed, assert_allowed
-from api.services.workspace import assert_workspace_member, get_workspace
+from api.services.workspace import (
+    assert_workspace_member,
+    get_workspace,
+    resolve_workspace_catalogs,
+)
 from duckhaven_shared.concurrency import parse_set_concurrency
 from duckhaven_shared.protocol import Frame, FrameType
 
@@ -66,19 +78,36 @@ async def create_query(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Agent not connected"
         )
 
-    backend = await db.get(StorageBackend, workspace.storage_backend_id)
-    if backend is not None and not agent_supports_backend(agent.capabilities, backend.kind):
-        ext = required_extension(backend.kind)
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail={
-                "error": "agent_incompatible",
-                "detail": (
-                    f"Agent '{agent.name}' is missing the '{ext}' extension required "
-                    f"by this workspace's {backend.kind} backend."
-                ),
-            },
+    # Every catalog bound to the workspace is attached on each query, so the
+    # agent must support every backend kind across them.
+    catalogs = await resolve_workspace_catalogs(db, workspace.id)
+    for catalog in catalogs:
+        kind = catalog.storage_backend.kind
+        if not agent_supports_backend(agent.capabilities, kind):
+            ext = required_extension(kind)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail={
+                    "error": "agent_incompatible",
+                    "detail": (
+                        f"Agent '{agent.name}' is missing the '{ext}' extension required "
+                        f"by catalog '{catalog.slug}'s {kind} backend."
+                    ),
+                },
+            )
+
+    # When the run came from a saved query, stamp its last_run_at. Ignore a
+    # missing/foreign id so a run never fails over a deleted saved query.
+    if body.saved_query_id is not None:
+        result = await db.execute(
+            select(SavedQuery).where(
+                SavedQuery.id == body.saved_query_id,
+                SavedQuery.workspace_id == workspace.id,
+            )
         )
+        saved = result.scalar_one_or_none()
+        if saved is not None:
+            saved.last_run_at = datetime.now(UTC)
 
     query = Query(
         workspace_id=workspace.id,
@@ -92,6 +121,7 @@ async def create_query(
         db,
         query,
         timeout_s=body.timeout_s,
+        active_catalog=body.catalog,
     )
     return query
 
@@ -129,6 +159,38 @@ async def _set_concurrency(
     return query
 
 
+@router.get("/workspaces/{ws}/sql-metadata", response_model=SqlMetadataOut)
+async def get_sql_metadata(
+    ws: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> SqlMetadataOut:
+    """DuckDB function/keyword/type dictionary for editor autocomplete.
+
+    Sourced live from a connected agent (cached per DuckDB version). Returns 503
+    when no compatible agent is connected so the editor falls back to its static
+    keyword list rather than caching an empty dictionary.
+    """
+    workspace = await get_workspace(db, ws)
+    if workspace is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+    await assert_workspace_member(db, workspace.id, user.id)
+
+    agent = await query_service.pick_agent_for(db, workspace)
+    if agent is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No compatible agent is connected.",
+        )
+    try:
+        return await sql_metadata_service.fetch_metadata(db, workspace, agent, user.id)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Could not load SQL metadata from the agent.",
+        ) from exc
+
+
 @router.get("/workspaces/{ws}/queries", response_model=list[QueryOut])
 async def list_workspace_queries(
     ws: str,
@@ -153,7 +215,7 @@ async def list_workspace_queries(
 
     stmt = (
         select(Query)
-        .where(or_(Query.origin.is_(None), Query.origin != "sample"))
+        .where(or_(Query.origin.is_(None), Query.origin.notin_(("sample", "metadata"))))
         .order_by(Query.started_at.desc())
         .limit(limit)
     )
@@ -296,13 +358,21 @@ async def list_saved_queries(
     ws: str,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> list[SavedQuery]:
+) -> list[SavedQueryOut]:
     workspace = await get_workspace(db, ws)
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     await assert_workspace_member(db, workspace.id, user.id)
-    result = await db.execute(select(SavedQuery).where(SavedQuery.workspace_id == workspace.id))
-    return list(result.scalars().all())
+    # Join the creator so the list can show who saved each query (attribution).
+    result = await db.execute(
+        select(SavedQuery, User.name)
+        .join(User, SavedQuery.created_by == User.id)
+        .where(SavedQuery.workspace_id == workspace.id)
+    )
+    return [
+        SavedQueryOut.model_validate(sq).model_copy(update={"created_by_name": name})
+        for sq, name in result.all()
+    ]
 
 
 @router.post(
@@ -313,6 +383,7 @@ async def list_saved_queries(
 async def create_saved_query(
     ws: str,
     body: SavedQueryCreate,
+    response: Response,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> SavedQuery:
@@ -320,14 +391,81 @@ async def create_saved_query(
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     await assert_workspace_member(db, workspace.id, user.id, min_role="writer")
-    sq = SavedQuery(
-        workspace_id=workspace.id,
-        name=body.name,
-        sql=body.sql,
-        default_agent_id=body.default_agent_id,
-        created_by=user.id,
+    # Overwrite by name: saving over an existing name updates that query instead
+    # of creating a duplicate ("report v1", "report v2", ...).
+    result = await db.execute(
+        select(SavedQuery).where(
+            SavedQuery.workspace_id == workspace.id,
+            SavedQuery.name == body.name,
+        )
     )
-    db.add(sq)
+    sq = result.scalar_one_or_none()
+    if sq is not None:
+        sq.sql = body.sql
+        sq.default_agent_id = body.default_agent_id
+        response.status_code = status.HTTP_200_OK
+    else:
+        sq = SavedQuery(
+            workspace_id=workspace.id,
+            name=body.name,
+            sql=body.sql,
+            default_agent_id=body.default_agent_id,
+            created_by=user.id,
+        )
+        db.add(sq)
     await db.commit()
     await db.refresh(sq)
     return sq
+
+
+@router.patch("/workspaces/{ws}/saved-queries/{sq_id}", response_model=SavedQueryOut)
+async def update_saved_query(
+    ws: str,
+    sq_id: uuid.UUID,
+    body: SavedQueryUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> SavedQuery:
+    workspace = await get_workspace(db, ws)
+    if workspace is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    await assert_workspace_member(db, workspace.id, user.id, min_role="writer")
+    result = await db.execute(
+        select(SavedQuery).where(
+            SavedQuery.id == sq_id,
+            SavedQuery.workspace_id == workspace.id,
+        )
+    )
+    sq = result.scalar_one_or_none()
+    if sq is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Saved query not found")
+    fields = body.model_dump(exclude_unset=True)
+    for key, value in fields.items():
+        setattr(sq, key, value)
+    await db.commit()
+    await db.refresh(sq)
+    return sq
+
+
+@router.delete("/workspaces/{ws}/saved-queries/{sq_id}", status_code=204)
+async def delete_saved_query(
+    ws: str,
+    sq_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> None:
+    workspace = await get_workspace(db, ws)
+    if workspace is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    await assert_workspace_member(db, workspace.id, user.id, min_role="writer")
+    result = await db.execute(
+        select(SavedQuery).where(
+            SavedQuery.id == sq_id,
+            SavedQuery.workspace_id == workspace.id,
+        )
+    )
+    sq = result.scalar_one_or_none()
+    if sq is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Saved query not found")
+    await db.delete(sq)
+    await db.commit()

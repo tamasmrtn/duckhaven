@@ -94,7 +94,7 @@ export function WorkspaceSwitcher({
                       ? "ADLS"
                       : ws.storage_backend_kind === "object_store"
                         ? "object"
-                        : ws.storage_backend_kind.toUpperCase()}
+                        : (ws.storage_backend_kind?.toUpperCase() ?? "—")}
                   </span>
                 </CommandItem>
               ))}

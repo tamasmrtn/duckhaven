@@ -15,7 +15,7 @@ import {
   CommandList,
   CommandSeparator,
 } from "@/components/ui/command";
-import { FileText, BookOpen, Database, Clock, Settings } from "lucide-react";
+import { FileText, BookOpen, BookMarked, Clock, Settings } from "lucide-react";
 import { useWorkspaces } from "@/queries/workspaces";
 import { StorageIcon } from "./StorageIcon";
 
@@ -103,7 +103,7 @@ export function CommandPalette({
                     onSelect={() => go("/$ws/saved-queries", { ws: currentWs })}
                     className="gap-2"
                   >
-                    <Database className="size-4 text-text-secondary" />
+                    <BookMarked className="size-4 text-text-secondary" />
                     Saved queries
                   </CommandItem>
                   <CommandItem

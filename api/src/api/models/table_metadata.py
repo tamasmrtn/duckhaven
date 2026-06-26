@@ -21,19 +21,19 @@ from api.db.base import Base
 
 class TableMetadata(Base):
     """Control-plane-tracked catalog metadata that Polaris does not provide
-    (ownership, last-write provenance, row/size stats). Keyed by workspace + the
-    catalog schema/table name. Populated on table create and on write/sample completion.
+    (ownership, last-write provenance, row/size stats). These are intrinsic
+    table facts, so they are keyed by the catalog (not the workspace): a catalog
+    shared across workspaces has one owner/row-count row. Populated on table
+    create and on write/sample completion.
     """
 
     __tablename__ = "table_metadata"
     __table_args__ = (
-        UniqueConstraint(
-            "workspace_id", "schema_name", "table_name", name="uq_table_metadata_ident"
-        ),
+        UniqueConstraint("catalog_id", "schema_name", "table_name", name="uq_table_metadata_ident"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id"), nullable=False)
+    catalog_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("catalogs.id"), nullable=False)
     schema_name: Mapped[str] = mapped_column(String(255), nullable=False)
     table_name: Mapped[str] = mapped_column(String(255), nullable=False)
 

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import pytest
+from conftest import seed_workspace
 from httpx import AsyncClient
 
+from api.models.catalog import Catalog
 from api.models.maintenance import MaintenanceRecommendation, TableHealthSample
-from api.models.storage_backend import StorageBackend
 from api.models.user import User
-from api.models.workspace import Workspace, WorkspaceMember
+from api.models.workspace import Workspace
 from api.services.auth import hash_password
+from api.services.workspace import get_default_catalog
 
 MIB = 1024 * 1024
 
@@ -23,16 +25,15 @@ async def user(db_session) -> User:
 
 @pytest.fixture
 async def workspace(db_session, user: User) -> Workspace:
-    sb = StorageBackend(kind="object_store", name="s", root_uri="", created_by=user.id)
-    db_session.add(sb)
-    await db_session.flush()
-    ws = Workspace(slug="hw", name="HW", storage_backend_id=sb.id)
-    db_session.add(ws)
-    await db_session.flush()
-    db_session.add(WorkspaceMember(workspace_id=ws.id, user_id=user.id, role="writer"))
-    await db_session.commit()
-    await db_session.refresh(ws)
+    ws, _catalog = await seed_workspace(
+        db_session, user_id=user.id, slug="hw", name="HW", role="writer"
+    )
     return ws
+
+
+@pytest.fixture
+async def catalog(db_session, workspace: Workspace) -> Catalog:
+    return await get_default_catalog(db_session, workspace.id)
 
 
 @pytest.fixture
@@ -42,9 +43,11 @@ async def auth_client(client: AsyncClient, user: User) -> AsyncClient:
 
 
 async def _seed_sample(db, ws, *, table="events", score=60, bytes_=100 * MIB):
+    catalog = await get_default_catalog(db, ws.id)
     db.add(
         TableHealthSample(
             workspace_id=ws.id,
+            catalog_id=catalog.id,
             schema_name="analytics",
             table_name=table,
             score=score,
@@ -80,11 +83,14 @@ async def test_workspace_health_lists_tables_worst_first(auth_client, workspace,
     assert len(data["namespaces"]) == 1
 
 
-async def test_table_health_detail_includes_history_and_recs(auth_client, workspace, db_session):
+async def test_table_health_detail_includes_history_and_recs(
+    auth_client, workspace, catalog, db_session
+):
     await _seed_sample(db_session, workspace, table="events", score=55)
     db_session.add(
         MaintenanceRecommendation(
             workspace_id=workspace.id,
+            catalog_id=catalog.id,
             schema_name="analytics",
             table_name="events",
             kind="compact_small_files",
@@ -113,9 +119,10 @@ async def test_table_health_404_without_data(auth_client, workspace):
     assert resp.status_code == 404
 
 
-async def test_list_and_dismiss_recommendation(auth_client, workspace, db_session):
+async def test_list_and_dismiss_recommendation(auth_client, workspace, catalog, db_session):
     rec = MaintenanceRecommendation(
         workspace_id=workspace.id,
+        catalog_id=catalog.id,
         schema_name="analytics",
         table_name="events",
         kind="expire_snapshots",

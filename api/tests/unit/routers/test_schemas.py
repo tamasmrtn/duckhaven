@@ -6,10 +6,12 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from conftest import seed_workspace
 from fake_polaris import FakePolaris
 from httpx import AsyncClient
 from sqlalchemy import select
 
+from api.models.catalog import Catalog
 from api.models.storage_backend import StorageBackend
 from api.models.table_metadata import TableMetadata
 from api.models.user import User
@@ -64,11 +66,16 @@ async def auth_client(client: AsyncClient, owner: User) -> AsyncClient:
 async def _make_workspace(
     auth_client: AsyncClient, backend: StorageBackend, slug: str = "alpha"
 ) -> str:
-    resp = await auth_client.post(
-        "/workspaces",
-        json={"slug": slug, "name": slug.title(), "storage_backend_id": str(backend.id)},
-    )
+    resp = await auth_client.post("/workspaces", json={"slug": slug, "name": slug.title()})
     assert resp.status_code == 201, resp.text
+    # Workspaces no longer auto-create a catalog; attach a default one (its
+    # polaris_name defaults to the catalog slug == the workspace slug) so the
+    # legacy default-catalog schema routes these tests exercise resolve.
+    cat = await auth_client.post(
+        f"/workspaces/{slug}/catalogs",
+        json={"name": slug.replace("-", "_"), "storage_backend_id": str(backend.id)},
+    )
+    assert cat.status_code == 201, cat.text
     return resp.json()["slug"]
 
 
@@ -90,28 +97,20 @@ async def test_list_schemas_self_heals_catalog(
 async def test_list_schemas_self_heals_pre_m3_workspace(
     auth_client: AsyncClient, backend: StorageBackend, fake_polaris: FakePolaris, db_session
 ):
-    """A workspace row that pre-dates M3 has no UC catalog — listing
-    schemas must self-heal (create catalog + main schema) on first access."""
+    """A catalog row whose Polaris catalog was never provisioned (e.g. a partial
+    create) self-heals (create catalog + default schema) on first access."""
     slug = "premig"
-    ws = Workspace(slug=slug, name="Pre", storage_backend_id=backend.id)
-    db_session.add(ws)
-    await db_session.commit()
-    await db_session.refresh(ws)
-    # Make the authed user a member so RBAC passes.
-    from sqlalchemy import select
-
     user_id = (
         (await db_session.execute(select(User).where(User.email == "owner@test.local")))
         .scalar_one()
         .id
     )
-    db_session.add(WorkspaceMember(workspace_id=ws.id, user_id=user_id, role="reader"))
-    await db_session.commit()
+    await seed_workspace(db_session, user_id=user_id, slug=slug, name="Pre", role="reader")
 
-    assert slug not in fake_polaris.catalogs  # no catalog yet
+    assert slug not in fake_polaris.catalogs  # not provisioned in Polaris yet
     resp = await auth_client.get(f"/workspaces/{slug}/schemas")
     assert resp.status_code == 200
-    assert slug in fake_polaris.catalogs  # self-healed
+    assert slug in fake_polaris.catalogs  # self-healed (polaris_name == slug)
     assert (slug, "analytics") in fake_polaris.schemas
 
 
@@ -120,7 +119,7 @@ async def test_create_schema_requires_writer(
 ):
     """Reader role on the workspace must not be able to create schemas."""
     slug = "readonly"
-    ws = Workspace(slug=slug, name="RO", storage_backend_id=backend.id)
+    ws = Workspace(slug=slug, name="RO")
     db_session.add(ws)
     await db_session.commit()
     await db_session.refresh(ws)
@@ -160,7 +159,7 @@ async def test_non_member_cannot_list(
     auth_client: AsyncClient, backend: StorageBackend, db_session
 ):
     """A user that isn't a workspace_member must be denied (403)."""
-    ws = Workspace(slug="other", name="Other", storage_backend_id=backend.id)
+    ws = Workspace(slug="other", name="Other")
     db_session.add(ws)
     await db_session.commit()
 
@@ -299,7 +298,7 @@ async def test_list_snapshots_404_for_unknown_table(
 async def test_list_snapshots_non_member_denied(
     auth_client: AsyncClient, backend: StorageBackend, db_session
 ):
-    ws = Workspace(slug="other", name="Other", storage_backend_id=backend.id)
+    ws = Workspace(slug="other", name="Other")
     db_session.add(ws)
     await db_session.commit()
     resp = await auth_client.get("/workspaces/other/schemas/main/tables/events/snapshots")
@@ -310,7 +309,7 @@ async def test_create_table_requires_writer(
     auth_client: AsyncClient, backend: StorageBackend, db_session
 ):
     slug = "readonly2"
-    ws = Workspace(slug=slug, name="RO2", storage_backend_id=backend.id)
+    ws = Workspace(slug=slug, name="RO2")
     db_session.add(ws)
     await db_session.commit()
     await db_session.refresh(ws)
@@ -461,7 +460,7 @@ async def test_drop_schema_requires_writer(
     auth_client: AsyncClient, backend: StorageBackend, db_session
 ):
     slug = "readonly4"
-    ws = Workspace(slug=slug, name="RO4", storage_backend_id=backend.id)
+    ws = Workspace(slug=slug, name="RO4")
     db_session.add(ws)
     await db_session.commit()
     await db_session.refresh(ws)
@@ -537,7 +536,7 @@ async def test_table_detail_surfaces_iceberg_metadata(
             payload={
                 "query_id": str(query.id),
                 "status": "done",
-                "stats_table": {"schema": "main", "table": "events"},
+                "stats_table": {"catalog": slug, "schema": "main", "table": "events"},
                 "table_row_count": 5,
                 "iceberg": {
                     "snapshot_id": 7264354987654321234,
@@ -645,7 +644,7 @@ async def test_drop_table_requires_writer(
     auth_client: AsyncClient, backend: StorageBackend, db_session
 ):
     slug = "readonly3"
-    ws = Workspace(slug=slug, name="RO3", storage_backend_id=backend.id)
+    ws = Workspace(slug=slug, name="RO3")
     db_session.add(ws)
     await db_session.commit()
     await db_session.refresh(ws)
@@ -684,11 +683,15 @@ def _patch_probe(monkeypatch) -> list[tuple[str, str]]:
     async def fake_run_sync_query(db, *, workspace, user_id, stats_for, **kwargs):
         calls.append((stats_for["schema"], stats_for["table"]))
         # Upsert like the real websocket handler (a probed table may already have
-        # a sidecar row, e.g. one created via the create-table endpoint).
+        # a sidecar row, e.g. one created via the create-table endpoint). Metadata
+        # is catalog-scoped, so resolve the catalog from the probe's slug.
+        catalog = (
+            await db.execute(select(Catalog).where(Catalog.slug == stats_for["catalog"]))
+        ).scalar_one()
         existing = (
             await db.execute(
                 select(TableMetadata).where(
-                    TableMetadata.workspace_id == workspace.id,
+                    TableMetadata.catalog_id == catalog.id,
                     TableMetadata.schema_name == stats_for["schema"],
                     TableMetadata.table_name == stats_for["table"],
                 )
@@ -696,7 +699,7 @@ def _patch_probe(monkeypatch) -> list[tuple[str, str]]:
         ).scalar_one_or_none()
         if existing is None:
             existing = TableMetadata(
-                workspace_id=workspace.id,
+                catalog_id=catalog.id,
                 schema_name=stats_for["schema"],
                 table_name=stats_for["table"],
             )
@@ -768,7 +771,7 @@ async def test_refresh_stats_503_when_no_agent_connected(
 async def test_refresh_stats_non_member_forbidden(
     auth_client: AsyncClient, backend: StorageBackend, db_session
 ):
-    ws = Workspace(slug="other", name="Other", storage_backend_id=backend.id)
+    ws = Workspace(slug="other", name="Other")
     db_session.add(ws)
     await db_session.commit()
 
@@ -824,7 +827,7 @@ async def test_recount_503_when_no_agent_connected(
 async def test_recount_non_member_forbidden(
     auth_client: AsyncClient, backend: StorageBackend, db_session
 ):
-    ws = Workspace(slug="other", name="Other", storage_backend_id=backend.id)
+    ws = Workspace(slug="other", name="Other")
     db_session.add(ws)
     await db_session.commit()
 

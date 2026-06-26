@@ -35,8 +35,8 @@ function ScoreBadge({
 function TableRow({ ws, t }: { ws: string; t: TableHealth }) {
   return (
     <Link
-      to="/$ws/catalog/$schema/$table"
-      params={{ ws, schema: t.schema_name, table: t.table_name }}
+      to="/$ws/catalog"
+      params={{ ws }}
       className="flex items-center justify-between border-b border-[var(--border-subtle)] px-4 py-2 hover:bg-accent/50"
     >
       <div className="flex items-center gap-3">

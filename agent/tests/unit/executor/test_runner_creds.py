@@ -1,4 +1,4 @@
-"""Runner Polaris/Iceberg attach + extension wiring.
+"""Runner Polaris/Iceberg multi-attach + extension wiring.
 
 Uses a fake `duckdb.connect` to capture the SQL the runner issues
 without depending on the real extensions or a live Polaris. The real
@@ -20,6 +20,15 @@ POLARIS = {
     "client_id": "root",
     "client_secret": "s3cr3t",
 }
+
+
+def _catalog(slug: str, polaris_name: str, kind: str, root_uri: str) -> dict[str, Any]:
+    return {
+        "slug": slug,
+        "polaris_name": polaris_name,
+        "backend": {"kind": kind, "root_uri": root_uri},
+        "default_schema": "analytics",
+    }
 
 
 class FakeConn:
@@ -54,8 +63,8 @@ def test_object_store_loads_httpfs_and_vends_credentials(fake_conn: FakeConn, tm
         tmp_path / "out.parquet",
         memory_bytes=1024**3,
         threads=2,
-        backend={"kind": "object_store", "root_uri": "file:///tmp/data"},
-        workspace_slug="ws-alpha",
+        catalogs=[_catalog("ws_alpha", "ws-alpha", "object_store", "file:///tmp/data")],
+        active_catalog="ws_alpha",
         polaris=POLARIS,
     )
     cmds = [c[0] for c in fake_conn.commands]
@@ -72,8 +81,8 @@ def test_s3_loads_httpfs_and_vends_credentials(fake_conn: FakeConn, tmp_path: Pa
         tmp_path / "out.parquet",
         memory_bytes=1024**3,
         threads=2,
-        backend={"kind": "s3", "root_uri": "s3://bucket/prefix"},
-        workspace_slug="ws-alpha",
+        catalogs=[_catalog("ws_alpha", "ws-alpha", "s3", "s3://bucket/prefix")],
+        active_catalog="ws_alpha",
         polaris=POLARIS,
     )
     cmds = [c[0] for c in fake_conn.commands]
@@ -96,8 +105,8 @@ def test_adls_loads_azure_and_vends_credentials(fake_conn: FakeConn, tmp_path: P
         tmp_path / "out.parquet",
         memory_bytes=1024**3,
         threads=2,
-        backend={"kind": "adls_gen2", "root_uri": "abfss://c@a.dfs/"},
-        workspace_slug="ws-blue",
+        catalogs=[_catalog("ws_blue", "ws-blue", "adls_gen2", "abfss://c@a.dfs/")],
+        active_catalog="ws_blue",
         polaris=POLARIS,
     )
     cmds = [c[0] for c in fake_conn.commands]
@@ -107,20 +116,43 @@ def test_adls_loads_azure_and_vends_credentials(fake_conn: FakeConn, tmp_path: P
     assert "ACCESS_DELEGATION_MODE 'vended_credentials'" in attach_cmd
 
 
-def test_attach_uses_workspace_slug_as_warehouse(fake_conn: FakeConn, tmp_path: Path):
+def test_attach_uses_polaris_name_as_warehouse_and_slug_alias(fake_conn: FakeConn, tmp_path: Path):
     runner_module.run_query_sync(
         "SELECT 1",
         tmp_path / "out.parquet",
         memory_bytes=1024**3,
         threads=2,
-        backend={"kind": "object_store", "root_uri": "file:///tmp/data"},
-        workspace_slug="ws-alpha",
+        catalogs=[_catalog("ws_alpha", "ws-alpha", "object_store", "file:///tmp/data")],
+        active_catalog="ws_alpha",
         polaris=POLARIS,
     )
     attach_sql = next(c[0] for c in fake_conn.commands if c[0].startswith("ATTACH"))
-    # ATTACH takes no bind params; warehouse (slug) + endpoint are inlined.
-    assert "ATTACH 'ws-alpha' AS dh_catalog" in attach_sql
+    # ATTACH takes no bind params; the Polaris warehouse name + endpoint are
+    # inlined, and the catalog is aliased by its (identifier-safe) slug.
+    assert "ATTACH 'ws-alpha' AS \"ws_alpha\"" in attach_sql
     assert "ENDPOINT 'http://polaris:8181/api/catalog'" in attach_sql
+    use_sql = next(c[0] for c in fake_conn.commands if c[0].startswith("USE"))
+    assert use_sql == 'USE "ws_alpha"."analytics"'
+
+
+def test_multi_attach_attaches_every_catalog_and_uses_active(fake_conn: FakeConn, tmp_path: Path):
+    runner_module.run_query_sync(
+        "SELECT 1",
+        tmp_path / "out.parquet",
+        memory_bytes=1024**3,
+        threads=2,
+        catalogs=[
+            _catalog("raw", "dev__raw", "object_store", "file:///tmp/raw"),
+            _catalog("curated", "dev__curated", "object_store", "file:///tmp/curated"),
+        ],
+        active_catalog="curated",
+        polaris=POLARIS,
+    )
+    attaches = [c[0] for c in fake_conn.commands if c[0].startswith("ATTACH")]
+    assert any("ATTACH 'dev__raw' AS \"raw\"" in c for c in attaches)
+    assert any("ATTACH 'dev__curated' AS \"curated\"" in c for c in attaches)
+    use_sql = next(c[0] for c in fake_conn.commands if c[0].startswith("USE"))
+    assert use_sql == 'USE "curated"."analytics"'
 
 
 def test_no_polaris_means_no_attach(fake_conn: FakeConn, tmp_path: Path):
@@ -129,13 +161,13 @@ def test_no_polaris_means_no_attach(fake_conn: FakeConn, tmp_path: Path):
         tmp_path / "out.parquet",
         memory_bytes=1024**3,
         threads=2,
-        workspace_slug="ws-alpha",
+        catalogs=[_catalog("ws_alpha", "ws-alpha", "object_store", "file:///tmp/data")],
     )
     cmds = [c[0] for c in fake_conn.commands]
     assert not any("ATTACH" in c for c in cmds)
 
 
-def test_no_workspace_slug_means_no_attach(fake_conn: FakeConn, tmp_path: Path):
+def test_no_catalogs_means_no_attach(fake_conn: FakeConn, tmp_path: Path):
     runner_module.run_query_sync(
         "SELECT 1",
         tmp_path / "out.parquet",

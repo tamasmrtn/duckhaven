@@ -5,7 +5,7 @@
  * end-to-end — the integration the unit/component layers can only mock).
  */
 import { expect, test } from "../fixtures/test";
-import { WS_SLUG } from "../helpers";
+import { DEFAULT_CATALOG, DEFAULT_SCHEMA } from "../helpers";
 
 test("History tab lists commits and time-travels to a past snapshot", async ({
   page,
@@ -21,7 +21,7 @@ test("History tab lists commits and time-travels to a past snapshot", async ({
   await worksheetPage.runAndReadRows(`INSERT INTO ${table} VALUES (2)`);
 
   // History tab reads the snapshot log live from Polaris.
-  await catalogPage.gotoTable(WS_SLUG, table);
+  await catalogPage.gotoTable(DEFAULT_CATALOG, DEFAULT_SCHEMA, table);
   await page.getByRole("tab", { name: /history/i }).click();
 
   const panel = page.getByRole("tabpanel");

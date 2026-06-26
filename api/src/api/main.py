@@ -93,7 +93,7 @@ async def _polaris_error_handler(_: Request, exc: PolarisError) -> JSONResponse:
     if isinstance(exc, PolarisNotFoundError):
         code = status.HTTP_404_NOT_FOUND
     elif isinstance(exc, PolarisBadRequestError):
-        code = status.HTTP_422_UNPROCESSABLE_ENTITY
+        code = status.HTTP_422_UNPROCESSABLE_CONTENT
     else:
         code = status.HTTP_502_BAD_GATEWAY
     return JSONResponse(status_code=code, content={"detail": str(exc)})

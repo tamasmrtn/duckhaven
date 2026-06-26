@@ -6,6 +6,7 @@ import {
   Table2,
   Layers,
   Book,
+  Lock,
   RefreshCw,
   Plus,
   Link2,
@@ -223,12 +224,90 @@ function SchemaNode({
   );
 }
 
+// The built-in, read-only metadata schema every catalog exposes. It is not a
+// Polaris namespace (so it never comes back from `useSchemas`); it is DuckDB's
+// native, live `information_schema`, surfaced here as a virtual node. The views
+// listed are the ones DuckHaven supports — see docs/reference/sql-support.md.
+const INFORMATION_SCHEMA = "information_schema";
+const INFORMATION_SCHEMA_VIEWS = [
+  "schemata",
+  "tables",
+  "columns",
+  "views",
+] as const;
+
+interface InformationSchemaNodeProps {
+  catalog: string;
+  filter: string;
+  onMetaViewClick?: (catalog: string, view: string) => void;
+}
+
+// Virtual, read-only `information_schema` node. Always present (never created),
+// never writable — hence the lock icon and the "read-only" badge, and no
+// create/drop affordances. Clicking a view seeds a scoped query when a handler
+// is provided (worksheet sidebar); elsewhere the views are display-only.
+function InformationSchemaNode({
+  catalog,
+  filter,
+  onMetaViewClick,
+}: InformationSchemaNodeProps) {
+  const [open, setOpen] = useState(false);
+  const f = filter.toLowerCase();
+  const views = INFORMATION_SCHEMA_VIEWS.filter((v) => !f || v.includes(f));
+
+  // Hide the node entirely when a table search matches none of its views.
+  if (filter && views.length === 0 && !INFORMATION_SCHEMA.includes(f))
+    return null;
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-sm font-medium text-text-primary hover:bg-accent focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+        aria-expanded={open}
+        title="Built-in, read-only metadata schema"
+      >
+        {open ? (
+          <ChevronDown className="size-3.5 shrink-0 text-text-secondary" />
+        ) : (
+          <ChevronRight className="size-3.5 shrink-0 text-text-secondary" />
+        )}
+        <Layers className="size-3.5 shrink-0 text-[var(--brand-maya-blue)]" />
+        <span className="truncate">{INFORMATION_SCHEMA}</span>
+        <span className="ml-1 flex items-center gap-0.5 rounded bg-accent px-1 text-2xs text-text-tertiary">
+          <Lock className="size-2.5" />
+          read-only
+        </span>
+      </button>
+
+      {open && (
+        <div className="ml-3 border-l border-[var(--border-subtle)] pl-2">
+          {views.map((view) => (
+            <button
+              key={view}
+              type="button"
+              disabled={!onMetaViewClick}
+              onClick={() => onMetaViewClick?.(catalog, view)}
+              className="flex w-full items-center gap-1.5 rounded py-1 pr-1.5 pl-1.5 text-sm text-text-secondary hover:bg-accent hover:text-text-primary focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)] disabled:cursor-default disabled:hover:bg-transparent"
+            >
+              <Table2 className="size-3.5 shrink-0 text-text-tertiary" />
+              <span className="truncate">{view}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface CatalogNodeProps {
   ws: string;
   catalog: Catalog;
   filter: string;
   defaultOpen: boolean;
   onTableClick: (catalog: string, schema: string, table: string) => void;
+  onMetaViewClick?: (catalog: string, view: string) => void;
 }
 
 function CatalogNode({
@@ -237,6 +316,7 @@ function CatalogNode({
   filter,
   defaultOpen,
   onTableClick,
+  onMetaViewClick,
 }: CatalogNodeProps) {
   const [open, setOpen] = useState(defaultOpen);
   const [createSchemaOpen, setCreateSchemaOpen] = useState(false);
@@ -316,19 +396,30 @@ function CatalogNode({
                 className="my-1 h-5 w-full animate-shimmer rounded"
               />
             ))
-          ) : schemas?.length === 0 ? (
-            <p className="px-2 py-1 text-2xs text-text-tertiary">No schemas.</p>
           ) : (
-            schemas?.map((s) => (
-              <SchemaNode
-                key={s.name}
-                ws={ws}
+            <>
+              {schemas?.length === 0 && !filter && (
+                <p className="px-2 py-1 text-2xs text-text-tertiary">
+                  No user schemas.
+                </p>
+              )}
+              {schemas?.map((s) => (
+                <SchemaNode
+                  key={s.name}
+                  ws={ws}
+                  catalog={catalog.slug}
+                  schemaName={s.name}
+                  filter={filter}
+                  onTableClick={onTableClick}
+                />
+              ))}
+              {/* Always-present, read-only metadata schema (virtual). */}
+              <InformationSchemaNode
                 catalog={catalog.slug}
-                schemaName={s.name}
                 filter={filter}
-                onTableClick={onTableClick}
+                onMetaViewClick={onMetaViewClick}
               />
-            ))
+            </>
           )}
         </div>
       )}
@@ -347,12 +438,14 @@ interface CatalogTreeProps {
   ws: string;
   workspaceName: string;
   onTableClick: (catalog: string, schema: string, table: string) => void;
+  onMetaViewClick?: (catalog: string, view: string) => void;
 }
 
 export function CatalogTree({
   ws,
   workspaceName,
   onTableClick,
+  onMetaViewClick,
 }: CatalogTreeProps) {
   const [filter, setFilter] = useState("");
   const [createCatalogOpen, setCreateCatalogOpen] = useState(false);
@@ -459,6 +552,7 @@ export function CatalogTree({
                 filter={filter}
                 defaultOpen={c.is_default || (catalogs.length === 1 && i === 0)}
                 onTableClick={onTableClick}
+                onMetaViewClick={onMetaViewClick}
               />
             ))}
           </div>

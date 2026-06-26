@@ -72,6 +72,44 @@ describe('CatalogTree', () => {
     expect(catalog.querySelector('svg.lucide-database')).toBeNull()
   })
 
+  it('shows a read-only information_schema node with its supported views', async () => {
+    renderTree(() => {})
+    // Wait for the default catalog to expand and load.
+    await screen.findByRole('button', { name: /events/i })
+
+    const infoNode = screen.getByRole('button', { name: /information_schema/i })
+    // Read-only signalling: a lock icon and a "read-only" badge.
+    expect(within(infoNode).getByText(/read-only/i)).toBeInTheDocument()
+    expect(infoNode.querySelector('svg.lucide-lock')).toBeTruthy()
+
+    // Expanding reveals the supported views.
+    await userEvent.click(infoNode)
+    for (const view of ['schemata', 'tables', 'columns', 'views']) {
+      expect(screen.getByRole('button', { name: view })).toBeInTheDocument()
+    }
+  })
+
+  it('seeds a scoped query when an information_schema view is clicked', async () => {
+    const onMetaViewClick = vi.fn()
+    const { wrapper: Wrapper } = createWrapper()
+    render(
+      <CatalogTree
+        ws="acme-analytics"
+        workspaceName="acme-analytics"
+        onTableClick={() => {}}
+        onMetaViewClick={onMetaViewClick}
+      />,
+      { wrapper: Wrapper },
+    )
+    await screen.findByRole('button', { name: /events/i })
+
+    await userEvent.click(
+      screen.getByRole('button', { name: /information_schema/i }),
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'tables' }))
+    expect(onMetaViewClick).toHaveBeenCalledWith('acme_analytics', 'tables')
+  })
+
   it('opens the new-catalog dialog from the create dropdown', async () => {
     renderTree(() => {})
 

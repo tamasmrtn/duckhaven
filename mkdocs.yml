@@ -120,6 +120,7 @@ nav:
       - Connect LDAP / AD: guides/connect-ldap.md
   - Operations:
       - Operator runbook: operations/runbook.md
+      - Storage security & maintenance: operations/storage-maintenance.md
       - Monitoring: operations/monitoring.md
       - Scaling compute: operations/scaling.md
       - Offboarding & break-glass: operations/offboarding.md

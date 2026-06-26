@@ -8,22 +8,62 @@ live. Admins register backends; each [workspace](../concepts/workspaces.md) bind
 Out of the box, name-only workspace creation uses the bundled MinIO object store (`object_store`), isolating each
 workspace under a `/{slug}` prefix. No configuration is required to start.
 
-## Register an external backend
+## Enable external storage types
 
-From **Admin → Storage**, register a backend with its kind, a name, and a root URI:
+Polaris must advertise the storage types you intend to use. The bundled stack sets
+`SUPPORTED_CATALOG_STORAGE_TYPES=["S3","AZURE"]` in `deploy/docker-compose.yml`, which covers both AWS S3 and Azure
+ADLS Gen2. External backends need **no** static credentials in `.env` — the role assumption (S3) and SAS minting
+(ADLS) happen inside Polaris.
 
-| Kind | Root URI example | Required agent extension |
-|---|---|---|
-| `s3` | `s3://acme-data/duckhaven/` | `httpfs` |
-| `adls_gen2` | `abfss://research@acme/duckhaven/` | `azure` |
+## Register an AWS S3 backend
 
-Registration runs a health check (credential vending plus a test `LIST` against the root), naming the agent that ran
-it. A backend that is in use by any workspace cannot be deleted.
+First, prepare AWS so Polaris can assume a least-privilege role:
 
-!!! note "External cloud credentials are in progress"
-    The bundled `object_store` path is fully wired. External `s3` / `adls_gen2` credential wiring (role/tenant) is
-    validated behind opt-in integration tests and is still being finished — verify against the roadmap before relying
-    on it in production.
+1. **Create an IAM role** whose permission policy grants only the bucket and prefix you'll use — `s3:GetObject`,
+   `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket` scoped to `arn:aws:s3:::acme-data` and
+   `arn:aws:s3:::acme-data/duckhaven/*`. Grant `kms:Decrypt`/`kms:GenerateDataKey` if the bucket uses SSE-KMS.
+2. **Set the trust policy** so the Polaris principal can assume the role, guarded by your external id (a
+   confused-deputy guard) and, where possible, an `aws:SourceArn` condition:
+
+    ```json
+    { "Version": "2012-10-17", "Statement": [{
+      "Effect": "Allow",
+      "Principal": { "AWS": "<polaris-principal-arn>" },
+      "Action": "sts:AssumeRole",
+      "Condition": { "StringEquals": { "sts:ExternalId": "dh-acme" } }
+    }] }
+    ```
+
+3. **Harden the bucket**: block all public access, enforce TLS-only access with an `aws:SecureTransport` bucket
+   policy, enable SSE-KMS, and reach it over a VPC gateway endpoint where the agents run.
+
+Then in **Admin → Storage**, register a backend with kind `s3`, a root URI like `s3://acme-data/duckhaven/`, the
+**role ARN**, **region**, and (recommended) the **external id**. Leave the endpoint blank for real AWS.
+
+## Register an Azure ADLS Gen2 backend
+
+1. **Register an Entra application** (or use Polaris's multi-tenant app) and grant it admin consent in your tenant via
+   the consent URL.
+2. **Assign the data-plane role** `Storage Blob Data Contributor` to that identity on the storage account or
+   container — Entra RBAC, not account keys.
+3. **Harden the account**: enable the hierarchical namespace (ADLS Gen2), restrict access with private endpoints, and
+   keep encryption at rest on (default).
+
+Then register a backend with kind `adls_gen2`, a root URI like
+`abfss://research@acme.dfs.core.windows.net/duckhaven/`, the **tenant id**, and (if used) the app name / consent URL.
+Turn on **hierarchical** for HNS accounts so SAS tokens are down-scoped to the path.
+
+## Validate access
+
+Each external backend row has a **Test access** button. It provisions a throwaway Polaris catalog from the config,
+forces a storage write under the assumed role / consented app, then vends scoped client credentials and lists the
+probe path — the same path agents use. A green result means register → vend → read/write works end to end; a red
+result shows a sanitized reason (no secrets). A backend in use by any workspace cannot be deleted.
+
+!!! note "Assume-role validation needs STS"
+    The bundled MinIO has no STS, so the S3 assume-role leg is exercised against LocalStack or a real AWS account (see
+    `make localstack-dev`). Azure has no offline emulator for Entra credential vending, so the ADLS path is validated
+    against a real Azure account.
 
 ## Bind a workspace
 

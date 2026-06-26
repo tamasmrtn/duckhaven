@@ -9,6 +9,13 @@ export function useMe() {
   });
 }
 
+export function useAuthMethods() {
+  return useQuery({
+    queryKey: ["auth", "methods"],
+    queryFn: authApi.methods,
+  });
+}
+
 export function useLogin() {
   const qc = useQueryClient();
   return useMutation({

@@ -5,7 +5,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useLogin } from "@/queries/auth";
+import { useAuthMethods, useLogin } from "@/queries/auth";
 import { useSetupStatus } from "@/queries/setup";
 import { useQueryClient } from "@tanstack/react-query";
 import { workspacesApi } from "@/api/workspaces";
@@ -13,11 +13,16 @@ import { workspacesApi } from "@/api/workspaces";
 export function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState(() =>
+    new URLSearchParams(window.location.search).get("error") === "sso"
+      ? "Single sign-on failed. Try again or sign in locally."
+      : "",
+  );
   const login = useLogin();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const setupStatus = useSetupStatus();
+  const methods = useAuthMethods();
 
   // Brand-new install lands here from the index route; bounce to /setup so the
   // operator creates the first admin before any login attempt.
@@ -117,6 +122,26 @@ export function LoginPage() {
             {login.isPending ? "Signing in…" : "Sign in"}
           </Button>
         </form>
+
+        {methods.data?.oidc && (
+          <>
+            <div className="flex items-center gap-3">
+              <div className="h-px flex-1 bg-[var(--border-subtle)]" />
+              <span className="text-2xs text-text-tertiary">or</span>
+              <div className="h-px flex-1 bg-[var(--border-subtle)]" />
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full h-9"
+              onClick={() => {
+                window.location.href = "/api/auth/oidc/login";
+              }}
+            >
+              Sign in with {methods.data.oidc_label}
+            </Button>
+          </>
+        )}
 
         <p className="text-center text-2xs text-text-tertiary">
           Self-hosted · Tailscale only

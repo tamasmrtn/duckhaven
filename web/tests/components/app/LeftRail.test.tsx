@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 // LeftRail only consumes these two router hooks; stub them so the nav can be
 // rendered in isolation for an icon assertion.
@@ -10,9 +11,20 @@ vi.mock('@tanstack/react-router', () => ({
 
 import { LeftRail } from '@/components/app/LeftRail'
 
+function renderRail() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  return render(
+    <QueryClientProvider client={client}>
+      <LeftRail ws="acme" />
+    </QueryClientProvider>,
+  )
+}
+
 describe('LeftRail icons', () => {
   it('uses a bookmarked book for Saved queries and an open book for Catalog', () => {
-    const { getByLabelText } = render(<LeftRail ws="acme" />)
+    const { getByLabelText } = renderRail()
 
     expect(
       getByLabelText('Saved queries').querySelector('svg.lucide-book-marked'),
@@ -23,7 +35,7 @@ describe('LeftRail icons', () => {
   })
 
   it('no longer uses the ambiguous database glyph in the nav', () => {
-    const { container } = render(<LeftRail ws="acme" />)
+    const { container } = renderRail()
     expect(container.querySelector('svg.lucide-database')).toBeNull()
   })
 })

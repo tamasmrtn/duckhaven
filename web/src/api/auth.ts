@@ -1,5 +1,5 @@
 import { get, post } from "./client";
-import type { User } from "@/types/auth";
+import type { AuthMethods, User } from "@/types/auth";
 
 export const authApi = {
   login: (email: string, password: string) =>
@@ -8,4 +8,6 @@ export const authApi = {
   logout: () => post<void>("/auth/logout"),
 
   me: () => get<User>("/me"),
+
+  methods: () => get<AuthMethods>("/auth/methods"),
 };

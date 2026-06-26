@@ -42,8 +42,16 @@ Access to data is granted by adding a user to a workspace with a role:
 | `writer` | Reader, plus create/modify/drop tables and run DDL |
 | `owner` | Writer, plus manage workspace membership |
 
-Workspace membership is always managed inside DuckHaven (it is not driven by IdP groups). Authorization is enforced at
-the API boundary before any query reaches an agent. See [Permissions](../concepts/permissions.md).
+There are two ways to manage membership:
+
+- **From Admin → Users** — open a user's **⋯ → Manage workspaces** to grant, change, or remove their role in any
+  workspace from one place. This is the admin path and works for any workspace (it requires the global `users:manage`
+  permission, not workspace ownership).
+- **Within a workspace** — an `owner` of a workspace manages that workspace's own members.
+
+Workspace membership is always managed inside DuckHaven (it is not driven by IdP groups, which set only the global
+role). Authorization is enforced at the API boundary before any query reaches an agent. See
+[Permissions](../concepts/permissions.md).
 
 ## Registering agents
 

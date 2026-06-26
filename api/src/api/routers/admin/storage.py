@@ -35,7 +35,7 @@ async def list_backends(
                 kind=sb.kind,
                 name=sb.name,
                 root_uri=sb.root_uri,
-                uc_storage_credential_id=sb.uc_storage_credential_id,
+                config=sb.config,
                 created_by=sb.created_by,
                 created_at=sb.created_at,
                 workspace_count=count,
@@ -59,7 +59,7 @@ async def create_backend(
         kind=body.kind,
         name=body.name,
         root_uri=body.root_uri,
-        uc_storage_credential_id=body.uc_storage_credential_id,
+        config=body.config,
         created_by=admin.id,
     )
     db.add(sb)
@@ -70,7 +70,7 @@ async def create_backend(
         kind=sb.kind,
         name=sb.name,
         root_uri=sb.root_uri,
-        uc_storage_credential_id=sb.uc_storage_credential_id,
+        config=sb.config,
         created_by=sb.created_by,
         created_at=sb.created_at,
         workspace_count=0,

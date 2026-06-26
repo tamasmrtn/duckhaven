@@ -33,4 +33,33 @@ export const userHandlers = [
   http.post("/api/admin/users/:id/revoke-sessions", () => {
     return new HttpResponse(null, { status: 204 });
   }),
+
+  http.get("/api/admin/users/:id/workspaces", () => {
+    return HttpResponse.json([
+      {
+        workspace_id: "w-1",
+        slug: "analytics",
+        name: "Analytics",
+        role: "reader",
+      },
+      { workspace_id: "w-2", slug: "finance", name: "Finance", role: null },
+    ]);
+  }),
+
+  http.put(
+    "/api/admin/users/:id/workspaces/:ws",
+    async ({ params, request }) => {
+      const body = (await request.json()) as { role: string };
+      return HttpResponse.json({
+        workspace_id: "w-x",
+        slug: params.ws,
+        name: String(params.ws),
+        role: body.role,
+      });
+    },
+  ),
+
+  http.delete("/api/admin/users/:id/workspaces/:ws", () => {
+    return new HttpResponse(null, { status: 204 });
+  }),
 ];

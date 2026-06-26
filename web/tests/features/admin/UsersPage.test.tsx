@@ -67,6 +67,34 @@ describe('UsersPage', () => {
     })
   })
 
+  it('grants a workspace role from the manage-workspaces dialog', async () => {
+    let put: { url: string; role: string } | null = null
+    server.use(
+      http.put('/api/admin/users/:id/workspaces/:ws', async ({ params, request }) => {
+        const body = (await request.json()) as { role: string }
+        put = { url: String(params.ws), role: body.role }
+        return HttpResponse.json({
+          workspace_id: 'w-2',
+          slug: params.ws,
+          name: String(params.ws),
+          role: body.role,
+        })
+      }),
+    )
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: USERS_ROUTE })
+
+    await user.click(await screen.findByRole('button', { name: /actions for jess/i }))
+    await user.click(await screen.findByRole('menuitem', { name: /manage workspaces/i }))
+
+    // The dialog lists the user's workspaces; grant a role in "finance" (no access).
+    const select = await screen.findByRole('combobox', { name: /role in finance/i })
+    await user.click(select)
+    await user.click(await screen.findByRole('option', { name: 'writer' }))
+
+    await waitFor(() => expect(put).toEqual({ url: 'finance', role: 'writer' }))
+  })
+
   it('deactivates a user from the row actions menu', async () => {
     let patch: Record<string, unknown> | null = null
     server.use(

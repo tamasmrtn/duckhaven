@@ -30,12 +30,16 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   useAdminUsers,
   useCreateUser,
+  useRemoveUserWorkspace,
   useRevokeSessions,
+  useSetUserWorkspaceRole,
   useUpdateUser,
+  useUserWorkspaces,
 } from "@/queries/users";
 import type { User } from "@/types/auth";
 
 const ROLES = ["admin", "user"];
+const WORKSPACE_ROLES = ["reader", "writer", "owner"];
 
 function CreateUserDialog({
   open,
@@ -136,9 +140,87 @@ function CreateUserDialog({
   );
 }
 
+function ManageWorkspacesDialog({
+  userId,
+  userName,
+  open,
+  onOpenChange,
+}: {
+  userId: string;
+  userName: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { data: workspaces = [], isLoading } = useUserWorkspaces(userId, open);
+  const setRole = useSetUserWorkspaceRole(userId);
+  const remove = useRemoveUserWorkspace(userId);
+
+  function change(slug: string, value: string) {
+    if (value === "none") remove.mutate(slug);
+    else setRole.mutate({ ws: slug, role: value });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Workspace access</DialogTitle>
+          <DialogDescription>
+            Grant {userName} a role in each workspace, or remove access.
+            Workspace roles are separate from the global role.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="max-h-80 space-y-2 overflow-auto">
+          {isLoading ? (
+            <Skeleton className="h-12 w-full animate-shimmer rounded-md" />
+          ) : workspaces.length === 0 ? (
+            <p className="py-6 text-center text-sm text-text-secondary">
+              No workspaces yet.
+            </p>
+          ) : (
+            workspaces.map((w) => (
+              <div
+                key={w.workspace_id}
+                className="flex items-center justify-between gap-3 rounded-md border border-[var(--border-subtle)] p-2"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">{w.name}</p>
+                  <p className="truncate text-xs text-text-secondary">
+                    {w.slug}
+                  </p>
+                </div>
+                <Select
+                  value={w.role ?? "none"}
+                  onValueChange={(v) => change(w.slug, v)}
+                >
+                  <SelectTrigger
+                    className="h-8 w-32"
+                    aria-label={`Role in ${w.name}`}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No access</SelectItem>
+                    {WORKSPACE_ROLES.map((r) => (
+                      <SelectItem key={r} value={r}>
+                        {r}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ))
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function UserRow({ user }: { user: User }) {
   const update = useUpdateUser();
   const revoke = useRevokeSessions();
+  const [workspacesOpen, setWorkspacesOpen] = useState(false);
 
   return (
     <div className="flex items-center gap-3 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-3">
@@ -193,6 +275,9 @@ function UserRow({ user }: { user: User }) {
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
+          <DropdownMenuItem onClick={() => setWorkspacesOpen(true)}>
+            Manage workspaces
+          </DropdownMenuItem>
           <DropdownMenuItem
             onClick={() =>
               update.mutate({
@@ -208,6 +293,12 @@ function UserRow({ user }: { user: User }) {
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      <ManageWorkspacesDialog
+        userId={user.id}
+        userName={user.name}
+        open={workspacesOpen}
+        onOpenChange={setWorkspacesOpen}
+      />
     </div>
   );
 }

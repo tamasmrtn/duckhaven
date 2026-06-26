@@ -38,3 +38,36 @@ export function useRevokeSessions() {
     mutationFn: (id: string) => usersApi.revokeSessions(id),
   });
 }
+
+export function useUserWorkspaces(userId: string, enabled = true) {
+  return useQuery({
+    queryKey: ["admin", "users", userId, "workspaces"],
+    queryFn: () => usersApi.workspaces(userId),
+    enabled,
+  });
+}
+
+export function useSetUserWorkspaceRole(userId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ ws, role }: { ws: string; role: string }) =>
+      usersApi.setWorkspaceRole(userId, ws, role),
+    onSuccess: () => {
+      void qc.invalidateQueries({
+        queryKey: ["admin", "users", userId, "workspaces"],
+      });
+    },
+  });
+}
+
+export function useRemoveUserWorkspace(userId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ws: string) => usersApi.removeWorkspace(userId, ws),
+    onSuccess: () => {
+      void qc.invalidateQueries({
+        queryKey: ["admin", "users", userId, "workspaces"],
+      });
+    },
+  });
+}

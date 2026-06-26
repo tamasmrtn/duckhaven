@@ -18,6 +18,7 @@ from api.main import api_app, app  # noqa: E402
 from api.models.catalog import Catalog, WorkspaceCatalog  # noqa: E402
 from api.models.storage_backend import StorageBackend  # noqa: E402
 from api.models.workspace import Workspace, WorkspaceMember  # noqa: E402
+from api.services.rbac import seed_roles  # noqa: E402
 
 
 async def seed_workspace(
@@ -76,6 +77,10 @@ async def db_engine():
     engine = create_async_engine(TEST_DB_URL, connect_args={"check_same_thread": False})
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    # Seed built-in roles so permission checks resolve (mirrors the lifespan seed,
+    # since tests build the schema from metadata rather than running migrations).
+    async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+        await seed_roles(session)
     yield engine
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)

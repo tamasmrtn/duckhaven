@@ -21,7 +21,9 @@ from api.models.storage_backend import StorageBackend
 from api.models.user import User
 from api.schemas.catalog_mgmt import CatalogAttachRequest, CatalogCreate, CatalogOut
 from api.services import catalog as catalog_service
+from api.services.permissions import Permission
 from api.services.polaris import PolarisClient
+from api.services.rbac import has_permission
 from api.services.workspace import (
     assert_workspace_member,
     default_object_store_backend,
@@ -205,7 +207,9 @@ async def drop_catalog(
     catalog = await db.get(Catalog, catalog_id)
     if catalog is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-    if user.role != "admin" and catalog.created_by != user.id:
+    if not await has_permission(db, user, Permission.CATALOGS_ADMIN) and (
+        catalog.created_by != user.id
+    ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
     await catalog_service.drop_catalog(db, polaris, catalog=catalog)
     await db.commit()

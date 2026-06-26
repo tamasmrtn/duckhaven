@@ -24,6 +24,8 @@ from api.services import query as query_service
 from api.services import sql_metadata as sql_metadata_service
 from api.services.agent_capabilities import agent_supports_backend, required_extension
 from api.services.agent_registry import registry
+from api.services.permissions import Permission
+from api.services.rbac import has_permission
 from api.services.sql_guard import SQLNotAllowed, assert_allowed
 from api.services.workspace import (
     assert_workspace_member,
@@ -211,7 +213,7 @@ async def list_workspace_queries(
     with 403 for non-admins. Internal queries (e.g. table-sample previews) are
     excluded.
     """
-    is_admin = user.role == "admin"
+    is_admin = await has_permission(db, user, Permission.QUERIES_ADMIN)
 
     stmt = (
         select(Query)

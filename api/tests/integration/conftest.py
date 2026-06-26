@@ -40,6 +40,7 @@ from api.models.user import User
 from api.services.agent_registry import registry
 from api.services.auth import hash_password
 from api.services.polaris import PolarisClient
+from api.services.rbac import seed_roles
 
 # Plain HTTP transport in tests; never emit Secure cookies the test client drops.
 settings.cookie_secure = False
@@ -173,7 +174,10 @@ async def db_session(pg_engine) -> AsyncIterator[AsyncSession]:
     """Per-test clean schema: create all tables, yield a session, drop all after."""
     async with pg_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    async with async_sessionmaker(pg_engine, expire_on_commit=False)() as session:
+    sessionmaker = async_sessionmaker(pg_engine, expire_on_commit=False)
+    async with sessionmaker() as seed_session:
+        await seed_roles(seed_session)
+    async with sessionmaker() as session:
         yield session
     async with pg_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
@@ -231,6 +235,61 @@ async def admin_client(app_client: AsyncClient, admin_user: User) -> AsyncClient
     )
     assert resp.status_code == 200, resp.text
     return app_client
+
+
+# --- Federated identity (real Keycloak / OpenLDAP), env-gated ---
+
+
+@pytest.fixture
+def oidc_settings(monkeypatch) -> str:
+    """Point the app's OIDC config at a live Keycloak (see `make idp-dev`)."""
+    meta = os.getenv("OIDC_SERVER_METADATA_URL")
+    if not meta:
+        pytest.skip("OIDC_SERVER_METADATA_URL not set; skipping OIDC integration test")
+    monkeypatch.setattr(settings, "oidc_enabled", True)
+    monkeypatch.setattr(settings, "oidc_server_metadata_url", meta)
+    monkeypatch.setattr(settings, "oidc_client_id", os.getenv("OIDC_CLIENT_ID", "duckhaven-api"))
+    monkeypatch.setattr(
+        settings, "oidc_client_secret", os.getenv("OIDC_CLIENT_SECRET", "duckhaven-secret")
+    )
+    monkeypatch.setattr(settings, "oidc_group_role_map", {"dh-admins": "admin"})
+    # Deterministic redirect_uri the Keycloak realm whitelists.
+    monkeypatch.setattr(settings, "oidc_redirect_base_url", "http://test")
+
+    # Re-register the Authlib client against the live IdP with the test config.
+    from api.services.oidc import OIDC_CLIENT_NAME, oauth, register_oidc
+
+    if hasattr(oauth, "_registry"):
+        oauth._registry.pop(OIDC_CLIENT_NAME, None)
+    if hasattr(oauth, "_clients"):
+        oauth._clients.pop(OIDC_CLIENT_NAME, None)
+    register_oidc()
+    return meta
+
+
+@pytest.fixture
+def ldap_settings(monkeypatch) -> str:
+    """Point the app's LDAP config at a live OpenLDAP (see `make idp-dev`)."""
+    uri = os.getenv("LDAP_SERVER_URI")
+    if not uri:
+        pytest.skip("LDAP_SERVER_URI not set; skipping LDAP integration test")
+    monkeypatch.setattr(settings, "ldap_enabled", True)
+    monkeypatch.setattr(settings, "ldap_server_uri", uri)
+    monkeypatch.setattr(
+        settings, "ldap_bind_dn", os.getenv("LDAP_BIND_DN", "cn=admin,dc=duckhaven,dc=test")
+    )
+    monkeypatch.setattr(settings, "ldap_bind_password", os.getenv("LDAP_BIND_PASSWORD", "admin"))
+    monkeypatch.setattr(
+        settings,
+        "ldap_user_search_base",
+        os.getenv("LDAP_USER_SEARCH_BASE", "ou=people,dc=duckhaven,dc=test"),
+    )
+    monkeypatch.setattr(
+        settings,
+        "ldap_group_role_map",
+        {"cn=dh-admins,ou=groups,dc=duckhaven,dc=test": "admin"},
+    )
+    return uri
 
 
 # --- Polaris catalog cleanup for workspace-creation tests ---

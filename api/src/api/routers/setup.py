@@ -17,7 +17,7 @@ from api.deps import get_db
 from api.models.user import User
 from api.schemas.auth import UserOut
 from api.schemas.setup import FirstAdminRequest, SetupStatus
-from api.services.auth import create_session, hash_password
+from api.services.auth import create_session, hash_password, set_session_cookie
 
 router = APIRouter(prefix="/setup", tags=["setup"])
 
@@ -73,12 +73,5 @@ async def create_first_admin(
     settings.setup_token_path.unlink(missing_ok=True)
 
     token = await create_session(db, user.id)
-    response.set_cookie(
-        key="session",
-        value=token,
-        httponly=True,
-        secure=settings.cookie_secure,
-        samesite="lax",
-        max_age=7 * 24 * 3600,
-    )
+    set_session_cookie(response, token)
     return user

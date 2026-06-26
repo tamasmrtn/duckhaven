@@ -4,11 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_admin_user, get_db
+from api.deps import get_db, require_permission
 from api.models.catalog import Catalog
 from api.models.storage_backend import StorageBackend
 from api.models.user import User
 from api.schemas.storage_backend import StorageBackendCreate, StorageBackendOut
+from api.services.permissions import Permission
 
 router = APIRouter(prefix="/storage-backends")
 
@@ -17,7 +18,7 @@ VALID_KINDS = {"object_store", "s3", "adls_gen2"}
 
 @router.get("", response_model=list[StorageBackendOut])
 async def list_backends(
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require_permission(Permission.STORAGE_MANAGE)),
     db: AsyncSession = Depends(get_db),
 ) -> list[StorageBackendOut]:
     result = await db.execute(select(StorageBackend))
@@ -46,7 +47,7 @@ async def list_backends(
 @router.post("", response_model=StorageBackendOut, status_code=status.HTTP_201_CREATED)
 async def create_backend(
     body: StorageBackendCreate,
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require_permission(Permission.STORAGE_MANAGE)),
     db: AsyncSession = Depends(get_db),
 ) -> StorageBackendOut:
     if body.kind not in VALID_KINDS:
@@ -79,7 +80,7 @@ async def create_backend(
 @router.delete("/{backend_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_backend(
     backend_id: uuid.UUID,
-    admin: User = Depends(get_admin_user),
+    admin: User = Depends(require_permission(Permission.STORAGE_MANAGE)),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     result = await db.execute(select(StorageBackend).where(StorageBackend.id == backend_id))

@@ -4,28 +4,47 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.config import settings
 from api.deps import get_current_user, get_db
 from api.models.user import User
-from api.schemas.auth import LoginRequest, UserOut
-from api.services.auth import create_session, delete_session, get_user_by_email, verify_password
+from api.schemas.auth import AuthMethods, LoginRequest, UserOut
+from api.services.auth import (
+    authenticate_password,
+    create_session,
+    delete_session,
+    set_session_cookie,
+)
+from api.services.rbac import user_permissions
 
 router = APIRouter()
 me_router = APIRouter()
 
 
+async def _user_out_with_permissions(db: AsyncSession, user: User) -> UserOut:
+    out = UserOut.model_validate(user)
+    out.permissions = sorted(await user_permissions(db, user))
+    return out
+
+
+@router.get("/methods", response_model=AuthMethods)
+async def methods() -> AuthMethods:
+    """Tell the SPA which login methods to render. Local is always available so
+    the break-glass admin can sign in regardless of IdP state."""
+    return AuthMethods(
+        local=True,
+        ldap=settings.ldap_enabled,
+        oidc=settings.oidc_enabled,
+        oidc_label=settings.oidc_label,
+    )
+
+
 @router.post("/login", response_model=UserOut)
-async def login(body: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)) -> User:
-    user = await get_user_by_email(db, body.email)
-    if user is None or not verify_password(body.password, user.password_hash):
+async def login(
+    body: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)
+) -> UserOut:
+    user = await authenticate_password(db, body.email, body.password)
+    if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     token = await create_session(db, user.id)
-    response.set_cookie(
-        key="session",
-        value=token,
-        httponly=True,
-        secure=settings.cookie_secure,
-        samesite="lax",
-        max_age=7 * 24 * 3600,
-    )
-    return user
+    set_session_cookie(response, token)
+    return await _user_out_with_permissions(db, user)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -40,5 +59,5 @@ async def logout(
 
 
 @me_router.get("/me", response_model=UserOut)
-async def me(user: User = Depends(get_current_user)) -> User:
-    return user
+async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> UserOut:
+    return await _user_out_with_permissions(db, user)

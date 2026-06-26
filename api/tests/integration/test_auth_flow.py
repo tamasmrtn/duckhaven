@@ -75,3 +75,39 @@ async def test_login_rejects_bad_credentials(app_client, admin_user) -> None:
         "/auth/login", json={"email": admin_user.email, "password": "wrong"}
     )
     assert resp.status_code == 401
+
+
+async def test_break_glass_local_admin_when_ldap_unreachable(
+    app_client, admin_user, monkeypatch
+) -> None:
+    """Local-first auth lets the break-glass admin in even with LDAP enabled but
+    the directory down — the LDAP bind is never reached for a local account."""
+    monkeypatch.setattr(settings, "ldap_enabled", True)
+    monkeypatch.setattr(settings, "ldap_server_uri", "ldap://127.0.0.1:1")
+    resp = await app_client.post(
+        "/auth/login", json={"email": admin_user.email, "password": "integration-pw-123"}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["auth_provider"] == "local"
+
+
+async def test_oidc_callback_redirects_to_error_when_idp_down(app_client, monkeypatch) -> None:
+    """A failed callback (unreachable IdP / bad state) degrades to a friendly
+    error redirect, never a 500 or a leaked token."""
+    monkeypatch.setattr(settings, "oidc_enabled", True)
+    monkeypatch.setattr(
+        settings,
+        "oidc_server_metadata_url",
+        "http://127.0.0.1:1/.well-known/openid-configuration",
+    )
+    from api.services.oidc import OIDC_CLIENT_NAME, oauth, register_oidc
+
+    if hasattr(oauth, "_registry"):
+        oauth._registry.pop(OIDC_CLIENT_NAME, None)
+    if hasattr(oauth, "_clients"):
+        oauth._clients.pop(OIDC_CLIENT_NAME, None)
+    register_oidc()
+
+    resp = await app_client.get("/auth/oidc/callback", follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/login?error=sso"

@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import JSONResponse, Response
 from starlette.staticfiles import StaticFiles
 from starlette.types import Scope
@@ -19,6 +20,7 @@ from api.routers import (
     catalogs,
     health,
     maintenance,
+    oidc,
     queries,
     schemas,
     setup,
@@ -29,12 +31,14 @@ from api.routers.admin import maintenance as admin_maintenance
 from api.routers.admin import storage as admin_storage
 from api.routers.admin import users as admin_users
 from api.services.bootstrap import seed_agent_bootstrap_token
+from api.services.oidc import register_oidc
 from api.services.polaris import (
     PolarisBadRequestError,
     PolarisClient,
     PolarisError,
     PolarisNotFoundError,
 )
+from api.services.rbac import seed_roles
 
 
 @asynccontextmanager
@@ -43,9 +47,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # starts, so the credentials table exists. Seed before serving traffic so
     # the bundled agent can register the moment /api/healthz reports ready.
     async with async_session_factory() as db:
+        await seed_roles(db)
         await seed_agent_bootstrap_token(
             db, settings.agent_bootstrap_token, settings.agent_bootstrap_ttl_hours
         )
+
+    register_oidc()
 
     app.state.polaris_client = PolarisClient(
         base_url=settings.polaris_base_url,
@@ -85,6 +92,18 @@ api_app.add_middleware(
     allow_headers=["*"],
 )
 
+# Short-lived signed cookie holding only the transient OIDC handshake state
+# (state/nonce/PKCE verifier). Distinct from the app `session` cookie; this is
+# the first real consumer of `secret_key`.
+api_app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.secret_key,
+    session_cookie="dh_oidc",
+    https_only=settings.cookie_secure,
+    same_site="lax",
+    max_age=600,
+)
+
 
 # Surface PolarisError escaping a route as a meaningful HTTP response instead of a
 # bare 500. NotFound/BadRequest map to their natural client codes; everything else
@@ -104,6 +123,7 @@ api_app.include_router(health.router, tags=["health"])
 api_app.include_router(setup.router)
 api_app.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_app.include_router(auth.me_router, tags=["auth"])
+api_app.include_router(oidc.router, prefix="/auth/oidc", tags=["auth"])
 api_app.include_router(workspaces.router, tags=["workspaces"])
 api_app.include_router(catalogs.router, tags=["catalog"])
 api_app.include_router(schemas.router, tags=["catalog"])

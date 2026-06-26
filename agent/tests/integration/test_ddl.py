@@ -39,10 +39,16 @@ def _run(
         tmp_path / f"{uuid4().hex}.parquet",
         memory_bytes=1024**3,
         threads=2,
-        backend={"kind": "s3"},
-        workspace_slug=catalog,
+        catalogs=[
+            {
+                "slug": catalog,
+                "polaris_name": catalog,
+                "backend": {"kind": "s3"},
+                "default_schema": ns,
+            }
+        ],
+        active_catalog=catalog,
         polaris={"endpoint": base_url, "client_id": creds[0], "client_secret": creds[1]},
-        default_schema=ns,
     )
 
 
@@ -79,14 +85,20 @@ async def test_create_insert_select_drop_roundtrip(
         result_path,
         memory_bytes=1024**3,
         threads=2,
-        backend={"kind": "s3"},
-        workspace_slug=catalog,
+        catalogs=[
+            {
+                "slug": catalog,
+                "polaris_name": catalog,
+                "backend": {"kind": "s3"},
+                "default_schema": ns,
+            }
+        ],
+        active_catalog=catalog,
         polaris={
             "endpoint": polaris_base_url,
             "client_id": polaris_creds[0],
             "client_secret": polaris_creds[1],
         },
-        default_schema=ns,
     )
     assert selected["wrote_result"] is True
     assert selected["row_count"] == 2
@@ -129,14 +141,20 @@ async def test_alter_table_add_column(
         result_path,
         memory_bytes=1024**3,
         threads=2,
-        backend={"kind": "s3"},
-        workspace_slug=catalog,
+        catalogs=[
+            {
+                "slug": catalog,
+                "polaris_name": catalog,
+                "backend": {"kind": "s3"},
+                "default_schema": ns,
+            }
+        ],
+        active_catalog=catalog,
         polaris={
             "endpoint": polaris_base_url,
             "client_id": polaris_creds[0],
             "client_secret": polaris_creds[1],
         },
-        default_schema=ns,
     )
     assert selected["wrote_result"] is True
     assert duckdb.read_parquet(str(result_path)).fetchall() == [("hello",)]

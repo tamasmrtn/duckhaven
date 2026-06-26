@@ -1,4 +1,4 @@
-// Statement-aware SQL splitting for the worksheet editor (Snowsight-style Run).
+// Statement-aware SQL splitting for the worksheet editor's Run command.
 // Splits a body on top-level `;`, ignoring semicolons inside single-quoted
 // strings (with `''` escaping), double-quoted identifiers, line comments
 // (`-- … \n`) and block comments (`/* … */`). Dollar-quoted strings are not
@@ -81,6 +81,22 @@ export function splitStatements(sql: string): string[] {
   return statementRanges(sql)
     .map((r) => cleanStatement(sql.slice(r.start, r.end)))
     .filter((s) => s.length > 0);
+}
+
+// The raw statement segment enclosing `offset`, with the cursor re-based to that
+// segment. Unlike `activeStatement` this keeps the text un-trimmed so offsets
+// stay aligned — used by the completion engine for cursor-context detection.
+export function activeStatementBounds(
+  sql: string,
+  offset: number,
+): { text: string; offset: number } {
+  const ranges = statementRanges(sql);
+  if (ranges.length === 0) return { text: "", offset: 0 };
+  const clamped = Math.max(0, Math.min(offset, sql.length));
+  const seg =
+    ranges.find((r) => clamped >= r.start && clamped < r.end) ??
+    ranges[ranges.length - 1];
+  return { text: sql.slice(seg.start, seg.end), offset: clamped - seg.start };
 }
 
 // The single statement enclosing `offset` (the cursor). A cursor sitting just

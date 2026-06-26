@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useParams, Link } from "@tanstack/react-router";
 import {
   Play,
@@ -46,10 +47,13 @@ import { AgentPicker } from "@/components/app/AgentPicker";
 import { StatusPill } from "@/components/app/StatusPill";
 import { StorageLabel } from "@/components/app/StorageIcon";
 import { CatalogTree } from "@/features/catalog/CatalogTree";
-import { takePendingSql } from "@/features/catalog/worksheetSql";
+import { useCatalogs } from "@/queries/catalogs";
+import { takePendingQuery } from "@/features/catalog/worksheetSql";
 import { ProfilePanel } from "@/features/worksheet/profile/ProfilePanel";
 import { SqlEditor, type SqlEditorHandle } from "./SqlEditor";
+import { useSqlCompletion } from "./completion/useSqlCompletion";
 import { splitStatements } from "./statements";
+import { isDdl } from "./ddl";
 import { queriesApi } from "@/api/queries";
 import { ResultsTable } from "./ResultsTable";
 import { cn, formatBytes } from "@/utils";
@@ -59,6 +63,9 @@ interface Tab {
   title: string;
   sql: string;
   dirty: boolean;
+  // Set when the tab was opened from a saved query, so a run can stamp its
+  // last_run_at on the backend.
+  savedQueryId?: string;
 }
 
 const DEFAULT_SQL = `SELECT
@@ -84,6 +91,18 @@ const activeQueryStorageKey = (ws: string) => `dh-active-query-${ws}`;
 function loadActiveQueryId(ws: string): string | null {
   try {
     return sessionStorage.getItem(activeQueryStorageKey(ws));
+  } catch {
+    return null;
+  }
+}
+
+// The active tab is persisted (per workspace) so leaving the worksheet for
+// another page and returning restores the same tab, not the first one.
+const activeTabStorageKey = (ws: string) => `dh-active-tab-${ws}`;
+
+function loadActiveTab(ws: string): string | null {
+  try {
+    return sessionStorage.getItem(activeTabStorageKey(ws));
   } catch {
     return null;
   }
@@ -121,9 +140,38 @@ export function WorksheetPage() {
   const { ws } = useParams({ from: "/$ws/worksheets" });
   const { data: workspace } = useWorkspace(ws);
   const { data: agents = [] } = useAgents();
+  const qc = useQueryClient();
+
+  // Active catalog: the one USEd for unqualified names + fed to completion.
+  // Defaults to the workspace's default catalog; the user can switch it.
+  const { data: catalogs = [] } = useCatalogs(ws);
+  const [activeCatalog, setActiveCatalog] = useState<string | undefined>(
+    undefined,
+  );
+  const resolvedCatalog =
+    activeCatalog ??
+    catalogs.find((c) => c.is_default)?.slug ??
+    catalogs[0]?.slug;
+
+  // Feed the active catalog + DuckDB metadata to the editor's autocomplete.
+  useSqlCompletion(ws, resolvedCatalog);
+
+  // After a successful DDL run, refresh the catalog tree and the autocomplete
+  // caches so the new/altered/dropped object is usable without a manual refresh.
+  const refreshCatalog = useCallback(() => {
+    qc.invalidateQueries({ queryKey: ["workspace", ws, "catalog"] });
+  }, [qc, ws]);
+  // The last dispatched statement streams to "done" via the reactive query
+  // hooks rather than being awaited in runPayload, so remember whether it was
+  // DDL and refresh once it completes (handled in an effect below).
+  const lastRunWasDdl = useRef(false);
 
   const [tabs, setTabs] = useState<Tab[]>(() => loadTabs(ws));
-  const [activeTab, setActiveTab] = useState("tab-1");
+  const [activeTab, setActiveTab] = useState(() => {
+    const stored = loadActiveTab(ws);
+    if (stored && tabs.some((t) => t.id === stored)) return stored;
+    return tabs[0]?.id ?? "tab-1";
+  });
   // Declared before the workspace-sync block below so that block can rehydrate
   // it on a workspace switch. Initialized from sessionStorage so a refresh
   // mid-execution recovers the running/completed query.
@@ -134,6 +182,9 @@ export function WorksheetPage() {
   const [resultsTab, setResultsTab] = useState<"results" | "profile">(
     "results",
   );
+  // Declared before the workspace-sync block so it can pre-select the agent a
+  // saved query was opened with.
+  const [agentId, setAgentId] = useState<string>(() => agents[0]?.id ?? "");
 
   // On first render and whenever the workspace changes, (re)load that
   // workspace's tabs and seed any SQL a catalog action stashed (e.g. Alter
@@ -142,15 +193,16 @@ export function WorksheetPage() {
   const [loadedWs, setLoadedWs] = useState<string | null>(null);
   if (loadedWs !== ws) {
     const base = loadedWs === null ? tabs : loadTabs(ws);
-    const pending = takePendingSql(ws);
+    const pending = takePendingQuery(ws);
     const next = pending
       ? [
           ...base,
           {
             id: `tab-seed-${ws}-${base.length}`,
-            title: "from catalog",
-            sql: pending,
+            title: pending.savedQueryId ? "saved query" : "from catalog",
+            sql: pending.sql,
             dirty: true,
+            savedQueryId: pending.savedQueryId,
           },
         ]
       : base;
@@ -161,9 +213,20 @@ export function WorksheetPage() {
     if (loadedWs !== null) {
       setActiveQueryId(loadActiveQueryId(ws));
     }
+    // A saved query carries its default agent — pre-select it.
+    if (pending?.agentId) {
+      setAgentId(pending.agentId);
+    }
     if (loadedWs !== null || pending) {
       setTabs(next);
-      setActiveTab(pending ? next[next.length - 1].id : next[0].id);
+      if (pending) {
+        setActiveTab(next[next.length - 1].id);
+      } else {
+        const stored = loadActiveTab(ws);
+        setActiveTab(
+          stored && next.some((t) => t.id === stored) ? stored : next[0].id,
+        );
+      }
     }
   }
 
@@ -175,6 +238,15 @@ export function WorksheetPage() {
       // ignore unavailable storage
     }
   }, [ws, tabs]);
+
+  // Persist the active tab so returning to the worksheet restores it.
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(activeTabStorageKey(ws), activeTab);
+    } catch {
+      // ignore unavailable storage
+    }
+  }, [ws, activeTab]);
 
   // Persist the active query id so a refresh mid-execution recovers it.
   useEffect(() => {
@@ -189,7 +261,6 @@ export function WorksheetPage() {
     }
   }, [ws, activeQueryId]);
 
-  const [agentId, setAgentId] = useState<string>(() => agents[0]?.id ?? "");
   const [timeout, setTimeout_] = useState(10);
   const [dispatchError, setDispatchError] = useState<string | null>(null);
   // Progress across a multi-statement run (selection spanning several `;`).
@@ -198,6 +269,9 @@ export function WorksheetPage() {
   );
   const [saveOpen, setSaveOpen] = useState(false);
   const [saveName, setSaveName] = useState("");
+  // Inline tab rename (double-click a tab): the tab being edited and its draft.
+  const [editingTabId, setEditingTabId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
   const [leftWidth, setLeftWidth] = useState(280);
   const [editorHeight, setEditorHeight] = useState(55); // percent
   const isMobile = useMediaQuery("(max-width: 767px)");
@@ -216,6 +290,15 @@ export function WorksheetPage() {
   const saveQuery = useSaveQuery(ws);
   const { data: queryData } = useQuery_(activeQueryId);
   const queryRows = useQueryRows(activeQueryId, queryData?.status === "done");
+
+  // The final statement of a run streams to "done" here (not awaited in
+  // runPayload); refresh the catalog when that statement was DDL.
+  useEffect(() => {
+    if (queryData?.status === "done" && lastRunWasDdl.current) {
+      lastRunWasDdl.current = false;
+      refreshCatalog();
+    }
+  }, [queryData?.status, refreshCatalog]);
 
   const firstHealthyAgent = agents.find((a) => a.status === "healthy");
   const resolvedAgentId = agentId || firstHealthyAgent?.id || "";
@@ -255,8 +338,36 @@ export function WorksheetPage() {
     });
   }
 
-  function insertTableSnippet(schema: string, table: string) {
-    const snippet = `SELECT * FROM ${schema}.${table} LIMIT 100`;
+  function startRename(tab: Tab) {
+    setEditingTabId(tab.id);
+    setEditingTitle(tab.title);
+  }
+
+  function commitRename() {
+    const id = editingTabId;
+    const title = editingTitle.trim();
+    setEditingTabId(null);
+    if (id && title) {
+      setTabs((prev) => prev.map((t) => (t.id === id ? { ...t, title } : t)));
+    }
+  }
+
+  function insertTableSnippet(catalog: string, schema: string, table: string) {
+    // Fully qualify so the snippet resolves regardless of the active catalog.
+    const snippet = `SELECT * FROM ${catalog}.${schema}.${table} LIMIT 100`;
+    setTabs((prev) =>
+      prev.map((t) =>
+        t.id === activeTab ? { ...t, sql: snippet, dirty: true } : t,
+      ),
+    );
+  }
+
+  function insertMetaViewSnippet(catalog: string, view: string) {
+    // information_schema is DuckDB's global view set (not per-catalog), so scope
+    // it by catalog. schemata keys on catalog_name; tables/columns/views on
+    // table_catalog.
+    const col = view === "schemata" ? "catalog_name" : "table_catalog";
+    const snippet = `SELECT * FROM information_schema.${view} WHERE ${col} = '${catalog}' LIMIT 100`;
     setTabs((prev) =>
       prev.map((t) =>
         t.id === activeTab ? { ...t, sql: snippet, dirty: true } : t,
@@ -297,20 +408,29 @@ export function WorksheetPage() {
     setDispatchError(null);
     const multi = statements.length > 1;
     setRunSeq(null);
+    lastRunWasDdl.current = false;
     try {
       for (let i = 0; i < statements.length; i++) {
         if (multi) setRunSeq({ index: i + 1, total: statements.length });
         const result = await dispatchQuery.mutateAsync({
           sql: statements[i],
           agentId: resolvedAgentId,
-          opts: { timeout: timeout * 60 },
+          opts: {
+            timeout: timeout * 60,
+            savedQueryId: currentTab?.savedQueryId,
+            catalog: resolvedCatalog,
+          },
         });
         setActiveQueryId(result.id);
+        lastRunWasDdl.current = isDdl(statements[i]);
         // Wait for every statement but the last; abort the sequence if one
         // does not complete cleanly. The last streams via the reactive hooks.
         if (i < statements.length - 1) {
           const status = await waitForTerminal(result.id);
           if (status !== "done") break;
+          // Refresh the catalog after each successful DDL statement (the last
+          // statement's refresh is handled by the effect watching queryData).
+          if (isDdl(statements[i])) refreshCatalog();
         }
       }
     } catch (err) {
@@ -329,13 +449,30 @@ export function WorksheetPage() {
     await cancelQuery.mutateAsync(activeQueryId);
   }
 
+  // Open the Save dialog, pre-filling the name from the tab title unless it's a
+  // placeholder, so re-saving a named query overwrites it by name.
+  function openSaveDialog() {
+    const title = currentTab?.title ?? "";
+    const placeholder = ["untitled", "from catalog", "saved query"].includes(
+      title,
+    );
+    setSaveName(placeholder ? "" : title);
+    setSaveOpen(true);
+  }
+
   async function handleSave() {
-    if (!saveName.trim() || !currentTab) return;
+    const name = saveName.trim();
+    if (!name || !currentTab) return;
     await saveQuery.mutateAsync({
-      name: saveName,
+      name,
       sql: currentTab.sql,
       default_agent_id: resolvedAgentId || undefined,
     });
+    // Name the tab after the saved query and clear its unsaved marker.
+    const id = currentTab.id;
+    setTabs((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, title: name, dirty: false } : t)),
+    );
     setSaveOpen(false);
     setSaveName("");
   }
@@ -400,17 +537,36 @@ export function WorksheetPage() {
               <TabsTrigger
                 key={tab.id}
                 value={tab.id}
+                onDoubleClick={() => startRename(tab)}
                 className={cn(
                   "group h-7 gap-1.5 rounded-t-sm rounded-b-none border-b-2 px-3 text-xs data-[state=active]:border-[var(--brand-yellow)] data-[state=active]:bg-[var(--bg-canvas)] data-[state=inactive]:border-transparent",
                 )}
               >
-                {tab.dirty && (
+                {tab.dirty && editingTabId !== tab.id && (
                   <span
                     className="size-1.5 rounded-full bg-[var(--brand-orange)]"
                     aria-label="unsaved"
                   />
                 )}
-                {tab.title}
+                {editingTabId === tab.id ? (
+                  <input
+                    value={editingTitle}
+                    onChange={(e) => setEditingTitle(e.target.value)}
+                    onBlur={commitRename}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") commitRename();
+                      else if (e.key === "Escape") setEditingTabId(null);
+                      e.stopPropagation();
+                    }}
+                    // Don't let clicks bubble to the tab trigger while editing.
+                    onClick={(e) => e.stopPropagation()}
+                    autoFocus
+                    aria-label="Rename worksheet"
+                    className="w-24 bg-transparent text-xs outline-none border-b border-[var(--brand-yellow)]"
+                  />
+                ) : (
+                  tab.title
+                )}
                 <button
                   type="button"
                   onClick={(e) => closeTab(tab.id, e)}
@@ -447,6 +603,7 @@ export function WorksheetPage() {
                   ws={ws}
                   workspaceName={workspace?.name ?? ws}
                   onTableClick={insertTableSnippet}
+                  onMetaViewClick={insertMetaViewSnippet}
                 />
               </div>
             </div>
@@ -484,8 +641,8 @@ export function WorksheetPage() {
                     <CatalogTree
                       ws={ws}
                       workspaceName={workspace?.name ?? ws}
-                      onTableClick={(schema, table) => {
-                        insertTableSnippet(schema, table);
+                      onTableClick={(catalog, schema, table) => {
+                        insertTableSnippet(catalog, schema, table);
                         setCatalogOpen(false);
                       }}
                     />
@@ -496,8 +653,25 @@ export function WorksheetPage() {
             <AgentPicker
               value={resolvedAgentId}
               onChange={setAgentId}
-              workspaceBackend={workspace?.storage_backend_kind}
+              workspaceBackend={workspace?.storage_backend_kind ?? undefined}
             />
+
+            {catalogs.length > 0 && (
+              <select
+                aria-label="Active catalog"
+                value={resolvedCatalog ?? ""}
+                onChange={(e) => setActiveCatalog(e.target.value)}
+                className="h-8 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 text-xs text-text-primary"
+                title="Active catalog (USEd for unqualified table names)"
+              >
+                {catalogs.map((c) => (
+                  <option key={c.id} value={c.slug}>
+                    {c.slug}
+                    {c.is_default ? " (default)" : ""}
+                  </option>
+                ))}
+              </select>
+            )}
 
             <Popover>
               <PopoverTrigger asChild>
@@ -553,7 +727,7 @@ export function WorksheetPage() {
                 variant="ghost"
                 size="sm"
                 className="h-8 text-xs"
-                onClick={() => setSaveOpen(true)}
+                onClick={openSaveDialog}
               >
                 <Save className="size-3.5 mr-1" />
                 Save…
@@ -585,6 +759,7 @@ export function WorksheetPage() {
               value={currentTab?.sql ?? ""}
               onChange={updateTabSql}
               onRun={runPayload}
+              onSave={openSaveDialog}
             />
           </div>
 

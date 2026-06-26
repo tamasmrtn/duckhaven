@@ -5,9 +5,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_admin_user, get_db
+from api.models.catalog import Catalog
 from api.models.storage_backend import StorageBackend
 from api.models.user import User
-from api.models.workspace import Workspace
 from api.schemas.storage_backend import StorageBackendCreate, StorageBackendOut
 
 router = APIRouter(prefix="/storage-backends")
@@ -25,7 +25,7 @@ async def list_backends(
     out = []
     for sb in backends:
         count_result = await db.execute(
-            select(func.count()).where(Workspace.storage_backend_id == sb.id)
+            select(func.count()).where(Catalog.storage_backend_id == sb.id)
         )
         count = count_result.scalar_one()
         out.append(
@@ -87,12 +87,12 @@ async def delete_backend(
     if sb is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     count_result = await db.execute(
-        select(func.count()).where(Workspace.storage_backend_id == backend_id)
+        select(func.count()).where(Catalog.storage_backend_id == backend_id)
     )
     if count_result.scalar_one() > 0:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Cannot delete a backend that is in use by one or more workspaces",
+            detail="Cannot delete a backend that is in use by one or more catalogs",
         )
     await db.delete(sb)
     await db.commit()

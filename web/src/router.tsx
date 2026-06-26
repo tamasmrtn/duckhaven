@@ -97,7 +97,7 @@ const catalogRoute = createRoute({
 
 const catalogTableRoute = createRoute({
   getParentRoute: () => wsRoute,
-  path: "/catalog/$schema/$table",
+  path: "/catalog/$catalog/$schema/$table",
   component: CatalogPage,
 });
 

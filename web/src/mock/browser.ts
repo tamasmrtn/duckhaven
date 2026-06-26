@@ -2,6 +2,7 @@ import { setupWorker } from "msw/browser";
 import { authHandlers } from "./handlers/auth";
 import { setupHandlers } from "./handlers/setup";
 import { workspaceHandlers } from "./handlers/workspaces";
+import { catalogHandlers } from "./handlers/catalogs";
 import { agentHandlers } from "./handlers/agents";
 import { metricsHandlers } from "./handlers/metrics";
 import { schemaHandlers } from "./handlers/schemas";
@@ -14,6 +15,7 @@ export const worker = setupWorker(
   ...authHandlers,
   ...setupHandlers,
   ...workspaceHandlers,
+  ...catalogHandlers,
   ...agentHandlers,
   ...metricsHandlers,
   ...schemaHandlers,

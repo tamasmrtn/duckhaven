@@ -36,6 +36,20 @@ ALLOWED = [
     # "query at this snapshot"). Locks I8 — these must not classify as an escape.
     "SELECT * FROM analytics.events AT (VERSION => 1234567890)",
     "SELECT * FROM analytics.events AT (TIMESTAMP => '2026-05-15T14:03:00Z') LIMIT 100",
+    # Metadata browsing: information_schema is DuckDB's native, read-only SELECT
+    # surface (global views spanning attached catalogs, scoped per catalog with
+    # table_catalog). It must pass the guard like any other SELECT.
+    "SELECT table_schema, table_name FROM information_schema.tables",
+    "SELECT column_name FROM information_schema.columns WHERE table_catalog = 'analytics'",
+    "SELECT schema_name FROM information_schema.schemata",
+    "SELECT * FROM iceberg_snapshots('analytics.analytics.events')",
+    # Column introspection: DuckDB classifies DESCRIBE/DESC/SHOW/SUMMARIZE as
+    # SELECT, so they already pass. This is the documented column-detail path for
+    # Iceberg tables (information_schema.columns can't introspect them yet).
+    "DESCRIBE analytics.analytics.events",
+    "DESC analytics.analytics.events",
+    "SELECT * FROM (DESCRIBE analytics.analytics.events)",
+    "SHOW ALL TABLES",
 ]
 
 

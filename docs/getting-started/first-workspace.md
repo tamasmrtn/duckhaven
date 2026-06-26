@@ -1,22 +1,23 @@
 # Your first workspace
 
-A [workspace](../concepts/workspaces.md) is where your team collaborates: it maps to one Apache Polaris catalog and is
-pinned to one [storage backend](../concepts/storage-backends.md). This page creates your first one.
+A [workspace](../concepts/workspaces.md) is where your team collaborates. It attaches one or more
+[catalogs](../concepts/catalogs.md) — the data domains you query. This page creates your first workspace and catalog.
 
 ## Create a workspace
 
-After signing in as the admin you created during [installation](installation.md), create a workspace by name. Name-only
-creation automatically:
+After signing in as the admin you created during [installation](installation.md), create a workspace **by name**. A new
+workspace starts **empty** — no catalog and no storage are provisioned yet.
 
-- provisions a catalog on the bundled object store, and
-- creates a default `analytics` schema,
+## Create a catalog
 
-so you can start querying immediately — no storage configuration required.
+Open the workspace's catalog browser and use the **+ → Create catalog**. By default the catalog uses the bundled object
+storage and gets a default `analytics` schema, so you can start querying immediately — no storage configuration
+required. The first catalog you attach becomes the workspace's default (used for unqualified table names).
 
 !!! tip "Using external storage"
-    To back a workspace with your own S3 bucket or Azure Data Lake instead of the bundled object store, register that
-    [storage backend](../deployment/storage.md) first, then select it when creating the workspace. The backend binding
-    is **immutable** after creation.
+    To back a catalog with your own S3 bucket or Azure Data Lake instead of the bundled object store, pick or register
+    that [storage backend](../deployment/storage.md) in the create-catalog dialog's **Storage backend** selector. A
+    catalog's backend is **immutable** after creation.
 
 ## Add members
 

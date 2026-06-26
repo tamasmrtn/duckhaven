@@ -6,7 +6,7 @@ choose.
 ## Worksheets and tabs
 
 Open multiple worksheets as tabs. Each worksheet remembers its selected agent, so you can run different work against
-different compute.
+different compute. **Double-click a tab to rename it**, and saving a worksheet names its tab after the saved query.
 
 ## Pick an agent
 
@@ -19,6 +19,33 @@ is shown disabled — picking it would fail fast.
 Press **Ctrl+Enter** (or the Run button) to execute the statement under the cursor — runs are statement-aware, not
 whole-buffer. While a query runs you can **Cancel** it; a wall-clock timeout also applies.
 
+## Autocomplete and IntelliSense
+
+As you type, the editor suggests completions based on where the cursor sits in the statement. Suggestions appear
+automatically; press **Ctrl+Space** (or **Cmd+Space**) to summon them on demand, and type a **`.`** after a name to
+drill into it.
+
+What it offers depends on context:
+
+- after `FROM` / `JOIN` — the workspace's **schemas** and **tables**;
+- after `schema.` — the **tables** in that schema;
+- after a table or alias and a dot (e.g. `s.` for `FROM sales s`) — that table's **columns**, with their types. Aliases
+  are resolved from the statement's `FROM`/`JOIN`;
+- inside `SELECT`, `WHERE`, `GROUP BY`, `ORDER BY` and similar — **columns** from every table in scope, including each
+  table in a `JOIN`. When more than one table is joined, each column shows the table it came from so identically-named
+  columns can be told apart. Columns come first; DuckDB **functions** and **keywords** are held back until you start
+  typing, so they don't bury the column list;
+- after `CAST(… AS` or in a column definition — DuckDB **data types**.
+
+Functions show their signature and, where DuckDB provides one, a usage example; typing the opening parenthesis brings up
+**parameter hints**. Function, keyword, and type suggestions are read from the agent you've selected, so a connected
+agent makes them richer — but keyword completion still works before an agent connects. Columns are fetched on demand the
+first time you reference a table and appear as soon as they load. Running a `CREATE`, `ALTER`, or `DROP` refreshes the
+catalog automatically, so a newly created or altered object is available to complete against right away — no manual
+catalog refresh needed.
+
+This release does autocomplete and signature help only; it does not flag SQL errors with red underlines.
+
 ## Read results
 
 - Results appear in a grid below the editor, paged on demand so large results never load whole.
@@ -30,7 +57,24 @@ whole-buffer. While a query runs you can **Cancel** it; a wall-clock timeout als
 Worksheets accept `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `MERGE` and catalog DDL (`CREATE`, `ALTER`, `DROP`). Sandbox
 escapes (`ATTACH`, `COPY`, `LOAD`, `SET`, `PRAGMA`, …) are rejected. See [SQL support](../reference/sql-support.md).
 
+## Inspect your tables
+
+Every catalog has a built-in, read-only `information_schema` you can query like any other table — list what's in a
+catalog, then `DESCRIBE` a table to see its columns:
+
+```sql
+SELECT table_schema, table_name FROM information_schema.tables WHERE table_catalog = 'analytics';
+DESCRIBE analytics.analytics.events;
+```
+
+In the catalog tree it appears under each catalog as a lock-marked **`information_schema`** node badged *read-only*;
+expand it to see the supported views, and click one to drop a scoped query into the editor. It is not a stored schema —
+it never appears in Polaris and cannot be written to.
+
+See [Inspecting metadata](../reference/sql-support.md#inspecting-metadata-information_schema) for the full surface.
+
 ## Save for later
 
-Save a frequently used query with a name and an optional default agent — see [Saved queries](saved-queries.md). Every
-run is recorded in the workspace [history and audit log](../operations/monitoring.md).
+Save a frequently used query with a name and an optional default agent — press **Ctrl+S** (or the **Save…** button) to
+name and save the current worksheet. See [Saved queries](saved-queries.md). Every run is recorded in the workspace
+[history and audit log](../operations/monitoring.md).

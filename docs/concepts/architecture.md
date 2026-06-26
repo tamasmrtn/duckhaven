@@ -40,7 +40,7 @@ agent host when you need more compute).
 | Control plane | One `docker compose` stack: Postgres + Apache Polaris + the API |
 | Compute | 1..N DuckDB **agents** on separate hosts |
 | Engines | DuckDB only (heterogeneous versions allowed) |
-| Storage | Apache Iceberg on Object storage (bundled MinIO) / S3 / ADLS Gen 2 (one backend per workspace) |
+| Storage | Apache Iceberg on Object storage (bundled MinIO) / S3 / ADLS Gen 2 (one backend per catalog) |
 | Catalog & credentials | Apache Polaris — table governance + short-lived credential vending |
 | Frontend | React SPA — SQL worksheets (no notebooks) |
 | Network | Private only (Tailscale recommended); no public ingress |
@@ -59,10 +59,10 @@ Two ideas shape nearly every design decision:
 1. **DuckHaven is a dispatcher, not an optimizer.** The user picks the
    engine (agent) per worksheet. There is no distributed query planner and
    no cost-based routing. Compute is transparent and explicit.
-2. **A workspace is bound to exactly one storage backend.** This binding is
-   chosen at workspace-create time, is immutable, and is enforced on every
-   write. It keeps governance, credentials, and disaster-recovery reasoning
-   simple.
+2. **Storage is bound to the catalog, not the workspace.** Each catalog is
+   pinned to exactly one storage backend at create time, immutably; a workspace
+   reaches storage through the catalogs it attaches (many-to-many). It keeps
+   governance, credentials, and disaster-recovery reasoning simple.
 
 ### Non-goals (explicit boundaries)
 
@@ -322,8 +322,10 @@ erDiagram
     workspaces ||--o{ workspace_members : has
     workspaces ||--o{ queries : runs
     workspaces ||--o{ saved_queries : stores
-    workspaces ||--o{ table_metadata : "stats + ownership"
-    workspaces }o--|| storage_backends : "pinned to (1)"
+    workspaces ||--o{ workspace_catalogs : attaches
+    catalogs ||--o{ workspace_catalogs : "bound to (M:N)"
+    catalogs ||--o{ table_metadata : "stats + ownership"
+    catalogs }o--|| storage_backends : "pinned to (1)"
     agents ||--o{ credentials : "session token"
     agents ||--o{ queries : executes
 
@@ -344,7 +346,17 @@ erDiagram
     workspaces {
         uuid id
         string slug
+    }
+    catalogs {
+        uuid id
+        string slug
+        string polaris_name
         uuid storage_backend_id
+    }
+    workspace_catalogs {
+        uuid workspace_id
+        uuid catalog_id
+        bool is_default
     }
     workspace_members {
         uuid workspace_id
@@ -386,7 +398,7 @@ erDiagram
     }
     table_metadata {
         uuid id
-        uuid workspace_id
+        uuid catalog_id
         string schema_name
         string table_name
         uuid owner_id
@@ -407,23 +419,31 @@ Notes that matter for changes:
   internal rows (`origin = "sample"`, used by the table-sample preview). It is
   workspace-scoped for members; an admin may pass `all_workspaces` (and the
   `user_id`/`agent_id`/`since`/`until` filters) for the cross-workspace audit view.
-- **`table_metadata` is the catalog sidecar** — the only DuckHaven-owned table
-  keyed by a Polaris schema/table name. It holds what Polaris does not track: `owner_id`,
-  `last_write_*`, and agent-computed `row_count`/`size_bytes`. Populated on
-  table create and on sample/stats completion; merged into `TableOut` by
-  `routers/schemas.py`. Polaris remains the source of truth for catalog structure.
-- **`workspaces.storage_backend_id` is immutable** after creation, and a
-  backend cannot be deleted while any workspace references it.
+- **Catalogs are decoupled (M:N).** `catalogs` is a first-class entity (own
+  Polaris catalog + storage backend); `workspace_catalogs` binds catalogs to
+  workspaces many-to-many, with exactly one `is_default` per workspace. Storage
+  is catalog-scoped — a backend cannot be deleted while any catalog references it.
+- **`table_metadata` is the catalog sidecar** — keyed by `catalog_id` (the table's
+  true home; a shared catalog has one ownership/stats row). It holds what Polaris
+  does not track: `owner_id`, `last_write_*`, and agent-computed
+  `row_count`/`size_bytes`. Populated on table create and on sample/stats
+  completion; merged into `TableOut` by `routers/schemas.py`. Polaris remains the
+  source of truth for catalog structure. (Maintenance health rows keep a
+  denormalized `workspace_id` alongside `catalog_id` so the workspace health page
+  reads without a join.)
 
 ### Apache Polaris (owned by Polaris, addressed via `services/polaris.py`)
 
-One **Polaris catalog per workspace** (named by the workspace `slug`), containing
-namespaces (schemas) and tables. The default namespace is **`analytics`**, not
-`main`: `main` is DuckDB's built-in default schema in an attached catalog and
-shadows the Iceberg namespace, so `catalog.main.table` won't resolve. Every
-DuckHaven-created table is Apache **Iceberg** format and catalog-managed by
-definition; its location sits under the catalog's base location, derived from
-the workspace backend's `root_uri`. Catalogs are created **fully DuckHaven-owned**:
+One **Polaris catalog per DuckHaven catalog** (named by `catalogs.polaris_name`;
+migrated catalogs keep the originating workspace slug, so no Polaris catalog is
+renamed), containing namespaces (schemas) and tables. A workspace's query attaches
+**all** of its bound catalogs (multi-attach), each under its slug alias, and `USE`s
+the active one. The default namespace is **`analytics`**, not `main`: `main` is
+DuckDB's built-in default schema in an attached catalog and shadows the Iceberg
+namespace, so `catalog.main.table` won't resolve. Every DuckHaven-created table is
+Apache **Iceberg** format and catalog-managed by definition; its location sits under
+the catalog's base location, derived from the catalog backend's `root_uri`. Catalogs
+are created **fully DuckHaven-owned**:
 `ensure_catalog_access` grants the service principal the full catalog-management
 set (`CATALOG_MANAGE_CONTENT` + `CATALOG_MANAGE_METADATA` + `CATALOG_MANAGE_ACCESS`),
 and `create_catalog` enables `polaris.config.drop-with-purge.enabled` so `DROP`
@@ -616,10 +636,12 @@ it explicitly rather than working around it.
   entities.** Never persist catalog *structure* (schemas, tables, columns) into
   Postgres or treat DuckHaven's database as a catalog cache. Postgres may hold
   a supplementary `table_metadata` sidecar — ownership, last-write provenance,
-  and row/size stats that Polaris does not track — keyed by the Polaris schema/table name.
-- **I4 — One workspace, one storage backend, forever.** The binding is set
-  at creation and is immutable. Every table's `storage_location` derives from
-  its workspace backend's `root_uri`.
+  and row/size stats that Polaris does not track — keyed by `catalog_id` + the
+  Polaris schema/table name.
+- **I4 — One catalog, one storage backend, forever.** Storage is catalog-scoped:
+  each catalog binds to a single backend at creation and is immutable. Every
+  table's `storage_location` derives from its catalog backend's `root_uri`. A
+  workspace reaches storage through the catalogs it attaches (M:N).
 - **I5 — The control↔agent wire format lives only in `shared/`.** Both
   `api/` and `agent/` import `duckhaven_shared`. Never define a frame type or
   payload shape independently on one side.
@@ -707,8 +729,9 @@ the *categories* a contributor should be aware of.
 |---|---|
 | **Control plane** | The `duckhaven-api` process (with Postgres + Polaris). Orchestrates; never runs DuckDB queries. |
 | **Agent** | A `duckhaven-agent` process embedding DuckDB, running on its own host, dialing home over WebSocket. The unit of compute. |
-| **Workspace** | A governance + collaboration boundary. Maps 1:1 to an Apache Polaris catalog and is pinned to exactly one storage backend. |
-| **Storage backend** | A physical location for Iceberg tables (Object storage, S3, ADLS Gen 2), registered once and referenced by workspaces. |
+| **Workspace** | A governance + collaboration boundary. Attaches one or more catalogs (M:N); one is the default. |
+| **Catalog** | A decoupled data domain: its own Apache Polaris catalog + storage backend, attachable to many workspaces. |
+| **Storage backend** | A physical location for Iceberg tables (Object storage, S3, ADLS Gen 2), registered once and referenced by catalogs. |
 | **Catalog-managed table** | An Iceberg table whose commits are arbitrated by Apache Polaris (every Polaris REST table is catalog-managed). |
 | **Bootstrap token** | A single-use credential an operator generates so a new agent can register. Exchanged once for a long-lived agent session token. |
 | **Capabilities** | The document an agent advertises (DuckDB version, loaded extensions, memory ceiling) used to match agents to workspace backends. |

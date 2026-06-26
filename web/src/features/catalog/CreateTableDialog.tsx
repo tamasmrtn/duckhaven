@@ -41,11 +41,13 @@ function emptyRow(): Row {
 
 export function CreateTableDialog({
   ws,
+  catalog,
   schema,
   open,
   onOpenChange,
 }: {
   ws: string;
+  catalog?: string;
   schema: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -53,7 +55,7 @@ export function CreateTableDialog({
   const [name, setName] = useState("");
   const [rows, setRows] = useState<Row[]>([emptyRow()]);
   const [error, setError] = useState<string | null>(null);
-  const create = useCreateTable(ws, schema);
+  const create = useCreateTable(ws, catalog, schema);
 
   function reset() {
     setName("");

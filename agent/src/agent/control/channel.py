@@ -119,10 +119,22 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
     query_id = payload["query_id"]
     sql = payload["sql"]
     timeout_s = min(float(payload.get("timeout_s", 600.0)), settings.max_timeout_s)
-    backend = payload.get("backend")
-    workspace = payload.get("workspace") or {}
-    workspace_slug = workspace.get("slug") if isinstance(workspace, dict) else None
-    default_schema = workspace.get("default_schema") if isinstance(workspace, dict) else None
+    catalogs = payload.get("catalogs") or []
+    active_catalog = payload.get("active_catalog")
+    # Back-compat: a pre-multi-catalog control plane sends a single `workspace`
+    # (slug == Polaris name) + `backend`; adapt it to a one-element catalog list.
+    if not catalogs and isinstance(payload.get("workspace"), dict):
+        ws = payload["workspace"]
+        slug = ws.get("slug")
+        catalogs = [
+            {
+                "slug": slug,
+                "polaris_name": slug,
+                "backend": payload.get("backend") or {},
+                "default_schema": ws.get("default_schema"),
+            }
+        ]
+        active_catalog = slug
     # Polaris connection info comes from agent config, not the wire; DuckDB
     # does the OAuth2 exchange itself and Polaris vends storage creds on attach.
     polaris = {
@@ -147,10 +159,9 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
         if admission.is_auto:
             conn, estimate = await _prepare_and_estimate(
                 sql,
-                backend=backend,
-                workspace_slug=workspace_slug,
+                catalogs=catalogs,
+                active_catalog=active_catalog,
                 polaris=polaris,
-                default_schema=default_schema,
             )
             reservation: Reservation = await admission.acquire(_build_request(estimate, admission))
         else:
@@ -185,10 +196,9 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
             timeout_s,
             memory_bytes=reservation.memory_bytes,
             threads=reservation.threads,
-            backend=backend,
-            workspace_slug=workspace_slug,
+            catalogs=catalogs,
+            active_catalog=active_catalog,
             polaris=polaris,
-            default_schema=default_schema,
             stats_for=stats_for,
             health_for=health_for,
             conn=conn,
@@ -208,6 +218,7 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
         }
         if stats_for:
             done_payload["stats_table"] = {
+                "catalog": stats_for.get("catalog"),
                 "schema": stats_for.get("schema"),
                 "table": stats_for.get("table"),
             }

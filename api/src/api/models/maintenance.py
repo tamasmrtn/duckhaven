@@ -63,8 +63,9 @@ class TableHealthSample(Base):
     """One health snapshot for one table from one scan cycle.
 
     The latest sample per table is the table's current health; the full series
-    powers storage-growth trends. Keyed loosely by workspace + schema + table
-    name (catalog identity, like ``table_metadata``).
+    powers storage-growth trends. Scoped by ``catalog_id`` (the table's true
+    home); ``workspace_id`` is retained as a denormalized filter so the
+    workspace-scoped health page reads without a join through the bindings.
     """
 
     __tablename__ = "table_health_sample"
@@ -80,6 +81,7 @@ class TableHealthSample(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id"), nullable=False)
+    catalog_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("catalogs.id"), nullable=False)
     schema_name: Mapped[str] = mapped_column(String(255), nullable=False)
     table_name: Mapped[str] = mapped_column(String(255), nullable=False)
     scanned_at: Mapped[datetime] = mapped_column(
@@ -113,7 +115,7 @@ class MaintenanceRecommendation(Base):
     __tablename__ = "maintenance_recommendation"
     __table_args__ = (
         UniqueConstraint(
-            "workspace_id",
+            "catalog_id",
             "schema_name",
             "table_name",
             "kind",
@@ -123,6 +125,7 @@ class MaintenanceRecommendation(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id"), nullable=False)
+    catalog_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("catalogs.id"), nullable=False)
     schema_name: Mapped[str] = mapped_column(String(255), nullable=False)
     table_name: Mapped[str] = mapped_column(String(255), nullable=False)
 

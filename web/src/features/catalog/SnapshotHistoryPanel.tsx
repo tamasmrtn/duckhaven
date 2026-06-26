@@ -23,18 +23,20 @@ const RELATIVE_OFFSETS: { label: string; ms: number }[] = [
 
 export function SnapshotHistoryPanel({
   ws,
+  catalog,
   schema,
   table,
   onQuery,
 }: {
   ws: string;
+  catalog: string;
   schema: string;
   table: string;
   /** Opens a new worksheet pre-filled with the given SQL (reuses the table
    * detail's stash→navigate). */
   onQuery: (sql: string) => void;
 }) {
-  const { data, isLoading } = useTableSnapshots(ws, schema, table);
+  const { data, isLoading } = useTableSnapshots(ws, catalog, schema, table);
 
   if (isLoading) {
     return (
@@ -58,7 +60,7 @@ export function SnapshotHistoryPanel({
         </span>
         <QueryAsOfTimestamp
           onQuery={(iso) =>
-            onQuery(snapshotByTimestampTemplate(schema, table, iso))
+            onQuery(snapshotByTimestampTemplate(schema, table, iso, catalog))
           }
         />
         {RELATIVE_OFFSETS.map((o) => (
@@ -69,7 +71,7 @@ export function SnapshotHistoryPanel({
             className="h-7 text-xs"
             onClick={() => {
               const iso = new Date(Date.now() - o.ms).toISOString();
-              onQuery(snapshotByTimestampTemplate(schema, table, iso));
+              onQuery(snapshotByTimestampTemplate(schema, table, iso, catalog));
             }}
           >
             {o.label}
@@ -120,7 +122,12 @@ export function SnapshotHistoryPanel({
                   snap={s}
                   onQuery={() =>
                     onQuery(
-                      snapshotByVersionTemplate(schema, table, s.snapshot_id),
+                      snapshotByVersionTemplate(
+                        schema,
+                        table,
+                        s.snapshot_id,
+                        catalog,
+                      ),
                     )
                   }
                 />

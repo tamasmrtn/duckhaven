@@ -27,16 +27,22 @@ def _attach(
     ns: str,
     creds,
 ) -> None:
-    runner._attach_polaris(
+    runner._attach_catalogs(
         conn,
-        warehouse=warehouse,
+        catalogs=[
+            {
+                "slug": warehouse,
+                "polaris_name": warehouse,
+                "backend": {"kind": "s3"},
+                "default_schema": ns,
+            }
+        ],
+        active_catalog=warehouse,
         polaris={
             "endpoint": base_url,
             "client_id": creds[0],
             "client_secret": creds[1],
         },
-        delegation_mode="vended_credentials",
-        default_schema=ns,
     )
 
 
@@ -58,7 +64,7 @@ async def test_time_travel_returns_past_state(
         # iceberg_snapshots needs the catalog-qualified table: a bare name makes
         # it glob the filesystem (version guessing) instead of resolving via the
         # attached REST catalog — the same form runner._iceberg_metadata uses.
-        ident = f'{runner._CATALOG_ALIAS}."{ns}"."events"'
+        ident = f'"{catalog}"."{ns}"."events"'
         snap_a, ts_a = conn.execute(
             f"SELECT snapshot_id, timestamp_ms FROM iceberg_snapshots({ident}) "
             "ORDER BY sequence_number DESC LIMIT 1"

@@ -2,7 +2,7 @@ import { useRouterState, useNavigate } from "@tanstack/react-router";
 import {
   FileText,
   BookOpen,
-  Database,
+  BookMarked,
   Clock,
   Settings,
   HeartPulse,
@@ -37,7 +37,7 @@ const navItems: NavItem[] = [
   },
   {
     segment: "saved-queries",
-    icon: Database,
+    icon: BookMarked,
     label: "Saved queries",
     matchSegment: "saved-queries",
   },

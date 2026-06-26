@@ -1,4 +1,5 @@
 import pytest
+from conftest import seed_workspace
 from httpx import AsyncClient
 
 from api.models.user import User
@@ -154,3 +155,66 @@ async def test_revoke_sessions_invalidates_session(
     assert resp.status_code == 204
     db_session.expire_all()
     assert await get_session_user(db_session, token) is None
+
+
+# --- Workspace membership management ---
+
+
+async def test_list_user_workspaces_includes_non_member(
+    admin_client: AsyncClient, admin: User, regular_user: User, db_session
+):
+    await seed_workspace(db_session, user_id=admin.id, slug="alpha", name="Alpha")
+    resp = await admin_client.get(f"/admin/users/{regular_user.id}/workspaces")
+    assert resp.status_code == 200
+    alpha = next(r for r in resp.json() if r["slug"] == "alpha")
+    assert alpha["role"] is None
+
+
+async def test_set_user_workspace_role_adds_then_updates(
+    admin_client: AsyncClient, admin: User, regular_user: User, db_session
+):
+    await seed_workspace(db_session, user_id=admin.id, slug="alpha", name="Alpha")
+    add = await admin_client.put(
+        f"/admin/users/{regular_user.id}/workspaces/alpha", json={"role": "reader"}
+    )
+    assert add.status_code == 200
+    assert add.json()["role"] == "reader"
+
+    upd = await admin_client.put(
+        f"/admin/users/{regular_user.id}/workspaces/alpha", json={"role": "writer"}
+    )
+    assert upd.json()["role"] == "writer"
+
+    listing = await admin_client.get(f"/admin/users/{regular_user.id}/workspaces")
+    assert next(r for r in listing.json() if r["slug"] == "alpha")["role"] == "writer"
+
+
+async def test_set_user_workspace_invalid_role_rejected(
+    admin_client: AsyncClient, admin: User, regular_user: User, db_session
+):
+    await seed_workspace(db_session, user_id=admin.id, slug="alpha", name="Alpha")
+    resp = await admin_client.put(
+        f"/admin/users/{regular_user.id}/workspaces/alpha", json={"role": "superuser"}
+    )
+    assert resp.status_code == 422
+
+
+async def test_remove_user_from_workspace(
+    admin_client: AsyncClient, admin: User, regular_user: User, db_session
+):
+    await seed_workspace(db_session, user_id=admin.id, slug="alpha", name="Alpha")
+    await admin_client.put(
+        f"/admin/users/{regular_user.id}/workspaces/alpha", json={"role": "reader"}
+    )
+    rm = await admin_client.delete(f"/admin/users/{regular_user.id}/workspaces/alpha")
+    assert rm.status_code == 204
+    listing = await admin_client.get(f"/admin/users/{regular_user.id}/workspaces")
+    assert next(r for r in listing.json() if r["slug"] == "alpha")["role"] is None
+
+
+async def test_workspace_membership_requires_users_manage(
+    user_client: AsyncClient, admin: User, regular_user: User, db_session
+):
+    await seed_workspace(db_session, user_id=admin.id, slug="alpha", name="Alpha")
+    resp = await user_client.get(f"/admin/users/{regular_user.id}/workspaces")
+    assert resp.status_code == 403

@@ -54,6 +54,29 @@ async def polaris_s3_catalog(
 
 
 @pytest.fixture
+async def external_s3_catalog(
+    polaris_base_url: str, polaris_creds: tuple[str, str]
+) -> AsyncIterator[tuple[str, str]]:
+    """External assume-role S3 catalog. Requires DH_TEST_S3_ROLE_ARN +
+    DH_TEST_S3_ROOT_URI (a LocalStack-STS or real-AWS setup); skips otherwise."""
+    role_arn = os.getenv("DH_TEST_S3_ROLE_ARN")
+    root_uri = os.getenv("DH_TEST_S3_ROOT_URI")
+    if not role_arn or not root_uri:
+        pytest.skip("DH_TEST_S3_ROLE_ARN / DH_TEST_S3_ROOT_URI not set; skipping external-S3 test")
+    async with dh_polaris.external_s3_catalog(
+        polaris_base_url,
+        polaris_creds,
+        prefix="dh_agt_ext",
+        role_arn=role_arn,
+        root_uri=root_uri,
+        region=os.getenv("DH_TEST_S3_REGION", "us-east-1"),
+        external_id=os.getenv("DH_TEST_S3_EXTERNAL_ID"),
+        endpoint=os.getenv("DH_TEST_S3_ENDPOINT"),
+    ) as cat:
+        yield cat
+
+
+@pytest.fixture
 def attach_factory(
     polaris_base_url: str, polaris_creds: tuple[str, str]
 ) -> Iterator[Callable[..., duckdb.DuckDBPyConnection]]:

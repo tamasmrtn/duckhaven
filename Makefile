@@ -3,6 +3,7 @@
         test-integration test-integration-api test-integration-agent \
         test-cross-component test-e2e \
         polaris-dev polaris-dev-s3 polaris-dev-down \
+        localstack-dev localstack-dev-down \
         idp-dev idp-dev-down \
         lint format \
         migrate migrate-new migrate-down \
@@ -127,6 +128,44 @@ polaris-dev-s3: polaris-dev
 
 polaris-dev-down:
 	docker rm -f dh-polaris-dev dh-minio-dev >/dev/null 2>&1 || true
+
+# ── LocalStack (S3 + STS) for the external assume-role health/vending tests ───
+# MinIO has no STS, so the external `s3` path (Polaris assumes an IAM role to
+# vend creds) can only be exercised against LocalStack or real AWS. This brings
+# up LocalStack and seeds a role + bucket; point `make polaris-dev` at it by
+# setting POLARIS_S3_ENDPOINT(_INTERNAL) to the LocalStack URL, then run the
+# tests with the printed DH_TEST_S3_* env. See docs/operations/storage-maintenance.md.
+# Azure ADLS has no offline emulator for Entra credential vending (Azurite
+# emulates Blob/SAS but not Entra), so the ADLS assume-identity path is
+# validated against a real Azure account — the agent/api tests skip without it.
+LOCALSTACK_BUCKET ?= dh-external-test
+LOCALSTACK_ROLE ?= dh-polaris-role
+
+localstack-dev:
+	docker rm -f dh-localstack-dev >/dev/null 2>&1 || true
+	docker run -d --name dh-localstack-dev -p 4566:4566 \
+		-e SERVICES=s3,sts,iam localstack/localstack:latest
+	@echo "Waiting for LocalStack..."
+	@for i in $$(seq 1 30); do \
+		curl -sf http://localhost:4566/_localstack/health >/dev/null 2>&1 && break; sleep 1; \
+	done
+	docker run --rm --network host -e AWS_ACCESS_KEY_ID=test \
+		-e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
+		amazon/aws-cli:2.34.48 --endpoint-url http://localhost:4566 \
+		s3 mb s3://$(LOCALSTACK_BUCKET) || true
+	docker run --rm --network host -e AWS_ACCESS_KEY_ID=test \
+		-e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
+		amazon/aws-cli:2.34.48 --endpoint-url http://localhost:4566 iam create-role \
+		--role-name $(LOCALSTACK_ROLE) \
+		--assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"*"},"Action":"sts:AssumeRole"}]}' || true
+	@echo ""
+	@echo "LocalStack S3+STS ready. Run the external assume-role tests with:"
+	@echo "  DH_TEST_S3_ROLE_ARN=arn:aws:iam::000000000000:role/$(LOCALSTACK_ROLE) \\"
+	@echo "  DH_TEST_S3_ROOT_URI=s3://$(LOCALSTACK_BUCKET)/duckhaven \\"
+	@echo "  DH_TEST_S3_ENDPOINT=http://localhost:4566 make test-integration"
+
+localstack-dev-down:
+	docker rm -f dh-localstack-dev >/dev/null 2>&1 || true
 	docker network rm dh-polaris-net >/dev/null 2>&1 || true
 
 # ── Local IdP + LDAP (for SSO/LDAP integration tests) ─────────────────────────

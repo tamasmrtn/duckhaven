@@ -65,7 +65,7 @@ async def validate_backend(polaris: PolarisClient, backend: StorageBackend) -> S
         body = await polaris.load_table_with_credentials(temp, _PROBE_SCHEMA, _PROBE_TABLE)
         creds = body.get("config") or {}
         location = (body.get("metadata") or {}).get("location") or base_location
-        count = _list_prefix(backend.kind, location, creds)
+        count = _list_prefix(backend.kind, location, creds, backend.config or {})
         return StorageBackendHealth(
             valid=True,
             detail=f"Vended credentials reached storage ({count} object(s) under the probe path).",
@@ -97,24 +97,26 @@ async def _cleanup(polaris: PolarisClient, catalog: str) -> None:
         pass
 
 
-def _list_prefix(kind: str, location: str, creds: dict) -> int:
+def _list_prefix(kind: str, location: str, creds: dict, config: dict) -> int:
     """LIST the probe location with the vended credentials; return object count."""
     if kind == "s3":
-        return _list_s3(location, creds)
+        return _list_s3(location, creds, config)
     if kind == "adls_gen2":
         return _list_adls(location, creds)
     raise ValueError(f"Unsupported backend kind for health check: {kind}")
 
 
-def _list_s3(location: str, creds: dict) -> int:
+def _list_s3(location: str, creds: dict, config: dict) -> int:
     import boto3
 
     parsed = urlparse(location)
     bucket, prefix = parsed.netloc, parsed.path.lstrip("/")
     client_kwargs: dict[str, str] = {}
-    if endpoint := creds.get("s3.endpoint"):
+    # Prefer the endpoint/region Polaris vends; fall back to the backend's own
+    # config (S3-compatible stores often omit them from the vended creds).
+    if endpoint := (creds.get("s3.endpoint") or config.get("endpoint")):
         client_kwargs["endpoint_url"] = endpoint
-    if region := (creds.get("client.region") or creds.get("s3.region")):
+    if region := (creds.get("client.region") or creds.get("s3.region") or config.get("region")):
         client_kwargs["region_name"] = region
     s3 = boto3.client(
         "s3",

@@ -97,13 +97,38 @@ def test_list_s3_passes_vended_creds(monkeypatch):
         "s3.session-token": "TK",
         "client.region": "eu-west-1",
     }
-    count = storage_health._list_s3("s3://bucket/base/probe", creds)
+    count = storage_health._list_s3("s3://bucket/base/probe", creds, {})
 
     assert count == 2
     assert captured["Bucket"] == "bucket"
     assert captured["Prefix"] == "base/probe"
     assert captured["client_kwargs"]["aws_session_token"] == "TK"
     assert captured["client_kwargs"]["region_name"] == "eu-west-1"
+
+
+def test_list_s3_falls_back_to_config_endpoint(monkeypatch):
+    captured = {}
+
+    class _FakeS3:
+        def list_objects_v2(self, **kwargs):
+            return {"KeyCount": 0}
+
+    def _fake_client(service, **kwargs):
+        captured["client_kwargs"] = kwargs
+        return _FakeS3()
+
+    import boto3
+
+    monkeypatch.setattr(boto3, "client", _fake_client)
+    # Vended creds omit endpoint/region; the backend config supplies them.
+    storage_health._list_s3(
+        "s3://bucket/probe",
+        {"s3.access-key-id": "AK", "s3.secret-access-key": "SK"},
+        {"endpoint": "http://minio:9000", "region": "us-east-1"},
+    )
+
+    assert captured["client_kwargs"]["endpoint_url"] == "http://minio:9000"
+    assert captured["client_kwargs"]["region_name"] == "us-east-1"
 
 
 def test_list_adls_requires_sas():

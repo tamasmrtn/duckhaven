@@ -101,6 +101,14 @@ services:
       # external backends vend their own short-lived creds via assume-role /
       # managed-identity configured on the storage backend.
       polaris.features."SUPPORTED_CATALOG_STORAGE_TYPES": "[\"S3\",\"AZURE\"]"
+      # Service principal Polaris uses to mint ADLS Gen2 SAS tokens for any
+      # adls_gen2 backend. The per-backend config only carries the tenant id;
+      # these instance-level creds (Azure DefaultAzureCredential chain) are what
+      # actually let Polaris consent and vend a scoped SAS. Leave all empty to
+      # keep ADLS vending disabled (bundled S3/MinIO still works).
+      AZURE_TENANT_ID: ${AZURE_TENANT_ID:-}
+      AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-}
+      AZURE_CLIENT_SECRET: ${AZURE_CLIENT_SECRET:-}
       polaris.readiness.ignore-severe-issues: "true"
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8182/q/health"]

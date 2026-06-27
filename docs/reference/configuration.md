@@ -43,15 +43,16 @@ by default; local accounts always work. Secrets here must never be committed —
 
 | Variable | Default | Description |
 |---|---|---|
-| `OIDC_ENABLED` | `false` | Master switch for OIDC SSO. When `true`, the login page shows a "Sign in with SSO" button. |
-| `OIDC_LABEL` | `SSO` | Button label, e.g. `Okta` renders "Sign in with Okta". |
-| `OIDC_SERVER_METADATA_URL` | — | IdP discovery document, ending in `/.well-known/openid-configuration`. |
-| `OIDC_CLIENT_ID` | — | Confidential client ID registered in the IdP. |
-| `OIDC_CLIENT_SECRET` | — | Client secret for the confidential client. |
-| `OIDC_SCOPES` | `openid email profile groups` | Scopes requested from the IdP. |
-| `OIDC_GROUPS_CLAIM` | `groups` | ID-token claim holding the user's group memberships. |
-| `OIDC_GROUP_ROLE_MAP` | `{}` | JSON object mapping group value → global role, e.g. `{"dh-admins": "admin"}`. |
+| `OIDC_PROVIDERS` | `[]` | JSON list of OIDC providers, each a button on the login page. Per-entry keys: `id` (url-safe slug, used in `/api/auth/oidc/<id>/callback`), `label`, `server_metadata_url`, `client_id`, `client_secret`, `scopes` (default `openid email profile`), `groups_claim` (default `groups`), `group_role_map`. Takes precedence over the single-provider fields below. |
 | `OIDC_REDIRECT_BASE_URL` | derived | Public base URL (scheme+host) used to build the callback. Required behind a TLS proxy; must match the registered redirect URI's host. |
+| `OIDC_ENABLED` | `false` | Single-provider shorthand (back-compat): when `true` and `OIDC_PROVIDERS` is empty, the fields below synthesize one provider with id `sso`. |
+| `OIDC_LABEL` | `SSO` | Button label for the shorthand provider, e.g. `Okta` renders "Sign in with Okta". |
+| `OIDC_SERVER_METADATA_URL` | — | Shorthand provider discovery document, ending in `/.well-known/openid-configuration`. |
+| `OIDC_CLIENT_ID` | — | Shorthand provider confidential client ID. |
+| `OIDC_CLIENT_SECRET` | — | Shorthand provider client secret. |
+| `OIDC_SCOPES` | `openid email profile groups` | Scopes for the shorthand provider. (Per-provider entries default to `openid email profile`; Entra rejects a `groups` scope.) |
+| `OIDC_GROUPS_CLAIM` | `groups` | Shorthand provider ID-token claim holding group memberships. |
+| `OIDC_GROUP_ROLE_MAP` | `{}` | Shorthand provider JSON map of group value → global role, e.g. `{"dh-admins": "admin"}`. |
 | `LDAP_ENABLED` | `false` | Master switch for LDAP/AD bind authentication. |
 | `LDAP_SERVER_URI` | — | `ldaps://host` (port 636) or `ldap://host` (use with `LDAP_USE_START_TLS`). |
 | `LDAP_USE_START_TLS` | `false` | Upgrade an `ldap://` connection to TLS via STARTTLS. |

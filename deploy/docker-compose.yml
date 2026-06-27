@@ -154,10 +154,11 @@ services:
       # HTTP, which would break login. Set true only behind a TLS terminator.
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       # OIDC / SSO (optional). Empty by default -> SSO off, local login only.
-      # Point these at your IdP (e.g. Entra ID) to enable the SSO button; see
-      # docs/deployment/identity.md. OIDC_GROUP_ROLE_MAP is JSON, e.g.
-      # {"<group-id>":"admin"}. For Entra, OIDC_SCOPES must not include "groups"
-      # (not a valid Entra scope) — group claims come from the app's claim config.
+      # OIDC_PROVIDERS is a JSON list of providers (one button each); see
+      # docs/guides/connect-idp.md. The OIDC_* fields below are a single-provider
+      # shorthand used only when OIDC_PROVIDERS is empty. For Entra, scopes must
+      # not include "groups" (not a valid Entra scope).
+      OIDC_PROVIDERS: ${OIDC_PROVIDERS:-}
       OIDC_ENABLED: ${OIDC_ENABLED:-false}
       OIDC_LABEL: ${OIDC_LABEL:-SSO}
       OIDC_SERVER_METADATA_URL: ${OIDC_SERVER_METADATA_URL:-}

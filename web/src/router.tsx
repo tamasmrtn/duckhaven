@@ -44,8 +44,26 @@ const setupRoute = createRoute({
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
-  beforeLoad: () => {
-    throw redirect({ to: "/login" });
+  // The post-login landing: SSO callbacks redirect here, so resolve the
+  // destination from the session rather than always bouncing to /login.
+  // Authenticated -> first workspace (or /welcome when they have none);
+  // unauthenticated -> /login.
+  beforeLoad: async () => {
+    try {
+      await authApi.me();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        throw redirect({ to: "/login" });
+      }
+      throw err;
+    }
+    const workspaces = await workspacesApi.list();
+    const first = workspaces[0];
+    throw redirect(
+      first
+        ? { to: "/$ws/worksheets", params: { ws: first.slug } }
+        : { to: "/welcome" },
+    );
   },
 });
 

@@ -19,11 +19,30 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import certifi
 import duckdb
 
 from agent.executor.plan import parse_profile
 
 logger = logging.getLogger(__name__)
+
+
+def _configure_external_tls(conn: duckdb.DuckDBPyConnection, *, azure: bool) -> None:
+    """Give the azure/httpfs extensions a CA bundle so HTTPS to the cloud works.
+
+    DuckDB's statically-linked extensions don't know the distro's CA path, so
+    TLS to Azure Blob / S3 fails with an "SSL CA cert" error in a minimal
+    container (plain-HTTP MinIO never hits this). certifi ships a portable
+    bundle; point ``ca_cert_file`` at it. The azure extension only honours it
+    under the curl transport, so select that too."""
+    bundle = certifi.where().replace("'", "''")
+    try:
+        conn.execute(f"SET ca_cert_file = '{bundle}'")
+        if azure:
+            conn.execute("SET azure_transport_option_type = 'curl'")
+    except duckdb.Error as exc:
+        logger.warning("Could not configure TLS CA bundle: %s", exc)
+
 
 # Curated profile metric set (see Part 2). Keys are DuckDB metric names; the
 # value "true" enables each. Captured per operator + per query, then parsed by
@@ -366,6 +385,10 @@ def open_and_attach(
     for kind in backend_kinds:
         if (io_ext := _BACKEND_IO_EXTENSION.get(kind or "")) is not None:
             _safe_install_load(conn, io_ext)
+    # External cloud backends (s3/adls_gen2) talk HTTPS and need a CA bundle the
+    # statically-linked extensions can't find on their own.
+    if backend_kinds - {None, "object_store"}:
+        _configure_external_tls(conn, azure="adls_gen2" in backend_kinds)
     if catalogs and polaris and _safe_install_load(conn, "iceberg"):
         try:
             _attach_catalogs(

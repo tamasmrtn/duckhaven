@@ -431,6 +431,7 @@ name = "duckhaven-agent"
 version = "0.1.0"
 source = { editable = "agent" }
 dependencies = [
+    { name = "certifi" },
     { name = "duckdb" },
     { name = "duckhaven-shared" },
     { name = "httpx" },
@@ -443,6 +444,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "certifi", specifier = ">=2024.0" },
     { name = "duckdb", specifier = ">=1.5" },
     { name = "duckhaven-shared", editable = "shared" },
     { name = "httpx", specifier = ">=0.27" },

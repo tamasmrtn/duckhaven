@@ -73,6 +73,8 @@ def test_object_store_loads_httpfs_and_vends_credentials(fake_conn: FakeConn, tm
     assert any("LOAD httpfs" in c for c in cmds)
     attach_cmd = next(c for c in cmds if c.startswith("ATTACH"))
     assert "ACCESS_DELEGATION_MODE 'vended_credentials'" in attach_cmd
+    # The bundled MinIO is plain HTTP, so no CA bundle is configured.
+    assert not any("ca_cert_file" in c for c in cmds)
 
 
 def test_s3_loads_httpfs_and_vends_credentials(fake_conn: FakeConn, tmp_path: Path):
@@ -91,6 +93,9 @@ def test_s3_loads_httpfs_and_vends_credentials(fake_conn: FakeConn, tmp_path: Pa
     assert any("INSTALL iceberg" in c for c in cmds)
     attach_cmd = next(c for c in cmds if c.startswith("ATTACH"))
     assert "ACCESS_DELEGATION_MODE 'vended_credentials'" in attach_cmd
+    # External S3 is HTTPS: a CA bundle is set, but the azure-only transport is not.
+    assert any(c.startswith("SET ca_cert_file =") for c in cmds)
+    assert not any("azure_transport_option_type" in c for c in cmds)
     # The iceberg secret carries the OAuth2 client credentials.
     secret_cmd, secret_params = next(
         c for c in fake_conn.commands if c[0].startswith("CREATE SECRET")
@@ -114,6 +119,10 @@ def test_adls_loads_azure_and_vends_credentials(fake_conn: FakeConn, tmp_path: P
     assert any("LOAD azure" in c for c in cmds)
     attach_cmd = next(c for c in cmds if c.startswith("ATTACH"))
     assert "ACCESS_DELEGATION_MODE 'vended_credentials'" in attach_cmd
+    # ADLS is HTTPS and its extension only honours the CA bundle under the curl
+    # transport, so both are configured (the SSL-CA fix found in real-Azure testing).
+    assert any(c.startswith("SET ca_cert_file =") for c in cmds)
+    assert any("SET azure_transport_option_type = 'curl'" in c for c in cmds)
 
 
 def test_attach_uses_polaris_name_as_warehouse_and_slug_alias(fake_conn: FakeConn, tmp_path: Path):

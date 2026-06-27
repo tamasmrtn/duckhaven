@@ -35,6 +35,14 @@ a reverse proxy (the in-container request can't see the public scheme/host) — 
 
 Restart the API. The login page now shows the SSO button.
 
+!!! note "Microsoft Entra ID specifics"
+    The discovery URL is tenant-scoped
+    (`https://login.microsoftonline.com/<tenant-id>/v2.0/.well-known/openid-configuration`). **Do not** put `groups`
+    in `OIDC_SCOPES` — it is not a valid Entra scope and the sign-in fails with `invalid_scope`; use
+    `OIDC_SCOPES="openid email profile"`. Entra emits group claims from the app registration's **groupMembershipClaims**
+    (e.g. *SecurityGroup*), not from a scope, and puts group **object IDs** (GUIDs) in the `groups` claim — so
+    `OIDC_GROUP_ROLE_MAP` keys are those GUIDs.
+
 ## Map groups to roles
 
 To let your directory drive who is an admin, expose the user's groups as a claim in the ID token and map group values

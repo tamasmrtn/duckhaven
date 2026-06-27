@@ -10,6 +10,7 @@ import {
   RefreshCw,
   Plus,
   Link2,
+  Info,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -39,6 +40,12 @@ import {
   AttachCatalogDialog,
   CreateCatalogDialog,
 } from "@/features/catalog/CatalogDialogs";
+import {
+  CatalogInfoDialog,
+  backendLabel,
+} from "@/features/catalog/CatalogInfoDialog";
+import { StorageIcon } from "@/components/app/StorageIcon";
+import type { BackendKind } from "@/types/storage-backend";
 import { cn } from "@/utils";
 import type { Catalog, CatalogTable } from "@/types/catalog";
 
@@ -320,6 +327,7 @@ function CatalogNode({
 }: CatalogNodeProps) {
   const [open, setOpen] = useState(defaultOpen);
   const [createSchemaOpen, setCreateSchemaOpen] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
   const { data: schemas, isLoading } = useSchemas(ws, open ? catalog.slug : "");
   const detach = useDetachCatalog(ws);
   const drop = useDropCatalog(ws);
@@ -363,6 +371,16 @@ function CatalogNode({
             )}
             <Book className="size-3.5 shrink-0 text-[var(--brand-slate-blue)]" />
             <span className="truncate">{catalog.slug}</span>
+            {/* Storage-backend indicator: which object store this catalog lives on. */}
+            <span
+              className="ml-1 inline-flex shrink-0"
+              title={`Storage: ${backendLabel(catalog.storage_backend_kind)}`}
+            >
+              <StorageIcon
+                kind={catalog.storage_backend_kind as BackendKind}
+                className="size-3 text-text-tertiary"
+              />
+            </span>
             {catalog.is_default && (
               <span className="ml-1 rounded bg-accent px-1 text-2xs text-text-tertiary">
                 default
@@ -371,6 +389,11 @@ function CatalogNode({
           </button>
         </ContextMenuTrigger>
         <ContextMenuContent>
+          <ContextMenuItem onSelect={() => setInfoOpen(true)}>
+            <Info />
+            Catalog information
+          </ContextMenuItem>
+          <ContextMenuSeparator />
           <ContextMenuItem onSelect={() => setCreateSchemaOpen(true)}>
             <Plus />
             Create schema
@@ -429,6 +452,11 @@ function CatalogNode({
         catalog={catalog.slug}
         open={createSchemaOpen}
         onOpenChange={setCreateSchemaOpen}
+      />
+      <CatalogInfoDialog
+        catalog={catalog}
+        open={infoOpen}
+        onOpenChange={setInfoOpen}
       />
     </div>
   );

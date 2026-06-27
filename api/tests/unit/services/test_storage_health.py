@@ -46,6 +46,16 @@ async def test_s3_valid_lists_and_cleans_up(monkeypatch):
     assert "3 object" in result.detail
     polaris.create_catalog.assert_awaited_once()
     polaris.delete_catalog.assert_awaited_once()
+    # The probe catalog must be scoped under a unique sub-prefix, not the bare
+    # backend root, so its allowedLocations never overlap an existing catalog.
+    base = polaris.create_catalog.await_args.kwargs["base_location"]
+    assert base.startswith("s3://acme-data/duckhaven/")
+    assert base != "s3://acme-data/duckhaven"
+
+
+async def test_empty_exception_message_falls_back_to_type():
+    """A failure whose str() is blank still yields a non-empty detail."""
+    assert storage_health._short(RuntimeError("")) == "RuntimeError"
 
 
 async def test_polaris_rejects_config_is_invalid(monkeypatch):

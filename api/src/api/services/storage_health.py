@@ -33,7 +33,12 @@ _PROBE_COLUMNS = [{"id": 1, "name": "x", "required": False, "type": "int"}]
 
 def _short(exc: object) -> str:
     """One-line, secret-free error detail for surfacing in the admin UI."""
-    return " ".join(str(exc).split())[:300]
+    msg = " ".join(str(exc).split())
+    # Some SDK exceptions stringify to nothing; fall back to the type so the
+    # detail is never blank.
+    if not msg and isinstance(exc, BaseException):
+        msg = type(exc).__name__
+    return msg[:300]
 
 
 async def validate_backend(polaris: PolarisClient, backend: StorageBackend) -> StorageBackendHealth:
@@ -47,9 +52,13 @@ async def validate_backend(polaris: PolarisClient, backend: StorageBackend) -> S
         backend.kind, backend.root_uri, backend.config
     )
     temp = f"dhhealth{uuid.uuid4().hex[:12]}"
+    # Scope the probe under a unique sub-prefix (mirrors ensure_polaris_catalog's
+    # /{polaris_name} scoping) so its allowedLocations never overlap an existing
+    # catalog already provisioned under the same backend root.
+    probe_location = f"{base_location.rstrip('/')}/{temp}"
     try:
         await polaris.create_catalog(
-            temp, storage_type=storage_type, base_location=base_location, extra_storage=extra
+            temp, storage_type=storage_type, base_location=probe_location, extra_storage=extra
         )
     except PolarisError as exc:
         return StorageBackendHealth(
@@ -64,14 +73,14 @@ async def validate_backend(polaris: PolarisClient, backend: StorageBackend) -> S
         )
         body = await polaris.load_table_with_credentials(temp, _PROBE_SCHEMA, _PROBE_TABLE)
         creds = body.get("config") or {}
-        location = (body.get("metadata") or {}).get("location") or base_location
+        location = (body.get("metadata") or {}).get("location") or probe_location
         count = _list_prefix(backend.kind, location, creds, backend.config or {})
         return StorageBackendHealth(
             valid=True,
             detail=f"Vended credentials reached storage ({count} object(s) under the probe path).",
         )
     except Exception as exc:  # noqa: BLE001 — any failure means the backend isn't usable
-        logger.info("Storage health check failed for backend=%s: %s", backend.id, _short(exc))
+        logger.warning("Storage health check failed for backend=%s", backend.id, exc_info=True)
         return StorageBackendHealth(valid=False, detail=_short(exc))
     finally:
         await _cleanup(polaris, temp)

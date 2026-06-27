@@ -56,6 +56,8 @@ def _catalog_out(
         polaris_name=catalog.polaris_name,
         storage_backend_id=catalog.storage_backend_id,
         storage_backend_kind=catalog.storage_backend.kind,
+        storage_backend_name=catalog.storage_backend.name,
+        storage_backend_root_uri=catalog.storage_backend.root_uri,
         created_at=catalog.created_at,
         is_default=is_default,
         attached_workspaces=attached_workspaces,

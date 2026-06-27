@@ -30,6 +30,8 @@ class CatalogOut(BaseModel):
     polaris_name: str
     storage_backend_id: uuid.UUID
     storage_backend_kind: str
+    storage_backend_name: str
+    storage_backend_root_uri: str
     created_at: datetime
     # Set on the workspace-scoped listing: whether this is the workspace's
     # default catalog and whether it is shared with other workspaces.

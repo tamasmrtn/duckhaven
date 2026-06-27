@@ -42,6 +42,11 @@ async def test_create_catalog_and_list(auth_client, owner, db_session, fake_pola
     # The seeded catalog is the default; the new one is not.
     assert by_slug["dev"]["is_default"] is True
     assert by_slug["curated"]["is_default"] is False
+    # The listing carries the storage backend's kind, name and root URI so the
+    # UI can show an indicator + catalog-information panel without an admin call.
+    assert by_slug["curated"]["storage_backend_kind"] == "object_store"
+    assert "storage_backend_name" in by_slug["curated"]
+    assert "storage_backend_root_uri" in by_slug["curated"]
 
 
 async def test_create_requires_owner(auth_client, owner, db_session):

@@ -1,6 +1,9 @@
+import json
 from pathlib import Path
+from typing import Annotated
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -71,10 +74,27 @@ class Settings(BaseSettings):
     oidc_groups_claim: str = "groups"
     # Maps IdP group value -> DuckHaven global role (e.g. {"dh-admins": "admin"}).
     # The highest-privilege matched role wins; unmatched users default to "user".
-    oidc_group_role_map: dict[str, str] = {}
+    # NoDecode: parse the env value ourselves (see the validator) so a blank
+    # passthrough value coerces to {} instead of failing JSON decoding on boot.
+    oidc_group_role_map: Annotated[dict[str, str], NoDecode] = {}
     # Public base URL the IdP redirects back to (scheme+host), used to build the
     # callback. When unset, derived from the incoming request.
     oidc_redirect_base_url: str | None = None
+
+    @field_validator("oidc_group_role_map", mode="before")
+    @classmethod
+    def _parse_group_role_map(cls, v: object) -> object:
+        """Parse the group->role map from its env string ourselves (NoDecode).
+
+        Compose passes ``OIDC_GROUP_ROLE_MAP`` through as an empty string when an
+        operator enables SSO without a group map; an empty string is not valid
+        JSON, so coerce blank to ``{}`` and JSON-decode anything else, rather
+        than crashing on boot."""
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return {}
+        if isinstance(v, str):
+            return json.loads(v)
+        return v
 
     # ── LDAP / Active Directory (Part A, secondary) ───────────────────────────
     ldap_enabled: bool = False

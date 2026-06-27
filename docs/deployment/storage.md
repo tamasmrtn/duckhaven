@@ -12,8 +12,16 @@ workspace under a `/{slug}` prefix. No configuration is required to start.
 
 Polaris must advertise the storage types you intend to use. The bundled stack sets
 `SUPPORTED_CATALOG_STORAGE_TYPES=["S3","AZURE"]` in `deploy/docker-compose.yml`, which covers both AWS S3 and Azure
-ADLS Gen2. External backends need **no** static credentials in `.env` — the role assumption (S3) and SAS minting
-(ADLS) happen inside Polaris.
+ADLS Gen2.
+
+Credential vending happens inside Polaris, so no storage secrets ever reach the API or agents. The two clouds differ
+in what Polaris itself needs:
+
+- **AWS S3** — no static credentials anywhere; Polaris assumes the backend's IAM role via STS.
+- **Azure ADLS Gen2** — Polaris mints SAS tokens through a service principal read from *its own* environment
+  (`AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET`, the Azure `DefaultAzureCredential` chain). Set these
+  in `.env` to the SP that holds **Storage Blob Data Contributor** on the account; the per-backend config only carries
+  the tenant id. Without them, ADLS vending fails.
 
 ## Register an AWS S3 backend
 

@@ -256,13 +256,11 @@ def oidc_settings(monkeypatch) -> str:
     # Deterministic redirect_uri the Keycloak realm whitelists.
     monkeypatch.setattr(settings, "oidc_redirect_base_url", "http://test")
 
-    # Re-register the Authlib client against the live IdP with the test config.
-    from api.services.oidc import OIDC_CLIENT_NAME, oauth, register_oidc
+    # Re-register the Authlib client(s) against the live IdP with the test config.
+    # The single-provider fields synthesize one provider with id "sso".
+    from api.services.oidc import register_oidc, reset_oidc_clients
 
-    if hasattr(oauth, "_registry"):
-        oauth._registry.pop(OIDC_CLIENT_NAME, None)
-    if hasattr(oauth, "_clients"):
-        oauth._clients.pop(OIDC_CLIENT_NAME, None)
+    reset_oidc_clients()
     register_oidc()
     return meta
 

@@ -76,7 +76,7 @@ async def test_methods_local_only_by_default(client: AsyncClient):
     data = resp.json()
     assert data["local"] is True
     assert data["ldap"] is False
-    assert data["oidc"] is False
+    assert data["oidc_providers"] == []
 
 
 async def test_inactive_user_cannot_login(client: AsyncClient, db_session, admin_user: User):

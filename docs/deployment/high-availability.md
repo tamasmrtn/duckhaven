@@ -123,6 +123,13 @@ replica gets a unique `REPLICA_ID` and `REPLICA_INTERNAL_URL` so peers can reach
 it; the `/internal` endpoints are refused at the load balancer and only used
 replica-to-replica on the private network.
 
+The load balancer **must forward `X-Forwarded-For`** on the agent WebSocket
+upgrade. The control plane records the agent's result-server address from that
+header (the socket peer is the load balancer, not the agent), and an API replica
+fetches result Parquet from the agent directly using it — so without it, paging
+query results fails. Caddy sets `X-Forwarded-For` automatically; on nginx, add
+`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`.
+
 To add a third replica, copy the `api-2` service to `api-3` (its own
 `REPLICA_ID`/`REPLICA_INTERNAL_URL` and data volume) and add `api-3:8000` to the
 Caddy upstream list.

@@ -25,6 +25,21 @@ router = APIRouter()
 _PRESENCE_REFRESH_S = 30.0
 
 
+def _result_host(ws: WebSocket) -> str | None:
+    """The agent's reachable address for result fetches.
+
+    Behind a reverse proxy (Caddy in the HA topology) the socket peer is the
+    proxy, so the real agent address is the left-most ``X-Forwarded-For`` hop.
+    Falls back to the socket peer for a direct (single-node) connection.
+    """
+    forwarded_for = ws.headers.get("x-forwarded-for")
+    if forwarded_for:
+        first = forwarded_for.split(",", 1)[0].strip()
+        if first:
+            return first
+    return ws.client.host if ws.client else None
+
+
 @router.websocket("/agents/connect")
 async def agent_connect(
     ws: WebSocket,
@@ -41,10 +56,14 @@ async def agent_connect(
             return
 
         token = frame.payload["token"]
-        # The agent's result server is reachable at the socket peer address; the
-        # agent advertises its result port in the auth frame. Together these tell
-        # services/query.proxy_rows where to fetch result Parquet.
-        result_host = ws.client.host if ws.client else None
+        # Where the agent's result server is reachable, so services/query.proxy_rows
+        # can fetch result Parquet. The agent advertises its result port in the auth
+        # frame; the host is the connection's peer address — except behind a reverse
+        # proxy / load balancer (the HA topology dials the API through Caddy), where
+        # the peer is the proxy. There the agent's real address is the left-most
+        # X-Forwarded-For hop, mirroring how the add-agent dial URL trusts
+        # X-Forwarded-* (routers/agents._agent_dial_url).
+        result_host = _result_host(ws)
         result_port = frame.payload.get("result_port")
         result_port_int = int(result_port) if result_port is not None else None
 

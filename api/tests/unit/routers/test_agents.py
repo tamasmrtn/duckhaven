@@ -1,13 +1,38 @@
 import json
 import uuid
 from datetime import UTC
+from types import SimpleNamespace
 
 import pytest
 from httpx import AsyncClient
 
 from api.models.agent import Agent
 from api.models.user import User
+from api.routers.agents_ws import _result_host
 from api.services.auth import hash_password
+
+
+def _fake_ws(*, xff: str | None, peer: str | None):
+    headers = {"x-forwarded-for": xff} if xff is not None else {}
+    client = SimpleNamespace(host=peer) if peer is not None else None
+    return SimpleNamespace(headers=headers, client=client)
+
+
+def test_result_host_prefers_forwarded_for():
+    """Behind a proxy the agent's real address is the left-most X-Forwarded-For
+    hop, not the socket peer (which is the load balancer)."""
+    ws = _fake_ws(xff="10.0.0.5, 172.30.0.10", peer="172.30.0.10")
+    assert _result_host(ws) == "10.0.0.5"
+
+
+def test_result_host_falls_back_to_peer_without_forwarded_for():
+    ws = _fake_ws(xff=None, peer="172.30.0.7")
+    assert _result_host(ws) == "172.30.0.7"
+
+
+def test_result_host_ignores_blank_forwarded_for():
+    ws = _fake_ws(xff="   ", peer="172.30.0.7")
+    assert _result_host(ws) == "172.30.0.7"
 
 
 @pytest.fixture

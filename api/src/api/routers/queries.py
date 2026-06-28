@@ -23,7 +23,7 @@ from api.schemas.query import (
 from api.services import query as query_service
 from api.services import sql_metadata as sql_metadata_service
 from api.services.agent_capabilities import agent_supports_backend, required_extension
-from api.services.agent_registry import registry
+from api.services.agent_dispatch import is_agent_connected, send_to_agent
 from api.services.permissions import Permission
 from api.services.rbac import has_permission
 from api.services.sql_guard import SQLNotAllowed, assert_allowed
@@ -75,7 +75,7 @@ async def create_query(
     agent = result.scalar_one_or_none()
     if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-    if registry.get(body.agent_id) is None:
+    if not await is_agent_connected(db, body.agent_id):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Agent not connected"
         )
@@ -140,12 +140,12 @@ async def _set_concurrency(
     agent = result.scalar_one_or_none()
     if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-    if registry.get(body.agent_id) is None:
+    if not await is_agent_connected(db, body.agent_id):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Agent not connected"
         )
     frame = Frame(type=FrameType.SET_CONCURRENCY, payload={"profile": profile})
-    await registry.send(body.agent_id, frame.model_dump_json())
+    await send_to_agent(db, body.agent_id, frame.model_dump_json())
     query = Query(
         workspace_id=workspace_id,
         agent_id=body.agent_id,

@@ -1,0 +1,25 @@
+# Caddy as the public entrypoint and API load balancer.
+#
+# - Terminates TLS (auto Let's Encrypt for a real domain; see the commented
+#   block) and forwards browser + agent traffic to the API replicas.
+# - Active health checks hit /api/readyz, so a replica that is draining for
+#   shutdown or has lost a dependency is taken out of rotation automatically.
+# - WebSocket upgrades (agents dial /agents/connect) are proxied transparently.
+# - /internal/* is the private inter-replica dispatch API and must never be
+#   reachable from outside; it is refused here and only used replica-to-replica
+#   on the compose network.
+#
+# Replace :80 with your domain (e.g. duckhaven.example.com) to enable auto-TLS,
+# and set COOKIE_SECURE=true + OIDC_REDIRECT_BASE_URL accordingly.
+
+:80 {
+	@internal path /internal/*
+	respond @internal 404
+
+	reverse_proxy api-1:8000 api-2:8000 {
+		lb_policy round_robin
+		health_uri /api/readyz
+		health_interval 5s
+		health_timeout 2s
+	}
+}

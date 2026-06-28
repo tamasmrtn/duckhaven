@@ -68,15 +68,33 @@ by default; local accounts always work. Secrets here must never be committed —
 | `LDAP_TLS_CA_CERT` | — | Path to a CA bundle validating the directory's TLS certificate. |
 | `LDAP_TIMEOUT_S` | `10` | Connection / receive timeout for directory operations, in seconds. |
 
+### High availability
+
+Only used by the opt-in [HA topology](../deployment/high-availability.md) (multiple API replicas). The single-node
+stack ignores them. All have single-replica-safe defaults, so a one-box install behaves identically whether they are set
+or not.
+
+| Variable | Default | Description |
+|---|---|---|
+| `REPLICA_ID` | `api` | Identifier for this API replica, recorded as the owner of agents whose WebSocket it holds. The HA compose sets one per replica (`api-1`, `api-2`). |
+| `REPLICA_INTERNAL_URL` | `http://localhost:8000` | URL peer replicas use to forward agent-dispatch frames to this replica's private `/internal` endpoints. |
+| `INTERNAL_API_SECRET` | _(empty)_ | Shared secret guarding the `/internal` cross-replica dispatch endpoints. Must be identical on every replica. When empty, peer forwarding is disabled (single-replica mode). |
+| `AGENT_PRESENCE_TTL_S` | `90` | How recently an agent must have pinged for another replica to consider it connected; covers a replica that died without clearing its ownership. |
+| `DB_POOL_SIZE` | `5` | SQLAlchemy connection-pool size per replica. Keep `replicas × (DB_POOL_SIZE + DB_MAX_OVERFLOW)` under the Postgres `max_connections`. |
+| `DB_MAX_OVERFLOW` | `10` | Extra connections each replica may open above `DB_POOL_SIZE` under load. |
+| `DB_POOL_RECYCLE_S` | `1800` | Recycle pooled connections older than this (seconds). With `pool_pre_ping`, this is what makes Postgres failover transparent. |
+
 ### Maintenance advisor
 
 Gates and tunes the background [maintenance advisor](../concepts/maintenance.md) scanner that runs inside the API
 process. The runtime cadence (off/hourly/daily) and profile are set at runtime in **Admin → Maintenance**, not here —
-these variables only control the loop itself. The scanner assumes a single API replica.
+these variables only control the loop itself. Across multiple API replicas the scanner is leader-elected via a Postgres
+advisory lock, so only one cycle runs at a time — leave it enabled everywhere (see
+[High availability](../deployment/high-availability.md)).
 
 | Variable | Default | Description |
 |---|---|---|
-| `MAINTENANCE_SCANNER_ENABLED` | `true` | Master switch for the background scanner loop. Set `false` to disable scanning entirely (e.g. when running multiple API replicas). |
+| `MAINTENANCE_SCANNER_ENABLED` | `true` | Whether this replica participates in the (leader-elected) scanner loop. Safe to leave `true` on every replica; set `false` only to exclude a replica entirely. |
 | `MAINTENANCE_SCAN_TICK_S` | `900` | How often (seconds) the loop wakes to check whether a scan is due per the runtime cadence. |
 | `MAINTENANCE_DEEP_SCAN_INTERVAL_S` | `604800` (7 days) | How often the expensive orphan/storage tier runs; cheap metadata probes run every due cycle. |
 

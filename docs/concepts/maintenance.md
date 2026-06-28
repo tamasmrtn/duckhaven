@@ -98,8 +98,10 @@ variables.
 - **Orphan detection is an estimate.** It compares files listed under a table's location against files referenced by
   current metadata. In-flight writes and files shared across snapshots can appear orphaned, so these recommendations
   are flagged low confidence and are an estimate to investigate — DuckHaven never deletes a file.
-- **Single scanner.** The loop assumes one API replica. Running multiple replicas with the scanner enabled scans each
-  table more than once; disable the flag on all but one.
+- **Single scanner per cluster.** Only one scan cycle runs at a time across the whole deployment. With multiple API
+  replicas the loop coordinates through a Postgres advisory lock (leader election), so it is safe to leave
+  `MAINTENANCE_SCANNER_ENABLED` on every replica — exactly one wins each tick. See
+  [High availability](../deployment/high-availability.md).
 - **No per-table policies.** Thresholds are deployment-wide. Per-table and per-namespace overrides are not yet
   supported.
 

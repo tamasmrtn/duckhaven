@@ -17,7 +17,8 @@ from api.models.user import User
 from api.models.workspace import Workspace
 from api.services.agent_registry import registry
 from api.services.auth import hash_password
-from api.services.maintenance.scanner import _due, run_cycle
+from api.services.maintenance import scanner as scanner_mod
+from api.services.maintenance.scanner import _due, run_cycle, run_tick, scan_leadership
 
 
 class FakeWS:
@@ -139,3 +140,32 @@ async def test_disabled_policy_short_circuits(session_factory, fake_polaris):
         await db.commit()
     result = await run_cycle(session_factory, fake_polaris, force=False)
     assert result["status"] == "skipped"
+
+
+async def test_scan_leadership_granted_on_non_postgres(session_factory):
+    """Without advisory locks (SQLite) leadership is always granted, so the
+    single-process scanner behaves exactly as before."""
+    async with scan_leadership(session_factory) as is_leader:
+        assert is_leader is True
+
+
+async def test_run_tick_standby_skips_cycle(session_factory, fake_polaris, monkeypatch):
+    """A replica that loses leadership does not run a cycle."""
+    import contextlib
+
+    @contextlib.asynccontextmanager
+    async def _no_leadership(_factory):
+        yield False
+
+    called = False
+
+    async def _spy_run_cycle(*a, **k):
+        nonlocal called
+        called = True
+        return {"status": "ran"}
+
+    monkeypatch.setattr(scanner_mod, "scan_leadership", _no_leadership)
+    monkeypatch.setattr(scanner_mod, "run_cycle", _spy_run_cycle)
+    result = await run_tick(session_factory, fake_polaris)
+    assert result == {"status": "standby"}
+    assert called is False

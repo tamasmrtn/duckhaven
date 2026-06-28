@@ -19,7 +19,11 @@ from api.models.table_metadata import TableMetadata
 from api.models.user import Credential
 from api.models.workspace import Workspace
 from api.services.agent_capabilities import agent_supports_backend
-from api.services.agent_registry import registry
+from api.services.agent_dispatch import (
+    connected_agent_ids,
+    is_agent_connected,
+    send_to_agent,
+)
 from api.services.workspace import (
     DEFAULT_SCHEMA,
     get_default_catalog,
@@ -37,7 +41,7 @@ async def dispatch_query(
     stats_for: dict[str, str] | None = None,
     health_for: dict[str, object] | None = None,
 ) -> None:
-    if query.agent_id is None or registry.get(query.agent_id) is None:
+    if query.agent_id is None or not await is_agent_connected(db, query.agent_id):
         raise ValueError("Agent not connected")
 
     workspace = await db.get(Workspace, query.workspace_id)
@@ -80,7 +84,10 @@ async def dispatch_query(
         payload["health_for"] = health_for
 
     frame = Frame(type=FrameType.DISPATCH_QUERY, payload=payload)
-    await registry.send(query.agent_id, frame.model_dump_json())
+    if not await send_to_agent(db, query.agent_id, frame.model_dump_json()):
+        # The socket vanished between the presence check and the send, or its
+        # owning replica is unreachable. Fail fast so the caller surfaces it.
+        raise ValueError("Agent not connected")
     # Status stays "queued" until the agent admits the query and emits
     # QUERY_PROGRESS; the agent may hold it in its admission queue first.
     await db.commit()
@@ -181,12 +188,13 @@ async def _upsert_table_stats(db: AsyncSession, query_id: uuid.UUID, frame: Fram
 
 
 async def cancel_query(db: AsyncSession, query: Query) -> None:
-    if query.agent_id and registry.get(query.agent_id):
+    if query.agent_id:
         frame = Frame(
             type=FrameType.CANCEL_QUERY,
             payload={"query_id": str(query.id)},
         )
-        await registry.send(query.agent_id, frame.model_dump_json())
+        # Best-effort: routes to the owning replica, or no-ops if disconnected.
+        await send_to_agent(db, query.agent_id, frame.model_dump_json())
     query.status = "cancelled"
     query.finished_at = datetime.now(tz=UTC)
     await db.commit()
@@ -265,7 +273,7 @@ def decode_parquet_page(
 async def pick_agent_for(db: AsyncSession, workspace: Workspace) -> Agent | None:
     """A connected agent whose capabilities support *every* backend kind across
     the workspace's catalogs (all are attached on each query)."""
-    connected = registry.connected_ids()
+    connected = await connected_agent_ids(db)
     if not connected:
         return None
     catalogs = await resolve_workspace_catalogs(db, workspace.id)

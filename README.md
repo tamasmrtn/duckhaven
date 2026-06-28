@@ -115,6 +115,10 @@ flowchart TB
   sandbox escapes (`ATTACH`, `COPY`, `LOAD`, `SET`, …) are rejected.
 - The API is exposed directly on port 8000 over a private network (Tailscale
   recommended); there is no public ingress.
+- The default deploy is single-node, but an opt-in highly-available topology — HA
+  Postgres plus multiple API replicas behind a load balancer — is available on
+  the same Docker Compose foundation. See
+  [High availability](docs/deployment/high-availability.md).
 
 For the full architecture, see [docs/concepts/architecture.md](docs/concepts/architecture.md). For
 the UI design system, see [docs/developer/design-system.md](docs/developer/design-system.md).
@@ -153,6 +157,7 @@ inside the api container, the first admin is created from the browser.
 - [Install](docs/deployment/install.md)
 - [Update](docs/deployment/updating.md)
 - [Reverse proxy + TLS (Caddy)](docs/deployment/reverse-proxy-tls.md)
+- [High availability](docs/deployment/high-availability.md)
 - [Backup & restore](docs/deployment/backup-restore.md)
 - [Add an agent](docs/deployment/add-agent.md)
 
@@ -170,12 +175,13 @@ cutting a new release see [docs/developer/releasing.md](docs/developer/releasing
   published agent and API images (GHCR), server-side backend compatibility
   checks, Iceberg snapshot history browsing with "query at this snapshot"
   time travel, EXPLAIN-based per-query memory sizing (the `auto` concurrency
-  profile), and post-execution query profiles with inefficiency highlights.
+  profile), post-execution query profiles with inefficiency highlights, and an
+  opt-in [highly-available control plane](docs/deployment/high-availability.md)
+  (HA Postgres + multiple API replicas behind a load balancer).
 - **In progress** — External cloud-backend (S3 / ADLS Gen 2) credential wiring.
 - **Future** — Notebook UI, heterogeneous engines (Spark, Trino, Polars),
-  per-table backend override, Polaris RBAC permission mirroring, control-plane
-  HA, Prometheus metrics + Grafana dashboards, off-box result durability / DR
-  automation.
+  per-table backend override, Polaris RBAC permission mirroring, Prometheus
+  metrics + Grafana dashboards, off-box result durability / DR automation.
 
 See [docs/concepts/architecture.md](docs/concepts/architecture.md) §13 for the gap tracker.
 

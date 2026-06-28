@@ -21,14 +21,21 @@ remote [agent](agents.md) uses, which rules out local-file storage across the co
 An agent must have the required DuckDB extension loaded to serve a workspace on a given backend; see the
 [Agent reference](../reference/agent-reference.md).
 
-!!! note "External cloud credentials are in progress"
-    The bundled `object_store` path is fully wired. External `s3` / `adls_gen2` credential wiring is validated behind
-    opt-in integration tests and is still being finished — check the roadmap before relying on it in production.
+## Credential model
+
+External backends carry **no static keys**. Each backend stores only identifiers — for `s3` an IAM **role ARN** (plus
+an optional external id and region), for `adls_gen2` an Entra **tenant id** (plus an optional app name and consent
+URL). Trust is established on the cloud side:
+
+- **AWS S3** — Polaris assumes the registered role via STS (`AssumeRole`), optionally guarded by an external id.
+- **Azure ADLS Gen2** — Polaris vends a scoped SAS token through a consented Entra application in the tenant.
 
 ## Credential vending
 
 When an agent attaches a workspace catalog, Polaris vends short-lived, connection-scoped credentials applied as a
-DuckDB `SECRET` that dies with the per-query connection. No long-lived storage secrets are stored on agents.
+DuckDB `SECRET` that dies with the per-query connection. No long-lived storage secrets are stored on agents — the role
+assumption / SAS minting happens server-side in Polaris, and only the resulting scoped, expiring credential ever
+reaches DuckDB.
 
 ## Related
 

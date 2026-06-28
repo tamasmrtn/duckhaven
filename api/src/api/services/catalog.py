@@ -50,7 +50,9 @@ async def create_catalog(
             status_code=status.HTTP_409_CONFLICT, detail=f"Catalog '{name}' already taken"
         )
 
-    storage_type, base_location, extra_storage = polaris_storage(backend.kind, backend.root_uri)
+    storage_type, base_location, extra_storage = polaris_storage(
+        backend.kind, backend.root_uri, backend.config
+    )
     try:
         await ensure_polaris_catalog(
             polaris,

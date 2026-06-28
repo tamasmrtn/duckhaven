@@ -123,23 +123,28 @@ export function LoginPage() {
           </Button>
         </form>
 
-        {methods.data?.oidc && (
+        {(methods.data?.oidc_providers?.length ?? 0) > 0 && (
           <>
             <div className="flex items-center gap-3">
               <div className="h-px flex-1 bg-[var(--border-subtle)]" />
               <span className="text-2xs text-text-tertiary">or</span>
               <div className="h-px flex-1 bg-[var(--border-subtle)]" />
             </div>
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full h-9"
-              onClick={() => {
-                window.location.href = "/api/auth/oidc/login";
-              }}
-            >
-              Sign in with {methods.data.oidc_label}
-            </Button>
+            <div className="space-y-2">
+              {methods.data?.oidc_providers.map((p) => (
+                <Button
+                  key={p.id}
+                  type="button"
+                  variant="outline"
+                  className="w-full h-9"
+                  onClick={() => {
+                    window.location.href = `/api/auth/oidc/${p.id}/login`;
+                  }}
+                >
+                  Sign in with {p.label}
+                </Button>
+              ))}
+            </div>
           </>
         )}
 

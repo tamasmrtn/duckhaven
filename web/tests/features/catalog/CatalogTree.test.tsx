@@ -72,6 +72,32 @@ describe('CatalogTree', () => {
     expect(catalog.querySelector('svg.lucide-database')).toBeNull()
   })
 
+  it('shows a storage-backend indicator on the catalog node', async () => {
+    renderTree(() => {})
+
+    // acme_analytics is an S3-backed catalog (fixtures) -> the Box glyph.
+    const catalog = await screen.findByRole('button', { name: /acme_analytics/i })
+    expect(catalog.querySelector('svg.lucide-box')).toBeTruthy()
+  })
+
+  it('opens Catalog information from the right-click menu with backend metadata', async () => {
+    renderTree(() => {})
+
+    const catalog = await screen.findByRole('button', { name: /acme_analytics/i })
+    fireEvent.contextMenu(catalog)
+
+    await userEvent.click(
+      await screen.findByRole('menuitem', { name: /catalog information/i }),
+    )
+
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('Catalog information')).toBeInTheDocument()
+    expect(within(dialog).getByText(/AWS S3/)).toBeInTheDocument()
+    expect(
+      within(dialog).getByText('s3://acme-data/duckhaven/'),
+    ).toBeInTheDocument()
+  })
+
   it('shows a read-only information_schema node with its supported views', async () => {
     renderTree(() => {})
     // Wait for the default catalog to expand and load.

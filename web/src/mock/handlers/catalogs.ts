@@ -16,6 +16,8 @@ function out(c: (typeof CATALOGS)[number]): Catalog {
     polaris_name: c.polaris_name,
     storage_backend_id: c.storage_backend_id,
     storage_backend_kind: c.storage_backend_kind,
+    storage_backend_name: c.storage_backend_name,
+    storage_backend_root_uri: c.storage_backend_root_uri,
     created_at: c.created_at,
     is_default: c.is_default,
     attached_workspaces: c.workspace_ids.length,
@@ -54,6 +56,8 @@ export const catalogHandlers = [
       // Chosen backend, else a bundled object store (matches the API default).
       storage_backend_id: body.storage_backend_id ?? "sb-bundled",
       storage_backend_kind: "object_store" as const,
+      storage_backend_name: "Bundled object storage",
+      storage_backend_root_uri: "",
       created_at: new Date().toISOString(),
       is_default: first,
       attached_workspaces: 1,

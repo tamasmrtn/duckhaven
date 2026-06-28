@@ -15,6 +15,10 @@ export interface Catalog {
   polaris_name: string;
   storage_backend_id: string;
   storage_backend_kind: string;
+  // Backend display name + root URI (where this catalog's data lives). Optional
+  // so legacy/partial fixtures still type-check; the API always provides them.
+  storage_backend_name?: string;
+  storage_backend_root_uri?: string;
   created_at: string;
   is_default: boolean;
   attached_workspaces: number | null;

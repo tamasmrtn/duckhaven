@@ -39,13 +39,47 @@ def _minio_prefix(root_uri: str) -> str:
     return prefix.strip("/")
 
 
-def polaris_storage(kind: str, root_uri: str) -> tuple[str, str, dict | None]:
+def _external_extra_storage(kind: str, config: dict | None) -> dict | None:
+    """Build the Polaris storageConfigInfo extras for an external backend.
+
+    Keys are the camelCase field names Polaris expects (roleArn / tenantId …);
+    storageType + allowedLocations are added by the Polaris client. Every value
+    is an identifier, never a static secret — Polaris vends short-lived scoped
+    credentials by assuming the role / consenting app at attach time (I7).
+    """
+    if not config:
+        return None
+    if kind == "s3":
+        extra: dict = {"roleArn": config["role_arn"], "region": config["region"]}
+        if config.get("external_id"):
+            extra["externalId"] = config["external_id"]
+        if config.get("endpoint"):
+            extra["endpoint"] = config["endpoint"]
+        if config.get("path_style_access") is not None:
+            extra["pathStyleAccess"] = config["path_style_access"]
+        return extra
+    if kind == "adls_gen2":
+        extra = {"tenantId": config["tenant_id"]}
+        if config.get("multi_tenant_app_name"):
+            extra["multiTenantAppName"] = config["multi_tenant_app_name"]
+        if config.get("consent_url"):
+            extra["consentUrl"] = config["consent_url"]
+        if config.get("hierarchical") is not None:
+            extra["hierarchical"] = config["hierarchical"]
+        return extra
+    return None
+
+
+def polaris_storage(
+    kind: str, root_uri: str, config: dict | None = None
+) -> tuple[str, str, dict | None]:
     """Resolve a backend's (Polaris storage type, base location, extra storage).
 
     object_store is backed by the bundled MinIO bucket: its root_uri is a
     prefix label under that bucket and the extra storage config carries the
     vended/internal endpoints. s3/adls_gen2 are external stores whose root_uri
-    already carries a scheme; they get no MinIO endpoint injected.
+    already carries a scheme; their extras (role ARN / tenant id / …) come from
+    the backend's per-kind ``config``.
     """
     storage_type = _KIND_TO_STORAGE_TYPE.get(kind, "S3")
     if kind in _BUNDLED_MINIO_KINDS:
@@ -60,7 +94,7 @@ def polaris_storage(kind: str, root_uri: str) -> tuple[str, str, dict | None]:
             "region": settings.s3_region,
         }
         return storage_type, base, extra
-    return storage_type, root_uri.rstrip("/"), None
+    return storage_type, root_uri.rstrip("/"), _external_extra_storage(kind, config)
 
 
 def default_object_store_backend(name: str, created_by: uuid.UUID) -> StorageBackend:

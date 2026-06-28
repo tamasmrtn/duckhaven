@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, Trash2, ShieldAlert } from "lucide-react";
+import { Plus, Trash2, ShieldAlert, ShieldCheck, ShieldX } from "lucide-react";
 import { Banner } from "@/components/ui/banner";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,10 +22,15 @@ import {
 import {
   useStorageBackends,
   useCreateStorageBackend,
+  useCheckStorageBackendHealth,
   useDeleteStorageBackend,
 } from "@/queries/storage-backends";
 import { StorageIcon } from "@/components/app/StorageIcon";
-import type { BackendKind } from "@/types/storage-backend";
+import type {
+  BackendKind,
+  StorageBackendConfig,
+  StorageBackendHealth,
+} from "@/types/storage-backend";
 import { cn, plural } from "@/utils";
 
 const KIND_LABELS: Record<BackendKind, string> = {
@@ -40,7 +45,51 @@ const KIND_URI_PLACEHOLDER: Record<BackendKind, string> = {
   adls_gen2: "abfss://container@account.dfs.core.windows.net/duckhaven/",
 };
 
-type WizardStep = 1 | 2 | 3;
+type WizardStep = 1 | 2 | 3 | 4;
+
+const EMPTY_CONFIG = {
+  role_arn: "",
+  region: "",
+  external_id: "",
+  endpoint: "",
+  path_style_access: false,
+  tenant_id: "",
+  multi_tenant_app_name: "",
+  consent_url: "",
+  hierarchical: false,
+};
+
+function buildConfig(
+  kind: BackendKind,
+  c: typeof EMPTY_CONFIG,
+): StorageBackendConfig | undefined {
+  if (kind === "s3") {
+    return {
+      role_arn: c.role_arn.trim(),
+      region: c.region.trim(),
+      ...(c.external_id.trim() ? { external_id: c.external_id.trim() } : {}),
+      ...(c.endpoint.trim() ? { endpoint: c.endpoint.trim() } : {}),
+      ...(c.path_style_access ? { path_style_access: true } : {}),
+    };
+  }
+  if (kind === "adls_gen2") {
+    return {
+      tenant_id: c.tenant_id.trim(),
+      ...(c.multi_tenant_app_name.trim()
+        ? { multi_tenant_app_name: c.multi_tenant_app_name.trim() }
+        : {}),
+      ...(c.consent_url.trim() ? { consent_url: c.consent_url.trim() } : {}),
+      ...(c.hierarchical ? { hierarchical: true } : {}),
+    };
+  }
+  return undefined;
+}
+
+function configComplete(kind: BackendKind, c: typeof EMPTY_CONFIG): boolean {
+  if (kind === "s3") return !!c.role_arn.trim() && !!c.region.trim();
+  if (kind === "adls_gen2") return !!c.tenant_id.trim();
+  return true;
+}
 
 function RegisterWizard({
   open,
@@ -53,15 +102,23 @@ function RegisterWizard({
   const [kind, setKind] = useState<BackendKind>("s3");
   const [name, setName] = useState("");
   const [uri, setUri] = useState("");
-  const [credId, setCredId] = useState("");
+  const [config, setConfig] = useState({ ...EMPTY_CONFIG });
   const create = useCreateStorageBackend();
+
+  function set<K extends keyof typeof EMPTY_CONFIG>(
+    key: K,
+    value: (typeof EMPTY_CONFIG)[K],
+  ) {
+    setConfig((prev) => ({ ...prev, [key]: value }));
+  }
 
   function reset() {
     setStep(1);
     setKind("s3");
     setName("");
     setUri("");
-    setCredId("");
+    setConfig({ ...EMPTY_CONFIG });
+    create.reset();
   }
 
   async function handleFinish() {
@@ -69,11 +126,12 @@ function RegisterWizard({
       kind,
       name,
       root_uri: uri,
-      uc_storage_credential_id: credId || undefined,
+      config: buildConfig(kind, config),
     });
-    reset();
-    onClose();
+    setStep(4);
   }
+
+  const isExternal = kind === "s3" || kind === "adls_gen2";
 
   return (
     <Dialog
@@ -87,7 +145,11 @@ function RegisterWizard({
     >
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Register storage backend — Step {step} of 3</DialogTitle>
+          <DialogTitle>
+            {step === 4
+              ? "Backend registered"
+              : `Register storage backend — Step ${step} of 3`}
+          </DialogTitle>
           <DialogDescription>
             Configure a storage location (object storage, S3, or ADLS) that
             workspaces can use for their tables.
@@ -170,54 +232,248 @@ function RegisterWizard({
 
         {step === 3 && (
           <div className="space-y-4 py-2">
-            {kind === "s3" || kind === "adls_gen2" ? (
-              <>
+            {kind === "s3" && (
+              <div className="space-y-3">
                 <p className="text-sm text-text-secondary">
-                  Bind a Polaris storage credential for short-lived credential
-                  vending.
+                  Polaris assumes this IAM role via STS to vend short-lived
+                  scoped credentials. No access keys are stored.
                 </p>
-                <div className="space-y-1.5">
-                  <Label className="text-sm">UC Storage Credential ID</Label>
+                <Field label="Role ARN" required>
                   <Input
-                    placeholder="uc-cred-id"
-                    value={credId}
-                    onChange={(e) => setCredId(e.target.value)}
+                    placeholder="arn:aws:iam::123456789012:role/duckhaven"
+                    value={config.role_arn}
+                    onChange={(e) => set("role_arn", e.target.value)}
+                    className="font-mono text-xs"
+                    autoFocus
+                  />
+                </Field>
+                <Field label="Region" required>
+                  <Input
+                    placeholder="us-east-1"
+                    value={config.region}
+                    onChange={(e) => set("region", e.target.value)}
                     className="font-mono text-xs"
                   />
-                </div>
-              </>
-            ) : (
+                </Field>
+                <Field label="External ID">
+                  <Input
+                    placeholder="dh-acme (confused-deputy guard)"
+                    value={config.external_id}
+                    onChange={(e) => set("external_id", e.target.value)}
+                    className="font-mono text-xs"
+                  />
+                </Field>
+                <Field label="Endpoint (S3-compatible only)">
+                  <Input
+                    placeholder="leave blank for AWS S3"
+                    value={config.endpoint}
+                    onChange={(e) => set("endpoint", e.target.value)}
+                    className="font-mono text-xs"
+                  />
+                </Field>
+                <Checkbox
+                  label="Path-style access"
+                  checked={config.path_style_access}
+                  onChange={(v) => set("path_style_access", v)}
+                />
+              </div>
+            )}
+
+            {kind === "adls_gen2" && (
+              <div className="space-y-3">
+                <p className="text-sm text-text-secondary">
+                  Polaris vends a scoped SAS token through the consented Entra
+                  app. No account key is stored.
+                </p>
+                <Field label="Tenant ID" required>
+                  <Input
+                    placeholder="00000000-0000-0000-0000-000000000000"
+                    value={config.tenant_id}
+                    onChange={(e) => set("tenant_id", e.target.value)}
+                    className="font-mono text-xs"
+                    autoFocus
+                  />
+                </Field>
+                <Field label="Multi-tenant app name">
+                  <Input
+                    placeholder="polaris-storage-app"
+                    value={config.multi_tenant_app_name}
+                    onChange={(e) =>
+                      set("multi_tenant_app_name", e.target.value)
+                    }
+                    className="font-mono text-xs"
+                  />
+                </Field>
+                <Field label="Consent URL">
+                  <Input
+                    placeholder="https://login.microsoftonline.com/…"
+                    value={config.consent_url}
+                    onChange={(e) => set("consent_url", e.target.value)}
+                    className="font-mono text-xs"
+                  />
+                </Field>
+                <Checkbox
+                  label="Hierarchical namespace (ADLS Gen2 HNS)"
+                  checked={config.hierarchical}
+                  onChange={(v) => set("hierarchical", v)}
+                />
+              </div>
+            )}
+
+            {kind === "object_store" && (
               <p className="text-sm text-text-secondary">
                 No credential needed — object storage is the bundled MinIO
-                object store, which Polaris accesses with the stack's configured
-                credentials. The Root URI is a prefix label within that bucket.
+                object store, which Polaris accesses with the stack&apos;s
+                configured credentials. The Root URI is a prefix label within
+                that bucket.
               </p>
             )}
-            <div className="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-3 text-xs space-y-1">
-              <p className="font-medium text-text-primary">Summary</p>
-              <p>
-                <span className="text-text-secondary">Kind:</span>{" "}
-                {KIND_LABELS[kind]}
+
+            {create.isError && (
+              <p className="text-xs text-[var(--status-failed)]">
+                Registration failed. Check the config and try again.
               </p>
-              <p>
-                <span className="text-text-secondary">Name:</span> {name}
-              </p>
-              <p className="font-mono break-all">
-                <span className="text-text-secondary">URI:</span> {uri}
-              </p>
-            </div>
+            )}
+
             <DialogFooter className="gap-2">
               <Button variant="outline" onClick={() => setStep(2)}>
                 Back
               </Button>
-              <Button onClick={handleFinish} disabled={create.isPending}>
+              <Button
+                onClick={handleFinish}
+                disabled={create.isPending || !configComplete(kind, config)}
+              >
                 {create.isPending ? "Registering…" : "Register backend"}
+              </Button>
+            </DialogFooter>
+          </div>
+        )}
+
+        {step === 4 && (
+          <div className="space-y-4 py-2">
+            <div className="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-3 text-sm space-y-2">
+              <p className="font-medium text-text-primary">
+                {KIND_LABELS[kind]} backend “{name}” is registered.
+              </p>
+              {isExternal ? (
+                <p className="text-text-secondary text-xs">
+                  {kind === "s3"
+                    ? "Make sure the IAM role’s trust policy lets the Polaris principal assume it (with the external id, if set), then run Test access to confirm credential vending reaches the bucket."
+                    : "Grant admin consent to the Entra app and assign it the Storage Blob Data Contributor role on the account, then run Test access to confirm credential vending reaches the container."}
+                </p>
+              ) : (
+                <p className="text-text-secondary text-xs">
+                  Ready to use — workspaces can create catalogs on it.
+                </p>
+              )}
+            </div>
+            <DialogFooter>
+              <Button
+                onClick={() => {
+                  reset();
+                  onClose();
+                }}
+              >
+                Done
               </Button>
             </DialogFooter>
           </div>
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+function Field({
+  label,
+  required,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-sm">
+        {label}
+        {required && (
+          <span className="ml-1 text-[var(--status-failed)]">*</span>
+        )}
+      </Label>
+      {children}
+    </div>
+  );
+}
+
+function Checkbox({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <label className="flex items-center gap-2 text-sm text-text-secondary">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="size-3.5 accent-[var(--brand-slate-blue)]"
+      />
+      {label}
+    </label>
+  );
+}
+
+function HealthCell({ id, kind }: { id: string; kind: BackendKind }) {
+  const check = useCheckStorageBackendHealth();
+  const [result, setResult] = useState<StorageBackendHealth | null>(null);
+
+  if (kind === "object_store") {
+    return <span className="text-xs text-text-tertiary">—</span>;
+  }
+
+  async function run() {
+    try {
+      setResult(await check.mutateAsync(id));
+    } catch {
+      setResult({ valid: false, detail: "Health check request failed." });
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-6 text-2xs"
+        onClick={run}
+        disabled={check.isPending}
+      >
+        {check.isPending ? "Testing…" : "Test access"}
+      </Button>
+      {result && (
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span>
+                {result.valid ? (
+                  <ShieldCheck className="size-4 text-[var(--status-success)]" />
+                ) : (
+                  <ShieldX className="size-4 text-[var(--status-failed)]" />
+                )}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-xs">
+              {result.detail}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )}
+    </div>
   );
 }
 
@@ -269,7 +525,7 @@ export function StorageBackendsPage() {
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-[var(--bg-surface)] z-10">
               <tr className="border-b border-[var(--border-subtle)]">
-                {["Kind", "Name", "Root URI", "UC cred", "In use", ""].map(
+                {["Kind", "Name", "Root URI", "Access", "In use", ""].map(
                   (h) => (
                     <th
                       key={h}
@@ -301,20 +557,7 @@ export function StorageBackendsPage() {
                     {b.root_uri}
                   </td>
                   <td className="px-4 py-2">
-                    {b.uc_storage_credential_id ? (
-                      <span
-                        className={cn(
-                          "text-xs",
-                          b.uc_credential_valid
-                            ? "text-[var(--status-success)]"
-                            : "text-[var(--status-failed)]",
-                        )}
-                      >
-                        {b.uc_credential_valid ? "✓ valid" : "✗ invalid"}
-                      </span>
-                    ) : (
-                      <span className="text-xs text-text-tertiary">—</span>
-                    )}
+                    <HealthCell id={b.id} kind={b.kind} />
                   </td>
                   <td className="px-4 py-2 text-xs text-text-secondary font-tabular">
                     {b.workspace_count} ws

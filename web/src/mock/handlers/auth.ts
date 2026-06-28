@@ -18,8 +18,7 @@ export const authHandlers = [
     return HttpResponse.json({
       local: true,
       ldap: false,
-      oidc: false,
-      oidc_label: "SSO",
+      oidc_providers: [],
     });
   }),
 ];

@@ -13,9 +13,9 @@
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": true,
       "redirectUris": [
-        "http://test/api/auth/oidc/callback",
-        "http://localhost:8000/api/auth/oidc/callback",
-        "http://127.0.0.1:8000/api/auth/oidc/callback"
+        "http://test/api/auth/oidc/sso/callback",
+        "http://localhost:8000/api/auth/oidc/sso/callback",
+        "http://127.0.0.1:8000/api/auth/oidc/sso/callback"
       ],
       "webOrigins": ["+"],
       "protocolMappers": [

@@ -79,20 +79,25 @@ describe('LoginPage', () => {
     expect(alert).not.toHaveTextContent(/try any email and password/i)
   })
 
-  it('shows the SSO button when OIDC is enabled', async () => {
+  it('renders a button per configured OIDC provider', async () => {
     server.use(
       http.get('/api/auth/methods', () =>
         HttpResponse.json({
           local: true,
           ldap: false,
-          oidc: true,
-          oidc_label: 'Okta',
+          oidc_providers: [
+            { id: 'entra', label: 'Microsoft' },
+            { id: 'google', label: 'Google' },
+          ],
         }),
       ),
     )
     renderWithProviders({ initialRoute: '/login' })
     expect(
-      await screen.findByRole('button', { name: /sign in with okta/i }),
+      await screen.findByRole('button', { name: /sign in with microsoft/i }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /sign in with google/i }),
     ).toBeInTheDocument()
   })
 

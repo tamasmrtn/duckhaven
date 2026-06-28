@@ -100,14 +100,13 @@ async def test_oidc_callback_redirects_to_error_when_idp_down(app_client, monkey
         "oidc_server_metadata_url",
         "http://127.0.0.1:1/.well-known/openid-configuration",
     )
-    from api.services.oidc import OIDC_CLIENT_NAME, oauth, register_oidc
+    monkeypatch.setattr(settings, "oidc_client_id", "duckhaven-api")
+    from api.services.oidc import register_oidc, reset_oidc_clients
 
-    if hasattr(oauth, "_registry"):
-        oauth._registry.pop(OIDC_CLIENT_NAME, None)
-    if hasattr(oauth, "_clients"):
-        oauth._clients.pop(OIDC_CLIENT_NAME, None)
+    reset_oidc_clients()
     register_oidc()
 
-    resp = await app_client.get("/auth/oidc/callback", follow_redirects=False)
+    # The single-provider fields synthesize a provider with id "sso".
+    resp = await app_client.get("/auth/oidc/sso/callback", follow_redirects=False)
     assert resp.status_code == 303
     assert resp.headers["location"] == "/login?error=sso"

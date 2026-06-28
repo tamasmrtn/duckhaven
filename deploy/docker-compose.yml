@@ -109,6 +109,10 @@ services:
       AZURE_TENANT_ID: ${AZURE_TENANT_ID:-}
       AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-}
       AZURE_CLIENT_SECRET: ${AZURE_CLIENT_SECRET:-}
+      # Override the STS endpoint Polaris uses to assume external S3 roles. Empty
+      # for real AWS; set to a private/emulated STS (e.g. LocalStack, GovCloud,
+      # a VPC STS endpoint) for testing or non-public deployments.
+      AWS_ENDPOINT_URL_STS: ${AWS_ENDPOINT_URL_STS:-}
       polaris.readiness.ignore-severe-issues: "true"
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8182/q/health"]

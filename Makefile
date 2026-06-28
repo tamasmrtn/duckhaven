@@ -140,11 +140,14 @@ polaris-dev-down:
 # validated against a real Azure account — the agent/api tests skip without it.
 LOCALSTACK_BUCKET ?= dh-external-test
 LOCALSTACK_ROLE ?= dh-polaris-role
+# Pin a community image: localstack/localstack:latest now refuses to start
+# without a (paid) license token. 3.8.x runs S3/STS/IAM free, no token.
+LOCALSTACK_IMAGE_TAG ?= 3.8.1
 
 localstack-dev:
 	docker rm -f dh-localstack-dev >/dev/null 2>&1 || true
 	docker run -d --name dh-localstack-dev -p 4566:4566 \
-		-e SERVICES=s3,sts,iam localstack/localstack:latest
+		-e SERVICES=s3,sts,iam localstack/localstack:$(LOCALSTACK_IMAGE_TAG)
 	@echo "Waiting for LocalStack..."
 	@for i in $$(seq 1 30); do \
 		curl -sf http://localhost:4566/_localstack/health >/dev/null 2>&1 && break; sleep 1; \

@@ -18,6 +18,11 @@ class Agent(Base):
     result_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
     result_port: Mapped[int | None] = mapped_column(nullable=True)
     last_ping_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Which API replica currently holds this agent's WebSocket, and the internal
+    # URL peers use to forward dispatch frames to it. Both NULL when the agent is
+    # not connected anywhere. Set on registration, cleared on disconnect.
+    owner_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    owner_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

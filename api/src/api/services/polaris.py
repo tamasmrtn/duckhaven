@@ -182,6 +182,12 @@ class PolarisClient:
     async def aclose(self) -> None:
         await self._http.aclose()
 
+    async def ping(self) -> None:
+        """Readiness check: confirm Polaris is reachable and our client
+        credentials still mint a token. The token is cached, so this is cheap to
+        call on every readiness probe."""
+        await self._access_token()
+
     async def __aenter__(self) -> Self:
         return self
 

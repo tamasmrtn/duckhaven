@@ -35,7 +35,7 @@ class ConnectionManager:
     def touch(self, agent_id: uuid.UUID) -> None:
         conn = self._connections.get(str(agent_id))
         if conn:
-            conn.last_ping_at = datetime.utcnow()
+            conn.last_ping_at = datetime.now(UTC)
 
     def connected_ids(self) -> set[str]:
         return set(self._connections.keys())
@@ -58,6 +58,19 @@ class ConnectionManager:
         except Exception:
             self.unregister(agent_id)
             return False
+
+    async def close(self, agent_id: uuid.UUID, code: int = 1012) -> bool:
+        """Close a locally-held socket (1012 = Service Restart) so the agent
+        reconnects elsewhere. Used by force-disconnect and graceful drain."""
+        conn = self._connections.get(str(agent_id))
+        if conn is None:
+            return False
+        try:
+            await conn.ws.close(code=code)
+        except Exception:
+            pass
+        self.unregister(agent_id)
+        return True
 
 
 registry = ConnectionManager()

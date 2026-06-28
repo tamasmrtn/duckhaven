@@ -6,7 +6,7 @@ from api.deps import get_current_user, get_db
 from api.models.agent import Agent
 from api.models.user import User
 from api.schemas.agent import AgentCapabilitiesOut, AgentOut
-from api.services.agent_registry import registry
+from api.services.agent_dispatch import connected_agent_ids
 
 router = APIRouter(prefix="/agents")
 
@@ -18,7 +18,7 @@ async def list_agents(
 ) -> list[AgentOut]:
     result = await db.execute(select(Agent))
     agents = result.scalars().all()
-    connected = registry.connected_ids()
+    connected = await connected_agent_ids(db)
     out = []
     for agent in agents:
         caps = None

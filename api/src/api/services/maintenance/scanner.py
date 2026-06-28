@@ -11,7 +11,9 @@ coverage via a persisted cursor, and graceful skips when no agent is connected.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -28,6 +30,11 @@ from api.services.polaris import PolarisClient, PolarisError
 from api.services.query import dispatch_query, pick_agent_for
 
 logger = logging.getLogger(__name__)
+
+# Cluster-wide advisory-lock key electing the single scanner leader each tick.
+# Arbitrary constant ('dhsc'); only its uniqueness against other advisory locks
+# in this database matters.
+_SCANNER_LOCK_KEY = 0x64687363
 
 _FREQUENCY_WINDOW = {
     "hourly": timedelta(hours=1),
@@ -213,6 +220,49 @@ async def _dispatch_probe(
     )
 
 
+@contextlib.asynccontextmanager
+async def scan_leadership(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> AsyncIterator[bool]:
+    """Yield ``True`` iff this replica holds the cluster-wide scanner lock.
+
+    Uses a Postgres session-level advisory lock so that, with multiple API
+    replicas all running the scanner, exactly one runs a cycle per tick. The lock
+    is held on this session's connection for the duration of the ``with`` block
+    (covering the cycle that runs on its own connections) and released after. On
+    backends without advisory locks (SQLite in unit tests) leadership is always
+    granted, preserving single-process behavior.
+    """
+    async with session_factory() as db:
+        if db.bind.dialect.name != "postgresql":
+            yield True
+            return
+        got = bool(
+            (
+                await db.execute(
+                    sa.text("SELECT pg_try_advisory_lock(:k)"), {"k": _SCANNER_LOCK_KEY}
+                )
+            ).scalar()
+        )
+        try:
+            yield got
+        finally:
+            if got:
+                await db.execute(sa.text("SELECT pg_advisory_unlock(:k)"), {"k": _SCANNER_LOCK_KEY})
+                await db.commit()
+
+
+async def run_tick(
+    session_factory: async_sessionmaker[AsyncSession],
+    polaris: PolarisClient,
+) -> dict[str, Any]:
+    """One scheduler tick: run a cycle only if this replica wins leadership."""
+    async with scan_leadership(session_factory) as is_leader:
+        if not is_leader:
+            return {"status": "standby"}
+        return await run_cycle(session_factory, polaris)
+
+
 async def scanner_loop(
     session_factory: async_sessionmaker[AsyncSession],
     polaris: PolarisClient,
@@ -220,12 +270,13 @@ async def scanner_loop(
     """Background loop: wake on a fixed tick and run a cycle when one is due.
 
     Mirrors the agent's retention sweep loop. Each cycle is wrapped so one bad
-    run never kills the loop.
+    run never kills the loop. Leadership is elected per tick so it is safe to run
+    this loop on every replica.
     """
     logger.info("Maintenance scanner started (tick %.0fs)", settings.maintenance_scan_tick_s)
     while True:
         try:
-            result = await run_cycle(session_factory, polaris)
+            result = await run_tick(session_factory, polaris)
             if result.get("status") == "ran":
                 logger.info("Maintenance scan: %s", result)
         except Exception as exc:  # noqa: BLE001 - the loop must survive any cycle failure

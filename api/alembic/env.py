@@ -1,6 +1,7 @@
 import asyncio
 from logging.config import fileConfig
 
+import sqlalchemy as sa
 from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
@@ -9,6 +10,12 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 import api.models  # noqa: F401 — registers all models with Base
 from api.config import settings
 from api.db.base import Base
+
+# Transaction-level advisory lock that serializes concurrent `alembic upgrade`
+# runs across API replicas (every replica migrates on boot). The first runner
+# holds it for the migration transaction; others block here and then find the DB
+# already at head. Auto-released on commit. Arbitrary unique key ('dhmg').
+_MIGRATION_LOCK_KEY = 0x64686D67
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)
@@ -34,6 +41,11 @@ def run_migrations_offline() -> None:
 def do_run_migrations(connection: Connection) -> None:
     context.configure(connection=connection, target_metadata=target_metadata)
     with context.begin_transaction():
+        # Serialize concurrent replicas: only one runs migrations at a time.
+        if connection.dialect.name == "postgresql":
+            connection.execute(
+                sa.text("SELECT pg_advisory_xact_lock(:k)"), {"k": _MIGRATION_LOCK_KEY}
+            )
         context.run_migrations()
 
 

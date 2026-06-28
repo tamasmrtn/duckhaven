@@ -12,12 +12,17 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from api.deps import get_session_factory
 from api.models.agent import Agent
 from api.models.user import Credential
+from api.services.agent_dispatch import claim_agent_owner, release_agent_owner
 from api.services.agent_registry import registry
 from duckhaven_shared.protocol import Frame, FrameType
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# How often a heartbeat refreshes the DB ``last_ping_at`` that proves cluster-wide
+# presence. Heartbeats arrive far more often; throttling avoids a write per beat.
+_PRESENCE_REFRESH_S = 30.0
 
 
 @router.websocket("/agents/connect")
@@ -112,6 +117,11 @@ async def agent_connect(
         )
 
         registry.register(agent_id, ws)
+        # Record this replica as the socket's owner so queries created on any
+        # replica can route dispatch frames here.
+        async with session_factory() as db:
+            await claim_agent_owner(db, agent_id)
+        last_presence_refresh = datetime.now(tz=UTC)
 
         async for raw_msg in ws.iter_text():
             # Each frame is isolated: a per-frame session keeps no pooled
@@ -123,6 +133,16 @@ async def agent_connect(
 
                 if msg_frame.type == FrameType.HEARTBEAT:
                     registry.touch(agent_id)
+                    now = datetime.now(tz=UTC)
+                    if (now - last_presence_refresh).total_seconds() >= _PRESENCE_REFRESH_S:
+                        async with session_factory() as db:
+                            await db.execute(
+                                sa.update(Agent)
+                                .where(Agent.id == agent_id)
+                                .values(last_ping_at=now)
+                            )
+                            await db.commit()
+                        last_presence_refresh = now
                     await ws.send_text(Frame(type=FrameType.HEARTBEAT).model_dump_json())
 
                 elif msg_frame.type == FrameType.AGENT_STATUS:
@@ -142,6 +162,24 @@ async def agent_connect(
                     # High-frequency live utilization: kept in an in-memory ring
                     # buffer only, never persisted.
                     registry.record_metrics(agent_id, msg_frame.payload)
+                    # Metrics arrive every couple of seconds, so they're a
+                    # reliable liveness signal: refresh the cluster-wide presence
+                    # watermark (throttled) so peer replicas see this agent as
+                    # connected and can route dispatch frames to this replica.
+                    # Without this, last_ping_at is set only at registration and
+                    # goes stale after the presence TTL, breaking cross-replica
+                    # dispatch from any non-owning replica.
+                    registry.touch(agent_id)
+                    now = datetime.now(tz=UTC)
+                    if (now - last_presence_refresh).total_seconds() >= _PRESENCE_REFRESH_S:
+                        async with session_factory() as db:
+                            await db.execute(
+                                sa.update(Agent)
+                                .where(Agent.id == agent_id)
+                                .values(last_ping_at=now)
+                            )
+                            await db.commit()
+                        last_presence_refresh = now
 
                 elif msg_frame.type in (FrameType.QUERY_DONE, FrameType.QUERY_PROGRESS):
                     from api.services.query import handle_agent_frame
@@ -161,7 +199,4 @@ async def agent_connect(
         if agent_id:
             registry.unregister(agent_id)
             async with session_factory() as db:
-                await db.execute(
-                    sa.update(Agent).where(Agent.id == agent_id).values(status="unavailable")
-                )
-                await db.commit()
+                await release_agent_owner(db, agent_id)

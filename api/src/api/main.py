@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -19,6 +20,7 @@ from api.routers import (
     auth,
     catalogs,
     health,
+    internal,
     maintenance,
     oidc,
     queries,
@@ -30,6 +32,7 @@ from api.routers.admin import agents as admin_agents
 from api.routers.admin import maintenance as admin_maintenance
 from api.routers.admin import storage as admin_storage
 from api.routers.admin import users as admin_users
+from api.services.agent_dispatch import drain_local_agents
 from api.services.bootstrap import seed_agent_bootstrap_token
 from api.services.oidc import register_oidc
 from api.services.polaris import (
@@ -43,6 +46,15 @@ from api.services.rbac import seed_roles
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # uvicorn configures only its own loggers and leaves the root logger without
+    # a handler, so module-level logs (scanner leadership, cross-replica dispatch
+    # warnings, Polaris errors) would otherwise be dropped. Give the root logger a
+    # handler; uvicorn's loggers don't propagate, so this won't double-log access.
+    logging.basicConfig(
+        level=settings.log_level,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+
     # Migrations have already run (api-entrypoint.sh) by the time the app
     # starts, so the credentials table exists. Seed before serving traffic so
     # the bundled agent can register the moment /api/healthz reports ready.
@@ -53,6 +65,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
 
     register_oidc()
+
+    # Readiness gate: flipped on at the end of startup, off again at shutdown so a
+    # load balancer drains this replica before it stops.
+    app.state.draining = False
 
     app.state.polaris_client = PolarisClient(
         base_url=settings.polaris_base_url,
@@ -73,6 +89,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        # Stop reporting ready so the load balancer routes new work elsewhere,
+        # then hand our agents to other replicas before tearing down.
+        app.state.draining = True
+        await drain_local_agents(async_session_factory)
         if scanner_task is not None:
             scanner_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -163,6 +183,8 @@ async def _outer_lifespan(_: FastAPI) -> AsyncIterator[None]:
 # REST API under /api, and the built SPA at / (only present in the image).
 app = FastAPI(lifespan=_outer_lifespan)
 app.include_router(agents_ws.router, tags=["agents"])
+# Network-private inter-replica dispatch; never exposed past the internal network.
+app.include_router(internal.router)
 app.mount("/api", api_app)
 if settings.static_dir.is_dir():
     app.mount("/", SPAStaticFiles(directory=settings.static_dir, html=True), name="ui")

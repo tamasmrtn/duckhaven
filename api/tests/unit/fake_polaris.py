@@ -178,3 +178,6 @@ class FakePolaris:
 
     async def aclose(self) -> None:
         return None
+
+    async def ping(self) -> None:
+        return None

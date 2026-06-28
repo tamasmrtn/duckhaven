@@ -18,7 +18,11 @@ from api.schemas.agent import (
     BootstrapTokenOut,
     MetricsSampleOut,
 )
-from api.services.agent_registry import registry
+from api.services.agent_dispatch import (
+    connected_agent_ids,
+    disconnect_agent,
+    gather_agent_metrics,
+)
 from api.services.permissions import Permission
 
 router = APIRouter(prefix="/agents")
@@ -33,7 +37,7 @@ async def list_agents(
 ) -> list[AgentOut]:
     result = await db.execute(select(Agent))
     agents = result.scalars().all()
-    connected = registry.connected_ids()
+    connected = await connected_agent_ids(db)
     out = []
     for agent in agents:
         caps = None
@@ -61,7 +65,7 @@ async def list_metrics(
     db: AsyncSession = Depends(get_db),
 ) -> list[AgentMetricsOut]:
     """Recent live-utilization samples per connected agent (in-memory ring buffer)."""
-    buffers = registry.recent_metrics()
+    buffers = await gather_agent_metrics(db)
     if not buffers:
         return []
     ids = [uuid.UUID(aid) for aid in buffers]
@@ -138,4 +142,4 @@ async def revoke_agent(
     )
     await db.execute(sa.update(Agent).where(Agent.id == agent_id).values(status="unavailable"))
     await db.commit()
-    registry.unregister(agent_id)
+    await disconnect_agent(db, agent_id)

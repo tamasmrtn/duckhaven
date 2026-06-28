@@ -168,6 +168,61 @@ async def test_ws_metrics_sample_buffered_not_persisted(ws_client, db_engine):
         assert agent.capabilities is None  # metrics never touch the capabilities column
 
 
+async def test_ws_metrics_sample_refreshes_presence(ws_client, db_engine, monkeypatch):
+    """A METRICS_SAMPLE advances last_ping_at so peer replicas keep seeing the
+    agent connected. Regression: the agent never sends proactive HEARTBEATs (it
+    only echoes server ones), so without refreshing presence on the metrics frame
+    last_ping_at went stale after the TTL and cross-replica dispatch broke."""
+    import asyncio
+    from datetime import datetime, timedelta
+
+    from httpx import AsyncClient
+    from httpx_ws import aconnect_ws
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.models.user import Credential
+    from api.routers import agents_ws
+
+    # Refresh on every metrics frame instead of throttling, so the test is fast.
+    monkeypatch.setattr(agents_ws, "_PRESENCE_REFRESH_S", 0.0)
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    token = "dh_boot_presence321"
+    async with factory() as db:
+        db.add(
+            Credential(
+                user_id=None,
+                agent_id=None,
+                kind="agent_bootstrap",
+                token=token,
+                expires_at=datetime.now(tz=UTC) + timedelta(hours=1),
+            )
+        )
+        await db.commit()
+
+    sample = {"cpu_percent": 1.0, "memory_percent": 2.0, "sampled_at": "2026-06-05T00:00:00Z"}
+    async with AsyncClient(transport=ws_client, base_url="http://test") as c:
+        async with aconnect_ws("http://test/agents/connect", c) as ws:
+            await ws.send_text(
+                json.dumps(
+                    {"type": "auth", "payload": {"token": token, "name": "p", "result_port": 8001}}
+                )
+            )
+            raw = await asyncio.wait_for(ws.receive_text(), timeout=5.0)
+            agent_id = uuid.UUID(json.loads(raw)["payload"]["agent_id"])
+
+            async with factory() as db:
+                before = (await db.get(Agent, agent_id)).last_ping_at
+            await asyncio.sleep(0.01)
+            await ws.send_text(json.dumps({"type": "metrics_sample", "payload": sample}))
+            await asyncio.sleep(0.1)
+            async with factory() as db:
+                after = (await db.get(Agent, agent_id)).last_ping_at
+
+    assert before is not None and after is not None
+    assert after > before
+
+
 async def test_ws_valid_bootstrap_exchange(ws_client, db_engine):
     import asyncio
     from datetime import datetime, timedelta

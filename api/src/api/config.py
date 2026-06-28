@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "postgresql+asyncpg://duckhaven:duckhaven@localhost:5432/duckhaven"
+    # Root log level. uvicorn configures only its own loggers (and leaves the root
+    # logger handler-less), so without this the API's module loggers — scanner
+    # leadership, cross-replica dispatch warnings, Polaris errors — are dropped.
+    log_level: str = "INFO"
     # Apache Polaris (Iceberg REST catalog). The API authenticates to Polaris
     # with a service-principal client id/secret to create catalogs, namespaces
     # and tables. Dev defaults match the Polaris bootstrap root principal.
@@ -72,11 +76,36 @@ class Settings(BaseSettings):
     # (off/hourly/daily) is the runtime policy; this flag just gates the loop
     # itself, and the tick is how often the loop wakes to check whether a scan
     # is due. Single-scanner assumption: run one API replica with this enabled.
+    # Coordinated across replicas by a Postgres advisory lock (leader election),
+    # so it is safe to leave enabled on every replica: only the lock holder runs
+    # a scan cycle each tick. This flag still gates whether *this* replica
+    # participates at all.
     maintenance_scanner_enabled: bool = True
     maintenance_scan_tick_s: float = 900.0
     # How often the expensive orphan/glob tier runs (cheap metadata runs every
     # due cycle); seconds. Default weekly.
     maintenance_deep_scan_interval_s: float = 7 * 86400.0
+
+    # ── High availability (multi-replica control plane) ───────────────────────
+    # Identity of this API replica and the URL peers use to reach it for
+    # inter-replica agent-dispatch forwarding. The defaults make a single-replica
+    # deploy forward to itself, i.e. behave exactly as a single node.
+    replica_id: str = "api"
+    replica_internal_url: str = "http://localhost:8000"
+    # Shared secret guarding the network-private /internal/* forwarding endpoints.
+    # When unset, peer forwarding is disabled (single-replica mode); an agent on
+    # another replica is then simply treated as unreachable.
+    internal_api_secret: str | None = None
+    # An agent counts as connected cluster-wide if it owns a replica AND has
+    # pinged within this window. The TTL covers a replica that died without
+    # clearing its ownership rows.
+    agent_presence_ttl_s: float = 90.0
+    # SQLAlchemy connection pool. pool_pre_ping discards connections to a failed
+    # Postgres primary after failover so the app reconnects transparently; the
+    # sizing bounds per-replica connections against the Postgres max.
+    db_pool_size: int = 5
+    db_max_overflow: int = 10
+    db_pool_recycle_s: int = 1800
 
     # ── OIDC SSO (Part A) ─────────────────────────────────────────────────────
     # When enabled, the login page shows a "Sign in with SSO" button and the

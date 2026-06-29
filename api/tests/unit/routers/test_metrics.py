@@ -9,6 +9,7 @@ absolutely after a scrape.
 import uuid
 from datetime import UTC, datetime
 
+import httpx
 import pytest
 from httpx import AsyncClient
 from prometheus_client import REGISTRY
@@ -22,6 +23,7 @@ from api.models.maintenance import MaintenancePolicy, MaintenanceRecommendation
 from api.models.query import Query
 from api.services import query as query_service
 from api.services.agent_registry import registry
+from api.services.polaris import PolarisClient
 from duckhaven_shared.protocol import Frame, FrameType
 
 RID = settings.replica_id
@@ -223,3 +225,156 @@ async def test_http_metrics_middleware(client: AsyncClient):
         {"replica_id": RID, "method": "GET", "route": "/metrics", "status": "200"},
     )
     assert not_counted is None
+
+
+# ── Queue admission signals ───────────────────────────────────────────────────
+
+
+async def test_queue_wait_recorded_on_first_running_transition(db_session):
+    before = _value("duckhaven_query_queue_wait_seconds_count", {"replica_id": RID}) or 0
+    query = await _make_query(db_session, origin=None)
+    # Force the query back to "queued" so the PROGRESS frame is the first transition.
+    query.status = "queued"
+    await db_session.commit()
+    await query_service.handle_agent_frame(
+        db_session,
+        Frame(type=FrameType.QUERY_PROGRESS, payload={"query_id": str(query.id), "stage": "scan"}),
+    )
+    assert _value("duckhaven_query_queue_wait_seconds_count", {"replica_id": RID}) == before + 1
+
+
+async def test_queue_rejection_counted(db_session):
+    before = (
+        _value("duckhaven_query_queue_rejected_total", {"replica_id": RID, "reason": "queue_full"})
+        or 0
+    )
+    query = await _make_query(db_session, origin=None)
+    await query_service.handle_agent_frame(
+        db_session,
+        Frame(
+            type=FrameType.QUERY_DONE,
+            payload={"query_id": str(query.id), "status": "failed", "error": "queue full"},
+        ),
+    )
+    after = _value(
+        "duckhaven_query_queue_rejected_total", {"replica_id": RID, "reason": "queue_full"}
+    )
+    assert after == before + 1
+
+
+async def test_ordinary_failure_is_not_a_queue_rejection(db_session):
+    full = (
+        _value("duckhaven_query_queue_rejected_total", {"replica_id": RID, "reason": "queue_full"})
+        or 0
+    )
+    timeout = (
+        _value(
+            "duckhaven_query_queue_rejected_total", {"replica_id": RID, "reason": "queued_timeout"}
+        )
+        or 0
+    )
+    query = await _make_query(db_session, origin=None)
+    await query_service.handle_agent_frame(
+        db_session,
+        Frame(
+            type=FrameType.QUERY_DONE,
+            payload={
+                "query_id": str(query.id),
+                "status": "failed",
+                "error": "Catalog Error: no such table",
+            },
+        ),
+    )
+    assert (
+        _value("duckhaven_query_queue_rejected_total", {"replica_id": RID, "reason": "queue_full"})
+        or 0
+    ) == full
+    assert (
+        _value(
+            "duckhaven_query_queue_rejected_total", {"replica_id": RID, "reason": "queued_timeout"}
+        )
+        or 0
+    ) == timeout
+
+
+# ── Polaris dependency health ─────────────────────────────────────────────────
+
+
+def _polaris_client(handler) -> PolarisClient:
+    transport = httpx.MockTransport(handler)
+    http = httpx.AsyncClient(
+        transport=transport, base_url="http://polaris", headers={"Polaris-Realm": "R"}
+    )
+    return PolarisClient(
+        base_url="http://polaris", realm="R", client_id="root", client_secret="s", http=http
+    )
+
+
+async def test_polaris_request_metrics_on_success():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/oauth/tokens"):
+            return httpx.Response(200, json={"access_token": "t", "expires_in": 3600})
+        return httpx.Response(200, json={"name": "curated"})
+
+    before = (
+        _value(
+            "duckhaven_polaris_requests_total",
+            {"replica_id": RID, "operation": "get_catalog", "status": "200"},
+        )
+        or 0
+    )
+    client = _polaris_client(handler)
+    try:
+        await client.get_catalog("curated")
+    finally:
+        await client.aclose()
+    assert (
+        _value(
+            "duckhaven_polaris_requests_total",
+            {"replica_id": RID, "operation": "get_catalog", "status": "200"},
+        )
+        == before + 1
+    )
+    assert (
+        _value(
+            "duckhaven_polaris_request_duration_seconds_count",
+            {"replica_id": RID, "operation": "get_catalog"},
+        )
+        is not None
+    )
+    # The token fetch is recorded under its own operation label.
+    assert (
+        _value(
+            "duckhaven_polaris_requests_total",
+            {"replica_id": RID, "operation": "get_token", "status": "200"},
+        )
+        is not None
+    )
+
+
+async def test_polaris_request_metrics_on_transport_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/oauth/tokens"):
+            return httpx.Response(200, json={"access_token": "t", "expires_in": 3600})
+        raise httpx.ConnectError("boom")
+
+    before = (
+        _value(
+            "duckhaven_polaris_requests_total",
+            {"replica_id": RID, "operation": "get_catalog", "status": "error"},
+        )
+        or 0
+    )
+    client = _polaris_client(handler)
+    try:
+        with pytest.raises(httpx.ConnectError):
+            await client.get_catalog("curated")
+    finally:
+        await client.aclose()
+    assert (
+        _value(
+            "duckhaven_polaris_requests_total",
+            {"replica_id": RID, "operation": "get_catalog", "status": "error"},
+        )
+        == before + 1
+    )

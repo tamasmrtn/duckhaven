@@ -81,6 +81,32 @@ HTTP_DURATION = Histogram(
     ["replica_id", "method", "route"],
 )
 
+POLARIS_REQUESTS = Counter(
+    "duckhaven_polaris_requests",
+    "Requests issued to Apache Polaris (Iceberg REST + management APIs).",
+    ["replica_id", "operation", "status"],
+)
+POLARIS_DURATION = Histogram(
+    "duckhaven_polaris_request_duration_seconds",
+    "Latency of requests issued to Apache Polaris.",
+    ["replica_id", "operation"],
+)
+
+QUERY_QUEUE_WAIT = Histogram(
+    "duckhaven_query_queue_wait_seconds",
+    "Time a user query waited in the agent admission queue before running.",
+    ["replica_id"],
+    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60),
+)
+QUERY_QUEUE_REJECTED = Counter(
+    "duckhaven_query_queue_rejected",
+    "User queries rejected by agent admission control, by reason.",
+    ["replica_id", "reason"],
+)
+
+# Agent admission-reject error strings (see agent control/channel.py) -> reason label.
+_QUEUE_REJECT_REASONS = {"queue full": "queue_full", "queued timeout": "queued_timeout"}
+
 
 # ── Inline instrumentation helpers (called from the query service) ────────────
 
@@ -97,6 +123,27 @@ def record_query_completion(status: str, duration_ms: int | None, result_bytes: 
         QUERY_DURATION.labels(settings.replica_id).observe(duration_ms / 1000.0)
     if result_bytes is not None:
         QUERY_RESULT_BYTES.labels(settings.replica_id).observe(result_bytes)
+
+
+def record_query_queue_wait(seconds: float) -> None:
+    QUERY_QUEUE_WAIT.labels(settings.replica_id).observe(max(0.0, seconds))
+
+
+def record_query_queue_rejection(error: str | None) -> bool:
+    """Count a queue-admission rejection from a failed query's error text.
+
+    Returns True if the error matched a known admission-reject reason.
+    """
+    reason = _QUEUE_REJECT_REASONS.get((error or "").strip().lower())
+    if reason is None:
+        return False
+    QUERY_QUEUE_REJECTED.labels(settings.replica_id, reason).inc()
+    return True
+
+
+def record_polaris_request(operation: str, status: str, duration_s: float) -> None:
+    POLARIS_REQUESTS.labels(settings.replica_id, operation, status).inc()
+    POLARIS_DURATION.labels(settings.replica_id, operation).observe(duration_s)
 
 
 # ── Scanner leadership flag (set by the maintenance scanner loop) ─────────────

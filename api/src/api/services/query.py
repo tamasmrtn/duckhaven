@@ -12,7 +12,12 @@ import httpx
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.metrics import record_query_completion, record_query_submitted
+from api.metrics import (
+    record_query_completion,
+    record_query_queue_rejection,
+    record_query_queue_wait,
+    record_query_submitted,
+)
 from api.models.agent import Agent
 from api.models.catalog import Catalog
 from api.models.query import Query
@@ -100,6 +105,14 @@ async def handle_agent_frame(db: AsyncSession, frame: Frame) -> None:
     query_id = uuid.UUID(frame.payload["query_id"])
     if frame.type == FrameType.QUERY_PROGRESS:
         progress = {k: v for k, v in frame.payload.items() if k != "query_id"}
+        # First queued -> running transition: record how long the query waited in
+        # the agent's admission queue before it started executing.
+        query = await db.get(Query, query_id)
+        if query is not None and query.status == "queued" and query.origin is None:
+            started = query.started_at
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=UTC)
+            record_query_queue_wait((datetime.now(tz=UTC) - started).total_seconds())
         await db.execute(
             sa.update(Query)
             .where(Query.id == query_id)
@@ -131,6 +144,8 @@ async def handle_agent_frame(db: AsyncSession, frame: Frame) -> None:
                 frame.payload.get("duration_ms"),
                 frame.payload.get("result_bytes"),
             )
+            if status_val == "failed":
+                record_query_queue_rejection(frame.payload.get("error"))
         if status_val == "done":
             await _upsert_table_stats(db, query_id, frame)
             health = frame.payload.get("health")

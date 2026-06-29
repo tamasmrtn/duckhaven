@@ -12,6 +12,8 @@ export interface Query {
   user_id?: string | null;
   sql: string;
   status: QueryStatus;
+  // Tags non-interactive runs (e.g. "scheduled"); null/absent for user runs.
+  origin?: string | null;
   row_count: number | null;
   duration_ms: number | null;
   result_bytes: number | null;

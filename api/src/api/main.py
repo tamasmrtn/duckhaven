@@ -14,6 +14,7 @@ from starlette.types import Scope
 
 from api.config import settings
 from api.db.session import async_session_factory
+from api.metrics import PrometheusMiddleware
 from api.routers import (
     agents,
     agents_ws,
@@ -27,6 +28,9 @@ from api.routers import (
     schemas,
     setup,
     workspaces,
+)
+from api.routers import (
+    metrics as metrics_router,
 )
 from api.routers.admin import agents as admin_agents
 from api.routers.admin import maintenance as admin_maintenance
@@ -104,6 +108,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 # an origin with the SPA; owns the lifespan-managed PolarisClient state.
 api_app = FastAPI(title="duckhaven-api", lifespan=lifespan)
 
+# Record request count/latency by route template (skips the /metrics scrape).
+api_app.add_middleware(PrometheusMiddleware)
+
 api_app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -140,6 +147,7 @@ async def _polaris_error_handler(_: Request, exc: PolarisError) -> JSONResponse:
 
 
 api_app.include_router(health.router, tags=["health"])
+api_app.include_router(metrics_router.router, tags=["metrics"])
 api_app.include_router(setup.router)
 api_app.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_app.include_router(auth.me_router, tags=["auth"])

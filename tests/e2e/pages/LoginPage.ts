@@ -13,7 +13,9 @@ export class LoginPage {
     await this.goto();
     await this.page.getByRole("textbox", { name: "Email" }).fill(email);
     await this.page.getByRole("textbox", { name: "Password" }).fill(password);
-    await this.page.getByRole("button", { name: "Sign in" }).click();
+    // Exact match so a configured OIDC provider's "Sign in with <IdP>" button
+    // does not also match the local sign-in button.
+    await this.page.getByRole("button", { name: "Sign in", exact: true }).click();
   }
 
   async loginAsAdmin(): Promise<void> {

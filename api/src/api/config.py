@@ -107,6 +107,11 @@ class Settings(BaseSettings):
     db_max_overflow: int = 10
     db_pool_recycle_s: int = 1800
 
+    # Prometheus metrics exposition at GET /api/metrics. Unauthenticated like the
+    # health endpoints (Prometheus scrapers carry no session cookie); keep it on
+    # the internal network. Set false to remove the endpoint entirely.
+    metrics_enabled: bool = True
+
     # ── OIDC SSO (Part A) ─────────────────────────────────────────────────────
     # When enabled, the login page shows a "Sign in with SSO" button and the
     # /auth/oidc/* endpoints are live. Local accounts keep working regardless so

@@ -25,6 +25,7 @@ from api.routers import (
     maintenance,
     oidc,
     queries,
+    schedules,
     schemas,
     setup,
     workspaces,
@@ -90,6 +91,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         scanner_task = asyncio.create_task(
             scanner_loop(async_session_factory, app.state.polaris_client)
         )
+
+    scheduler_task: asyncio.Task | None = None
+    if settings.scheduler_enabled:
+        from api.services.scheduler.scanner import scheduler_loop
+
+        scheduler_task = asyncio.create_task(scheduler_loop(async_session_factory))
     try:
         yield
     finally:
@@ -97,10 +104,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # then hand our agents to other replicas before tearing down.
         app.state.draining = True
         await drain_local_agents(async_session_factory)
-        if scanner_task is not None:
-            scanner_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await scanner_task
+        for task in (scanner_task, scheduler_task):
+            if task is not None:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
         await app.state.polaris_client.aclose()
 
 
@@ -156,6 +164,7 @@ api_app.include_router(workspaces.router, tags=["workspaces"])
 api_app.include_router(catalogs.router, tags=["catalog"])
 api_app.include_router(schemas.router, tags=["catalog"])
 api_app.include_router(queries.router, tags=["queries"])
+api_app.include_router(schedules.router, tags=["schedules"])
 api_app.include_router(agents.router, tags=["agents"])
 api_app.include_router(maintenance.router, tags=["maintenance"])
 api_app.include_router(admin_agents.router, prefix="/admin", tags=["admin"])

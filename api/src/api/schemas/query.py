@@ -26,6 +26,8 @@ class QueryOut(BaseModel):
     user_id: uuid.UUID | None = None
     sql: str
     status: str
+    # Tags non-interactive runs (e.g. "scheduled") so the UI can label them.
+    origin: str | None = None
     row_count: int | None
     duration_ms: int | None
     result_bytes: int | None = None
@@ -90,3 +92,34 @@ class SavedQueryOut(BaseModel):
     created_by_name: str | None = None
     created_at: datetime
     last_run_at: datetime | None
+
+
+class ScheduleCreate(BaseModel):
+    # v1 only supports "saved_query"; kept explicit as the extension seam.
+    job_type: str = "saved_query"
+    saved_query_id: uuid.UUID
+    agent_id: uuid.UUID | None = None
+    cron: str
+    enabled: bool = True
+
+
+class ScheduleUpdate(BaseModel):
+    cron: str | None = None
+    enabled: bool | None = None
+    agent_id: uuid.UUID | None = None
+
+
+class ScheduleOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    workspace_id: uuid.UUID
+    job_type: str
+    saved_query_id: uuid.UUID | None
+    agent_id: uuid.UUID | None
+    cron: str
+    enabled: bool
+    next_run_at: datetime | None
+    last_run_at: datetime | None
+    last_run_query_id: uuid.UUID | None
+    created_at: datetime

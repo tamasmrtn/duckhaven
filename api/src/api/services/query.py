@@ -12,6 +12,7 @@ import httpx
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.metrics import record_query_completion, record_query_submitted
 from api.models.agent import Agent
 from api.models.catalog import Catalog
 from api.models.query import Query
@@ -90,6 +91,8 @@ async def dispatch_query(
         raise ValueError("Agent not connected")
     # Status stays "queued" until the agent admits the query and emits
     # QUERY_PROGRESS; the agent may hold it in its admission queue first.
+    if query.origin is None:
+        record_query_submitted()
     await db.commit()
 
 
@@ -105,11 +108,12 @@ async def handle_agent_frame(db: AsyncSession, frame: Frame) -> None:
         await db.commit()
         return
     if frame.type == FrameType.QUERY_DONE:
+        status_val = frame.payload.get("status", "done")
         await db.execute(
             sa.update(Query)
             .where(Query.id == query_id)
             .values(
-                status=frame.payload.get("status", "done"),
+                status=status_val,
                 row_count=frame.payload.get("row_count"),
                 duration_ms=frame.payload.get("duration_ms"),
                 result_bytes=frame.payload.get("result_bytes"),
@@ -120,15 +124,20 @@ async def handle_agent_frame(db: AsyncSession, frame: Frame) -> None:
             )
         )
         await db.commit()
-        if frame.payload.get("status", "done") == "done":
+        query = await db.get(Query, query_id)
+        if query is not None and query.origin is None:
+            record_query_completion(
+                status_val,
+                frame.payload.get("duration_ms"),
+                frame.payload.get("result_bytes"),
+            )
+        if status_val == "done":
             await _upsert_table_stats(db, query_id, frame)
             health = frame.payload.get("health")
-            if health:
+            if health and query is not None:
                 from api.services.maintenance.ingest import record_health_sample
 
-                query = await db.get(Query, query_id)
-                if query is not None:
-                    await record_health_sample(db, query, health)
+                await record_health_sample(db, query, health)
 
 
 async def _upsert_table_stats(db: AsyncSession, query_id: uuid.UUID, frame: Frame) -> None:
@@ -198,6 +207,8 @@ async def cancel_query(db: AsyncSession, query: Query) -> None:
     query.status = "cancelled"
     query.finished_at = datetime.now(tz=UTC)
     await db.commit()
+    if query.origin is None:
+        record_query_completion("cancelled", None, None)
 
 
 async def proxy_rows(

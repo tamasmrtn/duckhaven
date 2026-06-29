@@ -68,8 +68,12 @@ the conventional `_total` suffix in the exposition (e.g. `duckhaven_queries_tota
 | `duckhaven_queries_total` | counter | `replica_id`, `status` | User queries reaching a terminal state (`done`/`failed`/`cancelled`). |
 | `duckhaven_query_duration_seconds` | histogram | `replica_id` | Duration of completed (`done`) user queries. |
 | `duckhaven_query_result_bytes` | histogram | `replica_id` | Result size of completed (`done`) user queries. |
+| `duckhaven_query_queue_wait_seconds` | histogram | `replica_id` | Time a user query waited in the agent admission queue before running. |
+| `duckhaven_query_queue_rejected_total` | counter | `replica_id`, `reason` | User queries rejected by agent admission control (`reason`: `queue_full`/`queued_timeout`). |
 | `duckhaven_http_requests_total` | counter | `replica_id`, `method`, `route`, `status` | REST API requests, keyed by route template. |
 | `duckhaven_http_request_duration_seconds` | histogram | `replica_id`, `method`, `route` | REST API request latency. |
+| `duckhaven_polaris_requests_total` | counter | `replica_id`, `operation`, `status` | Requests to Apache Polaris (Iceberg REST + management). `status` is the HTTP code, or `error` for transport failures. |
+| `duckhaven_polaris_request_duration_seconds` | histogram | `replica_id`, `operation` | Latency of requests to Apache Polaris. |
 | `duckhaven_agent_up` | gauge | `replica_id`, `agent_id`, `agent_name` | `1` for each agent with a recent sample owned by this replica. |
 | `duckhaven_agent_cpu_percent` | gauge | (same) | Agent CPU utilization. |
 | `duckhaven_agent_memory_percent` | gauge | (same) | Agent memory utilization. |
@@ -88,6 +92,20 @@ In-flight `queued`/`running` query counts are exposed as the per-agent gauges
 (`duckhaven_agent_running_queries` / `_queued_queries`); `duckhaven_queries_total` records
 terminal outcomes. This is the Prometheus-idiomatic split — counters for events, gauges for
 instantaneous state.
+
+Two signals deserve a callout because they catch failure modes a generic query-failure count
+would hide:
+
+- **Queue admission** — `duckhaven_query_queue_wait_seconds` is the time queries spend waiting
+  for an agent slot, and `duckhaven_query_queue_rejected_total` counts queries the agent turned
+  away once `MAX_QUEUE_DEPTH` / `QUEUED_TIMEOUT_S` were hit. A rising wait time or any
+  rejections mean the fleet is saturated — add an agent or raise its slot count. (Rejections
+  also show up under `duckhaven_queries_total{status="failed"}`; this counter is the specific
+  breakdown.)
+- **Polaris dependency health** — `duckhaven_polaris_requests_total` / `_request_duration_seconds`
+  surface the Iceberg catalog's error rate and latency. Alert on a non-zero rate of
+  `status="error"` (or 5xx) here to catch catalog-layer degradation before it manifests as
+  mysterious query failures.
 
 ### Behavior under high availability
 

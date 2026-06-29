@@ -167,6 +167,68 @@ async def delete_catalog(client: httpx.AsyncClient, headers: dict[str, str], nam
         await client.delete(f"{MGMT_API}/catalogs/{name}", headers=headers)
 
 
+def external_s3_storage_config(
+    base_location: str,
+    *,
+    role_arn: str,
+    region: str,
+    external_id: str | None = None,
+    endpoint: str | None = None,
+) -> dict[str, Any]:
+    """Build an external (assume-role) S3 ``storageConfigInfo``.
+
+    Mirrors ``api.services.workspace._external_extra_storage`` for ``s3``:
+    Polaris assumes ``role_arn`` via STS rather than using static keys. Needs a
+    LocalStack-STS or real-AWS endpoint — MinIO has no STS to assume through."""
+    storage: dict[str, Any] = {
+        "storageType": "S3",
+        "allowedLocations": [base_location],
+        "roleArn": role_arn,
+        "region": region,
+    }
+    if external_id:
+        storage["externalId"] = external_id
+    if endpoint:
+        storage["endpoint"] = endpoint
+        storage["pathStyleAccess"] = True
+    return storage
+
+
+@contextlib.asynccontextmanager
+async def external_s3_catalog(
+    base_url: str,
+    creds: tuple[str, str],
+    *,
+    prefix: str,
+    role_arn: str,
+    root_uri: str,
+    region: str,
+    external_id: str | None = None,
+    endpoint: str | None = None,
+    seed_table: bool = True,
+) -> AsyncIterator[tuple[str, str]]:
+    """Create a uniquely-named external assume-role S3 catalog, yield
+    ``(catalog_name, namespace)``, then tear it down. The caller gates on the
+    DH_TEST_S3_* env that supplies ``role_arn`` / ``root_uri``."""
+    name = f"{prefix}_{uuid4().hex[:10]}"
+    base = f"{root_uri.rstrip('/')}/{uuid4().hex[:8]}"
+    storage = external_s3_storage_config(
+        base, role_arn=role_arn, region=region, external_id=external_id, endpoint=endpoint
+    )
+    async with httpx.AsyncClient(base_url=base_url, timeout=15.0) as client:
+        headers = {
+            "Authorization": f"Bearer {await access_token(client, creds)}",
+            "Polaris-Realm": REALM,
+        }
+        await provision_catalog(
+            client, headers, name, base, storage, creds[0], seed_table=seed_table
+        )
+        try:
+            yield name, DEFAULT_NAMESPACE
+        finally:
+            await delete_catalog(client, headers, name)
+
+
 @contextlib.asynccontextmanager
 async def s3_catalog(
     base_url: str,

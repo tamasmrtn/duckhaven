@@ -25,6 +25,18 @@ async def test_vended_credentials_enable_object_store_write(
     assert conn.execute("SELECT label FROM events WHERE id = 1").fetchone() == ("vended",)
 
 
+async def test_external_s3_vended_credentials_enable_write(
+    external_s3_catalog, attach_factory
+) -> None:
+    """An external assume-role S3 catalog reads and writes through the same
+    vended-credentials path as the bundled object store: Polaris assumes the
+    role server-side and hands DuckDB scoped creds. Gated on DH_TEST_S3_*."""
+    catalog, ns = external_s3_catalog
+    conn = attach_factory(catalog, ns, delegation="vended_credentials")
+    conn.execute("INSERT INTO events VALUES (7, 'external')")
+    assert conn.execute("SELECT label FROM events WHERE id = 7").fetchone() == ("external",)
+
+
 async def test_without_delegation_object_store_is_unreadable(
     polaris_s3_catalog, attach_factory
 ) -> None:

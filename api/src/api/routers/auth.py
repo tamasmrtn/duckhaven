@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.config import settings
 from api.deps import get_current_user, get_db
 from api.models.user import User
-from api.schemas.auth import AuthMethods, LoginRequest, UserOut
+from api.schemas.auth import AuthMethods, LoginRequest, OidcProviderInfo, UserOut
 from api.services.auth import (
     authenticate_password,
     create_session,
@@ -30,8 +30,9 @@ async def methods() -> AuthMethods:
     return AuthMethods(
         local=True,
         ldap=settings.ldap_enabled,
-        oidc=settings.oidc_enabled,
-        oidc_label=settings.oidc_label,
+        oidc_providers=[
+            OidcProviderInfo(id=p.id, label=p.label) for p in settings.effective_oidc_providers()
+        ],
     )
 
 

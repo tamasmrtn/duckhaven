@@ -57,6 +57,92 @@ async def test_create_object_store_backend(admin_client: AsyncClient):
     assert data["workspace_count"] == 0
 
 
+async def test_create_s3_backend_with_config(admin_client: AsyncClient):
+    resp = await admin_client.post(
+        "/admin/storage-backends",
+        json={
+            "kind": "s3",
+            "name": "acme-s3",
+            "root_uri": "s3://acme-data/duckhaven/",
+            "config": {
+                "role_arn": "arn:aws:iam::123456789012:role/duckhaven",
+                "external_id": "dh-acme",
+                "region": "us-east-1",
+            },
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["kind"] == "s3"
+    assert data["config"]["role_arn"] == "arn:aws:iam::123456789012:role/duckhaven"
+
+
+async def test_create_s3_backend_missing_config_fails(admin_client: AsyncClient):
+    """s3 requires role_arn + region; omitting the config is a 422."""
+    resp = await admin_client.post(
+        "/admin/storage-backends",
+        json={"kind": "s3", "name": "acme-s3", "root_uri": "s3://acme-data/"},
+    )
+    assert resp.status_code == 422
+
+
+async def test_create_s3_backend_rejects_unknown_config_key(admin_client: AsyncClient):
+    resp = await admin_client.post(
+        "/admin/storage-backends",
+        json={
+            "kind": "s3",
+            "name": "acme-s3",
+            "root_uri": "s3://acme-data/",
+            "config": {
+                "role_arn": "arn:aws:iam::123456789012:role/duckhaven",
+                "region": "us-east-1",
+                "secret_access_key": "AKIA-nope",
+            },
+        },
+    )
+    assert resp.status_code == 422
+
+
+async def test_create_adls_backend_with_config(admin_client: AsyncClient):
+    resp = await admin_client.post(
+        "/admin/storage-backends",
+        json={
+            "kind": "adls_gen2",
+            "name": "research-adls",
+            "root_uri": "abfss://research@acme.dfs.core.windows.net/duckhaven/",
+            "config": {"tenant_id": "00000000-0000-0000-0000-000000000000", "hierarchical": True},
+        },
+    )
+    assert resp.status_code == 201
+    assert resp.json()["config"]["tenant_id"] == "00000000-0000-0000-0000-000000000000"
+
+
+async def test_create_adls_backend_missing_tenant_fails(admin_client: AsyncClient):
+    resp = await admin_client.post(
+        "/admin/storage-backends",
+        json={
+            "kind": "adls_gen2",
+            "name": "research-adls",
+            "root_uri": "abfss://research@acme.dfs.core.windows.net/",
+            "config": {"hierarchical": True},
+        },
+    )
+    assert resp.status_code == 422
+
+
+async def test_object_store_rejects_config(admin_client: AsyncClient):
+    resp = await admin_client.post(
+        "/admin/storage-backends",
+        json={
+            "kind": "object_store",
+            "name": "primary",
+            "root_uri": "",
+            "config": {"role_arn": "arn:aws:iam::123456789012:role/x"},
+        },
+    )
+    assert resp.status_code == 422
+
+
 async def test_create_invalid_kind(admin_client: AsyncClient):
     resp = await admin_client.post(
         "/admin/storage-backends",

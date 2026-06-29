@@ -78,4 +78,7 @@ USER duckhaven
 EXPOSE 8000
 
 ENTRYPOINT ["/usr/local/bin/api-entrypoint.sh"]
-CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# --timeout-graceful-shutdown bounds the drain: on SIGTERM the lifespan marks the
+# replica not-ready and hands its agents to peers, then in-flight requests get up
+# to this long to finish before connections are force-closed.
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-graceful-shutdown", "30"]

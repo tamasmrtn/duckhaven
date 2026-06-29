@@ -37,10 +37,17 @@ class UpdateUserRequest(BaseModel):
     is_active: bool | None = None
 
 
+class OidcProviderInfo(BaseModel):
+    """A configured SSO provider the login page renders a button for."""
+
+    id: str
+    label: str
+
+
 class AuthMethods(BaseModel):
     """Which login methods the SPA should surface."""
 
     local: bool
     ldap: bool
-    oidc: bool
-    oidc_label: str
+    # One entry per configured OIDC provider; empty when SSO is off.
+    oidc_providers: list[OidcProviderInfo] = []

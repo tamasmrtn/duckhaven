@@ -182,6 +182,12 @@ class PolarisClient:
     async def aclose(self) -> None:
         await self._http.aclose()
 
+    async def ping(self) -> None:
+        """Readiness check: confirm Polaris is reachable and our client
+        credentials still mint a token. The token is cached, so this is cheap to
+        call on every readiness probe."""
+        await self._access_token()
+
     async def __aenter__(self) -> Self:
         return self
 
@@ -427,6 +433,25 @@ class PolarisClient:
         )
         self._raise_for_status(resp)
         return self._table_from_load_result(resp.json(), catalog, schema, name)
+
+    async def load_table_with_credentials(
+        self, catalog: str, schema: str, name: str
+    ) -> dict[str, Any]:
+        """Load a table requesting vended credentials.
+
+        Sends the Iceberg REST access-delegation header so Polaris returns
+        short-lived, scoped storage credentials in the result's ``config`` map
+        (the same path agents use). Returns the raw LoadTableResult so callers
+        can read both ``config`` (creds) and ``metadata.location``."""
+        resp = await self._http.get(
+            f"{self.CATALOG_PATH}/{catalog}/namespaces/{schema}/tables/{name}",
+            headers={
+                **await self._auth_headers(),
+                "X-Iceberg-Access-Delegation": "vended-credentials",
+            },
+        )
+        self._raise_for_status(resp)
+        return resp.json()
 
     async def list_snapshots(self, catalog: str, schema: str, name: str) -> list[PolarisSnapshot]:
         """Snapshot history for a table, newest first.

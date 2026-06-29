@@ -23,7 +23,10 @@ reservation from its `EXPLAIN` plan; static slot ladders (`single`, `equal_2`, `
 available as alternatives. See [Runbook §6](runbook.md#6-query-queueing-concurrency) and
 [Query execution](../concepts/query-execution.md).
 
-## What does not scale horizontally
+## Control-plane high availability
 
-The control plane (Postgres + Polaris + API) is intentionally single-node; high availability is a roadmap item, not a
-current property.
+By default the control plane (Postgres + Polaris + API) runs single-node, which is the right choice for most installs.
+For deployments that cannot tolerate a single-box outage, DuckHaven supports a highly-available topology: HA Postgres
+(Patroni + HAProxy, or a managed database) plus multiple API replicas behind a load balancer. This is opt-in via a
+separate compose file and a few extra settings — see [High availability](../deployment/high-availability.md) for the
+topology, configuration, and a failover runbook.

@@ -1,0 +1,280 @@
+# Highly-available control plane on Docker Compose.
+#
+# This is the opt-in HA topology; the single-node deploy/docker-compose.yml is
+# unchanged and keeps working. Compared to the single-node stack this file:
+#
+#   * runs HA Postgres as a Patroni cluster (patroni-1/2 + etcd) behind HAProxy,
+#     which exposes one stable read-write endpoint (pg-haproxy:5432) and always
+#     points at the current primary — so a primary failure fails over without
+#     changing the API's database_url;
+#   * runs TWO API replicas (api-1, api-2) behind Caddy, which load-balances
+#     browser + agent traffic and health-checks /api/readyz for graceful drain;
+#   * leaves the maintenance scanner enabled on both replicas — it is coordinated
+#     by a Postgres advisory lock, so exactly one runs a cycle at a time;
+#   * relies on the migration advisory lock (alembic env.py) so both replicas can
+#     run `alembic upgrade head` on boot without racing.
+#
+# For a real deployment, spread the services across hosts (an overlay network or
+# per-host compose files), use 3 etcd + 3 Patroni nodes for quorum, and front
+# Caddy with a real domain for auto-TLS. See docs/deployment/high-availability.md.
+#
+# Run with:
+#   docker compose -f deploy/docker-compose.ha.yml --env-file deploy/.env up -d
+
+x-api-base: &api-base
+  image: ghcr.io/tamasmrtn/duckhaven-api:${DUCKHAVEN_IMAGE_TAG:-latest}
+  restart: unless-stopped
+  depends_on:
+    # Wait for a healthy Postgres primary before migrating/booting, so the
+    # advisory-locked migrations and the bootstrap-token seed don't race
+    # leader election on a clean bring-up.
+    patroni-1:
+      condition: service_healthy
+    patroni-2:
+      condition: service_healthy
+    pg-haproxy:
+      condition: service_started
+    polaris:
+      condition: service_healthy
+  environment: &api-env
+    SECRET_KEY: ${SECRET_KEY:?set a fixed SECRET_KEY so all replicas agree}
+    POSTGRES_HOST: pg-haproxy
+    POSTGRES_PASSWORD: ${DUCKHAVEN_DB_PASSWORD:-duckhaven}
+    POLARIS_BASE_URL: http://polaris:8181
+    POLARIS_REALM: ${POLARIS_REALM:-POLARIS}
+    POLARIS_CLIENT_ID: ${POLARIS_CLIENT_ID:-root}
+    POLARIS_CLIENT_SECRET: ${POLARIS_CLIENT_SECRET:-s3cr3t}
+    S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
+    S3_ENDPOINT_INTERNAL: ${S3_ENDPOINT_INTERNAL:-http://minio:9000}
+    S3_REGION: ${S3_REGION:-us-east-1}
+    S3_BUCKET: ${S3_BUCKET:-warehouse}
+    AGENT_BOOTSTRAP_TOKEN: ${AGENT_BOOTSTRAP_TOKEN:-dh_boot_localdev_seed}
+    COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    # Shared secret guarding the private /internal dispatch endpoints between
+    # replicas. Required for cross-replica agent dispatch to work.
+    INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:?set a shared INTERNAL_API_SECRET}
+    # Scanner tick shortened for the HA failover drill (Drill 3) so leader
+    # election is observable without waiting the 900s default. Restore to
+    # default (or unset) for production.
+    MAINTENANCE_SCAN_TICK_S: ${MAINTENANCE_SCAN_TICK_S:-900}
+  healthcheck:
+    test:
+      - CMD
+      - python
+      - -c
+      - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/readyz', timeout=2).status==200 else 1)"
+    interval: 10s
+    timeout: 5s
+    retries: 5
+    start_period: 40s
+
+services:
+  # ── HA Postgres: Patroni cluster + etcd DCS, fronted by HAProxy ──────────────
+  etcd:
+    image: gcr.io/etcd-development/etcd:v3.5.15
+    restart: unless-stopped
+    environment:
+      ETCD_NAME: etcd
+      ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd:2379
+      ETCD_LISTEN_PEER_URLS: http://0.0.0.0:2380
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd:2380
+      ETCD_INITIAL_CLUSTER: etcd=http://etcd:2380
+      ETCD_INITIAL_CLUSTER_STATE: new
+      ETCD_INITIAL_CLUSTER_TOKEN: duckhaven-etcd
+    command: ["/usr/local/bin/etcd"]
+
+  patroni-1: &patroni
+    image: ghcr.io/zalando/spilo-16:3.3-p1
+    restart: unless-stopped
+    depends_on:
+      etcd:
+        condition: service_started
+    environment: &patroni-env
+      SCOPE: duckhaven
+      PGVERSION: "16"
+      ETCD3_HOSTS: "'etcd:2379'"
+      # Superuser + replication passwords for the cluster's internal users.
+      PGPASSWORD_SUPERUSER: ${POSTGRES_SUPERUSER_PASSWORD:-superuser}
+      PGPASSWORD_STANDBY: ${POSTGRES_REPLICATION_PASSWORD:-standby}
+      DUCKHAVEN_DB_PASSWORD: ${DUCKHAVEN_DB_PASSWORD:-duckhaven}
+      # Create the duckhaven role/db + polaris db on the primary after bootstrap.
+      SPILO_CONFIGURATION: |
+        bootstrap:
+          post_init: /post-init.sh
+    # Patroni's REST /health returns 200 only once local Postgres is up (leader
+    # or joined replica). Dependents wait on this so they don't connect through
+    # pg-haproxy before a primary exists — which would race leader election.
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8008/health', timeout=2).status==200 else 1)"
+      interval: 5s
+      timeout: 5s
+      # The first-boot replica basebackup (basebackup_fast_xlog) can take a few
+      # minutes; give it room before dependents declare the cluster down.
+      retries: 60
+      start_period: 30s
+    volumes:
+      - patroni1_data:/home/postgres/pgdata
+      - ./ha/patroni-post-init.sh:/post-init.sh:ro
+
+  patroni-2:
+    <<: *patroni
+    environment:
+      <<: *patroni-env
+    volumes:
+      - patroni2_data:/home/postgres/pgdata
+      - ./ha/patroni-post-init.sh:/post-init.sh:ro
+
+  # Single read-write Postgres endpoint -> current Patroni leader.
+  pg-haproxy:
+    image: haproxy:2.9-alpine
+    restart: unless-stopped
+    depends_on:
+      patroni-1:
+        condition: service_started
+      patroni-2:
+        condition: service_started
+    volumes:
+      - ./ha/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+
+  # ── Object store + Polaris (unchanged from the single-node stack) ────────────
+  minio:
+    image: minio/minio:${MINIO_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    entrypoint:
+      - /bin/sh
+      - -c
+      - mkdir -p "/data/${S3_BUCKET:-warehouse}" && exec minio server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      S3_BUCKET: ${S3_BUCKET:-warehouse}
+    volumes:
+      - minio_data:/data
+
+  polaris-bootstrap:
+    image: apache/polaris-admin-tool:${POLARIS_IMAGE_TAG:-latest}
+    depends_on:
+      # Wait for a real Postgres primary, not just pg-haproxy's process: the
+      # realm bootstrap writes to Postgres and must not race Patroni leader
+      # election (an EOF mid-handshake leaves no realm and breaks /readyz).
+      patroni-1:
+        condition: service_healthy
+      patroni-2:
+        condition: service_healthy
+      pg-haproxy:
+        condition: service_started
+    environment:
+      POLARIS_PERSISTENCE_TYPE: relational-jdbc
+      POLARIS_PERSISTENCE_RELATIONAL_JDBC_DATABASE_TYPE: postgresql
+      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://pg-haproxy:5432/polaris
+      QUARKUS_DATASOURCE_USERNAME: duckhaven
+      QUARKUS_DATASOURCE_PASSWORD: ${DUCKHAVEN_DB_PASSWORD:-duckhaven}
+    volumes:
+      - ./polaris-bootstrap.sh:/polaris-bootstrap.sh:ro
+    entrypoint: ["/bin/sh", "/polaris-bootstrap.sh"]
+    command:
+      - java
+      - -jar
+      - /deployments/polaris-admin-tool.jar
+      - bootstrap
+      - --realm=${POLARIS_REALM:-POLARIS}
+      - --credential=${POLARIS_REALM:-POLARIS},${POLARIS_CLIENT_ID:-root},${POLARIS_CLIENT_SECRET:-s3cr3t}
+    restart: "no"
+
+  polaris:
+    image: apache/polaris:${POLARIS_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      polaris-bootstrap:
+        condition: service_completed_successfully
+      minio:
+        condition: service_started
+    environment:
+      POLARIS_PERSISTENCE_TYPE: relational-jdbc
+      POLARIS_PERSISTENCE_RELATIONAL_JDBC_DATABASE_TYPE: postgresql
+      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://pg-haproxy:5432/polaris
+      QUARKUS_DATASOURCE_USERNAME: duckhaven
+      QUARKUS_DATASOURCE_PASSWORD: ${DUCKHAVEN_DB_PASSWORD:-duckhaven}
+      POLARIS_REALM_CONTEXT_REALMS: ${POLARIS_REALM:-POLARIS}
+      QUARKUS_OTEL_SDK_DISABLED: "true"
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      AWS_REGION: ${S3_REGION:-us-east-1}
+      polaris.features."ALLOW_INSECURE_STORAGE_TYPES": "true"
+      polaris.features."SUPPORTED_CATALOG_STORAGE_TYPES": "[\"S3\",\"AZURE\"]"
+      polaris.readiness.ignore-severe-issues: "true"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8182/q/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+
+  # ── API replicas behind Caddy ───────────────────────────────────────────────
+  api-1:
+    <<: *api-base
+    environment:
+      <<: *api-env
+      REPLICA_ID: api-1
+      REPLICA_INTERNAL_URL: http://api-1:8000
+    volumes:
+      - api1_data:/var/duckhaven
+
+  api-2:
+    <<: *api-base
+    environment:
+      <<: *api-env
+      REPLICA_ID: api-2
+      REPLICA_INTERNAL_URL: http://api-2:8000
+    volumes:
+      - api2_data:/var/duckhaven
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      api-1:
+        condition: service_started
+      api-2:
+        condition: service_started
+    ports:
+      - "8000:80"
+    volumes:
+      - ./ha/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  # Bundled agent dials Caddy; it lands on one replica and reconnects to another
+  # if that replica drains or dies.
+  agent:
+    image: ghcr.io/tamasmrtn/duckhaven-agent:${DUCKHAVEN_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    mem_limit: ${AGENT_MEM_LIMIT:-4g}
+    depends_on:
+      caddy:
+        condition: service_started
+    environment:
+      CONTROL_PLANE_URL: ws://caddy:80/agents/connect
+      BOOTSTRAP_TOKEN: ${AGENT_BOOTSTRAP_TOKEN:-dh_boot_localdev_seed}
+      AGENT_NAME: TestAgent-1
+      POLARIS_BASE_URL: http://polaris:8181
+      POLARIS_CLIENT_ID: ${POLARIS_CLIENT_ID:-root}
+      POLARIS_CLIENT_SECRET: ${POLARIS_CLIENT_SECRET:-s3cr3t}
+      RESULTS_HTTP_HOST: 0.0.0.0
+    volumes:
+      - agent_results:/var/duckhaven-agent/results
+
+volumes:
+  patroni1_data:
+  patroni2_data:
+  api1_data:
+  api2_data:
+  minio_data:
+  agent_results:
+  caddy_data:
+  caddy_config:

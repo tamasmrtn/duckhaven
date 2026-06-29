@@ -1,6 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { storageBackendsApi } from "@/api/storage-backends";
-import type { BackendKind } from "@/types/storage-backend";
+import {
+  storageBackendsApi,
+  type CreateStorageBackend,
+} from "@/api/storage-backends";
 
 export function useStorageBackends() {
   return useQuery({
@@ -12,15 +14,16 @@ export function useStorageBackends() {
 export function useCreateStorageBackend() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: {
-      kind: BackendKind;
-      name: string;
-      root_uri: string;
-      uc_storage_credential_id?: string;
-    }) => storageBackendsApi.create(data),
+    mutationFn: (data: CreateStorageBackend) => storageBackendsApi.create(data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin", "storage-backends"] });
     },
+  });
+}
+
+export function useCheckStorageBackendHealth() {
+  return useMutation({
+    mutationFn: (id: string) => storageBackendsApi.checkHealth(id),
   });
 }
 

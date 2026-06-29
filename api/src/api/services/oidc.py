@@ -1,33 +1,52 @@
-"""OIDC client registration (Authlib).
+"""OIDC client registration (Authlib), one client per configured provider.
 
-A single ``OAuth`` registry holds the configured IdP. Registration is gated on
-``oidc_enabled`` so the dependency is inert until an operator wires up an IdP.
+A single ``OAuth`` registry holds every configured IdP, registered under a
+per-provider client name. Registration reads ``Settings.effective_oidc_providers``
+so the registry is inert until an operator configures at least one provider.
 Authlib handles discovery, Authorization Code + PKCE, and ID-token validation
 (signature via JWKS, ``iss``/``aud``/``exp``, ``nonce``).
 """
 
 from authlib.integrations.starlette_client import OAuth
 
-from api.config import settings
-
-OIDC_CLIENT_NAME = "duckhaven"
+from api.config import OidcProvider, settings
 
 oauth = OAuth()
 
 
+def client_name(provider_id: str) -> str:
+    """Authlib client name for a provider id (namespaced to avoid collisions)."""
+    return f"oidc_{provider_id}"
+
+
+def get_provider(provider_id: str) -> OidcProvider | None:
+    """The configured provider with this id, or None."""
+    return next((p for p in settings.effective_oidc_providers() if p.id == provider_id), None)
+
+
 def register_oidc() -> None:
-    """Register the IdP from settings. Idempotent; safe to call on each startup."""
-    if not (settings.oidc_enabled and settings.oidc_server_metadata_url):
-        return
-    if oauth.create_client(OIDC_CLIENT_NAME) is not None:
-        return
-    oauth.register(
-        name=OIDC_CLIENT_NAME,
-        client_id=settings.oidc_client_id,
-        client_secret=settings.oidc_client_secret,
-        server_metadata_url=settings.oidc_server_metadata_url,
-        client_kwargs={
-            "scope": settings.oidc_scopes,
-            "code_challenge_method": "S256",
-        },
-    )
+    """Register every configured provider. Idempotent; safe to call per startup."""
+    for provider in settings.effective_oidc_providers():
+        name = client_name(provider.id)
+        if oauth.create_client(name) is not None:
+            continue
+        oauth.register(
+            name=name,
+            client_id=provider.client_id,
+            client_secret=provider.client_secret,
+            server_metadata_url=provider.server_metadata_url,
+            client_kwargs={
+                "scope": provider.scopes,
+                "code_challenge_method": "S256",
+            },
+        )
+
+
+def reset_oidc_clients() -> None:
+    """Forget all registered clients so ``register_oidc`` re-reads settings.
+
+    Used by tests that swap the provider configuration between cases."""
+    for attr in ("_clients", "_registry"):
+        registry = getattr(oauth, attr, None)
+        if isinstance(registry, dict):
+            registry.clear()

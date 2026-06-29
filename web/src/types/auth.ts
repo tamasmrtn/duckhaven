@@ -11,9 +11,13 @@ export interface User {
   created_at: string;
 }
 
+export interface OidcProviderInfo {
+  id: string;
+  label: string;
+}
+
 export interface AuthMethods {
   local: boolean;
   ldap: boolean;
-  oidc: boolean;
-  oidc_label: string;
+  oidc_providers: OidcProviderInfo[];
 }

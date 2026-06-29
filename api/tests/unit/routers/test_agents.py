@@ -1,13 +1,38 @@
 import json
 import uuid
 from datetime import UTC
+from types import SimpleNamespace
 
 import pytest
 from httpx import AsyncClient
 
 from api.models.agent import Agent
 from api.models.user import User
+from api.routers.agents_ws import _result_host
 from api.services.auth import hash_password
+
+
+def _fake_ws(*, xff: str | None, peer: str | None):
+    headers = {"x-forwarded-for": xff} if xff is not None else {}
+    client = SimpleNamespace(host=peer) if peer is not None else None
+    return SimpleNamespace(headers=headers, client=client)
+
+
+def test_result_host_prefers_forwarded_for():
+    """Behind a proxy the agent's real address is the left-most X-Forwarded-For
+    hop, not the socket peer (which is the load balancer)."""
+    ws = _fake_ws(xff="10.0.0.5, 172.30.0.10", peer="172.30.0.10")
+    assert _result_host(ws) == "10.0.0.5"
+
+
+def test_result_host_falls_back_to_peer_without_forwarded_for():
+    ws = _fake_ws(xff=None, peer="172.30.0.7")
+    assert _result_host(ws) == "172.30.0.7"
+
+
+def test_result_host_ignores_blank_forwarded_for():
+    ws = _fake_ws(xff="   ", peer="172.30.0.7")
+    assert _result_host(ws) == "172.30.0.7"
 
 
 @pytest.fixture
@@ -166,6 +191,61 @@ async def test_ws_metrics_sample_buffered_not_persisted(ws_client, db_engine):
         agent = await db.get(Agent, agent_id)
         assert agent is not None
         assert agent.capabilities is None  # metrics never touch the capabilities column
+
+
+async def test_ws_metrics_sample_refreshes_presence(ws_client, db_engine, monkeypatch):
+    """A METRICS_SAMPLE advances last_ping_at so peer replicas keep seeing the
+    agent connected. Regression: the agent never sends proactive HEARTBEATs (it
+    only echoes server ones), so without refreshing presence on the metrics frame
+    last_ping_at went stale after the TTL and cross-replica dispatch broke."""
+    import asyncio
+    from datetime import datetime, timedelta
+
+    from httpx import AsyncClient
+    from httpx_ws import aconnect_ws
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.models.user import Credential
+    from api.routers import agents_ws
+
+    # Refresh on every metrics frame instead of throttling, so the test is fast.
+    monkeypatch.setattr(agents_ws, "_PRESENCE_REFRESH_S", 0.0)
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    token = "dh_boot_presence321"
+    async with factory() as db:
+        db.add(
+            Credential(
+                user_id=None,
+                agent_id=None,
+                kind="agent_bootstrap",
+                token=token,
+                expires_at=datetime.now(tz=UTC) + timedelta(hours=1),
+            )
+        )
+        await db.commit()
+
+    sample = {"cpu_percent": 1.0, "memory_percent": 2.0, "sampled_at": "2026-06-05T00:00:00Z"}
+    async with AsyncClient(transport=ws_client, base_url="http://test") as c:
+        async with aconnect_ws("http://test/agents/connect", c) as ws:
+            await ws.send_text(
+                json.dumps(
+                    {"type": "auth", "payload": {"token": token, "name": "p", "result_port": 8001}}
+                )
+            )
+            raw = await asyncio.wait_for(ws.receive_text(), timeout=5.0)
+            agent_id = uuid.UUID(json.loads(raw)["payload"]["agent_id"])
+
+            async with factory() as db:
+                before = (await db.get(Agent, agent_id)).last_ping_at
+            await asyncio.sleep(0.01)
+            await ws.send_text(json.dumps({"type": "metrics_sample", "payload": sample}))
+            await asyncio.sleep(0.1)
+            async with factory() as db:
+                after = (await db.get(Agent, agent_id)).last_ping_at
+
+    assert before is not None and after is not None
+    assert after > before
 
 
 async def test_ws_valid_bootstrap_exchange(ws_client, db_engine):

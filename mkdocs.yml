@@ -107,6 +107,7 @@ nav:
       - Add an agent: deployment/add-agent.md
       - Configure storage: deployment/storage.md
       - Reverse proxy & TLS: deployment/reverse-proxy-tls.md
+      - High availability: deployment/high-availability.md
       - Updating: deployment/updating.md
       - Backup & restore: deployment/backup-restore.md
   - Guides:
@@ -120,8 +121,10 @@ nav:
       - Connect LDAP / AD: guides/connect-ldap.md
   - Operations:
       - Operator runbook: operations/runbook.md
+      - Storage security & maintenance: operations/storage-maintenance.md
       - Monitoring: operations/monitoring.md
       - Scaling compute: operations/scaling.md
+      - HA failover runbook: operations/ha-failover.md
       - Offboarding & break-glass: operations/offboarding.md
       - Troubleshooting: operations/troubleshooting.md
   - Reference:

@@ -29,6 +29,9 @@ boot, so every variable below is optional.
 | `S3_REGION` | `us-east-1` | Region reported to DuckDB / Polaris. |
 | `S3_ENDPOINT` | `http://minio:9000` | The MinIO URL Polaris vends to DuckDB. For agents on **other** hosts, set this to an address reachable from the agent host. |
 | `S3_ENDPOINT_INTERNAL` | `http://minio:9000` | The endpoint Polaris uses inside the Compose network; rarely needs changing. |
+| `polaris.features."SUPPORTED_CATALOG_STORAGE_TYPES"` | `["S3","AZURE"]` | Storage types Polaris will provision (set in `docker-compose.yml`). `S3` covers the bundled MinIO and external AWS S3; `AZURE` enables external ADLS Gen2. |
+| `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` | _(empty)_ | Service principal Polaris uses to mint ADLS Gen2 SAS tokens (Azure `DefaultAzureCredential`). Needs **Storage Blob Data Contributor** on the account. Empty disables ADLS vending; AWS S3 and MinIO are unaffected. |
+| `AWS_ENDPOINT_URL_STS` | _(empty)_ | Override the STS endpoint Polaris uses to assume external `s3` roles. Empty = real AWS STS. Set to a private/emulated STS (LocalStack, a VPC STS endpoint, GovCloud) for testing or non-public deployments. |
 | `COOKIE_SECURE` | `false` | Set `true` only when the API is served over HTTPS (a TLS terminator in front), so session cookies are `Secure`-flagged. |
 | `SESSION_MAX_AGE_SECONDS` | `604800` (7 days) | Session lifetime — drives both the server-side credential expiry and the cookie max-age. Lower it to shorten how long a sign-in lasts. |
 | `AGENT_BOOTSTRAP_TOKEN` | `dh_boot_localdev_seed` | Single-use token the API seeds on startup so the bundled in-stack agent auto-registers. Override in production. |
@@ -41,15 +44,16 @@ by default; local accounts always work. Secrets here must never be committed —
 
 | Variable | Default | Description |
 |---|---|---|
-| `OIDC_ENABLED` | `false` | Master switch for OIDC SSO. When `true`, the login page shows a "Sign in with SSO" button. |
-| `OIDC_LABEL` | `SSO` | Button label, e.g. `Okta` renders "Sign in with Okta". |
-| `OIDC_SERVER_METADATA_URL` | — | IdP discovery document, ending in `/.well-known/openid-configuration`. |
-| `OIDC_CLIENT_ID` | — | Confidential client ID registered in the IdP. |
-| `OIDC_CLIENT_SECRET` | — | Client secret for the confidential client. |
-| `OIDC_SCOPES` | `openid email profile groups` | Scopes requested from the IdP. |
-| `OIDC_GROUPS_CLAIM` | `groups` | ID-token claim holding the user's group memberships. |
-| `OIDC_GROUP_ROLE_MAP` | `{}` | JSON object mapping group value → global role, e.g. `{"dh-admins": "admin"}`. |
+| `OIDC_PROVIDERS` | `[]` | JSON list of OIDC providers, each a button on the login page. Per-entry keys: `id` (url-safe slug, used in `/api/auth/oidc/<id>/callback`), `label`, `server_metadata_url`, `client_id`, `client_secret`, `scopes` (default `openid email profile`), `groups_claim` (default `groups`), `group_role_map`. Takes precedence over the single-provider fields below. |
 | `OIDC_REDIRECT_BASE_URL` | derived | Public base URL (scheme+host) used to build the callback. Required behind a TLS proxy; must match the registered redirect URI's host. |
+| `OIDC_ENABLED` | `false` | Single-provider shorthand (back-compat): when `true` and `OIDC_PROVIDERS` is empty, the fields below synthesize one provider with id `sso`. |
+| `OIDC_LABEL` | `SSO` | Button label for the shorthand provider, e.g. `Okta` renders "Sign in with Okta". |
+| `OIDC_SERVER_METADATA_URL` | — | Shorthand provider discovery document, ending in `/.well-known/openid-configuration`. |
+| `OIDC_CLIENT_ID` | — | Shorthand provider confidential client ID. |
+| `OIDC_CLIENT_SECRET` | — | Shorthand provider client secret. |
+| `OIDC_SCOPES` | `openid email profile groups` | Scopes for the shorthand provider. (Per-provider entries default to `openid email profile`; Entra rejects a `groups` scope.) |
+| `OIDC_GROUPS_CLAIM` | `groups` | Shorthand provider ID-token claim holding group memberships. |
+| `OIDC_GROUP_ROLE_MAP` | `{}` | Shorthand provider JSON map of group value → global role, e.g. `{"dh-admins": "admin"}`. |
 | `LDAP_ENABLED` | `false` | Master switch for LDAP/AD bind authentication. |
 | `LDAP_SERVER_URI` | — | `ldaps://host` (port 636) or `ldap://host` (use with `LDAP_USE_START_TLS`). |
 | `LDAP_USE_START_TLS` | `false` | Upgrade an `ldap://` connection to TLS via STARTTLS. |
@@ -64,15 +68,33 @@ by default; local accounts always work. Secrets here must never be committed —
 | `LDAP_TLS_CA_CERT` | — | Path to a CA bundle validating the directory's TLS certificate. |
 | `LDAP_TIMEOUT_S` | `10` | Connection / receive timeout for directory operations, in seconds. |
 
+### High availability
+
+Only used by the opt-in [HA topology](../deployment/high-availability.md) (multiple API replicas). The single-node
+stack ignores them. All have single-replica-safe defaults, so a one-box install behaves identically whether they are set
+or not.
+
+| Variable | Default | Description |
+|---|---|---|
+| `REPLICA_ID` | `api` | Identifier for this API replica, recorded as the owner of agents whose WebSocket it holds. The HA compose sets one per replica (`api-1`, `api-2`). |
+| `REPLICA_INTERNAL_URL` | `http://localhost:8000` | URL peer replicas use to forward agent-dispatch frames to this replica's private `/internal` endpoints. |
+| `INTERNAL_API_SECRET` | _(empty)_ | Shared secret guarding the `/internal` cross-replica dispatch endpoints. Must be identical on every replica. When empty, peer forwarding is disabled (single-replica mode). |
+| `AGENT_PRESENCE_TTL_S` | `90` | How recently an agent must have pinged for another replica to consider it connected; covers a replica that died without clearing its ownership. |
+| `DB_POOL_SIZE` | `5` | SQLAlchemy connection-pool size per replica. Keep `replicas × (DB_POOL_SIZE + DB_MAX_OVERFLOW)` under the Postgres `max_connections`. |
+| `DB_MAX_OVERFLOW` | `10` | Extra connections each replica may open above `DB_POOL_SIZE` under load. |
+| `DB_POOL_RECYCLE_S` | `1800` | Recycle pooled connections older than this (seconds). With `pool_pre_ping`, this is what makes Postgres failover transparent. |
+
 ### Maintenance advisor
 
 Gates and tunes the background [maintenance advisor](../concepts/maintenance.md) scanner that runs inside the API
 process. The runtime cadence (off/hourly/daily) and profile are set at runtime in **Admin → Maintenance**, not here —
-these variables only control the loop itself. The scanner assumes a single API replica.
+these variables only control the loop itself. Across multiple API replicas the scanner is leader-elected via a Postgres
+advisory lock, so only one cycle runs at a time — leave it enabled everywhere (see
+[High availability](../deployment/high-availability.md)).
 
 | Variable | Default | Description |
 |---|---|---|
-| `MAINTENANCE_SCANNER_ENABLED` | `true` | Master switch for the background scanner loop. Set `false` to disable scanning entirely (e.g. when running multiple API replicas). |
+| `MAINTENANCE_SCANNER_ENABLED` | `true` | Whether this replica participates in the (leader-elected) scanner loop. Safe to leave `true` on every replica; set `false` only to exclude a replica entirely. |
 | `MAINTENANCE_SCAN_TICK_S` | `900` | How often (seconds) the loop wakes to check whether a scan is due per the runtime cadence. |
 | `MAINTENANCE_DEEP_SCAN_INTERVAL_S` | `604800` (7 days) | How often the expensive orphan/storage tier runs; cheap metadata probes run every due cycle. |
 

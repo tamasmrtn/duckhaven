@@ -711,9 +711,13 @@ the *categories* a contributor should be aware of.
   extension version on the agent. The UI Alter flow generates SQL run through the
   agent, so any unsupported op surfaces as a query error rather than a silent
   no-op.
-- **Single control-plane box.** The control plane is intentionally
-  single-node (Postgres + Polaris + API on one host). High availability is a
-  future concern, not a current property.
+- **Control-plane HA is opt-in.** The default deploy is single-node (Postgres +
+  Polaris + API on one host) for simplicity, and that is what most installs run.
+  A highly-available topology — HA Postgres plus multiple API replicas behind a
+  load balancer — is now supported via a separate compose file; see
+  [High availability](../deployment/high-availability.md). It is not the default,
+  so a single-node install carries the usual single-box failure domain until you
+  opt in.
 - **Result durability.** Results live only on the executing agent until the
   retention sweep removes them; they are not replicated. The recovery story
   is "re-run from saved SQL," not "fetch the old result."

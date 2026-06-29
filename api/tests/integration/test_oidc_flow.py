@@ -35,14 +35,14 @@ async def _drive_keycloak_login(authorize_url: str, username: str, password: str
 
 
 async def _callback_path(callback_url: str) -> str:
-    # The redirect_uri is http://test/api/auth/oidc/callback, but the ASGI client
-    # targets api_app directly (no /api prefix), so strip it for routing. Authlib
-    # still uses the stored redirect_uri for the token exchange.
+    # The redirect_uri is http://test/api/auth/oidc/sso/callback, but the ASGI
+    # client targets api_app directly (no /api prefix), so strip it for routing.
+    # Authlib still uses the stored redirect_uri for the token exchange.
     return callback_url.split("http://test", 1)[-1].replace("/api/auth", "/auth", 1)
 
 
 async def test_sso_login_provisions_admin_from_group(app_client, oidc_settings) -> None:
-    login = await app_client.get("/auth/oidc/login", follow_redirects=False)
+    login = await app_client.get("/auth/oidc/sso/login", follow_redirects=False)
     assert login.status_code in (302, 307)
 
     callback_url = await _drive_keycloak_login(login.headers["location"], "sso-admin", "sso-pass")
@@ -61,7 +61,7 @@ async def test_sso_login_provisions_admin_from_group(app_client, oidc_settings) 
 
 
 async def test_sso_user_without_group_is_plain_user(app_client, oidc_settings) -> None:
-    login = await app_client.get("/auth/oidc/login", follow_redirects=False)
+    login = await app_client.get("/auth/oidc/sso/login", follow_redirects=False)
     callback_url = await _drive_keycloak_login(login.headers["location"], "sso-user", "sso-pass")
     cb = await app_client.get(await _callback_path(callback_url), follow_redirects=False)
     assert cb.status_code == 303

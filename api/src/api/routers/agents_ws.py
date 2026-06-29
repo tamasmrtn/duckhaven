@@ -12,12 +12,32 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from api.deps import get_session_factory
 from api.models.agent import Agent
 from api.models.user import Credential
+from api.services.agent_dispatch import claim_agent_owner, release_agent_owner
 from api.services.agent_registry import registry
 from duckhaven_shared.protocol import Frame, FrameType
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# How often a heartbeat refreshes the DB ``last_ping_at`` that proves cluster-wide
+# presence. Heartbeats arrive far more often; throttling avoids a write per beat.
+_PRESENCE_REFRESH_S = 30.0
+
+
+def _result_host(ws: WebSocket) -> str | None:
+    """The agent's reachable address for result fetches.
+
+    Behind a reverse proxy (Caddy in the HA topology) the socket peer is the
+    proxy, so the real agent address is the left-most ``X-Forwarded-For`` hop.
+    Falls back to the socket peer for a direct (single-node) connection.
+    """
+    forwarded_for = ws.headers.get("x-forwarded-for")
+    if forwarded_for:
+        first = forwarded_for.split(",", 1)[0].strip()
+        if first:
+            return first
+    return ws.client.host if ws.client else None
 
 
 @router.websocket("/agents/connect")
@@ -36,10 +56,14 @@ async def agent_connect(
             return
 
         token = frame.payload["token"]
-        # The agent's result server is reachable at the socket peer address; the
-        # agent advertises its result port in the auth frame. Together these tell
-        # services/query.proxy_rows where to fetch result Parquet.
-        result_host = ws.client.host if ws.client else None
+        # Where the agent's result server is reachable, so services/query.proxy_rows
+        # can fetch result Parquet. The agent advertises its result port in the auth
+        # frame; the host is the connection's peer address — except behind a reverse
+        # proxy / load balancer (the HA topology dials the API through Caddy), where
+        # the peer is the proxy. There the agent's real address is the left-most
+        # X-Forwarded-For hop, mirroring how the add-agent dial URL trusts
+        # X-Forwarded-* (routers/agents._agent_dial_url).
+        result_host = _result_host(ws)
         result_port = frame.payload.get("result_port")
         result_port_int = int(result_port) if result_port is not None else None
 
@@ -112,6 +136,11 @@ async def agent_connect(
         )
 
         registry.register(agent_id, ws)
+        # Record this replica as the socket's owner so queries created on any
+        # replica can route dispatch frames here.
+        async with session_factory() as db:
+            await claim_agent_owner(db, agent_id)
+        last_presence_refresh = datetime.now(tz=UTC)
 
         async for raw_msg in ws.iter_text():
             # Each frame is isolated: a per-frame session keeps no pooled
@@ -123,6 +152,16 @@ async def agent_connect(
 
                 if msg_frame.type == FrameType.HEARTBEAT:
                     registry.touch(agent_id)
+                    now = datetime.now(tz=UTC)
+                    if (now - last_presence_refresh).total_seconds() >= _PRESENCE_REFRESH_S:
+                        async with session_factory() as db:
+                            await db.execute(
+                                sa.update(Agent)
+                                .where(Agent.id == agent_id)
+                                .values(last_ping_at=now)
+                            )
+                            await db.commit()
+                        last_presence_refresh = now
                     await ws.send_text(Frame(type=FrameType.HEARTBEAT).model_dump_json())
 
                 elif msg_frame.type == FrameType.AGENT_STATUS:
@@ -142,6 +181,24 @@ async def agent_connect(
                     # High-frequency live utilization: kept in an in-memory ring
                     # buffer only, never persisted.
                     registry.record_metrics(agent_id, msg_frame.payload)
+                    # Metrics arrive every couple of seconds, so they're a
+                    # reliable liveness signal: refresh the cluster-wide presence
+                    # watermark (throttled) so peer replicas see this agent as
+                    # connected and can route dispatch frames to this replica.
+                    # Without this, last_ping_at is set only at registration and
+                    # goes stale after the presence TTL, breaking cross-replica
+                    # dispatch from any non-owning replica.
+                    registry.touch(agent_id)
+                    now = datetime.now(tz=UTC)
+                    if (now - last_presence_refresh).total_seconds() >= _PRESENCE_REFRESH_S:
+                        async with session_factory() as db:
+                            await db.execute(
+                                sa.update(Agent)
+                                .where(Agent.id == agent_id)
+                                .values(last_ping_at=now)
+                            )
+                            await db.commit()
+                        last_presence_refresh = now
 
                 elif msg_frame.type in (FrameType.QUERY_DONE, FrameType.QUERY_PROGRESS):
                     from api.services.query import handle_agent_frame
@@ -161,7 +218,4 @@ async def agent_connect(
         if agent_id:
             registry.unregister(agent_id)
             async with session_factory() as db:
-                await db.execute(
-                    sa.update(Agent).where(Agent.id == agent_id).values(status="unavailable")
-                )
-                await db.commit()
+                await release_agent_owner(db, agent_id)

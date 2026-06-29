@@ -33,4 +33,7 @@ export const schedulesApi = {
   // Databricks-style per-job run history (newest first).
   listRuns: (ws: string, id: string) =>
     get<Query[]>(`/workspaces/${ws}/schedules/${id}/runs`),
+
+  // Every scheduled run in the workspace, newest first — the global runs feed.
+  listAllRuns: (ws: string) => get<Query[]>(`/workspaces/${ws}/schedule-runs`),
 };

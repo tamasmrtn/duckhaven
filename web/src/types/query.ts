@@ -14,6 +14,8 @@ export interface Query {
   status: QueryStatus;
   // Tags non-interactive runs (e.g. "scheduled"); null/absent for user runs.
   origin?: string | null;
+  // Set when the run was produced by a schedule; maps a run to its schedule.
+  schedule_id?: string | null;
   row_count: number | null;
   duration_ms: number | null;
   result_bytes: number | null;

@@ -53,3 +53,13 @@ export function useScheduleRuns(ws: string, id: string | null) {
     refetchInterval: 3000,
   });
 }
+
+export function useAllScheduleRuns(ws: string) {
+  return useQuery({
+    queryKey: ["workspace", ws, "schedule-runs"],
+    queryFn: () => schedulesApi.listAllRuns(ws),
+    enabled: !!ws,
+    // Poll so freshly-fired runs appear in the feed.
+    refetchInterval: 5000,
+  });
+}

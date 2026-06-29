@@ -17,6 +17,7 @@ import { WelcomePage } from "@/features/auth/WelcomePage";
 import { WorksheetPage } from "@/features/worksheet/WorksheetPage";
 import { CatalogPage } from "@/features/catalog/CatalogPage";
 import { SavedQueriesPage } from "@/features/saved-queries/SavedQueriesPage";
+import { SchedulesPage } from "@/features/schedules/SchedulesPage";
 import { HistoryPage } from "@/features/history/HistoryPage";
 import { QueryProfilePage } from "@/features/query-profile/QueryProfilePage";
 import { AdminLayout } from "@/features/admin/AdminLayout";
@@ -125,6 +126,12 @@ const savedQueriesRoute = createRoute({
   component: SavedQueriesPage,
 });
 
+const schedulesRoute = createRoute({
+  getParentRoute: () => wsRoute,
+  path: "/schedules",
+  component: SchedulesPage,
+});
+
 const historyRoute = createRoute({
   getParentRoute: () => wsRoute,
   path: "/history",
@@ -197,6 +204,7 @@ export const routeTree = rootRoute.addChildren([
     catalogRoute,
     catalogTableRoute,
     savedQueriesRoute,
+    schedulesRoute,
     historyRoute,
     queryProfileRoute,
     healthRoute,

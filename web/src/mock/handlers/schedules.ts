@@ -111,6 +111,18 @@ export const scheduleHandlers = [
   http.get("/api/workspaces/:ws/schedules/:id/runs", ({ params }) => {
     const ws = findWorkspace(params.ws as string);
     if (!ws) return httpError(404, "Workspace not found");
+    const runs = SCHEDULE_RUNS.filter(
+      (q) => q.workspace_id === ws.id && q.schedule_id === params.id,
+    )
+      .slice()
+      .sort((a, b) => b.started_at.localeCompare(a.started_at));
+    return HttpResponse.json(runs);
+  }),
+
+  // Workspace-wide scheduled runs feed (across all schedules), newest first.
+  http.get("/api/workspaces/:ws/schedule-runs", ({ params }) => {
+    const ws = findWorkspace(params.ws as string);
+    if (!ws) return httpError(404, "Workspace not found");
     const runs = SCHEDULE_RUNS.filter((q) => q.workspace_id === ws.id)
       .slice()
       .sort((a, b) => b.started_at.localeCompare(a.started_at));

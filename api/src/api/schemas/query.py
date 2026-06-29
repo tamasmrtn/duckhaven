@@ -28,6 +28,9 @@ class QueryOut(BaseModel):
     status: str
     # Tags non-interactive runs (e.g. "scheduled") so the UI can label them.
     origin: str | None = None
+    # Set when the run was produced by a schedule; lets the runs feed map a run
+    # back to its schedule. Null for interactive runs.
+    schedule_id: uuid.UUID | None = None
     row_count: int | None
     duration_ms: int | None
     result_bytes: int | None = None

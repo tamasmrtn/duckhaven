@@ -8,9 +8,12 @@ one cron schedule, with every execution recorded so you can see what ran and whe
 
 ## Add a schedule
 
-On the **Saved queries** page, click the schedule (calendar) action on a saved
-query. In the dialog you set:
+Open **Schedules** from the left nav. It has two tabs: **Schedules** (your
+schedules) and **Runs** (every scheduled run). On the **Schedules** tab click
+**New schedule** and set:
 
+- **Saved query** — the saved query this schedule runs. (Save a query first from a
+  worksheet if you don't have one yet.)
 - **Cron expression** — a standard five-field cron string,
   `minute hour day-of-month month day-of-week`. For example `0 2 * * *` runs daily
   at 02:00, and `*/15 * * * *` runs every fifteen minutes. Cron times are evaluated
@@ -22,16 +25,18 @@ query. In the dialog you set:
   the chosen agent is offline when a run is due, that run is recorded as **failed**
   (it does not silently fall back to another agent).
 
-When enabled, the saved-query card shows the **next run** time.
+Each schedule row shows its cron, agent, status, and next/last run. Click a row to
+edit it (or **Remove** it).
 
 ## View run history
 
-The schedule dialog lists the recent **runs** of that schedule, newest first, with
-each run's status, duration, and start time — the same information you'd see for an
-interactive query. A failed run shows its error here, so a misconfigured schedule
-(bad agent, query error) is visible rather than silent. Scheduled runs also appear
-in the workspace [History](run-queries.md), tagged as *scheduled* to distinguish
-them from queries you ran by hand.
+The **Runs** tab lists every scheduled run in the workspace, newest first, with
+each run's status, agent, rows, duration, and start time. A failed run shows its
+error, so a misconfigured schedule (bad agent, query error) is visible rather than
+silent. The edit dialog for a single schedule also shows that schedule's recent
+runs. Scheduled runs additionally appear in the workspace
+[History](run-queries.md), tagged as *scheduled* to distinguish them from queries
+you ran by hand.
 
 ## How it runs
 

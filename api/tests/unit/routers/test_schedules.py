@@ -144,6 +144,52 @@ async def test_list_schedule_runs_newest_first(
     assert all(r["origin"] == "scheduled" for r in runs)
 
 
+async def test_list_workspace_schedule_runs(
+    authed_client: AsyncClient, workspace: Workspace, saved_query: SavedQuery, db_session
+):
+    created = (
+        await authed_client.post(
+            f"/workspaces/{workspace.slug}/schedules",
+            json={"saved_query_id": str(saved_query.id), "cron": "0 2 * * *"},
+        )
+    ).json()
+    schedule_id = created["id"]
+
+    base = datetime(2026, 6, 29, 0, 0, tzinfo=UTC)
+    # Two scheduled runs and one interactive run (schedule_id null).
+    db_session.add_all(
+        [
+            Query(
+                workspace_id=workspace.id,
+                sql="SELECT 1",
+                status="done",
+                origin="scheduled",
+                schedule_id=uuid.UUID(schedule_id),
+                started_at=base,
+            ),
+            Query(
+                workspace_id=workspace.id,
+                sql="SELECT 1",
+                status="failed",
+                origin="scheduled",
+                schedule_id=uuid.UUID(schedule_id),
+                started_at=base + timedelta(minutes=5),
+            ),
+            Query(workspace_id=workspace.id, sql="SELECT 2", status="done", started_at=base),
+        ]
+    )
+    await db_session.commit()
+
+    resp = await authed_client.get(f"/workspaces/{workspace.slug}/schedule-runs")
+    assert resp.status_code == 200
+    runs = resp.json()
+    # Only the two scheduled runs, newest first, each carrying its schedule_id.
+    assert len(runs) == 2
+    assert all(r["schedule_id"] == schedule_id for r in runs)
+    starts = [r["started_at"] for r in runs]
+    assert starts == sorted(starts, reverse=True)
+
+
 async def test_non_member_forbidden(client: AsyncClient, db_session, workspace: Workspace):
     outsider = User(
         email="out@sched.local", password_hash=hash_password("pw"), name="Out", role="user"

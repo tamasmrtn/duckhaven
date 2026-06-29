@@ -55,6 +55,29 @@ async def list_schedules(
     return list((await db.execute(stmt)).scalars().all())
 
 
+@router.get("/workspaces/{ws}/schedule-runs", response_model=list[QueryOut])
+async def list_workspace_schedule_runs(
+    ws: str,
+    limit: int = QueryParam(default=100, le=500),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[Query]:
+    """Every scheduled run in the workspace, newest first — the global runs feed."""
+    workspace = await _require_workspace(db, ws, user)
+    return list(
+        (
+            await db.execute(
+                select(Query)
+                .where(Query.workspace_id == workspace.id, Query.schedule_id.isnot(None))
+                .order_by(Query.started_at.desc())
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
 @router.post("/workspaces/{ws}/schedules", status_code=201, response_model=ScheduleOut)
 async def create_schedule(
     ws: str,

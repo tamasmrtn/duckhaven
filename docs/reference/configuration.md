@@ -98,6 +98,15 @@ advisory lock, so only one cycle runs at a time — leave it enabled everywhere 
 | `MAINTENANCE_SCAN_TICK_S` | `900` | How often (seconds) the loop wakes to check whether a scan is due per the runtime cadence. |
 | `MAINTENANCE_DEEP_SCAN_INTERVAL_S` | `604800` (7 days) | How often the expensive orphan/storage tier runs; cheap metadata probes run every due cycle. |
 
+### Observability
+
+Controls the Prometheus metrics endpoint. See [Monitoring](../operations/monitoring.md#prometheus-metrics)
+for the metric reference, scrape config, and a starter Grafana dashboard.
+
+| Variable | Default | Description |
+|---|---|---|
+| `METRICS_ENABLED` | `true` | Expose `GET /api/metrics` in Prometheus text format. Unauthenticated like the health endpoints (keep it on the internal network); set `false` to remove the endpoint entirely. |
+
 ## Agent
 
 Source of truth: the [Agent reference](agent-reference.md). An agent needs only `CONTROL_PLANE_URL` and a

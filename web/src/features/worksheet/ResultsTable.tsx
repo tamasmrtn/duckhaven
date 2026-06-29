@@ -5,7 +5,7 @@ import {
   flexRender,
   type ColumnDef,
 } from "@tanstack/react-table";
-import { Download, Copy } from "lucide-react";
+import { Download, Copy, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { QueryRow } from "@/types/query";
@@ -15,6 +15,7 @@ interface ResultsTableProps {
   columns: string[];
   rows: QueryRow[];
   total: number;
+  error?: string | null;
   isLoading?: boolean;
   onLoadMore?: () => void;
   hasMore?: boolean;
@@ -50,6 +51,7 @@ export function ResultsTable({
   columns,
   rows,
   total,
+  error,
   isLoading,
   onLoadMore,
   hasMore,
@@ -93,6 +95,23 @@ export function ResultsTable({
     columns: colDefs,
     getCoreRowModel: getCoreRowModel(),
   });
+
+  if (error) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+        <AlertCircle className="size-8 text-[var(--status-failed)]" />
+        <p className="text-md font-medium text-[var(--status-failed)]">
+          Query failed
+        </p>
+        <pre
+          role="alert"
+          className="max-h-[60%] w-full max-w-2xl overflow-auto whitespace-pre-wrap rounded-md border border-[var(--status-failed)]/30 bg-[var(--status-failed)]/10 px-4 py-3 text-left font-mono text-sm text-[var(--status-failed)] select-text"
+        >
+          {error}
+        </pre>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (

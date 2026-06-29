@@ -794,11 +794,8 @@ export function WorksheetPage() {
                 ))}
               </div>
               {dispatchError && (
-                <span
-                  className="text-xs text-[var(--status-failed)] truncate max-w-md"
-                  role="alert"
-                >
-                  {dispatchError}
+                <span className="text-xs font-medium text-[var(--status-failed)]">
+                  Failed
                 </span>
               )}
               {runSeq && runSeq.total > 1 && (
@@ -825,14 +822,6 @@ export function WorksheetPage() {
                         {formatBytes(queryData.result_bytes)}
                       </span>
                     )}
-                  {queryData.status === "failed" && queryData.error && (
-                    <span
-                      className="text-xs text-[var(--status-failed)] truncate max-w-xs"
-                      role="alert"
-                    >
-                      {queryData.error}
-                    </span>
-                  )}
                   {queryData.status === "running" &&
                     typeof queryData.progress?.stage === "string" && (
                       <span className="text-xs text-text-secondary">
@@ -865,6 +854,10 @@ export function WorksheetPage() {
                   columns={queryRows.columns}
                   rows={queryRows.rows}
                   total={queryRows.total}
+                  error={
+                    dispatchError ??
+                    (queryData?.status === "failed" ? queryData.error : null)
+                  }
                   isLoading={
                     queryRows.isLoading && queryData?.status === "running"
                   }

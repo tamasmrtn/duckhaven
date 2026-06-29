@@ -109,10 +109,13 @@ services:
       AZURE_TENANT_ID: ${AZURE_TENANT_ID:-}
       AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-}
       AZURE_CLIENT_SECRET: ${AZURE_CLIENT_SECRET:-}
-      # Override the STS endpoint Polaris uses to assume external S3 roles. Empty
-      # for real AWS; set to a private/emulated STS (e.g. LocalStack, GovCloud,
-      # a VPC STS endpoint) for testing or non-public deployments.
-      AWS_ENDPOINT_URL_STS: ${AWS_ENDPOINT_URL_STS:-}
+      # Optional STS endpoint override for external S3 roles (e.g. LocalStack,
+      # GovCloud, a VPC STS endpoint). Intentionally NOT given an empty default:
+      # an empty AWS_ENDPOINT_URL_STS makes the AWS SDK build an STS client with
+      # no protocol ("protocol must not be null"), which breaks credential
+      # vending for the bundled MinIO catalog (role-less S3, no STS). Leaving it
+      # unset lets Polaris vend static creds directly. To use a custom STS
+      # endpoint, add `AWS_ENDPOINT_URL_STS: <url>` here.
       polaris.readiness.ignore-severe-issues: "true"
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8182/q/health"]

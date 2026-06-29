@@ -86,6 +86,15 @@ class Settings(BaseSettings):
     # due cycle); seconds. Default weekly.
     maintenance_deep_scan_interval_s: float = 7 * 86400.0
 
+    # Job scheduler. When enabled, a background loop in the API lifespan runs saved
+    # queries on their cron schedules. Like the maintenance scanner it is
+    # coordinated across replicas by a Postgres advisory lock (leader election), so
+    # it is safe to leave enabled on every replica: only the lock holder dispatches
+    # each tick. The tick is how often the loop wakes to check for due schedules,
+    # and so also the finest effective cadence (60s => at most once per minute).
+    scheduler_enabled: bool = True
+    scheduler_tick_s: float = 60.0
+
     # ── High availability (multi-replica control plane) ───────────────────────
     # Identity of this API replica and the URL peers use to reach it for
     # inter-replica agent-dispatch forwarding. The defaults make a single-replica

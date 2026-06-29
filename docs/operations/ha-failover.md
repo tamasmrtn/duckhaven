@@ -112,6 +112,23 @@ migrations don't race.
    SELECT last_scan_at, scan_cursor FROM maintenance_policy;
    ```
 
+3. **Scheduler:** the query [scheduler](../guides/schedule-queries.md) uses the same
+   leader-election pattern (a distinct advisory lock). With an enabled schedule due,
+   confirm only one replica logs a dispatch for a given tick:
+
+   ```bash
+   docker compose -f deploy/docker-compose.ha.yml logs api-1 api-2 | grep "Scheduled run:"
+   ```
+
+   The leader logs `Scheduled run: ...`; the standby stays silent. A due schedule
+   produces exactly one run per tick, not one per replica. Independent of logs, the
+   schedule's `last_run_at` / `last_run_query_id` advance once per fired run and never
+   twice for the same tick:
+
+   ```sql
+   SELECT id, enabled, next_run_at, last_run_at FROM schedules;
+   ```
+
 ## After any drill
 
 Check overall health:

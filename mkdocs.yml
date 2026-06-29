@@ -116,6 +116,7 @@ nav:
       - Snapshots & time travel: guides/snapshots-time-travel.md
       - Read query profiles: guides/query-profiles.md
       - Saved queries: guides/saved-queries.md
+      - Schedule queries: guides/schedule-queries.md
       - Manage users & access: guides/users-access.md
       - Connect an IdP (SSO): guides/connect-idp.md
       - Connect LDAP / AD: guides/connect-ldap.md

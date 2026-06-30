@@ -333,10 +333,11 @@ async def _cancel(db: AsyncSession, polaris: PolarisClient, migration: CatalogMi
 async def _fail(
     db: AsyncSession, polaris: PolarisClient, migration: CatalogMigration, exc: Exception
 ) -> None:
-    logger.exception("Catalog migration %s failed", migration.id)
+    migration_id = migration.id
+    logger.exception("Catalog migration %s failed", migration_id)
     # Roll back any half-applied in-flight changes before recording the failure.
     await db.rollback()
-    migration = await db.get(CatalogMigration, migration.id)
+    migration = await db.get(CatalogMigration, migration_id)
     if migration is None or migration.status in (STATUS_COMPLETED, STATUS_CANCELLED):
         return
     await _teardown_shadow(polaris, migration.shadow_polaris_name)

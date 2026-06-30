@@ -1,8 +1,9 @@
 # Storage backends
 
 A **storage backend** is a physical location where Iceberg table data lives. Backends are registered once by an admin
-and referenced by [catalogs](catalogs.md) — one backend per catalog, fixed at creation. A
-[workspace](workspaces.md) reaches storage through the catalogs it attaches.
+and referenced by [catalogs](catalogs.md) — one backend per catalog. A catalog's backend is chosen at creation, but it
+is no longer permanent: an admin can move a catalog to a different backend with a [storage migration](catalogs.md#storage-migration).
+A [workspace](workspaces.md) reaches storage through the catalogs it attaches.
 
 ## S3-compatible object storage only
 

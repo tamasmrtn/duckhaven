@@ -113,6 +113,7 @@ nav:
   - Guides:
       - Run queries: guides/run-queries.md
       - Manage catalogs: guides/manage-catalogs.md
+      - Migrate a catalog's storage: guides/migrate-catalog-storage.md
       - Snapshots & time travel: guides/snapshots-time-travel.md
       - Read query profiles: guides/query-profiles.md
       - Saved queries: guides/saved-queries.md

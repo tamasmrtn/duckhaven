@@ -9,6 +9,7 @@ import { resetSchemas } from "./fixtures/schemas";
 import { resetQueries } from "./fixtures/queries";
 import { resetSchedules } from "./fixtures/schedules";
 import { resetStorageBackends } from "./fixtures/storage-backends";
+import { resetCatalogMigrations } from "./fixtures/catalog-migrations";
 import { resetAgents } from "./fixtures/agents";
 import { resetMetrics } from "./fixtures/metrics";
 import { resetMaintenance } from "./fixtures/maintenance";
@@ -22,6 +23,7 @@ export function resetMockState(): void {
   resetQueries();
   resetSchedules();
   resetStorageBackends();
+  resetCatalogMigrations();
   resetAgents();
   resetMetrics();
   resetMaintenance();

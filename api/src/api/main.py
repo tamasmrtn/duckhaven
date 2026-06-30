@@ -97,6 +97,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from api.services.scheduler.scanner import scheduler_loop
 
         scheduler_task = asyncio.create_task(scheduler_loop(async_session_factory))
+
+    migration_task: asyncio.Task | None = None
+    if settings.migration_runner_enabled:
+        from api.services.migration.runner import migration_loop
+
+        migration_task = asyncio.create_task(
+            migration_loop(async_session_factory, app.state.polaris_client)
+        )
     try:
         yield
     finally:
@@ -104,7 +112,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # then hand our agents to other replicas before tearing down.
         app.state.draining = True
         await drain_local_agents(async_session_factory)
-        for task in (scanner_task, scheduler_task):
+        for task in (scanner_task, scheduler_task, migration_task):
             if task is not None:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):

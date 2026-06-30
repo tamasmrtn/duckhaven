@@ -553,6 +553,23 @@ class PolarisClient:
         self._raise_for_status(resp)
         return self._table_from_load_result(resp.json(), catalog, schema, name)
 
+    async def register_table(
+        self, catalog: str, schema: str, name: str, metadata_location: str
+    ) -> PolarisTable:
+        """Adopt an existing Iceberg metadata.json as a new table (Iceberg REST
+        ``registerTable``). Used by storage migration to point a freshly-copied,
+        path-rewritten metadata file into the shadow catalog without rewriting any
+        data. The namespace must already exist; the table must not."""
+        resp = await self._send(
+            "register_table",
+            "POST",
+            f"{self.CATALOG_PATH}/{catalog}/namespaces/{schema}/register",
+            json={"name": name, "metadata-location": metadata_location},
+            headers=await self._auth_headers(),
+        )
+        self._raise_for_status(resp)
+        return self._table_from_load_result(resp.json(), catalog, schema, name)
+
     async def delete_table(
         self, catalog: str, schema: str, name: str, *, purge: bool = False
     ) -> None:

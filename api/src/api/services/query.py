@@ -30,6 +30,8 @@ from api.services.agent_dispatch import (
     is_agent_connected,
     send_to_agent,
 )
+from api.services.migration.service import workspace_has_active_migration
+from api.services.sql_guard import is_read_only
 from api.services.workspace import (
     DEFAULT_SCHEMA,
     get_default_catalog,
@@ -53,6 +55,10 @@ async def dispatch_query(
     workspace = await db.get(Workspace, query.workspace_id)
     if workspace is None:
         raise ValueError("Workspace missing for query")
+    # Read-only freeze: while any attached catalog is mid storage-migration, reject
+    # writes (reads still flow). Conservative — blocks writes in the whole workspace.
+    if not is_read_only(query.sql) and await workspace_has_active_migration(db, workspace.id):
+        raise ValueError("Catalog is read-only: a storage backend migration is in progress")
     catalogs = await resolve_workspace_catalogs(db, workspace.id)
     if not catalogs:
         raise ValueError("Workspace has no catalogs attached")

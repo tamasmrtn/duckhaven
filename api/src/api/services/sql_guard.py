@@ -54,3 +54,17 @@ def assert_allowed(sql: str) -> None:
             f"Disallowed statement type(s): {names}. Allowed: SELECT, INSERT, "
             "UPDATE, DELETE, MERGE, CREATE, ALTER, DROP."
         )
+
+
+def is_read_only(sql: str) -> bool:
+    """True iff every statement is a ``SELECT`` (no writes/DDL).
+
+    Used by the catalog-migration freeze gate to keep reads flowing while a
+    catalog is read-only mid-migration. Reuses the same lexical parse as
+    ``assert_allowed`` — no execution. Unparseable SQL is treated as not
+    read-only so the stricter ``assert_allowed`` path reports the parse error."""
+    try:
+        statements = duckdb.extract_statements(sql)
+    except Exception:  # noqa: BLE001 - parse failure -> not provably read-only
+        return False
+    return bool(statements) and all(s.type == duckdb.StatementType.SELECT for s in statements)

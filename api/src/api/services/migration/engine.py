@@ -38,6 +38,7 @@ from api.services.migration import (
     STATUS_FAILED,
     STATUS_PENDING,
     STATUS_VERIFYING,
+    TABLE_COPIED,
     TABLE_PENDING,
     TABLE_REGISTERED,
     TABLE_VERIFIED,
@@ -54,12 +55,24 @@ from api.services.workspace import ensure_polaris_catalog, polaris_storage
 
 logger = logging.getLogger(__name__)
 
-# Throwaway namespace/table on the shadow catalog whose sole purpose is to make
-# Polaris vend catalog-scoped write credentials for the new location (mirrors the
-# storage-health probe). Dropped before cutover so the migrated catalog is clean.
-_PROBE_SCHEMA = "dh_migration"
-_PROBE_TABLE = "probe"
-_PROBE_COLUMNS = [{"id": 1, "name": "x", "required": False, "type": "int"}]
+
+def _schema_columns(metadata: dict) -> list[dict]:
+    """The current schema's Iceberg field list, for a placeholder ``create_table``.
+
+    Polaris only vends storage credentials scoped to a *table's own* location
+    (never the catalog base — confirmed against a real ADLS Gen2 account: its SAS
+    is directory-scoped to the exact table path and rejects requests to a sibling
+    table). So the copy step below creates a throwaway placeholder table per
+    target to get Polaris to assign it a location and vend credentials for that
+    location specifically; this recovers the source table's current schema so the
+    placeholder is well-formed enough for ``create_table`` to accept. The
+    placeholder's schema itself is discarded once the real (rewritten) metadata is
+    registered in its place.
+    """
+    schemas = metadata.get("schemas") or []
+    current_id = metadata.get("current-schema-id")
+    schema = next((s for s in schemas if s.get("schema-id") == current_id), None)
+    return (schema or (schemas[0] if schemas else {})).get("fields", [])
 
 
 async def log_event(db: AsyncSession, migration_id: uuid.UUID, level: str, message: str) -> None:
@@ -75,12 +88,6 @@ async def log_event(db: AsyncSession, migration_id: uuid.UUID, level: str, messa
         CatalogMigrationEvent(migration_id=migration_id, seq=seq + 1, level=level, message=message)
     )
     await db.flush()
-
-
-def _cat_base(backend: StorageBackend, polaris_name: str) -> str:
-    """The catalog's scoped storage root — matches ``ensure_polaris_catalog``."""
-    _, base, _ = polaris_storage(backend.kind, backend.root_uri, backend.config)
-    return f"{base.rstrip('/')}/{polaris_name}"
 
 
 async def process_migration(
@@ -153,18 +160,6 @@ async def _provision(db: AsyncSession, polaris: PolarisClient, migration: Catalo
             )
             total += 1
 
-    # Probe table → catalog-scoped vended write credentials for the new location.
-    try:
-        await polaris.create_schema(shadow, _PROBE_SCHEMA)
-    except PolarisConflictError:
-        pass
-    try:
-        await polaris.create_table(
-            catalog=shadow, schema=_PROBE_SCHEMA, name=_PROBE_TABLE, columns=_PROBE_COLUMNS
-        )
-    except PolarisConflictError:
-        pass
-
     migration.tables_total = total
     migration.status = STATUS_COPYING
     await log_event(db, migration.id, "info", f"Copying {total} table(s) to the new backend")
@@ -178,9 +173,6 @@ async def _copy(db: AsyncSession, polaris: PolarisClient, migration: CatalogMigr
     assert catalog and source and target
     shadow = migration.shadow_polaris_name
     assert shadow
-
-    old_prefix = _cat_base(source, catalog.polaris_name)
-    new_prefix = _cat_base(target, shadow)
 
     pending = (
         (
@@ -202,40 +194,73 @@ async def _copy(db: AsyncSession, polaris: PolarisClient, migration: CatalogMigr
             await _cancel(db, polaris, migration)
             return
 
-        # Source read creds (table-scoped) + destination write creds (the shadow
-        # probe yields catalog-scoped creds for the whole new base).
-        src_body = await polaris.load_table_with_credentials(
-            catalog.polaris_name, mt.schema_name, mt.table_name
-        )
-        dst_body = await polaris.load_table_with_credentials(shadow, _PROBE_SCHEMA, _PROBE_TABLE)
-        src_meta = src_body.get("metadata") or {}
-        src_location = src_meta.get("location")
-        src_metadata_location = src_body.get("metadata-location")
-        if not src_location or not src_metadata_location:
-            raise RuntimeError(f"Polaris returned no location for {mt.schema_name}.{mt.table_name}")
+        if mt.status == TABLE_PENDING:
+            src_body = await polaris.load_table_with_credentials(
+                catalog.polaris_name, mt.schema_name, mt.table_name
+            )
+            src_meta = src_body.get("metadata") or {}
+            src_location = src_meta.get("location")
+            src_metadata_location = src_body.get("metadata-location")
+            if not src_location or not src_metadata_location:
+                raise RuntimeError(
+                    f"Polaris returned no location for {mt.schema_name}.{mt.table_name}"
+                )
 
-        src_ctx = StorageContext(source.kind, src_body.get("config") or {}, source.config or {})
-        dst_ctx = StorageContext(target.kind, dst_body.get("config") or {}, target.config or {})
+            # A placeholder table exists only long enough to make Polaris assign
+            # it a location and vend credentials scoped to it — a conflict here
+            # means a crashed prior attempt already created it (resume); either
+            # way `load_table_with_credentials` below returns that location.
+            try:
+                await polaris.create_table(
+                    catalog=shadow,
+                    schema=mt.schema_name,
+                    name=mt.table_name,
+                    columns=_schema_columns(src_meta),
+                )
+            except PolarisConflictError:
+                pass
+            dst_body = await polaris.load_table_with_credentials(
+                shadow, mt.schema_name, mt.table_name
+            )
+            dst_location = (dst_body.get("metadata") or {}).get("location")
+            if not dst_location:
+                raise RuntimeError(
+                    f"Polaris returned no placeholder location for {mt.schema_name}.{mt.table_name}"
+                )
+            dst_ctx = StorageContext(target.kind, dst_body.get("config") or {}, target.config or {})
+            # Drop the placeholder's Polaris entry (metadata only — the vended
+            # credentials remain valid) so `register_table` can adopt the real,
+            # rewritten metadata into a name that doesn't already exist.
+            await polaris.delete_table(shadow, mt.schema_name, mt.table_name, purge=False)
 
-        result = await asyncio.to_thread(
-            relocate.relocate_table,
-            source_location=src_location,
-            source_metadata_location=src_metadata_location,
-            old_prefix=old_prefix,
-            new_prefix=new_prefix,
-            src_ctx=src_ctx,
-            dst_ctx=dst_ctx,
-        )
-        mt.source_metadata_location = src_metadata_location
-        mt.target_metadata_location = result.target_metadata_location
-        mt.bytes_copied = result.bytes_copied
-        migration.bytes_copied += result.bytes_copied
+            src_ctx = StorageContext(source.kind, src_body.get("config") or {}, source.config or {})
+            result = await asyncio.to_thread(
+                relocate.relocate_table,
+                source_location=src_location,
+                source_metadata_location=src_metadata_location,
+                old_prefix=src_location,
+                new_prefix=dst_location,
+                src_ctx=src_ctx,
+                dst_ctx=dst_ctx,
+            )
+            mt.source_metadata_location = src_metadata_location
+            mt.target_metadata_location = result.target_metadata_location
+            mt.bytes_copied = result.bytes_copied
+            migration.bytes_copied += result.bytes_copied
+            mt.status = TABLE_COPIED
+            await log_event(
+                db,
+                migration.id,
+                "info",
+                f"Copied {mt.schema_name}.{mt.table_name} to the new backend",
+            )
+            await db.commit()
 
         # Adopt the rewritten metadata into the shadow catalog. A conflict means a
         # prior attempt already registered it (resume) — treat as done.
         try:
             await polaris.register_table(
-                shadow, mt.schema_name, mt.table_name, result.target_metadata_location
+                shadow, mt.schema_name, mt.table_name, mt.target_metadata_location
             )
         except PolarisConflictError:
             pass
@@ -245,7 +270,7 @@ async def _copy(db: AsyncSession, polaris: PolarisClient, migration: CatalogMigr
             db,
             migration.id,
             "info",
-            f"Copied and registered {mt.schema_name}.{mt.table_name} "
+            f"Registered {mt.schema_name}.{mt.table_name} "
             f"({migration.tables_done}/{migration.tables_total})",
         )
         await db.commit()
@@ -300,13 +325,6 @@ async def _cutover(db: AsyncSession, polaris: PolarisClient, migration: CatalogM
     assert catalog
     shadow = migration.shadow_polaris_name
     assert shadow
-
-    # Drop the probe (best-effort) so the migrated catalog has no stray table.
-    try:
-        await polaris.delete_table(shadow, _PROBE_SCHEMA, _PROBE_TABLE, purge=True)
-        await polaris.delete_schema(shadow, _PROBE_SCHEMA)
-    except PolarisError:
-        pass
 
     # The atomic flip: from here the catalog reads/writes the new backend. The old
     # Polaris catalog + data are left intact for the retention window (rollback).

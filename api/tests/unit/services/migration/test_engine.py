@@ -10,6 +10,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
+import sqlalchemy as sa
 
 from api.models.catalog import Catalog
 from api.models.catalog_migration import CatalogMigration, CatalogMigrationTable
@@ -79,9 +80,31 @@ async def test_happy_path_cuts_over(db_session, fake_polaris):
     assert catalog.polaris_name == mig.shadow_polaris_name
     assert catalog.storage_backend_id == target.id
     assert mig.source_polaris_name == "srccat"
-    # The shadow table was registered and the probe cleaned up.
-    assert (mig.shadow_polaris_name, "analytics", "t") in fake_polaris.tables
-    assert (mig.shadow_polaris_name, "dh_migration", "probe") not in fake_polaris.tables
+    # A per-table placeholder was created in the shadow catalog to get Polaris to
+    # assign it a location and vend destination credentials scoped to it (not a
+    # single shared probe reused across every table — that credential wouldn't
+    # extend to other tables on backends whose vending is directory-scoped, e.g.
+    # ADLS Gen2).
+    assert any(
+        b["catalog"] == mig.shadow_polaris_name and b["schema"] == "analytics" and b["name"] == "t"
+        for b in fake_polaris.created_table_bodies
+    )
+    # The shadow table is registered with the real rewritten metadata, not left
+    # holding the discarded placeholder's own metadata (which would happen if
+    # register_table silently no-op'd on a conflict because the placeholder was
+    # never dropped first).
+    mt = (
+        await db_session.execute(
+            sa.select(CatalogMigrationTable).where(
+                CatalogMigrationTable.migration_id == mig.id,
+                CatalogMigrationTable.schema_name == "analytics",
+                CatalogMigrationTable.table_name == "t",
+            )
+        )
+    ).scalar_one()
+    registered = fake_polaris.tables[(mig.shadow_polaris_name, "analytics", "t")]
+    assert registered.storage_location == mt.target_metadata_location
+    assert "file:///w/" not in registered.storage_location
 
 
 async def test_failure_leaves_catalog_on_old_backend(db_session, fake_polaris, monkeypatch):

@@ -1,9 +1,10 @@
 # What is DuckHaven?
 
-DuckHaven is a **self-hosted, browser-based SQL workspace** for teams that run [DuckDB](https://duckdb.org/) over
-Apache Iceberg tables governed by [Apache Polaris](https://polaris.apache.org/). It gives a small team (roughly 2–10
-users) collaborative worksheets, a shared catalog, per-workspace permissions, and a full audit trail — without a cloud
-warehouse, Kubernetes, or a platform team.
+DuckHaven is a **self-hosted, governed DuckDB + Iceberg analytics platform** for small teams (roughly 2–10 users). It
+started as collaborative browser worksheets over [DuckDB](https://duckdb.org/) and Apache Iceberg tables governed by
+[Apache Polaris](https://polaris.apache.org/), and grew to cover the lifecycle around them: scheduled queries, an
+advisory lakehouse maintenance scanner, single sign-on, per-workspace permissions, and a full audit trail — without a
+cloud warehouse, Kubernetes, or a platform team.
 
 ## The problem it solves
 
@@ -15,8 +16,10 @@ billing, and no surprise costs.
 
 - **Browser worksheets** — a Monaco SQL editor with tabs, a results grid, and CSV export.
 - **A shared catalog** — browse schemas and tables, with sample rows and Iceberg snapshot history.
-- **Governed workspaces** — per-workspace roles and a complete audit log of who ran what.
+- **Governed workspaces** — per-workspace roles, single sign-on (OIDC/LDAP), and a complete audit log of who ran what.
 - **Transparent compute** — you pick the DuckDB [agent](agents.md) per query; nothing is hidden behind an optimizer.
+- **Scheduled queries** — run saved queries on a cron schedule, with per-schedule run history.
+- **Lakehouse maintenance** — a background advisor scores catalog health and recommends compaction and cleanup.
 - **Self-hosting** — one Docker Compose stack on your own network.
 
 ## Who it is for

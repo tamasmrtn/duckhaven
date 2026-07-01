@@ -15,12 +15,12 @@ the [Deployment guides](../deployment/install.md).
 
 ## 1. Overview
 
-DuckHaven is a **self-hosted, browser-based SQL workspace** for teams that
-run [DuckDB](https://duckdb.org/) over Apache Iceberg tables governed by
-[Apache Polaris](https://polaris.apache.org/). It gives a small team
-(2–10 users) collaborative worksheets, a shared catalog, per-workspace
-permissions, and a full audit trail — without a cloud warehouse, Kubernetes,
-or a platform team.
+DuckHaven is a **self-hosted, governed DuckDB + Iceberg analytics platform**
+for small teams (2–10 users) that run [DuckDB](https://duckdb.org/) over
+Apache Iceberg tables governed by [Apache Polaris](https://polaris.apache.org/).
+It gives collaborative worksheets, scheduled queries, a governed catalog,
+lakehouse-maintenance advice, per-workspace permissions, and a full audit
+trail — without a cloud warehouse, Kubernetes, or a platform team.
 
 Architecturally, DuckHaven is a **control plane / compute split**:
 

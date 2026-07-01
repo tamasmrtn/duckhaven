@@ -185,7 +185,31 @@ class PolarisClient:
         await self._http.aclose()
 
     async def _send(self, operation: str, method: str, url: str, **kwargs: Any) -> httpx.Response:
-        """Issue an HTTP request and record its outcome + latency for metrics.
+        """Issue a request, re-minting the token and replaying it once on a 401.
+
+        A cached token can outlive its real (wall-clock) lifetime across a host
+        suspend/resume: `time.monotonic()` pauses while the machine is suspended,
+        so our refresh timer still considers the token fresh, but its JWT `exp`
+        has passed and Polaris answers 401. Reactively drop the token, mint a new
+        one, and replay the request once. The token mint itself (`get_token`)
+        bypasses this so it cannot recurse.
+        """
+        resp = await self._send_once(operation, method, url, **kwargs)
+        auth = (kwargs.get("headers") or {}).get("Authorization")
+        if resp.status_code == 401 and operation != "get_token" and auth:
+            stale = auth.removeprefix("Bearer ").strip()
+            token = await self._access_token(stale_token=stale)
+            if f"Bearer {token}" != auth:
+                headers = {**kwargs["headers"], "Authorization": f"Bearer {token}"}
+                resp = await self._send_once(
+                    operation, method, url, **{**kwargs, "headers": headers}
+                )
+        return resp
+
+    async def _send_once(
+        self, operation: str, method: str, url: str, **kwargs: Any
+    ) -> httpx.Response:
+        """Issue a single HTTP request and record its outcome + latency for metrics.
 
         ``operation`` is a stable, low-cardinality name (not the URL, which
         carries catalog/table names). ``status`` is the HTTP status code, or
@@ -214,11 +238,22 @@ class PolarisClient:
 
     # --- Auth ---
 
-    async def _access_token(self) -> str:
+    async def _access_token(self, *, stale_token: str | None = None) -> str:
+        """Return a valid bearer token, minting one when the cache is empty or
+        stale.
+
+        ``stale_token`` is supplied by the 401-retry path — the token Polaris just
+        rejected. If the cache already holds a *different* token, a concurrent
+        caller re-minted first and we reuse that; otherwise we force a re-mint
+        even though the monotonic refresh timer still considers it fresh.
+        """
         async with self._token_lock:
-            if self._token is not None and time.monotonic() < self._token_expiry:
+            if stale_token is not None and self._token not in (None, stale_token):
                 return self._token
-            resp = await self._send(
+            force = stale_token is not None
+            if not force and self._token is not None and time.monotonic() < self._token_expiry:
+                return self._token
+            resp = await self._send_once(
                 "get_token",
                 "POST",
                 f"{self.CATALOG_PATH}/oauth/tokens",

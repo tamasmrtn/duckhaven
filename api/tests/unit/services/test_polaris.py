@@ -326,6 +326,56 @@ async def test_delete_table_with_purge(polaris: PolarisClient) -> None:
 
 
 @respx.mock
+async def test_reauths_and_retries_once_on_401(polaris: PolarisClient) -> None:
+    """A cached token can outlive its wall-clock exp across a host suspend/resume
+    (monotonic time pauses), so Polaris starts returning 401 while our refresh
+    timer still considers the token fresh. The client must drop the token,
+    re-mint, and replay the request once with the fresh token."""
+    token_route = respx.post(f"{CAT}/oauth/tokens").mock(
+        side_effect=[
+            httpx.Response(200, json={"access_token": "stale", "expires_in": 3600}),
+            httpx.Response(200, json={"access_token": "fresh", "expires_in": 3600}),
+        ]
+    )
+
+    def resource(request: httpx.Request) -> httpx.Response:
+        if request.headers.get("Authorization") == "Bearer stale":
+            return httpx.Response(401, json={})
+        return httpx.Response(200, json={"namespaces": [["analytics"]]})
+
+    ns_route = respx.get(f"{CAT}/new/namespaces").mock(side_effect=resource)
+
+    names = [s.name for s in await polaris.list_schemas("new")]
+
+    assert names == ["analytics"]
+    # Initial mint + one reactive re-auth; the resource is hit twice (401 then
+    # the successful retry with the fresh token).
+    assert token_route.call_count == 2
+    assert ns_route.call_count == 2
+    assert ns_route.calls.last.request.headers["Authorization"] == "Bearer fresh"
+
+
+@respx.mock
+async def test_persistent_401_retries_once_then_raises(polaris: PolarisClient) -> None:
+    """If a freshly minted token is *also* rejected, the client retries exactly
+    once (no infinite loop) and surfaces the 401 as a BadRequest error."""
+    token_route = respx.post(f"{CAT}/oauth/tokens").mock(
+        side_effect=[
+            httpx.Response(200, json={"access_token": "t1", "expires_in": 3600}),
+            httpx.Response(200, json={"access_token": "t2", "expires_in": 3600}),
+        ]
+    )
+    ns_route = respx.get(f"{CAT}/new/namespaces").mock(return_value=httpx.Response(401, json={}))
+
+    with pytest.raises(PolarisBadRequestError):
+        await polaris.list_schemas("new")
+
+    # Exactly one re-auth and one replay — the retry does not recurse.
+    assert token_route.call_count == 2
+    assert ns_route.call_count == 2
+
+
+@respx.mock
 async def test_status_dispatch(polaris: PolarisClient) -> None:
     _mock_token()
     respx.get(f"{MGMT}/catalogs/c404").mock(return_value=httpx.Response(404, json={}))

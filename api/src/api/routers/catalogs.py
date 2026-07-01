@@ -23,6 +23,7 @@ from api.schemas.catalog_mgmt import CatalogAttachRequest, CatalogCreate, Catalo
 from api.schemas.catalog_migration import (
     CatalogMigrationEventOut,
     CatalogMigrationOut,
+    CatalogMigrationScalarOut,
     CatalogMigrationTableOut,
     MigrationStartRequest,
 )
@@ -55,7 +56,11 @@ async def _catalog_for_admin(db: AsyncSession, user: User, catalog_id: uuid.UUID
 
 
 def _migration_out(migration, *, include_tables: bool = False) -> CatalogMigrationOut:
-    out = CatalogMigrationOut.model_validate(migration)
+    # Validated via the scalar-only schema first: the full schema declares
+    # ``tables``, and pydantic's from_attributes mode reads every declared field,
+    # which would lazy-load the relationship even when it isn't loaded/requested.
+    scalars = CatalogMigrationScalarOut.model_validate(migration)
+    out = CatalogMigrationOut(**scalars.model_dump())
     if include_tables:
         out.tables = [CatalogMigrationTableOut.model_validate(t) for t in migration.tables]
     return out

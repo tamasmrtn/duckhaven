@@ -22,7 +22,15 @@ class CatalogMigrationTableOut(BaseModel):
     error: str | None = None
 
 
-class CatalogMigrationOut(BaseModel):
+class CatalogMigrationScalarOut(BaseModel):
+    """Every ``CatalogMigrationOut`` field except ``tables``.
+
+    Validated from the ORM object on its own so ``from_attributes`` never touches
+    the ``tables`` relationship — reading it when unloaded triggers a lazy load,
+    which fails outside an async-safe context. Callers that need the per-table
+    breakdown attach it separately once eager-loaded (see ``_migration_out``).
+    """
+
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -40,6 +48,9 @@ class CatalogMigrationOut(BaseModel):
     started_at: datetime | None = None
     cutover_at: datetime | None = None
     finished_at: datetime | None = None
+
+
+class CatalogMigrationOut(CatalogMigrationScalarOut):
     # Populated on the detail endpoint; omitted from the list view.
     tables: list[CatalogMigrationTableOut] | None = None
 

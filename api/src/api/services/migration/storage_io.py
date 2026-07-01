@@ -97,6 +97,14 @@ def _s3_bucket_key(uri: str) -> tuple[str, str]:
 def _s3_list(ctx: StorageContext, location: str) -> list[tuple[str, int]]:
     client = _s3_client(ctx)
     bucket, prefix = _s3_bucket_key(location)
+    # A directory-style trailing slash: Polaris's vended STS credentials scope
+    # s3:ListBucket to an `s3:prefix` StringLike condition of `<location>/*`,
+    # which only matches a request prefix that itself ends in "/" — without it
+    # MinIO denies the call outright. It also stops a bare prefix match from
+    # sweeping in a sibling table whose name is a superstring (e.g. "users" vs
+    # "users2").
+    if not prefix.endswith("/"):
+        prefix += "/"
     out: list[tuple[str, int]] = []
     token: str | None = None
     while True:
@@ -163,6 +171,10 @@ def _adls_list(ctx: StorageContext, location: str) -> list[tuple[str, int]]:
     client = _adls_container(ctx, location)
     netloc = _adls_host(location)
     prefix = _adls_path(location)
+    # Directory-style trailing slash so a bare prefix match can't sweep in a
+    # sibling table whose name is a superstring (e.g. "users" vs "users2").
+    if not prefix.endswith("/"):
+        prefix += "/"
     out: list[tuple[str, int]] = []
     for blob in client.list_blobs(name_starts_with=prefix):
         out.append((f"abfss://{netloc}/{blob.name}", int(blob.size or 0)))

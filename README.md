@@ -246,15 +246,18 @@ cutting a new release see [docs/developer/releasing.md](docs/developer/releasing
   API images (GHCR), server-side backend compatibility checks, Iceberg snapshot
   history browsing with "query at this snapshot" time travel, EXPLAIN-based
   per-query memory sizing (the `auto` concurrency profile), post-execution query
-  profiles with inefficiency highlights, and an opt-in
+  profiles with inefficiency highlights, an opt-in
   [highly-available control plane](docs/deployment/high-availability.md)
-  (HA Postgres + multiple API replicas behind a load balancer).
+  (HA Postgres + multiple API replicas behind a load balancer), and
+  [catalog storage-backend migration](docs/guides/migrate-catalog-storage.md)
+  (move a catalog to a different backend after creation, preserving all data and
+  Iceberg snapshot history).
 - **In progress** — Finishing the Polaris `storageConfigInfo` credential wiring
   (role ARN / tenant) so external S3 / ADLS Gen 2 backends are production-ready
   outside the opt-in integration tests.
 - **Future** — Notebook UI, heterogeneous engines (Spark, Trino, Polars),
-  per-table backend override, Polaris RBAC permission mirroring, Grafana
-  dashboards, off-box result durability / DR automation.
+  Polaris RBAC permission mirroring, Grafana dashboards, off-box result
+  durability / DR automation.
 
 See [docs/concepts/architecture.md](docs/concepts/architecture.md) §13 for the gap tracker.
 

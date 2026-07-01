@@ -24,6 +24,7 @@ import { AdminLayout } from "@/features/admin/AdminLayout";
 import { AgentsPage } from "@/features/admin/AgentsPage";
 import { MetricsPage } from "@/features/admin/MetricsPage";
 import { StorageBackendsPage } from "@/features/admin/StorageBackendsPage";
+import { CatalogMigrationsPage } from "@/features/admin/CatalogMigrationsPage";
 import { UsersPage } from "@/features/admin/UsersPage";
 import { MaintenancePage } from "@/features/admin/MaintenancePage";
 import { LakehouseHealthPage } from "@/features/health/LakehouseHealthPage";
@@ -182,6 +183,12 @@ const storageRoute = createRoute({
   component: StorageBackendsPage,
 });
 
+const migrationsRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: "/migrations",
+  component: CatalogMigrationsPage,
+});
+
 const usersRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/users",
@@ -213,6 +220,7 @@ export const routeTree = rootRoute.addChildren([
       agentsRoute,
       metricsRoute,
       storageRoute,
+      migrationsRoute,
       usersRoute,
       adminMaintenanceRoute,
     ]),

@@ -17,7 +17,8 @@ required. The first catalog you attach becomes the workspace's default (used for
 !!! tip "Using external storage"
     To back a catalog with your own S3 bucket or Azure Data Lake instead of the bundled object store, pick or register
     that [storage backend](../deployment/storage.md) in the create-catalog dialog's **Storage backend** selector. A
-    catalog's backend is **immutable** after creation.
+    catalog's backend is chosen here, but an admin can change it later with a
+    [storage migration](../guides/migrate-catalog-storage.md).
 
 ## Add members
 

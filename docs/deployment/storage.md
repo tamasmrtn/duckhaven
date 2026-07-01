@@ -75,5 +75,6 @@ result shows a sanitized reason (no secrets). A backend in use by any workspace 
 
 ## Bind a workspace
 
-When creating a [workspace](../getting-started/first-workspace.md), select the registered backend. The binding is
-**immutable** afterwards — every table in that workspace lives under the backend's location.
+When creating a [workspace](../getting-started/first-workspace.md), select the registered backend. Every table in that
+catalog lives under the backend's location. The binding is no longer permanent: an admin can later move a catalog to a
+different backend with a [storage migration](../guides/migrate-catalog-storage.md).

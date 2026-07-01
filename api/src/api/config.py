@@ -95,6 +95,19 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = True
     scheduler_tick_s: float = 60.0
 
+    # Catalog storage-backend migration runner. When enabled, a background loop in
+    # the API lifespan advances in-progress catalog migrations (copy + path-rewrite
+    # + re-register Iceberg tables onto a new backend, then atomic cutover). Like
+    # the scheduler/scanner it is coordinated across replicas by a Postgres
+    # advisory lock, so it is safe to leave enabled on every replica. The tick is
+    # how often the loop wakes to claim and advance a migration.
+    migration_runner_enabled: bool = True
+    migration_runner_tick_s: float = 30.0
+    # How long the old backend's data is retained after a successful cutover before
+    # the deferred cleanup sweep drops the source Polaris catalog. Gives a window
+    # to roll back (reverse-migrate) if a problem surfaces post-cutover.
+    migration_retention_days: int = 7
+
     # ── High availability (multi-replica control plane) ───────────────────────
     # Identity of this API replica and the URL peers use to reach it for
     # inter-replica agent-dispatch forwarding. The defaults make a single-replica

@@ -112,6 +112,18 @@ due schedule — leave it enabled everywhere (see
 | `SCHEDULER_ENABLED` | `true` | Whether this replica participates in the (leader-elected) scheduler loop. Safe to leave `true` on every replica; set `false` only to exclude a replica entirely. |
 | `SCHEDULER_TICK_S` | `60` | How often (seconds) the loop wakes to dispatch due schedules. Also the finest effective cadence — a schedule cannot run more often than one tick. |
 
+### Catalog storage migration
+
+Gates and tunes the background runner that performs
+[catalog storage migrations](../guides/migrate-catalog-storage.md). Like the scheduler it is leader-elected via a
+Postgres advisory lock, so only one replica advances a given migration — leave it enabled everywhere.
+
+| Variable | Default | Description |
+|---|---|---|
+| `MIGRATION_RUNNER_ENABLED` | `true` | Whether this replica participates in the (leader-elected) migration runner. Safe to leave `true` on every replica; set `false` only to exclude a replica entirely. |
+| `MIGRATION_RUNNER_TICK_S` | `30` | How often (seconds) the runner wakes to claim and advance an in-flight migration. |
+| `MIGRATION_RETENTION_DAYS` | `7` | How long the old backend's data is retained after a successful cutover before the source Polaris catalog is dropped. The window during which a migration can be reversed. |
+
 ### Observability
 
 Controls the Prometheus metrics endpoint. See [Monitoring](../operations/monitoring.md#prometheus-metrics)

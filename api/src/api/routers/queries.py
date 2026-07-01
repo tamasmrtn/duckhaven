@@ -24,9 +24,10 @@ from api.services import query as query_service
 from api.services import sql_metadata as sql_metadata_service
 from api.services.agent_capabilities import agent_supports_backend, required_extension
 from api.services.agent_dispatch import is_agent_connected, send_to_agent
+from api.services.migration.service import workspace_has_active_migration
 from api.services.permissions import Permission
 from api.services.rbac import has_permission
-from api.services.sql_guard import SQLNotAllowed, assert_allowed
+from api.services.sql_guard import SQLNotAllowed, assert_allowed, is_read_only
 from api.services.workspace import (
     assert_workspace_member,
     get_workspace,
@@ -70,6 +71,17 @@ async def create_query(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"error": "sql_not_allowed", "detail": str(exc)},
         ) from exc
+
+    # Reject writes while a catalog attached to this workspace is mid storage
+    # migration (the read-only window). Reads are unaffected.
+    if not is_read_only(body.sql) and await workspace_has_active_migration(db, workspace.id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "catalog_read_only",
+                "detail": "A storage backend migration is in progress; the catalog is read-only.",
+            },
+        )
 
     result = await db.execute(select(Agent).where(Agent.id == body.agent_id))
     agent = result.scalar_one_or_none()

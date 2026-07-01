@@ -168,6 +168,36 @@ class FakePolaris:
         self.tables[key] = table
         return table
 
+    async def register_table(
+        self, catalog: str, schema: str, name: str, metadata_location: str
+    ) -> PolarisTable:
+        key = (catalog, schema, name)
+        if key in self.tables:
+            raise PolarisConflictError(f"table {catalog}.{schema}.{name} already exists")
+        table = PolarisTable(
+            name=name,
+            catalog_name=catalog,
+            schema_name=schema,
+            table_id=str(uuid4()),
+            storage_location=metadata_location,
+            properties={},
+        )
+        self.tables[key] = table
+        return table
+
+    async def load_table_with_credentials(
+        self, catalog: str, schema: str, name: str
+    ) -> dict[str, Any]:
+        key = (catalog, schema, name)
+        if key not in self.tables:
+            raise PolarisNotFoundError(f"{catalog}.{schema}.{name}")
+        location = f"s3://fake/{catalog}/{schema}/{name}"
+        return {
+            "metadata": {"location": location},
+            "metadata-location": f"{location}/metadata/v1.metadata.json",
+            "config": {"s3.access-key-id": "k", "s3.secret-access-key": "s"},
+        }
+
     async def delete_table(
         self, catalog: str, schema: str, name: str, *, purge: bool = False
     ) -> None:

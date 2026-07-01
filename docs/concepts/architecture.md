@@ -60,9 +60,10 @@ Two ideas shape nearly every design decision:
    engine (agent) per worksheet. There is no distributed query planner and
    no cost-based routing. Compute is transparent and explicit.
 2. **Storage is bound to the catalog, not the workspace.** Each catalog is
-   pinned to exactly one storage backend at create time, immutably; a workspace
-   reaches storage through the catalogs it attaches (many-to-many). It keeps
-   governance, credentials, and disaster-recovery reasoning simple.
+   bound to exactly one storage backend at a time — chosen at create time, and
+   changed only through a managed [storage migration](catalogs.md#storage-migration);
+   a workspace reaches storage through the catalogs it attaches (many-to-many). It
+   keeps governance, credentials, and disaster-recovery reasoning simple.
 
 ### Non-goals (explicit boundaries)
 
@@ -638,10 +639,12 @@ it explicitly rather than working around it.
   a supplementary `table_metadata` sidecar — ownership, last-write provenance,
   and row/size stats that Polaris does not track — keyed by `catalog_id` + the
   Polaris schema/table name.
-- **I4 — One catalog, one storage backend, forever.** Storage is catalog-scoped:
-  each catalog binds to a single backend at creation and is immutable. Every
-  table's `storage_location` derives from its catalog backend's `root_uri`. A
-  workspace reaches storage through the catalogs it attaches (M:N).
+- **I4 — One catalog, one storage backend at a time.** Storage is catalog-scoped:
+  each catalog binds to a single backend, chosen at creation and changed only
+  through a managed [storage migration](catalogs.md#storage-migration) (copy +
+  path-rewrite + atomic cutover). Every table's `storage_location` derives from
+  its catalog backend's `root_uri`. A workspace reaches storage through the
+  catalogs it attaches (M:N).
 - **I5 — The control↔agent wire format lives only in `shared/`.** Both
   `api/` and `agent/` import `duckhaven_shared`. Never define a frame type or
   payload shape independently on one side.

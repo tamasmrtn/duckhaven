@@ -20,7 +20,15 @@ from api.models.catalog import Catalog, WorkspaceCatalog
 from api.models.storage_backend import StorageBackend
 from api.models.user import User
 from api.schemas.catalog_mgmt import CatalogAttachRequest, CatalogCreate, CatalogOut
+from api.schemas.catalog_migration import (
+    CatalogMigrationEventOut,
+    CatalogMigrationOut,
+    CatalogMigrationScalarOut,
+    CatalogMigrationTableOut,
+    MigrationStartRequest,
+)
 from api.services import catalog as catalog_service
+from api.services.migration import service as migration_service
 from api.services.permissions import Permission
 from api.services.polaris import PolarisClient
 from api.services.rbac import has_permission
@@ -33,6 +41,29 @@ from api.services.workspace import (
 )
 
 router = APIRouter()
+
+
+async def _catalog_for_admin(db: AsyncSession, user: User, catalog_id: uuid.UUID) -> Catalog:
+    """Load a catalog, enforcing the same creator-or-admin gate as drop."""
+    catalog = await db.get(Catalog, catalog_id)
+    if catalog is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    if not await has_permission(db, user, Permission.CATALOGS_ADMIN) and (
+        catalog.created_by != user.id
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    return catalog
+
+
+def _migration_out(migration, *, include_tables: bool = False) -> CatalogMigrationOut:
+    # Validated via the scalar-only schema first: the full schema declares
+    # ``tables``, and pydantic's from_attributes mode reads every declared field,
+    # which would lazy-load the relationship even when it isn't loaded/requested.
+    scalars = CatalogMigrationScalarOut.model_validate(migration)
+    out = CatalogMigrationOut(**scalars.model_dump())
+    if include_tables:
+        out.tables = [CatalogMigrationTableOut.model_validate(t) for t in migration.tables]
+    return out
 
 
 async def _binding_count(db: AsyncSession, catalog_id: uuid.UUID) -> int:
@@ -215,3 +246,95 @@ async def drop_catalog(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
     await catalog_service.drop_catalog(db, polaris, catalog=catalog)
     await db.commit()
+
+
+@router.post(
+    "/catalogs/{catalog_id}/migrations",
+    response_model=CatalogMigrationOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def start_catalog_migration(
+    catalog_id: uuid.UUID,
+    body: MigrationStartRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    polaris: PolarisClient = Depends(get_polaris_client),
+) -> CatalogMigrationOut:
+    """Begin migrating a catalog's Iceberg data to a new storage backend. The
+    catalog goes read-only (writes rejected) until the background runner finishes
+    and atomically cuts over. Allowed for the catalog's creator or an admin."""
+    catalog = await _catalog_for_admin(db, user, catalog_id)
+    target = await db.get(StorageBackend, body.target_storage_backend_id)
+    if target is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Target storage backend not found"
+        )
+    migration = await migration_service.start_migration(
+        db, polaris, catalog=catalog, target_backend=target, created_by=user.id
+    )
+    await db.commit()
+    await db.refresh(migration)
+    return _migration_out(migration)
+
+
+@router.get("/catalogs/{catalog_id}/migrations", response_model=list[CatalogMigrationOut])
+async def list_catalog_migrations(
+    catalog_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[CatalogMigrationOut]:
+    """Migration history for a catalog, newest first."""
+    await _catalog_for_admin(db, user, catalog_id)
+    migrations = await migration_service.list_migrations(db, catalog_id)
+    return [_migration_out(m) for m in migrations]
+
+
+@router.get("/catalogs/{catalog_id}/migrations/{migration_id}", response_model=CatalogMigrationOut)
+async def get_catalog_migration(
+    catalog_id: uuid.UUID,
+    migration_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> CatalogMigrationOut:
+    """Status + progress for one migration, including per-table state."""
+    await _catalog_for_admin(db, user, catalog_id)
+    migration = await migration_service.get_migration(db, catalog_id, migration_id)
+    await db.refresh(migration, attribute_names=["tables"])
+    return _migration_out(migration, include_tables=True)
+
+
+@router.get(
+    "/catalogs/{catalog_id}/migrations/{migration_id}/logs",
+    response_model=list[CatalogMigrationEventOut],
+)
+async def get_catalog_migration_logs(
+    catalog_id: uuid.UUID,
+    migration_id: uuid.UUID,
+    after: int = 0,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[CatalogMigrationEventOut]:
+    """User-facing log stream; ``after`` is the last seq the client has seen."""
+    await _catalog_for_admin(db, user, catalog_id)
+    await migration_service.get_migration(db, catalog_id, migration_id)
+    events = await migration_service.list_events(db, migration_id, after=after)
+    return [CatalogMigrationEventOut.model_validate(e) for e in events]
+
+
+@router.post(
+    "/catalogs/{catalog_id}/migrations/{migration_id}/cancel",
+    response_model=CatalogMigrationOut,
+)
+async def cancel_catalog_migration(
+    catalog_id: uuid.UUID,
+    migration_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> CatalogMigrationOut:
+    """Request cancellation of an in-flight migration (only before cutover)."""
+    await _catalog_for_admin(db, user, catalog_id)
+    migration = await migration_service.get_migration(db, catalog_id, migration_id)
+    await migration_service.request_cancel(db, migration)
+    await db.commit()
+    await db.refresh(migration)
+    return _migration_out(migration)

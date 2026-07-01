@@ -1,9 +1,11 @@
 # DuckHaven
 
-> DuckHaven is a self-hosted, browser-based SQL workspace for DuckDB teams. It pairs
-> collaborative worksheets with an Apache Iceberg catalog governed by Apache Polaris and
-> multi-agent DuckDB compute, all running on your own infrastructure — no cloud warehouse
-> lock-in, no Kubernetes, no platform team required.
+> DuckHaven is a self-hosted, governed DuckDB + Iceberg analytics platform for small teams.
+> It started as collaborative browser worksheets and grew to cover the lifecycle around them:
+> an Apache Iceberg catalog governed by Apache Polaris, scheduled queries, an advisory lakehouse
+> maintenance scanner, single sign-on, and multi-agent DuckDB compute — all on your own
+> infrastructure. It is deliberately right-sized (homelab to small team), not an enterprise
+> lakehouse. No cloud warehouse lock-in, no Kubernetes, no platform team required.
 
 ## Getting started
 

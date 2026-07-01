@@ -1,5 +1,5 @@
 ---
-title: Self-hosted SQL workspace for DuckDB teams
+title: Self-hosted analytics platform for DuckDB teams
 template: home.html
 hide:
   - navigation

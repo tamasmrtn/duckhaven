@@ -100,8 +100,11 @@ async def test_failure_leaves_catalog_on_old_backend(db_session, fake_polaris, m
 
     monkeypatch.setattr(relocate, "relocate_table", boom)
     await engine.process_migration(db_session, fake_polaris, mig)
+    # The failure path rolls back, which expires every object in the session
+    # (not just `mig`) — refresh `source` too before reading its attributes.
     await db_session.refresh(mig)
     await db_session.refresh(catalog)
+    await db_session.refresh(source)
 
     assert mig.status == "failed"
     assert "storage unreachable" in (mig.error or "")

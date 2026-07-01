@@ -11,7 +11,9 @@ setup("authenticate as admin", async ({ page }) => {
   await page.goto(`${BASE_URL}/login`);
   await page.getByRole("textbox", { name: "Email" }).fill(ADMIN_EMAIL);
   await page.getByRole("textbox", { name: "Password" }).fill(ADMIN_PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
+  // Exact match so a configured OIDC provider's "Sign in with <IdP>" button
+  // does not also match the local sign-in button.
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/${WS_SLUG}/`));
   await page.context().storageState({ path: ADMIN_STORAGE_STATE });
 });

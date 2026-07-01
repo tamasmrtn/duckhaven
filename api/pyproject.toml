@@ -19,6 +19,9 @@ dependencies = [
     "itsdangerous>=2.0",
     "boto3>=1.34",
     "azure-storage-blob>=12.19",
+    "fastavro>=1.9",
+    "prometheus-client>=0.20",
+    "croniter>=3.0",
 ]
 
 [tool.uv.sources]

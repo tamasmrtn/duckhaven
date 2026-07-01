@@ -1,8 +1,9 @@
 site_name: DuckHaven
 site_description: >-
-  Self-hosted, browser-based SQL workspace for DuckDB teams — collaborative
-  worksheets, an Apache Iceberg catalog governed by Apache Polaris, and
-  multi-agent compute, on your own infrastructure.
+  Self-hosted, governed DuckDB + Iceberg analytics platform for small teams —
+  collaborative worksheets, scheduled queries, catalog governance via Apache
+  Polaris, lakehouse maintenance, and multi-agent compute, on your own
+  infrastructure.
 site_url: https://tamasmrtn.github.io/duckhaven/
 repo_url: https://github.com/tamasmrtn/duckhaven
 repo_name: tamasmrtn/duckhaven
@@ -113,9 +114,11 @@ nav:
   - Guides:
       - Run queries: guides/run-queries.md
       - Manage catalogs: guides/manage-catalogs.md
+      - Migrate a catalog's storage: guides/migrate-catalog-storage.md
       - Snapshots & time travel: guides/snapshots-time-travel.md
       - Read query profiles: guides/query-profiles.md
       - Saved queries: guides/saved-queries.md
+      - Schedule queries: guides/schedule-queries.md
       - Manage users & access: guides/users-access.md
       - Connect an IdP (SSO): guides/connect-idp.md
       - Connect LDAP / AD: guides/connect-ldap.md

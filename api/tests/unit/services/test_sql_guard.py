@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from api.services.sql_guard import SQLNotAllowed, assert_allowed
+from api.services.sql_guard import SQLNotAllowed, assert_allowed, is_read_only
 
 ALLOWED = [
     "SELECT 1",
@@ -93,3 +93,38 @@ def test_parse_error_surfaces_as_not_allowed() -> None:
     with pytest.raises(SQLNotAllowed) as info:
         assert_allowed("NOT EVEN SQL")
     assert "parse error" in str(info.value).lower()
+
+
+# `is_read_only` drives the migration freeze gate: SELECT-only bodies stay
+# allowed while a catalog is read-only mid-migration; everything else is a write.
+READ_ONLY = [
+    "SELECT 1",
+    "SELECT * FROM analytics.events",
+    "WITH q AS (SELECT 1) SELECT * FROM q",
+    "select 1; select 2",
+    "DESCRIBE analytics.analytics.events",
+    "SELECT * FROM analytics.events AT (VERSION => 1)",
+]
+
+NOT_READ_ONLY = [
+    "INSERT INTO t VALUES (1)",
+    "UPDATE t SET x=1",
+    "DELETE FROM t",
+    "CREATE TABLE t (x INT)",
+    "ALTER TABLE t ADD COLUMN x INT",
+    "DROP TABLE t",
+    "MERGE INTO t USING u ON t.id=u.id WHEN MATCHED THEN DELETE",
+    "SELECT 1; INSERT INTO t VALUES (1)",  # any write taints the batch
+    "",
+    "NOT EVEN SQL",  # unparseable -> not provably read-only
+]
+
+
+@pytest.mark.parametrize("sql", READ_ONLY)
+def test_is_read_only_true(sql: str) -> None:
+    assert is_read_only(sql) is True
+
+
+@pytest.mark.parametrize("sql", NOT_READ_ONLY)
+def test_is_read_only_false(sql: str) -> None:
+    assert is_read_only(sql) is False

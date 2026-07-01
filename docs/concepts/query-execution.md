@@ -31,6 +31,17 @@ memory budget is cgroup-aware (it respects a container/pod limit). Capacity is s
 The profile is switchable at runtime and applies per agent. See
 [Runbook §6](../operations/runbook.md#6-query-queueing-concurrency) and [Scaling compute](../operations/scaling.md).
 
+## Scheduled vs. interactive runs
+
+Most queries are **interactive**: a person presses Run, picks the agent, and waits
+for rows. A query can also run **unattended** on a cron [schedule](../guides/schedule-queries.md).
+A scheduled run takes the exact same path described above — same allowlist, same
+agent dispatch, same admission control — with two differences: there is no waiting
+user (it is dispatched fire-and-forget; results stream back and are recorded), and
+it is tagged `origin="scheduled"` so History can distinguish it from a query someone
+ran by hand. A leader-elected loop in the control plane drives schedules, so exactly
+one replica dispatches a given due schedule.
+
 ## Results and profiles
 
 Results are materialized as Parquet **on the executing agent**; the control plane fetches and decodes pages on demand,

@@ -86,6 +86,28 @@ class Settings(BaseSettings):
     # due cycle); seconds. Default weekly.
     maintenance_deep_scan_interval_s: float = 7 * 86400.0
 
+    # Job scheduler. When enabled, a background loop in the API lifespan runs saved
+    # queries on their cron schedules. Like the maintenance scanner it is
+    # coordinated across replicas by a Postgres advisory lock (leader election), so
+    # it is safe to leave enabled on every replica: only the lock holder dispatches
+    # each tick. The tick is how often the loop wakes to check for due schedules,
+    # and so also the finest effective cadence (60s => at most once per minute).
+    scheduler_enabled: bool = True
+    scheduler_tick_s: float = 60.0
+
+    # Catalog storage-backend migration runner. When enabled, a background loop in
+    # the API lifespan advances in-progress catalog migrations (copy + path-rewrite
+    # + re-register Iceberg tables onto a new backend, then atomic cutover). Like
+    # the scheduler/scanner it is coordinated across replicas by a Postgres
+    # advisory lock, so it is safe to leave enabled on every replica. The tick is
+    # how often the loop wakes to claim and advance a migration.
+    migration_runner_enabled: bool = True
+    migration_runner_tick_s: float = 30.0
+    # How long the old backend's data is retained after a successful cutover before
+    # the deferred cleanup sweep drops the source Polaris catalog. Gives a window
+    # to roll back (reverse-migrate) if a problem surfaces post-cutover.
+    migration_retention_days: int = 7
+
     # ── High availability (multi-replica control plane) ───────────────────────
     # Identity of this API replica and the URL peers use to reach it for
     # inter-replica agent-dispatch forwarding. The defaults make a single-replica
@@ -106,6 +128,11 @@ class Settings(BaseSettings):
     db_pool_size: int = 5
     db_max_overflow: int = 10
     db_pool_recycle_s: int = 1800
+
+    # Prometheus metrics exposition at GET /api/metrics. Unauthenticated like the
+    # health endpoints (Prometheus scrapers carry no session cookie); keep it on
+    # the internal network. Set false to remove the endpoint entirely.
+    metrics_enabled: bool = True
 
     # ── OIDC SSO (Part A) ─────────────────────────────────────────────────────
     # When enabled, the login page shows a "Sign in with SSO" button and the

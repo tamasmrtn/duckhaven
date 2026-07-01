@@ -98,6 +98,41 @@ advisory lock, so only one cycle runs at a time — leave it enabled everywhere 
 | `MAINTENANCE_SCAN_TICK_S` | `900` | How often (seconds) the loop wakes to check whether a scan is due per the runtime cadence. |
 | `MAINTENANCE_DEEP_SCAN_INTERVAL_S` | `604800` (7 days) | How often the expensive orphan/storage tier runs; cheap metadata probes run every due cycle. |
 
+### Scheduler
+
+Gates and tunes the background scheduler that runs saved queries on their cron
+[schedules](../guides/schedule-queries.md). Cron expressions are stored per
+schedule (set in the UI), not here. Like the maintenance scanner the loop is
+leader-elected via a Postgres advisory lock, so only one replica dispatches a given
+due schedule — leave it enabled everywhere (see
+[High availability](../deployment/high-availability.md)).
+
+| Variable | Default | Description |
+|---|---|---|
+| `SCHEDULER_ENABLED` | `true` | Whether this replica participates in the (leader-elected) scheduler loop. Safe to leave `true` on every replica; set `false` only to exclude a replica entirely. |
+| `SCHEDULER_TICK_S` | `60` | How often (seconds) the loop wakes to dispatch due schedules. Also the finest effective cadence — a schedule cannot run more often than one tick. |
+
+### Catalog storage migration
+
+Gates and tunes the background runner that performs
+[catalog storage migrations](../guides/migrate-catalog-storage.md). Like the scheduler it is leader-elected via a
+Postgres advisory lock, so only one replica advances a given migration — leave it enabled everywhere.
+
+| Variable | Default | Description |
+|---|---|---|
+| `MIGRATION_RUNNER_ENABLED` | `true` | Whether this replica participates in the (leader-elected) migration runner. Safe to leave `true` on every replica; set `false` only to exclude a replica entirely. |
+| `MIGRATION_RUNNER_TICK_S` | `30` | How often (seconds) the runner wakes to claim and advance an in-flight migration. |
+| `MIGRATION_RETENTION_DAYS` | `7` | How long the old backend's data is retained after a successful cutover before the source Polaris catalog is dropped. The window during which a migration can be reversed. |
+
+### Observability
+
+Controls the Prometheus metrics endpoint. See [Monitoring](../operations/monitoring.md#prometheus-metrics)
+for the metric reference, scrape config, and a starter Grafana dashboard.
+
+| Variable | Default | Description |
+|---|---|---|
+| `METRICS_ENABLED` | `true` | Expose `GET /api/metrics` in Prometheus text format. Unauthenticated like the health endpoints (keep it on the internal network); set `false` to remove the endpoint entirely. |
+
 ## Agent
 
 Source of truth: the [Agent reference](agent-reference.md). An agent needs only `CONTROL_PLANE_URL` and a

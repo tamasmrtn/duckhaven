@@ -21,6 +21,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import settings
+from api.metrics import set_scan_leader
 from api.models.catalog import Catalog, WorkspaceCatalog
 from api.models.maintenance import MaintenancePolicy, TableHealthSample
 from api.models.query import Query
@@ -258,6 +259,9 @@ async def run_tick(
 ) -> dict[str, Any]:
     """One scheduler tick: run a cycle only if this replica wins leadership."""
     async with scan_leadership(session_factory) as is_leader:
+        # Mirror leadership into the metrics layer so only the leader emits the
+        # cluster-wide scanner gauges (no double-counting across replicas).
+        set_scan_leader(is_leader)
         if not is_leader:
             return {"status": "standby"}
         return await run_cycle(session_factory, polaris)

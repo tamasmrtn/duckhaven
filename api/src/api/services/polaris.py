@@ -23,6 +23,8 @@ from typing import Any, Literal, Self
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
+from api.metrics import record_polaris_request
+
 logger = logging.getLogger(__name__)
 
 # Scope requested for the service-principal token; PRINCIPAL_ROLE:ALL is the
@@ -182,6 +184,46 @@ class PolarisClient:
     async def aclose(self) -> None:
         await self._http.aclose()
 
+    async def _send(self, operation: str, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        """Issue a request, re-minting the token and replaying it once on a 401.
+
+        A cached token can outlive its real (wall-clock) lifetime across a host
+        suspend/resume: `time.monotonic()` pauses while the machine is suspended,
+        so our refresh timer still considers the token fresh, but its JWT `exp`
+        has passed and Polaris answers 401. Reactively drop the token, mint a new
+        one, and replay the request once. The token mint itself (`get_token`)
+        bypasses this so it cannot recurse.
+        """
+        resp = await self._send_once(operation, method, url, **kwargs)
+        auth = (kwargs.get("headers") or {}).get("Authorization")
+        if resp.status_code == 401 and operation != "get_token" and auth:
+            stale = auth.removeprefix("Bearer ").strip()
+            token = await self._access_token(stale_token=stale)
+            if f"Bearer {token}" != auth:
+                headers = {**kwargs["headers"], "Authorization": f"Bearer {token}"}
+                resp = await self._send_once(
+                    operation, method, url, **{**kwargs, "headers": headers}
+                )
+        return resp
+
+    async def _send_once(
+        self, operation: str, method: str, url: str, **kwargs: Any
+    ) -> httpx.Response:
+        """Issue a single HTTP request and record its outcome + latency for metrics.
+
+        ``operation`` is a stable, low-cardinality name (not the URL, which
+        carries catalog/table names). ``status`` is the HTTP status code, or
+        ``error`` when the request never produced a response (timeout/connection).
+        """
+        start = time.perf_counter()
+        try:
+            resp = await self._http.request(method, url, **kwargs)
+        except Exception:
+            record_polaris_request(operation, "error", time.perf_counter() - start)
+            raise
+        record_polaris_request(operation, str(resp.status_code), time.perf_counter() - start)
+        return resp
+
     async def ping(self) -> None:
         """Readiness check: confirm Polaris is reachable and our client
         credentials still mint a token. The token is cached, so this is cheap to
@@ -196,11 +238,24 @@ class PolarisClient:
 
     # --- Auth ---
 
-    async def _access_token(self) -> str:
+    async def _access_token(self, *, stale_token: str | None = None) -> str:
+        """Return a valid bearer token, minting one when the cache is empty or
+        stale.
+
+        ``stale_token`` is supplied by the 401-retry path — the token Polaris just
+        rejected. If the cache already holds a *different* token, a concurrent
+        caller re-minted first and we reuse that; otherwise we force a re-mint
+        even though the monotonic refresh timer still considers it fresh.
+        """
         async with self._token_lock:
-            if self._token is not None and time.monotonic() < self._token_expiry:
+            if stale_token is not None and self._token not in (None, stale_token):
                 return self._token
-            resp = await self._http.post(
+            force = stale_token is not None
+            if not force and self._token is not None and time.monotonic() < self._token_expiry:
+                return self._token
+            resp = await self._send_once(
+                "get_token",
+                "POST",
                 f"{self.CATALOG_PATH}/oauth/tokens",
                 data={
                     "grant_type": "client_credentials",
@@ -274,15 +329,22 @@ class PolarisClient:
                 "storageConfigInfo": storage_config,
             }
         }
-        resp = await self._http.post(
-            f"{self.MGMT_PATH}/catalogs", json=body, headers=await self._auth_headers()
+        resp = await self._send(
+            "create_catalog",
+            "POST",
+            f"{self.MGMT_PATH}/catalogs",
+            json=body,
+            headers=await self._auth_headers(),
         )
         self._raise_for_status(resp)
         return PolarisCatalog(name=name)
 
     async def get_catalog(self, name: str) -> PolarisCatalog:
-        resp = await self._http.get(
-            f"{self.MGMT_PATH}/catalogs/{name}", headers=await self._auth_headers()
+        resp = await self._send(
+            "get_catalog",
+            "GET",
+            f"{self.MGMT_PATH}/catalogs/{name}",
+            headers=await self._auth_headers(),
         )
         self._raise_for_status(resp)
         body = resp.json()
@@ -297,8 +359,11 @@ class PolarisClient:
             return False
 
     async def delete_catalog(self, name: str) -> None:
-        resp = await self._http.delete(
-            f"{self.MGMT_PATH}/catalogs/{name}", headers=await self._auth_headers()
+        resp = await self._send(
+            "delete_catalog",
+            "DELETE",
+            f"{self.MGMT_PATH}/catalogs/{name}",
+            headers=await self._auth_headers(),
         )
         self._raise_for_status(resp)
 
@@ -314,7 +379,9 @@ class PolarisClient:
         roles, so the role must go before ``delete_catalog``. Idempotent: a
         missing role (already removed, or a never-granted catalog) is success.
         """
-        resp = await self._http.delete(
+        resp = await self._send(
+            "delete_catalog_access",
+            "DELETE",
             f"{self.MGMT_PATH}/catalogs/{catalog}/catalog-roles/{self._RW_CATALOG_ROLE}",
             headers=await self._auth_headers(),
         )
@@ -347,7 +414,13 @@ class PolarisClient:
         async def _create(path: str, body: dict[str, Any]) -> None:
             try:
                 self._raise_for_status(
-                    await self._http.post(f"{self.MGMT_PATH}{path}", json=body, headers=headers)
+                    await self._send(
+                        "ensure_catalog_access",
+                        "POST",
+                        f"{self.MGMT_PATH}{path}",
+                        json=body,
+                        headers=headers,
+                    )
                 )
             except PolarisConflictError:
                 pass
@@ -355,7 +428,13 @@ class PolarisClient:
         async def _put(path: str, body: dict[str, Any]) -> None:
             try:
                 self._raise_for_status(
-                    await self._http.put(f"{self.MGMT_PATH}{path}", json=body, headers=headers)
+                    await self._send(
+                        "ensure_catalog_access",
+                        "PUT",
+                        f"{self.MGMT_PATH}{path}",
+                        json=body,
+                        headers=headers,
+                    )
                 )
             except PolarisServerError as exc:
                 # Polaris's grant-record writes — both privilege grants and the
@@ -382,7 +461,9 @@ class PolarisClient:
     # --- Namespaces (Iceberg REST) ---
 
     async def create_schema(self, catalog: str, name: str) -> PolarisSchema:
-        resp = await self._http.post(
+        resp = await self._send(
+            "create_schema",
+            "POST",
             f"{self.CATALOG_PATH}/{catalog}/namespaces",
             json={"namespace": [name], "properties": {}},
             headers=await self._auth_headers(),
@@ -391,15 +472,20 @@ class PolarisClient:
         return PolarisSchema(name=name, catalog_name=catalog)
 
     async def delete_schema(self, catalog: str, name: str) -> None:
-        resp = await self._http.delete(
+        resp = await self._send(
+            "delete_schema",
+            "DELETE",
             f"{self.CATALOG_PATH}/{catalog}/namespaces/{name}",
             headers=await self._auth_headers(),
         )
         self._raise_for_status(resp)
 
     async def list_schemas(self, catalog: str) -> list[PolarisSchema]:
-        resp = await self._http.get(
-            f"{self.CATALOG_PATH}/{catalog}/namespaces", headers=await self._auth_headers()
+        resp = await self._send(
+            "list_schemas",
+            "GET",
+            f"{self.CATALOG_PATH}/{catalog}/namespaces",
+            headers=await self._auth_headers(),
         )
         self._raise_for_status(resp)
         namespaces = resp.json().get("namespaces") or []
@@ -415,7 +501,9 @@ class PolarisClient:
     async def list_tables(self, catalog: str, schema: str) -> list[PolarisTable]:
         """List tables in a namespace. Iceberg REST returns identifiers only
         (no schema), so columns are empty here — use `get_table` for detail."""
-        resp = await self._http.get(
+        resp = await self._send(
+            "list_tables",
+            "GET",
             f"{self.CATALOG_PATH}/{catalog}/namespaces/{schema}/tables",
             headers=await self._auth_headers(),
         )
@@ -427,7 +515,9 @@ class PolarisClient:
         ]
 
     async def get_table(self, catalog: str, schema: str, name: str) -> PolarisTable:
-        resp = await self._http.get(
+        resp = await self._send(
+            "get_table",
+            "GET",
             f"{self.CATALOG_PATH}/{catalog}/namespaces/{schema}/tables/{name}",
             headers=await self._auth_headers(),
         )
@@ -443,7 +533,9 @@ class PolarisClient:
         short-lived, scoped storage credentials in the result's ``config`` map
         (the same path agents use). Returns the raw LoadTableResult so callers
         can read both ``config`` (creds) and ``metadata.location``."""
-        resp = await self._http.get(
+        resp = await self._send(
+            "load_table_with_credentials",
+            "GET",
             f"{self.CATALOG_PATH}/{catalog}/namespaces/{schema}/tables/{name}",
             headers={
                 **await self._auth_headers(),
@@ -459,7 +551,9 @@ class PolarisClient:
         Reuses the same LoadTableResult GET as `get_table` — the snapshot log
         is already part of the table metadata, so this is a metadata read with
         no table scan. Never persisted (read on demand)."""
-        resp = await self._http.get(
+        resp = await self._send(
+            "list_snapshots",
+            "GET",
             f"{self.CATALOG_PATH}/{catalog}/namespaces/{schema}/tables/{name}",
             headers=await self._auth_headers(),
         )
@@ -484,9 +578,28 @@ class PolarisClient:
         }
         if comment:
             body["properties"] = {"comment": comment}
-        resp = await self._http.post(
+        resp = await self._send(
+            "create_table",
+            "POST",
             f"{self.CATALOG_PATH}/{catalog}/namespaces/{schema}/tables",
             json=body,
+            headers=await self._auth_headers(),
+        )
+        self._raise_for_status(resp)
+        return self._table_from_load_result(resp.json(), catalog, schema, name)
+
+    async def register_table(
+        self, catalog: str, schema: str, name: str, metadata_location: str
+    ) -> PolarisTable:
+        """Adopt an existing Iceberg metadata.json as a new table (Iceberg REST
+        ``registerTable``). Used by storage migration to point a freshly-copied,
+        path-rewritten metadata file into the shadow catalog without rewriting any
+        data. The namespace must already exist; the table must not."""
+        resp = await self._send(
+            "register_table",
+            "POST",
+            f"{self.CATALOG_PATH}/{catalog}/namespaces/{schema}/register",
+            json={"name": name, "metadata-location": metadata_location},
             headers=await self._auth_headers(),
         )
         self._raise_for_status(resp)
@@ -499,7 +612,9 @@ class PolarisClient:
         # own drop paths pass purge=True against fully-owned catalogs, which
         # enable DROP_WITH_PURGE_ENABLED and grant CATALOG_MANAGE_CONTENT
         # (i.e. TABLE_WRITE_DATA) so purge is authorized and reclaims data files.
-        resp = await self._http.delete(
+        resp = await self._send(
+            "delete_table",
+            "DELETE",
             f"{self.CATALOG_PATH}/{catalog}/namespaces/{schema}/tables/{name}",
             params={"purgeRequested": "true"} if purge else None,
             headers=await self._auth_headers(),

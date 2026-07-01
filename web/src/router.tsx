@@ -17,12 +17,14 @@ import { WelcomePage } from "@/features/auth/WelcomePage";
 import { WorksheetPage } from "@/features/worksheet/WorksheetPage";
 import { CatalogPage } from "@/features/catalog/CatalogPage";
 import { SavedQueriesPage } from "@/features/saved-queries/SavedQueriesPage";
+import { SchedulesPage } from "@/features/schedules/SchedulesPage";
 import { HistoryPage } from "@/features/history/HistoryPage";
 import { QueryProfilePage } from "@/features/query-profile/QueryProfilePage";
 import { AdminLayout } from "@/features/admin/AdminLayout";
 import { AgentsPage } from "@/features/admin/AgentsPage";
 import { MetricsPage } from "@/features/admin/MetricsPage";
 import { StorageBackendsPage } from "@/features/admin/StorageBackendsPage";
+import { CatalogMigrationsPage } from "@/features/admin/CatalogMigrationsPage";
 import { UsersPage } from "@/features/admin/UsersPage";
 import { MaintenancePage } from "@/features/admin/MaintenancePage";
 import { LakehouseHealthPage } from "@/features/health/LakehouseHealthPage";
@@ -125,6 +127,12 @@ const savedQueriesRoute = createRoute({
   component: SavedQueriesPage,
 });
 
+const schedulesRoute = createRoute({
+  getParentRoute: () => wsRoute,
+  path: "/schedules",
+  component: SchedulesPage,
+});
+
 const historyRoute = createRoute({
   getParentRoute: () => wsRoute,
   path: "/history",
@@ -175,6 +183,12 @@ const storageRoute = createRoute({
   component: StorageBackendsPage,
 });
 
+const migrationsRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: "/migrations",
+  component: CatalogMigrationsPage,
+});
+
 const usersRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/users",
@@ -197,6 +211,7 @@ export const routeTree = rootRoute.addChildren([
     catalogRoute,
     catalogTableRoute,
     savedQueriesRoute,
+    schedulesRoute,
     historyRoute,
     queryProfileRoute,
     healthRoute,
@@ -205,6 +220,7 @@ export const routeTree = rootRoute.addChildren([
       agentsRoute,
       metricsRoute,
       storageRoute,
+      migrationsRoute,
       usersRoute,
       adminMaintenanceRoute,
     ]),

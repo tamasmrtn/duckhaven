@@ -3,6 +3,7 @@ import {
   FileText,
   BookOpen,
   BookMarked,
+  CalendarClock,
   Clock,
   Settings,
   HeartPulse,
@@ -44,6 +45,12 @@ const navItems: NavItem[] = [
     icon: BookMarked,
     label: "Saved queries",
     matchSegment: "saved-queries",
+  },
+  {
+    segment: "schedules",
+    icon: CalendarClock,
+    label: "Schedules",
+    matchSegment: "schedules",
   },
   {
     segment: "history",

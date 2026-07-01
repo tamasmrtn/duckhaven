@@ -14,6 +14,7 @@ from starlette.types import Scope
 
 from api.config import settings
 from api.db.session import async_session_factory
+from api.metrics import PrometheusMiddleware
 from api.routers import (
     agents,
     agents_ws,
@@ -24,9 +25,13 @@ from api.routers import (
     maintenance,
     oidc,
     queries,
+    schedules,
     schemas,
     setup,
     workspaces,
+)
+from api.routers import (
+    metrics as metrics_router,
 )
 from api.routers.admin import agents as admin_agents
 from api.routers.admin import maintenance as admin_maintenance
@@ -86,6 +91,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         scanner_task = asyncio.create_task(
             scanner_loop(async_session_factory, app.state.polaris_client)
         )
+
+    scheduler_task: asyncio.Task | None = None
+    if settings.scheduler_enabled:
+        from api.services.scheduler.scanner import scheduler_loop
+
+        scheduler_task = asyncio.create_task(scheduler_loop(async_session_factory))
+
+    migration_task: asyncio.Task | None = None
+    if settings.migration_runner_enabled:
+        from api.services.migration.runner import migration_loop
+
+        migration_task = asyncio.create_task(
+            migration_loop(async_session_factory, app.state.polaris_client)
+        )
     try:
         yield
     finally:
@@ -93,16 +112,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # then hand our agents to other replicas before tearing down.
         app.state.draining = True
         await drain_local_agents(async_session_factory)
-        if scanner_task is not None:
-            scanner_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await scanner_task
+        for task in (scanner_task, scheduler_task, migration_task):
+            if task is not None:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
         await app.state.polaris_client.aclose()
 
 
 # The browser-facing REST API. Mounted under /api on the outer app so it shares
 # an origin with the SPA; owns the lifespan-managed PolarisClient state.
 api_app = FastAPI(title="duckhaven-api", lifespan=lifespan)
+
+# Record request count/latency by route template (skips the /metrics scrape).
+api_app.add_middleware(PrometheusMiddleware)
 
 api_app.add_middleware(
     CORSMiddleware,
@@ -140,6 +163,7 @@ async def _polaris_error_handler(_: Request, exc: PolarisError) -> JSONResponse:
 
 
 api_app.include_router(health.router, tags=["health"])
+api_app.include_router(metrics_router.router, tags=["metrics"])
 api_app.include_router(setup.router)
 api_app.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_app.include_router(auth.me_router, tags=["auth"])
@@ -148,6 +172,7 @@ api_app.include_router(workspaces.router, tags=["workspaces"])
 api_app.include_router(catalogs.router, tags=["catalog"])
 api_app.include_router(schemas.router, tags=["catalog"])
 api_app.include_router(queries.router, tags=["queries"])
+api_app.include_router(schedules.router, tags=["schedules"])
 api_app.include_router(agents.router, tags=["agents"])
 api_app.include_router(maintenance.router, tags=["maintenance"])
 api_app.include_router(admin_agents.router, prefix="/admin", tags=["admin"])

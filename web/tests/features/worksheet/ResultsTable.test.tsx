@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, fireEvent } from '@testing-library/react'
+import { render, fireEvent, screen } from '@testing-library/react'
 import { ResultsTable } from '@/features/worksheet/ResultsTable'
 
 const rows = Array.from({ length: 50 }, (_, i) => ({ n: i }))
@@ -82,5 +82,33 @@ describe('ResultsTable infinite scroll', () => {
     setScroll(scroller, 900)
     fireEvent.scroll(scroller)
     expect(onLoadMore).not.toHaveBeenCalled()
+  })
+})
+
+describe('ResultsTable error state', () => {
+  const longError =
+    'Binder Error: Referenced column "foo" not found\n' +
+    'in table "orders". Candidate bindings: "bar", "baz"'
+
+  it('renders the full, untruncated failure message in the results area', () => {
+    render(<ResultsTable columns={[]} rows={[]} total={0} error={longError} />)
+    const alert = screen.getByRole('alert')
+    expect(alert).toHaveTextContent('Binder Error')
+    expect(alert).toHaveTextContent('Candidate bindings')
+    expect(screen.getByText('Query failed')).toBeInTheDocument()
+  })
+
+  it('shows the error instead of rows even when result rows are present', () => {
+    render(
+      <ResultsTable
+        columns={['n']}
+        rows={rows}
+        total={50}
+        error="boom"
+      />,
+    )
+    expect(screen.getByRole('alert')).toHaveTextContent('boom')
+    // The table (and its column header) must not render alongside the error.
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
   })
 })

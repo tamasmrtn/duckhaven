@@ -233,3 +233,26 @@ Both surface:
 Profiling is on by default and best-effort: a capture failure yields no profile
 rather than failing the query, and DDL/DML carry no profile (a no-profile state
 is shown). Set `PROFILING_ENABLED=false` on the agent to disable it.
+
+## 8. Recover a stuck or failed catalog storage migration
+
+A [catalog storage migration](../guides/migrate-catalog-storage.md) is driven by the leader-elected migration runner;
+all its state lives in Postgres (`catalog_migrations`, `catalog_migration_tables`, `catalog_migration_events`), so a
+restart resumes an in-flight migration from its last completed table.
+
+**Inspect.** Open **Admin → Migrations**, select the catalog, and read the live log, or query the tables directly:
+
+```sql
+SELECT id, status, tables_done, tables_total, error FROM catalog_migrations ORDER BY created_at DESC;
+```
+
+- **Stuck in `copying`/`verifying`.** Confirm the migration runner is enabled (`MIGRATION_RUNNER_ENABLED=true`) on at
+  least one healthy replica and that the target backend is reachable (re-run its health check on the storage admin
+  page). The runner retries transient storage/Polaris errors; a genuinely unreachable backend ends the migration as
+  `failed`.
+- **`failed`.** The catalog is untouched on its **original** backend (the pointer only changes at the atomic cutover).
+  Read the `error` / log, fix the cause, and start a **new** migration. The failed run's shadow catalog is cleaned up
+  best-effort; if an orphaned `<name>__m<hex>` Polaris catalog remains, drop it manually.
+- **Cancel.** Cancelling before cutover tears the shadow copy down and leaves the catalog on its original backend.
+- **Reverse a completed migration.** The old data is retained for `MIGRATION_RETENTION_DAYS` after cutover — start a new
+  migration back to the original backend within that window.

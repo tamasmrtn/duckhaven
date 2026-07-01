@@ -42,6 +42,22 @@ When DuckHaven creates a catalog it grants its service principal the full catalo
 (`CATALOG_MANAGE_CONTENT`, `CATALOG_MANAGE_METADATA`, `CATALOG_MANAGE_ACCESS`) and enables drop-with-purge so that
 `DROP TABLE` reclaims data files.
 
+## Storage migration
+
+A catalog's [storage backend](storage-backends.md) is chosen at creation but is **not permanent**. An admin can move a
+catalog to a different backend — for example off the bundled object store onto a corporate S3 bucket, or from S3 to
+ADLS Gen 2 — without losing data or snapshot history.
+
+Iceberg references every file by **absolute** URI (metadata → manifest lists → manifests → data files), so a migration
+cannot be a plain object copy: DuckHaven copies each table's files to the new location, rewrites those absolute paths,
+and re-registers the tables in Polaris under a fresh shadow catalog. Once every table is copied and verified, the
+catalog is **atomically** re-pointed at the new backend — the user-facing slug never changes, so attached workspaces and
+existing SQL keep working.
+
+While a migration runs the catalog is **read-only**: reads continue against the old location, but writes are rejected
+until cutover. The old data is retained for a configurable window afterwards so a migration can be reversed if needed.
+See [Migrate a catalog's storage](../guides/migrate-catalog-storage.md) for the operator workflow.
+
 ## Credential vending
 
 Polaris vends short-lived, connection-scoped storage credentials per catalog when an [agent](agents.md) attaches it. No

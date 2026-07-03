@@ -1,5 +1,6 @@
 from api.models.agent import Agent
 from api.models.catalog import Catalog, WorkspaceCatalog
+from api.models.catalog_grant import CatalogGrant
 from api.models.catalog_migration import (
     CatalogMigration,
     CatalogMigrationEvent,
@@ -20,6 +21,7 @@ from api.models.workspace import Workspace, WorkspaceMember
 __all__ = [
     "Agent",
     "Catalog",
+    "CatalogGrant",
     "CatalogMigration",
     "CatalogMigrationEvent",
     "CatalogMigrationTable",

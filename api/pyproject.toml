@@ -22,6 +22,7 @@ dependencies = [
     "fastavro>=1.9",
     "prometheus-client>=0.20",
     "croniter>=3.0",
+    "sqlglot>=25",
 ]
 
 [tool.uv.sources]

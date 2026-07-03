@@ -54,6 +54,10 @@ class WorkspaceCatalog(Base):
     workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id"), primary_key=True)
     catalog_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("catalogs.id"), primary_key=True)
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # "open" (default) = the workspace role governs every schema/table, today's
+    # behavior. "scoped" = access is narrowed by CatalogGrant rows for this
+    # catalog (opt-in per attachment, so untouched catalogs are unaffected).
+    access_mode: Mapped[str] = mapped_column(String(20), nullable=False, server_default="open")
     attached_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

@@ -20,6 +20,7 @@ from api.routers import (
     agents_ws,
     auth,
     catalogs,
+    grants,
     health,
     internal,
     maintenance,
@@ -172,6 +173,7 @@ api_app.include_router(oidc.router, prefix="/auth/oidc", tags=["auth"])
 api_app.include_router(workspaces.router, tags=["workspaces"])
 api_app.include_router(catalogs.router, tags=["catalog"])
 api_app.include_router(schemas.router, tags=["catalog"])
+api_app.include_router(grants.router, tags=["grants"])
 api_app.include_router(queries.router, tags=["queries"])
 api_app.include_router(schedules.router, tags=["schedules"])
 api_app.include_router(agents.router, tags=["agents"])

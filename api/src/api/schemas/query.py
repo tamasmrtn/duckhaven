@@ -24,6 +24,9 @@ class QueryOut(BaseModel):
     workspace_id: uuid.UUID
     agent_id: uuid.UUID | None
     user_id: uuid.UUID | None = None
+    # Display name of the user/service account that ran the query, resolved from
+    # user_id for the History view. Null for internal runs with no user.
+    user_name: str | None = None
     sql: str
     status: str
     # Tags non-interactive runs (e.g. "scheduled") so the UI can label them.

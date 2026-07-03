@@ -305,6 +305,45 @@ async def test_list_workspace_queries_scoped_and_ordered(
     assert sqls == ["SELECT 'newer'", "SELECT 'older'"]  # newest first, sample excluded
 
 
+async def test_list_workspace_queries_resolves_user_name(
+    authed_client: AsyncClient, workspace: Workspace, agent: Agent, db_session, user: User
+):
+    """History resolves user_id to a display name (the User column) and leaves it
+    null for internal runs with no user."""
+    from datetime import UTC, datetime
+
+    from api.models.query import Query
+
+    now = datetime.now(UTC)
+    db_session.add_all(
+        [
+            Query(
+                workspace_id=workspace.id,
+                agent_id=agent.id,
+                user_id=user.id,
+                sql="SELECT 'by user'",
+                status="done",
+                started_at=now,
+            ),
+            Query(
+                workspace_id=workspace.id,
+                agent_id=agent.id,
+                user_id=None,
+                sql="SELECT 'no user'",
+                status="done",
+                started_at=now,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    resp = await authed_client.get(f"/workspaces/{workspace.slug}/queries")
+    assert resp.status_code == 200
+    by_sql = {r["sql"]: r for r in resp.json()}
+    assert by_sql["SELECT 'by user'"]["user_name"] == "Querier"
+    assert by_sql["SELECT 'no user'"]["user_name"] is None
+
+
 async def test_list_workspace_queries_non_member_forbidden(
     client: AsyncClient, workspace: Workspace, db_session
 ):

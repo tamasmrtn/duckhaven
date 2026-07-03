@@ -48,7 +48,11 @@ class Credential(Base):
         ForeignKey("agents.id", ondelete="CASCADE"), nullable=True
     )
     kind: Mapped[str] = mapped_column(String(50), nullable=False)
-    token: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    # Raw value for sessions/agent tokens; NULL for PATs, which store only a hash.
+    token: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
+    # SHA-256 hex digest of a PAT secret (kind="pat"); NULL for other kinds. The
+    # unique index gives an O(1) lookup by the hash of a presented bearer token.
+    token_hash: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

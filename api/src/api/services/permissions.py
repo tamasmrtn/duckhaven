@@ -13,6 +13,7 @@ class Permission(StrEnum):
     AGENTS_MANAGE = "agents:manage"
     STORAGE_MANAGE = "storage:manage"
     USERS_MANAGE = "users:manage"
+    SERVICE_ACCOUNTS_MANAGE = "service_accounts:manage"
     MAINTENANCE_MANAGE = "maintenance:manage"
     CATALOGS_ADMIN = "catalogs:admin"
     QUERIES_ADMIN = "queries:admin"

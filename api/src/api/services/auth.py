@@ -1,3 +1,4 @@
+import hashlib
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -29,6 +30,23 @@ def set_session_cookie(response: Response, token: str) -> None:
         samesite="lax",
         max_age=settings.session_max_age_seconds,
     )
+
+
+# Personal Access Tokens: a machine-caller credential presented as a bearer
+# token. Format mirrors the agent bootstrap token (`dh_boot_...`): a scanning
+# prefix plus a high-entropy random body. Unlike sessions (stored raw), a PAT is
+# stored only as a SHA-256 digest — a fast hash is the right choice for a
+# 256-bit-random secret (no brute-force surface) and, being deterministic, lets
+# us look the credential up by the hash of a presented token.
+PAT_PREFIX = "dh_pat_"
+
+
+def generate_pat() -> str:
+    return f"{PAT_PREFIX}{secrets.token_urlsafe(32)}"
+
+
+def hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 def hash_password(plain: str) -> str:
@@ -86,6 +104,33 @@ async def get_session_user(db: AsyncSession, token: str) -> User | None:
     )
     cred = result.scalar_one_or_none()
     if cred is None:
+        return None
+    return cred.user
+
+
+async def get_pat_user(db: AsyncSession, token: str) -> User | None:
+    """Resolve a presented PAT bearer token to its service-account user, or None.
+
+    Parallels ``get_session_user`` but matches ``kind == "pat"`` against the
+    SHA-256 hash of the token, so PATs and session cookies never cross-resolve.
+    Rejects an expired token or one whose owning account is disabled.
+    """
+    if not token.startswith(PAT_PREFIX):
+        return None
+    now = datetime.now(tz=UTC)
+    result = await db.execute(
+        select(Credential)
+        .options(selectinload(Credential.user))
+        .where(
+            Credential.token_hash == hash_token(token),
+            Credential.kind == "pat",
+            (Credential.expires_at == None) | (Credential.expires_at > now),  # noqa: E711
+        )
+    )
+    cred = result.scalar_one_or_none()
+    if cred is None:
+        return None
+    if cred.user is None or not cred.user.is_active:
         return None
     return cred.user
 

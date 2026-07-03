@@ -26,7 +26,8 @@ import uuid
 from dataclasses import dataclass
 
 import sqlglot
-from sqlalchemy import select
+from fastapi import HTTPException, status
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlglot import exp
 
@@ -190,6 +191,71 @@ async def visible_schemas(
     """Subset of ``names`` the principal may discover in a scoped catalog."""
     grants = await load_grants(db, user_id, catalog.id)
     return {n for n in names if schema_visible(grants, n)}
+
+
+async def visible_tables(
+    db: AsyncSession,
+    workspace_id: uuid.UUID,
+    catalog: Catalog,
+    user_id: uuid.UUID,
+    schema: str,
+    names: list[str],
+) -> set[str]:
+    """Subset of tables in ``schema`` the principal may discover (metadata+)."""
+    grants = await load_grants(db, user_id, catalog.id)
+    role = await _member_role(db, workspace_id, user_id)
+    return {n for n in names if access_tier(grants, role, schema, n) is not None}
+
+
+async def is_scoped(db: AsyncSession, workspace_id: uuid.UUID, catalog: Catalog) -> bool:
+    return await attachment_access_mode(db, workspace_id, catalog.id) == "scoped"
+
+
+async def enforce_leaf(
+    db: AsyncSession,
+    workspace_id: uuid.UUID,
+    catalog: Catalog,
+    user_id: uuid.UUID,
+    *,
+    schema: str | None,
+    table: str | None,
+    need: str,
+) -> None:
+    """Require tier ``need`` at a node when the catalog is scoped, else 404.
+
+    404 (not 403) at the leaf so a denied object is indistinguishable from one
+    that does not exist — the workspace boundary already 403'd via membership.
+    No-op for ``open`` attachments (today's behavior unchanged).
+    """
+    if not await is_scoped(db, workspace_id, catalog):
+        return
+    tier = await node_tier(db, workspace_id, catalog, user_id, schema, table)
+    if tier_rank(tier) < TIER_SCALE[need]:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+
+async def delete_table_grants(
+    db: AsyncSession, catalog_id: uuid.UUID, schema: str, table: str
+) -> None:
+    """Remove grants for a dropped table (mirrors ``_delete_table_meta``)."""
+    await db.execute(
+        delete(CatalogGrant).where(
+            CatalogGrant.catalog_id == catalog_id,
+            CatalogGrant.schema_name == schema,
+            CatalogGrant.table_name == table,
+        )
+    )
+
+
+async def delete_schema_grants(db: AsyncSession, catalog_id: uuid.UUID, schema: str) -> None:
+    """Remove a dropped schema's grants — the schema-level grant and every
+    table-level grant beneath it (catalog-level grants are untouched)."""
+    await db.execute(
+        delete(CatalogGrant).where(
+            CatalogGrant.catalog_id == catalog_id,
+            CatalogGrant.schema_name == schema,
+        )
+    )
 
 
 # --- SQL object-reference extraction ----------------------------------------

@@ -326,6 +326,8 @@ erDiagram
     workspaces ||--o{ workspace_catalogs : attaches
     catalogs ||--o{ workspace_catalogs : "bound to (M:N)"
     catalogs ||--o{ table_metadata : "stats + ownership"
+    catalogs ||--o{ catalog_grants : "scoped access"
+    users ||--o{ catalog_grants : "granted to"
     catalogs }o--|| storage_backends : "pinned to (1)"
     agents ||--o{ credentials : "session token"
     agents ||--o{ queries : executes
@@ -358,6 +360,15 @@ erDiagram
         uuid workspace_id
         uuid catalog_id
         bool is_default
+        string access_mode
+    }
+    catalog_grants {
+        uuid id
+        uuid user_id
+        uuid catalog_id
+        string schema_name
+        string table_name
+        string tier
     }
     workspace_members {
         uuid workspace_id
@@ -628,7 +639,10 @@ it explicitly rather than working around it.
   DuckDB object only to parse (`sql_guard`) and to decode a result Parquet
   file into JSON rows (`services/query.py`, a fixed `read_parquet` over bytes
   fetched from the agent). It must never `ATTACH` storage, load extensions, or
-  `.execute()` user SQL. All user-query execution happens on agents.
+  `.execute()` user SQL. All user-query execution happens on agents. The
+  scoped-grant object check (`services/grants.py`) statically extracts the
+  table names a query references with `sqlglot`, a pure-Python parser — it
+  opens no DuckDB connection and executes nothing.
 - **I2 — Agents initiate the control connection; the control plane does
   not.** The control plane holds no static agent inventory and never dials an
   agent's control channel. Its only outbound reach to an agent is the HTTP
@@ -638,7 +652,9 @@ it explicitly rather than working around it.
   Postgres or treat DuckHaven's database as a catalog cache. Postgres may hold
   a supplementary `table_metadata` sidecar — ownership, last-write provenance,
   and row/size stats that Polaris does not track — keyed by `catalog_id` + the
-  Polaris schema/table name.
+  Polaris schema/table name. The `catalog_grants` ACL is the same shape: rows
+  keyed by `catalog_id` + schema/table *name*, an access-control list — not a
+  cache of catalog structure.
 - **I4 — One catalog, one storage backend at a time.** Storage is catalog-scoped:
   each catalog binds to a single backend, chosen at creation and changed only
   through a managed [storage migration](catalogs.md#storage-migration) (copy +
@@ -669,7 +685,10 @@ it explicitly rather than working around it.
   registry is an ephemeral index of live sockets, not state.
 - **I10 — Authorization happens at the API boundary** via
   `assert_workspace_member` before any dispatch. Polaris grants are
-  defense-in-depth, not the primary gate.
+  defense-in-depth, not the primary gate. When a catalog attachment is in
+  `access_mode="scoped"`, `services/grants.py` extends this same boundary with
+  catalog/schema/table grants — enforced DuckHaven-side, still never delegated
+  to Polaris.
 
 ---
 
@@ -688,6 +707,7 @@ A quick "if you want to do X, start here" index for contributors and agents.
 | Add a storage backend kind | `api/.../services/agent_capabilities.py` (required extension) + `services/workspace.py` (`polaris_storage`) | `agent/.../executor/runner.py` (iceberg attach), `StorageBackend` validation, web `StorageIcon`/wizard |
 | Change catalog credentials | `agent/.../config.py` + `api/.../config.py` (Polaris client id/secret) | `agent/.../executor/runner.py` (iceberg `SECRET`) |
 | Add a UI screen | `web/src/features/<feature>/` | `src/router.tsx`, `src/api/` + `src/queries/`, MSW handler in `src/mock/handlers/`, a test under `web/tests/` |
+| Change scoped-access grant resolution or enforcement | `api/.../services/grants.py` | `routers/schemas.py` (browsing), `services/query.py::dispatch_query` (SQL), `routers/grants.py` (admin API), tests under `api/tests/unit/` |
 | Change the agent handshake/auth | `api/.../routers/agents_ws.py` + `api/.../routers/admin/agents.py` | `agent/.../control/channel.py`, `agent/.../auth.py` |
 
 Per project convention, **every change ships with tests** (pytest for

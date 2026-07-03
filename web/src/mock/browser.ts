@@ -11,6 +11,7 @@ import { scheduleHandlers } from "./handlers/schedules";
 import { storageBackendHandlers } from "./handlers/storage-backends";
 import { catalogMigrationHandlers } from "./handlers/catalog-migrations";
 import { userHandlers } from "./handlers/users";
+import { serviceAccountHandlers } from "./handlers/service-accounts";
 import { maintenanceHandlers } from "./handlers/maintenance";
 
 export const worker = setupWorker(
@@ -26,5 +27,6 @@ export const worker = setupWorker(
   ...storageBackendHandlers,
   ...catalogMigrationHandlers,
   ...userHandlers,
+  ...serviceAccountHandlers,
   ...maintenanceHandlers,
 );

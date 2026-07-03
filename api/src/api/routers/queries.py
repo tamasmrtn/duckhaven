@@ -24,6 +24,7 @@ from api.services import query as query_service
 from api.services import sql_metadata as sql_metadata_service
 from api.services.agent_capabilities import agent_supports_backend, required_extension
 from api.services.agent_dispatch import is_agent_connected, send_to_agent
+from api.services.grants import GrantDenied
 from api.services.migration.service import workspace_has_active_migration
 from api.services.permissions import Permission
 from api.services.rbac import has_permission
@@ -131,12 +132,18 @@ async def create_query(
     )
     db.add(query)
     await db.flush()
-    await query_service.dispatch_query(
-        db,
-        query,
-        timeout_s=body.timeout_s,
-        active_catalog=body.catalog,
-    )
+    try:
+        await query_service.dispatch_query(
+            db,
+            query,
+            timeout_s=body.timeout_s,
+            active_catalog=body.catalog,
+        )
+    except GrantDenied as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": "grant_denied", "detail": str(exc)},
+        ) from exc
     return query
 
 

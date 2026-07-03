@@ -295,6 +295,11 @@ def extract_table_refs(sql: str) -> list[TableRef]:
         for t in stmt.find_all(exp.Table):
             cat = t.catalog or None
             schema = t.db or None
+            # Table *functions* (duckdb_functions(), read_parquet(...), range(...))
+            # parse as a Table with an empty name — they are not catalog objects,
+            # so there is nothing to grant-check.
+            if not t.name:
+                continue
             # An unqualified name matching a CTE alias is not a real table.
             if cat is None and schema is None and t.name in cte_names:
                 continue
@@ -305,3 +310,48 @@ def extract_table_refs(sql: str) -> list[TableRef]:
 def is_exempt_ref(catalog: str | None, schema: str | None) -> bool:
     """True for the built-in discovery surfaces (system catalog / info schema)."""
     return (catalog in SYSTEM_CATALOGS) or (schema in METADATA_SCHEMAS)
+
+
+async def assert_query_access(
+    db: AsyncSession,
+    workspace_id: uuid.UUID,
+    principal_id: uuid.UUID | None,
+    sql: str,
+    active_catalog: str,
+    catalogs: list[Catalog],
+) -> None:
+    """Reject a query before dispatch if the principal lacks tier on any object.
+
+    Every referenced table needs at least ``reader`` (``writer`` for the write
+    target) on any catalog whose attachment is scoped. Runs for both interactive
+    and scheduled dispatch — the shared chokepoint. It is a **no-op** when no
+    attached catalog is scoped, so open workspaces never even parse the SQL and
+    keep today's behavior byte-for-byte.
+
+    Raises :class:`GrantDenied` (a ``ValueError``) on any shortfall, an
+    unresolvable/unattached catalog reference, an unparseable statement, or a
+    missing principal — all fail-closed.
+    """
+    # Import here to avoid a module-level cycle with the workspace service.
+    from api.services.workspace import DEFAULT_SCHEMA
+
+    scoped_ids = {c.id for c in catalogs if await is_scoped(db, workspace_id, c)}
+    if not scoped_ids:
+        return
+
+    by_slug = {c.slug: c for c in catalogs}
+    for ref in extract_table_refs(sql):
+        if is_exempt_ref(ref.catalog, ref.schema):
+            continue
+        cat = by_slug.get(ref.catalog or active_catalog)
+        if cat is None:
+            raise GrantDenied(f"Query references unknown catalog '{ref.catalog or active_catalog}'")
+        if cat.id not in scoped_ids:
+            continue  # open catalog — unrestricted
+        if principal_id is None:
+            raise GrantDenied("A scoped catalog requires an authenticated principal")
+        schema = ref.schema or DEFAULT_SCHEMA
+        need = "writer" if ref.is_target else "reader"
+        tier = await node_tier(db, workspace_id, cat, principal_id, schema, ref.table)
+        if tier_rank(tier) < TIER_SCALE[need]:
+            raise GrantDenied(f"Not authorized ({need}) on {cat.slug}.{schema}.{ref.table}")

@@ -24,12 +24,18 @@ list.
 | `catalog` | Catalogs (create/attach/detach/drop), [storage migrations](#catalog-storage-migrations), schemas, tables, table detail, sample rows, snapshot history |
 | `queries` | Submit queries, page result rows, profiles, saved queries, history |
 | `agents` | List agents and capabilities |
-| `admin` | Agents (bootstrap/revoke), storage backends, users, maintenance |
+| `admin` | Agents (bootstrap/revoke), storage backends, users, service accounts & PATs, maintenance |
 
 ## Authentication
 
-The API uses session-cookie authentication (see [Permissions](../concepts/permissions.md)). Authenticate as you would
-in the browser and send the session cookie with each request.
+The API accepts two credentials, both resolving to the same authorization checks:
+
+- **Session cookie** — for browser clients. Authenticate as you would in the UI and send the session cookie with each
+  request.
+- **Bearer token** — for machine clients. Send a [service-account PAT](../guides/service-accounts.md) on the
+  `Authorization: Bearer <token>` header. This is the supported path for unattended callers (CI, schedulers, tooling).
+
+See [Permissions](../concepts/permissions.md) for the underlying model.
 
 !!! note "Private by design"
     DuckHaven has no public ingress; the API is reachable only on your private network (Tailscale recommended). The
@@ -38,7 +44,8 @@ in the browser and send the session cookie with each request.
 ## Catalog storage migrations
 
 Move a catalog to a different [storage backend](../concepts/storage-backends.md). All endpoints require the catalog's
-creator or an admin with the catalogs permission. See [Migrate a catalog's storage](../guides/migrate-catalog-storage.md).
+creator or an admin with the catalogs permission. See
+[Migrate a catalog's storage](../guides/migrate-catalog-storage.md).
 
 | Method & path | Purpose |
 |---|---|

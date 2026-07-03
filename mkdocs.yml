@@ -120,6 +120,7 @@ nav:
       - Saved queries: guides/saved-queries.md
       - Schedule queries: guides/schedule-queries.md
       - Manage users & access: guides/users-access.md
+      - Service accounts & tokens: guides/service-accounts.md
       - Connect an IdP (SSO): guides/connect-idp.md
       - Connect LDAP / AD: guides/connect-ldap.md
   - Operations:

@@ -91,6 +91,17 @@ describe('HistoryPage', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('shows a User column with who ran each query', async () => {
+    renderWithProviders({ initialRoute: '/acme-analytics/history' })
+    await screen.findByText(/raw\.users/)
+    expect(
+      screen.getByRole('columnheader', { name: 'User' }),
+    ).toBeInTheDocument()
+    // Fixture ws-1 queries were run by Marton and Jess.
+    expect(screen.getAllByText('Marton').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Jess').length).toBeGreaterThan(0)
+  })
+
   it('lets an admin switch to the cross-workspace view', async () => {
     server.use(
       http.get('/api/workspaces/:ws/queries', ({ request }) => {

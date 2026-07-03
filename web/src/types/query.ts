@@ -10,6 +10,8 @@ export interface Query {
   workspace_id: string;
   agent_id: string;
   user_id?: string | null;
+  // Display name of who ran the query (resolved from user_id server-side).
+  user_name?: string | null;
   sql: string;
   status: QueryStatus;
   // Tags non-interactive runs (e.g. "scheduled"); null/absent for user runs.

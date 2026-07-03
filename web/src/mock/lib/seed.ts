@@ -15,6 +15,12 @@ export function nextBootstrapToken(): string {
   return `dh_boot_seed${String(counter).padStart(12, "0")}`;
 }
 
+// Deterministic PAT, shaped like the backend's `dh_pat_<token>`.
+export function nextServiceAccountToken(): string {
+  counter += 1;
+  return `dh_pat_seed${String(counter).padStart(12, "0")}`;
+}
+
 export function resetSeed(): void {
   counter = 0;
 }

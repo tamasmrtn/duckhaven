@@ -35,6 +35,7 @@ from api.routers import (
 )
 from api.routers.admin import agents as admin_agents
 from api.routers.admin import maintenance as admin_maintenance
+from api.routers.admin import service_accounts as admin_service_accounts
 from api.routers.admin import storage as admin_storage
 from api.routers.admin import users as admin_users
 from api.services.agent_dispatch import drain_local_agents
@@ -178,6 +179,7 @@ api_app.include_router(maintenance.router, tags=["maintenance"])
 api_app.include_router(admin_agents.router, prefix="/admin", tags=["admin"])
 api_app.include_router(admin_storage.router, prefix="/admin", tags=["admin"])
 api_app.include_router(admin_users.router, prefix="/admin", tags=["admin"])
+api_app.include_router(admin_service_accounts.router, prefix="/admin", tags=["admin"])
 api_app.include_router(admin_maintenance.router, prefix="/admin", tags=["admin"])
 
 

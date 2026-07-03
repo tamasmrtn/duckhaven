@@ -21,6 +21,7 @@ query's profile.
 Administrators get an extra **This workspace / All workspaces** toggle on the same page. Switching to **All
 workspaces** turns History into the global audit log: every query across every workspace, with a Workspace column and
 a filter by user. This is admin-only — a member can never read another workspace's queries. Each record captures the
+**user** who ran it (the human or [service account](../guides/service-accounts.md) — shown in the **User** column), the
 SQL, status, row count, duration, result size, and any error. There is no separate audit table; the audit log is the
 query record itself.
 

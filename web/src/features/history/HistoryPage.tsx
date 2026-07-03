@@ -42,8 +42,17 @@ export function HistoryPage() {
   }
 
   const columns = all
-    ? ["Status", "Workspace", "Agent", "SQL", "Rows", "Duration", "Started"]
-    : ["Status", "SQL", "Agent", "Rows", "Duration", "Started"];
+    ? [
+        "Status",
+        "Workspace",
+        "Agent",
+        "User",
+        "SQL",
+        "Rows",
+        "Duration",
+        "Started",
+      ]
+    : ["Status", "SQL", "Agent", "User", "Rows", "Duration", "Started"];
 
   return (
     <div className="flex h-full flex-col">
@@ -157,6 +166,9 @@ export function HistoryPage() {
                   )}
                   <td className="px-4 py-2 font-mono text-xs text-text-secondary">
                     {agentName.get(q.agent_id) ?? shortId(q.agent_id)}
+                  </td>
+                  <td className="px-4 py-2 text-xs text-text-secondary">
+                    {q.user_name ?? "—"}
                   </td>
                   {all && (
                     <td className="px-4 py-2 max-w-xs">

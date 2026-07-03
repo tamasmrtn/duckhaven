@@ -11,6 +11,7 @@ import { scheduleHandlers } from '@/mock/handlers/schedules'
 import { storageBackendHandlers } from '@/mock/handlers/storage-backends'
 import { catalogMigrationHandlers } from '@/mock/handlers/catalog-migrations'
 import { userHandlers } from '@/mock/handlers/users'
+import { serviceAccountHandlers } from '@/mock/handlers/service-accounts'
 import { maintenanceHandlers } from '@/mock/handlers/maintenance'
 
 export const server = setupServer(
@@ -26,5 +27,6 @@ export const server = setupServer(
   ...storageBackendHandlers,
   ...catalogMigrationHandlers,
   ...userHandlers,
+  ...serviceAccountHandlers,
   ...maintenanceHandlers,
 )

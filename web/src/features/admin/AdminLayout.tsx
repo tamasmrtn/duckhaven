@@ -13,6 +13,7 @@ const tabs = [
   { segment: "migrations", label: "Migrations" },
   { segment: "maintenance", label: "Maintenance" },
   { segment: "users", label: "Users" },
+  { segment: "service-accounts", label: "Service accounts" },
 ];
 
 export function AdminLayout() {

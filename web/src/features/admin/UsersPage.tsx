@@ -140,7 +140,7 @@ function CreateUserDialog({
   );
 }
 
-function ManageWorkspacesDialog({
+export function ManageWorkspacesDialog({
   userId,
   userName,
   open,

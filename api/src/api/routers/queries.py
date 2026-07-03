@@ -227,8 +227,11 @@ async def list_workspace_queries(
     """
     is_admin = await has_permission(db, user, Permission.QUERIES_ADMIN)
 
+    # Left-join the user so History can show who ran each query (the name is
+    # attached to each Query row below for QueryOut serialization).
     stmt = (
-        select(Query)
+        select(Query, User.name)
+        .outerjoin(User, Query.user_id == User.id)
         .where(or_(Query.origin.is_(None), Query.origin.notin_(("sample", "metadata"))))
         .order_by(Query.started_at.desc())
         .limit(limit)
@@ -257,7 +260,11 @@ async def list_workspace_queries(
             stmt = stmt.where(Query.started_at <= until)
 
     result = await db.execute(stmt)
-    return list(result.scalars().all())
+    queries: list[Query] = []
+    for query, user_name in result.all():
+        query.user_name = user_name
+        queries.append(query)
+    return queries
 
 
 @router.get("/queries/{query_id}", response_model=QueryOut)

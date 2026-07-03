@@ -14,6 +14,7 @@ const tabs = [
   { segment: "maintenance", label: "Maintenance" },
   { segment: "users", label: "Users" },
   { segment: "service-accounts", label: "Service accounts" },
+  { segment: "access", label: "Access grants" },
 ];
 
 export function AdminLayout() {

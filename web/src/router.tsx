@@ -27,6 +27,7 @@ import { StorageBackendsPage } from "@/features/admin/StorageBackendsPage";
 import { CatalogMigrationsPage } from "@/features/admin/CatalogMigrationsPage";
 import { UsersPage } from "@/features/admin/UsersPage";
 import { ServiceAccountsPage } from "@/features/admin/ServiceAccountsPage";
+import { GrantsPage } from "@/features/admin/GrantsPage";
 import { MaintenancePage } from "@/features/admin/MaintenancePage";
 import { LakehouseHealthPage } from "@/features/health/LakehouseHealthPage";
 
@@ -208,6 +209,12 @@ const adminMaintenanceRoute = createRoute({
   component: MaintenancePage,
 });
 
+const grantsRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: "/access",
+  component: GrantsPage,
+});
+
 export const routeTree = rootRoute.addChildren([
   indexRoute,
   loginRoute,
@@ -231,6 +238,7 @@ export const routeTree = rootRoute.addChildren([
       usersRoute,
       serviceAccountsRoute,
       adminMaintenanceRoute,
+      grantsRoute,
     ]),
   ]),
 ]);

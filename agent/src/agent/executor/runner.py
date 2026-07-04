@@ -87,6 +87,28 @@ _BACKEND_IO_EXTENSION: dict[str, str] = {
 # All backends are object storage, so all get vended credentials from Polaris.
 _VENDED_BACKENDS = {"object_store", "s3", "adls_gen2"}
 
+# Substrings that identify a rejected/expired *storage* credential (as opposed to
+# a genuine authz or missing-object error). Polaris vends short-lived STS creds
+# (an hour on the bundled MinIO); once they expire the object store purges the
+# temporary access key and returns "InvalidAccessKeyId" ("...does not exist..."),
+# or "InvalidToken"/"ExpiredToken" for the session token. When we see one of
+# these we re-vend a fresh credential and retry once rather than surfacing a
+# confusing S3 error to the user (G-D-cred-refresh).
+_CREDENTIAL_ERROR_MARKERS = (
+    "access key id you provided does not exist",
+    "invalidaccesskeyid",
+    "the security token included in the request is invalid",
+    "invalidtoken",
+    "expiredtoken",
+    "token has expired",
+)
+
+
+def _is_credential_error(exc: Exception) -> bool:
+    """True when ``exc`` looks like an expired/rejected vended storage credential."""
+    msg = str(exc).lower()
+    return any(marker in msg for marker in _CREDENTIAL_ERROR_MARKERS)
+
 
 def _is_single_select(sql: str) -> bool:
     """True when the body is exactly one `SELECT` — the only shape we materialize
@@ -447,18 +469,24 @@ def run_query_sync(
     - `on_connect`: called with the connection so the supervisor can
       `interrupt()` it on timeout/cancel (G-D2-a).
     """
+
+    def _open_fresh() -> duckdb.DuckDBPyConnection:
+        c = open_and_attach(catalogs=catalogs, active_catalog=active_catalog, polaris=polaris)
+        if on_connect is not None:
+            on_connect(c)
+        return c
+
     if conn is None:
-        conn = open_and_attach(
-            catalogs=catalogs,
-            active_catalog=active_catalog,
-            polaris=polaris,
-        )
-    if on_connect is not None:
+        conn = _open_fresh()
+    elif on_connect is not None:
         on_connect(conn)
     # Sibling of the result file; retention only sweeps `*.parquet`, so we own
     # this file's lifecycle and unlink it ourselves.
     profile_path = result_path.with_suffix(".profile.json")
-    try:
+    # We can transparently re-vend credentials only when we know how to re-ATTACH.
+    can_reattach = bool(catalogs and polaris)
+
+    def _execute() -> dict[str, Any]:
         # The admission manager sizes each query's slice of the agent's budget
         # (memory_bytes + threads) so concurrent sessions never oversubscribe the
         # cgroup memory limit. DuckDB's default thread count ignores the cgroup
@@ -557,6 +585,20 @@ def run_query_sync(
                 except Exception as exc:  # noqa: BLE001 - health probe is best-effort
                     logger.warning("Health probe failed for %s.%s: %s", schema, table, exc)
         return result
+
+    try:
+        try:
+            return _execute()
+        except Exception as exc:  # noqa: BLE001 - re-vend once on credential expiry
+            if not (can_reattach and _is_credential_error(exc)):
+                raise
+            logger.warning(
+                "Storage credentials rejected mid-query; re-vending and retrying once: %s",
+                exc,
+            )
+            conn.close()
+            conn = _open_fresh()
+            return _execute()
     finally:
         conn.close()
         profile_path.unlink(missing_ok=True)

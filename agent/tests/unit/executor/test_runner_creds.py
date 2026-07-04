@@ -186,3 +186,97 @@ def test_no_catalogs_means_no_attach(fake_conn: FakeConn, tmp_path: Path):
     )
     cmds = [c[0] for c in fake_conn.commands]
     assert not any("ATTACH" in c for c in cmds)
+
+
+# --- Credential-expiry re-vend + retry (G-D-cred-refresh) --------------------
+
+_EXPIRED_S3 = (
+    "HTTP Error: GetTableInformation endpoint returned response code Forbidden_403 with "
+    'message "The Access Key Id you provided does not exist in our records."'
+)
+
+
+class RetryConn:
+    """A FakeConn that optionally raises a credential error on the COPY."""
+
+    def __init__(self, fail_on_copy: bool) -> None:
+        self.commands: list[str] = []
+        self._fail_on_copy = fail_on_copy
+
+    def execute(self, sql: str, params: list[Any] | None = None):
+        self.commands.append(sql)
+        if self._fail_on_copy and sql.startswith("COPY"):
+            raise RuntimeError(_EXPIRED_S3)
+        return self
+
+    def fetchone(self):
+        return (0,)
+
+    def close(self) -> None:
+        pass
+
+
+def _conn_factory(monkeypatch: pytest.MonkeyPatch, conns: list[RetryConn]) -> list[RetryConn]:
+    """Hand out ``conns`` in order on each duckdb.connect(); record what was made."""
+    made: list[RetryConn] = []
+    it = iter(conns)
+
+    def _connect(*_a, **_kw):
+        c = next(it)
+        made.append(c)
+        return c
+
+    monkeypatch.setattr(runner_module.duckdb, "connect", _connect)
+    return made
+
+
+def test_is_credential_error_matches_expiry_but_not_other_errors():
+    assert runner_module._is_credential_error(RuntimeError(_EXPIRED_S3))
+    assert runner_module._is_credential_error(Exception("InvalidToken: bad session token"))
+    assert runner_module._is_credential_error(Exception("The provided token has expired"))
+    assert not runner_module._is_credential_error(Exception("Catalog Error: Table x not found"))
+    assert not runner_module._is_credential_error(Exception("Out of Memory"))
+
+
+def test_expired_credentials_are_re_vended_and_retried_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    # First connection's COPY fails with an expired-key S3 error; the runner
+    # should re-vend a fresh connection and succeed on the retry.
+    made = _conn_factory(monkeypatch, [RetryConn(fail_on_copy=True), RetryConn(fail_on_copy=False)])
+    result = runner_module.run_query_sync(
+        "SELECT 1",
+        tmp_path / "out.parquet",
+        memory_bytes=1024**3,
+        threads=2,
+        catalogs=[_catalog("ws_alpha", "ws-alpha", "object_store", "file:///tmp/data")],
+        active_catalog="ws_alpha",
+        polaris=POLARIS,
+    )
+    assert result["row_count"] == 0
+    # Two connections were opened: the stale one and the re-vended one.
+    assert len(made) == 2
+    assert any(c.startswith("COPY") for c in made[1].commands)
+
+
+def test_non_credential_error_is_not_retried(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    class BoomConn(RetryConn):
+        def execute(self, sql: str, params: list[Any] | None = None):
+            self.commands.append(sql)
+            if sql.startswith("COPY"):
+                raise RuntimeError("Catalog Error: Table with name users does not exist!")
+            return self
+
+    made = _conn_factory(monkeypatch, [BoomConn(fail_on_copy=False), RetryConn(fail_on_copy=False)])
+    with pytest.raises(RuntimeError, match="does not exist"):
+        runner_module.run_query_sync(
+            "SELECT 1",
+            tmp_path / "out.parquet",
+            memory_bytes=1024**3,
+            threads=2,
+            catalogs=[_catalog("ws_alpha", "ws-alpha", "object_store", "file:///tmp/data")],
+            active_catalog="ws_alpha",
+            polaris=POLARIS,
+        )
+    # Only the first connection was opened — no re-vend on a non-credential error.
+    assert len(made) == 1

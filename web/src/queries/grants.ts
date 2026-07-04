@@ -17,7 +17,11 @@ export function useSetAccessMode(ws: string, catalog: string) {
   return useMutation({
     mutationFn: (access_mode: AccessMode) =>
       grantsApi.setAccessMode(ws, catalog, access_mode),
-    onSuccess: () => qc.invalidateQueries({ queryKey: key(ws, catalog) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: key(ws, catalog) });
+      // The catalog list carries access_mode too (tree badge, admin toggle).
+      qc.invalidateQueries({ queryKey: ["workspace", ws, "catalogs"] });
+    },
   });
 }
 

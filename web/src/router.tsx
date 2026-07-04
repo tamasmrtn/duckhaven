@@ -27,7 +27,7 @@ import { StorageBackendsPage } from "@/features/admin/StorageBackendsPage";
 import { CatalogMigrationsPage } from "@/features/admin/CatalogMigrationsPage";
 import { UsersPage } from "@/features/admin/UsersPage";
 import { ServiceAccountsPage } from "@/features/admin/ServiceAccountsPage";
-import { GrantsPage } from "@/features/admin/GrantsPage";
+import { CatalogAccessPage } from "@/features/admin/CatalogAccessPage";
 import { MaintenancePage } from "@/features/admin/MaintenancePage";
 import { LakehouseHealthPage } from "@/features/health/LakehouseHealthPage";
 
@@ -114,6 +114,18 @@ const worksheetsRoute = createRoute({
 const catalogRoute = createRoute({
   getParentRoute: () => wsRoute,
   path: "/catalog",
+  component: CatalogPage,
+});
+
+const catalogDetailRoute = createRoute({
+  getParentRoute: () => wsRoute,
+  path: "/catalog/$catalog",
+  component: CatalogPage,
+});
+
+const schemaDetailRoute = createRoute({
+  getParentRoute: () => wsRoute,
+  path: "/catalog/$catalog/$schema",
   component: CatalogPage,
 });
 
@@ -209,10 +221,10 @@ const adminMaintenanceRoute = createRoute({
   component: MaintenancePage,
 });
 
-const grantsRoute = createRoute({
+const catalogAccessRoute = createRoute({
   getParentRoute: () => adminRoute,
-  path: "/access",
-  component: GrantsPage,
+  path: "/catalog-access",
+  component: CatalogAccessPage,
 });
 
 export const routeTree = rootRoute.addChildren([
@@ -223,6 +235,8 @@ export const routeTree = rootRoute.addChildren([
   wsRoute.addChildren([
     worksheetsRoute,
     catalogRoute,
+    catalogDetailRoute,
+    schemaDetailRoute,
     catalogTableRoute,
     savedQueriesRoute,
     schedulesRoute,
@@ -238,7 +252,7 @@ export const routeTree = rootRoute.addChildren([
       usersRoute,
       serviceAccountsRoute,
       adminMaintenanceRoute,
-      grantsRoute,
+      catalogAccessRoute,
     ]),
   ]),
 ]);

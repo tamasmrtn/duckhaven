@@ -67,6 +67,9 @@ export function useTableSample(
     ],
     queryFn: () => schemasApi.sampleRows(ws, catalog, schema, table),
     enabled: !!ws && !!schema && !!table,
+    // A denied sample (scoped metadata tier) or missing agent is not worth
+    // retrying — surface it to the user immediately.
+    retry: false,
   });
 }
 

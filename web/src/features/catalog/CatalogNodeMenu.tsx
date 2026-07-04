@@ -7,6 +7,7 @@ import {
   Trash2,
   ExternalLink,
   RefreshCw,
+  Shield,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -24,6 +25,7 @@ import {
 import { CreateSchemaDialog } from "./CreateSchemaDialog";
 import { CreateTableDialog } from "./CreateTableDialog";
 import { ConfirmDropDialog } from "./ConfirmDropDialog";
+import { PermissionsDialog } from "./PermissionsDialog";
 import {
   alterTemplate,
   selectTemplate,
@@ -55,6 +57,7 @@ export function CatalogNodeMenu({
   const [createSchemaOpen, setCreateSchemaOpen] = useState(false);
   const [createTableOpen, setCreateTableOpen] = useState(false);
   const [dropOpen, setDropOpen] = useState(false);
+  const [permsOpen, setPermsOpen] = useState(false);
 
   const dropSchema = useDropSchema(ws, catalog);
   const deleteTable = useDeleteTable(
@@ -103,6 +106,12 @@ export function CatalogNodeMenu({
                 <Table2 />
                 Create table
               </ContextMenuItem>
+              {catalog && (
+                <ContextMenuItem onSelect={() => setPermsOpen(true)}>
+                  <Shield />
+                  Permissions…
+                </ContextMenuItem>
+              )}
               <ContextMenuSeparator />
               <ContextMenuItem destructive onSelect={() => setDropOpen(true)}>
                 <Trash2 />
@@ -136,6 +145,12 @@ export function CatalogNodeMenu({
                 <RefreshCw />
                 Recount rows
               </ContextMenuItem>
+              {catalog && (
+                <ContextMenuItem onSelect={() => setPermsOpen(true)}>
+                  <Shield />
+                  Permissions…
+                </ContextMenuItem>
+              )}
               <ContextMenuSeparator />
               <ContextMenuItem destructive onSelect={() => setDropOpen(true)}>
                 <Trash2 />
@@ -189,6 +204,16 @@ export function CatalogNodeMenu({
             toast.success(`Dropped ${node.schema}.${node.table}`);
             onDropped?.();
           }}
+        />
+      )}
+      {catalog && node.kind !== "catalog" && (
+        <PermissionsDialog
+          ws={ws}
+          catalog={catalog}
+          schema={node.schema}
+          table={node.kind === "table" ? node.table : undefined}
+          open={permsOpen}
+          onOpenChange={setPermsOpen}
         />
       )}
     </>

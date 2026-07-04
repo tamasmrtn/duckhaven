@@ -22,6 +22,8 @@ export interface Catalog {
   created_at: string;
   is_default: boolean;
   attached_workspaces: number | null;
+  // Scoped-access mode of this workspace's attachment ("open" | "scoped").
+  access_mode?: "open" | "scoped";
 }
 
 export interface CatalogTable {

@@ -4,6 +4,7 @@ import {
   useParams,
   useNavigate,
 } from "@tanstack/react-router";
+import { useMe } from "@/queries/auth";
 import { cn } from "@/utils";
 
 const tabs = [
@@ -14,7 +15,7 @@ const tabs = [
   { segment: "maintenance", label: "Maintenance" },
   { segment: "users", label: "Users" },
   { segment: "service-accounts", label: "Service accounts" },
-  { segment: "access", label: "Access grants" },
+  { segment: "catalog-access", label: "Catalog access" },
 ];
 
 export function AdminLayout() {
@@ -22,6 +23,28 @@ export function AdminLayout() {
   const state = useRouterState();
   const pathname = state.location.pathname;
   const navigate = useNavigate();
+  const { data: me, isLoading } = useMe();
+  // Admin capability = holding any global permission (mirrors the left rail).
+  const isAdmin = (me?.permissions?.length ?? 0) > 0;
+
+  // Client-side gate: the admin area's screens are individually enforced by the
+  // API too, but non-admins shouldn't even see the admin shell (e.g. by typing
+  // the URL directly). Wait for `me` to resolve so a real admin never flashes it.
+  if (isLoading) return null;
+  if (!isAdmin) {
+    return (
+      <div className="flex h-full items-center justify-center p-8 text-center">
+        <div className="space-y-1">
+          <p className="text-sm font-medium text-text-primary">
+            Admin access required
+          </p>
+          <p className="text-sm text-text-tertiary">
+            You don&apos;t have permission to view this area.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full flex-col">

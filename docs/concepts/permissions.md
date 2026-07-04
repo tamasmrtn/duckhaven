@@ -74,6 +74,10 @@ Each catalog attachment has an **access mode**:
 - **`scoped`** — the workspace role is no longer enough on its own; a member sees
   only what a **grant** gives them on that catalog.
 
+Switch a catalog between the two modes from its **Permissions** dialog in the
+catalog view (right-click the catalog), or from **Admin → Catalog access**, which
+lists every attached catalog with its mode.
+
 A grant is set at one of three levels of the hierarchy, and a grant at a coarser
 level covers everything beneath it — including tables created *after* the grant:
 
@@ -106,7 +110,9 @@ several tables is rejected before it runs if the principal lacks at least `reade
 on **any** referenced table. Denied objects return a 404 (not a 403) at the leaf, so
 a restricted table is indistinguishable from one that does not exist. Grants apply
 equally to human members and [service accounts](../guides/service-accounts.md), and
-are managed from **Admin → Access grants**.
+are managed from the **catalog view** — right-click a catalog, schema, or table (or
+open a table's **Permissions** tab) to grant a principal access at that level, the
+same object-first workflow as Databricks Unity Catalog's Catalog Explorer.
 
 ## What is not in scope
 

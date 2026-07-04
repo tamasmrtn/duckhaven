@@ -24,6 +24,7 @@ from api.models.query import Query
 from api.models.table_metadata import TableMetadata
 from api.models.user import Credential
 from api.models.workspace import Workspace
+from api.services import grants as grant_service
 from api.services.agent_capabilities import agent_supports_backend
 from api.services.agent_dispatch import (
     connected_agent_ids,
@@ -46,6 +47,7 @@ async def dispatch_query(
     *,
     timeout_s: float = 600.0,
     active_catalog: str | None = None,
+    principal_id: uuid.UUID | None = None,
     stats_for: dict[str, str] | None = None,
     health_for: dict[str, object] | None = None,
 ) -> None:
@@ -70,6 +72,17 @@ async def dispatch_query(
     if active_catalog is None:
         default = await get_default_catalog(db, workspace.id)
         active_catalog = default.slug if default is not None else catalogs[0].slug
+
+    # Scoped-catalog grant check: reject before dispatch if the principal lacks
+    # tier on any referenced object. No-op unless a catalog is in scoped mode.
+    await grant_service.assert_query_access(
+        db,
+        workspace.id,
+        principal_id if principal_id is not None else query.user_id,
+        query.sql,
+        active_catalog,
+        catalogs,
+    )
     payload: dict[str, object] = {
         "query_id": str(query.id),
         "sql": query.sql,

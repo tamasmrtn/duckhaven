@@ -47,6 +47,21 @@ async def test_create_catalog_and_list(auth_client, owner, db_session, fake_pola
     assert by_slug["curated"]["storage_backend_kind"] == "object_store"
     assert "storage_backend_name" in by_slug["curated"]
     assert "storage_backend_root_uri" in by_slug["curated"]
+    # Attachments default to open access; the listing surfaces the mode so the
+    # admin toggle and tree badge can read it without a per-catalog grants call.
+    assert by_slug["curated"]["access_mode"] == "open"
+
+
+async def test_catalog_list_reflects_scoped_access_mode(
+    auth_client, owner, db_session, fake_polaris: FakePolaris
+):
+    await seed_workspace(db_session, user_id=owner.id, slug="dev", name="Dev")
+    await auth_client.patch(
+        "/workspaces/dev/catalogs/dev/access-mode", json={"access_mode": "scoped"}
+    )
+
+    by_slug = {c["slug"]: c for c in (await auth_client.get("/workspaces/dev/catalogs")).json()}
+    assert by_slug["dev"]["access_mode"] == "scoped"
 
 
 async def test_create_requires_owner(auth_client, owner, db_session):

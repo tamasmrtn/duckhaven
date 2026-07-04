@@ -11,6 +11,7 @@ import {
   Plus,
   Link2,
   Info,
+  Shield,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -36,6 +37,7 @@ import {
 } from "@/queries/catalogs";
 import { CatalogNodeMenu } from "@/features/catalog/CatalogNodeMenu";
 import { CreateSchemaDialog } from "@/features/catalog/CreateSchemaDialog";
+import { PermissionsDialog } from "@/features/catalog/PermissionsDialog";
 import {
   AttachCatalogDialog,
   CreateCatalogDialog,
@@ -161,6 +163,7 @@ interface SchemaNodeProps {
   schemaName: string;
   filter: string;
   onTableClick: (catalog: string, schema: string, table: string) => void;
+  onSchemaClick?: (catalog: string, schema: string) => void;
 }
 
 function SchemaNode({
@@ -169,6 +172,7 @@ function SchemaNode({
   schemaName,
   filter,
   onTableClick,
+  onSchemaClick,
 }: SchemaNodeProps) {
   const [open, setOpen] = useState(true);
   const { data: tables, isLoading } = useTables(
@@ -190,20 +194,33 @@ function SchemaNode({
         catalog={catalog}
         node={{ kind: "schema", schema: schemaName }}
       >
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-sm font-medium text-text-primary hover:bg-accent focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
-          aria-expanded={open}
-        >
-          {open ? (
-            <ChevronDown className="size-3.5 shrink-0 text-text-secondary" />
-          ) : (
-            <ChevronRight className="size-3.5 shrink-0 text-text-secondary" />
-          )}
-          <Layers className="size-3.5 shrink-0 text-[var(--brand-maya-blue)]" />
-          <span className="truncate">{schemaName}</span>
-        </button>
+        <div className="flex w-full items-center rounded text-sm font-medium text-text-primary hover:bg-accent">
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            className="shrink-0 rounded p-1 text-text-secondary hover:text-text-primary focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+            aria-expanded={open}
+            aria-label={open ? "Collapse schema" : "Expand schema"}
+          >
+            {open ? (
+              <ChevronDown className="size-3.5 shrink-0" />
+            ) : (
+              <ChevronRight className="size-3.5 shrink-0" />
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              onSchemaClick
+                ? onSchemaClick(catalog, schemaName)
+                : setOpen((v) => !v)
+            }
+            className="flex min-w-0 flex-1 items-center gap-1.5 rounded py-1 pr-2 focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+          >
+            <Layers className="size-3.5 shrink-0 text-[var(--brand-maya-blue)]" />
+            <span className="truncate">{schemaName}</span>
+          </button>
+        </div>
       </CatalogNodeMenu>
 
       {open && (
@@ -315,6 +332,8 @@ interface CatalogNodeProps {
   defaultOpen: boolean;
   onTableClick: (catalog: string, schema: string, table: string) => void;
   onMetaViewClick?: (catalog: string, view: string) => void;
+  onCatalogClick?: (catalog: string) => void;
+  onSchemaClick?: (catalog: string, schema: string) => void;
 }
 
 function CatalogNode({
@@ -324,10 +343,13 @@ function CatalogNode({
   defaultOpen,
   onTableClick,
   onMetaViewClick,
+  onCatalogClick,
+  onSchemaClick,
 }: CatalogNodeProps) {
   const [open, setOpen] = useState(defaultOpen);
   const [createSchemaOpen, setCreateSchemaOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
+  const [permsOpen, setPermsOpen] = useState(false);
   const { data: schemas, isLoading } = useSchemas(ws, open ? catalog.slug : "");
   const detach = useDetachCatalog(ws);
   const drop = useDropCatalog(ws);
@@ -358,35 +380,53 @@ function CatalogNode({
     <div>
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-sm font-semibold text-text-primary hover:bg-accent focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
-            aria-expanded={open}
-          >
-            {open ? (
-              <ChevronDown className="size-3.5 shrink-0 text-text-secondary" />
-            ) : (
-              <ChevronRight className="size-3.5 shrink-0 text-text-secondary" />
-            )}
-            <Book className="size-3.5 shrink-0 text-[var(--brand-slate-blue)]" />
-            <span className="truncate">{catalog.slug}</span>
-            {/* Storage-backend indicator: which object store this catalog lives on. */}
-            <span
-              className="ml-1 inline-flex shrink-0"
-              title={`Storage: ${backendLabel(catalog.storage_backend_kind)}`}
+          <div className="flex w-full items-center rounded text-sm font-semibold text-text-primary hover:bg-accent">
+            <button
+              type="button"
+              onClick={() => setOpen((v) => !v)}
+              className="shrink-0 rounded p-1 text-text-secondary hover:text-text-primary focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+              aria-expanded={open}
+              aria-label={open ? "Collapse catalog" : "Expand catalog"}
             >
-              <StorageIcon
-                kind={catalog.storage_backend_kind as BackendKind}
-                className="size-3 text-text-tertiary"
-              />
-            </span>
-            {catalog.is_default && (
-              <span className="ml-1 rounded bg-accent px-1 text-2xs text-text-tertiary">
-                default
+              {open ? (
+                <ChevronDown className="size-3.5 shrink-0" />
+              ) : (
+                <ChevronRight className="size-3.5 shrink-0" />
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                onCatalogClick
+                  ? onCatalogClick(catalog.slug)
+                  : setOpen((v) => !v)
+              }
+              className="flex min-w-0 flex-1 items-center gap-1.5 rounded py-1 pr-2 focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+            >
+              <Book className="size-3.5 shrink-0 text-[var(--brand-slate-blue)]" />
+              <span className="truncate">{catalog.slug}</span>
+              {/* Storage-backend indicator: which object store this catalog lives on. */}
+              <span
+                className="ml-1 inline-flex shrink-0"
+                title={`Storage: ${backendLabel(catalog.storage_backend_kind)}`}
+              >
+                <StorageIcon
+                  kind={catalog.storage_backend_kind as BackendKind}
+                  className="size-3 text-text-tertiary"
+                />
               </span>
-            )}
-          </button>
+              {catalog.access_mode === "scoped" && (
+                <span className="ml-1 rounded bg-accent px-1 text-2xs text-text-tertiary">
+                  scoped
+                </span>
+              )}
+              {catalog.is_default && (
+                <span className="ml-1 rounded bg-accent px-1 text-2xs text-text-tertiary">
+                  default
+                </span>
+              )}
+            </button>
+          </div>
         </ContextMenuTrigger>
         <ContextMenuContent>
           <ContextMenuItem onSelect={() => setInfoOpen(true)}>
@@ -397,6 +437,10 @@ function CatalogNode({
           <ContextMenuItem onSelect={() => setCreateSchemaOpen(true)}>
             <Plus />
             Create schema
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => setPermsOpen(true)}>
+            <Shield />
+            Permissions…
           </ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuItem onSelect={handleDetach}>
@@ -434,6 +478,7 @@ function CatalogNode({
                   schemaName={s.name}
                   filter={filter}
                   onTableClick={onTableClick}
+                  onSchemaClick={onSchemaClick}
                 />
               ))}
               {/* Always-present, read-only metadata schema (virtual). */}
@@ -458,6 +503,12 @@ function CatalogNode({
         open={infoOpen}
         onOpenChange={setInfoOpen}
       />
+      <PermissionsDialog
+        ws={ws}
+        catalog={catalog.slug}
+        open={permsOpen}
+        onOpenChange={setPermsOpen}
+      />
     </div>
   );
 }
@@ -467,6 +518,11 @@ interface CatalogTreeProps {
   workspaceName: string;
   onTableClick: (catalog: string, schema: string, table: string) => void;
   onMetaViewClick?: (catalog: string, view: string) => void;
+  // When provided, clicking a catalog / schema label navigates to its detail
+  // pane (catalog page); when omitted the label just expands the node
+  // (worksheet sidebar).
+  onCatalogClick?: (catalog: string) => void;
+  onSchemaClick?: (catalog: string, schema: string) => void;
 }
 
 export function CatalogTree({
@@ -474,6 +530,8 @@ export function CatalogTree({
   workspaceName,
   onTableClick,
   onMetaViewClick,
+  onCatalogClick,
+  onSchemaClick,
 }: CatalogTreeProps) {
   const [filter, setFilter] = useState("");
   const [createCatalogOpen, setCreateCatalogOpen] = useState(false);
@@ -581,6 +639,8 @@ export function CatalogTree({
                 defaultOpen={c.is_default || (catalogs.length === 1 && i === 0)}
                 onTableClick={onTableClick}
                 onMetaViewClick={onMetaViewClick}
+                onCatalogClick={onCatalogClick}
+                onSchemaClick={onSchemaClick}
               />
             ))}
           </div>

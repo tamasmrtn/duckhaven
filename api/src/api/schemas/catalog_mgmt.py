@@ -37,3 +37,6 @@ class CatalogOut(BaseModel):
     # default catalog and whether it is shared with other workspaces.
     is_default: bool = False
     attached_workspaces: int | None = None
+    # The attachment's scoped-access mode ("open" | "scoped"); "open" for the
+    # deployment-wide listing where there is no single workspace attachment.
+    access_mode: str = "open"

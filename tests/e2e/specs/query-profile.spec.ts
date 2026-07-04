@@ -27,9 +27,11 @@ test("the Profile tab shows the summary and operator tree @smoke", async ({
   // Interactive operator tree with a blocking GROUP BY node.
   await expect(page.getByText(/GROUP_BY/).first()).toBeVisible();
 
-  // Collapsing the root hides descendants; expanding restores them.
+  // Collapsing the root hides descendants; expanding restores them. Match the
+  // exact "Collapse" label so this targets the profile tree's root, not the
+  // catalog sidebar's "Collapse catalog"/"Collapse schema" chevrons.
   const groupBy = page.getByText(/GROUP_BY/).first();
-  await page.getByRole("button", { name: "Collapse" }).first().click();
+  await page.getByRole("button", { name: "Collapse", exact: true }).first().click();
   await expect(groupBy).toBeHidden();
 });
 

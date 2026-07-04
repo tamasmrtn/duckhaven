@@ -148,7 +148,9 @@ async def _run_saved_query(db: AsyncSession, schedule: Schedule, now: datetime) 
         query.finished_at = now
     else:
         try:
-            await dispatch_query(db, query)
+            # Scheduled runs have no caller (user_id=None for audit); grants are
+            # evaluated against the saved query's creator.
+            await dispatch_query(db, query, principal_id=saved.created_by)
         except ValueError as exc:
             # Fail fast like a manual dispatch: the run is recorded as failed and
             # surfaces in History / the run list. One bad schedule never blocks

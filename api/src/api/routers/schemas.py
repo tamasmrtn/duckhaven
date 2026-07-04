@@ -39,6 +39,7 @@ from api.schemas.catalog import (
     TableOut,
 )
 from api.schemas.query import RowsPageOut
+from api.services import grants as grant_service
 from api.services import query as query_service
 from api.services.polaris import (
     PolarisClient,
@@ -311,12 +312,18 @@ async def _ensure_catalog(db: AsyncSession, polaris: PolarisClient, catalog: Cat
 
 async def list_schemas(
     target: _Target = Depends(target_catalog("reader")),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> list[CatalogSchemaOut]:
     cat = target.catalog
     await _ensure_catalog(db, polaris, cat)
     schemas = await polaris.list_schemas(cat.polaris_name)
+    if await grant_service.is_scoped(db, target.workspace.id, cat):
+        visible = await grant_service.visible_schemas(
+            db, target.workspace.id, cat, user.id, [s.name for s in schemas]
+        )
+        schemas = [s for s in schemas if s.name in visible]
     return [
         CatalogSchemaOut(
             name=s.name,
@@ -331,10 +338,14 @@ async def list_schemas(
 async def create_schema(
     body: CatalogSchemaCreate,
     target: _Target = Depends(target_catalog("writer")),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> CatalogSchemaOut:
     cat = target.catalog
+    await grant_service.enforce_leaf(
+        db, target.workspace.id, cat, user.id, schema=body.name, table=None, need="writer"
+    )
     await _ensure_catalog(db, polaris, cat)
     try:
         sc = await polaris.create_schema(cat.polaris_name, body.name)
@@ -364,6 +375,18 @@ async def refresh_table_stats(
             m = meta.get(t.name)
             if m is None or m.row_count is None:
                 missing.append((s.name, t.name))
+
+    # In scoped mode a row-count probe reads data, so only probe tables the
+    # principal has at least `reader` on (a metadata-tier table stays hidden).
+    if missing and await grant_service.is_scoped(db, workspace.id, cat):
+        allowed = []
+        for schema_name, table_name in missing:
+            tier = await grant_service.node_tier(
+                db, workspace.id, cat, user.id, schema_name, table_name
+            )
+            if grant_service.tier_rank(tier) >= grant_service.TIER_SCALE["reader"]:
+                allowed.append((schema_name, table_name))
+        missing = allowed
 
     if not missing:
         return {"probed": 0}
@@ -397,11 +420,15 @@ async def drop_schema(
     schema: str,
     cascade: bool = False,
     target: _Target = Depends(target_catalog("writer")),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> None:
     """Drop a schema. Fails if it still holds tables unless `cascade=true`."""
     cat = target.catalog
+    await grant_service.enforce_leaf(
+        db, target.workspace.id, cat, user.id, schema=schema, table=None, need="writer"
+    )
     try:
         tables = await polaris.list_tables(cat.polaris_name, schema)
     except PolarisNotFoundError as exc:
@@ -422,17 +449,25 @@ async def drop_schema(
         await polaris.delete_schema(cat.polaris_name, schema)
     except PolarisNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
+    # Drop dangling grants for the schema and every table that was under it.
+    await grant_service.delete_schema_grants(db, cat.id, schema)
     await db.commit()
 
 
 async def list_tables(
     schema: str,
     target: _Target = Depends(target_catalog("reader")),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> list[TableOut]:
     cat = target.catalog
     tables = await polaris.list_tables(cat.polaris_name, schema)
+    if await grant_service.is_scoped(db, target.workspace.id, cat):
+        visible = await grant_service.visible_tables(
+            db, target.workspace.id, cat, user.id, schema, [t.name for t in tables]
+        )
+        tables = [t for t in tables if t.name in visible]
     meta = await _load_table_meta(db, cat.id, schema)
     return [_table_to_out(t, cat, target.workspace.id, meta.get(t.name)) for t in tables]
 
@@ -441,10 +476,14 @@ async def get_table(
     schema: str,
     table: str,
     target: _Target = Depends(target_catalog("reader")),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> TableOut:
     cat = target.catalog
+    await grant_service.enforce_leaf(
+        db, target.workspace.id, cat, user.id, schema=schema, table=table, need="metadata"
+    )
     try:
         t = await polaris.get_table(cat.polaris_name, schema, table)
     except PolarisNotFoundError as exc:
@@ -457,11 +496,15 @@ async def list_snapshots(
     schema: str,
     table: str,
     target: _Target = Depends(target_catalog("reader")),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> list[SnapshotOut]:
     """Iceberg snapshot history for a table, newest first (live from Polaris)."""
     cat = target.catalog
+    await grant_service.enforce_leaf(
+        db, target.workspace.id, cat, user.id, schema=schema, table=table, need="metadata"
+    )
     try:
         snapshots = await polaris.list_snapshots(cat.polaris_name, schema, table)
     except PolarisNotFoundError as exc:
@@ -478,6 +521,9 @@ async def create_table(
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> TableOut:
     cat = target.catalog
+    await grant_service.enforce_leaf(
+        db, target.workspace.id, cat, user.id, schema=schema, table=body.name, need="writer"
+    )
     columns = [_column_for_iceberg(spec, idx + 1) for idx, spec in enumerate(body.columns)]
 
     await _ensure_catalog(db, polaris, cat)
@@ -512,15 +558,20 @@ async def drop_table(
     schema: str,
     table: str,
     target: _Target = Depends(target_catalog("writer")),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> None:
     cat = target.catalog
+    await grant_service.enforce_leaf(
+        db, target.workspace.id, cat, user.id, schema=schema, table=table, need="writer"
+    )
     try:
         await polaris.delete_table(cat.polaris_name, schema, table, purge=True)
     except PolarisNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
     await _delete_table_meta(db, cat.id, schema, table)
+    await grant_service.delete_table_grants(db, cat.id, schema, table)
     await db.commit()
 
 
@@ -537,6 +588,9 @@ async def sample_table(
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> RowsPageOut:
     workspace, cat = target.workspace, target.catalog
+    await grant_service.enforce_leaf(
+        db, workspace.id, cat, user.id, schema=schema, table=table, need="reader"
+    )
     try:
         await polaris.get_table(cat.polaris_name, schema, table)
     except PolarisNotFoundError as exc:
@@ -586,6 +640,9 @@ async def recount_table(
 ) -> dict[str, int | None]:
     """Force a fresh row-count probe for a single table."""
     workspace, cat = target.workspace, target.catalog
+    await grant_service.enforce_leaf(
+        db, workspace.id, cat, user.id, schema=schema, table=table, need="reader"
+    )
     try:
         await polaris.get_table(cat.polaris_name, schema, table)
     except PolarisNotFoundError as exc:

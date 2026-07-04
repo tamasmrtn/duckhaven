@@ -1,8 +1,10 @@
 # Manage users & access
 
-DuckHaven has two independent layers of access: a **global role** (what someone can administer) and per-workspace
-[membership](../concepts/workspaces.md) (which data they can touch). This guide covers both. For the underlying model
-see [Identity & permissions](../concepts/permissions.md).
+This guide is the **how-to** for the first two of DuckHaven's [three access layers](access-levels.md): a user's
+**global role** (what they can administer) and their **workspace membership** (which workspaces they can enter). The
+third layer — fine-grained data grants inside a *scoped* catalog — is managed from the catalog view; see
+[How access works](access-levels.md) for the model and [Identity & permissions](../concepts/permissions.md) for the
+full reference.
 
 ## Users
 
@@ -34,7 +36,7 @@ See [Offboarding & break-glass](../operations/offboarding.md) for the full depar
 
 ## Workspace membership and roles
 
-Access to data is granted by adding a user to a workspace with a role:
+Access to a workspace's data starts with adding a user to it with a role:
 
 | Role | Grants |
 |---|---|
@@ -52,6 +54,10 @@ There are two ways to manage membership:
 Workspace membership is always managed inside DuckHaven (it is not driven by IdP groups, which set only the global
 role). Authorization is enforced at the API boundary before any query reaches an agent. See
 [Permissions](../concepts/permissions.md).
+
+By default a member's role applies to every table in the workspace's catalogs. To narrow access to specific schemas or
+tables, switch a catalog to *scoped* mode and grant per-object access — the third access layer, covered in
+[How access works](access-levels.md).
 
 ## Registering agents
 

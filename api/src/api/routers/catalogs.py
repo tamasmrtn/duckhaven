@@ -78,7 +78,11 @@ async def _binding_count(db: AsyncSession, catalog_id: uuid.UUID) -> int:
 
 
 def _catalog_out(
-    catalog: Catalog, *, is_default: bool = False, attached_workspaces: int | None = None
+    catalog: Catalog,
+    *,
+    is_default: bool = False,
+    attached_workspaces: int | None = None,
+    access_mode: str = "open",
 ) -> CatalogOut:
     return CatalogOut(
         id=catalog.id,
@@ -92,6 +96,7 @@ def _catalog_out(
         created_at=catalog.created_at,
         is_default=is_default,
         attached_workspaces=attached_workspaces,
+        access_mode=access_mode,
     )
 
 
@@ -116,22 +121,25 @@ async def list_workspace_catalogs(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     await assert_workspace_member(db, workspace.id, user.id)
     catalogs = await resolve_workspace_catalogs(db, workspace.id)
-    defaults = {
-        link.catalog_id
-        for link in (
+    links = list(
+        (
             await db.execute(
                 select(WorkspaceCatalog).where(
                     WorkspaceCatalog.workspace_id == workspace.id,
-                    WorkspaceCatalog.is_default.is_(True),
                 )
             )
         )
         .scalars()
         .all()
-    }
+    )
+    defaults = {link.catalog_id for link in links if link.is_default}
+    modes = {link.catalog_id: link.access_mode for link in links}
     return [
         _catalog_out(
-            c, is_default=c.id in defaults, attached_workspaces=await _binding_count(db, c.id)
+            c,
+            is_default=c.id in defaults,
+            attached_workspaces=await _binding_count(db, c.id),
+            access_mode=modes.get(c.id, "open"),
         )
         for c in catalogs
     ]

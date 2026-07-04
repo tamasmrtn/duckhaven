@@ -5,14 +5,18 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ApiError } from "@/api/client";
 import { useTable, useTableSample } from "@/queries/schemas";
 import { useDeleteTable } from "@/queries/schemas.mutations";
 import { ResultsTable } from "@/features/worksheet/ResultsTable";
 import { StorageIcon } from "@/components/app/StorageIcon";
 import { useWorkspace } from "@/queries/workspaces";
 import { CatalogTree } from "@/features/catalog/CatalogTree";
+import { CatalogDetail } from "@/features/catalog/CatalogDetail";
+import { SchemaDetail } from "@/features/catalog/SchemaDetail";
 import { ConfirmDropDialog } from "@/features/catalog/ConfirmDropDialog";
 import { SnapshotHistoryPanel } from "@/features/catalog/SnapshotHistoryPanel";
+import { PermissionsPanel } from "@/features/catalog/PermissionsPanel";
 import { TableHealthPanel } from "@/features/health/TableHealthPanel";
 import {
   alterTemplate,
@@ -64,12 +68,18 @@ function TableDetail({
   table: string;
 }) {
   const { data: tableData, isLoading } = useTable(ws, catalog, schema, table);
-  const { data: sampleData, isLoading: sampleLoading } = useTableSample(
-    ws,
-    catalog,
-    schema,
-    table,
-  );
+  const {
+    data: sampleData,
+    isLoading: sampleLoading,
+    error: sampleError,
+  } = useTableSample(ws, catalog, schema, table);
+  // In a scoped catalog a `metadata`-tier grant lets you describe a table but
+  // not read its rows: the sample endpoint 404s (leaf denials 404 so they don't
+  // confirm existence). Since the table detail already loaded, that 404/403 here
+  // means "no read access", not "missing" — say so instead of an empty grid.
+  const sampleDenied =
+    sampleError instanceof ApiError &&
+    (sampleError.status === 404 || sampleError.status === 403);
   const { data: workspace } = useWorkspace(ws);
   const navigate = useNavigate();
   const deleteTable = useDeleteTable(ws, catalog, schema);
@@ -232,6 +242,9 @@ function TableDetail({
             <TabsTrigger value="health" className="text-xs">
               Health
             </TabsTrigger>
+            <TabsTrigger value="permissions" className="text-xs">
+              Permissions
+            </TabsTrigger>
           </TabsList>
           <TabsContent
             value="sample"
@@ -243,12 +256,23 @@ function TableDetail({
               </p>
             </div>
             <div className="flex-1 overflow-hidden">
-              <ResultsTable
-                columns={sampleData?.columns ?? []}
-                rows={sampleData?.rows ?? []}
-                total={sampleData?.total ?? 0}
-                isLoading={sampleLoading}
-              />
+              {sampleDenied ? (
+                <div className="flex h-full items-center justify-center p-6 text-center">
+                  <p className="max-w-sm text-sm text-text-tertiary">
+                    You have <strong>metadata</strong> access to this table —
+                    you can see its structure, but previewing rows requires{" "}
+                    <strong>reader</strong> access. Ask a workspace owner to
+                    grant it.
+                  </p>
+                </div>
+              ) : (
+                <ResultsTable
+                  columns={sampleData?.columns ?? []}
+                  rows={sampleData?.rows ?? []}
+                  total={sampleData?.total ?? 0}
+                  isLoading={sampleLoading}
+                />
+              )}
             </div>
           </TabsContent>
           <TabsContent
@@ -268,6 +292,17 @@ function TableDetail({
             className="mt-0 flex flex-1 flex-col overflow-hidden border-t border-[var(--border-subtle)]"
           >
             <TableHealthPanel ws={ws} schema={schema} table={table} />
+          </TabsContent>
+          <TabsContent
+            value="permissions"
+            className="mt-0 flex flex-1 flex-col overflow-auto border-t border-[var(--border-subtle)]"
+          >
+            <PermissionsPanel
+              ws={ws}
+              catalog={catalog}
+              schema={schema}
+              table={table}
+            />
           </TabsContent>
         </Tabs>
       </div>
@@ -308,6 +343,18 @@ export function CatalogPage() {
           <CatalogTree
             ws={ws}
             workspaceName={workspace?.name ?? ws}
+            onCatalogClick={(c) =>
+              navigate({
+                to: "/$ws/catalog/$catalog",
+                params: { ws, catalog: c },
+              })
+            }
+            onSchemaClick={(c, s) =>
+              navigate({
+                to: "/$ws/catalog/$catalog/$schema",
+                params: { ws, catalog: c, schema: s },
+              })
+            }
             onTableClick={(c, s, t) =>
               navigate({
                 to: "/$ws/catalog/$catalog/$schema/$table",
@@ -325,9 +372,13 @@ export function CatalogPage() {
               schema={schema}
               table={table}
             />
+          ) : catalog && schema ? (
+            <SchemaDetail ws={ws} catalog={catalog} schema={schema} />
+          ) : catalog ? (
+            <CatalogDetail ws={ws} catalog={catalog} />
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-text-tertiary">
-              Select a table to view its details.
+              Select a catalog, schema, or table to view its details.
             </div>
           )}
         </div>

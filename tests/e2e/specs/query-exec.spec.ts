@@ -36,7 +36,10 @@ test("sandbox-escape statements (SET) are blocked by the guard @smoke", async ({
 });
 
 test("a running query can be cancelled", async ({ page, worksheetPage }) => {
-  await worksheetPage.setSql("SELECT count(*) FROM range(500000000) t(i)");
+  // Per-row arithmetic over billions of rows so the query can't be shortcut and
+  // is reliably still running when Cancel lands (a bare count(*) over range can
+  // finish first on a fast host, racing the cancel).
+  await worksheetPage.setSql("SELECT sum(i % 7) FROM range(4000000000) t(i)");
   await worksheetPage.runButton.click();
   await page.locator("button", { hasText: "Cancel" }).click();
   await expect(page.getByRole("status").first()).toHaveText(/cancel/i, { timeout: 15_000 });

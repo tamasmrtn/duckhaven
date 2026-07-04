@@ -129,6 +129,90 @@ async def test_dispatches_due_schedule(session_factory):
     assert ws_obj.sent[-1]["type"] == "dispatch_query"
 
 
+async def _seed_scoped(db, *, sql: str, grant_tier: str | None):
+    """Seed a scoped-catalog schedule whose saved query is `sql`, optionally with
+    a grant for the creator at `grant_tier` on analytics.secret."""
+    from sqlalchemy import update
+
+    from api.models.catalog import WorkspaceCatalog
+    from api.models.catalog_grant import CatalogGrant
+
+    suffix = uuid.uuid4().hex[:8]
+    user = User(
+        email=f"sc-{suffix}@test.local", password_hash=hash_password("pw"), name="SC", role="user"
+    )
+    db.add(user)
+    await db.flush()
+    ws, cat = await seed_workspace(db, user_id=user.id, slug=f"scoped-{suffix}", name="Scoped")
+    await db.execute(
+        update(WorkspaceCatalog)
+        .where(WorkspaceCatalog.workspace_id == ws.id, WorkspaceCatalog.catalog_id == cat.id)
+        .values(access_mode="scoped")
+    )
+    if grant_tier is not None:
+        db.add(
+            CatalogGrant(
+                user_id=user.id,
+                catalog_id=cat.id,
+                schema_name="analytics",
+                table_name="secret",
+                tier=grant_tier,
+            )
+        )
+    agent = Agent(name="a", status="healthy", capabilities={"extensions": ["httpfs", "iceberg"]})
+    db.add(agent)
+    await db.flush()
+    registry.register(agent.id, FakeWS())  # type: ignore[arg-type]
+    saved = SavedQuery(workspace_id=ws.id, name="nightly", sql=sql, created_by=user.id)
+    db.add(saved)
+    await db.flush()
+    schedule = Schedule(
+        workspace_id=ws.id,
+        job_type="saved_query",
+        saved_query_id=saved.id,
+        cron="0 2 * * *",
+        enabled=True,
+        next_run_at=_PAST,
+        created_by=user.id,
+    )
+    db.add(schedule)
+    await db.commit()
+    return ws
+
+
+async def test_scheduled_run_denied_by_creator_grants(session_factory):
+    """A scheduled query against a scoped catalog is enforced against the saved
+    query's creator; without a grant the run is recorded as failed."""
+    async with session_factory() as db:
+        ws = await _seed_scoped(db, sql="SELECT * FROM analytics.secret", grant_tier=None)
+
+    await run_cycle(session_factory, now=_NOW)
+
+    async with session_factory() as db:
+        q = (
+            await db.execute(
+                select(Query).where(Query.workspace_id == ws.id, Query.origin == "scheduled")
+            )
+        ).scalar_one()
+        assert q.status == "failed"
+        assert "authorized" in (q.error or "").lower()
+
+
+async def test_scheduled_run_allowed_with_creator_grant(session_factory):
+    async with session_factory() as db:
+        ws = await _seed_scoped(db, sql="SELECT * FROM analytics.secret", grant_tier="reader")
+
+    await run_cycle(session_factory, now=_NOW)
+
+    async with session_factory() as db:
+        q = (
+            await db.execute(
+                select(Query).where(Query.workspace_id == ws.id, Query.origin == "scheduled")
+            )
+        ).scalar_one()
+        assert q.status == "queued"
+
+
 async def test_skips_disabled_and_future_schedules(session_factory):
     async with session_factory() as db:
         await _seed(db, enabled=False, next_run_at=_PAST)

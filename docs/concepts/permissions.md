@@ -56,9 +56,72 @@ Independently of the global role, each member of a [workspace](workspaces.md) ha
 | `writer` | Everything a reader can, plus create/modify/drop tables and run DDL |
 | `owner` | Everything a writer can, plus manage workspace membership |
 
+By default this role applies uniformly to every schema and table in every catalog
+the workspace attaches. To scope access more finely, see **scoped access** below.
+
+## Scoped access
+
+A workspace role is coarse: it grants the same access to *every* object in *every*
+attached catalog. Sometimes you want less — "this analyst sees the `marketing`
+schema but not `finance`," or "this coding-agent service account can *discover* a
+table but never read its rows." **Scoped access** provides that, opt-in per catalog
+attachment, without changing anything for teams that don't need it.
+
+Each catalog attachment has an **access mode**:
+
+- **`open`** (the default) — the workspace role governs every object. Today's
+  behavior, unchanged.
+- **`scoped`** — the workspace role is no longer enough on its own; a member sees
+  only what a **grant** gives them on that catalog.
+
+Switch a catalog between the two modes from its **Permissions** dialog in the
+catalog view (right-click the catalog), or from **Admin → Catalog access**, which
+lists every attached catalog with its mode.
+
+A grant is set at one of three levels of the hierarchy, and a grant at a coarser
+level covers everything beneath it — including tables created *after* the grant:
+
+- **catalog** — every schema and table in the catalog
+- **schema** — every current and future table in that schema
+- **table** — one table
+
+Each grant carries a **tier**, extending the role vocabulary with a discovery-only
+level:
+
+| Tier | Can do |
+|---|---|
+| `metadata` | Discover and describe the object (list it, read its columns and `information_schema`) — but **not** read its rows |
+| `reader` | Everything `metadata` can, plus read rows (query / sample) |
+| `writer` | Everything `reader` can, plus write and run DDL |
+
+Two rules keep resolution predictable, matching Databricks Unity Catalog and
+Snowflake:
+
+- **Grants only narrow, never widen.** A principal's effective tier is capped at
+  their workspace role — a schema-level `writer` grant cannot promote a workspace
+  `reader` past what `reader` allows. To restrict someone to a subset of a catalog,
+  don't grant broadly — grant narrowly.
+- **Grants are additive, with no deny.** Where several grants apply, the highest
+  wins; there is no override/deny mechanism.
+
+Enforcement happens at the same API boundary as workspace roles — for both the REST
+browsing endpoints and raw SQL (interactive *and* scheduled). A query that joins
+several tables is rejected before it runs if the principal lacks at least `reader`
+on **any** referenced table. Denied objects return a 404 (not a 403) at the leaf, so
+a restricted table is indistinguishable from one that does not exist. Grants apply
+equally to human members and [service accounts](../guides/service-accounts.md), and
+are managed from the **catalog view** — right-click a catalog, schema, or table (or
+open a table's **Permissions** tab) to grant a principal access at that level, the
+same object-first workflow as Databricks Unity Catalog's Catalog Explorer.
+
 ## What is not in scope
 
-- **No row- or column-level security.** Permissions are workspace-level.
+- **No row- or column-level security.** Object-level grants reach down to the
+  catalog, schema, and table (see [Scoped access](#scoped-access)),
+  but not to individual rows or columns — the same boundary Unity Catalog and
+  Snowflake draw between object grants and row filters / column masks.
+- **No group- or role-based grants.** A grant targets a principal (member or
+  service account) directly; there is no grantable group concept yet.
 - **No SCIM.** Provisioning is just-in-time at login, not a push from the directory.
 - **RBAC is API-enforced only.** Roles and workspace membership are enforced by DuckHaven; Polaris sees only the API
   service principal and is never granted per-user access. The catalog grant mirror is intentionally a no-op.

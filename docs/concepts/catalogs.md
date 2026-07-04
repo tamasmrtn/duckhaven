@@ -14,6 +14,9 @@ Polaris catalog and [storage backend](storage-backends.md) — that is attached 
 - The default namespace is **`analytics`**, not `main` — `main` is DuckDB's built-in default schema and would shadow the
   Iceberg namespace.
 - Tables are [Apache Iceberg](tables.md) and catalog-managed: Polaris arbitrates every commit.
+- Each attachment has an **access mode**. By default (`open`) the workspace role governs the whole catalog; switching an
+  attachment to `scoped` narrows access down to the catalog, schema, or table per principal — see
+  [scoped access](permissions.md#scoped-access).
 
 ## Querying across catalogs
 

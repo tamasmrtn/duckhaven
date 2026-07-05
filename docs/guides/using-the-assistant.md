@@ -10,15 +10,30 @@ and what it can and cannot do, see the [AI data assistant](../concepts/assistant
 
 ## Have a conversation
 
-1. Open a workspace and go to **Assistant**.
-2. Start a new conversation and type a question, for example:
+1. Click the **✨ sparkle** button in the top bar (just left of the theme toggle) to open the assistant panel on the
+   right — it stays available on every page, alongside your work, like a coding copilot. `Ctrl/Cmd+I` toggles it too.
+2. Type a question, for example:
    - "What tables are in the sales schema?"
    - "How many orders were placed last month, by region?"
    - "Describe the customers table."
 3. The assistant streams its answer as it works. When it runs a query, you'll see the SQL it ran and a preview of the
    result; open the full result in the query grid just as you would for a query you ran yourself.
 
-Each conversation is private to you. You can keep several conversations and return to them later.
+Each conversation is private to you. Use the conversation dropdown in the panel header to switch between chats or start
+a new one; they persist so you can return to them later.
+
+## Let the assistant write SQL in your worksheet
+
+On the worksheet, ask the assistant to write or change the SQL you're editing — "write a query for last week's signups
+by day", "add a WHERE clause for 2025", "fix this join". Instead of only chatting, it proposes an edit **directly in
+your editor**:
+
+- The proposed SQL replaces the editor content, with the **changed lines highlighted** so it's obvious what the
+  assistant wrote versus what was already yours.
+- A bar appears above the editor with **Accept** and **Reject**. Accept keeps the change (the worksheet is marked
+  unsaved); Reject restores your original SQL.
+- Nothing runs automatically — you review, accept, then run it with the usual **Run** button, which goes through the
+  same permission checks as any query.
 
 ## Approving a write
 

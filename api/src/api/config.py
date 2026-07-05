@@ -134,6 +134,42 @@ class Settings(BaseSettings):
     # the internal network. Set false to remove the endpoint entirely.
     metrics_enabled: bool = True
 
+    # ── AI data assistant ─────────────────────────────────────────────────────
+    # A governed, model-agnostic chat assistant that browses catalog metadata and
+    # runs SQL as a service-account principal, through the same REST chokepoints as
+    # any other client. Disabled by default; enable by pointing it at a service
+    # account (created via the admin UI) and configuring a model.
+    assistant_enabled: bool = False
+    # Slug of the service account the assistant acts as. Its workspace memberships
+    # and catalog grants govern the assistant's data access exactly like any
+    # principal. The synthesized email is "{slug}@service-account.local".
+    assistant_service_account_slug: str | None = None
+    # Pydantic AI model string, e.g. "anthropic:claude-sonnet-4-latest",
+    # "openai:gpt-4o", or "mistral:mistral-large-latest". No provider is assumed;
+    # for OpenAI-compatible endpoints (Ollama, vLLM, Azure) set the base URL below
+    # and use an "openai:<model>" string. Provider API keys come from the standard
+    # provider env vars (ANTHROPIC_API_KEY/OPENAI_API_KEY/MISTRAL_API_KEY) unless
+    # assistant_api_key is set.
+    assistant_model: str = "anthropic:claude-sonnet-4-latest"
+    # OpenAI-compatible base URL (Ollama/vLLM/Azure/…). When set, the model routes
+    # through the OpenAI protocol against this endpoint (keyless self-hosted path).
+    assistant_openai_base_url: str | None = None
+    # Explicit API key for the configured model. Optional: hosted providers fall
+    # back to their standard env var; keyless endpoints (Ollama) need nothing.
+    assistant_api_key: str | None = None
+    # Lifetime of the ephemeral PAT minted for each assistant turn's loopback
+    # calls. Short by design: a crash-orphaned credential expires harmlessly.
+    assistant_pat_ttl_s: int = 600
+    # Max concurrent assistant runs per API process, capping how much the shared
+    # event loop can be occupied by (potentially slow) LLM turns.
+    assistant_max_concurrency: int = 4
+    # Cap on model output tokens per turn — a coarse cost guard for self-hosters
+    # bringing their own API keys.
+    assistant_max_output_tokens: int = 4096
+    # Result-sample caps fed into model context (never the full Parquet payload).
+    assistant_result_row_cap: int = 100
+    assistant_result_byte_cap: int = 32_768
+
     # ── OIDC SSO (Part A) ─────────────────────────────────────────────────────
     # When enabled, the login page shows a "Sign in with SSO" button and the
     # /auth/oidc/* endpoints are live. Local accounts keep working regardless so

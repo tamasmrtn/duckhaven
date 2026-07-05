@@ -18,6 +18,7 @@ from api.metrics import PrometheusMiddleware
 from api.routers import (
     agents,
     agents_ws,
+    assistant,
     auth,
     catalogs,
     grants,
@@ -177,6 +178,7 @@ api_app.include_router(grants.router, tags=["grants"])
 api_app.include_router(queries.router, tags=["queries"])
 api_app.include_router(schedules.router, tags=["schedules"])
 api_app.include_router(agents.router, tags=["agents"])
+api_app.include_router(assistant.router, tags=["assistant"])
 api_app.include_router(maintenance.router, tags=["maintenance"])
 api_app.include_router(admin_agents.router, prefix="/admin", tags=["admin"])
 api_app.include_router(admin_storage.router, prefix="/admin", tags=["admin"])

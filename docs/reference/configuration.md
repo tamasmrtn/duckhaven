@@ -124,6 +124,27 @@ Postgres advisory lock, so only one replica advances a given migration — leave
 | `MIGRATION_RUNNER_TICK_S` | `30` | How often (seconds) the runner wakes to claim and advance an in-flight migration. |
 | `MIGRATION_RETENTION_DAYS` | `7` | How long the old backend's data is retained after a successful cutover before the source Polaris catalog is dropped. The window during which a migration can be reversed. |
 
+### AI assistant
+
+Configures the governed [AI data assistant](../concepts/assistant.md). Disabled by default; enable it by pointing it at
+a service account you created (see [Service accounts & tokens](../guides/service-accounts.md)) and configuring a model.
+The provider is not fixed — use any of the bundled providers or an OpenAI-compatible endpoint. Provider API keys may be
+supplied here or via the provider's own standard environment variable (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` /
+`MISTRAL_API_KEY`); a self-hosted OpenAI-compatible endpoint (Ollama, vLLM) can run keyless.
+
+| Variable | Default | Description |
+|---|---|---|
+| `ASSISTANT_ENABLED` | `false` | Master switch. When `false`, the assistant API returns 503 and no model or provider dependency is exercised. |
+| `ASSISTANT_SERVICE_ACCOUNT_SLUG` | — | Slug of the service account the assistant acts as. Its per-workspace membership and catalog grants govern its data access. Required when enabled. |
+| `ASSISTANT_MODEL` | `anthropic:claude-sonnet-4-latest` | Pydantic AI model string, e.g. `openai:gpt-4o` or `mistral:mistral-large-latest`. For an OpenAI-compatible endpoint, use `openai:<model>` with the base URL below. |
+| `ASSISTANT_OPENAI_BASE_URL` | — | Base URL of an OpenAI-compatible endpoint (Ollama, vLLM, Azure). When set, the model routes through the OpenAI protocol against this endpoint. |
+| `ASSISTANT_API_KEY` | — | Explicit API key for the model. Optional: hosted providers fall back to their standard env var; keyless endpoints need nothing. **Rotate like any secret.** |
+| `ASSISTANT_PAT_TTL_S` | `600` | Lifetime (seconds) of the short-lived PAT minted for each turn's loopback calls. |
+| `ASSISTANT_MAX_CONCURRENCY` | `4` | Max concurrent assistant runs per API process, bounding how much the shared event loop can be occupied by model turns. |
+| `ASSISTANT_MAX_OUTPUT_TOKENS` | `4096` | Cap on model output tokens per turn — a coarse cost guard. |
+| `ASSISTANT_RESULT_ROW_CAP` | `100` | Max rows of a query result fed into model context (the full result is still available in the UI). |
+| `ASSISTANT_RESULT_BYTE_CAP` | `32768` | Max bytes of a result sample fed into model context. |
+
 ### Observability
 
 Controls the Prometheus metrics endpoint. See [Monitoring](../operations/monitoring.md#prometheus-metrics)

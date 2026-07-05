@@ -101,6 +101,7 @@ nav:
       - Storage backends: concepts/storage-backends.md
       - Query execution: concepts/query-execution.md
       - Permissions: concepts/permissions.md
+      - AI assistant: concepts/assistant.md
       - Metadata: concepts/metadata.md
       - Lakehouse maintenance: concepts/maintenance.md
   - Deployment:
@@ -119,6 +120,7 @@ nav:
       - Read query profiles: guides/query-profiles.md
       - Saved queries: guides/saved-queries.md
       - Schedule queries: guides/schedule-queries.md
+      - Use the AI assistant: guides/using-the-assistant.md
       - How access works: guides/access-levels.md
       - Manage users & access: guides/users-access.md
       - Service accounts & tokens: guides/service-accounts.md

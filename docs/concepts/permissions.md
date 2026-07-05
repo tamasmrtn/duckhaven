@@ -126,6 +126,13 @@ same object-first workflow as Databricks Unity Catalog's Catalog Explorer.
 - **RBAC is API-enforced only.** Roles and workspace membership are enforced by DuckHaven; Polaris sees only the API
   service principal and is never granted per-user access. The catalog grant mirror is intentionally a no-op.
 
+## The AI assistant is governed the same way
+
+The [AI data assistant](assistant.md) is not a special principal. It acts as a service account, and its data access is
+governed entirely by that account's workspace membership and catalog grants — including the `metadata` tier for a
+browse-only assistant. Its tools call the same REST endpoints described here, as that account, so scoped grants and the
+SQL guard apply unchanged. Nothing about the assistant widens access; grants remain the single source of truth.
+
 ## Related
 
 - [Manage users & access](../guides/users-access.md) — create users, assign roles, offboard.

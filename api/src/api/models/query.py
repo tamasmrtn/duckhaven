@@ -93,6 +93,9 @@ class Schedule(Base):
     agent_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("agents.id", ondelete="SET NULL"), nullable=True
     )
+    # Target for job_type="assistant_run": the natural-language prompt the assistant
+    # runs unattended each tick. Null for other job types.
+    assistant_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     cron: Mapped[str] = mapped_column(String(255), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -61,7 +61,7 @@ export async function* streamMessage(
   ws: string,
   conversationId: string,
   prompt: string,
-  catalog?: string | null,
+  opts?: { catalog?: string | null; editorSql?: string | null },
 ): AsyncGenerator<AssistantFrame, void, unknown> {
   const res = await fetch(
     `/api/workspaces/${ws}/assistant/conversations/${conversationId}/messages`,
@@ -69,7 +69,11 @@ export async function* streamMessage(
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, catalog: catalog ?? null }),
+      body: JSON.stringify({
+        prompt,
+        catalog: opts?.catalog ?? null,
+        editor_sql: opts?.editorSql ?? null,
+      }),
     },
   );
   yield* readSSE(res);

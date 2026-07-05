@@ -8,6 +8,23 @@ export interface SqlEditorHandle {
   // The SQL to run for the current cursor/selection: the selected text if any,
   // otherwise the single statement under the cursor.
   getRunPayload: () => string;
+  // Highlight the lines that differ between the previous and proposed SQL, so an
+  // AI-proposed edit is visually distinct from the user's own code.
+  highlightDiff: (oldSql: string, newSql: string) => void;
+  // Clear any AI-diff highlighting.
+  clearHighlight: () => void;
+}
+
+// Naive line-level diff: the 1-based line numbers in `newSql` that differ from
+// `oldSql` at the same position (or are new). Enough to visually flag changes.
+function changedLineNumbers(oldSql: string, newSql: string): number[] {
+  const oldLines = oldSql.split("\n");
+  const newLines = newSql.split("\n");
+  const changed: number[] = [];
+  for (let i = 0; i < newLines.length; i++) {
+    if (oldLines[i] !== newLines[i]) changed.push(i + 1);
+  }
+  return changed;
 }
 
 interface SqlEditorProps {
@@ -81,6 +98,8 @@ const DUCKHAVEN_LIGHT_THEME = {
 export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
   function SqlEditor({ value, onChange, onRun, onSave, readOnly }, ref) {
     const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
+    const monacoRef = useRef<Parameters<OnMount>[1] | null>(null);
+    const decorationsRef = useRef<string[]>([]);
     const isDark = useIsDark();
 
     // Monaco command callbacks are captured once at mount, so route onRun/onSave
@@ -110,7 +129,35 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
       return activeStatement(model.getValue(), offset);
     };
 
-    useImperativeHandle(ref, () => ({ getRunPayload: computeRunPayload }));
+    useImperativeHandle(ref, () => ({
+      getRunPayload: computeRunPayload,
+      highlightDiff: (oldSql: string, newSql: string) => {
+        const editor = editorRef.current;
+        const monaco = monacoRef.current;
+        if (!editor || !monaco) return;
+        const decos = changedLineNumbers(oldSql, newSql).map((ln) => ({
+          range: new monaco.Range(ln, 1, ln, 1),
+          options: {
+            isWholeLine: true,
+            className: "dh-ai-diff-line",
+            linesDecorationsClassName: "dh-ai-diff-gutter",
+          },
+        }));
+        decorationsRef.current = editor.deltaDecorations(
+          decorationsRef.current,
+          decos,
+        );
+      },
+      clearHighlight: () => {
+        const editor = editorRef.current;
+        if (editor) {
+          decorationsRef.current = editor.deltaDecorations(
+            decorationsRef.current,
+            [],
+          );
+        }
+      },
+    }));
 
     const handleBeforeMount: BeforeMount = (monaco) => {
       monaco.editor.defineTheme("duckhaven-dark", DUCKHAVEN_DARK_THEME);
@@ -122,6 +169,7 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
 
     const handleMount: OnMount = (editor, monaco) => {
       editorRef.current = editor;
+      monacoRef.current = monaco;
       // Let the completion data layer refresh an open suggest widget once
       // lazily-fetched columns arrive.
       setActiveEditor(editor);

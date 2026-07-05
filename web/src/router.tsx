@@ -18,7 +18,6 @@ import { WorksheetPage } from "@/features/worksheet/WorksheetPage";
 import { CatalogPage } from "@/features/catalog/CatalogPage";
 import { SavedQueriesPage } from "@/features/saved-queries/SavedQueriesPage";
 import { SchedulesPage } from "@/features/schedules/SchedulesPage";
-import { AssistantPage } from "@/features/assistant/AssistantPage";
 import { HistoryPage } from "@/features/history/HistoryPage";
 import { QueryProfilePage } from "@/features/query-profile/QueryProfilePage";
 import { AdminLayout } from "@/features/admin/AdminLayout";
@@ -148,12 +147,6 @@ const schedulesRoute = createRoute({
   component: SchedulesPage,
 });
 
-const assistantRoute = createRoute({
-  getParentRoute: () => wsRoute,
-  path: "/assistant",
-  component: AssistantPage,
-});
-
 const historyRoute = createRoute({
   getParentRoute: () => wsRoute,
   path: "/history",
@@ -247,7 +240,6 @@ export const routeTree = rootRoute.addChildren([
     catalogTableRoute,
     savedQueriesRoute,
     schedulesRoute,
-    assistantRoute,
     historyRoute,
     queryProfileRoute,
     healthRoute,

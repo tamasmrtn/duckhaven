@@ -1,6 +1,7 @@
 import {
   ChevronDown,
   Search,
+  Sparkles,
   Sun,
   Moon,
   Monitor,
@@ -20,6 +21,8 @@ import {
 import { useMe, useLogout } from "@/queries/auth";
 import { useNavigate } from "@tanstack/react-router";
 import { useTheme } from "@/hooks/useTheme";
+import { useAssistant } from "@/features/assistant/AssistantContext";
+import { cn } from "@/utils";
 import { StorageIcon } from "./StorageIcon";
 import type { Workspace } from "@/types/workspace";
 
@@ -38,6 +41,7 @@ export function TopBar({
   const logout = useLogout();
   const navigate = useNavigate();
   const { theme, setTheme } = useTheme();
+  const { open: assistantOpen, toggle: toggleAssistant } = useAssistant();
 
   const themeIcons = {
     light: <Sun className="size-4" />,
@@ -91,6 +95,21 @@ export function TopBar({
       </button>
 
       <div className="ml-auto flex items-center gap-1">
+        {/* Assistant toggle — sits just left of the theme control */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className={cn(
+            "size-8",
+            assistantOpen && "bg-accent text-[var(--brand-yellow)]",
+          )}
+          aria-label="Toggle AI assistant"
+          aria-pressed={assistantOpen}
+          onClick={toggleAssistant}
+        >
+          <Sparkles className="size-4" />
+        </Button>
+
         {/* Theme toggle */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

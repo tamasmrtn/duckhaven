@@ -39,6 +39,7 @@ export type AssistantFrame =
       tool: string;
       sql: string | null;
     }
+  | { type: "propose_edit"; sql: string; explanation: string }
   | {
       type: "done";
       message_id: string;

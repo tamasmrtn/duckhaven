@@ -7,12 +7,24 @@ interface LiveTool {
   tool: string;
 }
 
+interface ChatOptions {
+  // Current worksheet SQL to send as context (so the assistant can edit it).
+  getEditorSql?: () => string | null;
+  // Apply an assistant-proposed edit to the worksheet editor.
+  onProposeEdit?: (sql: string, explanation: string) => void;
+}
+
 /**
  * Drives one conversation's streaming turns: consumes SSE frames into live
- * state (streamed text, tool activity, a pending write approval), and reloads
- * the persisted transcript when a turn settles.
+ * state (streamed text, tool activity, a pending write approval, proposed editor
+ * edits), and reloads the persisted transcript when a turn settles.
  */
-export function useAssistantChat(ws: string, conversationId: string | null) {
+export function useAssistantChat(
+  ws: string,
+  conversationId: string | null,
+  options: ChatOptions = {},
+) {
+  const { getEditorSql, onProposeEdit } = options;
   const qc = useQueryClient();
   const [streaming, setStreaming] = useState(false);
   const [streamingText, setStreamingText] = useState("");
@@ -21,7 +33,10 @@ export function useAssistantChat(ws: string, conversationId: string | null) {
   const [error, setError] = useState<string | null>(null);
 
   const consume = useCallback(
-    async (frames: AsyncGenerator<AssistantFrame, void, unknown>) => {
+    async (
+      id: string,
+      frames: AsyncGenerator<AssistantFrame, void, unknown>,
+    ) => {
       setStreaming(true);
       setError(null);
       setStreamingText("");
@@ -38,6 +53,8 @@ export function useAssistantChat(ws: string, conversationId: string | null) {
               tool: frame.tool,
               sql: frame.sql,
             });
+          } else if (frame.type === "propose_edit") {
+            onProposeEdit?.(frame.sql, frame.explanation);
           } else if (frame.type === "error") {
             setError(frame.message);
           }
@@ -47,13 +64,7 @@ export function useAssistantChat(ws: string, conversationId: string | null) {
       } finally {
         setStreaming(false);
         await qc.invalidateQueries({
-          queryKey: [
-            "workspace",
-            ws,
-            "assistant",
-            "conversation",
-            conversationId,
-          ],
+          queryKey: ["workspace", ws, "assistant", "conversation", id],
         });
         await qc.invalidateQueries({
           queryKey: ["workspace", ws, "assistant", "conversations"],
@@ -62,15 +73,18 @@ export function useAssistantChat(ws: string, conversationId: string | null) {
         setLiveTools([]);
       }
     },
-    [ws, conversationId, qc],
+    [ws, qc, onProposeEdit],
   );
 
   const send = useCallback(
-    (prompt: string) => {
-      if (!conversationId || streaming) return;
-      void consume(streamMessage(ws, conversationId, prompt));
+    (prompt: string, id: string) => {
+      if (streaming) return;
+      void consume(
+        id,
+        streamMessage(ws, id, prompt, { editorSql: getEditorSql?.() ?? null }),
+      );
     },
-    [ws, conversationId, streaming, consume],
+    [ws, streaming, consume, getEditorSql],
   );
 
   const resolveApproval = useCallback(
@@ -79,6 +93,7 @@ export function useAssistantChat(ws: string, conversationId: string | null) {
       const request = pending;
       setPending(null);
       void consume(
+        conversationId,
         streamApproval(ws, conversationId, request.tool_call_id, approved),
       );
     },

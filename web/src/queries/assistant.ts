@@ -1,0 +1,42 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { assistantApi } from "@/api/assistant";
+
+export function useConversations(ws: string) {
+  return useQuery({
+    queryKey: ["workspace", ws, "assistant", "conversations"],
+    queryFn: () => assistantApi.listConversations(ws),
+    enabled: !!ws,
+  });
+}
+
+export function useConversation(ws: string, id: string | null) {
+  return useQuery({
+    queryKey: ["workspace", ws, "assistant", "conversation", id],
+    queryFn: () => assistantApi.getConversation(ws, id!),
+    enabled: !!ws && !!id,
+  });
+}
+
+export function useCreateConversation(ws: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (title?: string) => assistantApi.createConversation(ws, title),
+    onSuccess: () => {
+      qc.invalidateQueries({
+        queryKey: ["workspace", ws, "assistant", "conversations"],
+      });
+    },
+  });
+}
+
+export function useDeleteConversation(ws: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => assistantApi.deleteConversation(ws, id),
+    onSuccess: () => {
+      qc.invalidateQueries({
+        queryKey: ["workspace", ws, "assistant", "conversations"],
+      });
+    },
+  });
+}

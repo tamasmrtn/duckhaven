@@ -8,6 +8,7 @@ import { resetCatalogs } from "./fixtures/catalogs";
 import { resetSchemas } from "./fixtures/schemas";
 import { resetQueries } from "./fixtures/queries";
 import { resetSchedules } from "./fixtures/schedules";
+import { resetAssistant } from "./fixtures/assistant";
 import { resetStorageBackends } from "./fixtures/storage-backends";
 import { resetCatalogMigrations } from "./fixtures/catalog-migrations";
 import { resetAgents } from "./fixtures/agents";
@@ -24,6 +25,7 @@ export function resetMockState(): void {
   resetSchemas();
   resetQueries();
   resetSchedules();
+  resetAssistant();
   resetStorageBackends();
   resetCatalogMigrations();
   resetAgents();

@@ -8,6 +8,7 @@ import { metricsHandlers } from "./handlers/metrics";
 import { schemaHandlers } from "./handlers/schemas";
 import { queryHandlers } from "./handlers/queries";
 import { scheduleHandlers } from "./handlers/schedules";
+import { assistantHandlers } from "./handlers/assistant";
 import { storageBackendHandlers } from "./handlers/storage-backends";
 import { catalogMigrationHandlers } from "./handlers/catalog-migrations";
 import { userHandlers } from "./handlers/users";
@@ -25,6 +26,7 @@ export const worker = setupWorker(
   ...schemaHandlers,
   ...queryHandlers,
   ...scheduleHandlers,
+  ...assistantHandlers,
   ...storageBackendHandlers,
   ...catalogMigrationHandlers,
   ...userHandlers,

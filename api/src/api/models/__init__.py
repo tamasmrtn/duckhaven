@@ -1,4 +1,9 @@
 from api.models.agent import Agent
+from api.models.assistant import (
+    AssistantConversation,
+    AssistantMessage,
+    AssistantToolCall,
+)
 from api.models.catalog import Catalog, WorkspaceCatalog
 from api.models.catalog_grant import CatalogGrant
 from api.models.catalog_migration import (
@@ -20,6 +25,9 @@ from api.models.workspace import Workspace, WorkspaceMember
 
 __all__ = [
     "Agent",
+    "AssistantConversation",
+    "AssistantMessage",
+    "AssistantToolCall",
     "Catalog",
     "CatalogGrant",
     "CatalogMigration",

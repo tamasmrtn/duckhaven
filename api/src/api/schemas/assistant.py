@@ -5,6 +5,12 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class AssistantStatusOut(BaseModel):
+    # Whether the assistant is enabled in this deployment. Reported even when
+    # disabled so the UI can show a clear "turned off" state.
+    enabled: bool
+
+
 class ConversationCreate(BaseModel):
     # Optional opening message; when present the created conversation is returned
     # and the client immediately opens the streaming turn endpoint.

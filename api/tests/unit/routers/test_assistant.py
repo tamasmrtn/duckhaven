@@ -41,6 +41,20 @@ async def test_disabled_returns_503(authed, workspace, monkeypatch):
     assert resp.status_code == 503
 
 
+async def test_status_reports_enabled(authed, workspace):
+    resp = await authed.get(f"/workspaces/{workspace.slug}/assistant/status")
+    assert resp.status_code == 200
+    assert resp.json() == {"enabled": True}
+
+
+async def test_status_reports_disabled_without_503(authed, workspace, monkeypatch):
+    monkeypatch.setattr(settings, "assistant_enabled", False)
+    resp = await authed.get(f"/workspaces/{workspace.slug}/assistant/status")
+    # Reachable even when disabled — that is the whole point.
+    assert resp.status_code == 200
+    assert resp.json() == {"enabled": False}
+
+
 async def test_non_member_forbidden(authed, user, db_session):
     other, _ = await seed_workspace(db_session, user_id=user.id, role=None, slug="other-ws")
     resp = await authed.get(f"/workspaces/{other.slug}/assistant/conversations")

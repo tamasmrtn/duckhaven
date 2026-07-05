@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@tests/utils";
+import { setAssistantEnabled } from "@/mock/fixtures/assistant";
 
 // The panel is a right-side dock opened from the top bar; render a workspace page
 // so the worksheet editor bridge is live for the propose-edit test.
@@ -54,6 +55,23 @@ describe("AssistantPanel", () => {
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("Approve write?")).toBeInTheDocument();
     expect(within(dialog).getByText("DELETE FROM events")).toBeInTheDocument();
+  });
+
+  it("shows a turned-off notice and disables input when the assistant is off", async () => {
+    setAssistantEnabled(false);
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+
+    expect(
+      await screen.findByText("Assistant is turned off"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/ask a DuckHaven admin to turn it on/i),
+    ).toBeInTheDocument();
+    // The composer is present but disabled.
+    expect(screen.getByLabelText("Message")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
   });
 
   it("proposes an editor edit that the user can accept", async () => {

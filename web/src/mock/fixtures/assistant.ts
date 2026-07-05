@@ -41,6 +41,15 @@ function seed(): MockConversation[] {
 
 export let CONVERSATIONS: MockConversation[] = seed();
 
+// Whether the mock assistant is "enabled" (mirrors ASSISTANT_ENABLED). Tests flip
+// this to exercise the disabled UI state.
+export let ASSISTANT_ENABLED = true;
+
+export function setAssistantEnabled(value: boolean): void {
+  ASSISTANT_ENABLED = value;
+}
+
 export function resetAssistant(): void {
   CONVERSATIONS = seed();
+  ASSISTANT_ENABLED = true;
 }

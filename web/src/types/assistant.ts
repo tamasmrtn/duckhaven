@@ -1,3 +1,7 @@
+export interface AssistantStatus {
+  enabled: boolean;
+}
+
 export interface Conversation {
   id: string;
   workspace_id: string;

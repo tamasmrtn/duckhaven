@@ -4,7 +4,6 @@ import {
   BookOpen,
   BookMarked,
   CalendarClock,
-  Bot,
   Clock,
   Settings,
   HeartPulse,
@@ -52,12 +51,6 @@ const navItems: NavItem[] = [
     icon: CalendarClock,
     label: "Schedules",
     matchSegment: "schedules",
-  },
-  {
-    segment: "assistant",
-    icon: Bot,
-    label: "Assistant",
-    matchSegment: "assistant",
   },
   {
     segment: "history",

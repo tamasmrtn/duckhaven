@@ -8,6 +8,9 @@ import {
   Settings2,
   AlertCircle,
   PanelLeft,
+  Sparkles,
+  Check,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -55,6 +58,7 @@ import { useSqlCompletion } from "./completion/useSqlCompletion";
 import { splitStatements } from "./statements";
 import { isDdl } from "./ddl";
 import { queriesApi } from "@/api/queries";
+import { useAssistant } from "@/features/assistant/AssistantContext";
 import { ResultsTable } from "./ResultsTable";
 import { cn, formatBytes } from "@/utils";
 
@@ -284,7 +288,22 @@ export function WorksheetPage() {
   // Imperative handle to read the editor's current selection / cursor statement.
   const editorRef = useRef<SqlEditorHandle>(null);
 
+  // Assistant ↔ editor bridge: lets the AI panel read the current SQL and propose
+  // edits that the user accepts or rejects, with the changed lines highlighted.
+  const { editorRef: assistantEditorRef } = useAssistant();
+  const [proposal, setProposal] = useState<{
+    tabId: string;
+    oldSql: string;
+    newSql: string;
+    explanation: string;
+  } | null>(null);
+  const currentSqlRef = useRef("");
+  const proposeEditRef = useRef<(sql: string, explanation: string) => void>(
+    () => {},
+  );
+
   const currentTab = tabs.find((t) => t.id === activeTab);
+  currentSqlRef.current = currentTab?.sql ?? "";
   const dispatchQuery = useDispatchQuery(ws);
   const cancelQuery = useCancelQuery();
   const saveQuery = useSaveQuery(ws);
@@ -314,6 +333,55 @@ export function WorksheetPage() {
         t.id === activeTab ? { ...t, sql, dirty: t.sql !== sql } : t,
       ),
     );
+  }
+
+  // Apply an AI-proposed edit to the active tab: swap in the new SQL (marking the
+  // tab dirty) and remember the original so the user can reject.
+  const proposeEdit = (newSql: string, explanation: string) => {
+    const oldSql = currentSqlRef.current;
+    setProposal({ tabId: activeTab, oldSql, newSql, explanation });
+    setTabs((prev) =>
+      prev.map((t) =>
+        t.id === activeTab ? { ...t, sql: newSql, dirty: true } : t,
+      ),
+    );
+  };
+  // Keep the bridge pointing at the latest closure without re-registering it.
+  proposeEditRef.current = proposeEdit;
+
+  // Register the editor bridge for the assistant panel (once).
+  useEffect(() => {
+    assistantEditorRef.current = {
+      getSql: () => currentSqlRef.current,
+      proposeEdit: (sql, explanation) =>
+        proposeEditRef.current(sql, explanation),
+    };
+    return () => {
+      assistantEditorRef.current = null;
+    };
+  }, [assistantEditorRef, proposeEditRef, currentSqlRef]);
+
+  // Highlight the proposed lines once the editor reflects the new SQL.
+  useEffect(() => {
+    if (proposal && proposal.tabId === activeTab) {
+      editorRef.current?.highlightDiff(proposal.oldSql, proposal.newSql);
+    }
+  }, [proposal, activeTab]);
+
+  function acceptProposal() {
+    editorRef.current?.clearHighlight();
+    setProposal(null);
+  }
+
+  function rejectProposal() {
+    if (proposal) {
+      const { tabId, oldSql } = proposal;
+      setTabs((prev) =>
+        prev.map((t) => (t.id === tabId ? { ...t, sql: oldSql } : t)),
+      );
+    }
+    editorRef.current?.clearHighlight();
+    setProposal(null);
   }
 
   function addTab() {
@@ -746,6 +814,36 @@ export function WorksheetPage() {
               >
                 Add an agent
               </Link>
+            </div>
+          )}
+
+          {/* AI proposal bar: shown while an assistant-proposed edit awaits review */}
+          {proposal && proposal.tabId === activeTab && (
+            <div className="flex items-center gap-2 border-b border-[var(--border-subtle)] bg-[color-mix(in_oklab,var(--brand-yellow)_10%,var(--bg-surface))] px-3 py-1.5 text-xs shrink-0">
+              <Sparkles className="size-3.5 text-[var(--brand-yellow)] shrink-0" />
+              <span className="truncate text-text-primary">
+                Assistant proposed changes
+                {proposal.explanation ? ` — ${proposal.explanation}` : ""}
+              </span>
+              <div className="ml-auto flex items-center gap-1">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 gap-1 text-xs"
+                  onClick={rejectProposal}
+                >
+                  <X className="size-3.5" />
+                  Reject
+                </Button>
+                <Button
+                  size="sm"
+                  className="h-7 gap-1 bg-[var(--brand-yellow)] text-black hover:bg-yellow-300 text-xs"
+                  onClick={acceptProposal}
+                >
+                  <Check className="size-3.5" />
+                  Accept
+                </Button>
+              </div>
             </div>
           )}
 

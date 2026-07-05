@@ -84,3 +84,16 @@
     }
   }
 }
+
+/* AI-proposed edits: lines changed by the assistant are tinted with the brand
+   accent and marked in the gutter, so it's clear what is AI-generated vs. the
+   user's own SQL. Applied to Monaco decoration elements (outside the React tree),
+   so these are plain global rules. */
+.dh-ai-diff-line {
+  background: color-mix(in oklab, var(--brand-yellow) 16%, transparent);
+}
+.dh-ai-diff-gutter {
+  background: var(--brand-yellow);
+  width: 3px !important;
+  margin-left: 2px;
+}

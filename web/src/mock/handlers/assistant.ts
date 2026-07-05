@@ -105,6 +105,28 @@ export const assistantHandlers = [
         ]);
       }
 
+      // Simulate proposing an editor edit.
+      if (/\b(write|edit|filter|add|column|query)\b/i.test(prompt)) {
+        const proposed = "SELECT * FROM events LIMIT 10";
+        conv.transcript.push({
+          role: "assistant",
+          text: "I proposed a query in your editor.",
+        });
+        return sse([
+          {
+            type: "propose_edit",
+            sql: proposed,
+            explanation: "select recent events",
+          },
+          { type: "token", text: "I proposed a query in your editor." },
+          {
+            type: "done",
+            message_id: nextId("msg"),
+            usage: { input: 8, output: 6 },
+          },
+        ]);
+      }
+
       const answer = "Here is what I found.";
       conv.transcript.push({ role: "assistant", text: answer });
       return sse([

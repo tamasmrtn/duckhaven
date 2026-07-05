@@ -52,6 +52,8 @@ class TurnRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=16_000)
     # Active catalog slug for unqualified table names; defaults to the workspace default.
     catalog: str | None = None
+    # Current worksheet-editor SQL, so the assistant can read and propose edits to it.
+    editor_sql: str | None = Field(default=None, max_length=100_000)
 
 
 class ApprovalRequest(BaseModel):

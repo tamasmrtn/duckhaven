@@ -172,6 +172,7 @@ async def send_message(
         workspace_slug=ws,
         prompt=body.prompt,
         catalog=body.catalog,
+        editor_sql=body.editor_sql,
     )
     return StreamingResponse(stream, media_type="text/event-stream", headers=_SSE_HEADERS)
 

@@ -140,3 +140,33 @@ async def test_write_with_grant_requests_approval(client, db_session, factory):
     assert len(approval) == 1
     assert approval[0]["sql"] == "DELETE FROM t"
     assert approval[0]["tool_call_id"]
+
+
+async def test_propose_sql_edit_emits_propose_edit_frame(client, db_session, factory):
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+    responses = [
+        tool_step(
+            "propose_sql_edit",
+            {"sql": "SELECT 1", "explanation": "a minimal query"},
+        ),
+        text_step("I proposed a query in your editor."),
+    ]
+    with get_agent().override(model=scripted_model(responses)):
+        chunks = [
+            frame
+            async for frame in stream_turn(
+                factory,
+                conversation_id=conv.id,
+                workspace_id=ws.id,
+                workspace_slug=ws.slug,
+                prompt="write me a query",
+                catalog=None,
+            )
+        ]
+    frames = parse_sse(chunks)
+    edits = [f for f in frames if f["type"] == "propose_edit"]
+    assert len(edits) == 1
+    assert edits[0]["sql"] == "SELECT 1"
+    assert edits[0]["explanation"] == "a minimal query"
+    # It is surfaced as its own frame, not a generic tool_call line.
+    assert not any(f["type"] == "tool_call" and f["tool"] == "propose_sql_edit" for f in frames)

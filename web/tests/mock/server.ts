@@ -8,6 +8,7 @@ import { metricsHandlers } from '@/mock/handlers/metrics'
 import { schemaHandlers } from '@/mock/handlers/schemas'
 import { queryHandlers } from '@/mock/handlers/queries'
 import { scheduleHandlers } from '@/mock/handlers/schedules'
+import { assistantHandlers } from '@/mock/handlers/assistant'
 import { storageBackendHandlers } from '@/mock/handlers/storage-backends'
 import { catalogMigrationHandlers } from '@/mock/handlers/catalog-migrations'
 import { userHandlers } from '@/mock/handlers/users'
@@ -24,6 +25,7 @@ export const server = setupServer(
   ...schemaHandlers,
   ...queryHandlers,
   ...scheduleHandlers,
+  ...assistantHandlers,
   ...storageBackendHandlers,
   ...catalogMigrationHandlers,
   ...userHandlers,

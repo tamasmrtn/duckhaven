@@ -1,0 +1,142 @@
+import { http, HttpResponse } from "msw";
+import { CONVERSATIONS, type MockConversation } from "../fixtures/assistant";
+import { findWorkspace } from "../fixtures/workspaces";
+import { nextId } from "../lib/seed";
+import { httpError } from "../lib/errors";
+
+function sse(frames: object[]) {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    start(controller) {
+      for (const frame of frames) {
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify(frame)}\n\n`),
+        );
+      }
+      controller.close();
+    },
+  });
+  return new HttpResponse(stream, {
+    headers: { "Content-Type": "text/event-stream" },
+  });
+}
+
+function publicView(c: MockConversation) {
+  const { transcript: _t, tool_calls: _tc, ...rest } = c;
+  void _t;
+  void _tc;
+  return rest;
+}
+
+export const assistantHandlers = [
+  http.get("/api/workspaces/:ws/assistant/conversations", ({ params }) => {
+    const ws = findWorkspace(params.ws as string);
+    if (!ws) return httpError(404, "Workspace not found");
+    return HttpResponse.json(
+      CONVERSATIONS.filter((c) => c.workspace_id === ws.id).map(publicView),
+    );
+  }),
+
+  http.post(
+    "/api/workspaces/:ws/assistant/conversations",
+    async ({ params, request }) => {
+      const ws = findWorkspace(params.ws as string);
+      if (!ws) return httpError(404, "Workspace not found");
+      const body = (await request.json()) as { title?: string | null };
+      const conv: MockConversation = {
+        id: nextId("conv"),
+        workspace_id: ws.id,
+        title: body.title || "New conversation",
+        total_input_tokens: 0,
+        total_output_tokens: 0,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        transcript: [],
+        tool_calls: [],
+      };
+      CONVERSATIONS.unshift(conv);
+      return HttpResponse.json(publicView(conv), { status: 201 });
+    },
+  ),
+
+  http.get("/api/workspaces/:ws/assistant/conversations/:id", ({ params }) => {
+    const conv = CONVERSATIONS.find((c) => c.id === params.id);
+    if (!conv) return httpError(404, "Conversation not found");
+    return HttpResponse.json(conv);
+  }),
+
+  http.delete(
+    "/api/workspaces/:ws/assistant/conversations/:id",
+    ({ params }) => {
+      const idx = CONVERSATIONS.findIndex((c) => c.id === params.id);
+      if (idx === -1) return httpError(404, "Conversation not found");
+      CONVERSATIONS.splice(idx, 1);
+      return new HttpResponse(null, { status: 204 });
+    },
+  ),
+
+  http.post(
+    "/api/workspaces/:ws/assistant/conversations/:id/messages",
+    async ({ params, request }) => {
+      const conv = CONVERSATIONS.find((c) => c.id === params.id);
+      if (!conv) return httpError(404, "Conversation not found");
+      const { prompt } = (await request.json()) as { prompt: string };
+      conv.transcript.push({ role: "user", text: prompt });
+
+      // Simulate a write proposal that needs approval.
+      if (/\b(delete|drop|update|insert)\b/i.test(prompt)) {
+        conv.tool_calls.push({
+          id: nextId("tc"),
+          tool: "run_sql",
+          args: { sql: "DELETE FROM events" },
+          status: "approval_required",
+          detail: null,
+          query_id: null,
+          latency_ms: 3,
+          created_at: new Date().toISOString(),
+        });
+        return sse([
+          {
+            type: "approval_required",
+            tool_call_id: "call-1",
+            tool: "run_sql",
+            sql: "DELETE FROM events",
+          },
+        ]);
+      }
+
+      const answer = "Here is what I found.";
+      conv.transcript.push({ role: "assistant", text: answer });
+      return sse([
+        { type: "token", text: "Here is " },
+        { type: "token", text: "what I found." },
+        {
+          type: "done",
+          message_id: nextId("msg"),
+          usage: { input: 10, output: 5 },
+        },
+      ]);
+    },
+  ),
+
+  http.post(
+    "/api/workspaces/:ws/assistant/conversations/:id/approvals",
+    async ({ params, request }) => {
+      const conv = CONVERSATIONS.find((c) => c.id === params.id);
+      if (!conv) return httpError(404, "Conversation not found");
+      const { approved } = (await request.json()) as { approved: boolean };
+      const answer = approved
+        ? "Done — the write ran."
+        : "Okay, I won't run it.";
+      conv.transcript.push({ role: "assistant", text: answer });
+      return sse([
+        { type: "token", text: answer },
+        {
+          type: "done",
+          message_id: nextId("msg"),
+          usage: { input: 4, output: 4 },
+        },
+      ]);
+    },
+  ),
+];

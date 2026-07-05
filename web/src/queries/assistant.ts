@@ -1,11 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { assistantApi } from "@/api/assistant";
 
-export function useConversations(ws: string) {
+export function useAssistantStatus(ws: string) {
+  return useQuery({
+    queryKey: ["workspace", ws, "assistant", "status"],
+    queryFn: () => assistantApi.status(ws),
+    enabled: !!ws,
+  });
+}
+
+export function useConversations(ws: string, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ["workspace", ws, "assistant", "conversations"],
     queryFn: () => assistantApi.listConversations(ws),
-    enabled: !!ws,
+    enabled: !!ws && options?.enabled !== false,
   });
 }
 

@@ -2,11 +2,15 @@ import { get, post, del } from "./client";
 import { ApiError } from "./client";
 import type {
   AssistantFrame,
+  AssistantStatus,
   Conversation,
   ConversationDetail,
 } from "@/types/assistant";
 
 export const assistantApi = {
+  status: (ws: string) =>
+    get<AssistantStatus>(`/workspaces/${ws}/assistant/status`),
+
   listConversations: (ws: string) =>
     get<Conversation[]>(`/workspaces/${ws}/assistant/conversations`),
 

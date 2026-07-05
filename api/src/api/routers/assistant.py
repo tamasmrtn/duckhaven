@@ -11,6 +11,7 @@ from api.models.assistant import AssistantConversation, AssistantToolCall
 from api.models.user import User
 from api.schemas.assistant import (
     ApprovalRequest,
+    AssistantStatusOut,
     ConversationCreate,
     ConversationDetailOut,
     ConversationOut,
@@ -53,6 +54,18 @@ async def _workspace(db: AsyncSession, ws: str, user: User):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
     await assert_workspace_member(db, workspace.id, user.id)
     return workspace
+
+
+@router.get("/workspaces/{ws}/assistant/status", response_model=AssistantStatusOut)
+async def assistant_status(
+    ws: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> AssistantStatusOut:
+    # Deliberately not gated by `_require_enabled`: the UI needs to learn the
+    # assistant is off in order to show a clear disabled state.
+    await _workspace(db, ws, user)
+    return AssistantStatusOut(enabled=settings.assistant_enabled)
 
 
 @router.get("/workspaces/{ws}/assistant/conversations", response_model=list[ConversationOut])

@@ -1,5 +1,9 @@
 import { http, HttpResponse } from "msw";
-import { CONVERSATIONS, type MockConversation } from "../fixtures/assistant";
+import {
+  ASSISTANT_ENABLED,
+  CONVERSATIONS,
+  type MockConversation,
+} from "../fixtures/assistant";
 import { findWorkspace } from "../fixtures/workspaces";
 import { nextId } from "../lib/seed";
 import { httpError } from "../lib/errors";
@@ -29,6 +33,12 @@ function publicView(c: MockConversation) {
 }
 
 export const assistantHandlers = [
+  http.get("/api/workspaces/:ws/assistant/status", ({ params }) => {
+    const ws = findWorkspace(params.ws as string);
+    if (!ws) return httpError(404, "Workspace not found");
+    return HttpResponse.json({ enabled: ASSISTANT_ENABLED });
+  }),
+
   http.get("/api/workspaces/:ws/assistant/conversations", ({ params }) => {
     const ws = findWorkspace(params.ws as string);
     if (!ws) return httpError(404, "Workspace not found");

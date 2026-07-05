@@ -68,6 +68,14 @@ def _event_to_frame(event) -> dict | None:
         if isinstance(args, str):
             with contextlib.suppress(json.JSONDecodeError):
                 args = json.loads(args)
+        # A proposed worksheet edit is a client-side action: surface it as its own
+        # frame the editor can apply, not a generic tool-call line.
+        if part.tool_name == "propose_sql_edit" and isinstance(args, dict):
+            return {
+                "type": "propose_edit",
+                "sql": args.get("sql", ""),
+                "explanation": args.get("explanation", ""),
+            }
         return {"type": "tool_call", "tool": part.tool_name, "args": args}
     return None
 
@@ -86,6 +94,7 @@ async def _turn_context(
     workspace_id: uuid.UUID,
     workspace_slug: str,
     catalog: str | None,
+    editor_sql: str | None = None,
 ) -> AsyncIterator[AssistantDeps]:
     """Resolve identity, mint an ephemeral PAT, and build the governed gateway."""
     async with session_factory() as db:
@@ -116,6 +125,7 @@ async def _turn_context(
                 catalog=catalog,
                 can_write=can_write,
                 query_timeout_s=_QUERY_TIMEOUT_S,
+                editor_sql=editor_sql,
             )
 
 
@@ -146,10 +156,13 @@ async def _stream(
     catalog: str | None,
     prompt: str | None,
     deferred_results: DeferredToolResults | None,
+    editor_sql: str | None = None,
 ) -> AsyncIterator[str]:
     require_enabled()
     async with _semaphore():
-        async with _turn_context(session_factory, workspace_id, workspace_slug, catalog) as deps:
+        async with _turn_context(
+            session_factory, workspace_id, workspace_slug, catalog, editor_sql
+        ) as deps:
             queue: asyncio.Queue = asyncio.Queue()
 
             async def handler(ctx, events) -> None:
@@ -217,6 +230,7 @@ def stream_turn(
     workspace_slug: str,
     prompt: str,
     catalog: str | None,
+    editor_sql: str | None = None,
 ) -> AsyncIterator[str]:
     """Stream a new user turn as SSE frames."""
     return _stream(
@@ -227,6 +241,7 @@ def stream_turn(
         catalog=catalog,
         prompt=prompt,
         deferred_results=None,
+        editor_sql=editor_sql,
     )
 
 

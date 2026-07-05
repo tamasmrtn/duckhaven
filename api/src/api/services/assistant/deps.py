@@ -27,6 +27,9 @@ class AssistantDeps:
     catalog: str | None
     can_write: bool
     query_timeout_s: float
+    # The SQL currently in the user's worksheet editor, sent with the turn so the
+    # assistant can read and propose edits to it. None when no editor is open.
+    editor_sql: str | None = None
     # Tool-call audit records for this run, keyed by the SDK tool_call_id. Populated
     # by the governance hooks; drained by the runner and persisted after the turn.
     records: dict[str, ToolCallRecord] = field(default_factory=dict)

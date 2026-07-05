@@ -109,6 +109,30 @@ async def get_query_result(
         raise ModelRetry(str(exc)) from exc
 
 
+async def get_worksheet_sql(ctx: RunContext[AssistantDeps]) -> str:
+    """Return the SQL currently in the user's worksheet editor.
+
+    Call this before proposing an edit so you build on what the user already has.
+    Returns an empty-editor note when nothing is open.
+    """
+    return ctx.deps.editor_sql or "(the worksheet editor is empty or not open)"
+
+
+async def propose_sql_edit(ctx: RunContext[AssistantDeps], sql: str, explanation: str) -> str:
+    """Propose replacing the SQL in the user's worksheet editor.
+
+    Use this when the user asks you to write, fix, or change the SQL in their
+    editor. The proposed SQL is shown in their editor as a highlighted change that
+    they accept or reject — it is not executed. Always provide the complete new SQL
+    for the worksheet, not a fragment or a diff.
+
+    Args:
+        sql: The full proposed SQL for the worksheet.
+        explanation: A one-line summary of what changed and why.
+    """
+    return "Proposed the edit in the user's editor; they will accept or reject it."
+
+
 ALL_TOOLS = [
     list_catalogs,
     list_schemas,
@@ -116,4 +140,6 @@ ALL_TOOLS = [
     describe_table,
     run_sql,
     get_query_result,
+    get_worksheet_sql,
+    propose_sql_edit,
 ]

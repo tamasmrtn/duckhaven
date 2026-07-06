@@ -80,6 +80,16 @@ def _event_to_frame(event) -> dict | None:
     return None
 
 
+def _resolved_ids(deferred_results: DeferredToolResults | None) -> set[str]:
+    """Tool-call ids being resumed, so history-sanitizing keeps their pending call."""
+    if deferred_results is None:
+        return set()
+    ids: set[str] = set()
+    ids.update(getattr(deferred_results, "approvals", None) or {})
+    ids.update(getattr(deferred_results, "calls", None) or {})
+    return ids
+
+
 def _deferred_sql(call) -> str | None:
     args = call.args
     if isinstance(args, str):
@@ -202,7 +212,9 @@ async def _stream(
             async def do_run() -> None:
                 try:
                     async with session_factory() as db:
-                        history = await load_history(db, conversation_id)
+                        history = await load_history(
+                            db, conversation_id, _resolved_ids(deferred_results)
+                        )
                     is_first_turn = not history
                     result = await get_agent().run(
                         prompt,

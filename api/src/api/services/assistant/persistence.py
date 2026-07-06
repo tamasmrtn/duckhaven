@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Collection
 
 from pydantic_ai import ModelMessagesTypeAdapter
 from pydantic_ai.messages import (
@@ -27,8 +28,18 @@ from api.models.assistant import AssistantConversation, AssistantMessage, Assist
 from api.services.assistant.deps import ToolCallRecord
 
 
-async def load_history(db: AsyncSession, conversation_id: uuid.UUID) -> list[ModelMessage]:
-    """Rebuild the full message history for a conversation, oldest turn first."""
+async def load_history(
+    db: AsyncSession,
+    conversation_id: uuid.UUID,
+    resolved_tool_call_ids: Collection[str] = (),
+) -> list[ModelMessage]:
+    """Rebuild the full message history for a conversation, oldest turn first.
+
+    ``resolved_tool_call_ids`` names the deferred tool calls being resumed (e.g. a
+    write the user just approved). ``sanitize_messages`` strips a *trailing*
+    unresolved tool call by default — which is exactly the paused approval we need
+    to keep — so those ids must be whitelisted when resuming.
+    """
     rows = (
         (
             await db.execute(
@@ -48,7 +59,7 @@ async def load_history(db: AsyncSession, conversation_id: uuid.UUID) -> list[Mod
     messages = ModelMessagesTypeAdapter.validate_python(combined)
     # Defensive: history is server-owned, but strip any client-supplied system
     # prompts / unexpected parts before feeding it back to the model.
-    return sanitize_messages(messages)
+    return sanitize_messages(messages, resolved_tool_call_ids=resolved_tool_call_ids)
 
 
 def render_transcript(messages: list[ModelMessage]) -> list[dict]:

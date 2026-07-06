@@ -27,6 +27,16 @@ if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = () => undefined
 }
 
+// ResizeObserver isn't implemented in jsdom; Radix ScrollArea uses it to track
+// content size. A no-op stub is enough for tests.
+if (!('ResizeObserver' in globalThis)) {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver
+}
+
 // localStorage may be missing or incomplete in some jsdom workers
 const store: Record<string, string> = {}
 const localStorageMock: Storage = {

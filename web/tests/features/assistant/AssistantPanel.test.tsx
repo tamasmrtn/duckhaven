@@ -29,6 +29,20 @@ describe("AssistantPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("collapses the Activity trace by default and expands it on click", async () => {
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    // Collapsed: a count is shown but the tool rows are hidden.
+    const toggle = screen.getByRole("button", { name: /Activity \(1\)/ });
+    expect(screen.queryByText("run_sql")).not.toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(screen.getByText("run_sql")).toBeInTheDocument();
+  });
+
   it("echoes the user's message immediately, before the reply streams in", async () => {
     const user = userEvent.setup();
     renderWithProviders({ initialRoute: ROUTE });

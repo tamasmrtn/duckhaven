@@ -142,6 +142,32 @@ async def test_write_with_grant_requests_approval(client, db_session, factory):
     assert approval[0]["tool_call_id"]
 
 
+async def test_first_turn_generates_a_title(client, db_session, factory):
+    from api.services.assistant.title import get_title_agent
+
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+    conv.title = "New conversation"
+    await db_session.commit()
+
+    with (
+        get_agent().override(model=scripted_model([text_step("Hi there.")])),
+        get_title_agent().override(model=scripted_model([text_step("Greeting the assistant")])),
+    ):
+        async for _ in stream_turn(
+            factory,
+            conversation_id=conv.id,
+            workspace_id=ws.id,
+            workspace_slug=ws.slug,
+            prompt="hello",
+            catalog=None,
+        ):
+            pass
+
+    async with factory() as db:
+        updated = await db.get(AssistantConversation, conv.id)
+        assert updated.title == "Greeting the assistant"
+
+
 async def test_propose_sql_edit_emits_propose_edit_frame(client, db_session, factory):
     ws, _catalog, conv = await _seed(db_session, sa_role="reader")
     responses = [

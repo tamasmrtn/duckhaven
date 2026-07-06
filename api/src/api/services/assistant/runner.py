@@ -129,6 +129,34 @@ async def _turn_context(
             )
 
 
+async def _maybe_generate_title(
+    session_factory: async_sessionmaker[AsyncSession],
+    conversation_id: uuid.UUID,
+    prompt: str | None,
+) -> None:
+    """Name a still-unnamed conversation from its opening message. Best-effort:
+    a title-model failure must never fail the turn."""
+    from api.services.assistant.title import DEFAULT_TITLE, generate_title
+
+    if not prompt:
+        return
+    async with session_factory() as db:
+        conversation = await db.get(AssistantConversation, conversation_id)
+        if conversation is None or conversation.title != DEFAULT_TITLE:
+            return
+    try:
+        title = await generate_title(prompt)
+    except Exception:  # noqa: BLE001 — titling is cosmetic; never break the turn
+        return
+    if not title:
+        return
+    async with session_factory() as db:
+        conversation = await db.get(AssistantConversation, conversation_id)
+        if conversation is not None and conversation.title == DEFAULT_TITLE:
+            conversation.title = title
+            await db.commit()
+
+
 async def _persist(
     session_factory: async_sessionmaker[AsyncSession],
     conversation_id: uuid.UUID,
@@ -175,6 +203,7 @@ async def _stream(
                 try:
                     async with session_factory() as db:
                         history = await load_history(db, conversation_id)
+                    is_first_turn = not history
                     result = await get_agent().run(
                         prompt,
                         message_history=history,
@@ -206,6 +235,8 @@ async def _stream(
                                 },
                             }
                         )
+                    if is_first_turn:
+                        await _maybe_generate_title(session_factory, conversation_id, prompt)
                 except Exception as exc:  # noqa: BLE001 — surfaced as an SSE error frame
                     await queue.put({"type": "error", "message": str(exc)})
                 finally:

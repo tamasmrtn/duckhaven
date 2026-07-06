@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Sparkles, Plus, Send, X } from "lucide-react";
+import {
+  Sparkles,
+  Plus,
+  Send,
+  X,
+  ChevronRight,
+  ChevronDown,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -53,6 +60,8 @@ export function AssistantPanel({ ws }: { ws: string }) {
   });
 
   const [draft, setDraft] = useState("");
+  // Activity (tool-call trace) is collapsed by default — it can get long.
+  const [activityOpen, setActivityOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -164,12 +173,23 @@ export function AssistantPanel({ ws }: { ws: string }) {
               ))}
             {detail && detail.tool_calls.length > 0 && (
               <div className="space-y-1">
-                <p className="text-xs font-medium text-text-secondary">
-                  Activity
-                </p>
-                {detail.tool_calls.map((call) => (
-                  <ToolCallCard key={call.id} ws={ws} call={call} />
-                ))}
+                <button
+                  type="button"
+                  onClick={() => setActivityOpen((o) => !o)}
+                  aria-expanded={activityOpen}
+                  className="flex items-center gap-1 text-xs font-medium text-text-secondary hover:text-text-primary"
+                >
+                  {activityOpen ? (
+                    <ChevronDown className="size-3.5" />
+                  ) : (
+                    <ChevronRight className="size-3.5" />
+                  )}
+                  Activity ({detail.tool_calls.length})
+                </button>
+                {activityOpen &&
+                  detail.tool_calls.map((call) => (
+                    <ToolCallCard key={call.id} ws={ws} call={call} />
+                  ))}
               </div>
             )}
             {chat.error && (

@@ -29,6 +29,28 @@ describe("AssistantPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("echoes the user's message immediately, before the reply streams in", async () => {
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    const probe = "unique probe message one two three";
+    await user.type(screen.getByLabelText("Message"), probe);
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    // The user's message is visible right away (optimistic echo) while the
+    // assistant reply is still streaming and not yet shown.
+    expect(screen.getByText(probe)).toBeInTheDocument();
+    expect(screen.queryByText("Here is what I found.")).not.toBeInTheDocument();
+
+    // The reply then arrives, and the user's message remains (now persisted).
+    expect(
+      await screen.findByText("Here is what I found."),
+    ).toBeInTheDocument();
+    expect(screen.getByText(probe)).toBeInTheDocument();
+  });
+
   it("streams an answer for a new message", async () => {
     const user = userEvent.setup();
     renderWithProviders({ initialRoute: ROUTE });

@@ -12,12 +12,17 @@ function sse(frames: object[]) {
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     start(controller) {
-      for (const frame of frames) {
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify(frame)}\n\n`),
-        );
-      }
-      controller.close();
+      // Small delay so the stream doesn't resolve synchronously — lets tests
+      // observe the interval where the turn is streaming (e.g. the optimistic
+      // echo of the user's just-sent message).
+      setTimeout(() => {
+        for (const frame of frames) {
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify(frame)}\n\n`),
+          );
+        }
+        controller.close();
+      }, 20);
     },
   });
   return new HttpResponse(stream, {

@@ -138,7 +138,7 @@ export function AssistantPanel({ ws }: { ws: string }) {
       ) : (
         <ScrollArea className="flex-1">
           <div className="flex flex-col gap-3 p-3">
-            {!detail && (
+            {!detail && !chat.pendingUserMessage && !chat.streaming && (
               <p className="text-sm text-text-tertiary">
                 Ask about your data, or ask me to write SQL in your worksheet.
               </p>
@@ -146,6 +146,9 @@ export function AssistantPanel({ ws }: { ws: string }) {
             {detail?.transcript.map((item, i) => (
               <Bubble key={i} role={item.role} text={item.text} />
             ))}
+            {chat.pendingUserMessage && (
+              <Bubble role="user" text={chat.pendingUserMessage} />
+            )}
             {chat.streamingText && (
               <Bubble role="assistant" text={chat.streamingText} />
             )}

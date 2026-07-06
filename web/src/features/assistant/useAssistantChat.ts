@@ -31,6 +31,11 @@ export function useAssistantChat(
   const [liveTools, setLiveTools] = useState<LiveTool[]>([]);
   const [pending, setPending] = useState<PendingApproval | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The just-sent user message, echoed immediately so it appears above the
+  // streaming reply instead of only after the turn's transcript refetch.
+  const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(
+    null,
+  );
 
   const consume = useCallback(
     async (
@@ -71,6 +76,9 @@ export function useAssistantChat(
         });
         setStreamingText("");
         setLiveTools([]);
+        // Cleared after the refetch settles, so the persisted transcript (which
+        // now includes this message) replaces the optimistic echo seamlessly.
+        setPendingUserMessage(null);
       }
     },
     [ws, qc, onProposeEdit],
@@ -79,6 +87,7 @@ export function useAssistantChat(
   const send = useCallback(
     (prompt: string, id: string) => {
       if (streaming) return;
+      setPendingUserMessage(prompt);
       void consume(
         id,
         streamMessage(ws, id, prompt, { editorSql: getEditorSql?.() ?? null }),
@@ -106,6 +115,7 @@ export function useAssistantChat(
     liveTools,
     pending,
     error,
+    pendingUserMessage,
     send,
     resolveApproval,
   };

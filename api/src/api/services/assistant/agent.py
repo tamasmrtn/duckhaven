@@ -29,7 +29,11 @@ def _build_model() -> Model | str:
         from pydantic_ai.models.openai import OpenAIChatModel
         from pydantic_ai.providers.openai import OpenAIProvider
 
-        model_name = settings.assistant_model.split(":", 1)[-1]
+        # Strip only a leading "openai:" provider prefix — the remaining name may
+        # itself contain a colon (e.g. an Ollama tag like "kimi-k2.7-code:cloud").
+        model_name = settings.assistant_model
+        if model_name.startswith("openai:"):
+            model_name = model_name.split(":", 1)[1]
         return OpenAIChatModel(
             model_name,
             provider=OpenAIProvider(

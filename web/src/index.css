@@ -97,3 +97,14 @@
   width: 3px !important;
   margin-left: 2px;
 }
+
+/* Keep the assistant thread within its fixed-width panel. Radix ScrollArea wraps
+   its content in a `display: table` box that shrink-wraps to the widest child
+   (e.g. a wide result table or code block), overflowing the panel and getting
+   clipped by its `overflow: hidden`. Forcing the wrapper to `block` holds it at
+   the viewport width so wide content scrolls within its own message bubble
+   instead of disappearing. The inline `display: table` requires `!important` to
+   override. Scoped to the assistant panel so other ScrollAreas are unaffected. */
+aside[aria-label="AI assistant"] [data-radix-scroll-area-viewport] > div {
+  display: block !important;
+}

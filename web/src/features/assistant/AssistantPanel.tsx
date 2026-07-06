@@ -25,6 +25,7 @@ import {
 import { EmptyState } from "@/components/app/EmptyState";
 import { cn } from "@/utils";
 import { useAssistant } from "./AssistantContext";
+import { Markdown } from "./Markdown";
 import { ToolCallCard } from "./ToolCallCard";
 import { WriteApprovalDialog } from "./WriteApprovalDialog";
 import { useAssistantChat } from "./useAssistantChat";
@@ -245,13 +246,13 @@ function Bubble({ role, text }: { role: "user" | "assistant"; text: string }) {
   return (
     <div
       className={cn(
-        "max-w-[90%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm",
+        "max-w-[90%] rounded-lg px-3 py-2 text-sm",
         role === "user"
-          ? "self-end bg-[var(--brand-slate-blue)] text-white"
-          : "self-start border border-[var(--border-subtle)] bg-[var(--bg-surface)]",
+          ? "self-end whitespace-pre-wrap bg-[var(--brand-slate-blue)] text-white"
+          : "min-w-0 self-start border border-[var(--border-subtle)] bg-[var(--bg-surface)]",
       )}
     >
-      {text}
+      {role === "assistant" ? <Markdown>{text}</Markdown> : text}
     </div>
   );
 }

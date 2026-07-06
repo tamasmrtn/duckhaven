@@ -1,7 +1,13 @@
 import pytest_asyncio
 from conftest import seed_workspace
 from pydantic_ai import ModelMessagesTypeAdapter
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    UserPromptPart,
+)
 from pydantic_ai.usage import RunUsage
 from sqlalchemy import select
 
@@ -57,6 +63,43 @@ async def test_save_and_load_roundtrip(db_session, conversation):
     assert len(tool_calls) == 1
     assert tool_calls[0].tool == "list_catalogs"
     assert tool_calls[0].status == "ok"
+
+
+def _has_tool_call(messages, tool_call_id: str) -> bool:
+    return any(
+        isinstance(m, ModelResponse)
+        and any(isinstance(p, ToolCallPart) and p.tool_call_id == tool_call_id for p in m.parts)
+        for m in messages
+    )
+
+
+async def test_resumed_pending_tool_call_survives_sanitize(db_session, conversation):
+    # A turn that ended awaiting approval: history ends with an unresolved tool call.
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content="delete stuff")]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name="run_sql",
+                    args={"sql": "DELETE FROM t"},
+                    tool_call_id="call-xyz",
+                )
+            ]
+        ),
+    ]
+    await save_turn(
+        db_session,
+        conversation,
+        new_messages_json=ModelMessagesTypeAdapter.dump_json(messages),
+        usage=RunUsage(input_tokens=1, output_tokens=1),
+        records={},
+    )
+    # Without whitelisting, sanitize strips the trailing unresolved tool call.
+    plain = await load_history(db_session, conversation.id)
+    assert not _has_tool_call(plain, "call-xyz")
+    # On an approval resume the id is whitelisted, so the pending call is kept.
+    resumed = await load_history(db_session, conversation.id, resolved_tool_call_ids={"call-xyz"})
+    assert _has_tool_call(resumed, "call-xyz")
 
 
 async def test_ordinals_increment_across_turns(db_session, conversation):

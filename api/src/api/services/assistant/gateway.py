@@ -15,6 +15,7 @@ so a direct service call would skip them — hence the loopback rather than a di
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 
 import httpx
@@ -64,11 +65,15 @@ class Gateway:
         *,
         row_cap: int,
         byte_cap: int,
+        service_account_id: str,
     ) -> None:
         self._client = client
         self._ws = workspace_slug
         self._row_cap = row_cap
         self._byte_cap = byte_cap
+        # The id the assistant's queries are attributed to; used to refuse paging
+        # results of queries run by *other* principals.
+        self._service_account_id = service_account_id
 
     async def _get(self, path: str, **kwargs) -> httpx.Response:
         resp = await self._client.get(path, **kwargs)
@@ -133,14 +138,23 @@ class Gateway:
         query = resp.json()
         query_id = query["id"]
 
-        deadline = asyncio.get_event_loop().time() + timeout_s
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_s
         status = query["status"]
-        while status not in _TERMINAL:
-            if asyncio.get_event_loop().time() > deadline:
-                raise GatewayError(f"Query timed out after {timeout_s:.0f}s.")
-            await asyncio.sleep(_POLL_INTERVAL_S)
-            query = (await self._get(f"/queries/{query_id}")).json()
-            status = query["status"]
+        try:
+            while status not in _TERMINAL:
+                if loop.time() > deadline:
+                    # Don't leave the query running on the agent to stack up.
+                    await self._cancel_query(query_id)
+                    raise GatewayError(f"Query timed out after {timeout_s:.0f}s.")
+                await asyncio.sleep(_POLL_INTERVAL_S)
+                query = (await self._get(f"/queries/{query_id}")).json()
+                status = query["status"]
+        except asyncio.CancelledError:
+            # The turn was cancelled while polling — best-effort cancel, detached
+            # so the cancellation still propagates promptly.
+            asyncio.ensure_future(self._cancel_query(query_id))  # noqa: RUF006
+            raise
 
         if status == "failed":
             raise GatewayError(f"Query failed: {query.get('error') or 'unknown error'}")
@@ -152,7 +166,19 @@ class Gateway:
         page["status"] = status
         return page
 
+    async def _cancel_query(self, query_id: str) -> None:
+        """Best-effort cancel of a running query; never raises."""
+        with contextlib.suppress(Exception):
+            await self._client.delete(f"/queries/{query_id}")
+
     async def get_query_result(self, query_id: str, *, cursor: str | None, limit: int) -> dict:
+        # Governance: the shared rows endpoint authorizes on workspace membership
+        # only, so restrict paging to queries this service account actually ran —
+        # otherwise the assistant could read data from a more-privileged member's
+        # query id, exceeding its own grants.
+        record = (await self._get(f"/queries/{query_id}")).json()
+        if str(record.get("user_id")) != self._service_account_id:
+            raise GatewayError("I can only page results of queries I ran in this conversation.")
         page = await self._fetch_page(query_id, cursor=cursor, limit=min(limit, self._row_cap))
         page["query_id"] = query_id
         return page

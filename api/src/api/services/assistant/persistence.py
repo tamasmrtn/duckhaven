@@ -24,6 +24,7 @@ from pydantic_ai.usage import RunUsage
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.config import settings
 from api.models.assistant import AssistantConversation, AssistantMessage, AssistantToolCall
 from api.services.assistant.deps import ToolCallRecord
 
@@ -40,19 +41,22 @@ async def load_history(
     unresolved tool call by default — which is exactly the paused approval we need
     to keep — so those ids must be whitelisted when resuming.
     """
+    # Coarse guard against unbounded context: only the most recent N turns are
+    # replayed. Fetch the newest N (ordinal desc), then restore chronological order.
     rows = (
         (
             await db.execute(
                 select(AssistantMessage)
                 .where(AssistantMessage.conversation_id == conversation_id)
-                .order_by(AssistantMessage.ordinal)
+                .order_by(AssistantMessage.ordinal.desc())
+                .limit(settings.assistant_history_turn_cap)
             )
         )
         .scalars()
         .all()
     )
     combined: list = []
-    for row in rows:
+    for row in reversed(rows):
         combined.extend(row.payload)
     if not combined:
         return []

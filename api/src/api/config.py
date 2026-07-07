@@ -158,14 +158,25 @@ class Settings(BaseSettings):
     # back to their standard env var; keyless endpoints (Ollama) need nothing.
     assistant_api_key: str | None = None
     # Lifetime of the ephemeral PAT minted for each assistant turn's loopback
-    # calls. Short by design: a crash-orphaned credential expires harmlessly.
-    assistant_pat_ttl_s: int = 600
+    # calls. It must comfortably exceed the longest plausible turn (bounded by
+    # assistant_request_limit × per-query timeout), because the same token is used
+    # for every loopback call in the turn; otherwise late calls would 401. A
+    # crash-orphaned credential still expires harmlessly within this window.
+    assistant_pat_ttl_s: int = 3600
     # Max concurrent assistant runs per API process, capping how much the shared
     # event loop can be occupied by (potentially slow) LLM turns.
     assistant_max_concurrency: int = 4
+    # Hard cap on model requests within a single turn — stops a model stuck in a
+    # tool loop from running queries and burning tokens indefinitely while holding
+    # a concurrency slot. Enforced via Pydantic AI UsageLimits.
+    assistant_request_limit: int = 20
     # Cap on model output tokens per turn — a coarse cost guard for self-hosters
     # bringing their own API keys.
     assistant_max_output_tokens: int = 4096
+    # Coarse guard against unbounded history: only the most recent N turns are
+    # replayed to the model, so per-turn cost stays bounded and a long conversation
+    # doesn't eventually overflow the context window. Older turns are dropped.
+    assistant_history_turn_cap: int = 40
     # Result-sample caps fed into model context (never the full Parquet payload).
     assistant_result_row_cap: int = 100
     assistant_result_byte_cap: int = 32_768

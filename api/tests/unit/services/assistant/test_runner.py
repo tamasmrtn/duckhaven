@@ -16,7 +16,7 @@ from api.models.assistant import AssistantConversation, AssistantMessage, Assist
 from api.models.user import User
 from api.models.workspace import WorkspaceMember
 from api.services.assistant.agent import get_agent
-from api.services.assistant.runner import run_turn, stream_turn
+from api.services.assistant.runner import stream_turn
 
 from .conftest import parse_sse, scripted_model, text_step, tool_step
 
@@ -52,21 +52,26 @@ async def _seed(db_session, *, sa_role: str):
     return ws, catalog, conv
 
 
-async def test_run_turn_browses_and_persists(client, db_session, factory):
+async def _run_stream(factory, ws, conv, prompt):
+    async for _ in stream_turn(
+        factory,
+        conversation_id=conv.id,
+        workspace_id=ws.id,
+        workspace_slug=ws.slug,
+        prompt=prompt,
+        catalog=None,
+    ):
+        pass
+
+
+async def test_turn_browses_and_persists_and_stamps_principal(client, db_session, factory):
     ws, _catalog, conv = await _seed(db_session, sa_role="reader")
     responses = [
         tool_step("list_catalogs", {}),
         text_step("I found the catalogs."),
     ]
     with get_agent().override(model=scripted_model(responses)):
-        answer = await run_turn(
-            factory,
-            conversation_id=conv.id,
-            workspace_id=ws.id,
-            workspace_slug=ws.slug,
-            prompt="what catalogs exist?",
-        )
-    assert answer == "I found the catalogs."
+        await _run_stream(factory, ws, conv, "what catalogs exist?")
 
     async with factory() as db:
         messages = (await db.execute(select(AssistantMessage))).scalars().all()
@@ -74,6 +79,12 @@ async def test_run_turn_browses_and_persists(client, db_session, factory):
         tool_calls = (await db.execute(select(AssistantToolCall))).scalars().all()
         assert [tc.tool for tc in tool_calls] == ["list_catalogs"]
         assert tool_calls[0].status == "ok"
+        # The conversation is attributed to the acting service account.
+        updated = await db.get(AssistantConversation, conv.id)
+        sa = (
+            await db.execute(select(User).where(User.email == "assistant@service-account.local"))
+        ).scalar_one()
+        assert updated.service_account_id == sa.id
 
 
 async def test_read_only_assistant_refuses_write(client, db_session, factory):
@@ -84,14 +95,7 @@ async def test_read_only_assistant_refuses_write(client, db_session, factory):
         text_step("I cannot do that; it is a write."),
     ]
     with get_agent().override(model=scripted_model(responses)):
-        answer = await run_turn(
-            factory,
-            conversation_id=conv.id,
-            workspace_id=ws.id,
-            workspace_slug=ws.slug,
-            prompt="delete everything",
-        )
-    assert "cannot" in answer.lower()
+        await _run_stream(factory, ws, conv, "delete everything")
     async with factory() as db:
         tool_calls = (await db.execute(select(AssistantToolCall))).scalars().all()
         assert tool_calls[0].tool == "run_sql"
@@ -196,3 +200,38 @@ async def test_propose_sql_edit_emits_propose_edit_frame(client, db_session, fac
     assert edits[0]["explanation"] == "a minimal query"
     # It is surfaced as its own frame, not a generic tool_call line.
     assert not any(f["type"] == "tool_call" and f["tool"] == "propose_sql_edit" for f in frames)
+
+
+async def test_request_limit_surfaces_friendly_error(client, db_session, factory, monkeypatch):
+    monkeypatch.setattr(settings, "assistant_request_limit", 1)
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+    # A tool call needs a second model request to process its result, exceeding 1.
+    responses = [tool_step("list_catalogs", {}), text_step("never reached")]
+    with get_agent().override(model=scripted_model(responses)):
+        chunks = [
+            frame
+            async for frame in stream_turn(
+                factory,
+                conversation_id=conv.id,
+                workspace_id=ws.id,
+                workspace_slug=ws.slug,
+                prompt="loop forever",
+                catalog=None,
+            )
+        ]
+    frames = parse_sse(chunks)
+    errors = [f for f in frames if f["type"] == "error"]
+    assert errors and "step limit" in errors[0]["message"]
+
+
+def test_safe_error_message_whitelists_known_types():
+    from api.services.assistant.gateway import GatewayError
+    from api.services.assistant.identity import AssistantIdentityError
+    from api.services.assistant.runner import _safe_error_message
+
+    assert _safe_error_message(GatewayError("Access denied: x")) == "Access denied: x"
+    assert "not configured" in _safe_error_message(AssistantIdentityError("not configured"))
+    # An unexpected error is not leaked verbatim.
+    assert _safe_error_message(ValueError("secret internal db url")) == (
+        "The assistant hit an internal error."
+    )

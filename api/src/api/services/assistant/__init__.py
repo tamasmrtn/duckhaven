@@ -12,13 +12,11 @@ orchestration.
 from api.services.assistant.runner import (
     AssistantDisabledError,
     resume_turn,
-    run_turn,
     stream_turn,
 )
 
 __all__ = [
     "AssistantDisabledError",
     "resume_turn",
-    "run_turn",
     "stream_turn",
 ]

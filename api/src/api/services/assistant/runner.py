@@ -12,13 +12,17 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import uuid
 from collections.abc import AsyncIterator
 
 import httpx
 from httpx import ASGITransport
 from pydantic_ai import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDenied
+from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import FunctionToolCallEvent, PartDeltaEvent, TextPartDelta
+from pydantic_ai.usage import UsageLimits
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import settings
@@ -26,9 +30,26 @@ from api.models.assistant import AssistantConversation
 from api.services.assistant.access import service_account_can_write
 from api.services.assistant.agent import get_agent
 from api.services.assistant.deps import AssistantDeps
-from api.services.assistant.gateway import Gateway
-from api.services.assistant.identity import ephemeral_pat, resolve_service_account
+from api.services.assistant.gateway import Gateway, GatewayError
+from api.services.assistant.identity import (
+    AssistantIdentityError,
+    ephemeral_pat,
+    resolve_service_account,
+)
 from api.services.assistant.persistence import load_history, save_turn
+
+logger = logging.getLogger(__name__)
+
+
+def _safe_error_message(exc: BaseException) -> str:
+    """Map a turn failure to a client-safe message; log the rest server-side."""
+    if isinstance(exc, UsageLimitExceeded):
+        return "The assistant reached its step limit for this turn. Try a more specific question."
+    if isinstance(exc, GatewayError | AssistantIdentityError | AssistantDisabledError):
+        return str(exc)
+    logger.exception("Assistant turn failed", exc_info=exc)
+    return "The assistant hit an internal error."
+
 
 # Per-run SQL wait ceiling for the assistant's loopback queries.
 _QUERY_TIMEOUT_S = 120.0
@@ -129,12 +150,14 @@ async def _turn_context(
                 workspace_slug,
                 row_cap=settings.assistant_result_row_cap,
                 byte_cap=settings.assistant_result_byte_cap,
+                service_account_id=str(service_account_id),
             )
             yield AssistantDeps(
                 gateway=gateway,
                 catalog=catalog,
                 can_write=can_write,
                 query_timeout_s=_QUERY_TIMEOUT_S,
+                service_account_id=service_account_id,
                 editor_sql=editor_sql,
             )
 
@@ -174,7 +197,19 @@ async def _persist(
     deps: AssistantDeps,
 ) -> uuid.UUID:
     async with session_factory() as db:
-        conversation = await db.get(AssistantConversation, conversation_id)
+        # Lock the conversation row so concurrent turns serialize their ordinal
+        # allocation (a no-op on SQLite; the unique constraint is the backstop).
+        conversation = (
+            await db.execute(
+                select(AssistantConversation)
+                .where(AssistantConversation.id == conversation_id)
+                .with_for_update()
+            )
+        ).scalar_one()
+        # Attribute the conversation to the acting service account (config-driven,
+        # so update if it changed since the last turn).
+        if conversation.service_account_id != deps.service_account_id:
+            conversation.service_account_id = deps.service_account_id
         message = await save_turn(
             db,
             conversation,
@@ -221,9 +256,15 @@ async def _stream(
                         message_history=history,
                         deferred_tool_results=deferred_results,
                         deps=deps,
+                        usage_limits=UsageLimits(request_limit=settings.assistant_request_limit),
                         event_stream_handler=handler,
                     )
-                    message_id = await _persist(session_factory, conversation_id, result, deps)
+                    # Shield persistence: once the turn has run, its messages and
+                    # audit rows must land even if this task is cancelled during
+                    # cleanup (e.g. client disconnect / shutdown).
+                    message_id = await asyncio.shield(
+                        _persist(session_factory, conversation_id, result, deps)
+                    )
                     output = result.output
                     if isinstance(output, DeferredToolRequests):
                         for call in output.approvals:
@@ -250,7 +291,7 @@ async def _stream(
                     if is_first_turn:
                         await _maybe_generate_title(session_factory, conversation_id, prompt)
                 except Exception as exc:  # noqa: BLE001 — surfaced as an SSE error frame
-                    await queue.put({"type": "error", "message": str(exc)})
+                    await queue.put({"type": "error", "message": _safe_error_message(exc)})
                 finally:
                     await queue.put(None)
 
@@ -262,6 +303,12 @@ async def _stream(
                         break
                     yield _sse(frame)
             finally:
+                # On client disconnect Starlette closes this generator. We
+                # deliberately let the in-flight turn finish and persist rather
+                # than cancel it: its queries are already running, and a partial
+                # cancel would waste them and leave an incomplete audit trail. The
+                # persist inside do_run is shielded, so a completed turn is never
+                # lost even if this await is itself cancelled at shutdown.
                 await task
 
 
@@ -313,30 +360,3 @@ def resume_turn(
         prompt=None,
         deferred_results=results,
     )
-
-
-async def run_turn(
-    session_factory: async_sessionmaker[AsyncSession],
-    *,
-    conversation_id: uuid.UUID,
-    workspace_id: uuid.UUID,
-    workspace_slug: str,
-    prompt: str,
-    catalog: str | None = None,
-) -> str:
-    """Run a turn to completion without streaming (used by scheduled runs).
-
-    Returns the assistant's final text. A write that would need approval is treated
-    as declined, since a scheduled run has no human to confirm it.
-    """
-    require_enabled()
-    async with _semaphore():
-        async with _turn_context(session_factory, workspace_id, workspace_slug, catalog) as deps:
-            async with session_factory() as db:
-                history = await load_history(db, conversation_id)
-            result = await get_agent().run(prompt, message_history=history, deps=deps)
-            await _persist(session_factory, conversation_id, result, deps)
-            output = result.output
-            if isinstance(output, DeferredToolRequests):
-                return "A write was proposed but requires interactive approval; skipped."
-            return output

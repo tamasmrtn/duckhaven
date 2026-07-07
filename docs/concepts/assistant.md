@@ -82,6 +82,6 @@ or vLLM server) via a base URL — so a fully self-hosted, keyless deployment is
 
 !!! note "Scope"
     The assistant is a focused v1: single-agent, one conversation turn at a time, no chart generation and no retrieval
-    over table *contents*. Scheduled unattended runs are available as a schedule job type; long-running durability
-    (resuming a turn after a process restart) is not provided — a scheduled run that is interrupted is simply retried on
-    the next tick.
+    over table *contents*, and no scheduled/unattended runs. Conversation memory is also bounded — only the most recent
+    turns are replayed to the model, so a very long conversation gradually forgets its oldest messages; start a new
+    conversation for an unrelated topic.

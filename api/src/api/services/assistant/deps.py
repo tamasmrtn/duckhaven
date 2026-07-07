@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 
 from api.services.assistant.gateway import Gateway
@@ -27,6 +28,9 @@ class AssistantDeps:
     catalog: str | None
     can_write: bool
     query_timeout_s: float
+    # The service account this turn acts as — stamped on the conversation for
+    # audit attribution.
+    service_account_id: uuid.UUID
     # The SQL currently in the user's worksheet editor, sent with the turn so the
     # assistant can read and propose edits to it. None when no editor is open.
     editor_sql: str | None = None

@@ -79,6 +79,31 @@ describe("AssistantPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows a Stop button while streaming and aborts on click", async () => {
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    // "hang" makes the mock stream stay open until aborted.
+    await user.type(screen.getByLabelText("Message"), "hang please");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    // A Stop button appears while the turn streams; Send is gone.
+    const stop = await screen.findByRole("button", { name: "Stop" });
+    expect(
+      screen.queryByRole("button", { name: "Send" }),
+    ).not.toBeInTheDocument();
+
+    await user.click(stop);
+
+    // Stopping reclaims the composer (Send returns) and keeps the message shown.
+    expect(
+      await screen.findByRole("button", { name: "Send" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("hang please")).toBeInTheDocument();
+  });
+
   it("prompts for approval when the assistant proposes a write", async () => {
     const user = userEvent.setup();
     renderWithProviders({ initialRoute: ROUTE });

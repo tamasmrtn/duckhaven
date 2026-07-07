@@ -3,6 +3,7 @@ import {
   Sparkles,
   Plus,
   Send,
+  Square,
   X,
   ChevronRight,
   ChevronDown,
@@ -223,14 +224,25 @@ export function AssistantPanel({ ws }: { ws: string }) {
             rows={1}
             className="max-h-40 flex-1 resize-none rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2 text-sm outline-none focus-visible:ring-1 focus-visible:ring-[var(--brand-slate-blue)] disabled:opacity-50"
           />
-          <Button
-            size="icon"
-            onClick={() => void submit()}
-            disabled={disabled || chat.streaming || !draft.trim()}
-            aria-label="Send"
-          >
-            <Send className="size-4" />
-          </Button>
+          {chat.streaming ? (
+            <Button
+              size="icon"
+              variant="outline"
+              onClick={chat.stop}
+              aria-label="Stop"
+            >
+              <Square className="size-4" />
+            </Button>
+          ) : (
+            <Button
+              size="icon"
+              onClick={() => void submit()}
+              disabled={disabled || !draft.trim()}
+              aria-label="Send"
+            >
+              <Send className="size-4" />
+            </Button>
+          )}
         </div>
       </div>
 

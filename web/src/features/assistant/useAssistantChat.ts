@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { streamApproval, streamMessage } from "@/api/assistant";
 import type { AssistantFrame, PendingApproval } from "@/types/assistant";
@@ -36,6 +36,8 @@ export function useAssistantChat(
   const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(
     null,
   );
+  // Aborts the in-flight turn's stream (the Stop button).
+  const abortRef = useRef<AbortController | null>(null);
 
   const consume = useCallback(
     async (
@@ -65,20 +67,35 @@ export function useAssistantChat(
           }
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : "The assistant failed.");
+        if (!(abortRef.current?.signal.aborted || isAbort(err))) {
+          setError(
+            err instanceof Error ? err.message : "The assistant failed.",
+          );
+        }
       } finally {
+        // Cancelling the reader on Stop ends the loop without throwing, so the
+        // aborted state is read from the signal here rather than a caught error.
+        const aborted = abortRef.current?.signal.aborted === true;
         setStreaming(false);
-        await qc.invalidateQueries({
-          queryKey: ["workspace", ws, "assistant", "conversation", id],
-        });
-        await qc.invalidateQueries({
-          queryKey: ["workspace", ws, "assistant", "conversations"],
-        });
-        setStreamingText("");
-        setLiveTools([]);
-        // Cleared after the refetch settles, so the persisted transcript (which
-        // now includes this message) replaces the optimistic echo seamlessly.
-        setPendingUserMessage(null);
+        abortRef.current = null;
+        if (aborted) {
+          // Stopped by the user: keep the partial reply and the user's message on
+          // screen. The server finishes and persists the turn, so it reconciles
+          // on the next refetch (e.g. the next send).
+          setLiveTools([]);
+        } else {
+          await qc.invalidateQueries({
+            queryKey: ["workspace", ws, "assistant", "conversation", id],
+          });
+          await qc.invalidateQueries({
+            queryKey: ["workspace", ws, "assistant", "conversations"],
+          });
+          setStreamingText("");
+          setLiveTools([]);
+          // Cleared after the refetch settles, so the persisted transcript (which
+          // now includes this message) replaces the optimistic echo seamlessly.
+          setPendingUserMessage(null);
+        }
       }
     },
     [ws, qc, onProposeEdit],
@@ -88,9 +105,14 @@ export function useAssistantChat(
     (prompt: string, id: string) => {
       if (streaming) return;
       setPendingUserMessage(prompt);
+      const controller = new AbortController();
+      abortRef.current = controller;
       void consume(
         id,
-        streamMessage(ws, id, prompt, { editorSql: getEditorSql?.() ?? null }),
+        streamMessage(ws, id, prompt, {
+          editorSql: getEditorSql?.() ?? null,
+          signal: controller.signal,
+        }),
       );
     },
     [ws, streaming, consume, getEditorSql],
@@ -101,13 +123,21 @@ export function useAssistantChat(
       if (!conversationId || !pending) return;
       const request = pending;
       setPending(null);
+      const controller = new AbortController();
+      abortRef.current = controller;
       void consume(
         conversationId,
-        streamApproval(ws, conversationId, request.tool_call_id, approved),
+        streamApproval(ws, conversationId, request.tool_call_id, approved, {
+          signal: controller.signal,
+        }),
       );
     },
     [ws, conversationId, pending, consume],
   );
+
+  const stop = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
 
   return {
     streaming,
@@ -118,5 +148,10 @@ export function useAssistantChat(
     pendingUserMessage,
     send,
     resolveApproval,
+    stop,
   };
+}
+
+function isAbort(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "AbortError";
 }

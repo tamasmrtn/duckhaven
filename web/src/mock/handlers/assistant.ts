@@ -98,6 +98,25 @@ export const assistantHandlers = [
       const { prompt } = (await request.json()) as { prompt: string };
       conv.transcript.push({ role: "user", text: prompt });
 
+      // A stream that emits a token then never closes, so the turn stays
+      // "streaming" until the client aborts it (exercises the Stop button).
+      if (/\bhang\b/i.test(prompt)) {
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({ type: "token", text: "thinking…" })}\n\n`,
+              ),
+            );
+            // Intentionally never closed.
+          },
+        });
+        return new HttpResponse(stream, {
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      }
+
       // Simulate a write proposal that needs approval.
       if (/\b(delete|drop|update|insert)\b/i.test(prompt)) {
         conv.tool_calls.push({

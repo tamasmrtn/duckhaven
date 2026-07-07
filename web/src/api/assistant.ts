@@ -29,6 +29,7 @@ export const assistantApi = {
 /** Read a `text/event-stream` body and yield decoded assistant frames. */
 async function* readSSE(
   res: Response,
+  signal?: AbortSignal,
 ): AsyncGenerator<AssistantFrame, void, unknown> {
   if (!res.ok || !res.body) {
     let message = `HTTP ${res.status}`;
@@ -41,22 +42,30 @@ async function* readSSE(
     throw new ApiError(res.status, message);
   }
   const reader = res.body.getReader();
+  // Cancelling the reader unblocks a pending read() so Stop takes effect
+  // immediately, even where aborting the fetch doesn't reject the read.
+  const onAbort = () => void reader.cancel().catch(() => {});
+  signal?.addEventListener("abort", onAbort);
   const decoder = new TextDecoder();
   let buffer = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let sep: number;
-    while ((sep = buffer.indexOf("\n\n")) !== -1) {
-      const block = buffer.slice(0, sep);
-      buffer = buffer.slice(sep + 2);
-      for (const line of block.split("\n")) {
-        if (line.startsWith("data: ")) {
-          yield JSON.parse(line.slice(6)) as AssistantFrame;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let sep: number;
+      while ((sep = buffer.indexOf("\n\n")) !== -1) {
+        const block = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        for (const line of block.split("\n")) {
+          if (line.startsWith("data: ")) {
+            yield JSON.parse(line.slice(6)) as AssistantFrame;
+          }
         }
       }
     }
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
   }
 }
 
@@ -65,7 +74,11 @@ export async function* streamMessage(
   ws: string,
   conversationId: string,
   prompt: string,
-  opts?: { catalog?: string | null; editorSql?: string | null },
+  opts?: {
+    catalog?: string | null;
+    editorSql?: string | null;
+    signal?: AbortSignal;
+  },
 ): AsyncGenerator<AssistantFrame, void, unknown> {
   const res = await fetch(
     `/api/workspaces/${ws}/assistant/conversations/${conversationId}/messages`,
@@ -78,9 +91,10 @@ export async function* streamMessage(
         catalog: opts?.catalog ?? null,
         editor_sql: opts?.editorSql ?? null,
       }),
+      signal: opts?.signal,
     },
   );
-  yield* readSSE(res);
+  yield* readSSE(res, opts?.signal);
 }
 
 /** Approve or deny a pending write; yields the resumed turn's frames. */
@@ -89,7 +103,7 @@ export async function* streamApproval(
   conversationId: string,
   toolCallId: string,
   approved: boolean,
-  reason?: string,
+  opts?: { reason?: string; signal?: AbortSignal },
 ): AsyncGenerator<AssistantFrame, void, unknown> {
   const res = await fetch(
     `/api/workspaces/${ws}/assistant/conversations/${conversationId}/approvals`,
@@ -100,9 +114,10 @@ export async function* streamApproval(
       body: JSON.stringify({
         tool_call_id: toolCallId,
         approved,
-        reason: reason ?? null,
+        reason: opts?.reason ?? null,
       }),
+      signal: opts?.signal,
     },
   );
-  yield* readSSE(res);
+  yield* readSSE(res, opts?.signal);
 }

@@ -139,9 +139,11 @@ supplied here or via the provider's own standard environment variable (`ANTHROPI
 | `ASSISTANT_MODEL` | `anthropic:claude-sonnet-4-latest` | Pydantic AI model string, e.g. `openai:gpt-4o` or `mistral:mistral-large-latest`. For an OpenAI-compatible endpoint, use `openai:<model>` with the base URL below. |
 | `ASSISTANT_OPENAI_BASE_URL` | — | Base URL of an OpenAI-compatible endpoint (Ollama, vLLM, Azure). When set, the model routes through the OpenAI protocol against this endpoint. |
 | `ASSISTANT_API_KEY` | — | Explicit API key for the model. Optional: hosted providers fall back to their standard env var; keyless endpoints need nothing. **Rotate like any secret.** |
-| `ASSISTANT_PAT_TTL_S` | `600` | Lifetime (seconds) of the short-lived PAT minted for each turn's loopback calls. |
+| `ASSISTANT_PAT_TTL_S` | `3600` | Lifetime (seconds) of the short-lived PAT minted for each turn's loopback calls. Must exceed the longest plausible turn (bounded by `ASSISTANT_REQUEST_LIMIT` × per-query timeout), since one token is reused for the whole turn. |
 | `ASSISTANT_MAX_CONCURRENCY` | `4` | Max concurrent assistant runs per API process, bounding how much the shared event loop can be occupied by model turns. |
+| `ASSISTANT_REQUEST_LIMIT` | `20` | Hard cap on model requests per turn — stops a tool-loop from running queries and burning tokens indefinitely. |
 | `ASSISTANT_MAX_OUTPUT_TOKENS` | `4096` | Cap on model output tokens per turn — a coarse cost guard. |
+| `ASSISTANT_HISTORY_TURN_CAP` | `40` | Only the most recent N turns are replayed to the model, bounding per-turn cost and context growth. |
 | `ASSISTANT_RESULT_ROW_CAP` | `100` | Max rows of a query result fed into model context (the full result is still available in the UI). |
 | `ASSISTANT_RESULT_BYTE_CAP` | `32768` | Max bytes of a result sample fed into model context. |
 

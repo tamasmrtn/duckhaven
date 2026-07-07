@@ -3,7 +3,16 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -59,6 +68,11 @@ class AssistantMessage(Base):
     """
 
     __tablename__ = "assistant_messages"
+    # Mirrors the migration's unique index so SQLite unit tests exercise the
+    # per-conversation ordinal invariant too.
+    __table_args__ = (
+        UniqueConstraint("conversation_id", "ordinal", name="uq_assistant_messages_ordinal"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     conversation_id: Mapped[uuid.UUID] = mapped_column(

@@ -102,6 +102,24 @@ async def test_resumed_pending_tool_call_survives_sanitize(db_session, conversat
     assert _has_tool_call(resumed, "call-xyz")
 
 
+async def test_load_history_caps_to_recent_turns(db_session, conversation, monkeypatch):
+    from api.config import settings
+
+    monkeypatch.setattr(settings, "assistant_history_turn_cap", 2)
+    for i in range(3):
+        await save_turn(
+            db_session,
+            conversation,
+            new_messages_json=_turn_json(f"q{i}", f"a{i}"),
+            usage=RunUsage(input_tokens=1, output_tokens=1),
+            records={},
+        )
+    history = await load_history(db_session, conversation.id)
+    texts = [item["text"] for item in render_transcript(history)]
+    # Only the most recent 2 turns survive, in chronological order.
+    assert texts == ["q1", "a1", "q2", "a2"]
+
+
 async def test_ordinals_increment_across_turns(db_session, conversation):
     await save_turn(
         db_session,

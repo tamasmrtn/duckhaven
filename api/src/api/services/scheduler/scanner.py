@@ -90,16 +90,6 @@ async def _dispatch_schedule(db: AsyncSession, schedule: Schedule, now: datetime
             logger.info("Scheduled run skipped (previous still running): schedule=%s", schedule.id)
             return False
 
-    # An assistant run produces a conversation turn, not a Query row, so it stamps
-    # its own last_run_at and returns early rather than flowing through the
-    # Query-centric tail below.
-    if schedule.job_type == "assistant_run":
-        schedule.next_run_at = advance
-        ran = await _run_assistant(db, schedule, now)
-        if ran:
-            schedule.last_run_at = now
-        return ran
-
     if schedule.job_type == "saved_query":
         query = await _run_saved_query(db, schedule, now)
     else:
@@ -171,54 +161,6 @@ async def _run_saved_query(db: AsyncSession, schedule: Schedule, now: datetime) 
 
     saved.last_run_at = now
     return query
-
-
-async def _run_assistant(db: AsyncSession, schedule: Schedule, now: datetime) -> bool:
-    """Run one unattended assistant turn from the schedule's prompt.
-
-    Creates a headless conversation owned by the schedule's creator and runs a
-    single turn to completion. Returns True if a run was attempted. A write that
-    would need interactive approval is declined by ``run_turn`` (no human present).
-
-    No durable execution: if the process dies mid-run the turn is lost; the next
-    tick simply starts a fresh run. Skip-if-running is not tracked for assistant
-    runs (they produce no ``Query`` row), which is acceptable for short turns.
-    """
-    if not settings.assistant_enabled or not schedule.assistant_prompt:
-        logger.warning(
-            "assistant_run schedule %s skipped (assistant disabled or no prompt)", schedule.id
-        )
-        return False
-    workspace = await db.get(Workspace, schedule.workspace_id)
-    if workspace is None:
-        return False
-
-    from api.db.session import async_session_factory
-    from api.models.assistant import AssistantConversation
-    from api.services.assistant.runner import run_turn
-
-    conversation = AssistantConversation(
-        workspace_id=workspace.id,
-        user_id=schedule.created_by,
-        title=f"Scheduled run {now:%Y-%m-%d %H:%M}",
-    )
-    db.add(conversation)
-    await db.flush()
-    conversation_id = conversation.id
-    # Commit so run_turn's own sessions can load the conversation.
-    await db.commit()
-
-    try:
-        await run_turn(
-            async_session_factory,
-            conversation_id=conversation_id,
-            workspace_id=workspace.id,
-            workspace_slug=workspace.slug,
-            prompt=schedule.assistant_prompt,
-        )
-    except Exception as exc:  # noqa: BLE001 — one bad run never blocks the cycle
-        logger.warning("Scheduled assistant run failed: schedule=%s err=%s", schedule.id, exc)
-    return True
 
 
 async def _resolve_agent(

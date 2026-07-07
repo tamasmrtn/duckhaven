@@ -69,10 +69,3 @@ The assistant acts as a service account you control. To turn it on:
 
 Because access is per workspace, you can safely enable one assistant across many workspaces and let each workspace's
 grants decide what it can reach.
-
-## Scheduled runs
-
-An assistant turn can also run unattended on a schedule (for example, a nightly data-quality summary). This is a
-schedule **job type**; create it alongside your other [scheduled jobs](schedule-queries.md) by choosing the assistant
-job type and providing the prompt to run. A scheduled run has no human present, so any write it proposes is declined
-rather than approved.

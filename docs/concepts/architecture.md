@@ -214,12 +214,12 @@ surface:
 
 | Directory | Responsibility |
 |---|---|
-| `routers/` | HTTP/WS endpoints. One module per resource: `auth`, `workspaces`, `schemas` (catalog DDL + table sample), `queries`, `agents`, `health`, `setup`, plus `agents_ws` (the agent WebSocket) and `admin/` (`agents`, `storage`, `users`, `maintenance`). |
+| `routers/` | HTTP/WS endpoints. One module per resource: `auth`, `workspaces`, `catalogs` (attach/detach + storage-backend migration control), `schemas` (catalog DDL + table sample), `queries`, `agents`, `grants` (scoped access-grant admin API), `assistant` (SSE chat + write-approval), `health`, `setup`, plus `agents_ws` (the agent WebSocket) and `admin/` (`agents`, `storage`, `users`, `maintenance`, `service_accounts`). |
 | `services/` | Business logic, framework-free. The interesting code lives here (see below). |
 | `models/` | SQLAlchemy ORM models = the Postgres schema. |
 | `schemas/` | Pydantic request/response DTOs (distinct from ORM models). |
 | `db/` | Engine/session setup (`session.py`) and the declarative `Base`. |
-| `deps.py` | FastAPI dependencies: `get_db`, `get_current_user`, `get_polaris_client`. |
+| `deps.py` | FastAPI dependencies: `get_db`, `get_current_user` (session cookie **or** PAT bearer token), `get_polaris_client`. |
 | `config.py` | `pydantic-settings` config (DB URL, Polaris URL + client credentials, cookie/secret settings). |
 | `alembic/` | Database migrations. Applied automatically by the container entrypoint in production. |
 
@@ -234,6 +234,9 @@ surface:
 | `services/agent_capabilities.py` | Maps a backend kind to its required DuckDB extension and checks an agent's advertised capabilities at dispatch time. | `routers/queries.py` |
 | `services/workspace.py` | Membership/role checks (`assert_workspace_member`), workspace lookup, lazy Polaris catalog creation (`ensure_polaris_catalog`), backend→storage mapping (`polaris_storage`). | Polaris, the `Workspace`/`WorkspaceMember` models |
 | `services/auth.py` | bcrypt password hashing/verification and session-cookie handling. | `routers/auth.py`, `routers/setup.py` |
+| `services/grants.py` | Scoped-access grant resolution: walks the `table → schema → catalog` hierarchy (inherits downward, including future tables), additive/no-deny, effective tier capped at the workspace role. Extracts referenced objects from SQL via `sqlglot`. | `routers/schemas.py` (browsing filter/404), `services/query.py::dispatch_query` (per-table enforcement), `routers/grants.py` (admin API) |
+| `services/assistant/` | The governed AI data assistant (package, not a single module). Thin tools that are authenticated loopback calls to DuckHaven's own REST API (`httpx` + `ASGITransport`) so authorization never leaves the normal API boundary; wraps them in a governance/audit capability; mints an ephemeral per-turn PAT as the assistant's identity; persists conversation state to Postgres; runs turns via Pydantic AI with human-in-the-loop write approval. | `routers/assistant.py`, the loopback REST API, Pydantic AI, `services/grants.py`/`sql_guard.py` (via the loopback) |
+| `services/migration/` | The catalog storage-backend migration engine (package): a `pending → copying → verifying → cutover → completed` state machine run by a leader-elected background loop (Postgres advisory lock). Provisions a shadow Polaris catalog at the target backend, copies/rewrites Iceberg files, verifies snapshot counts, then atomically re-points the catalog row at cutover; all progress is checkpointed so a crash resumes from the last completed table. | `routers/catalogs.py`, Polaris, the storage backends |
 
 ### 6.3 `agent/` — `duckhaven-agent` (compute)
 
@@ -329,8 +332,13 @@ erDiagram
     catalogs ||--o{ catalog_grants : "scoped access"
     users ||--o{ catalog_grants : "granted to"
     catalogs }o--|| storage_backends : "pinned to (1)"
+    catalogs ||--o{ catalog_migrations : migrates
     agents ||--o{ credentials : "session token"
     agents ||--o{ queries : executes
+    workspaces ||--o{ assistant_conversations : has
+    users ||--o{ assistant_conversations : owns
+    assistant_conversations ||--o{ assistant_messages : contains
+    assistant_messages ||--o{ assistant_tool_calls : logs
 
     users {
         uuid id
@@ -418,12 +426,53 @@ erDiagram
         bigint size_bytes
         datetime last_write_at
     }
+    catalog_migrations {
+        uuid id
+        uuid catalog_id
+        uuid source_backend_id
+        uuid target_backend_id
+        string status
+        jsonb progress
+    }
+    assistant_conversations {
+        uuid id
+        uuid workspace_id
+        uuid user_id
+        string title
+    }
+    assistant_messages {
+        uuid id
+        uuid conversation_id
+        jsonb model_messages
+    }
+    assistant_tool_calls {
+        uuid id
+        uuid message_id
+        string tool_name
+        jsonb args
+        jsonb result
+    }
 ```
 
 Notes that matter for changes:
 
-- **`credentials` is polymorphic** by `kind`: user `session`, agent
-  `agent_bootstrap` (single-use), and agent `agent_session` (long-lived).
+- **`credentials` is polymorphic** by `kind`: user `session`, user `pat`
+  (a bearer-token Personal Access Token, hashed with SHA-256 for O(1)
+  lookup-by-hash, operator-chosen expiry), agent `agent_bootstrap`
+  (single-use), and agent `agent_session` (long-lived).
+- **`workspace_catalogs.access_mode`** is `open` (today's default — the
+  workspace role applies uniformly) or `scoped` (per-principal
+  `catalog_grants` narrow access below the workspace role; see
+  [Permissions](permissions.md)).
+- **`catalog_migrations`** tracks a storage-backend migration's state machine
+  (`pending → copying → verifying → cutover → completed`) plus per-table and
+  event-log detail tables (checkpointed so a crash resumes from the last
+  completed table); see `services/migration/`.
+- **`assistant_conversations`/`assistant_messages`/`assistant_tool_calls`**
+  persist the AI assistant's chat history: one conversation per worksheet
+  session, its messages serialized via Pydantic AI's
+  `ModelMessagesTypeAdapter`, and each tool invocation logged for audit; see
+  `services/assistant/`.
 - **`agents.capabilities`** is the last advertised `AgentCapabilities` JSON;
   `result_host`/`result_port` tell the API where to fetch the result Parquet.
 - **`queries` is also the audit log** — there is no separate audit table.
@@ -586,6 +635,7 @@ presents as a Bearer credential when reading result rows.
 | **Apache Polaris** | Iceberg REST catalog: metadata authority + vendor of short-lived storage credentials (via access delegation). | `api/.../services/polaris.py` |
 | **Storage backends** | Where Iceberg tables physically live (all object storage): `object_store` (bundled MinIO, `httpfs`), S3 (`httpfs`), ADLS Gen 2 (`azure`). One per workspace. | `agent/.../executor/runner.py` (iceberg attach), `StorageBackend` model |
 | **Postgres** | State-of-record for DuckHaven entities + the Polaris metastore. | `api/.../db/`, `models/` |
+| **AI model providers (opt-in)** | Backs the AI data assistant: OpenAI, Anthropic, or Mistral SDKs via Pydantic AI, plus any OpenAI-compatible `base_url` (Ollama, vLLM, Azure OpenAI). Config-driven, disabled by default. | `api/.../services/assistant/agent.py` |
 | **Tailscale (operational)** | Recommended private network providing the transport-layer security perimeter. Not a code dependency. | deployment only |
 
 ---

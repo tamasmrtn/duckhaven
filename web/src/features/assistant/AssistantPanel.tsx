@@ -3,7 +3,7 @@ import {
   Sparkles,
   Plus,
   Send,
-  Square,
+  CircleStop,
   X,
   ChevronRight,
   ChevronDown,
@@ -231,7 +231,7 @@ export function AssistantPanel({ ws }: { ws: string }) {
               onClick={chat.stop}
               aria-label="Stop"
             >
-              <Square className="size-4" />
+              <CircleStop className="size-4" />
             </Button>
           ) : (
             <Button

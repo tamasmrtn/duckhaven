@@ -12,10 +12,12 @@ DuckHaven is a self-hosted analytics platform that lets a team write, schedule,
 maintain, and govern SQL over DuckDB. It started as collaborative browser
 worksheets and grew to cover the lifecycle around them: a governed Apache Iceberg
 catalog (via Apache Polaris), recurring scheduled queries, an advisory lakehouse
-maintenance scanner, single sign-on, and bring-your-own object storage. It is
-deliberately right-sized — lightweight enough for a homelab, serious enough for a
-team — not an enterprise lakehouse for petabyte fleets. No cloud warehouse
-lock-in, no Kubernetes, no opaque billing, no platform team required.
+maintenance scanner, single sign-on, and bring-your-own object storage — plus
+fine-grained catalog/schema/table access grants, machine identities for
+automation, and a governed AI data assistant. It is deliberately right-sized —
+lightweight enough for a homelab, serious enough for a team — not an
+enterprise lakehouse for petabyte fleets. No cloud warehouse lock-in, no
+Kubernetes, no opaque billing, no platform team required.
 
 **Documentation:** <https://tamasmrtn.github.io/duckhaven/>
 
@@ -86,6 +88,15 @@ network privacy, and no SaaS lock-in.
 
 - **Governed workspaces** — Per-workspace roles (reader / writer / owner) on top
   of global admin / user roles.
+- **Scoped access grants** — Go below the workspace role: grant reader / writer
+  / discovery-only `metadata` access at the catalog, schema, or table level,
+  inherited downward and capped at the workspace role. Opt-in per catalog
+  attachment (`open` vs `scoped`); today's uniform-role behavior is the
+  unchanged default.
+- **Machine auth** — DuckHaven-native service accounts (first-class RBAC
+  members, not a parallel system) with Personal Access Tokens for scripts,
+  automation, and the AI assistant's own governed identity. Operator-chosen
+  expiry (30d / 90d / 1y / never).
 - **Single sign-on** — Local accounts plus OIDC SSO (multiple providers) and
   LDAP / Active Directory, with just-in-time user provisioning and IdP
   group → role mapping.
@@ -113,11 +124,20 @@ network privacy, and no SaaS lock-in.
 - **Highly available (opt-in)** — The default deploy is single-node; an opt-in
   topology adds HA Postgres plus multiple API replicas behind a load balancer on
   the same Compose foundation.
+- **AI data assistant (opt-in)** — A governed, model-agnostic chat assistant
+  (OpenAI / Anthropic / Mistral / Ollama-compatible) that browses catalog
+  metadata, authors and runs SQL, and proposes worksheet edits with
+  diff-highlighted Accept/Reject — running as an audited service-account
+  principal through the same enforcement chokepoints as a human user. Disabled
+  by default.
 
 ### Storage
 
-- **Bring your own storage** — One backend per workspace, pinned at create time:
-  bundled object storage (MinIO), AWS S3, or Azure ADLS Gen 2.
+- **Bring your own storage** — One backend per workspace: bundled object
+  storage (MinIO), AWS S3, or Azure ADLS Gen 2.
+- **Live storage migration** — Move a catalog to a different backend after
+  creation (e.g. bundled MinIO → S3, or S3 → ADLS) without losing data or
+  Iceberg snapshot history, via a checkpointed background migration engine.
 - **Short-lived credentials** — Polaris vends temporary, connection-scoped storage
   credentials per query (S3 assume-role → STS, ADLS → Entra-minted SAS). No
   long-lived secrets ever land on agents.
@@ -251,13 +271,20 @@ cutting a new release see [docs/developer/releasing.md](docs/developer/releasing
   (HA Postgres + multiple API replicas behind a load balancer), and
   [catalog storage-backend migration](docs/guides/migrate-catalog-storage.md)
   (move a catalog to a different backend after creation, preserving all data and
-  Iceberg snapshot history).
+  Iceberg snapshot history), [fine-grained catalog/schema/table access
+  grants](docs/guides/access-levels.md) with an opt-in scoped access mode and a
+  discovery-only `metadata` tier, [DuckHaven-native service accounts and
+  Personal Access Tokens](docs/guides/service-accounts.md) for machine auth,
+  and a [governed AI data assistant](docs/concepts/assistant.md) (model-agnostic,
+  Pydantic AI) that browses the catalog, authors and runs SQL, and proposes
+  worksheet edits as an audited service-account principal.
 - **In progress** — Finishing the Polaris `storageConfigInfo` credential wiring
   (role ARN / tenant) so external S3 / ADLS Gen 2 backends are production-ready
   outside the opt-in integration tests.
 - **Future** — Notebook UI, heterogeneous engines (Spark, Trino, Polars),
   Polaris RBAC permission mirroring, Grafana dashboards, off-box result
-  durability / DR automation.
+  durability / DR automation, and for the AI assistant: an MCP server, chart
+  generation, RAG over table contents, and multi-agent workflows.
 
 See [docs/concepts/architecture.md](docs/concepts/architecture.md) §13 for the gap tracker.
 

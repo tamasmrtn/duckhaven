@@ -26,8 +26,8 @@ hide:
 
     ---
 
-    Per-workspace permissions, Apache Polaris catalog integration, and a full audit trail of who ran what,
-    where, and when.
+    Per-workspace permissions scoped down to catalog/schema/table grants, service-account machine auth,
+    Apache Polaris catalog integration, and a full audit trail of who ran what, where, and when.
 
 -   :material-server-network:{ .lg .middle } __Transparent compute__
 
@@ -49,6 +49,13 @@ hide:
 
     After each run, inspect an interactive operator graph with rows, bytes, and timing per step, plus flags
     for spills, scan blow-ups, and bad estimates.
+
+-   :material-robot:{ .lg .middle } __AI data assistant__
+
+    ---
+
+    An opt-in, governed chat assistant that browses the catalog, writes and runs SQL, and proposes
+    worksheet edits — audited like any other user.
 
 </div>
 

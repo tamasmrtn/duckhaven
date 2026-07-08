@@ -3,8 +3,9 @@
 DuckHaven is a **self-hosted, governed DuckDB + Iceberg analytics platform** for small teams (roughly 2–10 users). It
 started as collaborative browser worksheets over [DuckDB](https://duckdb.org/) and Apache Iceberg tables governed by
 [Apache Polaris](https://polaris.apache.org/), and grew to cover the lifecycle around them: scheduled queries, an
-advisory lakehouse maintenance scanner, single sign-on, per-workspace permissions, and a full audit trail — without a
-cloud warehouse, Kubernetes, or a platform team.
+advisory lakehouse maintenance scanner, single sign-on, per-workspace permissions, fine-grained access grants, machine
+auth, a governed AI data assistant, and a full audit trail — without a cloud warehouse, Kubernetes, or a platform
+team.
 
 ## The problem it solves
 
@@ -16,7 +17,10 @@ billing, and no surprise costs.
 
 - **Browser worksheets** — a Monaco SQL editor with tabs, a results grid, and CSV export.
 - **A shared catalog** — browse schemas and tables, with sample rows and Iceberg snapshot history.
-- **Governed workspaces** — per-workspace roles, single sign-on (OIDC/LDAP), and a complete audit log of who ran what.
+- **Governed workspaces** — per-workspace roles, scoped catalog/schema/table grants, service-account machine auth,
+  single sign-on (OIDC/LDAP), and a complete audit log of who ran what.
+- **AI assistant** — an opt-in, governed chat assistant that browses the catalog, writes and runs SQL, and proposes
+  worksheet edits under the same enforcement as a human user.
 - **Transparent compute** — you pick the DuckDB [agent](agents.md) per query; nothing is hidden behind an optimizer.
 - **Scheduled queries** — run saved queries on a cron schedule, with per-schedule run history.
 - **Lakehouse maintenance** — a background advisor scores catalog health and recommends compaction and cleanup.

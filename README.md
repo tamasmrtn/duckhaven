@@ -329,4 +329,6 @@ vending.
 
 ## License
 
-GNU Affero General Public License v3.0 (AGPLv3). See [LICENSE](LICENSE) for details.
+Copyright (c) 2026 DuckHaven Contributors.
+Licensed under the GNU Affero General Public License v3.0 or later
+(AGPL-3.0-or-later). See [LICENSE](LICENSE) for details.

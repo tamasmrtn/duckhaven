@@ -9,7 +9,7 @@ site_url: https://tamasmrtn.github.io/duckhaven/
 repo_url: https://github.com/tamasmrtn/duckhaven
 repo_name: tamasmrtn/duckhaven
 edit_uri: edit/main/docs/
-copyright: Copyright &copy; DuckHaven Contributors — MIT License
+copyright: Copyright &copy; DuckHaven Contributors — AGPLv3 License
 
 theme:
   name: material

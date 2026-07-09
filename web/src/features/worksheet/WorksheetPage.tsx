@@ -298,12 +298,14 @@ export function WorksheetPage() {
     explanation: string;
   } | null>(null);
   const currentSqlRef = useRef("");
+  const resolvedCatalogRef = useRef<string | undefined>(undefined);
   const proposeEditRef = useRef<(sql: string, explanation: string) => void>(
     () => {},
   );
 
   const currentTab = tabs.find((t) => t.id === activeTab);
   currentSqlRef.current = currentTab?.sql ?? "";
+  resolvedCatalogRef.current = resolvedCatalog;
   const dispatchQuery = useDispatchQuery(ws);
   const cancelQuery = useCancelQuery();
   const saveQuery = useSaveQuery(ws);
@@ -355,6 +357,7 @@ export function WorksheetPage() {
       getSql: () => currentSqlRef.current,
       proposeEdit: (sql, explanation) =>
         proposeEditRef.current(sql, explanation),
+      getCatalog: () => resolvedCatalogRef.current ?? null,
     };
     return () => {
       assistantEditorRef.current = null;

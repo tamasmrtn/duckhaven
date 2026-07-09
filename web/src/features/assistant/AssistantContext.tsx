@@ -15,6 +15,9 @@ import {
 export interface EditorBridge {
   getSql: () => string;
   proposeEdit: (sql: string, explanation: string) => void;
+  // The catalog currently USEd for unqualified names in the worksheet, so the
+  // assistant resolves table names against what the user is looking at.
+  getCatalog: () => string | null;
 }
 
 interface AssistantContextValue {

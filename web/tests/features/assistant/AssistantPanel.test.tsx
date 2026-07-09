@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { http, HttpResponse } from "msw";
 import { renderWithProviders } from "@tests/utils";
+import { server } from "@tests/mock/server";
 import { setAssistantEnabled } from "@/mock/fixtures/assistant";
 
 // The panel is a right-side dock opened from the top bar; render a workspace page
@@ -77,6 +79,35 @@ describe("AssistantPanel", () => {
     expect(
       await screen.findByText("Here is what I found."),
     ).toBeInTheDocument();
+  });
+
+  it("sends the worksheet's active catalog with every turn", async () => {
+    let capturedBody: { catalog?: string | null } | null = null;
+    server.use(
+      http.post(
+        "/api/workspaces/:ws/assistant/conversations/:id/messages",
+        async ({ request }) => {
+          capturedBody = (await request.json()) as { catalog?: string | null };
+          return new HttpResponse(
+            `data: ${JSON.stringify({ type: "token", text: "ok" })}\n\ndata: ${JSON.stringify(
+              { type: "done", message_id: "msg-x", usage: { input: 1, output: 1 } },
+            )}\n\n`,
+            { headers: { "Content-Type": "text/event-stream" } },
+          );
+        },
+      ),
+    );
+
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    await user.type(screen.getByLabelText("Message"), "how many rows?");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(capturedBody).not.toBeNull());
+    expect(capturedBody?.catalog).toBe("acme_analytics");
   });
 
   it("shows a Stop button while streaming and aborts on click", async () => {

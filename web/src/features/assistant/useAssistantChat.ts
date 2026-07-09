@@ -10,6 +10,9 @@ interface LiveTool {
 interface ChatOptions {
   // Current worksheet SQL to send as context (so the assistant can edit it).
   getEditorSql?: () => string | null;
+  // The catalog the worksheet is USEing, so unqualified names resolve against
+  // what the user is looking at instead of the workspace default.
+  getCatalog?: () => string | null;
   // Apply an assistant-proposed edit to the worksheet editor.
   onProposeEdit?: (sql: string, explanation: string) => void;
 }
@@ -24,7 +27,7 @@ export function useAssistantChat(
   conversationId: string | null,
   options: ChatOptions = {},
 ) {
-  const { getEditorSql, onProposeEdit } = options;
+  const { getEditorSql, getCatalog, onProposeEdit } = options;
   const qc = useQueryClient();
   const [streaming, setStreaming] = useState(false);
   const [streamingText, setStreamingText] = useState("");
@@ -111,11 +114,12 @@ export function useAssistantChat(
         id,
         streamMessage(ws, id, prompt, {
           editorSql: getEditorSql?.() ?? null,
+          catalog: getCatalog?.() ?? null,
           signal: controller.signal,
         }),
       );
     },
-    [ws, streaming, consume, getEditorSql],
+    [ws, streaming, consume, getEditorSql, getCatalog],
   );
 
   const resolveApproval = useCallback(

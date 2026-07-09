@@ -45,6 +45,42 @@ describe("AssistantPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows a follow-up chip linking to the last query's result", async () => {
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    const link = screen.getByRole("link", { name: "View full result" });
+    expect(link).toHaveAttribute(
+      "href",
+      "/acme-analytics/queries/q-1",
+    );
+    // The follow-up chip focuses the composer instead of submitting anything.
+    await user.click(screen.getByRole("button", { name: "Ask a follow-up" }));
+    expect(screen.getByLabelText("Message")).toHaveFocus();
+  });
+
+  it("suggests catalog-scoped starter prompts on a fresh conversation", async () => {
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: "/acme-research/worksheets" });
+    await openPanel(user);
+
+    const starter = await screen.findByRole("button", {
+      name: "What tables are in acme_research?",
+    });
+    await user.click(starter);
+
+    // Clicking a starter prompt submits it immediately, like typing and sending;
+    // the starter chips disappear once the turn is under way.
+    expect(
+      await screen.findByText("Here is what I found."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "What tables are in acme_research?" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("collapses the Activity trace by default and expands it on click", async () => {
     const user = userEvent.setup();
     renderWithProviders({ initialRoute: ROUTE });

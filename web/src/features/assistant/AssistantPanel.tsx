@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Link } from "@tanstack/react-router";
 import {
   Sparkles,
   Plus,
@@ -24,6 +25,7 @@ import {
   useConversations,
   useCreateConversation,
 } from "@/queries/assistant";
+import { useCatalogs } from "@/queries/catalogs";
 import { EmptyState } from "@/components/app/EmptyState";
 import { cn } from "@/utils";
 import { useAssistant } from "./AssistantContext";
@@ -32,12 +34,33 @@ import { ToolCallCard } from "./ToolCallCard";
 import { WriteApprovalDialog } from "./WriteApprovalDialog";
 import { useAssistantChat } from "./useAssistantChat";
 
+const GENERIC_STARTER_PROMPTS = [
+  "What data do I have access to?",
+  "Help me write a SQL query.",
+];
+
+/** 2-3 example prompts scoped to the workspace's actual catalogs, so the empty
+ * state suggests something concrete instead of a blank composer. */
+function starterPrompts(catalogSlugs: string[]): string[] {
+  if (catalogSlugs.length === 0) return GENERIC_STARTER_PROMPTS;
+  const [first, second] = catalogSlugs;
+  const prompts = [`What tables are in ${first}?`];
+  if (second) {
+    prompts.push(`Compare the schemas in ${first} and ${second}.`);
+  } else {
+    prompts.push(`Describe a table in ${first}.`);
+  }
+  prompts.push(`Show me a sample of data from ${first}.`);
+  return prompts;
+}
+
 export function AssistantPanel({ ws }: { ws: string }) {
   const { closePanel, editorRef } = useAssistant();
   const { data: status } = useAssistantStatus(ws);
   const enabled = status?.enabled === true;
   const disabled = status?.enabled === false;
   const { data: conversations = [] } = useConversations(ws, { enabled });
+  const { data: catalogs = [] } = useCatalogs(ws);
   const createConversation = useCreateConversation(ws);
   const [picked, setPicked] = useState<string | null>(null);
 
@@ -76,12 +99,13 @@ export function AssistantPanel({ ws }: { ws: string }) {
   // Activity (tool-call trace) is collapsed by default — it can get long.
   const [activityOpen, setActivityOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [detail?.transcript.length, chat.streamingText, chat.liveTools.length]);
 
-  const submit = async () => {
-    const prompt = draft.trim();
+  const submit = async (overrideText?: string) => {
+    const prompt = (overrideText ?? draft).trim();
     if (!prompt || chat.streaming || disabled) return;
     let id = effectiveId;
     if (!id) {
@@ -171,9 +195,27 @@ export function AssistantPanel({ ws }: { ws: string }) {
         <ScrollArea className="flex-1">
           <div className="flex flex-col gap-3 p-3">
             {!detail && !chat.pendingUserMessage && !chat.streaming && (
-              <p className="text-sm text-text-tertiary">
-                Ask about your data, or ask me to write SQL in your worksheet.
-              </p>
+              <EmptyState
+                icon={Sparkles}
+                title="Ask about your data"
+                description="Or ask me to write SQL in your worksheet."
+                action={
+                  <div className="flex flex-col items-center gap-1.5">
+                    {starterPrompts(catalogs.map((c) => c.slug)).map(
+                      (prompt) => (
+                        <button
+                          key={prompt}
+                          type="button"
+                          onClick={() => void submit(prompt)}
+                          className="rounded-full border border-[var(--border-subtle)] px-3 py-1 text-xs text-text-secondary hover:border-[var(--brand-slate-blue)] hover:text-text-primary"
+                        >
+                          {prompt}
+                        </button>
+                      ),
+                    )}
+                  </div>
+                }
+              />
             )}
             {detail?.transcript.map((item, i) => (
               <Bubble
@@ -225,6 +267,36 @@ export function AssistantPanel({ ws }: { ws: string }) {
                 {chat.error}
               </p>
             )}
+            {!chat.streaming &&
+              !chat.pending &&
+              detail &&
+              detail.transcript.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {(() => {
+                    const lastQuery = [...detail.tool_calls]
+                      .reverse()
+                      .find((c) => c.tool === "run_sql" && c.query_id);
+                    return (
+                      lastQuery && (
+                        <Link
+                          to="/$ws/queries/$queryId"
+                          params={{ ws, queryId: lastQuery.query_id! }}
+                          className="rounded-full border border-[var(--border-subtle)] px-3 py-1 text-xs text-text-secondary hover:border-[var(--brand-slate-blue)] hover:text-text-primary"
+                        >
+                          View full result
+                        </Link>
+                      )
+                    );
+                  })()}
+                  <button
+                    type="button"
+                    onClick={() => composerRef.current?.focus()}
+                    className="rounded-full border border-[var(--border-subtle)] px-3 py-1 text-xs text-text-secondary hover:border-[var(--brand-slate-blue)] hover:text-text-primary"
+                  >
+                    Ask a follow-up
+                  </button>
+                </div>
+              )}
             <div ref={bottomRef} />
           </div>
         </ScrollArea>
@@ -234,6 +306,7 @@ export function AssistantPanel({ ws }: { ws: string }) {
       <div className="border-t border-[var(--border-subtle)] p-2">
         <div className="flex items-end gap-2">
           <textarea
+            ref={composerRef}
             aria-label="Message"
             value={draft}
             disabled={disabled}

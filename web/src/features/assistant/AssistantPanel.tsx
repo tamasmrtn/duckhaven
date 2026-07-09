@@ -210,6 +210,21 @@ export function AssistantPanel({ ws }: { ws: string }) {
             {chat.pendingUserMessage && (
               <Bubble role="user" text={chat.pendingUserMessage} />
             )}
+            {chat.error && (
+              <div className="max-w-[90%] self-start space-y-1.5">
+                <p className="text-sm text-destructive" role="alert">
+                  {chat.error}
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  onClick={chat.regenerate}
+                >
+                  Retry
+                </Button>
+              </div>
+            )}
             {chat.streamingText && (
               <Bubble role="assistant" text={chat.streamingText} />
             )}
@@ -244,11 +259,23 @@ export function AssistantPanel({ ws }: { ws: string }) {
                   ))}
               </div>
             )}
-            {chat.error && (
-              <p className="text-sm text-destructive" role="alert">
-                {chat.error}
-              </p>
-            )}
+            {!chat.streaming &&
+              !chat.pending &&
+              !chat.error &&
+              chat.canRegenerate &&
+              detail &&
+              detail.transcript.length > 0 &&
+              detail.transcript[detail.transcript.length - 1].role ===
+                "assistant" && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 self-start text-xs text-text-tertiary"
+                  onClick={chat.regenerate}
+                >
+                  Regenerate
+                </Button>
+              )}
             {!chat.streaming &&
               !chat.pending &&
               detail &&

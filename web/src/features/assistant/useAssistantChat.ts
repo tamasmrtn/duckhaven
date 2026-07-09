@@ -44,6 +44,17 @@ export function useAssistantChat(
   );
   // Aborts the in-flight turn's stream (the Stop button).
   const abortRef = useRef<AbortController | null>(null);
+  // The most recently sent prompt, for Retry/Regenerate — kept independent of
+  // pendingUserMessage (which only lives as long as its bubble is shown).
+  // Tagged with the conversation it was sent to, so switching conversations
+  // never resends the old one into the newly selected chat: canRegenerate is
+  // derived each render from that comparison rather than reset via an effect.
+  const [lastPrompt, setLastPrompt] = useState<{
+    text: string;
+    conversationId: string;
+  } | null>(null);
+  const canRegenerate =
+    lastPrompt !== null && lastPrompt.conversationId === conversationId;
 
   const consume = useCallback(
     async (
@@ -54,6 +65,7 @@ export function useAssistantChat(
       setError(null);
       setStreamingText("");
       setLiveTools([]);
+      let sawError = false;
       try {
         for await (const frame of frames) {
           if (frame.type === "token") {
@@ -70,6 +82,7 @@ export function useAssistantChat(
             onProposeEdit?.(frame.sql, frame.explanation, frame.scoped);
           } else if (frame.type === "error") {
             setError(frame.message);
+            sawError = true;
           }
         }
       } catch (err) {
@@ -77,6 +90,7 @@ export function useAssistantChat(
           setError(
             err instanceof Error ? err.message : "The assistant failed.",
           );
+          sawError = true;
         }
       } finally {
         // Cancelling the reader on Stop ends the loop without throwing, so the
@@ -100,7 +114,11 @@ export function useAssistantChat(
           setLiveTools([]);
           // Cleared after the refetch settles, so the persisted transcript (which
           // now includes this message) replaces the optimistic echo seamlessly.
-          setPendingUserMessage(null);
+          // On error, keep it shown so the failure is anchored to the prompt that
+          // caused it and Retry has something to resend.
+          if (!sawError) {
+            setPendingUserMessage(null);
+          }
         }
       }
     },
@@ -110,6 +128,7 @@ export function useAssistantChat(
   const send = useCallback(
     (prompt: string, id: string) => {
       if (streaming) return;
+      setLastPrompt({ text: prompt, conversationId: id });
       setPendingUserMessage(prompt);
       const controller = new AbortController();
       abortRef.current = controller;
@@ -125,6 +144,16 @@ export function useAssistantChat(
     },
     [ws, streaming, consume, getEditorSql, getCatalog, getSelection],
   );
+
+  // Resend the last prompt as a new turn — used for both an inline Retry after
+  // an error and a Regenerate on the last completed answer. Since turns are
+  // append-only (no in-place overwrite), this adds a new turn rather than
+  // replacing the previous one.
+  const regenerate = useCallback(() => {
+    if (canRegenerate && lastPrompt && conversationId) {
+      send(lastPrompt.text, conversationId);
+    }
+  }, [send, conversationId, canRegenerate, lastPrompt]);
 
   const resolveApproval = useCallback(
     (approved: boolean) => {
@@ -154,7 +183,9 @@ export function useAssistantChat(
     pending,
     error,
     pendingUserMessage,
+    canRegenerate,
     send,
+    regenerate,
     resolveApproval,
     stop,
   };

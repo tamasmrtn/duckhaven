@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { renderWithProviders } from "@tests/utils";
 import { server } from "@tests/mock/server";
-import { setAssistantEnabled } from "@/mock/fixtures/assistant";
+import { CONVERSATIONS, setAssistantEnabled } from "@/mock/fixtures/assistant";
 
 // The panel is a right-side dock opened from the top bar; render a workspace page
 // so the worksheet editor bridge is live for the propose-edit test.
@@ -242,6 +242,78 @@ describe("AssistantPanel", () => {
 
     await waitFor(() => expect(capturedBody).not.toBeNull());
     expect(capturedBody?.catalog).toBe("acme_analytics");
+  });
+
+  it("shows an inline Retry on error and resends the same prompt on click", async () => {
+    let attempt = 0;
+    server.use(
+      http.post(
+        "/api/workspaces/:ws/assistant/conversations/:id/messages",
+        async ({ params, request }) => {
+          attempt += 1;
+          if (attempt === 1) {
+            return new HttpResponse(
+              `data: ${JSON.stringify({ type: "error", message: "The assistant hit an internal error." })}\n\n`,
+              { headers: { "Content-Type": "text/event-stream" } },
+            );
+          }
+          const conv = CONVERSATIONS.find((c) => c.id === params.id);
+          const { prompt } = (await request.json()) as { prompt: string };
+          conv?.transcript.push({ role: "user", text: prompt, sql: null });
+          conv?.transcript.push({
+            role: "assistant",
+            text: "Recovered.",
+            sql: null,
+          });
+          return new HttpResponse(
+            `data: ${JSON.stringify({ type: "token", text: "Recovered." })}\n\ndata: ${JSON.stringify(
+              { type: "done", message_id: "msg-retry", usage: { input: 1, output: 1 } },
+            )}\n\n`,
+            { headers: { "Content-Type": "text/event-stream" } },
+          );
+        },
+      ),
+    );
+
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    await user.type(screen.getByLabelText("Message"), "will this fail?");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(
+      await screen.findByText("The assistant hit an internal error."),
+    ).toBeInTheDocument();
+    // The failed prompt stays visible, anchoring the error to what caused it.
+    expect(screen.getByText("will this fail?")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("Recovered.")).toBeInTheDocument();
+    expect(
+      screen.queryByText("The assistant hit an internal error."),
+    ).not.toBeInTheDocument();
+    expect(attempt).toBe(2);
+  });
+
+  it("regenerates the last answer as a new turn", async () => {
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    await user.type(screen.getByLabelText("Message"), "how many rows total?");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findAllByText("Here is what I found.");
+
+    await user.click(screen.getByRole("button", { name: "Regenerate" }));
+
+    // Regenerating resends the same prompt as a new turn; both replies remain.
+    await waitFor(() =>
+      expect(screen.getAllByText("Here is what I found.")).toHaveLength(2),
+    );
+    expect(screen.getAllByText("how many rows total?")).toHaveLength(2);
   });
 
   it("shows a Stop button while streaming and aborts on click", async () => {

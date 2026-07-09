@@ -77,6 +77,7 @@ export async function* streamMessage(
   opts?: {
     catalog?: string | null;
     editorSql?: string | null;
+    selectionSql?: string | null;
     signal?: AbortSignal;
   },
 ): AsyncGenerator<AssistantFrame, void, unknown> {
@@ -90,6 +91,7 @@ export async function* streamMessage(
         prompt,
         catalog: opts?.catalog ?? null,
         editor_sql: opts?.editorSql ?? null,
+        selection_sql: opts?.selectionSql ?? null,
       }),
       signal: opts?.signal,
     },

@@ -14,10 +14,13 @@ import {
  */
 export interface EditorBridge {
   getSql: () => string;
-  proposeEdit: (sql: string, explanation: string) => void;
+  proposeEdit: (sql: string, explanation: string, scoped: boolean) => void;
   // The catalog currently USEd for unqualified names in the worksheet, so the
   // assistant resolves table names against what the user is looking at.
   getCatalog: () => string | null;
+  // The current non-empty text selection in the worksheet, if any, so a proposed
+  // edit can be scoped to just that fragment.
+  getSelection: () => { text: string; start: number; end: number } | null;
 }
 
 interface AssistantContextValue {

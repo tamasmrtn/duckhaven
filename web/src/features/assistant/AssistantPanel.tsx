@@ -55,14 +55,19 @@ export function AssistantPanel({ ws }: { ws: string }) {
     () => editorRef.current?.getCatalog() ?? null,
     [editorRef],
   );
+  const getSelection = useCallback(
+    () => editorRef.current?.getSelection() ?? null,
+    [editorRef],
+  );
   const onProposeEdit = useCallback(
-    (sql: string, explanation: string) =>
-      editorRef.current?.proposeEdit(sql, explanation),
+    (sql: string, explanation: string, scoped: boolean) =>
+      editorRef.current?.proposeEdit(sql, explanation, scoped),
     [editorRef],
   );
   const chat = useAssistantChat(ws, effectiveId, {
     getEditorSql,
     getCatalog,
+    getSelection,
     onProposeEdit,
   });
 

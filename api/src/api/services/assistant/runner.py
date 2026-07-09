@@ -77,8 +77,13 @@ def _sse(frame: dict) -> str:
     return f"data: {json.dumps(frame)}\n\n"
 
 
-def _event_to_frame(event) -> dict | None:
-    """Map a Pydantic AI stream event to a client SSE frame, or None to skip."""
+def _event_to_frame(event, *, scoped: bool) -> dict | None:
+    """Map a Pydantic AI stream event to a client SSE frame, or None to skip.
+
+    ``scoped`` reflects whether the request carried a worksheet selection — it
+    comes from request state, not the model's output, so a model that ignores the
+    scoping instructions can't mislabel a full-file rewrite as a scoped edit.
+    """
     if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
         if event.delta.content_delta:
             return {"type": "token", "text": event.delta.content_delta}
@@ -96,6 +101,7 @@ def _event_to_frame(event) -> dict | None:
                 "type": "propose_edit",
                 "sql": args.get("sql", ""),
                 "explanation": args.get("explanation", ""),
+                "scoped": scoped,
             }
         return {"type": "tool_call", "tool": part.tool_name, "args": args}
     return None
@@ -126,6 +132,7 @@ async def _turn_context(
     workspace_slug: str,
     catalog: str | None,
     editor_sql: str | None = None,
+    selection_sql: str | None = None,
 ) -> AsyncIterator[AssistantDeps]:
     """Resolve identity, mint an ephemeral PAT, and build the governed gateway."""
     async with session_factory() as db:
@@ -159,6 +166,7 @@ async def _turn_context(
                 query_timeout_s=_QUERY_TIMEOUT_S,
                 service_account_id=service_account_id,
                 editor_sql=editor_sql,
+                selection_sql=selection_sql,
             )
 
 
@@ -230,17 +238,19 @@ async def _stream(
     prompt: str | None,
     deferred_results: DeferredToolResults | None,
     editor_sql: str | None = None,
+    selection_sql: str | None = None,
 ) -> AsyncIterator[str]:
     require_enabled()
     async with _semaphore():
         async with _turn_context(
-            session_factory, workspace_id, workspace_slug, catalog, editor_sql
+            session_factory, workspace_id, workspace_slug, catalog, editor_sql, selection_sql
         ) as deps:
             queue: asyncio.Queue = asyncio.Queue()
+            scoped = deps.selection_sql is not None
 
             async def handler(ctx, events) -> None:
                 async for event in events:
-                    frame = _event_to_frame(event)
+                    frame = _event_to_frame(event, scoped=scoped)
                     if frame is not None:
                         await queue.put(frame)
 
@@ -321,6 +331,7 @@ def stream_turn(
     prompt: str,
     catalog: str | None,
     editor_sql: str | None = None,
+    selection_sql: str | None = None,
 ) -> AsyncIterator[str]:
     """Stream a new user turn as SSE frames."""
     return _stream(
@@ -332,6 +343,7 @@ def stream_turn(
         prompt=prompt,
         deferred_results=None,
         editor_sql=editor_sql,
+        selection_sql=selection_sql,
     )
 
 

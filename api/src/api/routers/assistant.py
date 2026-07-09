@@ -186,6 +186,7 @@ async def send_message(
         prompt=body.prompt,
         catalog=body.catalog,
         editor_sql=body.editor_sql,
+        selection_sql=body.selection_sql,
     )
     return StreamingResponse(stream, media_type="text/event-stream", headers=_SSE_HEADERS)
 

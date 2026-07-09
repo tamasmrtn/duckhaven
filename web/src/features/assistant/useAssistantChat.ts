@@ -13,8 +13,11 @@ interface ChatOptions {
   // The catalog the worksheet is USEing, so unqualified names resolve against
   // what the user is looking at instead of the workspace default.
   getCatalog?: () => string | null;
+  // The worksheet's current text selection, if any, so a proposed edit can be
+  // scoped to just that fragment.
+  getSelection?: () => { text: string; start: number; end: number } | null;
   // Apply an assistant-proposed edit to the worksheet editor.
-  onProposeEdit?: (sql: string, explanation: string) => void;
+  onProposeEdit?: (sql: string, explanation: string, scoped: boolean) => void;
 }
 
 /**
@@ -27,7 +30,7 @@ export function useAssistantChat(
   conversationId: string | null,
   options: ChatOptions = {},
 ) {
-  const { getEditorSql, getCatalog, onProposeEdit } = options;
+  const { getEditorSql, getCatalog, getSelection, onProposeEdit } = options;
   const qc = useQueryClient();
   const [streaming, setStreaming] = useState(false);
   const [streamingText, setStreamingText] = useState("");
@@ -64,7 +67,7 @@ export function useAssistantChat(
               sql: frame.sql,
             });
           } else if (frame.type === "propose_edit") {
-            onProposeEdit?.(frame.sql, frame.explanation);
+            onProposeEdit?.(frame.sql, frame.explanation, frame.scoped);
           } else if (frame.type === "error") {
             setError(frame.message);
           }
@@ -115,11 +118,12 @@ export function useAssistantChat(
         streamMessage(ws, id, prompt, {
           editorSql: getEditorSql?.() ?? null,
           catalog: getCatalog?.() ?? null,
+          selectionSql: getSelection?.()?.text ?? null,
           signal: controller.signal,
         }),
       );
     },
-    [ws, streaming, consume, getEditorSql, getCatalog],
+    [ws, streaming, consume, getEditorSql, getCatalog, getSelection],
   );
 
   const resolveApproval = useCallback(

@@ -60,6 +60,9 @@ class TurnRequest(BaseModel):
     catalog: str | None = None
     # Current worksheet-editor SQL, so the assistant can read and propose edits to it.
     editor_sql: str | None = Field(default=None, max_length=100_000)
+    # The user's current worksheet text selection, if non-empty, so a proposed edit
+    # can be scoped to just that fragment instead of rewriting the whole worksheet.
+    selection_sql: str | None = Field(default=None, max_length=100_000)
 
 
 class ApprovalRequest(BaseModel):

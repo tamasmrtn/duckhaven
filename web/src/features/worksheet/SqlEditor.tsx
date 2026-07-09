@@ -8,6 +8,10 @@ export interface SqlEditorHandle {
   // The SQL to run for the current cursor/selection: the selected text if any,
   // otherwise the single statement under the cursor.
   getRunPayload: () => string;
+  // The current non-empty text selection and its character offsets in the full
+  // document, or null if nothing is selected. Used to scope an AI-proposed edit
+  // to just the selected fragment instead of the whole worksheet.
+  getSelectionRange: () => { text: string; start: number; end: number } | null;
   // Highlight the lines that differ between the previous and proposed SQL, so an
   // AI-proposed edit is visually distinct from the user's own code.
   highlightDiff: (oldSql: string, newSql: string) => void;
@@ -131,6 +135,23 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
 
     useImperativeHandle(ref, () => ({
       getRunPayload: computeRunPayload,
+      getSelectionRange: () => {
+        const editor = editorRef.current;
+        const model = editor?.getModel();
+        const selection = editor?.getSelection();
+        if (!editor || !model || !selection || selection.isEmpty()) return null;
+        const text = model.getValueInRange(selection);
+        if (!text.trim()) return null;
+        const start = model.getOffsetAt({
+          lineNumber: selection.startLineNumber,
+          column: selection.startColumn,
+        });
+        const end = model.getOffsetAt({
+          lineNumber: selection.endLineNumber,
+          column: selection.endColumn,
+        });
+        return { text, start, end };
+      },
       highlightDiff: (oldSql: string, newSql: string) => {
         const editor = editorRef.current;
         const monaco = monacoRef.current;

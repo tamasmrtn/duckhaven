@@ -118,16 +118,31 @@ async def get_worksheet_sql(ctx: RunContext[AssistantDeps]) -> str:
     return ctx.deps.editor_sql or "(the worksheet editor is empty or not open)"
 
 
+async def get_worksheet_selection(ctx: RunContext[AssistantDeps]) -> str:
+    """Return the user's current text selection in the worksheet editor, if any.
+
+    Call this before proposing an edit when the user's request sounds like it's
+    about a specific part of the query ("this WHERE clause", "just this line").
+    If they have a selection, propose_sql_edit should replace only that fragment
+    instead of the whole worksheet. Returns a no-selection note otherwise.
+    """
+    return ctx.deps.selection_sql or "(no text is currently selected)"
+
+
 async def propose_sql_edit(ctx: RunContext[AssistantDeps], sql: str, explanation: str) -> str:
-    """Propose replacing the SQL in the user's worksheet editor.
+    """Propose replacing SQL in the user's worksheet editor.
 
     Use this when the user asks you to write, fix, or change the SQL in their
     editor. The proposed SQL is shown in their editor as a highlighted change that
-    they accept or reject — it is not executed. Always provide the complete new SQL
-    for the worksheet, not a fragment or a diff.
+    they accept or reject — it is not executed.
+
+    If get_worksheet_selection returned a non-empty selection, provide only the
+    replacement text for that selected fragment — do not repeat the rest of the
+    worksheet. Otherwise, provide the complete new SQL for the whole worksheet.
 
     Args:
-        sql: The full proposed SQL for the worksheet.
+        sql: The proposed SQL — a replacement for the selection if one exists,
+            otherwise the complete new SQL for the worksheet.
         explanation: A one-line summary of what changed and why.
     """
     return "Proposed the edit in the user's editor; they will accept or reject it."
@@ -141,5 +156,6 @@ ALL_TOOLS = [
     run_sql,
     get_query_result,
     get_worksheet_sql,
+    get_worksheet_selection,
     propose_sql_edit,
 ]

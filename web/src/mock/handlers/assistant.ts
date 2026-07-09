@@ -95,7 +95,10 @@ export const assistantHandlers = [
     async ({ params, request }) => {
       const conv = CONVERSATIONS.find((c) => c.id === params.id);
       if (!conv) return httpError(404, "Conversation not found");
-      const { prompt } = (await request.json()) as { prompt: string };
+      const { prompt, selection_sql } = (await request.json()) as {
+        prompt: string;
+        selection_sql?: string | null;
+      };
       conv.transcript.push({ role: "user", text: prompt });
 
       // A stream that emits a token then never closes, so the turn stays
@@ -151,6 +154,7 @@ export const assistantHandlers = [
             type: "propose_edit",
             sql: proposed,
             explanation: "select recent events",
+            scoped: Boolean(selection_sql),
           },
           { type: "token", text: "I proposed a query in your editor." },
           {

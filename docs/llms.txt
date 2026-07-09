@@ -3,9 +3,10 @@
 > DuckHaven is a self-hosted, governed DuckDB + Iceberg analytics platform for small teams.
 > It started as collaborative browser worksheets and grew to cover the lifecycle around them:
 > an Apache Iceberg catalog governed by Apache Polaris, scheduled queries, an advisory lakehouse
-> maintenance scanner, single sign-on, and multi-agent DuckDB compute — all on your own
-> infrastructure. It is deliberately right-sized (homelab to small team), not an enterprise
-> lakehouse. No cloud warehouse lock-in, no Kubernetes, no platform team required.
+> maintenance scanner, single sign-on, multi-agent DuckDB compute, fine-grained access grants,
+> machine auth, and a governed AI data assistant — all on your own infrastructure. It is
+> deliberately right-sized (homelab to small team), not an enterprise lakehouse. No cloud
+> warehouse lock-in, no Kubernetes, no platform team required.
 
 ## Getting started
 
@@ -24,6 +25,7 @@
 - [Agents](https://tamasmrtn.github.io/duckhaven/concepts/agents/): DuckDB compute agents you pick per query.
 - [Query execution](https://tamasmrtn.github.io/duckhaven/concepts/query-execution/): Queueing, memory estimation, and concurrency.
 - [Permissions](https://tamasmrtn.github.io/duckhaven/concepts/permissions/): Per-workspace access control and audit trail.
+- [AI assistant](https://tamasmrtn.github.io/duckhaven/concepts/assistant/): The governed AI data assistant and how it enforces access.
 
 ## Deployment
 
@@ -39,7 +41,11 @@
 - [Manage catalogs](https://tamasmrtn.github.io/duckhaven/guides/manage-catalogs/): Create and govern catalogs.
 - [Snapshots & time travel](https://tamasmrtn.github.io/duckhaven/guides/snapshots-time-travel/): Query tables at a past snapshot.
 - [Read query profiles](https://tamasmrtn.github.io/duckhaven/guides/query-profiles/): Inspect operator graphs, timing, and spills.
+- [Migrate a catalog's storage](https://tamasmrtn.github.io/duckhaven/guides/migrate-catalog-storage/): Move a catalog to a different storage backend without losing data.
+- [Use the AI assistant](https://tamasmrtn.github.io/duckhaven/guides/using-the-assistant/): Browse the catalog, run SQL, and propose worksheet edits with the assistant.
+- [How access works](https://tamasmrtn.github.io/duckhaven/guides/access-levels/): The three access layers, including fine-grained catalog/schema/table grants.
 - [Manage users & access](https://tamasmrtn.github.io/duckhaven/guides/users-access/): Administer users and permissions.
+- [Service accounts & tokens](https://tamasmrtn.github.io/duckhaven/guides/service-accounts/): Machine auth via service accounts and Personal Access Tokens.
 
 ## Reference
 

@@ -24,9 +24,31 @@ import { cn } from "@/utils";
 import { useAssistant } from "./AssistantContext";
 import { ConversationList } from "./ConversationList";
 import { Markdown } from "./Markdown";
+import { ThinkingStatus } from "./ThinkingStatus";
 import { ToolCallCard } from "./ToolCallCard";
 import { WriteApprovalDialog } from "./WriteApprovalDialog";
 import { useAssistantChat } from "./useAssistantChat";
+
+// Throttles a fast-changing string to at most one update per `delayMs`, so an
+// aria-live region can announce streamed text without firing per token.
+function useThrottledText(value: string, delayMs: number): string {
+  const [throttled, setThrottled] = useState(value);
+  const lastFiredAtRef = useRef(0);
+  useEffect(() => {
+    const elapsed = Date.now() - lastFiredAtRef.current;
+    if (elapsed >= delayMs) {
+      lastFiredAtRef.current = Date.now();
+      setThrottled(value);
+      return;
+    }
+    const timeout = setTimeout(() => {
+      lastFiredAtRef.current = Date.now();
+      setThrottled(value);
+    }, delayMs - elapsed);
+    return () => clearTimeout(timeout);
+  }, [value, delayMs]);
+  return throttled;
+}
 
 const GENERIC_STARTER_PROMPTS = [
   "What data do I have access to?",
@@ -88,6 +110,7 @@ export function AssistantPanel({ ws }: { ws: string }) {
     getSelection,
     onProposeEdit,
   });
+  const throttledStreamingText = useThrottledText(chat.streamingText, 750);
 
   const [draft, setDraft] = useState("");
   // Activity (tool-call trace) is collapsed by default — it can get long.
@@ -226,18 +249,21 @@ export function AssistantPanel({ ws }: { ws: string }) {
               </div>
             )}
             {chat.streamingText && (
-              <Bubble role="assistant" text={chat.streamingText} />
+              <>
+                <Bubble role="assistant" text={chat.streamingText} />
+                {/* Throttled so screen readers get periodic updates, not one per token. */}
+                <div aria-live="polite" className="sr-only">
+                  {throttledStreamingText}
+                </div>
+              </>
             )}
-            {chat.streaming &&
-              chat.liveTools.map((t, i) => (
-                <p
-                  key={i}
-                  className="text-xs text-text-secondary"
-                  role="status"
-                >
-                  Running <span className="font-mono">{t.tool}</span>…
-                </p>
-              ))}
+            {chat.streaming && (
+              <ThinkingStatus
+                currentTool={
+                  chat.liveTools[chat.liveTools.length - 1]?.tool ?? null
+                }
+              />
+            )}
             {detail && detail.tool_calls.length > 0 && (
               <div className="space-y-1">
                 <button

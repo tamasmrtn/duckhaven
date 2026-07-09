@@ -15,6 +15,8 @@ export interface Conversation {
 export interface TranscriptItem {
   role: "user" | "assistant";
   text: string;
+  // The SQL this turn ran or proposed, if any (attributed server-side).
+  sql: string | null;
 }
 
 export interface AssistantToolCall {

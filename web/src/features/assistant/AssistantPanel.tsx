@@ -8,6 +8,7 @@ import {
   ChevronRight,
   ChevronDown,
 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -103,6 +104,16 @@ export function AssistantPanel({ ws }: { ws: string }) {
       <div className="flex items-center gap-2 border-b border-[var(--border-subtle)] px-3 py-2">
         <Sparkles className="size-4 text-[var(--brand-yellow)]" />
         <span className="text-sm font-medium">Assistant</span>
+        {detail && (
+          <Badge
+            variant="outline"
+            className="font-normal text-text-tertiary"
+            title="Tokens used in this conversation (input / output)"
+          >
+            {detail.total_input_tokens.toLocaleString()} in ·{" "}
+            {detail.total_output_tokens.toLocaleString()} out
+          </Badge>
+        )}
         <div className="ml-auto flex items-center gap-1">
           {!disabled && conversations.length > 0 && (
             <Select
@@ -165,7 +176,12 @@ export function AssistantPanel({ ws }: { ws: string }) {
               </p>
             )}
             {detail?.transcript.map((item, i) => (
-              <Bubble key={i} role={item.role} text={item.text} />
+              <Bubble
+                key={i}
+                role={item.role}
+                text={item.text}
+                sql={item.sql}
+              />
             ))}
             {chat.pendingUserMessage && (
               <Bubble role="user" text={chat.pendingUserMessage} />
@@ -264,7 +280,15 @@ export function AssistantPanel({ ws }: { ws: string }) {
   );
 }
 
-function Bubble({ role, text }: { role: "user" | "assistant"; text: string }) {
+function Bubble({
+  role,
+  text,
+  sql,
+}: {
+  role: "user" | "assistant";
+  text: string;
+  sql?: string | null;
+}) {
   return (
     <div
       className={cn(
@@ -275,6 +299,11 @@ function Bubble({ role, text }: { role: "user" | "assistant"; text: string }) {
       )}
     >
       {role === "assistant" ? <Markdown>{text}</Markdown> : text}
+      {sql && (
+        <pre className="mt-2 overflow-x-auto rounded bg-[var(--bg-code)] p-2 font-mono text-xs text-white">
+          {sql}
+        </pre>
+      )}
     </div>
   );
 }

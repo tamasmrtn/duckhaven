@@ -31,6 +31,20 @@ describe("AssistantPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows token usage and the SQL a turn ran inline under the answer", async () => {
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    // Token usage badge in the header (seeded conversation: 120 in / 60 out).
+    expect(screen.getByText("120 in · 60 out")).toBeInTheDocument();
+    // The SQL that produced the answer is shown inline, not just in Activity.
+    expect(
+      screen.getByText("SELECT count(*) FROM events"),
+    ).toBeInTheDocument();
+  });
+
   it("collapses the Activity trace by default and expands it on click", async () => {
     const user = userEvent.setup();
     renderWithProviders({ initialRoute: ROUTE });

@@ -20,8 +20,12 @@ function seed(): MockConversation[] {
       created_at: "2026-07-01T10:00:00Z",
       updated_at: "2026-07-01T10:05:00Z",
       transcript: [
-        { role: "user", text: "How many events are there?" },
-        { role: "assistant", text: "There are 42 events in the events table." },
+        { role: "user", text: "How many events are there?", sql: null },
+        {
+          role: "assistant",
+          text: "There are 42 events in the events table.",
+          sql: "SELECT count(*) FROM events",
+        },
       ],
       tool_calls: [
         {

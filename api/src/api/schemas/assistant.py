@@ -47,6 +47,9 @@ class TranscriptItem(BaseModel):
 
     role: str  # "user" | "assistant"
     text: str
+    # The SQL this turn ran or proposed, if any — attributed by a same-transaction
+    # timestamp window (see render_transcript_with_sql), shown inline by default.
+    sql: str | None = None
 
 
 class ConversationDetailOut(ConversationOut):

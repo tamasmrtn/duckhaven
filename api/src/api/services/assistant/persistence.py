@@ -85,6 +85,74 @@ def render_transcript(messages: list[ModelMessage]) -> list[dict]:
     return items
 
 
+async def render_transcript_with_sql(db: AsyncSession, conversation_id: uuid.UUID) -> list[dict]:
+    """Like ``render_transcript``, but attach the SQL each turn ran (or proposed)
+    to its assistant line, so the UI can show it inline without a separate lookup.
+
+    ``AssistantToolCall`` rows have no FK to the ``AssistantMessage`` (turn) that
+    produced them. But ``save_turn`` writes a turn's message row and all of that
+    turn's tool-call rows in one transaction/commit, so a tool call can be
+    attributed to the turn whose time window it falls in: a message at ordinal N
+    owns tool calls with ``created_at`` in ``(row[N-1].created_at, row[N].created_at]``
+    (unbounded below for the first row). This is a heuristic derived from that
+    same-commit invariant, not a real key — it holds as long as turns don't
+    complete within the same timestamp tick, which is not a concern at Python's
+    datetime resolution.
+    """
+    rows = (
+        (
+            await db.execute(
+                select(AssistantMessage)
+                .where(AssistantMessage.conversation_id == conversation_id)
+                .order_by(AssistantMessage.ordinal.desc())
+                .limit(settings.assistant_history_turn_cap)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    rows = list(reversed(rows))
+    if not rows:
+        return []
+    tool_calls = (
+        (
+            await db.execute(
+                select(AssistantToolCall)
+                .where(AssistantToolCall.conversation_id == conversation_id)
+                .order_by(AssistantToolCall.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    items: list[dict] = []
+    lower_bound = None
+    for row in rows:
+        upper_bound = row.created_at
+        sql: str | None = None
+        for call in tool_calls:
+            if lower_bound is not None and call.created_at <= lower_bound:
+                continue
+            if call.created_at > upper_bound:
+                continue
+            if call.tool in ("run_sql", "propose_sql_edit") and isinstance(call.args, dict):
+                candidate = call.args.get("sql")
+                if candidate:
+                    sql = candidate
+        row_messages = sanitize_messages(ModelMessagesTypeAdapter.validate_python(row.payload))
+        row_items = render_transcript(row_messages)
+        for item in row_items:
+            item["sql"] = None
+        if sql:
+            for item in reversed(row_items):
+                if item["role"] == "assistant":
+                    item["sql"] = sql
+                    break
+        items.extend(row_items)
+        lower_bound = upper_bound
+    return items
+
+
 async def _next_ordinal(db: AsyncSession, conversation_id: uuid.UUID) -> int:
     current = (
         await db.execute(

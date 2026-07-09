@@ -13,13 +13,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   useAssistantStatus,
   useConversation,
   useConversations,
@@ -29,6 +22,7 @@ import { useCatalogs } from "@/queries/catalogs";
 import { EmptyState } from "@/components/app/EmptyState";
 import { cn } from "@/utils";
 import { useAssistant } from "./AssistantContext";
+import { ConversationList } from "./ConversationList";
 import { Markdown } from "./Markdown";
 import { ToolCallCard } from "./ToolCallCard";
 import { WriteApprovalDialog } from "./WriteApprovalDialog";
@@ -140,24 +134,12 @@ export function AssistantPanel({ ws }: { ws: string }) {
         )}
         <div className="ml-auto flex items-center gap-1">
           {!disabled && conversations.length > 0 && (
-            <Select
-              value={effectiveId ?? undefined}
-              onValueChange={(v) => setPicked(v)}
-            >
-              <SelectTrigger
-                className="h-7 w-36 text-xs"
-                aria-label="Conversation"
-              >
-                <SelectValue placeholder="Conversation" />
-              </SelectTrigger>
-              <SelectContent>
-                {conversations.map((c) => (
-                  <SelectItem key={c.id} value={c.id} className="text-xs">
-                    {c.title}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <ConversationList
+              ws={ws}
+              conversations={conversations}
+              activeId={effectiveId}
+              onSelect={(id) => setPicked(id)}
+            />
           )}
           {!disabled && (
             <Button

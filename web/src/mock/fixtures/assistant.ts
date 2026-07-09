@@ -40,6 +40,17 @@ function seed(): MockConversation[] {
         },
       ],
     },
+    {
+      id: "conv-2",
+      workspace_id: "ws-1",
+      title: "Revenue check",
+      total_input_tokens: 40,
+      total_output_tokens: 20,
+      created_at: "2026-07-02T09:00:00Z",
+      updated_at: "2026-07-02T09:02:00Z",
+      transcript: [],
+      tool_calls: [],
+    },
   ];
 }
 

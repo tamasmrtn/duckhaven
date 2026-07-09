@@ -15,6 +15,7 @@ from api.schemas.assistant import (
     ConversationCreate,
     ConversationDetailOut,
     ConversationOut,
+    ConversationUpdate,
     ToolCallOut,
     TranscriptItem,
     TurnRequest,
@@ -147,6 +148,26 @@ async def get_conversation(
         transcript=[TranscriptItem(**item) for item in transcript],
         tool_calls=[ToolCallOut.model_validate(tc) for tc in tool_calls],
     )
+
+
+@router.patch(
+    "/workspaces/{ws}/assistant/conversations/{conversation_id}",
+    response_model=ConversationOut,
+)
+async def rename_conversation(
+    ws: str,
+    conversation_id: uuid.UUID,
+    body: ConversationUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> AssistantConversation:
+    _require_enabled()
+    workspace = await _workspace(db, ws, user)
+    conversation = await _load_conversation(db, workspace.id, conversation_id, user.id)
+    conversation.title = body.title
+    await db.commit()
+    await db.refresh(conversation)
+    return conversation
 
 
 @router.delete(

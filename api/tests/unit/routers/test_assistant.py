@@ -84,6 +84,45 @@ async def test_conversation_crud(authed, workspace):
     assert gone.status_code == 404
 
 
+async def test_rename_conversation(authed, workspace):
+    created = await authed.post(
+        f"/workspaces/{workspace.slug}/assistant/conversations", json={"title": "Explore"}
+    )
+    conv_id = created.json()["id"]
+
+    renamed = await authed.patch(
+        f"/workspaces/{workspace.slug}/assistant/conversations/{conv_id}",
+        json={"title": "Revenue investigation"},
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["title"] == "Revenue investigation"
+
+    detail = await authed.get(f"/workspaces/{workspace.slug}/assistant/conversations/{conv_id}")
+    assert detail.json()["title"] == "Revenue investigation"
+
+
+async def test_rename_conversation_404_for_another_users_conversation(
+    authed, client, workspace, db_session
+):
+    created = await authed.post(f"/workspaces/{workspace.slug}/assistant/conversations", json={})
+    conv_id = created.json()["id"]
+
+    other = User(email="c@assist.local", password_hash=hash_password("pw"), name="C", role="user")
+    db_session.add(other)
+    await db_session.commit()
+    from api.models.workspace import WorkspaceMember
+
+    db_session.add(WorkspaceMember(workspace_id=workspace.id, user_id=other.id, role="reader"))
+    await db_session.commit()
+    await client.post("/auth/login", json={"email": "c@assist.local", "password": "pw"})
+
+    resp = await client.patch(
+        f"/workspaces/{workspace.slug}/assistant/conversations/{conv_id}",
+        json={"title": "hijacked"},
+    )
+    assert resp.status_code == 404
+
+
 async def test_conversation_is_private_to_creator(authed, client, workspace, db_session):
     created = await authed.post(f"/workspaces/{workspace.slug}/assistant/conversations", json={})
     conv_id = created.json()["id"]

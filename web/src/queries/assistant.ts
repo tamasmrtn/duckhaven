@@ -37,6 +37,22 @@ export function useCreateConversation(ws: string) {
   });
 }
 
+export function useRenameConversation(ws: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, title }: { id: string; title: string }) =>
+      assistantApi.renameConversation(ws, id, title),
+    onSuccess: (_data, { id }) => {
+      qc.invalidateQueries({
+        queryKey: ["workspace", ws, "assistant", "conversations"],
+      });
+      qc.invalidateQueries({
+        queryKey: ["workspace", ws, "assistant", "conversation", id],
+      });
+    },
+  });
+}
+
 export function useDeleteConversation(ws: string) {
   const qc = useQueryClient();
   return useMutation({

@@ -80,6 +80,17 @@ export const assistantHandlers = [
     return HttpResponse.json(conv);
   }),
 
+  http.patch(
+    "/api/workspaces/:ws/assistant/conversations/:id",
+    async ({ params, request }) => {
+      const conv = CONVERSATIONS.find((c) => c.id === params.id);
+      if (!conv) return httpError(404, "Conversation not found");
+      const { title } = (await request.json()) as { title: string };
+      conv.title = title;
+      return HttpResponse.json(publicView(conv));
+    },
+  ),
+
   http.delete(
     "/api/workspaces/:ws/assistant/conversations/:id",
     ({ params }) => {

@@ -45,6 +45,90 @@ describe("AssistantPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("searches and switches conversations from the history list", async () => {
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    await user.click(
+      screen.getByRole("button", { name: "Conversation history" }),
+    );
+    expect(screen.getByText("Exploring events")).toBeInTheDocument();
+    expect(screen.getByText("Revenue check")).toBeInTheDocument();
+
+    await user.type(
+      screen.getByLabelText("Search conversations"),
+      "revenue",
+    );
+    expect(screen.queryByText("Exploring events")).not.toBeInTheDocument();
+    const target = screen.getByText("Revenue check");
+    await user.click(target);
+
+    // Switching conversations closes the popover and loads the other thread.
+    await waitFor(() =>
+      expect(screen.queryByText("Revenue check")).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByText("There are 42 events in the events table."),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renames a conversation via the history list", async () => {
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    await user.click(
+      screen.getByRole("button", { name: "Conversation history" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Actions for Exploring events" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Rename" }));
+
+    const titleInput = screen.getByLabelText("Conversation title");
+    await user.clear(titleInput);
+    await user.type(titleInput, "Event volume investigation{Enter}");
+    await waitFor(() =>
+      expect(screen.queryByLabelText("Conversation title")).not.toBeInTheDocument(),
+    );
+
+    // Reopen the list to confirm the rename was persisted.
+    await user.click(
+      screen.getByRole("button", { name: "Conversation history" }),
+    );
+    expect(
+      await screen.findByText("Event volume investigation"),
+    ).toBeInTheDocument();
+  });
+
+  it("deletes a conversation and falls back to another", async () => {
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    await user.click(
+      screen.getByRole("button", { name: "Conversation history" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Actions for Exploring events" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+
+    // The deleted conversation is gone; the panel falls back to the other one.
+    await waitFor(() =>
+      expect(
+        screen.queryByText("There are 42 events in the events table."),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
   it("shows a follow-up chip linking to the last query's result", async () => {
     const user = userEvent.setup();
     renderWithProviders({ initialRoute: ROUTE });

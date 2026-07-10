@@ -5,6 +5,9 @@ The model is faked with FunctionModel; the tools make real loopback HTTP calls i
 identity minting, the gateway, the governance audit hooks, and persistence together.
 """
 
+import asyncio
+import contextlib
+
 import pytest
 import pytest_asyncio
 from conftest import seed_workspace
@@ -18,7 +21,7 @@ from api.models.workspace import WorkspaceMember
 from api.services.assistant.agent import get_agent
 from api.services.assistant.runner import stream_turn
 
-from .conftest import parse_sse, scripted_model, text_step, tool_step
+from .conftest import hanging_model, parse_sse, scripted_model, text_step, tool_step
 
 
 @pytest.fixture(autouse=True)
@@ -121,6 +124,57 @@ async def test_stream_turn_emits_tokens_and_done(client, db_session, factory):
     kinds = [f["type"] for f in frames]
     assert "done" in kinds
     assert any(f.get("text") for f in frames if f["type"] == "token")
+
+
+async def test_stop_cancels_and_discards_the_turn(client, db_session, factory):
+    # Real Stop: closing the stream mid-turn (a client disconnect / the Stop
+    # button) cancels the run and persists nothing.
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+    gate = asyncio.Event()  # never set → the model blocks mid-stream
+    with get_agent().override(model=hanging_model(gate)):
+        gen = stream_turn(
+            factory,
+            conversation_id=conv.id,
+            workspace_id=ws.id,
+            workspace_slug=ws.slug,
+            prompt="hi",
+            catalog=None,
+        )
+        # Start pulling the stream so the turn actually begins (mints identity,
+        # starts the model run), then cancel the pull — exactly what Starlette
+        # does to the body generator on client disconnect. Bounded so a
+        # cancellation that fails to propagate fails the test instead of hanging.
+        pull = asyncio.ensure_future(gen.__anext__())
+        await asyncio.sleep(0.3)
+        assert not pull.done()  # the run is under way and blocked in the model
+        pull.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.wait_for(pull, timeout=5)
+        # Cancelling the pull runs the generator's finally, which cancels the run.
+        with contextlib.suppress(RuntimeError, StopAsyncIteration):
+            await asyncio.wait_for(gen.aclose(), timeout=5)
+
+    async with factory() as db:
+        messages = (
+            (
+                await db.execute(
+                    select(AssistantMessage).where(AssistantMessage.conversation_id == conv.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert messages == []  # the cancelled turn left no message row
+        tool_calls = (
+            (
+                await db.execute(
+                    select(AssistantToolCall).where(AssistantToolCall.conversation_id == conv.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert tool_calls == []
 
 
 async def test_write_with_grant_requests_approval(client, db_session, factory):

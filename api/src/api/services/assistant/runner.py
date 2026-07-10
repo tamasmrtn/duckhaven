@@ -313,13 +313,17 @@ async def _stream(
                         break
                     yield _sse(frame)
             finally:
-                # On client disconnect Starlette closes this generator. We
-                # deliberately let the in-flight turn finish and persist rather
-                # than cancel it: its queries are already running, and a partial
-                # cancel would waste them and leave an incomplete audit trail. The
-                # persist inside do_run is shielded, so a completed turn is never
-                # lost even if this await is itself cancelled at shutdown.
-                await task
+                # Real Stop: the composer's Stop button aborts the client fetch,
+                # which Starlette surfaces here as a generator close. Cancel the
+                # in-flight turn rather than letting it run on — the model stops,
+                # Gateway.run_sql cancels any query still executing on the agent,
+                # and a turn cancelled mid-run persists nothing. The shielded
+                # _persist inside do_run still protects a turn that *already*
+                # finished, so completing the run just before Stop is never lost.
+                # On normal completion the task is already done, so this is a no-op.
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
 
 
 def stream_turn(

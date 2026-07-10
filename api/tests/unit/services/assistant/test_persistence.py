@@ -188,6 +188,74 @@ async def test_render_transcript_with_sql_attributes_sql_to_the_right_turn(
     assert by_text["how many rows?"]["sql"] is None
 
 
+async def test_render_transcript_with_sql_ignores_dropped_turns_at_the_cap(
+    db_session, conversation, monkeypatch
+):
+    # A dropped (past-cap) turn's SQL must not leak onto the oldest *visible*
+    # turn: with the cap at 2, an older turn that ran SQL falls outside the
+    # displayed window, and a visible turn that ran none should stay SQL-free.
+    from api.config import settings
+
+    monkeypatch.setattr(settings, "assistant_history_turn_cap", 2)
+    await save_turn(
+        db_session,
+        conversation,
+        new_messages_json=_turn_json("old q", "old a"),
+        usage=RunUsage(input_tokens=1, output_tokens=1),
+        records={"c0": ToolCallRecord(tool="run_sql", args={"sql": "SELECT 1"}, status="ok")},
+    )
+    await save_turn(
+        db_session,
+        conversation,
+        new_messages_json=_turn_json("mid q", "mid a"),
+        usage=RunUsage(input_tokens=1, output_tokens=1),
+        records={},
+    )
+    await save_turn(
+        db_session,
+        conversation,
+        new_messages_json=_turn_json("new q", "new a"),
+        usage=RunUsage(input_tokens=1, output_tokens=1),
+        records={"c2": ToolCallRecord(tool="run_sql", args={"sql": "SELECT 2"}, status="ok")},
+    )
+    # Stagger created_at by ordinal so the windows are deterministic under
+    # SQLite's whole-second CURRENT_TIMESTAMP (see the note on the test above).
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    messages = (
+        (
+            await db_session.execute(
+                select(AssistantMessage).where(AssistantMessage.conversation_id == conversation.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for m in messages:
+        m.created_at = base + timedelta(minutes=m.ordinal)
+    calls = (
+        (
+            await db_session.execute(
+                select(AssistantToolCall).where(
+                    AssistantToolCall.conversation_id == conversation.id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for c in calls:
+        c.created_at = base if c.args.get("sql") == "SELECT 1" else base + timedelta(minutes=2)
+    await db_session.commit()
+
+    items = await render_transcript_with_sql(db_session, conversation.id)
+    by_text = {item["text"]: item for item in items}
+    # The dropped "old" turn isn't rendered at all, and its SQL doesn't bleed
+    # onto the oldest visible ("mid") answer.
+    assert "old a" not in by_text
+    assert by_text["mid a"]["sql"] is None
+    assert by_text["new a"]["sql"] == "SELECT 2"
+
+
 async def test_render_transcript_with_sql_handles_a_turn_with_no_tool_calls(
     db_session, conversation
 ):

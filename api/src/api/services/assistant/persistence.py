@@ -114,11 +114,16 @@ async def render_transcript_with_sql(db: AsyncSession, conversation_id: uuid.UUI
     rows = list(reversed(rows))
     if not rows:
         return []
+    # Bound the tool-call scan to the displayed window. Without the lower bound,
+    # the oldest *visible* turn would absorb the tool calls of every *dropped*
+    # older turn (its window is unbounded below), misattributing a dropped turn's
+    # SQL onto the oldest visible answer once the conversation exceeds the cap.
     tool_calls = (
         (
             await db.execute(
                 select(AssistantToolCall)
                 .where(AssistantToolCall.conversation_id == conversation_id)
+                .where(AssistantToolCall.created_at >= rows[0].created_at)
                 .order_by(AssistantToolCall.created_at)
             )
         )
@@ -127,18 +132,27 @@ async def render_transcript_with_sql(db: AsyncSession, conversation_id: uuid.UUI
     )
     items: list[dict] = []
     lower_bound = None
+    # Both ``rows`` and ``tool_calls`` are sorted ascending, so walk them together
+    # with a single forward pointer (O(rows + calls)) rather than re-scanning the
+    # whole tool-call list per row.
+    call_idx = 0
     for row in rows:
         upper_bound = row.created_at
         sql: str | None = None
-        for call in tool_calls:
+        while call_idx < len(tool_calls):
+            call = tool_calls[call_idx]
             if lower_bound is not None and call.created_at <= lower_bound:
+                call_idx += 1
                 continue
             if call.created_at > upper_bound:
-                continue
+                break
             if call.tool in ("run_sql", "propose_sql_edit") and isinstance(call.args, dict):
                 candidate = call.args.get("sql")
                 if candidate:
+                    # Last matching call wins: a turn that both ran and proposed
+                    # SQL surfaces whichever committed later (its most recent action).
                     sql = candidate
+            call_idx += 1
         row_messages = sanitize_messages(ModelMessagesTypeAdapter.validate_python(row.payload))
         row_items = render_transcript(row_messages)
         for item in row_items:

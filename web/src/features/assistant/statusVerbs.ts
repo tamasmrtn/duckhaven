@@ -4,6 +4,13 @@
 // DuckHaven's voice rather than generic chatbot flavor text — deliberately
 // never interpolates the specific table/column being touched, so a status
 // like "Profiling `customers`…" can't read as profiling a named data subject.
+// Shared by the three "listing" tools so the pools can't drift out of sync.
+const LIST_VERBS = [
+  "Waddling through the catalog…",
+  "Scouting the shoreline…",
+  "Herding the ducklings…",
+];
+
 const VERB_POOLS: Record<string, string[]> = {
   run_sql: [
     "Quacking the numbers…",
@@ -11,21 +18,9 @@ const VERB_POOLS: Record<string, string[]> = {
     "Paddling upstream…",
     "Quacking through joins…",
   ],
-  list_catalogs: [
-    "Waddling through the catalog…",
-    "Scouting the shoreline…",
-    "Herding the ducklings…",
-  ],
-  list_schemas: [
-    "Waddling through the catalog…",
-    "Scouting the shoreline…",
-    "Herding the ducklings…",
-  ],
-  list_tables: [
-    "Waddling through the catalog…",
-    "Scouting the shoreline…",
-    "Herding the ducklings…",
-  ],
+  list_catalogs: LIST_VERBS,
+  list_schemas: LIST_VERBS,
+  list_tables: LIST_VERBS,
   describe_table: ["Preening the schema…", "Dabbling in the data…"],
   get_query_result: ["Surfacing results…", "Bobbing along…"],
   get_worksheet_sql: ["Dabbling in the data…"],

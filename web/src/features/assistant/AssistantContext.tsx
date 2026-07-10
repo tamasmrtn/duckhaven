@@ -19,8 +19,10 @@ export interface EditorBridge {
   // assistant resolves table names against what the user is looking at.
   getCatalog: () => string | null;
   // The current non-empty text selection in the worksheet, if any, so a proposed
-  // edit can be scoped to just that fragment.
-  getSelection: () => { text: string; start: number; end: number } | null;
+  // edit can be scoped to just that fragment. Calling this also *captures* the
+  // selection (arming the splice-back range), so it must be invoked at send-time,
+  // not treated as a pure getter — see the implementation in WorksheetPage.
+  captureSelection: () => { text: string; start: number; end: number } | null;
 }
 
 interface AssistantContextValue {

@@ -29,6 +29,11 @@ import { ToolCallCard } from "./ToolCallCard";
 import { WriteApprovalDialog } from "./WriteApprovalDialog";
 import { useAssistantChat } from "./useAssistantChat";
 
+// Shared pill/chip styling for the starter prompts, "View full result" link, and
+// "Ask a follow-up" button, so a tweak stays a single edit.
+const chipClass =
+  "rounded-full border border-[var(--border-subtle)] px-3 py-1 text-xs text-text-secondary hover:border-[var(--brand-slate-blue)] hover:text-text-primary";
+
 // Throttles a fast-changing string to at most one update per `delayMs`, so an
 // aria-live region can announce streamed text without firing per token.
 function useThrottledText(value: string, delayMs: number): string {
@@ -95,8 +100,8 @@ export function AssistantPanel({ ws }: { ws: string }) {
     () => editorRef.current?.getCatalog() ?? null,
     [editorRef],
   );
-  const getSelection = useCallback(
-    () => editorRef.current?.getSelection() ?? null,
+  const captureSelection = useCallback(
+    () => editorRef.current?.captureSelection() ?? null,
     [editorRef],
   );
   const onProposeEdit = useCallback(
@@ -107,7 +112,7 @@ export function AssistantPanel({ ws }: { ws: string }) {
   const chat = useAssistantChat(ws, effectiveId, {
     getEditorSql,
     getCatalog,
-    getSelection,
+    captureSelection,
     onProposeEdit,
   });
   const throttledStreamingText = useThrottledText(chat.streamingText, 750);
@@ -212,7 +217,7 @@ export function AssistantPanel({ ws }: { ws: string }) {
                           key={prompt}
                           type="button"
                           onClick={() => void submit(prompt)}
-                          className="rounded-full border border-[var(--border-subtle)] px-3 py-1 text-xs text-text-secondary hover:border-[var(--brand-slate-blue)] hover:text-text-primary"
+                          className={chipClass}
                         >
                           {prompt}
                         </button>
@@ -316,7 +321,7 @@ export function AssistantPanel({ ws }: { ws: string }) {
                         <Link
                           to="/$ws/queries/$queryId"
                           params={{ ws, queryId: lastQuery.query_id! }}
-                          className="rounded-full border border-[var(--border-subtle)] px-3 py-1 text-xs text-text-secondary hover:border-[var(--brand-slate-blue)] hover:text-text-primary"
+                          className={chipClass}
                         >
                           View full result
                         </Link>
@@ -326,7 +331,7 @@ export function AssistantPanel({ ws }: { ws: string }) {
                   <button
                     type="button"
                     onClick={() => composerRef.current?.focus()}
-                    className="rounded-full border border-[var(--border-subtle)] px-3 py-1 text-xs text-text-secondary hover:border-[var(--brand-slate-blue)] hover:text-text-primary"
+                    className={chipClass}
                   >
                     Ask a follow-up
                   </button>
@@ -408,7 +413,7 @@ function Bubble({
     >
       {role === "assistant" ? <Markdown>{text}</Markdown> : text}
       {sql && (
-        <pre className="mt-2 overflow-x-auto rounded bg-[var(--bg-code)] p-2 font-mono text-xs text-white">
+        <pre className="mt-2 overflow-x-auto rounded bg-[var(--bg-code)] p-2 font-mono text-xs text-[var(--text-code)]">
           {sql}
         </pre>
       )}

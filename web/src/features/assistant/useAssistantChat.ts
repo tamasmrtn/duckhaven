@@ -14,8 +14,9 @@ interface ChatOptions {
   // what the user is looking at instead of the workspace default.
   getCatalog?: () => string | null;
   // The worksheet's current text selection, if any, so a proposed edit can be
-  // scoped to just that fragment.
-  getSelection?: () => { text: string; start: number; end: number } | null;
+  // scoped to just that fragment. Calling this captures the selection as the
+  // splice-back range, so it's invoked once at send-time.
+  captureSelection?: () => { text: string; start: number; end: number } | null;
   // Apply an assistant-proposed edit to the worksheet editor.
   onProposeEdit?: (sql: string, explanation: string, scoped: boolean) => void;
 }
@@ -30,7 +31,7 @@ export function useAssistantChat(
   conversationId: string | null,
   options: ChatOptions = {},
 ) {
-  const { getEditorSql, getCatalog, getSelection, onProposeEdit } = options;
+  const { getEditorSql, getCatalog, captureSelection, onProposeEdit } = options;
   const qc = useQueryClient();
   const [streaming, setStreaming] = useState(false);
   const [streamingText, setStreamingText] = useState("");
@@ -137,12 +138,12 @@ export function useAssistantChat(
         streamMessage(ws, id, prompt, {
           editorSql: getEditorSql?.() ?? null,
           catalog: getCatalog?.() ?? null,
-          selectionSql: getSelection?.()?.text ?? null,
+          selectionSql: captureSelection?.()?.text ?? null,
           signal: controller.signal,
         }),
       );
     },
-    [ws, streaming, consume, getEditorSql, getCatalog, getSelection],
+    [ws, streaming, consume, getEditorSql, getCatalog, captureSelection],
   );
 
   // Resend the last prompt as a new turn — used for both an inline Retry after

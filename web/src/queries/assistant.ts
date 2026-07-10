@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { assistantApi } from "@/api/assistant";
 
 export function useAssistantStatus(ws: string) {
@@ -50,6 +51,7 @@ export function useRenameConversation(ws: string) {
         queryKey: ["workspace", ws, "assistant", "conversation", id],
       });
     },
+    onError: () => toast.error("Couldn't rename the conversation."),
   });
 }
 
@@ -62,5 +64,6 @@ export function useDeleteConversation(ws: string) {
         queryKey: ["workspace", ws, "assistant", "conversations"],
       });
     },
+    onError: () => toast.error("Couldn't delete the conversation."),
   });
 }

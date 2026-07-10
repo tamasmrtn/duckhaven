@@ -385,7 +385,7 @@ export function WorksheetPage() {
       proposeEdit: (sql, explanation, scoped) =>
         proposeEditRef.current(sql, explanation, scoped),
       getCatalog: () => resolvedCatalogRef.current ?? null,
-      getSelection: () => {
+      captureSelection: () => {
         const sel = editorRef.current?.getSelectionRange() ?? null;
         lastSelectionRef.current = sel;
         return sel;

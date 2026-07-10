@@ -40,9 +40,7 @@ describe("AssistantPanel", () => {
     // Token usage badge in the header (seeded conversation: 120 in / 60 out).
     expect(screen.getByText("120 in · 60 out")).toBeInTheDocument();
     // The SQL that produced the answer is shown inline, not just in Activity.
-    expect(
-      screen.getByText("SELECT count(*) FROM events"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("SELECT count(*) FROM events")).toBeInTheDocument();
   });
 
   it("searches and switches conversations from the history list", async () => {
@@ -57,10 +55,7 @@ describe("AssistantPanel", () => {
     expect(screen.getByText("Exploring events")).toBeInTheDocument();
     expect(screen.getByText("Revenue check")).toBeInTheDocument();
 
-    await user.type(
-      screen.getByLabelText("Search conversations"),
-      "revenue",
-    );
+    await user.type(screen.getByLabelText("Search conversations"), "revenue");
     expect(screen.queryByText("Exploring events")).not.toBeInTheDocument();
     const target = screen.getByText("Revenue check");
     await user.click(target);
@@ -92,7 +87,9 @@ describe("AssistantPanel", () => {
     await user.clear(titleInput);
     await user.type(titleInput, "Event volume investigation{Enter}");
     await waitFor(() =>
-      expect(screen.queryByLabelText("Conversation title")).not.toBeInTheDocument(),
+      expect(
+        screen.queryByLabelText("Conversation title"),
+      ).not.toBeInTheDocument(),
     );
 
     // Reopen the list to confirm the rename was persisted.
@@ -136,10 +133,7 @@ describe("AssistantPanel", () => {
     await screen.findByText("There are 42 events in the events table.");
 
     const link = screen.getByRole("link", { name: "View full result" });
-    expect(link).toHaveAttribute(
-      "href",
-      "/acme-analytics/queries/q-1",
-    );
+    expect(link).toHaveAttribute("href", "/acme-analytics/queries/q-1");
     // The follow-up chip focuses the composer instead of submitting anything.
     await user.click(screen.getByRole("button", { name: "Ask a follow-up" }));
     expect(screen.getByLabelText("Message")).toHaveFocus();
@@ -161,7 +155,9 @@ describe("AssistantPanel", () => {
       await screen.findByText("Here is what I found."),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "What tables are in acme_research?" }),
+      screen.queryByRole("button", {
+        name: "What tables are in acme_research?",
+      }),
     ).not.toBeInTheDocument();
   });
 
@@ -224,7 +220,11 @@ describe("AssistantPanel", () => {
           capturedBody = (await request.json()) as { catalog?: string | null };
           return new HttpResponse(
             `data: ${JSON.stringify({ type: "token", text: "ok" })}\n\ndata: ${JSON.stringify(
-              { type: "done", message_id: "msg-x", usage: { input: 1, output: 1 } },
+              {
+                type: "done",
+                message_id: "msg-x",
+                usage: { input: 1, output: 1 },
+              },
             )}\n\n`,
             { headers: { "Content-Type": "text/event-stream" } },
           );
@@ -267,7 +267,11 @@ describe("AssistantPanel", () => {
           });
           return new HttpResponse(
             `data: ${JSON.stringify({ type: "token", text: "Recovered." })}\n\ndata: ${JSON.stringify(
-              { type: "done", message_id: "msg-retry", usage: { input: 1, output: 1 } },
+              {
+                type: "done",
+                message_id: "msg-retry",
+                usage: { input: 1, output: 1 },
+              },
             )}\n\n`,
             { headers: { "Content-Type": "text/event-stream" } },
           );
@@ -316,17 +320,18 @@ describe("AssistantPanel", () => {
     expect(screen.getAllByText("how many rows total?")).toHaveLength(2);
   });
 
-  it("shows a Stop button while streaming and aborts on click", async () => {
+  it("stops a streaming turn: discards the partial and offers Retry", async () => {
     const user = userEvent.setup();
     renderWithProviders({ initialRoute: ROUTE });
     await openPanel(user);
     await screen.findByText("There are 42 events in the events table.");
 
-    // "hang" makes the mock stream stay open until aborted.
+    // "hang" makes the mock stream a token then stay open until aborted.
     await user.type(screen.getByLabelText("Message"), "hang please");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
-    // A Stop button appears while the turn streams; Send is gone.
+    // The partial reply streams in, and a Stop button replaces Send.
+    expect(await screen.findByText("thinking…")).toBeInTheDocument();
     const stop = await screen.findByRole("button", { name: "Stop" });
     expect(
       screen.queryByRole("button", { name: "Send" }),
@@ -334,11 +339,102 @@ describe("AssistantPanel", () => {
 
     await user.click(stop);
 
-    // Stopping reclaims the composer (Send returns) and keeps the message shown.
+    // The server discards the turn, so the partial is cleared and a Stopped
+    // note + Retry appears; the composer (Send) returns and the message stays.
+    await waitFor(() =>
+      expect(screen.queryByText("thinking…")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByText("Stopped.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
     expect(
       await screen.findByRole("button", { name: "Send" }),
     ).toBeInTheDocument();
     expect(screen.getByText("hang please")).toBeInTheDocument();
+  });
+
+  it("clears a stale error/pending bubble when switching conversations", async () => {
+    server.use(
+      http.post(
+        "/api/workspaces/:ws/assistant/conversations/:id/messages",
+        () =>
+          new HttpResponse(
+            `data: ${JSON.stringify({ type: "error", message: "The assistant hit an internal error." })}\n\n`,
+            { headers: { "Content-Type": "text/event-stream" } },
+          ),
+      ),
+    );
+
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    // Error a turn in the first conversation.
+    await user.type(screen.getByLabelText("Message"), "unique failing prompt");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(
+      await screen.findByText("The assistant hit an internal error."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("unique failing prompt")).toBeInTheDocument();
+
+    // Switch to another conversation.
+    await user.click(
+      screen.getByRole("button", { name: "Conversation history" }),
+    );
+    await user.click(screen.getByText("Revenue check"));
+
+    // The other conversation shows none of the first's transient state.
+    await waitFor(() =>
+      expect(
+        screen.queryByText("The assistant hit an internal error."),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByText("unique failing prompt")).not.toBeInTheDocument();
+  });
+
+  it("shows an inline error when the conversation list fails to load", async () => {
+    server.use(
+      http.get("/api/workspaces/:ws/assistant/conversations", () =>
+        HttpResponse.json({ detail: "boom" }, { status: 500 }),
+      ),
+    );
+
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+
+    expect(
+      await screen.findByText(/Couldn't load your conversations/i),
+    ).toBeInTheDocument();
+  });
+
+  it("shows starter prompts for an existing but empty conversation", async () => {
+    server.use(
+      http.get(
+        "/api/workspaces/:ws/assistant/conversations/:id",
+        ({ params }) => {
+          const conv = CONVERSATIONS.find((c) => c.id === params.id);
+          if (!conv) return new HttpResponse(null, { status: 404 });
+          return HttpResponse.json({
+            ...conv,
+            transcript: [],
+            tool_calls: [],
+          });
+        },
+      ),
+    );
+
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+
+    // A selected conversation with an empty transcript falls back to the empty
+    // state's starter prompts instead of rendering a blank thread.
+    expect(
+      await screen.findByRole("button", {
+        name: "What tables are in acme_analytics?",
+      }),
+    ).toBeInTheDocument();
   });
 
   it("prompts for approval when the assistant proposes a write", async () => {

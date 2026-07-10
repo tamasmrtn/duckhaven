@@ -8,6 +8,7 @@ import {
   X,
   ChevronRight,
   ChevronDown,
+  Loader2,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -80,7 +81,11 @@ export function AssistantPanel({ ws }: { ws: string }) {
   const { data: status } = useAssistantStatus(ws);
   const enabled = status?.enabled === true;
   const disabled = status?.enabled === false;
-  const { data: conversations = [] } = useConversations(ws, { enabled });
+  const {
+    data: conversations = [],
+    isLoading: conversationsLoading,
+    isError: conversationsError,
+  } = useConversations(ws, { enabled });
   const { data: catalogs = [] } = useCatalogs(ws);
   const createConversation = useCreateConversation(ws);
   const [picked, setPicked] = useState<string | null>(null);
@@ -90,7 +95,16 @@ export function AssistantPanel({ ws }: { ws: string }) {
       ? picked
       : (conversations[0]?.id ?? null);
 
-  const { data: detail } = useConversation(ws, effectiveId);
+  const {
+    data: detail,
+    isLoading: detailLoading,
+    isError: detailError,
+  } = useConversation(ws, effectiveId);
+  // A conversation is only fetched when one is selected, so its loading flag only
+  // counts when there's an id to load.
+  const loadingThread =
+    conversationsLoading || (!!effectiveId && detailLoading);
+  const threadLoadError = conversationsError || detailError;
 
   const getEditorSql = useCallback(
     () => editorRef.current?.getSql() ?? null,
@@ -204,29 +218,49 @@ export function AssistantPanel({ ws }: { ws: string }) {
       ) : (
         <ScrollArea className="flex-1">
           <div className="flex flex-col gap-3 p-3">
-            {!detail && !chat.pendingUserMessage && !chat.streaming && (
-              <EmptyState
-                icon={Sparkles}
-                title="Ask about your data"
-                description="Or ask me to write SQL in your worksheet."
-                action={
-                  <div className="flex flex-col items-center gap-1.5">
-                    {starterPrompts(catalogs.map((c) => c.slug)).map(
-                      (prompt) => (
-                        <button
-                          key={prompt}
-                          type="button"
-                          onClick={() => void submit(prompt)}
-                          className={chipClass}
-                        >
-                          {prompt}
-                        </button>
-                      ),
-                    )}
-                  </div>
-                }
-              />
+            {threadLoadError ? (
+              <p className="text-sm text-destructive" role="alert">
+                Couldn't load your conversations. Reopen the panel to try again.
+              </p>
+            ) : (
+              loadingThread && (
+                <div className="flex justify-center p-6 text-text-tertiary">
+                  <Loader2
+                    className="size-4 animate-spin"
+                    aria-label="Loading"
+                  />
+                </div>
+              )
             )}
+            {!threadLoadError &&
+              !loadingThread &&
+              (!detail || detail.transcript.length === 0) &&
+              !chat.pendingUserMessage &&
+              !chat.streaming &&
+              !chat.error &&
+              !chat.stopped && (
+                <EmptyState
+                  icon={Sparkles}
+                  title="Ask about your data"
+                  description="Or ask me to write SQL in your worksheet."
+                  action={
+                    <div className="flex flex-col items-center gap-1.5">
+                      {starterPrompts(catalogs.map((c) => c.slug)).map(
+                        (prompt) => (
+                          <button
+                            key={prompt}
+                            type="button"
+                            onClick={() => void submit(prompt)}
+                            className={chipClass}
+                          >
+                            {prompt}
+                          </button>
+                        ),
+                      )}
+                    </div>
+                  }
+                />
+              )}
             {detail?.transcript.map((item, i) => (
               <Bubble
                 key={i}
@@ -242,6 +276,21 @@ export function AssistantPanel({ ws }: { ws: string }) {
               <div className="max-w-[90%] self-start space-y-1.5">
                 <p className="text-sm text-destructive" role="alert">
                   {chat.error}
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  onClick={chat.regenerate}
+                >
+                  Retry
+                </Button>
+              </div>
+            )}
+            {chat.stopped && (
+              <div className="max-w-[90%] self-start space-y-1.5">
+                <p className="text-sm text-text-tertiary" role="status">
+                  Stopped.
                 </p>
                 <Button
                   size="sm"

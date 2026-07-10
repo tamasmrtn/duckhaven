@@ -24,10 +24,12 @@ describe("applyScopedEdit", () => {
     expect(result.note).toMatch(/changed since this was requested/);
   });
 
-  it("falls back to a full replace when there is no anchor at all", () => {
+  it("full-replaces without a drift note when there is no anchor at all", () => {
+    // No selection was captured (anchor === null), so a full replacement was
+    // expected — nothing "changed", so no misleading note.
     const result = applyScopedEdit("SELECT 1", null, "SELECT 2", true);
     expect(result.sql).toBe("SELECT 2");
-    expect(result.note).toMatch(/changed since this was requested/);
+    expect(result.note).toBeUndefined();
   });
 
   it("applies a plain full replace when the edit isn't scoped", () => {

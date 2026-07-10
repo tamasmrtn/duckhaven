@@ -33,8 +33,12 @@ export function applyScopedEdit(
   }
   return {
     sql: newSql,
-    note: scoped
-      ? "Applied as a full replacement — the document changed since this was requested."
-      : undefined,
+    // Only note a drift when an anchor existed but its text no longer matches at
+    // those offsets — not the plain no-selection path (anchor === null), where a
+    // full replacement was expected and nothing changed.
+    note:
+      scoped && anchor !== null
+        ? "Applied as a full replacement — the document changed since this was requested."
+        : undefined,
   };
 }

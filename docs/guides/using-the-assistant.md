@@ -22,7 +22,10 @@ and what it can and cannot do, see the [AI data assistant](../concepts/assistant
    it runs a query, the SQL is shown right under the answer, and a preview of the result; open the full result in the
    query grid — or click the **View full result** link that appears after the answer — just as you would for a query
    you ran yourself.
-4. If a turn fails, a **Retry** button appears with the error so you can resend it without retyping; after a good
+4. While a turn is running, the Send button becomes a **Stop** button. Clicking it cancels the turn: the assistant
+   stops generating, any query still running is cancelled, and the partial answer is discarded (nothing is saved). Your
+   question stays in the composer's place with a **Retry** to run it again.
+5. If a turn fails, a **Retry** button appears with the error so you can resend it without retyping; after a good
    answer, **Regenerate** resends the same question as a new turn if you want another attempt.
 
 Each conversation is private to you. Click the history icon in the panel header to search, switch, rename, or delete

@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class AssistantStatusOut(BaseModel):
@@ -70,6 +70,14 @@ class TurnRequest(BaseModel):
     # The user's current worksheet text selection, if non-empty, so a proposed edit
     # can be scoped to just that fragment instead of rewriting the whole worksheet.
     selection_sql: str | None = Field(default=None, max_length=100_000)
+
+    @field_validator("selection_sql")
+    @classmethod
+    def _blank_selection_is_none(cls, v: str | None) -> str | None:
+        # Normalize an empty/whitespace-only selection to None at the boundary, so
+        # "scoped" (runner: `is not None`) and the selection tool (truthiness) can't
+        # disagree about whether the user actually selected anything.
+        return None if v is not None and not v.strip() else v
 
 
 class ApprovalRequest(BaseModel):

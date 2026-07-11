@@ -60,9 +60,11 @@ by default.
 | FastAPI (automatic) | One server span per API request, named by route template. Health probes (`/healthz`, `/readyz`) and `/api/metrics` scrapes are excluded. |
 | httpx (automatic) | A client span for every request to Apache Polaris and for cross-replica dispatch forwards, as children of the request that caused them. |
 | SQLAlchemy (automatic) | A span per database statement, with the SQL as an attribute. |
-| `dispatch_query` (manual, api) | Wraps handing a query to an agent over the WebSocket control channel. Its W3C trace context rides inside the `DISPATCH_QUERY` frame so the agent's span below continues the same trace instead of starting a new one. |
+| `dispatch_query` (manual, api) | Wraps handing a query to an agent over the WebSocket control channel. Its W3C trace context rides inside the `DISPATCH_QUERY` frame so the agent's span below continues the same trace instead of starting a new one. Carries `duckhaven.origin` (`interactive` for a user's query, or the schedule/maintenance origin) so automated runs are distinguishable from clicks. |
 | `handle_dispatch` (manual, agent) | The agent's per-query span: admission queueing, running the query, and sending the result back. Continues the api's trace when the frame carried one; starts a fresh trace otherwise (e.g. an older peer without tracing). Failures set the span to an error status. |
 | `duckdb.execute` (manual, agent) | Wraps the actual DuckDB execution (offloaded to a worker thread), so per-query execution time is visible directly in the trace rather than only in the aggregate `duckhaven_query_duration_seconds` histogram. |
+| `assistant.turn` (manual, api) | One span per AI-assistant turn, carrying `duckhaven.conversation_id`, `duckhaven.workspace_id`, and the model name. Pydantic AI's own instrumentation nests under it — an agent-run span, a model-request span per LLM call (with `gen_ai.usage.*` token counts), and a span per tool call — and the assistant's loopback SQL chains on down through `dispatch_query` into the agent. Failures set the span to an error status. See [The AI assistant](#the-ai-assistant). |
+| results server (automatic, agent) | One server span per result-page fetch the api makes to the agent's result server, continuing the api's client span. A windowed page adds a `duckdb.slice_parquet` child span for the local slice. |
 
 Trace attributes are allowed to carry high-cardinality values that the
 [metrics cardinality policy](monitoring.md#cardinality-policy) bans as labels — a `query_id` on a span is exactly how
@@ -78,6 +80,24 @@ instrumentation extracts it and continues the same trace.
 
 To turn tracing off for Polaris specifically (leaving the api/agent traced), set `QUARKUS_OTEL_SDK_DISABLED: "true"`
 on the `polaris` service in the compose file.
+
+## The AI assistant
+
+When the [AI assistant](../concepts/assistant.md) is enabled, each turn is traced as an `assistant.turn` span with
+[Pydantic AI's OpenTelemetry instrumentation](https://ai.pydantic.dev/logfire/) nested underneath, following the
+OpenTelemetry [GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/). You get the model
+request timeline, per-tool-call spans, and `gen_ai.usage.*` token counts for the turn, and — because the assistant runs
+its SQL through the same governed REST endpoints as any client — the query it triggers continues the same trace right
+down to `duckdb.execute` on the agent.
+
+By default the spans **include the turn's content**: the user's prompt, the SQL the model wrote, tool arguments, and the
+result samples returned to the model. In a data platform this can be sensitive, and it is written to your trace backend.
+To record only the structure — roles, token usage, tool names, timing, and status — set:
+
+```bash
+# deploy/.env
+ASSISTANT_TRACE_INCLUDE_CONTENT=false
+```
 
 ## Finding a trace
 

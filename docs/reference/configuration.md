@@ -146,6 +146,7 @@ supplied here or via the provider's own standard environment variable (`ANTHROPI
 | `ASSISTANT_HISTORY_TURN_CAP` | `40` | Only the most recent N turns are replayed to the model, bounding per-turn cost and context growth. |
 | `ASSISTANT_RESULT_ROW_CAP` | `100` | Max rows of a query result fed into model context (the full result is still available in the UI). |
 | `ASSISTANT_RESULT_BYTE_CAP` | `32768` | Max bytes of a result sample fed into model context. |
+| `ASSISTANT_TRACE_INCLUDE_CONTENT` | `true` | When [tracing](../operations/tracing.md#the-ai-assistant) is enabled, record the turn's content (prompt, generated SQL, tool arguments, result samples) on spans. Set `false` to keep only structure — roles, token usage, tool names, timing, status — out of the trace backend. No effect when tracing is off. |
 
 ### Observability
 

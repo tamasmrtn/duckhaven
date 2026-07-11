@@ -66,6 +66,7 @@ export const assistantHandlers = [
         total_output_tokens: 0,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
+        history_truncated: false,
         transcript: [],
         tool_calls: [],
       };

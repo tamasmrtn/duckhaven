@@ -7,6 +7,7 @@ import type {
 export interface MockConversation extends Conversation {
   transcript: TranscriptItem[];
   tool_calls: AssistantToolCall[];
+  history_truncated: boolean;
 }
 
 function seed(): MockConversation[] {
@@ -19,6 +20,7 @@ function seed(): MockConversation[] {
       total_output_tokens: 60,
       created_at: "2026-07-01T10:00:00Z",
       updated_at: "2026-07-01T10:05:00Z",
+      history_truncated: false,
       transcript: [
         { role: "user", text: "How many events are there?", sql: null },
         {
@@ -48,6 +50,7 @@ function seed(): MockConversation[] {
       total_output_tokens: 20,
       created_at: "2026-07-02T09:00:00Z",
       updated_at: "2026-07-02T09:02:00Z",
+      history_truncated: false,
       transcript: [],
       tool_calls: [],
     },

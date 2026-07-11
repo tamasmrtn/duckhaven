@@ -134,6 +134,11 @@ export function AssistantPanel({ ws }: { ws: string }) {
   const [draft, setDraft] = useState("");
   // Activity (tool-call trace) is collapsed by default — it can get long.
   const [activityOpen, setActivityOpen] = useState(false);
+  // Keyed by conversation id so switching to another long conversation
+  // re-shows the notice instead of staying dismissed forever.
+  const [dismissedTruncationFor, setDismissedTruncationFor] = useState<
+    string | null
+  >(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
@@ -205,6 +210,26 @@ export function AssistantPanel({ ws }: { ws: string }) {
           </Button>
         </div>
       </div>
+
+      {!disabled &&
+        detail?.history_truncated &&
+        dismissedTruncationFor !== effectiveId && (
+          <div className="flex items-center justify-between gap-2 border-b border-[var(--border-subtle)] px-3 py-1.5">
+            <p className="text-sm text-text-tertiary" role="status">
+              This conversation is long — earlier messages are no longer part of
+              its context.
+            </p>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="size-6 shrink-0"
+              onClick={() => setDismissedTruncationFor(effectiveId)}
+              aria-label="Dismiss notice"
+            >
+              <X className="size-3.5" />
+            </Button>
+          </div>
+        )}
 
       {/* Thread (or the disabled notice) */}
       {disabled ? (

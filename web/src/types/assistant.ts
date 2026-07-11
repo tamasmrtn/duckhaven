@@ -33,6 +33,7 @@ export interface AssistantToolCall {
 export interface ConversationDetail extends Conversation {
   transcript: TranscriptItem[];
   tool_calls: AssistantToolCall[];
+  history_truncated: boolean;
 }
 
 // Server-sent events streamed from a turn.

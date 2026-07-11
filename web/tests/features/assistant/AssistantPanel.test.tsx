@@ -43,6 +43,36 @@ describe("AssistantPanel", () => {
     expect(screen.getByText("SELECT count(*) FROM events")).toBeInTheDocument();
   });
 
+  it("shows a dismissible notice when the conversation history is truncated", async () => {
+    const conv = CONVERSATIONS.find((c) => c.id === "conv-1")!;
+    conv.history_truncated = true;
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    const notice = screen.getByText(
+      "This conversation is long — earlier messages are no longer part of its context.",
+    );
+    expect(notice).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Dismiss notice" }));
+    expect(notice).not.toBeInTheDocument();
+  });
+
+  it("does not show the truncation notice for a conversation under the cap", async () => {
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    expect(
+      screen.queryByText(
+        "This conversation is long — earlier messages are no longer part of its context.",
+      ),
+    ).not.toBeInTheDocument();
+  });
+
   it("searches and switches conversations from the history list", async () => {
     const user = userEvent.setup();
     renderWithProviders({ initialRoute: ROUTE });

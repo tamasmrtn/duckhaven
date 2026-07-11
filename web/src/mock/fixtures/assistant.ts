@@ -7,6 +7,7 @@ import type {
 export interface MockConversation extends Conversation {
   transcript: TranscriptItem[];
   tool_calls: AssistantToolCall[];
+  history_truncated: boolean;
 }
 
 function seed(): MockConversation[] {
@@ -19,9 +20,14 @@ function seed(): MockConversation[] {
       total_output_tokens: 60,
       created_at: "2026-07-01T10:00:00Z",
       updated_at: "2026-07-01T10:05:00Z",
+      history_truncated: false,
       transcript: [
-        { role: "user", text: "How many events are there?" },
-        { role: "assistant", text: "There are 42 events in the events table." },
+        { role: "user", text: "How many events are there?", sql: null },
+        {
+          role: "assistant",
+          text: "There are 42 events in the events table.",
+          sql: "SELECT count(*) FROM events",
+        },
       ],
       tool_calls: [
         {
@@ -35,6 +41,18 @@ function seed(): MockConversation[] {
           created_at: "2026-07-01T10:04:30Z",
         },
       ],
+    },
+    {
+      id: "conv-2",
+      workspace_id: "ws-1",
+      title: "Revenue check",
+      total_input_tokens: 40,
+      total_output_tokens: 20,
+      created_at: "2026-07-02T09:00:00Z",
+      updated_at: "2026-07-02T09:02:00Z",
+      history_truncated: false,
+      transcript: [],
+      tool_calls: [],
     },
   ];
 }

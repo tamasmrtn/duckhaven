@@ -66,6 +66,7 @@ export const assistantHandlers = [
         total_output_tokens: 0,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
+        history_truncated: false,
         transcript: [],
         tool_calls: [],
       };
@@ -79,6 +80,17 @@ export const assistantHandlers = [
     if (!conv) return httpError(404, "Conversation not found");
     return HttpResponse.json(conv);
   }),
+
+  http.patch(
+    "/api/workspaces/:ws/assistant/conversations/:id",
+    async ({ params, request }) => {
+      const conv = CONVERSATIONS.find((c) => c.id === params.id);
+      if (!conv) return httpError(404, "Conversation not found");
+      const { title } = (await request.json()) as { title: string };
+      conv.title = title;
+      return HttpResponse.json(publicView(conv));
+    },
+  ),
 
   http.delete(
     "/api/workspaces/:ws/assistant/conversations/:id",
@@ -95,8 +107,11 @@ export const assistantHandlers = [
     async ({ params, request }) => {
       const conv = CONVERSATIONS.find((c) => c.id === params.id);
       if (!conv) return httpError(404, "Conversation not found");
-      const { prompt } = (await request.json()) as { prompt: string };
-      conv.transcript.push({ role: "user", text: prompt });
+      const { prompt, selection_sql } = (await request.json()) as {
+        prompt: string;
+        selection_sql?: string | null;
+      };
+      conv.transcript.push({ role: "user", text: prompt, sql: null });
 
       // A stream that emits a token then never closes, so the turn stays
       // "streaming" until the client aborts it (exercises the Stop button).
@@ -145,12 +160,14 @@ export const assistantHandlers = [
         conv.transcript.push({
           role: "assistant",
           text: "I proposed a query in your editor.",
+          sql: proposed,
         });
         return sse([
           {
             type: "propose_edit",
             sql: proposed,
             explanation: "select recent events",
+            scoped: Boolean(selection_sql),
           },
           { type: "token", text: "I proposed a query in your editor." },
           {
@@ -162,7 +179,7 @@ export const assistantHandlers = [
       }
 
       const answer = "Here is what I found.";
-      conv.transcript.push({ role: "assistant", text: answer });
+      conv.transcript.push({ role: "assistant", text: answer, sql: null });
       return sse([
         { type: "token", text: "Here is " },
         { type: "token", text: "what I found." },
@@ -184,7 +201,7 @@ export const assistantHandlers = [
       const answer = approved
         ? "Done — the write ran."
         : "Okay, I won't run it.";
-      conv.transcript.push({ role: "assistant", text: answer });
+      conv.transcript.push({ role: "assistant", text: answer, sql: null });
       return sse([
         { type: "token", text: answer },
         {

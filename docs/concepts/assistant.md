@@ -15,8 +15,11 @@ the assistant can see and do with the same grants they already use for people.
 - **Run SQL** — write and execute a query, then reason over a capped sample of the results. The full result set is
   available to you in the UI, exactly as if you had run the query yourself.
 - **Propose editor edits** — on the worksheet, write or change the SQL in your editor as a highlighted, accept-or-reject
-  suggestion (it never edits or runs on its own).
+  suggestion (it never edits or runs on its own). If your worksheet has a non-empty text selection when you ask, the
+  proposed edit is scoped to just that selection instead of rewriting the whole worksheet.
 - **Explain** — summarise what it found and show the SQL it ran.
+- **Ask when unsure** — if a request is missing something it needs to answer correctly (the grain, a time window,
+  which table), it asks a short clarifying question rather than guessing.
 
 It runs one turn at a time in a conversation, and each conversation is private to the person who started it.
 
@@ -84,4 +87,4 @@ or vLLM server) via a base URL — so a fully self-hosted, keyless deployment is
     The assistant is a focused v1: single-agent, one conversation turn at a time, no chart generation and no retrieval
     over table *contents*, and no scheduled/unattended runs. Conversation memory is also bounded — only the most recent
     turns are replayed to the model, so a very long conversation gradually forgets its oldest messages; start a new
-    conversation for an unrelated topic.
+    conversation for an unrelated topic. The panel shows a small notice once a conversation has crossed that point.

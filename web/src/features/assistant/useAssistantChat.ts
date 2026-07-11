@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { streamApproval, streamMessage } from "@/api/assistant";
 import type { AssistantFrame, PendingApproval } from "@/types/assistant";
@@ -10,8 +10,15 @@ interface LiveTool {
 interface ChatOptions {
   // Current worksheet SQL to send as context (so the assistant can edit it).
   getEditorSql?: () => string | null;
+  // The catalog the worksheet is USEing, so unqualified names resolve against
+  // what the user is looking at instead of the workspace default.
+  getCatalog?: () => string | null;
+  // The worksheet's current text selection, if any, so a proposed edit can be
+  // scoped to just that fragment. Calling this captures the selection as the
+  // splice-back range, so it's invoked once at send-time.
+  captureSelection?: () => { text: string; start: number; end: number } | null;
   // Apply an assistant-proposed edit to the worksheet editor.
-  onProposeEdit?: (sql: string, explanation: string) => void;
+  onProposeEdit?: (sql: string, explanation: string, scoped: boolean) => void;
 }
 
 /**
@@ -24,13 +31,16 @@ export function useAssistantChat(
   conversationId: string | null,
   options: ChatOptions = {},
 ) {
-  const { getEditorSql, onProposeEdit } = options;
+  const { getEditorSql, getCatalog, captureSelection, onProposeEdit } = options;
   const qc = useQueryClient();
   const [streaming, setStreaming] = useState(false);
   const [streamingText, setStreamingText] = useState("");
   const [liveTools, setLiveTools] = useState<LiveTool[]>([]);
   const [pending, setPending] = useState<PendingApproval | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Set when the user hits Stop: the server discards the cancelled turn, so the
+  // partial reply is cleared and a "Stopped" note + Retry is shown instead.
+  const [stopped, setStopped] = useState(false);
   // The just-sent user message, echoed immediately so it appears above the
   // streaming reply instead of only after the turn's transcript refetch.
   const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(
@@ -38,6 +48,41 @@ export function useAssistantChat(
   );
   // Aborts the in-flight turn's stream (the Stop button).
   const abortRef = useRef<AbortController | null>(null);
+  // The most recently sent prompt, for Retry/Regenerate — kept independent of
+  // pendingUserMessage (which only lives as long as its bubble is shown).
+  // Tagged with the conversation it was sent to, so switching conversations
+  // never resends the old one into the newly selected chat: canRegenerate is
+  // derived each render from that comparison rather than reset via an effect.
+  const [lastPrompt, setLastPrompt] = useState<{
+    text: string;
+    conversationId: string;
+  } | null>(null);
+  const canRegenerate =
+    lastPrompt !== null && lastPrompt.conversationId === conversationId;
+
+  // Switching conversations must not carry another conversation's transient state
+  // into the newly selected one. Abort any in-flight stream and clear the per-turn
+  // state that would otherwise render a stale error/pending/stopped bubble against
+  // the wrong chat. lastPrompt stays — it's conversation-tagged and drives
+  // canRegenerate on its own.
+  const prevConversationId = useRef<string | null>(conversationId);
+  useEffect(() => {
+    const prev = prevConversationId.current;
+    prevConversationId.current = conversationId;
+    // Only reset when moving *between* two conversations. Skip the null → id
+    // transition: creating a new conversation assigns its id right after `send`
+    // starts the first turn, and resetting there would abort that very turn.
+    if (prev === null || prev === conversationId) return;
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setStreaming(false);
+    setError(null);
+    setStopped(false);
+    setPending(null);
+    setPendingUserMessage(null);
+    setStreamingText("");
+    setLiveTools([]);
+  }, [conversationId]);
 
   const consume = useCallback(
     async (
@@ -46,8 +91,10 @@ export function useAssistantChat(
     ) => {
       setStreaming(true);
       setError(null);
+      setStopped(false);
       setStreamingText("");
       setLiveTools([]);
+      let sawError = false;
       try {
         for await (const frame of frames) {
           if (frame.type === "token") {
@@ -61,9 +108,10 @@ export function useAssistantChat(
               sql: frame.sql,
             });
           } else if (frame.type === "propose_edit") {
-            onProposeEdit?.(frame.sql, frame.explanation);
+            onProposeEdit?.(frame.sql, frame.explanation, frame.scoped);
           } else if (frame.type === "error") {
             setError(frame.message);
+            sawError = true;
           }
         }
       } catch (err) {
@@ -71,6 +119,7 @@ export function useAssistantChat(
           setError(
             err instanceof Error ? err.message : "The assistant failed.",
           );
+          sawError = true;
         }
       } finally {
         // Cancelling the reader on Stop ends the loop without throwing, so the
@@ -79,10 +128,13 @@ export function useAssistantChat(
         setStreaming(false);
         abortRef.current = null;
         if (aborted) {
-          // Stopped by the user: keep the partial reply and the user's message on
-          // screen. The server finishes and persists the turn, so it reconciles
-          // on the next refetch (e.g. the next send).
+          // Stopped by the user: the server cancels and discards the turn, so the
+          // partial reply is gone. Clear it and flag `stopped` to show a "Stopped"
+          // note; keep the user's message (pendingUserMessage) and lastPrompt so
+          // Retry can resend the same prompt.
+          setStreamingText("");
           setLiveTools([]);
+          setStopped(true);
         } else {
           await qc.invalidateQueries({
             queryKey: ["workspace", ws, "assistant", "conversation", id],
@@ -94,7 +146,11 @@ export function useAssistantChat(
           setLiveTools([]);
           // Cleared after the refetch settles, so the persisted transcript (which
           // now includes this message) replaces the optimistic echo seamlessly.
-          setPendingUserMessage(null);
+          // On error, keep it shown so the failure is anchored to the prompt that
+          // caused it and Retry has something to resend.
+          if (!sawError) {
+            setPendingUserMessage(null);
+          }
         }
       }
     },
@@ -104,6 +160,7 @@ export function useAssistantChat(
   const send = useCallback(
     (prompt: string, id: string) => {
       if (streaming) return;
+      setLastPrompt({ text: prompt, conversationId: id });
       setPendingUserMessage(prompt);
       const controller = new AbortController();
       abortRef.current = controller;
@@ -111,12 +168,24 @@ export function useAssistantChat(
         id,
         streamMessage(ws, id, prompt, {
           editorSql: getEditorSql?.() ?? null,
+          catalog: getCatalog?.() ?? null,
+          selectionSql: captureSelection?.()?.text ?? null,
           signal: controller.signal,
         }),
       );
     },
-    [ws, streaming, consume, getEditorSql],
+    [ws, streaming, consume, getEditorSql, getCatalog, captureSelection],
   );
+
+  // Resend the last prompt as a new turn — used for both an inline Retry after
+  // an error and a Regenerate on the last completed answer. Since turns are
+  // append-only (no in-place overwrite), this adds a new turn rather than
+  // replacing the previous one.
+  const regenerate = useCallback(() => {
+    if (canRegenerate && lastPrompt && conversationId) {
+      send(lastPrompt.text, conversationId);
+    }
+  }, [send, conversationId, canRegenerate, lastPrompt]);
 
   const resolveApproval = useCallback(
     (approved: boolean) => {
@@ -145,8 +214,11 @@ export function useAssistantChat(
     liveTools,
     pending,
     error,
+    stopped,
     pendingUserMessage,
+    canRegenerate,
     send,
+    regenerate,
     resolveApproval,
     stop,
   };

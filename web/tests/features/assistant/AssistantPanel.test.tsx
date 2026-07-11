@@ -360,8 +360,9 @@ describe("AssistantPanel", () => {
     await user.type(screen.getByLabelText("Message"), "hang please");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
-    // The partial reply streams in, and a Stop button replaces Send.
-    expect(await screen.findByText("thinking…")).toBeInTheDocument();
+    // The partial reply streams in (shown both as a bubble and, throttled, in
+    // an aria-live region for screen readers, so query for either match).
+    expect(await screen.findAllByText("thinking…")).not.toHaveLength(0);
     const stop = await screen.findByRole("button", { name: "Stop" });
     expect(
       screen.queryByRole("button", { name: "Send" }),
@@ -459,11 +460,15 @@ describe("AssistantPanel", () => {
     await openPanel(user);
 
     // A selected conversation with an empty transcript falls back to the empty
-    // state's starter prompts instead of rendering a blank thread.
+    // state's starter prompts instead of rendering a blank thread. Getting there
+    // needs two sequential fetches (the conversation list, then its detail), so
+    // give this one more room than the default 1s findByRole timeout.
     expect(
-      await screen.findByRole("button", {
-        name: "What tables are in acme_analytics?",
-      }),
+      await screen.findByRole(
+        "button",
+        { name: "What tables are in acme_analytics?" },
+        { timeout: 3000 },
+      ),
     ).toBeInTheDocument();
   });
 

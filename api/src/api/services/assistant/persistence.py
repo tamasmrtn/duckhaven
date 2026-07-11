@@ -167,6 +167,23 @@ async def render_transcript_with_sql(db: AsyncSession, conversation_id: uuid.UUI
     return items
 
 
+async def is_history_truncated(db: AsyncSession, conversation_id: uuid.UUID) -> bool:
+    """Whether this conversation has more turns than the history replay cap.
+
+    One ``AssistantMessage`` row is one full turn, so a plain count against
+    ``assistant_history_turn_cap`` tells the UI whether the oldest turns have
+    already fallen out of what's replayed to the model (see ``load_history``).
+    """
+    total = (
+        await db.execute(
+            select(func.count())
+            .select_from(AssistantMessage)
+            .where(AssistantMessage.conversation_id == conversation_id)
+        )
+    ).scalar_one()
+    return total > settings.assistant_history_turn_cap
+
+
 async def _next_ordinal(db: AsyncSession, conversation_id: uuid.UUID) -> int:
     current = (
         await db.execute(

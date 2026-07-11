@@ -59,6 +59,10 @@ class TranscriptItem(BaseModel):
 class ConversationDetailOut(ConversationOut):
     transcript: list[TranscriptItem]
     tool_calls: list[ToolCallOut]
+    # Whether this conversation has more turns than are replayed to the model
+    # (assistant_history_turn_cap) — the UI surfaces this so users know the
+    # oldest messages are no longer part of the assistant's context.
+    history_truncated: bool
 
 
 class TurnRequest(BaseModel):

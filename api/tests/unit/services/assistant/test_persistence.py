@@ -17,6 +17,7 @@ from api.models.assistant import AssistantConversation, AssistantMessage, Assist
 from api.models.user import User
 from api.services.assistant.deps import ToolCallRecord
 from api.services.assistant.persistence import (
+    is_history_truncated,
     load_history,
     render_transcript,
     render_transcript_with_sql,
@@ -121,6 +122,32 @@ async def test_load_history_caps_to_recent_turns(db_session, conversation, monke
     texts = [item["text"] for item in render_transcript(history)]
     # Only the most recent 2 turns survive, in chronological order.
     assert texts == ["q1", "a1", "q2", "a2"]
+
+
+async def test_is_history_truncated_false_under_cap(db_session, conversation):
+    await save_turn(
+        db_session,
+        conversation,
+        new_messages_json=_turn_json("q", "a"),
+        usage=RunUsage(input_tokens=1, output_tokens=1),
+        records={},
+    )
+    assert await is_history_truncated(db_session, conversation.id) is False
+
+
+async def test_is_history_truncated_true_over_cap(db_session, conversation, monkeypatch):
+    from api.config import settings
+
+    monkeypatch.setattr(settings, "assistant_history_turn_cap", 2)
+    for i in range(3):
+        await save_turn(
+            db_session,
+            conversation,
+            new_messages_json=_turn_json(f"q{i}", f"a{i}"),
+            usage=RunUsage(input_tokens=1, output_tokens=1),
+            records={},
+        )
+    assert await is_history_truncated(db_session, conversation.id) is True
 
 
 async def test_render_transcript_with_sql_attributes_sql_to_the_right_turn(

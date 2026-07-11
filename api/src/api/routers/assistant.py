@@ -21,7 +21,7 @@ from api.schemas.assistant import (
     TurnRequest,
 )
 from api.services.assistant import resume_turn, stream_turn
-from api.services.assistant.persistence import render_transcript_with_sql
+from api.services.assistant.persistence import is_history_truncated, render_transcript_with_sql
 from api.services.workspace import assert_workspace_member, get_workspace
 
 router = APIRouter()
@@ -126,6 +126,7 @@ async def get_conversation(
     workspace = await _workspace(db, ws, user)
     conversation = await _load_conversation(db, workspace.id, conversation_id, user.id)
     transcript = await render_transcript_with_sql(db, conversation.id)
+    truncated = await is_history_truncated(db, conversation.id)
     tool_calls = (
         (
             await db.execute(
@@ -147,6 +148,7 @@ async def get_conversation(
         updated_at=conversation.updated_at,
         transcript=[TranscriptItem(**item) for item in transcript],
         tool_calls=[ToolCallOut.model_validate(tc) for tc in tool_calls],
+        history_truncated=truncated,
     )
 
 

@@ -14,6 +14,7 @@ dependencies = [
     "certifi>=2024.0",
     "opentelemetry-sdk>=1.36",
     "opentelemetry-exporter-otlp-proto-http>=1.36",
+    "opentelemetry-instrumentation-asgi>=0.57b0",
 ]
 
 [tool.uv.sources]

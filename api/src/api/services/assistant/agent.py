@@ -44,6 +44,24 @@ def _build_model() -> Model | str:
     return settings.assistant_model
 
 
+def _instrumentation():
+    """OpenTelemetry instrumentation capability for the assistant agents.
+
+    Holds a lazy proxy tracer, so it is a no-op until setup_telemetry() installs an
+    SDK — matching how trace.get_tracer(...) is used elsewhere. Imports stay inside
+    the function so the disabled path never pays for them at module load.
+    """
+    from pydantic_ai import InstrumentationSettings
+    from pydantic_ai.capabilities import Instrumentation
+
+    return Instrumentation(
+        settings=InstrumentationSettings(
+            include_content=settings.assistant_trace_include_content,
+            version=5,  # pin the GenAI semconv version explicitly
+        )
+    )
+
+
 @lru_cache(maxsize=1)
 def get_agent() -> Agent[AssistantDeps, str]:
     """Return the process-wide assistant agent (built lazily, cached)."""
@@ -54,7 +72,7 @@ def get_agent() -> Agent[AssistantDeps, str]:
         deps_type=AssistantDeps,
         instructions=SYSTEM_PROMPT,
         tools=ALL_TOOLS,
-        capabilities=[build_governance()],
+        capabilities=[build_governance(), _instrumentation()],
         model_settings={"max_tokens": settings.assistant_max_output_tokens},
         defer_model_check=True,
         name="duckhaven-assistant",

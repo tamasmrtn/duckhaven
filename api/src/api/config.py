@@ -185,6 +185,9 @@ class Settings(BaseSettings):
     # Result-sample caps fed into model context (never the full Parquet payload).
     assistant_result_row_cap: int = 100
     assistant_result_byte_cap: int = 32_768
+    # Include prompt/SQL/result content on assistant trace spans (gen_ai semconv).
+    # Off means spans keep roles, token usage, tool names, timing, and status only.
+    assistant_trace_include_content: bool = True
 
     # ── OIDC SSO (Part A) ─────────────────────────────────────────────────────
     # When enabled, the login page shows a "Sign in with SSO" button and the

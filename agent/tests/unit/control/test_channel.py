@@ -2,9 +2,12 @@ import asyncio
 import uuid
 
 import websockets
+from opentelemetry import trace
+from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags, set_span_in_context
 
 from agent.executor.admission import Admission
 from duckhaven_shared.protocol import Frame, FrameType
+from duckhaven_shared.telemetry import inject_trace_context
 
 
 def _admission(profile: str = "single", **kwargs) -> Admission:
@@ -907,3 +910,164 @@ async def test_queue_full_returns_failed_frame(tmp_path, monkeypatch):
 
     release.set()
     await t1
+
+
+def _remote_trace_context() -> dict[str, str]:
+    span_context = SpanContext(
+        trace_id=0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA,
+        span_id=0xBBBBBBBBBBBBBBBB,
+        is_remote=False,
+        trace_flags=TraceFlags(TraceFlags.SAMPLED),
+    )
+    ctx = set_span_in_context(NonRecordingSpan(span_context))
+    return inject_trace_context(ctx)
+
+
+async def test_dispatch_with_trace_context_parents_the_span(tmp_path, monkeypatch, span_exporter):
+    """A DISPATCH_QUERY carrying trace_context produces a handle_dispatch span
+    parented to the api's trace, not a new root."""
+    import agent.control.channel as ch_module
+    import agent.executor.supervisor as sup_module
+
+    query_id = str(uuid.uuid4())
+
+    async def mock_run_query(sql, result_path, timeout_s, **kwargs):
+        result_path.write_bytes(b"PAR1fake")
+        return {"row_count": 1, "duration_ms": 10}
+
+    monkeypatch.setattr(sup_module, "run_query", mock_run_query)
+
+    async def handler(ws):
+        await _complete_auth(ws)
+        dispatch = Frame(
+            type=FrameType.DISPATCH_QUERY,
+            payload={"query_id": query_id, "sql": "SELECT 1", "timeout_s": 30.0},
+            trace_context=_remote_trace_context(),
+        )
+        await ws.send(dispatch.model_dump_json())
+        for _ in range(5):
+            try:
+                raw = await asyncio.wait_for(ws.recv(), timeout=1.0)
+                if Frame.model_validate_json(raw).type == FrameType.QUERY_DONE:
+                    break
+            except TimeoutError:
+                break
+        await asyncio.sleep(0.05)
+
+    async with websockets.serve(handler, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        monkeypatch.setattr(ch_module.settings, "control_plane_url", f"ws://127.0.0.1:{port}")
+        monkeypatch.setattr(ch_module.settings, "bootstrap_token", "boot")
+
+        task = asyncio.create_task(ch_module.run_control_channel(results_dir=tmp_path))
+        await asyncio.sleep(0.5)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError, Exception:
+            pass
+
+    spans = [s for s in span_exporter.get_finished_spans() if s.name == "handle_dispatch"]
+    assert len(spans) == 1
+    span = spans[0]
+    assert format(span.context.trace_id, "032x") == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    assert format(span.parent.span_id, "016x") == "bbbbbbbbbbbbbbbb"
+    assert span.attributes["duckhaven.query_id"] == query_id
+
+
+async def test_dispatch_without_trace_context_creates_root_span(
+    tmp_path, monkeypatch, span_exporter
+):
+    """A DISPATCH_QUERY from an old peer (no trace_context) still executes and
+    produces a root span rather than failing."""
+    import agent.control.channel as ch_module
+    import agent.executor.supervisor as sup_module
+
+    query_id = str(uuid.uuid4())
+
+    async def mock_run_query(sql, result_path, timeout_s, **kwargs):
+        result_path.write_bytes(b"PAR1fake")
+        return {"row_count": 1, "duration_ms": 10}
+
+    monkeypatch.setattr(sup_module, "run_query", mock_run_query)
+
+    async def handler(ws):
+        await _complete_auth(ws)
+        # No trace_context passed -> defaults to None, matching a legacy sender.
+        dispatch = Frame(
+            type=FrameType.DISPATCH_QUERY,
+            payload={"query_id": query_id, "sql": "SELECT 1", "timeout_s": 30.0},
+        )
+        await ws.send(dispatch.model_dump_json())
+        for _ in range(5):
+            try:
+                raw = await asyncio.wait_for(ws.recv(), timeout=1.0)
+                if Frame.model_validate_json(raw).type == FrameType.QUERY_DONE:
+                    break
+            except TimeoutError:
+                break
+        await asyncio.sleep(0.05)
+
+    async with websockets.serve(handler, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        monkeypatch.setattr(ch_module.settings, "control_plane_url", f"ws://127.0.0.1:{port}")
+        monkeypatch.setattr(ch_module.settings, "bootstrap_token", "boot")
+
+        task = asyncio.create_task(ch_module.run_control_channel(results_dir=tmp_path))
+        await asyncio.sleep(0.5)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError, Exception:
+            pass
+
+    spans = [s for s in span_exporter.get_finished_spans() if s.name == "handle_dispatch"]
+    assert len(spans) == 1
+    assert spans[0].parent is None
+
+
+async def test_dispatch_failure_sets_span_error_status(tmp_path, monkeypatch, span_exporter):
+    """A run_query exception is recorded on the handle_dispatch span as an error."""
+    import agent.control.channel as ch_module
+
+    query_id = str(uuid.uuid4())
+
+    async def failing_run_query(sql, result_path, timeout_s, **kwargs):
+        raise RuntimeError("intentional-error")
+
+    monkeypatch.setattr(ch_module, "run_query", failing_run_query)
+
+    async def handler(ws):
+        await _complete_auth(ws)
+        await ws.send(
+            Frame(
+                type=FrameType.DISPATCH_QUERY,
+                payload={"query_id": query_id, "sql": "NOT VALID SQL", "timeout_s": 30.0},
+            ).model_dump_json()
+        )
+        for _ in range(5):
+            try:
+                raw = await asyncio.wait_for(ws.recv(), timeout=2.0)
+                if Frame.model_validate_json(raw).type == FrameType.QUERY_DONE:
+                    break
+            except TimeoutError:
+                break
+        await asyncio.sleep(0.05)
+
+    async with websockets.serve(handler, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        monkeypatch.setattr(ch_module.settings, "control_plane_url", f"ws://127.0.0.1:{port}")
+        monkeypatch.setattr(ch_module.settings, "bootstrap_token", "tok")
+
+        task = asyncio.create_task(ch_module.run_control_channel(results_dir=tmp_path))
+        await asyncio.sleep(0.5)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError, Exception:
+            pass
+
+    spans = [s for s in span_exporter.get_finished_spans() if s.name == "handle_dispatch"]
+    assert len(spans) == 1
+    assert spans[0].status.status_code == trace.StatusCode.ERROR
+    assert len(spans[0].events) == 1  # record_exception

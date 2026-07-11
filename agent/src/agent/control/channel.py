@@ -5,6 +5,8 @@ import uuid
 from pathlib import Path
 
 import websockets
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 from websockets.exceptions import ConnectionClosed
 
 from agent.auth import TokenHolder, load_session_token, save_session_token
@@ -23,8 +25,10 @@ from agent.metrics.system import MetricsSampler, cpu_capability, effective_memor
 from duckhaven_shared.concurrency import BUCKET_FRACTIONS
 from duckhaven_shared.protocol import Frame, FrameType
 from duckhaven_shared.schemas import AgentCapabilities
+from duckhaven_shared.telemetry import extract_trace_context
 
 logger = logging.getLogger(__name__)
+_tracer = trace.get_tracer("duckhaven.agent")
 
 _in_flight: dict[str, asyncio.Task] = {}
 
@@ -115,6 +119,22 @@ def _build_request(estimate: int | None, admission: Admission) -> ReservationReq
     return ReservationRequest(memory_bytes=mem, threads=threads)
 
 
+async def _traced_dispatch(ws, msg: Frame, results_dir: Path, admission: Admission) -> None:
+    """Run _handle_dispatch inside a consumer span continuing the api's trace.
+
+    The span lives here (not in _consume) because dispatch runs as a detached
+    task — the extracted context would not propagate into create_task otherwise.
+    With no SDK configured the span is a no-op and dispatch runs unchanged.
+    """
+    with _tracer.start_as_current_span(
+        "handle_dispatch",
+        context=extract_trace_context(msg.trace_context),
+        kind=trace.SpanKind.CONSUMER,
+        attributes={"duckhaven.query_id": msg.payload.get("query_id", "")},
+    ):
+        await _handle_dispatch(ws, msg.payload, results_dir, admission)
+
+
 async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admission) -> None:
     query_id = payload["query_id"]
     sql = payload["sql"]
@@ -169,12 +189,14 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
     except QueueFull:
         if conn is not None:
             conn.close()
+        trace.get_current_span().set_status(Status(StatusCode.ERROR, "queue full"))
         await _send_failed(ws, query_id, "queue full")
         _in_flight.pop(query_id, None)
         return
     except QueuedTimeout:
         if conn is not None:
             conn.close()
+        trace.get_current_span().set_status(Status(StatusCode.ERROR, "queued timeout"))
         await _send_failed(ws, query_id, "queued timeout")
         _in_flight.pop(query_id, None)
         return
@@ -229,11 +251,15 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
             done_payload["health"] = stats.get("health")
         done = Frame(type=FrameType.QUERY_DONE, payload=done_payload)
     except TimeoutError:
+        trace.get_current_span().set_status(Status(StatusCode.ERROR, "timeout"))
         done = Frame(
             type=FrameType.QUERY_DONE,
             payload={"query_id": query_id, "status": "failed", "error": "timeout"},
         )
     except Exception as exc:
+        span = trace.get_current_span()
+        span.record_exception(exc)
+        span.set_status(Status(StatusCode.ERROR, str(exc)))
         done = Frame(
             type=FrameType.QUERY_DONE,
             payload={"query_id": query_id, "status": "failed", "error": str(exc)},
@@ -356,7 +382,7 @@ async def _consume(ws, results_dir: Path, admission: Admission) -> None:
 
         elif msg.type == FrameType.DISPATCH_QUERY:
             query_id = msg.payload.get("query_id", str(uuid.uuid4()))
-            task = asyncio.create_task(_handle_dispatch(ws, msg.payload, results_dir, admission))
+            task = asyncio.create_task(_traced_dispatch(ws, msg, results_dir, admission))
             _in_flight[query_id] = task
 
         elif msg.type == FrameType.CANCEL_QUERY:

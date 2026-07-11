@@ -3,8 +3,11 @@ from pathlib import Path
 from typing import Any
 
 import duckdb
+from opentelemetry import trace
 
 from agent.executor.runner import run_query_sync
+
+_tracer = trace.get_tracer("duckhaven.agent")
 
 
 async def run_query(
@@ -54,7 +57,16 @@ async def run_query(
 
     handle = loop.call_later(timeout_s, _interrupt)
     try:
-        return await loop.run_in_executor(None, _run)
+        # Manual span so per-query DuckDB execution time is visible in the
+        # trace; the query id is the result file's stem.
+        with _tracer.start_as_current_span(
+            "duckdb.execute",
+            attributes={
+                "db.system.name": "duckdb",
+                "duckhaven.query_id": result_path.stem,
+            },
+        ):
+            return await loop.run_in_executor(None, _run)
     except duckdb.InterruptException as exc:
         raise TimeoutError("query exceeded statement timeout") from exc
     except asyncio.CancelledError:

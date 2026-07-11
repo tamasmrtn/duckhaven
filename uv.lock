@@ -493,6 +493,8 @@ dependencies = [
     { name = "duckdb" },
     { name = "duckhaven-shared" },
     { name = "httpx" },
+    { name = "opentelemetry-exporter-otlp-proto-http" },
+    { name = "opentelemetry-sdk" },
     { name = "psutil" },
     { name = "pydantic-settings" },
     { name = "starlette" },
@@ -506,6 +508,8 @@ requires-dist = [
     { name = "duckdb", specifier = ">=1.5" },
     { name = "duckhaven-shared", editable = "shared" },
     { name = "httpx", specifier = ">=0.27" },
+    { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.36" },
+    { name = "opentelemetry-sdk", specifier = ">=1.36" },
     { name = "psutil", specifier = ">=7.0.0" },
     { name = "pydantic-settings", specifier = ">=2.0" },
     { name = "starlette", specifier = ">=0.40" },
@@ -581,11 +585,15 @@ name = "duckhaven-shared"
 version = "0.1.0"
 source = { editable = "shared" }
 dependencies = [
+    { name = "opentelemetry-api" },
     { name = "pydantic" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pydantic", specifier = ">=2.0" }]
+requires-dist = [
+    { name = "opentelemetry-api", specifier = ">=1.36" },
+    { name = "pydantic", specifier = ">=2.0" },
+]
 
 [[package]]
 name = "eval-type-backport"

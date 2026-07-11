@@ -13,7 +13,13 @@ Both compose stacks ship a small tracing pipeline:
 
 ```text
 api ──otlp/http──▶ otel-collector ──otlp/grpc──▶ tempo
+agent ──otlp/http──┘
 ```
+
+A query's trace is not confined to one process: the API dispatches it to an agent over a custom WebSocket protocol,
+and the agent hands the actual SQL to DuckDB on a worker thread. Both hops carry the trace forward explicitly (see
+[What is traced](#what-is-traced)), so **one trace covers the whole query** — from the HTTP request through DuckDB
+execution — not two disconnected halves.
 
 - **`otel-collector`** ([OpenTelemetry Collector](https://opentelemetry.io/docs/collector/)) receives OTLP over HTTP
   (`:4318`) and gRPC (`:4317`) on the compose network and batches spans to Tempo. Config:
@@ -39,8 +45,12 @@ The API exports traces when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (the compose fi
 OTEL_EXPORTER_OTLP_ENDPOINT=
 ```
 
-`OTEL_SERVICE_NAME` overrides the reported service name (default `duckhaven-api`). Under HA, each replica reports its
-`REPLICA_ID` as `service.instance.id`, so `api-1` and `api-2` are distinguishable inside one trace view.
+`OTEL_SERVICE_NAME` overrides the reported service name (default `duckhaven-api`, `duckhaven-agent` for the agent).
+Under HA, each API replica reports its `REPLICA_ID` as `service.instance.id`, so `api-1` and `api-2` are
+distinguishable inside one trace view; the agent reports its display name the same way.
+
+The agent has the identical `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_SERVICE_NAME` knobs, pointed at the same collector
+by default.
 
 ## What is traced
 
@@ -49,6 +59,9 @@ OTEL_EXPORTER_OTLP_ENDPOINT=
 | FastAPI (automatic) | One server span per API request, named by route template. Health probes (`/healthz`, `/readyz`) and `/api/metrics` scrapes are excluded. |
 | httpx (automatic) | A client span for every request to Apache Polaris and for cross-replica dispatch forwards, as children of the request that caused them. |
 | SQLAlchemy (automatic) | A span per database statement, with the SQL as an attribute. |
+| `dispatch_query` (manual, api) | Wraps handing a query to an agent over the WebSocket control channel. Its W3C trace context rides inside the `DISPATCH_QUERY` frame so the agent's span below continues the same trace instead of starting a new one. |
+| `handle_dispatch` (manual, agent) | The agent's per-query span: admission queueing, running the query, and sending the result back. Continues the api's trace when the frame carried one; starts a fresh trace otherwise (e.g. an older peer without tracing). Failures set the span to an error status. |
+| `duckdb.execute` (manual, agent) | Wraps the actual DuckDB execution (offloaded to a worker thread), so per-query execution time is visible directly in the trace rather than only in the aggregate `duckhaven_query_duration_seconds` histogram. |
 
 Trace attributes are allowed to carry high-cardinality values that the
 [metrics cardinality policy](monitoring.md#cardinality-policy) bans as labels — a `query_id` on a span is exactly how

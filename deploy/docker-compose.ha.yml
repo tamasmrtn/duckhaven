@@ -270,6 +270,8 @@ services:
       POLARIS_CLIENT_ID: ${POLARIS_CLIENT_ID:-root}
       POLARIS_CLIENT_SECRET: ${POLARIS_CLIENT_SECRET:-s3cr3t}
       RESULTS_HTTP_HOST: 0.0.0.0
+      # OpenTelemetry tracing (empty = disabled), same collector as the api.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
     volumes:
       - agent_results:/var/duckhaven-agent/results
 

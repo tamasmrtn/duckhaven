@@ -230,6 +230,8 @@ services:
       # The control plane reaches the result server across the compose network,
       # so bind all interfaces rather than loopback.
       RESULTS_HTTP_HOST: 0.0.0.0
+      # OpenTelemetry tracing (empty = disabled), same collector as the api.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
     volumes:
       - agent_results:/var/duckhaven-agent/results
     healthcheck:

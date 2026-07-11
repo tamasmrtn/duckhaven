@@ -10,6 +10,7 @@ from agent.config import settings
 from agent.control.channel import run_control_channel
 from agent.results.retention import sweep_loop
 from agent.results.server import make_results_app
+from agent.telemetry import setup_telemetry
 
 logging.basicConfig(level=logging.INFO)
 
@@ -42,6 +43,7 @@ async def _run_result_server(results_dir: Path, token_holder: TokenHolder) -> No
 
 
 async def main() -> None:
+    setup_telemetry()
     results_dir = Path(settings.results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
     _use_writable_workdir(results_dir)

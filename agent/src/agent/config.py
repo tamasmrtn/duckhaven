@@ -59,5 +59,11 @@ class Settings(BaseSettings):
     # it in QUERY_DONE. Best-effort; this flag is the kill switch.
     profiling_enabled: bool = True
 
+    # OpenTelemetry tracing. Unset endpoint (the default) disables the SDK
+    # entirely — no spans, no exporter. Maps from the standard
+    # OTEL_EXPORTER_OTLP_ENDPOINT / OTEL_SERVICE_NAME env vars.
+    otel_exporter_otlp_endpoint: str | None = None
+    otel_service_name: str = "duckhaven-agent"
+
 
 settings = Settings()

@@ -120,6 +120,8 @@ async def dispatch_query(
         attributes={
             "duckhaven.query_id": str(query.id),
             "duckhaven.agent_id": str(query.agent_id),
+            # null origin = a user's interactive query; else "scheduled"/etc.
+            "duckhaven.origin": query.origin or "interactive",
         },
     ):
         frame = Frame(

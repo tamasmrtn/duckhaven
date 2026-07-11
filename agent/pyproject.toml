@@ -9,7 +9,7 @@ dependencies = [
     "pydantic-settings>=2.0",
     "duckhaven-shared",
     "starlette>=0.40",
-    "uvicorn>=0.30",
+    "uvicorn>=0.50.2",
     "psutil>=7.0.0",
     "certifi>=2024.0",
 ]

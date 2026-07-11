@@ -85,6 +85,105 @@ def render_transcript(messages: list[ModelMessage]) -> list[dict]:
     return items
 
 
+async def render_transcript_with_sql(db: AsyncSession, conversation_id: uuid.UUID) -> list[dict]:
+    """Like ``render_transcript``, but attach the SQL each turn ran (or proposed)
+    to its assistant line, so the UI can show it inline without a separate lookup.
+
+    ``AssistantToolCall`` rows have no FK to the ``AssistantMessage`` (turn) that
+    produced them. But ``save_turn`` writes a turn's message row and all of that
+    turn's tool-call rows in one transaction/commit, so a tool call can be
+    attributed to the turn whose time window it falls in: a message at ordinal N
+    owns tool calls with ``created_at`` in ``(row[N-1].created_at, row[N].created_at]``
+    (unbounded below for the first row). This is a heuristic derived from that
+    same-commit invariant, not a real key — it holds as long as turns don't
+    complete within the same timestamp tick, which is not a concern at Python's
+    datetime resolution.
+    """
+    rows = (
+        (
+            await db.execute(
+                select(AssistantMessage)
+                .where(AssistantMessage.conversation_id == conversation_id)
+                .order_by(AssistantMessage.ordinal.desc())
+                .limit(settings.assistant_history_turn_cap)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    rows = list(reversed(rows))
+    if not rows:
+        return []
+    # Bound the tool-call scan to the displayed window. Without the lower bound,
+    # the oldest *visible* turn would absorb the tool calls of every *dropped*
+    # older turn (its window is unbounded below), misattributing a dropped turn's
+    # SQL onto the oldest visible answer once the conversation exceeds the cap.
+    tool_calls = (
+        (
+            await db.execute(
+                select(AssistantToolCall)
+                .where(AssistantToolCall.conversation_id == conversation_id)
+                .where(AssistantToolCall.created_at >= rows[0].created_at)
+                .order_by(AssistantToolCall.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    items: list[dict] = []
+    lower_bound = None
+    # Both ``rows`` and ``tool_calls`` are sorted ascending, so walk them together
+    # with a single forward pointer (O(rows + calls)) rather than re-scanning the
+    # whole tool-call list per row.
+    call_idx = 0
+    for row in rows:
+        upper_bound = row.created_at
+        sql: str | None = None
+        while call_idx < len(tool_calls):
+            call = tool_calls[call_idx]
+            if lower_bound is not None and call.created_at <= lower_bound:
+                call_idx += 1
+                continue
+            if call.created_at > upper_bound:
+                break
+            if call.tool in ("run_sql", "propose_sql_edit") and isinstance(call.args, dict):
+                candidate = call.args.get("sql")
+                if candidate:
+                    # Last matching call wins: a turn that both ran and proposed
+                    # SQL surfaces whichever committed later (its most recent action).
+                    sql = candidate
+            call_idx += 1
+        row_messages = sanitize_messages(ModelMessagesTypeAdapter.validate_python(row.payload))
+        row_items = render_transcript(row_messages)
+        for item in row_items:
+            item["sql"] = None
+        if sql:
+            for item in reversed(row_items):
+                if item["role"] == "assistant":
+                    item["sql"] = sql
+                    break
+        items.extend(row_items)
+        lower_bound = upper_bound
+    return items
+
+
+async def is_history_truncated(db: AsyncSession, conversation_id: uuid.UUID) -> bool:
+    """Whether this conversation has more turns than the history replay cap.
+
+    One ``AssistantMessage`` row is one full turn, so a plain count against
+    ``assistant_history_turn_cap`` tells the UI whether the oldest turns have
+    already fallen out of what's replayed to the model (see ``load_history``).
+    """
+    total = (
+        await db.execute(
+            select(func.count())
+            .select_from(AssistantMessage)
+            .where(AssistantMessage.conversation_id == conversation_id)
+        )
+    ).scalar_one()
+    return total > settings.assistant_history_turn_cap
+
+
 async def _next_ordinal(db: AsyncSession, conversation_id: uuid.UUID) -> int:
     current = (
         await db.execute(

@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import pytest
@@ -45,6 +46,23 @@ def scripted_model(steps: list[tuple]) -> FunctionModel:
                 yield word + " "
         else:
             yield {0: DeltaToolCall(name=step[1], json_args=json.dumps(step[2]))}
+
+    return FunctionModel(function, stream_function=stream_function)
+
+
+def hanging_model(gate: asyncio.Event) -> FunctionModel:
+    """A FunctionModel whose streaming run emits one token then blocks on ``gate``,
+    so a turn can be caught mid-stream to exercise cancellation. Leave ``gate``
+    unset to keep it blocked until the run is cancelled.
+    """
+
+    def function(messages, info) -> ModelResponse:  # non-streaming fallback (unused)
+        return ModelResponse(parts=[TextPart("unused")])
+
+    async def stream_function(messages, info):
+        yield "Thinking "
+        await gate.wait()
+        yield "done."
 
     return FunctionModel(function, stream_function=stream_function)
 

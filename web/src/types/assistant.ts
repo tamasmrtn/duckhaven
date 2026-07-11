@@ -15,6 +15,8 @@ export interface Conversation {
 export interface TranscriptItem {
   role: "user" | "assistant";
   text: string;
+  // The SQL this turn ran or proposed, if any (attributed server-side).
+  sql: string | null;
 }
 
 export interface AssistantToolCall {
@@ -31,6 +33,7 @@ export interface AssistantToolCall {
 export interface ConversationDetail extends Conversation {
   transcript: TranscriptItem[];
   tool_calls: AssistantToolCall[];
+  history_truncated: boolean;
 }
 
 // Server-sent events streamed from a turn.
@@ -43,7 +46,7 @@ export type AssistantFrame =
       tool: string;
       sql: string | null;
     }
-  | { type: "propose_edit"; sql: string; explanation: string }
+  | { type: "propose_edit"; sql: string; explanation: string; scoped: boolean }
   | {
       type: "done";
       message_id: string;

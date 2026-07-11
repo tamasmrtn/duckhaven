@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class AssistantStatusOut(BaseModel):
@@ -15,6 +15,10 @@ class ConversationCreate(BaseModel):
     # Optional opening message; when present the created conversation is returned
     # and the client immediately opens the streaming turn endpoint.
     title: str | None = None
+
+
+class ConversationUpdate(BaseModel):
+    title: str = Field(min_length=1, max_length=255)
 
 
 class ConversationOut(BaseModel):
@@ -47,11 +51,18 @@ class TranscriptItem(BaseModel):
 
     role: str  # "user" | "assistant"
     text: str
+    # The SQL this turn ran or proposed, if any — attributed by a same-transaction
+    # timestamp window (see render_transcript_with_sql), shown inline by default.
+    sql: str | None = None
 
 
 class ConversationDetailOut(ConversationOut):
     transcript: list[TranscriptItem]
     tool_calls: list[ToolCallOut]
+    # Whether this conversation has more turns than are replayed to the model
+    # (assistant_history_turn_cap) — the UI surfaces this so users know the
+    # oldest messages are no longer part of the assistant's context.
+    history_truncated: bool
 
 
 class TurnRequest(BaseModel):
@@ -60,6 +71,17 @@ class TurnRequest(BaseModel):
     catalog: str | None = None
     # Current worksheet-editor SQL, so the assistant can read and propose edits to it.
     editor_sql: str | None = Field(default=None, max_length=100_000)
+    # The user's current worksheet text selection, if non-empty, so a proposed edit
+    # can be scoped to just that fragment instead of rewriting the whole worksheet.
+    selection_sql: str | None = Field(default=None, max_length=100_000)
+
+    @field_validator("selection_sql")
+    @classmethod
+    def _blank_selection_is_none(cls, v: str | None) -> str | None:
+        # Normalize an empty/whitespace-only selection to None at the boundary, so
+        # "scoped" (runner: `is not None`) and the selection tool (truthiness) can't
+        # disagree about whether the user actually selected anything.
+        return None if v is not None and not v.strip() else v
 
 
 class ApprovalRequest(BaseModel):

@@ -12,15 +12,26 @@ and what it can and cannot do, see the [AI data assistant](../concepts/assistant
 
 1. Click the **✨ sparkle** button in the top bar (just left of the theme toggle) to open the assistant panel on the
    right — it stays available on every page, alongside your work, like a coding copilot. `Ctrl/Cmd+I` toggles it too.
-2. Type a question, for example:
+2. On a fresh conversation, click one of the suggested starter prompts (generated from the catalogs in your workspace)
+   or type your own question, for example:
    - "What tables are in the sales schema?"
    - "How many orders were placed last month, by region?"
    - "Describe the customers table."
-3. The assistant streams its answer as it works. When it runs a query, you'll see the SQL it ran and a preview of the
-   result; open the full result in the query grid just as you would for a query you ran yourself.
+3. The assistant streams its answer as it works, showing a rotating status word and an elapsed timer while it's busy. If
+   it opened your worksheet's active catalog, unqualified table names resolve against that catalog automatically. When
+   it runs a query, the SQL is shown right under the answer, and a preview of the result; open the full result in the
+   query grid — or click the **View full result** link that appears after the answer — just as you would for a query
+   you ran yourself.
+4. While a turn is running, the Send button becomes a **Stop** button. Clicking it cancels the turn: the assistant
+   stops generating, any query still running is cancelled, and the partial answer is discarded (nothing is saved). Your
+   question stays in the composer's place with a **Retry** to run it again.
+5. If a turn fails, a **Retry** button appears with the error so you can resend it without retyping; after a good
+   answer, **Regenerate** resends the same question as a new turn if you want another attempt.
 
-Each conversation is private to you. Use the conversation dropdown in the panel header to switch between chats or start
-a new one; they persist so you can return to them later.
+Each conversation is private to you. Click the history icon in the panel header to search, switch, rename, or delete
+conversations; the panel header also shows the conversation's total token usage. Conversations persist so you can
+return to them later. If a conversation grows very long, the panel shows a small notice that its oldest messages have
+dropped out of context — start a new conversation if you want a clean slate.
 
 ## Let the assistant write SQL in your worksheet
 
@@ -30,6 +41,9 @@ your editor**:
 
 - The proposed SQL replaces the editor content, with the **changed lines highlighted** so it's obvious what the
   assistant wrote versus what was already yours.
+- If you have text selected in the editor when you ask, the assistant proposes a replacement for just that selection
+  instead of rewriting the whole worksheet — handy for a small tweak in a long query. If the worksheet changed since
+  you asked, it falls back to a full replacement rather than risk applying the edit in the wrong place.
 - A bar appears above the editor with **Accept** and **Reject**. Accept keeps the change (the worksheet is marked
   unsaved); Reject restores your original SQL.
 - Nothing runs automatically — you review, accept, then run it with the usual **Run** button, which goes through the
@@ -50,6 +64,8 @@ Nothing that changes data runs without your approval.
 - Let it discover structure: it will list schemas and describe tables before querying, so you rarely need to know exact
   table or column names.
 - Be specific about the grain and filters you want ("by month", "for 2025", "excluding cancelled orders").
+- If your question is missing something essential — like the time period or which table you mean — the assistant
+  will ask a short clarifying question instead of guessing wrong.
 - Results shown to the model are a capped sample — for large outputs, trust the reported total row count and open the
   full result in the grid.
 - If the assistant says something is not accessible, that reflects the grants of its service account, not a bug. Ask

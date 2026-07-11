@@ -1,5 +1,9 @@
-"""inject/extract_trace_context: pure opentelemetry-api, safe with no SDK configured."""
+"""inject/extract_trace_context and log correlation: safe with no SDK configured."""
 
+import io
+import logging
+
+from opentelemetry import context as otel_context
 from opentelemetry import trace
 from opentelemetry.trace import (
     NonRecordingSpan,
@@ -8,7 +12,12 @@ from opentelemetry.trace import (
     set_span_in_context,
 )
 
-from duckhaven_shared.telemetry import extract_trace_context, inject_trace_context
+from duckhaven_shared.telemetry import (
+    LOG_FORMAT,
+    TraceContextLogFilter,
+    extract_trace_context,
+    inject_trace_context,
+)
 
 
 def _remote_context():
@@ -43,3 +52,35 @@ def test_extract_round_trips_an_injected_carrier():
 def test_extract_none_or_empty_carrier_returns_none():
     assert extract_trace_context(None) is None
     assert extract_trace_context({}) is None
+
+
+def _log_line(*, attach_context: bool = False) -> str:
+    """Emit one log record through the filter + LOG_FORMAT, return the line."""
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    handler.addFilter(TraceContextLogFilter())
+    logger = logging.getLogger("test.telemetry.filter")
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    token = otel_context.attach(_remote_context()) if attach_context else None
+    try:
+        logger.info("hello")
+    finally:
+        if token is not None:
+            otel_context.detach(token)
+        logger.removeHandler(handler)
+    return stream.getvalue().strip()
+
+
+def test_filter_stamps_placeholder_without_active_span():
+    line = _log_line()
+    assert "trace_id=- span_id=-" in line
+    assert "hello" in line
+
+
+def test_filter_stamps_hex_ids_with_active_span():
+    line = _log_line(attach_context=True)
+    assert "trace_id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" in line
+    assert "span_id=bbbbbbbbbbbbbbbb" in line

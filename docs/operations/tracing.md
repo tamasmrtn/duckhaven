@@ -72,6 +72,19 @@ you find one query's trace; it only ever costs one trace, not an unbounded metri
 In Grafana: **Explore → Tempo**, then search by service (`duckhaven-api`), span name, or duration. Every trace ID is
 also queryable directly (Tempo's TraceQL: `{ .service.name = "duckhaven-api" }`).
 
+## Correlating logs with traces
+
+Every log line from the api and agent carries the active span's trace and span id:
+
+```text
+09:14:02 INFO api.services.query [trace_id=4bf92f3577b34da6a3ce929d0e0e4736 span_id=00f067aa0ba902b7] dispatched
+```
+
+Outside a span (startup, background loops between requests) both fields print as `-` rather than being omitted, so
+the log shape stays consistent and grep-able either way. To find every log line for one query: get its trace id from
+Tempo (or from any log line for that query) and search `docker compose logs api agent | grep trace_id=<id>` — since
+the id is shared, this finds the line on both services even though the query crossed the WebSocket in between.
+
 ## Related
 
 - [Monitoring](monitoring.md) — Prometheus metrics, the other half of observability.

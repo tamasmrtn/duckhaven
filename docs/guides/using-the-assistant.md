@@ -30,7 +30,8 @@ and what it can and cannot do, see the [AI data assistant](../concepts/assistant
 
 Each conversation is private to you. Click the history icon in the panel header to search, switch, rename, or delete
 conversations; the panel header also shows the conversation's total token usage. Conversations persist so you can
-return to them later.
+return to them later. If a conversation grows very long, the panel shows a small notice that its oldest messages have
+dropped out of context — start a new conversation if you want a clean slate.
 
 ## Let the assistant write SQL in your worksheet
 
@@ -63,6 +64,8 @@ Nothing that changes data runs without your approval.
 - Let it discover structure: it will list schemas and describe tables before querying, so you rarely need to know exact
   table or column names.
 - Be specific about the grain and filters you want ("by month", "for 2025", "excluding cancelled orders").
+- If your question is missing something essential — like the time period or which table you mean — the assistant
+  will ask a short clarifying question instead of guessing wrong.
 - Results shown to the model are a capped sample — for large outputs, trust the reported total row count and open the
   full result in the grid.
 - If the assistant says something is not accessible, that reflects the grants of its service account, not a bug. Ask

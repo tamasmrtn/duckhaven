@@ -1,4 +1,4 @@
-import { get, post, del } from "./client";
+import { get, post, patch, del } from "./client";
 import { ApiError } from "./client";
 import type {
   AssistantFrame,
@@ -21,6 +21,11 @@ export const assistantApi = {
 
   getConversation: (ws: string, id: string) =>
     get<ConversationDetail>(`/workspaces/${ws}/assistant/conversations/${id}`),
+
+  renameConversation: (ws: string, id: string, title: string) =>
+    patch<Conversation>(`/workspaces/${ws}/assistant/conversations/${id}`, {
+      title,
+    }),
 
   deleteConversation: (ws: string, id: string) =>
     del(`/workspaces/${ws}/assistant/conversations/${id}`),
@@ -77,6 +82,7 @@ export async function* streamMessage(
   opts?: {
     catalog?: string | null;
     editorSql?: string | null;
+    selectionSql?: string | null;
     signal?: AbortSignal;
   },
 ): AsyncGenerator<AssistantFrame, void, unknown> {
@@ -90,6 +96,7 @@ export async function* streamMessage(
         prompt,
         catalog: opts?.catalog ?? null,
         editor_sql: opts?.editorSql ?? null,
+        selection_sql: opts?.selectionSql ?? null,
       }),
       signal: opts?.signal,
     },

@@ -54,6 +54,7 @@ import { useCatalogs } from "@/queries/catalogs";
 import { takePendingQuery } from "@/features/catalog/worksheetSql";
 import { ProfilePanel } from "@/features/worksheet/profile/ProfilePanel";
 import { SqlEditor, type SqlEditorHandle } from "./SqlEditor";
+import { applyScopedEdit } from "./scopedEdit";
 import { useSqlCompletion } from "./completion/useSqlCompletion";
 import { splitStatements } from "./statements";
 import { isDdl } from "./ddl";
@@ -296,14 +297,24 @@ export function WorksheetPage() {
     oldSql: string;
     newSql: string;
     explanation: string;
+    note?: string;
   } | null>(null);
   const currentSqlRef = useRef("");
-  const proposeEditRef = useRef<(sql: string, explanation: string) => void>(
-    () => {},
-  );
+  const resolvedCatalogRef = useRef<string | undefined>(undefined);
+  // The selection last read by the assistant (at send() time), so a scoped
+  // propose_edit response can be spliced back into the same range.
+  const lastSelectionRef = useRef<{
+    text: string;
+    start: number;
+    end: number;
+  } | null>(null);
+  const proposeEditRef = useRef<
+    (sql: string, explanation: string, scoped: boolean) => void
+  >(() => {});
 
   const currentTab = tabs.find((t) => t.id === activeTab);
   currentSqlRef.current = currentTab?.sql ?? "";
+  resolvedCatalogRef.current = resolvedCatalog;
   const dispatchQuery = useDispatchQuery(ws);
   const cancelQuery = useCancelQuery();
   const saveQuery = useSaveQuery(ws);
@@ -336,13 +347,31 @@ export function WorksheetPage() {
   }
 
   // Apply an AI-proposed edit to the active tab: swap in the new SQL (marking the
-  // tab dirty) and remember the original so the user can reject.
-  const proposeEdit = (newSql: string, explanation: string) => {
+  // tab dirty) and remember the original so the user can reject. A scoped edit is
+  // spliced into the selection it was requested for (see applyScopedEdit), falling
+  // back to a full replace if the document changed since the request.
+  const proposeEdit = (
+    newSql: string,
+    explanation: string,
+    scoped: boolean,
+  ) => {
     const oldSql = currentSqlRef.current;
-    setProposal({ tabId: activeTab, oldSql, newSql, explanation });
+    const applied = applyScopedEdit(
+      oldSql,
+      lastSelectionRef.current,
+      newSql,
+      scoped,
+    );
+    setProposal({
+      tabId: activeTab,
+      oldSql,
+      newSql: applied.sql,
+      explanation,
+      note: applied.note,
+    });
     setTabs((prev) =>
       prev.map((t) =>
-        t.id === activeTab ? { ...t, sql: newSql, dirty: true } : t,
+        t.id === activeTab ? { ...t, sql: applied.sql, dirty: true } : t,
       ),
     );
   };
@@ -353,8 +382,14 @@ export function WorksheetPage() {
   useEffect(() => {
     assistantEditorRef.current = {
       getSql: () => currentSqlRef.current,
-      proposeEdit: (sql, explanation) =>
-        proposeEditRef.current(sql, explanation),
+      proposeEdit: (sql, explanation, scoped) =>
+        proposeEditRef.current(sql, explanation, scoped),
+      getCatalog: () => resolvedCatalogRef.current ?? null,
+      captureSelection: () => {
+        const sel = editorRef.current?.getSelectionRange() ?? null;
+        lastSelectionRef.current = sel;
+        return sel;
+      },
     };
     return () => {
       assistantEditorRef.current = null;
@@ -825,6 +860,11 @@ export function WorksheetPage() {
                 Assistant proposed changes
                 {proposal.explanation ? ` — ${proposal.explanation}` : ""}
               </span>
+              {proposal.note && (
+                <span className="truncate italic text-text-tertiary">
+                  {proposal.note}
+                </span>
+              )}
               <div className="ml-auto flex items-center gap-1">
                 <Button
                   size="sm"

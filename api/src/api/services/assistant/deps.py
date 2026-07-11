@@ -34,6 +34,9 @@ class AssistantDeps:
     # The SQL currently in the user's worksheet editor, sent with the turn so the
     # assistant can read and propose edits to it. None when no editor is open.
     editor_sql: str | None = None
+    # The user's current text selection in the worksheet editor, if non-empty. When
+    # set, a proposed edit should be scoped to just this fragment.
+    selection_sql: str | None = None
     # Tool-call audit records for this run, keyed by the SDK tool_call_id. Populated
     # by the governance hooks; drained by the runner and persisted after the turn.
     records: dict[str, ToolCallRecord] = field(default_factory=dict)

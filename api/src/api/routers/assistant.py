@@ -15,12 +15,13 @@ from api.schemas.assistant import (
     ConversationCreate,
     ConversationDetailOut,
     ConversationOut,
+    ConversationUpdate,
     ToolCallOut,
     TranscriptItem,
     TurnRequest,
 )
 from api.services.assistant import resume_turn, stream_turn
-from api.services.assistant.persistence import load_history, render_transcript
+from api.services.assistant.persistence import is_history_truncated, render_transcript_with_sql
 from api.services.workspace import assert_workspace_member, get_workspace
 
 router = APIRouter()
@@ -124,7 +125,8 @@ async def get_conversation(
     _require_enabled()
     workspace = await _workspace(db, ws, user)
     conversation = await _load_conversation(db, workspace.id, conversation_id, user.id)
-    history = await load_history(db, conversation.id)
+    transcript = await render_transcript_with_sql(db, conversation.id)
+    truncated = await is_history_truncated(db, conversation.id)
     tool_calls = (
         (
             await db.execute(
@@ -144,9 +146,30 @@ async def get_conversation(
         total_output_tokens=conversation.total_output_tokens,
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
-        transcript=[TranscriptItem(**item) for item in render_transcript(history)],
+        transcript=[TranscriptItem(**item) for item in transcript],
         tool_calls=[ToolCallOut.model_validate(tc) for tc in tool_calls],
+        history_truncated=truncated,
     )
+
+
+@router.patch(
+    "/workspaces/{ws}/assistant/conversations/{conversation_id}",
+    response_model=ConversationOut,
+)
+async def rename_conversation(
+    ws: str,
+    conversation_id: uuid.UUID,
+    body: ConversationUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> AssistantConversation:
+    _require_enabled()
+    workspace = await _workspace(db, ws, user)
+    conversation = await _load_conversation(db, workspace.id, conversation_id, user.id)
+    conversation.title = body.title
+    await db.commit()
+    await db.refresh(conversation)
+    return conversation
 
 
 @router.delete(
@@ -186,6 +209,7 @@ async def send_message(
         prompt=body.prompt,
         catalog=body.catalog,
         editor_sql=body.editor_sql,
+        selection_sql=body.selection_sql,
     )
     return StreamingResponse(stream, media_type="text/event-stream", headers=_SSE_HEADERS)
 

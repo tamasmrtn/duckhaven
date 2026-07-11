@@ -10,7 +10,7 @@ from agent.config import settings
 from agent.control.channel import run_control_channel
 from agent.results.retention import sweep_loop
 from agent.results.server import make_results_app
-from agent.telemetry import setup_telemetry
+from agent.telemetry import instrument_asgi_app, setup_telemetry
 from duckhaven_shared.telemetry import LOG_FORMAT, install_log_correlation
 
 logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
@@ -34,7 +34,7 @@ def _use_writable_workdir(results_dir: Path) -> None:
 
 
 async def _run_result_server(results_dir: Path, token_holder: TokenHolder) -> None:
-    app = make_results_app(results_dir, token_holder)
+    app = instrument_asgi_app(make_results_app(results_dir, token_holder))
     config = uvicorn.Config(
         app,
         host=settings.results_http_host,

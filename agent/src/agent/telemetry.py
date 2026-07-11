@@ -1,7 +1,8 @@
 """OpenTelemetry tracing setup for the agent.
 
-Disabled unless OTEL_EXPORTER_OTLP_ENDPOINT is set. The agent creates only
-manual spans (dispatch handling, DuckDB execution) — no auto-instrumentation.
+Disabled unless OTEL_EXPORTER_OTLP_ENDPOINT is set. The agent creates manual spans
+(dispatch handling, DuckDB execution) plus one ASGI server span on the results
+server (see instrument_asgi_app) — no other auto-instrumentation.
 """
 
 from agent.config import settings
@@ -30,3 +31,17 @@ def setup_telemetry() -> bool:
     trace.set_tracer_provider(provider)
     _configured = True
     return True
+
+
+def instrument_asgi_app(app):
+    """Wrap an ASGI app in an OTel server-span middleware. No-op if tracing is off.
+
+    The results server receives traceparent-carrying requests from the api's
+    (globally instrumented) httpx client, so this server span continues that trace
+    instead of ending it at the socket. Uses the provider setup_telemetry installed.
+    """
+    if not settings.otel_exporter_otlp_endpoint:
+        return app
+    from opentelemetry.instrumentation.asgi import OpenTelemetryMiddleware
+
+    return OpenTelemetryMiddleware(app)

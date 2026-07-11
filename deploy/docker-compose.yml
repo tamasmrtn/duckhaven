@@ -82,6 +82,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_started
+      otel-collector:
+        condition: service_started
     environment:
       POLARIS_PERSISTENCE_TYPE: relational-jdbc
       POLARIS_PERSISTENCE_RELATIONAL_JDBC_DATABASE_TYPE: postgresql
@@ -89,7 +91,11 @@ services:
       QUARKUS_DATASOURCE_USERNAME: duckhaven
       QUARKUS_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-duckhaven}
       POLARIS_REALM_CONTEXT_REALMS: ${POLARIS_REALM:-POLARIS}
-      QUARKUS_OTEL_SDK_DISABLED: "true"
+      # Joins the same trace as the api/agent (see docs/operations/tracing.md);
+      # Quarkus's default OTLP protocol is grpc, matching the collector's 4317.
+      QUARKUS_OTEL_SDK_DISABLED: "false"
+      QUARKUS_OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      QUARKUS_OTEL_RESOURCE_ATTRIBUTES: service.name=polaris
       # Polaris signs/vends S3 credentials using these to reach the bundled
       # MinIO. ALLOW_INSECURE_STORAGE_TYPES is needed for a custom http endpoint.
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}

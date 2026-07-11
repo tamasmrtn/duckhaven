@@ -198,6 +198,8 @@ services:
         condition: service_completed_successfully
       minio:
         condition: service_started
+      otel-collector:
+        condition: service_started
     environment:
       POLARIS_PERSISTENCE_TYPE: relational-jdbc
       POLARIS_PERSISTENCE_RELATIONAL_JDBC_DATABASE_TYPE: postgresql
@@ -205,7 +207,11 @@ services:
       QUARKUS_DATASOURCE_USERNAME: duckhaven
       QUARKUS_DATASOURCE_PASSWORD: ${DUCKHAVEN_DB_PASSWORD:-duckhaven}
       POLARIS_REALM_CONTEXT_REALMS: ${POLARIS_REALM:-POLARIS}
-      QUARKUS_OTEL_SDK_DISABLED: "true"
+      # Joins the same trace as the api/agent (see docs/operations/tracing.md);
+      # Quarkus's default OTLP protocol is grpc, matching the collector's 4317.
+      QUARKUS_OTEL_SDK_DISABLED: "false"
+      QUARKUS_OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      QUARKUS_OTEL_RESOURCE_ATTRIBUTES: service.name=polaris
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
       AWS_REGION: ${S3_REGION:-us-east-1}

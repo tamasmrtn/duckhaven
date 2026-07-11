@@ -38,3 +38,10 @@ def test_referenced_config_files_exist():
     assert (DEPLOY / "otel" / "otel-collector.yaml").is_file()
     assert (DEPLOY / "tempo" / "tempo.yaml").is_file()
     assert (DEPLOY / "grafana" / "provisioning" / "datasources" / "tempo.yaml").is_file()
+
+
+def test_polaris_otel_enabled_and_pointed_at_the_collector():
+    for compose in (DEV, HA):
+        env = compose["services"]["polaris"]["environment"]
+        assert env["QUARKUS_OTEL_SDK_DISABLED"] == "false"
+        assert "QUARKUS_OTEL_EXPORTER_OTLP_ENDPOINT" in env

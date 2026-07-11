@@ -13,7 +13,8 @@ Both compose stacks ship a small tracing pipeline:
 
 ```text
 api ──otlp/http──▶ otel-collector ──otlp/grpc──▶ tempo
-agent ──otlp/http──┘
+agent ──otlp/http──┘         ▲
+polaris ──otlp/grpc──────────┘
 ```
 
 A query's trace is not confined to one process: the API dispatches it to an agent over a custom WebSocket protocol,
@@ -66,6 +67,17 @@ by default.
 Trace attributes are allowed to carry high-cardinality values that the
 [metrics cardinality policy](monitoring.md#cardinality-policy) bans as labels — a `query_id` on a span is exactly how
 you find one query's trace; it only ever costs one trace, not an unbounded metric series.
+
+## Apache Polaris
+
+Polaris's own OTel SDK (built into the vendored Quarkus image) is enabled and points at the same collector, so its
+internal Iceberg-catalog spans — namespace/table lookups, credential vending — appear nested under the api's httpx
+client span instead of as one opaque HTTP call. This needs no code on the DuckHaven side: `HTTPXClientInstrumentor`
+already adds a `traceparent` header to every request the api sends to Polaris, and Quarkus's server-side
+instrumentation extracts it and continues the same trace.
+
+To turn tracing off for Polaris specifically (leaving the api/agent traced), set `QUARKUS_OTEL_SDK_DISABLED: "true"`
+on the `polaris` service in the compose file.
 
 ## Finding a trace
 

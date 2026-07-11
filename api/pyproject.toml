@@ -24,6 +24,11 @@ dependencies = [
     "croniter>=3.0",
     "sqlglot>=25",
     "pydantic-ai-slim[anthropic,mistral,openai]==2.5.0",
+    "opentelemetry-sdk>=1.36",
+    "opentelemetry-exporter-otlp-proto-http>=1.36",
+    "opentelemetry-instrumentation-fastapi>=0.57b0",
+    "opentelemetry-instrumentation-httpx>=0.57b0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.57b0",
 ]
 
 [tool.uv.sources]

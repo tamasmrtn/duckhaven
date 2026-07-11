@@ -85,7 +85,9 @@ test-e2e:
 # Spins up MinIO + Apache Polaris-on-S3 (in-memory persistence). Object storage
 # is the only storage DuckHaven uses: Polaris vends scoped credentials so the
 # agent's DuckDB can read AND write Iceberg tables. Override the bucket or image
-# tag if needed.
+# tag if needed. QUARKUS_OTEL_SDK_DISABLED stays true here (unlike the compose
+# stacks): this dev flow runs no OTel collector, so exporting would only spam
+# connection errors.
 POLARIS_IMAGE_TAG ?= latest
 POLARIS_S3_BUCKET ?= warehouse
 

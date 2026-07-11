@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     # logger handler-less), so without this the API's module loggers — scanner
     # leadership, cross-replica dispatch warnings, Polaris errors — are dropped.
     log_level: str = "INFO"
+    # OpenTelemetry tracing. Unset endpoint (the default) disables the SDK
+    # entirely — no spans, no exporter, no instrumentation. Maps from the
+    # standard OTEL_EXPORTER_OTLP_ENDPOINT / OTEL_SERVICE_NAME env vars.
+    otel_exporter_otlp_endpoint: str | None = None
+    otel_service_name: str = "duckhaven-api"
     # Apache Polaris (Iceberg REST catalog). The API authenticates to Polaris
     # with a service-principal client id/secret to create catalogs, namespaces
     # and tables. Dev defaults match the Polaris bootstrap root principal.

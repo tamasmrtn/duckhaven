@@ -50,6 +50,7 @@ from api.services.polaris import (
     PolarisNotFoundError,
 )
 from api.services.rbac import seed_roles
+from api.telemetry import setup_telemetry
 
 
 @asynccontextmanager
@@ -219,3 +220,9 @@ app.include_router(internal.router)
 app.mount("/api", api_app)
 if settings.static_dir.is_dir():
     app.mount("/", SPAStaticFiles(directory=settings.static_dir, html=True), name="ui")
+
+# Instrument at module level: FastAPIInstrumentor injects middleware, which must
+# be in place before the middleware stack is built at startup. Both apps need it
+# — the outer app owns the agent WebSocket and /internal routes. No-op unless
+# OTEL_EXPORTER_OTLP_ENDPOINT is set.
+setup_telemetry(api_app, app)

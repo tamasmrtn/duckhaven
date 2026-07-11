@@ -149,12 +149,15 @@ supplied here or via the provider's own standard environment variable (`ANTHROPI
 
 ### Observability
 
-Controls the Prometheus metrics endpoint. See [Monitoring](../operations/monitoring.md#prometheus-metrics)
-for the metric reference, scrape config, and a starter Grafana dashboard.
+Controls the Prometheus metrics endpoint and OpenTelemetry tracing. See
+[Monitoring](../operations/monitoring.md#prometheus-metrics) for the metric reference, scrape config, and a starter
+Grafana dashboard, and [Distributed tracing](../operations/tracing.md) for the tracing pipeline.
 
 | Variable | Default | Description |
 |---|---|---|
 | `METRICS_ENABLED` | `true` | Expose `GET /api/metrics` in Prometheus text format. Unauthenticated like the health endpoints (keep it on the internal network); set `false` to remove the endpoint entirely. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | — | OTLP (http/protobuf) endpoint to export traces to; the compose files default it to the bundled collector, `http://otel-collector:4318`. Unset/empty disables tracing entirely. |
+| `OTEL_SERVICE_NAME` | `duckhaven-api` | Service name reported on spans. Replicas are distinguished by `REPLICA_ID` as `service.instance.id`. |
 
 ## Agent
 

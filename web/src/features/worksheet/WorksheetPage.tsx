@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useParams, Link } from "@tanstack/react-router";
+import { toast } from "sonner";
 import {
   Play,
   Square,
@@ -566,11 +567,17 @@ export function WorksheetPage() {
   async function handleSave() {
     const name = saveName.trim();
     if (!name || !currentTab) return;
-    await saveQuery.mutateAsync({
-      name,
-      sql: currentTab.sql,
-      default_agent_id: resolvedAgentId || undefined,
-    });
+    try {
+      await saveQuery.mutateAsync({
+        name,
+        sql: currentTab.sql,
+        default_agent_id: resolvedAgentId || undefined,
+      });
+    } catch (err) {
+      // Leave the dialog open so the user can retry after a failed save.
+      toast.error(err instanceof Error ? err.message : "Couldn't save query.");
+      return;
+    }
     // Name the tab after the saved query and clear its unsaved marker.
     const id = currentTab.id;
     setTabs((prev) =>

@@ -5,6 +5,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Select,
@@ -112,9 +120,9 @@ export function SchedulesPage() {
               subtitle="Create a schedule to run a saved query on a cron cadence."
             />
           ) : (
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-[var(--bg-surface)] z-10">
-                <tr className="border-b border-[var(--border-subtle)]">
+            <Table containerClassName="overflow-visible" className="text-sm">
+              <TableHeader className="sticky top-0 bg-[var(--bg-surface)] z-10">
+                <TableRow className="border-b border-[var(--border-subtle)] hover:bg-transparent">
                   {[
                     "Query",
                     "Cron",
@@ -123,18 +131,18 @@ export function SchedulesPage() {
                     "Next run",
                     "Last run",
                   ].map((h) => (
-                    <th
+                    <TableHead
                       key={h}
-                      className="px-3 py-2 text-left text-xs font-medium text-text-secondary"
+                      className="h-auto px-3 py-2 text-left text-xs font-medium text-text-secondary"
                     >
                       {h}
-                    </th>
+                    </TableHead>
                   ))}
-                </tr>
-              </thead>
-              <tbody>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {schedules.map((s, i) => (
-                  <tr
+                  <TableRow
                     key={s.id}
                     onClick={() => setEditing(s)}
                     className={cn(
@@ -142,18 +150,18 @@ export function SchedulesPage() {
                       i % 2 === 0 ? "" : "bg-[var(--bg-surface)]/40",
                     )}
                   >
-                    <td className="px-3 py-2 font-medium text-text-primary">
+                    <TableCell className="px-3 py-2 font-medium text-text-primary">
                       {scheduleName(s)}
-                    </td>
-                    <td className="px-3 py-2 font-mono text-xs text-text-secondary">
+                    </TableCell>
+                    <TableCell className="px-3 py-2 font-mono text-xs text-text-secondary">
                       {s.cron}
-                    </td>
-                    <td className="px-3 py-2 text-xs text-text-secondary">
+                    </TableCell>
+                    <TableCell className="px-3 py-2 text-xs text-text-secondary">
                       {s.agent_id
                         ? (agentName.get(s.agent_id) ?? shortId(s.agent_id))
                         : "Auto"}
-                    </td>
-                    <td className="px-3 py-2">
+                    </TableCell>
+                    <TableCell className="px-3 py-2">
                       <span
                         className={cn(
                           "rounded-full px-2 py-0.5 text-2xs font-medium",
@@ -164,17 +172,17 @@ export function SchedulesPage() {
                       >
                         {s.enabled ? "enabled" : "disabled"}
                       </span>
-                    </td>
-                    <td className="px-3 py-2 font-mono text-2xs text-text-tertiary">
+                    </TableCell>
+                    <TableCell className="px-3 py-2 font-mono text-2xs text-text-tertiary">
                       {s.enabled ? formatWhen(s.next_run_at) : "—"}
-                    </td>
-                    <td className="px-3 py-2 font-mono text-2xs text-text-tertiary">
+                    </TableCell>
+                    <TableCell className="px-3 py-2 font-mono text-2xs text-text-tertiary">
                       {formatWhen(s.last_run_at)}
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           )}
         </TabsContent>
 
@@ -241,37 +249,37 @@ function RunsTab({
   }
 
   return (
-    <table className="w-full text-sm">
-      <thead className="sticky top-0 bg-[var(--bg-surface)] z-10">
-        <tr className="border-b border-[var(--border-subtle)]">
+    <Table containerClassName="overflow-visible" className="text-sm">
+      <TableHeader className="sticky top-0 bg-[var(--bg-surface)] z-10">
+        <TableRow className="border-b border-[var(--border-subtle)] hover:bg-transparent">
           {["Status", "Schedule", "Agent", "Rows", "Duration", "Started"].map(
             (h) => (
-              <th
+              <TableHead
                 key={h}
-                className="px-4 py-2 text-left text-xs font-medium text-text-secondary"
+                className="h-auto px-4 py-2 text-left text-xs font-medium text-text-secondary"
               >
                 {h}
-              </th>
+              </TableHead>
             ),
           )}
-        </tr>
-      </thead>
-      <tbody>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
         {runs.map((r, i) => (
-          <tr
+          <TableRow
             key={r.id}
             className={cn(
-              "border-b border-[var(--border-subtle)]",
+              "border-b border-[var(--border-subtle)] hover:bg-transparent",
               i % 2 === 0 ? "" : "bg-[var(--bg-surface)]/40",
             )}
           >
-            <td className="px-4 py-2">
+            <TableCell className="px-4 py-2">
               <StatusPill status={r.status} durationMs={r.duration_ms} />
-            </td>
-            <td className="px-4 py-2 text-xs text-text-primary">
+            </TableCell>
+            <TableCell className="px-4 py-2 text-xs text-text-primary">
               {(r.schedule_id && labelByScheduleId.get(r.schedule_id)) ?? "—"}
-            </td>
-            <td className="px-4 py-2 font-mono text-xs text-text-secondary">
+            </TableCell>
+            <TableCell className="px-4 py-2 font-mono text-xs text-text-secondary">
               {r.agent_id
                 ? (agentName.get(r.agent_id) ?? shortId(r.agent_id))
                 : "—"}
@@ -280,20 +288,20 @@ function RunsTab({
                   {r.error}
                 </p>
               )}
-            </td>
-            <td className="px-4 py-2 font-mono text-xs text-text-secondary font-tabular">
+            </TableCell>
+            <TableCell className="px-4 py-2 font-mono text-xs text-text-secondary font-tabular">
               {r.row_count != null ? r.row_count.toLocaleString() : "—"}
-            </td>
-            <td className="px-4 py-2 font-mono text-xs text-text-secondary font-tabular">
+            </TableCell>
+            <TableCell className="px-4 py-2 font-mono text-xs text-text-secondary font-tabular">
               {formatDuration(r.duration_ms)}
-            </td>
-            <td className="px-4 py-2 font-mono text-2xs text-text-tertiary">
+            </TableCell>
+            <TableCell className="px-4 py-2 font-mono text-2xs text-text-tertiary">
               {new Date(r.started_at).toLocaleString()}
-            </td>
-          </tr>
+            </TableCell>
+          </TableRow>
         ))}
-      </tbody>
-    </table>
+      </TableBody>
+    </Table>
   );
 }
 

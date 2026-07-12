@@ -1,4 +1,4 @@
-import { ChevronRight } from "lucide-react";
+import { Breadcrumb } from "@/components/ui/breadcrumb";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCatalogs } from "@/queries/catalogs";
@@ -87,11 +87,12 @@ export function CatalogDetail({
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-4 shrink-0">
-        <div className="flex items-center gap-2 text-xs text-text-secondary">
-          <span className="font-medium text-text-primary">{ws}</span>
-          <ChevronRight className="size-3" />
-          <span className="font-medium text-text-primary">{catalog}</span>
-        </div>
+        <Breadcrumb
+          items={[
+            { label: ws, emphasis: true },
+            { label: catalog, emphasis: true },
+          ]}
+        />
         <div className="mt-2 flex items-center gap-2">
           {cat && (
             <StorageIcon

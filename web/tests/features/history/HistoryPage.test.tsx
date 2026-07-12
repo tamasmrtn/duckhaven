@@ -36,6 +36,16 @@ describe('HistoryPage', () => {
     expect(screen.queryByText('No queries yet.')).not.toBeInTheDocument()
   })
 
+  it('renders the history as a semantic table', async () => {
+    // Regression for the migration onto the shared Table primitive.
+    renderWithProviders({ initialRoute: '/acme-analytics/history' })
+    await screen.findByText(/raw\.users/)
+    expect(screen.getByRole('table')).toBeInTheDocument()
+    expect(
+      screen.getByRole('columnheader', { name: 'Status' }),
+    ).toBeInTheDocument()
+  })
+
   it('scopes history per workspace', async () => {
     // acme-analytics (ws-1) has queries against raw.*; acme-research (ws-2) has
     // the experiments.* query — each workspace shows only its own.

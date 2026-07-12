@@ -3,6 +3,14 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import { Clock } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { StatusPill } from "@/components/app/StatusPill";
 import { useWorkspaceQueries } from "@/queries/queries";
 import { useAgents } from "@/queries/agents";
@@ -119,22 +127,22 @@ export function HistoryPage() {
             </p>
           </div>
         ) : (
-          <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-[var(--bg-surface)] z-10">
-              <tr className="border-b border-[var(--border-subtle)]">
+          <Table containerClassName="overflow-visible" className="text-sm">
+            <TableHeader className="sticky top-0 bg-[var(--bg-surface)] z-10">
+              <TableRow className="border-b border-[var(--border-subtle)] hover:bg-transparent">
                 {columns.map((h) => (
-                  <th
+                  <TableHead
                     key={h}
-                    className="px-4 py-2 text-left text-xs font-medium text-text-secondary"
+                    className="h-auto px-4 py-2 text-left text-xs font-medium text-text-secondary"
                   >
                     {h}
-                  </th>
+                  </TableHead>
                 ))}
-              </tr>
-            </thead>
-            <tbody>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {wsQueries.map((q, i) => (
-                <tr
+                <TableRow
                   key={q.id}
                   onClick={all ? undefined : () => openProfile(q.id)}
                   className={cn(
@@ -143,17 +151,17 @@ export function HistoryPage() {
                     i % 2 === 0 ? "" : "bg-[var(--bg-surface)]/40",
                   )}
                 >
-                  <td className="px-4 py-2">
+                  <TableCell className="px-4 py-2">
                     <StatusPill status={q.status} durationMs={q.duration_ms} />
-                  </td>
+                  </TableCell>
                   {all && (
-                    <td className="px-4 py-2 font-mono text-xs text-text-secondary">
+                    <TableCell className="px-4 py-2 font-mono text-xs text-text-secondary">
                       {workspaceSlug.get(q.workspace_id) ??
                         shortId(q.workspace_id)}
-                    </td>
+                    </TableCell>
                   )}
                   {!all && (
-                    <td className="px-4 py-2 max-w-xs">
+                    <TableCell className="px-4 py-2 max-w-xs">
                       <pre className="truncate font-mono text-xs text-text-primary">
                         {q.sql}
                       </pre>
@@ -162,16 +170,16 @@ export function HistoryPage() {
                           {q.error}
                         </p>
                       )}
-                    </td>
+                    </TableCell>
                   )}
-                  <td className="px-4 py-2 font-mono text-xs text-text-secondary">
+                  <TableCell className="px-4 py-2 font-mono text-xs text-text-secondary">
                     {agentName.get(q.agent_id) ?? shortId(q.agent_id)}
-                  </td>
-                  <td className="px-4 py-2 text-xs text-text-secondary">
+                  </TableCell>
+                  <TableCell className="px-4 py-2 text-xs text-text-secondary">
                     {q.user_name ?? "—"}
-                  </td>
+                  </TableCell>
                   {all && (
-                    <td className="px-4 py-2 max-w-xs">
+                    <TableCell className="px-4 py-2 max-w-xs">
                       <pre className="truncate font-mono text-xs text-text-primary">
                         {q.sql}
                       </pre>
@@ -180,21 +188,21 @@ export function HistoryPage() {
                           {q.error}
                         </p>
                       )}
-                    </td>
+                    </TableCell>
                   )}
-                  <td className="px-4 py-2 font-mono text-xs text-text-secondary font-tabular">
+                  <TableCell className="px-4 py-2 font-mono text-xs text-text-secondary font-tabular">
                     {q.row_count != null ? q.row_count.toLocaleString() : "—"}
-                  </td>
-                  <td className="px-4 py-2 font-mono text-xs text-text-secondary font-tabular">
+                  </TableCell>
+                  <TableCell className="px-4 py-2 font-mono text-xs text-text-secondary font-tabular">
                     {formatDuration(q.duration_ms)}
-                  </td>
-                  <td className="px-4 py-2 font-mono text-2xs text-text-tertiary">
+                  </TableCell>
+                  <TableCell className="px-4 py-2 font-mono text-2xs text-text-tertiary">
                     {new Date(q.started_at).toLocaleString()}
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         )}
       </div>
     </div>

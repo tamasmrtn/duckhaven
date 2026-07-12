@@ -14,6 +14,16 @@ describe("SchedulesPage", () => {
     expect(screen.getByText("enabled")).toBeInTheDocument();
   });
 
+  it("renders the schedules as a semantic table", async () => {
+    // Regression for the migration onto the shared Table primitive.
+    renderWithProviders({ initialRoute: ROUTE });
+    await screen.findByText("Daily events");
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(
+      screen.getByRole("columnheader", { name: "Cron" }),
+    ).toBeInTheDocument();
+  });
+
   it("shows all scheduled runs on the Runs tab", async () => {
     const user = userEvent.setup();
     renderWithProviders({ initialRoute: ROUTE });
@@ -26,6 +36,7 @@ describe("SchedulesPage", () => {
       await screen.findByRole("status", { name: "done" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("status", { name: "failed" })).toBeInTheDocument();
+    expect(screen.getByRole("table")).toBeInTheDocument();
   });
 
   it("creates a new schedule from the New schedule dialog", async () => {

@@ -1,9 +1,5 @@
 export type QueryStatus =
-  | "queued"
-  | "running"
-  | "done"
-  | "failed"
-  | "cancelled";
+  "queued" | "running" | "done" | "failed" | "cancelled";
 
 export interface Query {
   id: string;

@@ -12,8 +12,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags, set_span_in_context
 
 from agent.executor import runner as runner_module
+from duckhaven_shared.telemetry import inject_trace_context
 
 POLARIS = {
     "endpoint": "http://polaris:8181",
@@ -186,6 +188,65 @@ def test_no_catalogs_means_no_attach(fake_conn: FakeConn, tmp_path: Path):
     )
     cmds = [c[0] for c in fake_conn.commands]
     assert not any("ATTACH" in c for c in cmds)
+
+
+# --- Trace-header secret (Polaris span joining) -------------------------------
+#
+# DuckDB's REST catalog client has no OpenTelemetry instrumentation of its own;
+# without this secret, every Polaris call DuckDB makes directly (OAuth token
+# exchange, namespace/table lookups, credential vending) would start its own
+# disconnected trace instead of joining the query's.
+
+
+def test_attach_creates_trace_headers_secret_when_span_active(fake_conn: FakeConn, tmp_path: Path):
+    # `trace_headers` is passed in explicitly, as the real callers do: they
+    # capture it on the event-loop thread (where the span is current) before
+    # handing work to run_in_executor, since contextvars are not propagated
+    # to worker threads.
+    span_context = SpanContext(
+        trace_id=0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA,
+        span_id=0xBBBBBBBBBBBBBBBB,
+        is_remote=False,
+        trace_flags=TraceFlags(TraceFlags.SAMPLED),
+    )
+    ctx = set_span_in_context(NonRecordingSpan(span_context))
+    runner_module.run_query_sync(
+        "SELECT 1",
+        tmp_path / "out.parquet",
+        memory_bytes=1024**3,
+        threads=2,
+        catalogs=[_catalog("ws_alpha", "ws-alpha", "object_store", "file:///tmp/data")],
+        active_catalog="ws_alpha",
+        polaris=POLARIS,
+        trace_headers=inject_trace_context(ctx),
+    )
+    secret_cmd, secret_params = next(
+        c
+        for c in fake_conn.commands
+        if c[0].startswith(f"CREATE OR REPLACE SECRET {runner_module._TRACE_HEADERS_SECRET}")
+    )
+    assert "TYPE HTTP" in secret_cmd
+    assert "EXTRA_HTTP_HEADERS ?" in secret_cmd
+    headers, scope = secret_params
+    assert headers == {"traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"}
+    assert scope == "http://polaris:8181"
+
+
+def test_no_active_span_means_no_trace_headers_secret(fake_conn: FakeConn, tmp_path: Path):
+    # No trace_headers passed (what callers do with no active span, e.g.
+    # tracing disabled): the runner must not create the secret at all, so
+    # tracing stays zero-overhead when disabled.
+    runner_module.run_query_sync(
+        "SELECT 1",
+        tmp_path / "out.parquet",
+        memory_bytes=1024**3,
+        threads=2,
+        catalogs=[_catalog("ws_alpha", "ws-alpha", "object_store", "file:///tmp/data")],
+        active_catalog="ws_alpha",
+        polaris=POLARIS,
+    )
+    cmds = [c[0] for c in fake_conn.commands]
+    assert not any(runner_module._TRACE_HEADERS_SECRET in c for c in cmds)
 
 
 # --- Credential-expiry re-vend + retry (G-D-cred-refresh) --------------------

@@ -22,6 +22,8 @@ runs DuckDB.
 | `MEMORY_LIMIT_BYTES` | No | `6442450944` (6 GB) | Per-query memory ceiling |
 | `MAX_CONCURRENCY_PROFILE` | No | `auto` | Reservation sizing: `auto` (EXPLAIN-estimated per query) or a static slot ladder (`single`/`equal_2`/`decaying_2`/`decaying_3`). See [Runbook §6](../operations/runbook.md#6-query-queueing-concurrency). |
 | `PROFILING_ENABLED` | No | `true` | Capture DuckDB's post-execution query profile and return it on `query_done`. Set `false` to disable. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | — | OTLP (http/protobuf) endpoint to export traces to. Unset/empty disables tracing entirely. See [Distributed tracing](../operations/tracing.md). |
+| `OTEL_SERVICE_NAME` | No | `duckhaven-agent` | Service name reported on spans. |
 
 The `auto` profile has additional best-effort estimator knobs
 (`ESTIMATE_SAFETY_MULTIPLIER`, `ESTIMATE_FLOOR_BYTES`,

@@ -11,7 +11,7 @@ from functools import lru_cache
 
 from pydantic_ai import Agent
 
-from api.services.assistant.agent import _build_model
+from api.services.assistant.agent import _build_model, _instrumentation
 
 DEFAULT_TITLE = "New conversation"
 
@@ -28,6 +28,7 @@ def get_title_agent() -> Agent[None, str]:
     return Agent(
         _build_model(),
         instructions=_TITLE_INSTRUCTIONS,
+        capabilities=[_instrumentation()],
         model_settings={"max_tokens": 24},
         defer_model_check=True,
         name="duckhaven-assistant-title",

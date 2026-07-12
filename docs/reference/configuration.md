@@ -146,15 +146,19 @@ supplied here or via the provider's own standard environment variable (`ANTHROPI
 | `ASSISTANT_HISTORY_TURN_CAP` | `40` | Only the most recent N turns are replayed to the model, bounding per-turn cost and context growth. |
 | `ASSISTANT_RESULT_ROW_CAP` | `100` | Max rows of a query result fed into model context (the full result is still available in the UI). |
 | `ASSISTANT_RESULT_BYTE_CAP` | `32768` | Max bytes of a result sample fed into model context. |
+| `ASSISTANT_TRACE_INCLUDE_CONTENT` | `true` | When [tracing](../operations/tracing.md#the-ai-assistant) is enabled, record the turn's content (prompt, generated SQL, tool arguments, result samples) on spans. Set `false` to keep only structure — roles, token usage, tool names, timing, status — out of the trace backend. No effect when tracing is off. |
 
 ### Observability
 
-Controls the Prometheus metrics endpoint. See [Monitoring](../operations/monitoring.md#prometheus-metrics)
-for the metric reference, scrape config, and a starter Grafana dashboard.
+Controls the Prometheus metrics endpoint and OpenTelemetry tracing. See
+[Monitoring](../operations/monitoring.md#prometheus-metrics) for the metric reference, scrape config, and a starter
+Grafana dashboard, and [Distributed tracing](../operations/tracing.md) for the tracing pipeline.
 
 | Variable | Default | Description |
 |---|---|---|
 | `METRICS_ENABLED` | `true` | Expose `GET /api/metrics` in Prometheus text format. Unauthenticated like the health endpoints (keep it on the internal network); set `false` to remove the endpoint entirely. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | — | OTLP (http/protobuf) endpoint to export traces to; the compose files default it to the bundled collector, `http://otel-collector:4318`. Unset/empty disables tracing entirely. |
+| `OTEL_SERVICE_NAME` | `duckhaven-api` | Service name reported on spans. Replicas are distinguished by `REPLICA_ID` as `service.instance.id`. |
 
 ## Agent
 
@@ -170,6 +174,8 @@ Source of truth: the [Agent reference](agent-reference.md). An agent needs only 
 | `MEMORY_LIMIT_BYTES` | No | `6442450944` (6 GB) | Per-query memory ceiling. |
 | `MAX_CONCURRENCY_PROFILE` | No | `auto` | Reservation sizing: `auto` (EXPLAIN-estimated per query) or a static slot ladder (`single`/`equal_2`/`decaying_2`/`decaying_3`). See [Runbook §6](../operations/runbook.md#6-query-queueing-concurrency). |
 | `PROFILING_ENABLED` | No | `true` | Capture DuckDB's post-execution query profile and return it on `query_done`. Set `false` to disable. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | — | OTLP (http/protobuf) endpoint to export traces to; the compose files default it to the bundled collector. Unset/empty disables tracing entirely. See [Distributed tracing](../operations/tracing.md). |
+| `OTEL_SERVICE_NAME` | No | `duckhaven-agent` | Service name reported on spans. |
 
 ### `auto` estimator knobs
 

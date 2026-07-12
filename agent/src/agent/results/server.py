@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 
 import duckdb
+from opentelemetry import trace
 from starlette.applications import Starlette
 from starlette.background import BackgroundTask
 from starlette.requests import Request
@@ -14,6 +15,7 @@ from starlette.routing import Route
 from agent.auth import TokenHolder
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+_tracer = trace.get_tracer("duckhaven.agent")
 
 
 def _parse_window(request: Request) -> tuple[int, int] | None:
@@ -91,7 +93,12 @@ def make_results_app(results_dir: Path, token_holder: TokenHolder) -> Starlette:
         # tells the caller the returned file already starts at the window, so it
         # decodes at offset 0.
         offset, limit = window
-        tmp = await asyncio.to_thread(_slice_parquet, path, offset, limit)
+        # Manual span so the windowed-fetch DuckDB work is visible in the trace,
+        # mirroring the executor's duckdb.execute span.
+        with _tracer.start_as_current_span(
+            "duckdb.slice_parquet", attributes={"db.system.name": "duckdb"}
+        ):
+            tmp = await asyncio.to_thread(_slice_parquet, path, offset, limit)
         return FileResponse(
             tmp,
             media_type="application/octet-stream",

@@ -57,6 +57,10 @@ x-api-base: &api-base
     # election is observable without waiting the 900s default. Restore to
     # default (or unset) for production.
     MAINTENANCE_SCAN_TICK_S: ${MAINTENANCE_SCAN_TICK_S:-900}
+    # OpenTelemetry tracing. Points at the bundled collector by default; set
+    # empty to disable tracing entirely. REPLICA_ID distinguishes the replicas
+    # as service.instance.id.
+    OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
   healthcheck:
     test:
       - CMD
@@ -194,6 +198,8 @@ services:
         condition: service_completed_successfully
       minio:
         condition: service_started
+      otel-collector:
+        condition: service_started
     environment:
       POLARIS_PERSISTENCE_TYPE: relational-jdbc
       POLARIS_PERSISTENCE_RELATIONAL_JDBC_DATABASE_TYPE: postgresql
@@ -201,7 +207,11 @@ services:
       QUARKUS_DATASOURCE_USERNAME: duckhaven
       QUARKUS_DATASOURCE_PASSWORD: ${DUCKHAVEN_DB_PASSWORD:-duckhaven}
       POLARIS_REALM_CONTEXT_REALMS: ${POLARIS_REALM:-POLARIS}
-      QUARKUS_OTEL_SDK_DISABLED: "true"
+      # Joins the same trace as the api/agent (see docs/operations/tracing.md);
+      # Quarkus's default OTLP protocol is grpc, matching the collector's 4317.
+      QUARKUS_OTEL_SDK_DISABLED: "false"
+      QUARKUS_OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      QUARKUS_OTEL_RESOURCE_ATTRIBUTES: service.name=polaris
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
       AWS_REGION: ${S3_REGION:-us-east-1}
@@ -266,8 +276,37 @@ services:
       POLARIS_CLIENT_ID: ${POLARIS_CLIENT_ID:-root}
       POLARIS_CLIENT_SECRET: ${POLARIS_CLIENT_SECRET:-s3cr3t}
       RESULTS_HTTP_HOST: 0.0.0.0
+      # OpenTelemetry tracing (empty = disabled), same collector as the api.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
     volumes:
       - agent_results:/var/duckhaven-agent/results
+
+  # ── Tracing: OTel Collector + Tempo (single-instance; the observability ──────
+  # plane is not HA). No bundled Grafana here — point your own at
+  # http://tempo:3200 (see docs/operations/tracing.md).
+  #
+  # Pinned (unlike the other bundled images): Tempo 3.0 replaced the
+  # monolithic `compactor` config block deploy/tempo/tempo.yaml uses with a
+  # disaggregated backend-scheduler/backend-worker split, so riding `:latest`
+  # crash-loops the container the moment it moves past 2.x. Override
+  # TEMPO_IMAGE_TAG once tempo.yaml is migrated to the 3.x schema.
+  tempo:
+    image: grafana/tempo:${TEMPO_IMAGE_TAG:-2.8.2}
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo_data:/var/tempo
+
+  otel-collector:
+    image: otel/opentelemetry-collector:${OTEL_COLLECTOR_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/config.yaml"]
+    depends_on:
+      tempo:
+        condition: service_started
+    volumes:
+      - ./otel/otel-collector.yaml:/etc/otelcol/config.yaml:ro
 
 volumes:
   patroni1_data:
@@ -278,3 +317,4 @@ volumes:
   agent_results:
   caddy_data:
   caddy_config:
+  tempo_data:

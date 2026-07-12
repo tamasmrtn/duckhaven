@@ -18,6 +18,8 @@ from collections.abc import AsyncIterator
 
 import httpx
 from httpx import ASGITransport
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 from pydantic_ai import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDenied
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import FunctionToolCallEvent, PartDeltaEvent, TextPartDelta
@@ -39,6 +41,7 @@ from api.services.assistant.identity import (
 from api.services.assistant.persistence import load_history, save_turn
 
 logger = logging.getLogger(__name__)
+_tracer = trace.get_tracer("duckhaven.api")
 
 
 def _safe_error_message(exc: BaseException) -> str:
@@ -255,55 +258,71 @@ async def _stream(
                         await queue.put(frame)
 
             async def do_run() -> None:
-                try:
-                    async with session_factory() as db:
-                        history = await load_history(
-                            db, conversation_id, _resolved_ids(deferred_results)
+                # The span opens here, inside the detached task, not around the
+                # create_task call below: the task is where the turn's work (and its
+                # trace context) actually lives. No-op until an SDK is configured.
+                with _tracer.start_as_current_span(
+                    "assistant.turn",
+                    attributes={
+                        "duckhaven.conversation_id": str(conversation_id),
+                        "duckhaven.workspace_id": str(workspace_id),
+                        "duckhaven.assistant.model": settings.assistant_model,
+                        "duckhaven.assistant.resumed": deferred_results is not None,
+                    },
+                ) as span:
+                    try:
+                        async with session_factory() as db:
+                            history = await load_history(
+                                db, conversation_id, _resolved_ids(deferred_results)
+                            )
+                        is_first_turn = not history
+                        result = await get_agent().run(
+                            prompt,
+                            message_history=history,
+                            deferred_tool_results=deferred_results,
+                            deps=deps,
+                            usage_limits=UsageLimits(
+                                request_limit=settings.assistant_request_limit
+                            ),
+                            event_stream_handler=handler,
                         )
-                    is_first_turn = not history
-                    result = await get_agent().run(
-                        prompt,
-                        message_history=history,
-                        deferred_tool_results=deferred_results,
-                        deps=deps,
-                        usage_limits=UsageLimits(request_limit=settings.assistant_request_limit),
-                        event_stream_handler=handler,
-                    )
-                    # Shield persistence: once the turn has run, its messages and
-                    # audit rows must land even if this task is cancelled during
-                    # cleanup (e.g. client disconnect / shutdown).
-                    message_id = await asyncio.shield(
-                        _persist(session_factory, conversation_id, result, deps)
-                    )
-                    output = result.output
-                    if isinstance(output, DeferredToolRequests):
-                        for call in output.approvals:
+                        # Shield persistence: once the turn has run, its messages and
+                        # audit rows must land even if this task is cancelled during
+                        # cleanup (e.g. client disconnect / shutdown).
+                        message_id = await asyncio.shield(
+                            _persist(session_factory, conversation_id, result, deps)
+                        )
+                        output = result.output
+                        if isinstance(output, DeferredToolRequests):
+                            for call in output.approvals:
+                                await queue.put(
+                                    {
+                                        "type": "approval_required",
+                                        "tool_call_id": call.tool_call_id,
+                                        "tool": call.tool_name,
+                                        "sql": _deferred_sql(call),
+                                    }
+                                )
+                        else:
+                            usage = result.usage
                             await queue.put(
                                 {
-                                    "type": "approval_required",
-                                    "tool_call_id": call.tool_call_id,
-                                    "tool": call.tool_name,
-                                    "sql": _deferred_sql(call),
+                                    "type": "done",
+                                    "message_id": str(message_id),
+                                    "usage": {
+                                        "input": usage.input_tokens or 0,
+                                        "output": usage.output_tokens or 0,
+                                    },
                                 }
                             )
-                    else:
-                        usage = result.usage
-                        await queue.put(
-                            {
-                                "type": "done",
-                                "message_id": str(message_id),
-                                "usage": {
-                                    "input": usage.input_tokens or 0,
-                                    "output": usage.output_tokens or 0,
-                                },
-                            }
-                        )
-                    if is_first_turn:
-                        await _maybe_generate_title(session_factory, conversation_id, prompt)
-                except Exception as exc:  # noqa: BLE001 — surfaced as an SSE error frame
-                    await queue.put({"type": "error", "message": _safe_error_message(exc)})
-                finally:
-                    await queue.put(None)
+                        if is_first_turn:
+                            await _maybe_generate_title(session_factory, conversation_id, prompt)
+                    except Exception as exc:  # noqa: BLE001 — surfaced as an SSE error frame
+                        span.record_exception(exc)
+                        span.set_status(Status(StatusCode.ERROR, str(exc)))
+                        await queue.put({"type": "error", "message": _safe_error_message(exc)})
+                    finally:
+                        await queue.put(None)
 
             task = asyncio.create_task(do_run())
             try:

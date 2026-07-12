@@ -204,6 +204,7 @@ and open maintenance recommendations — extend it from there.
 
 ## Related
 
+- [Distributed tracing](tracing.md) — per-request OpenTelemetry traces, the other half of observability.
 - [Query execution](../concepts/query-execution.md) — what the counters reflect.
 - [Operator runbook](runbook.md) — procedures for running the cluster.
 - [Configuration reference](../reference/configuration.md#observability) — the `METRICS_ENABLED` knob.

@@ -2,8 +2,14 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse, delay } from 'msw'
+import { toast } from 'sonner'
 import { renderWithProviders } from '@tests/utils'
 import { server } from '@tests/mock/server'
+
+// The test harness never mounts sonner's <Toaster>, so assert on the toast API.
+vi.mock('sonner', () => ({
+  toast: { error: vi.fn(), success: vi.fn() },
+}))
 
 const WS_ROUTE = '/acme-analytics/worksheets'
 
@@ -465,6 +471,30 @@ describe('WorksheetPage save modal', () => {
       screen.getByRole('tab', { name: /Daily report/ }),
     ).toBeInTheDocument()
     expect(screen.queryByText('events.sql')).not.toBeInTheDocument()
+  })
+
+  it('shows an error toast and keeps the dialog open when the save fails', async () => {
+    vi.mocked(toast.error).mockClear()
+    server.use(
+      http.post('/api/workspaces/:ws/saved-queries', () =>
+        HttpResponse.json({ detail: 'Save exploded' }, { status: 500 }),
+      ),
+    )
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: WS_ROUTE })
+    await screen.findByText('events.sql')
+
+    await user.click(screen.getByRole('button', { name: /save…/i }))
+    const dialog = screen.getByRole('dialog')
+    await user.type(
+      within(dialog).getByPlaceholderText(/my query name/i),
+      'Doomed query',
+    )
+    await user.click(within(dialog).getByRole('button', { name: /^save$/i }))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalled())
+    // The dialog stays open so the user can retry.
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
   })
 
   it('saving over an existing name updates it instead of duplicating', async () => {

@@ -6,6 +6,7 @@ import duckdb
 from opentelemetry import trace
 
 from agent.executor.runner import run_query_sync
+from duckhaven_shared.telemetry import inject_trace_context
 
 _tracer = trace.get_tracer("duckhaven.agent")
 
@@ -32,7 +33,7 @@ async def run_query(
     if conn is not None:
         conn_box["conn"] = conn
 
-    def _run() -> dict[str, Any]:
+    def _run(trace_headers: dict[str, str] | None) -> dict[str, Any]:
         return run_query_sync(
             sql,
             result_path,
@@ -46,6 +47,7 @@ async def run_query(
             conn=conn,
             enable_profiling=enable_profiling,
             on_connect=lambda c: conn_box.__setitem__("conn", c),
+            trace_headers=trace_headers,
         )
 
     def _interrupt() -> None:
@@ -66,7 +68,12 @@ async def run_query(
                 "duckhaven.query_id": result_path.stem,
             },
         ):
-            return await loop.run_in_executor(None, _run)
+            # Captured here (event-loop thread, inside the span) and passed
+            # in: run_in_executor does not propagate contextvars to the
+            # worker thread, so trace.get_current_span() would see nothing
+            # if called from inside _run.
+            trace_headers = inject_trace_context()
+            return await loop.run_in_executor(None, _run, trace_headers)
     except duckdb.InterruptException as exc:
         raise TimeoutError("query exceeded statement timeout") from exc
     except asyncio.CancelledError:

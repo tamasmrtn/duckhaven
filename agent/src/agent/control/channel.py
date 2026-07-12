@@ -25,7 +25,7 @@ from agent.metrics.system import MetricsSampler, cpu_capability, effective_memor
 from duckhaven_shared.concurrency import BUCKET_FRACTIONS
 from duckhaven_shared.protocol import Frame, FrameType
 from duckhaven_shared.schemas import AgentCapabilities
-from duckhaven_shared.telemetry import extract_trace_context
+from duckhaven_shared.telemetry import extract_trace_context, inject_trace_context
 
 logger = logging.getLogger(__name__)
 _tracer = trace.get_tracer("duckhaven.agent")
@@ -83,9 +83,14 @@ async def _prepare_and_estimate(sql: str, **attach_kwargs) -> tuple[object | Non
     """
     loop = asyncio.get_running_loop()
     conn_box: dict[str, object] = {}
+    # Captured here (event-loop thread, inside handle_dispatch's span) and
+    # passed in: run_in_executor does not propagate contextvars to the worker
+    # thread, so trace.get_current_span() would see nothing if called from
+    # inside _work.
+    trace_headers = inject_trace_context()
 
     def _work() -> int | None:
-        conn = open_and_attach(**attach_kwargs)
+        conn = open_and_attach(**attach_kwargs, trace_headers=trace_headers)
         conn_box["conn"] = conn
         return estimate_memory_bytes(conn, sql, safety=settings.estimate_safety_multiplier)
 

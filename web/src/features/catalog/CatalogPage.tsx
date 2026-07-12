@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useParams, useNavigate } from "@tanstack/react-router";
-import { ChevronRight, Pencil, ExternalLink, Trash2 } from "lucide-react";
+import { Pencil, ExternalLink, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { Breadcrumb } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -106,15 +107,14 @@ function TableDetail({
     <div className="flex h-full flex-col overflow-hidden">
       {/* Header */}
       <div className="border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-4 shrink-0">
-        <div className="flex items-center gap-2 text-xs text-text-secondary">
-          <span className="font-medium text-text-primary">{ws}</span>
-          <ChevronRight className="size-3" />
-          <span>{catalog}</span>
-          <ChevronRight className="size-3" />
-          <span>{schema}</span>
-          <ChevronRight className="size-3" />
-          <span className="font-medium text-text-primary">{table}</span>
-        </div>
+        <Breadcrumb
+          items={[
+            { label: ws, emphasis: true },
+            { label: catalog },
+            { label: schema },
+            { label: table, emphasis: true },
+          ]}
+        />
 
         <div className="mt-3 flex items-start justify-between">
           <div className="space-y-1">

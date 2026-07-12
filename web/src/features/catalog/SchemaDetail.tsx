@@ -1,4 +1,4 @@
-import { ChevronRight } from "lucide-react";
+import { Breadcrumb } from "@/components/ui/breadcrumb";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useTables } from "@/queries/schemas";
@@ -36,13 +36,13 @@ export function SchemaDetail({
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-4 shrink-0">
-        <div className="flex items-center gap-2 text-xs text-text-secondary">
-          <span className="font-medium text-text-primary">{ws}</span>
-          <ChevronRight className="size-3" />
-          <span>{catalog}</span>
-          <ChevronRight className="size-3" />
-          <span className="font-medium text-text-primary">{schema}</span>
-        </div>
+        <Breadcrumb
+          items={[
+            { label: ws, emphasis: true },
+            { label: catalog },
+            { label: schema, emphasis: true },
+          ]}
+        />
         <p className="mt-2 text-xs text-text-secondary">Schema</p>
       </div>
 

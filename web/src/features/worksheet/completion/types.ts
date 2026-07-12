@@ -15,12 +15,7 @@ export interface CatalogSnapshot {
 }
 
 export type SuggestionKind =
-  | "keyword"
-  | "function"
-  | "column"
-  | "table"
-  | "schema"
-  | "type";
+  "keyword" | "function" | "column" | "table" | "schema" | "type";
 
 export interface Suggestion {
   label: string;

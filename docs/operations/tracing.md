@@ -62,7 +62,7 @@ by default.
 | SQLAlchemy (automatic) | A span per database statement, with the SQL as an attribute. |
 | `dispatch_query` (manual, api) | Wraps handing a query to an agent over the WebSocket control channel. Its W3C trace context rides inside the `DISPATCH_QUERY` frame so the agent's span below continues the same trace instead of starting a new one. Carries `duckhaven.origin` (`interactive` for a user's query, or the schedule/maintenance origin) so automated runs are distinguishable from clicks. |
 | `handle_dispatch` (manual, agent) | The agent's per-query span: admission queueing, running the query, and sending the result back. Continues the api's trace when the frame carried one; starts a fresh trace otherwise (e.g. an older peer without tracing). Failures set the span to an error status. |
-| `duckdb.execute` (manual, agent) | Wraps the actual DuckDB execution (offloaded to a worker thread), so per-query execution time is visible directly in the trace rather than only in the aggregate `duckhaven_query_duration_seconds` histogram. |
+| `duckdb.execute` (manual, agent) | Wraps the actual DuckDB execution (offloaded to a worker thread), so per-query execution time is visible directly in the trace rather than only in the aggregate `duckhaven_query_duration_seconds` histogram. Also where the agent hands its active span to DuckDB's own Polaris calls — see [Apache Polaris](#apache-polaris). |
 | `assistant.turn` (manual, api) | One span per AI-assistant turn, carrying `duckhaven.conversation_id`, `duckhaven.workspace_id`, and the model name. Pydantic AI's own instrumentation nests under it — an agent-run span, a model-request span per LLM call (with `gen_ai.usage.*` token counts), and a span per tool call — and the assistant's loopback SQL chains on down through `dispatch_query` into the agent. Failures set the span to an error status. See [The AI assistant](#the-ai-assistant). |
 | results server (automatic, agent) | One server span per result-page fetch the api makes to the agent's result server, continuing the api's client span. A windowed page adds a `duckdb.slice_parquet` child span for the local slice. |
 
@@ -73,10 +73,21 @@ you find one query's trace; it only ever costs one trace, not an unbounded metri
 ## Apache Polaris
 
 Polaris's own OTel SDK (built into the vendored Quarkus image) is enabled and points at the same collector, so its
-internal Iceberg-catalog spans — namespace/table lookups, credential vending — appear nested under the api's httpx
-client span instead of as one opaque HTTP call. This needs no code on the DuckHaven side: `HTTPXClientInstrumentor`
-already adds a `traceparent` header to every request the api sends to Polaris, and Quarkus's server-side
-instrumentation extracts it and continues the same trace.
+internal Iceberg-catalog spans — namespace/table lookups, credential vending — join the trace of whatever caused them
+instead of appearing as one opaque HTTP call. Two call paths reach Polaris, joined by different mechanisms:
+
+- **api → Polaris**, e.g. listing schemas or managing grants: no extra code needed. `HTTPXClientInstrumentor` already
+  adds a `traceparent` header to every request the api sends, and Quarkus's server-side instrumentation extracts it and
+  continues the same trace, nested under the api's httpx client span.
+- **agent → Polaris**: DuckDB's own Iceberg REST catalog client makes these calls (OAuth token exchange,
+  namespace/table lookups, credential vending) directly from within the `iceberg`/`httpfs` extensions — an HTTP client
+  with no OpenTelemetry instrumentation of its own, so it would otherwise start a disconnected trace per call. Before
+  attaching a catalog, the agent captures the active span's W3C carrier (from `handle_dispatch`, or `duckdb.execute` on
+  a reused connection) and registers a DuckDB `HTTP`-type secret carrying it as an `EXTRA_HTTP_HEADERS` `traceparent`,
+  scoped to the Polaris endpoint. DuckDB attaches that header to every matching request for the life of the
+  connection, so Polaris's spans nest under the agent's span instead of starting their own trace. This context must be
+  captured on the event-loop thread, before handing the ATTACH work to `run_in_executor` — `contextvars` (and so
+  OpenTelemetry's current-span) are not propagated to worker threads.
 
 To turn tracing off for Polaris specifically (leaving the api/agent traced), set `QUARKUS_OTEL_SDK_DISABLED: "true"`
 on the `polaris` service in the compose file.

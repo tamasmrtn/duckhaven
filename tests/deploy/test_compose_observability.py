@@ -45,3 +45,14 @@ def test_polaris_otel_enabled_and_pointed_at_the_collector():
         env = compose["services"]["polaris"]["environment"]
         assert env["QUARKUS_OTEL_SDK_DISABLED"] == "false"
         assert "QUARKUS_OTEL_EXPORTER_OTLP_ENDPOINT" in env
+
+
+def test_tempo_image_defaults_to_a_pinned_version_not_latest():
+    # deploy/tempo/tempo.yaml is on Tempo's 2.x config schema (a monolithic
+    # `compactor` block); 3.0 replaced that with a disaggregated
+    # backend-scheduler/backend-worker split and crash-loops against it. Every
+    # other bundled image floats on :latest — Tempo must not, until tempo.yaml
+    # is migrated to the 3.x schema.
+    for compose in (DEV, HA):
+        image = compose["services"]["tempo"]["image"]
+        assert "TEMPO_IMAGE_TAG:-latest" not in image

@@ -254,8 +254,14 @@ services:
 
   # Trace storage. Single instance, local-disk blocks, 72h retention
   # (deploy/tempo/tempo.yaml). Queried via the bundled Grafana below.
+  #
+  # Pinned (unlike the other bundled images): Tempo 3.0 replaced the
+  # monolithic `compactor` config block deploy/tempo/tempo.yaml uses with a
+  # disaggregated backend-scheduler/backend-worker split, so riding `:latest`
+  # crash-loops the container the moment it moves past 2.x. Override
+  # TEMPO_IMAGE_TAG once tempo.yaml is migrated to the 3.x schema.
   tempo:
-    image: grafana/tempo:${TEMPO_IMAGE_TAG:-latest}
+    image: grafana/tempo:${TEMPO_IMAGE_TAG:-2.8.2}
     restart: unless-stopped
     command: ["-config.file=/etc/tempo.yaml"]
     volumes:

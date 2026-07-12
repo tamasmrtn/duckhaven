@@ -20,3 +20,8 @@ class FrameType(StrEnum):
 class Frame(BaseModel):
     type: FrameType
     payload: dict[str, Any] = {}
+    # W3C Trace Context carrier ("traceparent"/"tracestate"); None when the
+    # sender has no active trace. Compatible in both directions: an old peer
+    # drops the unknown key on parse (pydantic's default extra="ignore"), and
+    # a frame from an old sender leaves it None here.
+    trace_context: dict[str, str] | None = None

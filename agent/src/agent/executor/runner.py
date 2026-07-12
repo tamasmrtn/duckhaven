@@ -70,6 +70,13 @@ _PROFILE_SETTINGS_JSON = json.dumps({m: "true" for m in _PROFILE_METRICS})
 # Fixed identifier for the per-connection iceberg OAuth2 secret. Each catalog is
 # ATTACHed under its own slug alias (multi-attach), not a single fixed alias.
 _ICEBERG_SECRET = "dh_iceberg"
+# Per-connection secret carrying the active trace's W3C traceparent, scoped to
+# the Polaris endpoint. DuckDB's REST catalog client (iceberg/httpfs) has no
+# OpenTelemetry instrumentation of its own, so without this every Polaris call
+# DuckDB makes directly (OAuth token exchange, namespace/table lookups,
+# credential vending) would start a disconnected trace instead of joining the
+# query's. Scoping to the Polaris endpoint keeps it off unrelated S3/ADLS calls.
+_TRACE_HEADERS_SECRET = "dh_trace_headers"
 # Default namespace to `USE`. Must match the API's default (see
 # api/services/workspace.DEFAULT_SCHEMA). `USE <catalog>.<schema>` sets both the
 # default catalog and schema; a bare `USE <catalog>` does not reliably resolve
@@ -333,6 +340,7 @@ def _attach_catalogs(
     catalogs: list[dict[str, Any]],
     active_catalog: str | None,
     polaris: dict[str, Any],
+    trace_headers: dict[str, str] | None = None,
 ) -> None:
     """Create the iceberg OAuth2 secret and ATTACH every catalog (multi-attach).
 
@@ -344,6 +352,21 @@ def _attach_catalogs(
     is logged and skipped rather than failing the whole query.
     """
     endpoint = str(polaris["endpoint"]).rstrip("/")
+    # `trace_headers` carries the caller's active span (handle_dispatch, or
+    # duckdb.execute for static profiles) onto every DuckDB-issued request to
+    # Polaris, so Polaris's spans join this query's trace instead of starting
+    # their own. It must be captured on the event-loop thread by the caller —
+    # this function runs inside a worker thread (via run_in_executor), where
+    # OpenTelemetry's contextvar-based "current span" is not propagated, so
+    # calling inject_trace_context() here would silently see no active span.
+    # None when no SDK is configured or no span was active: DuckDB behaves
+    # exactly as before.
+    if trace_headers:
+        conn.execute(
+            f"CREATE OR REPLACE SECRET {_TRACE_HEADERS_SECRET} "
+            "(TYPE HTTP, EXTRA_HTTP_HEADERS ?, SCOPE ?)",
+            [trace_headers, endpoint],
+        )
     conn.execute(
         f"CREATE SECRET {_ICEBERG_SECRET} "
         "(TYPE ICEBERG, CLIENT_ID ?, CLIENT_SECRET ?, OAUTH2_SERVER_URI ?)",
@@ -391,6 +414,7 @@ def open_and_attach(
     catalogs: list[dict[str, Any]] | None = None,
     active_catalog: str | None = None,
     polaris: dict[str, Any] | None = None,
+    trace_headers: dict[str, str] | None = None,
 ) -> duckdb.DuckDBPyConnection:
     """Open a DuckDB connection, load the storage IO extensions, and ATTACH every
     catalog bound to the workspace so table names bind.
@@ -400,6 +424,11 @@ def open_and_attach(
     EXPLAIN) and the runner: in the ``auto`` profile a single connection is opened
     here, estimated against, then handed to ``run_query_sync`` for execution +
     profiling (one attach / one OAuth exchange).
+
+    `trace_headers`: a W3C traceparent carrier (see `_attach_catalogs`) captured
+    by the caller on the event-loop thread, since this function runs on a
+    worker thread via `run_in_executor` where OpenTelemetry's current-span
+    context is not available.
     """
     conn = duckdb.connect()
     catalogs = catalogs or []
@@ -414,7 +443,11 @@ def open_and_attach(
     if catalogs and polaris and _safe_install_load(conn, "iceberg"):
         try:
             _attach_catalogs(
-                conn, catalogs=catalogs, active_catalog=active_catalog, polaris=polaris
+                conn,
+                catalogs=catalogs,
+                active_catalog=active_catalog,
+                polaris=polaris,
+                trace_headers=trace_headers,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Polaris ATTACH failed: %s", exc)
@@ -449,6 +482,7 @@ def run_query_sync(
     conn: duckdb.DuckDBPyConnection | None = None,
     enable_profiling: bool = True,
     on_connect: Callable[[duckdb.DuckDBPyConnection], None] | None = None,
+    trace_headers: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Run a query through DuckDB.
 
@@ -468,10 +502,17 @@ def run_query_sync(
       and return it under `result["profile"]` (best-effort).
     - `on_connect`: called with the connection so the supervisor can
       `interrupt()` it on timeout/cancel (G-D2-a).
+    - `trace_headers`: forwarded to `open_and_attach` when this call opens its
+      own connection (ignored when `conn` is already attached).
     """
 
     def _open_fresh() -> duckdb.DuckDBPyConnection:
-        c = open_and_attach(catalogs=catalogs, active_catalog=active_catalog, polaris=polaris)
+        c = open_and_attach(
+            catalogs=catalogs,
+            active_catalog=active_catalog,
+            polaris=polaris,
+            trace_headers=trace_headers,
+        )
         if on_connect is not None:
             on_connect(c)
         return c

@@ -50,6 +50,8 @@ from api.services.polaris import (
     PolarisNotFoundError,
 )
 from api.services.rbac import seed_roles
+from api.telemetry import setup_telemetry
+from duckhaven_shared.telemetry import LOG_FORMAT, install_log_correlation
 
 
 @asynccontextmanager
@@ -58,10 +60,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # a handler, so module-level logs (scanner leadership, cross-replica dispatch
     # warnings, Polaris errors) would otherwise be dropped. Give the root logger a
     # handler; uvicorn's loggers don't propagate, so this won't double-log access.
-    logging.basicConfig(
-        level=settings.log_level,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    logging.basicConfig(level=settings.log_level, format=LOG_FORMAT)
+    # basicConfig has no filter= param; attach trace_id/span_id correlation now.
+    install_log_correlation()
 
     # Migrations have already run (api-entrypoint.sh) by the time the app
     # starts, so the credentials table exists. Seed before serving traffic so
@@ -219,3 +220,9 @@ app.include_router(internal.router)
 app.mount("/api", api_app)
 if settings.static_dir.is_dir():
     app.mount("/", SPAStaticFiles(directory=settings.static_dir, html=True), name="ui")
+
+# Instrument at module level: FastAPIInstrumentor injects middleware, which must
+# be in place before the middleware stack is built at startup. Both apps need it
+# — the outer app owns the agent WebSocket and /internal routes. No-op unless
+# OTEL_EXPORTER_OTLP_ENDPOINT is set.
+setup_telemetry(api_app, app)

@@ -29,7 +29,7 @@ known-first-party = ["api", "agent", "duckhaven_shared"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["api/tests/unit", "agent/tests/unit"]
+testpaths = ["api/tests/unit", "agent/tests/unit", "shared/tests/unit"]
 # Expose tests/'s children as top-level importable modules (testkit, ...) so
 # the shared kit imports cleanly from per-package runs without sys.path hacks
 # and without colliding with each service's own `tests` package.

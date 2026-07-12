@@ -10,8 +10,12 @@ from agent.config import settings
 from agent.control.channel import run_control_channel
 from agent.results.retention import sweep_loop
 from agent.results.server import make_results_app
+from agent.telemetry import instrument_asgi_app, setup_telemetry
+from duckhaven_shared.telemetry import LOG_FORMAT, install_log_correlation
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
+# basicConfig has no filter= param; attach trace_id/span_id correlation now.
+install_log_correlation()
 
 
 def _use_writable_workdir(results_dir: Path) -> None:
@@ -30,7 +34,7 @@ def _use_writable_workdir(results_dir: Path) -> None:
 
 
 async def _run_result_server(results_dir: Path, token_holder: TokenHolder) -> None:
-    app = make_results_app(results_dir, token_holder)
+    app = instrument_asgi_app(make_results_app(results_dir, token_holder))
     config = uvicorn.Config(
         app,
         host=settings.results_http_host,
@@ -42,6 +46,7 @@ async def _run_result_server(results_dir: Path, token_holder: TokenHolder) -> No
 
 
 async def main() -> None:
+    setup_telemetry()
     results_dir = Path(settings.results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
     _use_writable_workdir(results_dir)

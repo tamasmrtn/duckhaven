@@ -1,5 +1,5 @@
 .PHONY: install install-web dev dev-api dev-web \
-        test test-api test-agent test-web test-deploy \
+        test test-api test-agent test-web test-deploy test-shared \
         test-integration test-integration-api test-integration-agent \
         test-cross-component test-e2e \
         polaris-dev polaris-dev-s3 polaris-dev-down \
@@ -30,7 +30,7 @@ dev:
 	$(MAKE) dev-web
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
-test: test-api test-agent test-web test-deploy
+test: test-api test-agent test-web test-deploy test-shared
 
 test-api:
 	uv run --package duckhaven-api pytest api/tests/unit/ -v \
@@ -53,6 +53,9 @@ test-web:
 
 test-deploy:
 	uv run --package duckhaven-api pytest tests/deploy/ -v
+
+test-shared:
+	uv run --package duckhaven-api pytest shared/tests/unit/ -v
 
 # ── Integration tests (opt-in; require Polaris + Postgres) ────────────────────
 # Exit code 5 ("no tests ran") is tolerated so the targets are safe to run
@@ -85,7 +88,9 @@ test-e2e:
 # Spins up MinIO + Apache Polaris-on-S3 (in-memory persistence). Object storage
 # is the only storage DuckHaven uses: Polaris vends scoped credentials so the
 # agent's DuckDB can read AND write Iceberg tables. Override the bucket or image
-# tag if needed.
+# tag if needed. QUARKUS_OTEL_SDK_DISABLED stays true here (unlike the compose
+# stacks): this dev flow runs no OTel collector, so exporting would only spam
+# connection errors.
 POLARIS_IMAGE_TAG ?= latest
 POLARIS_S3_BUCKET ?= warehouse
 

@@ -10,6 +10,7 @@ from typing import Any
 import duckdb
 import httpx
 import sqlalchemy as sa
+from opentelemetry import trace
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.metrics import (
@@ -39,6 +40,9 @@ from api.services.workspace import (
     resolve_workspace_catalogs,
 )
 from duckhaven_shared.protocol import Frame, FrameType
+from duckhaven_shared.telemetry import inject_trace_context
+
+_tracer = trace.get_tracer("duckhaven.api")
 
 
 async def dispatch_query(
@@ -108,11 +112,27 @@ async def dispatch_query(
         # Ask the agent to run the maintenance health probe for this table.
         payload["health_for"] = health_for
 
-    frame = Frame(type=FrameType.DISPATCH_QUERY, payload=payload)
-    if not await send_to_agent(db, query.agent_id, frame.model_dump_json()):
-        # The socket vanished between the presence check and the send, or its
-        # owning replica is unreachable. Fail fast so the caller surfaces it.
-        raise ValueError("Agent not connected")
+    # Producer span for the WebSocket hop; its context rides in the frame so
+    # the agent's consumer span joins this trace.
+    with _tracer.start_as_current_span(
+        "dispatch_query",
+        kind=trace.SpanKind.PRODUCER,
+        attributes={
+            "duckhaven.query_id": str(query.id),
+            "duckhaven.agent_id": str(query.agent_id),
+            # null origin = a user's interactive query; else "scheduled"/etc.
+            "duckhaven.origin": query.origin or "interactive",
+        },
+    ):
+        frame = Frame(
+            type=FrameType.DISPATCH_QUERY,
+            payload=payload,
+            trace_context=inject_trace_context(),
+        )
+        if not await send_to_agent(db, query.agent_id, frame.model_dump_json()):
+            # The socket vanished between the presence check and the send, or its
+            # owning replica is unreachable. Fail fast so the caller surfaces it.
+            raise ValueError("Agent not connected")
     # Status stays "queued" until the agent admits the query and emits
     # QUERY_PROGRESS; the agent may hold it in its admission queue first.
     if query.origin is None:

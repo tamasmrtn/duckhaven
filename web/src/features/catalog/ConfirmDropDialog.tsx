@@ -10,6 +10,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ApiError } from "@/api/client";
 
 // Databricks-style destructive confirm: the user must type the object name.
@@ -86,10 +87,9 @@ export function ConfirmDropDialog({
           </p>
           {needsCascade && (
             <label className="flex items-center gap-2 text-text-secondary">
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={cascade}
-                onChange={(e) => setCascade(e.target.checked)}
+                onCheckedChange={(v) => setCascade(v === true)}
                 aria-label="also drop all tables in this schema"
               />
               Also drop all tables in this schema

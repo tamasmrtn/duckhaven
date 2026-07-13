@@ -18,6 +18,7 @@ from api.metrics import (
     record_query_queue_rejection,
     record_query_queue_wait,
     record_query_submitted,
+    record_sql_statement,
 )
 from api.models.agent import Agent
 from api.models.catalog import Catalog
@@ -185,6 +186,10 @@ async def handle_agent_frame(db: AsyncSession, frame: Frame) -> None:
             )
             if status_val == "failed":
                 record_query_queue_rejection(frame.payload.get("error"))
+        elif query is not None and query.origin == "session":
+            # Session statements are counted on their own series (kept out of the
+            # interactive-query counters above).
+            record_sql_statement(status_val)
         if status_val == "done":
             await _upsert_table_stats(db, query_id, frame)
             health = frame.payload.get("health")

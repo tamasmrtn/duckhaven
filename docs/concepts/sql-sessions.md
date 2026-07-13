@@ -5,10 +5,10 @@ A **SQL session** is a persistent database connection that DuckHaven holds open 
 relations, `USE catalog.schema`, `SET`, and multi-statement transactions — instead of the one-shot
 [query execution](query-execution.md) path where every request is independent.
 
-Sessions exist for tools that expect a warehouse connection: **dbt** and **dlt** (and, later, a small Python
-connector they share). Like Databricks, a client never talks to a compute node directly — it opens a session through the
-DuckHaven API, and the API brokers each statement to the agent over the agent's own outbound WebSocket. No inbound agent
-port is ever opened.
+Sessions exist for external tools that expect a warehouse-style connection — a client that opens a connection, runs a
+sequence of statements against it, and closes it. A client never talks to a compute node directly: it opens a session
+through the DuckHaven API, and the API brokers each statement to the agent over the agent's own outbound WebSocket. No
+inbound agent port is ever opened.
 
 !!! note "Off by default"
     The session surface is disabled unless an operator sets `SQL_SESSIONS_ENABLED=true`. Enable it **only after
@@ -31,7 +31,7 @@ port is ever opened.
 
 A session holds a real connection **and** a memory reservation on its agent for its whole life, so it counts against
 that agent's admission budget just like a running query — long-lived sessions can't oversubscribe memory or starve
-interactive queries. Because a session's `memory_limit` is fixed when it opens, size it for steady dbt/dlt work rather
+interactive queries. Because a session's `memory_limit` is fixed when it opens, size it for steady session work rather
 than a single huge query.
 
 To keep a crashed client from pinning an agent forever, a background reaper closes sessions that have been **idle** past
@@ -43,8 +43,8 @@ is routed by the agent's recorded owner, not by in-memory state.
 
 ## Statement policy
 
-The one-shot query path enforces a fixed allowlist (data + catalog DDL only). Sessions need more — dbt runs `SET`, dlt
-issues `COPY` from staged files — so the session path replaces the allowlist with a **capability-scoped policy** that is
+The one-shot query path enforces a fixed allowlist (data + catalog DDL only). Sessions need more — connection-scoped
+`SET`s and `COPY` from staged files — so the session path replaces the allowlist with a **capability-scoped policy**,
 still enforced entirely at the API, per statement:
 
 - **Allowed:** `SELECT`/`INSERT`/`UPDATE`/`DELETE`/`MERGE`, `CREATE`/`ALTER`/`DROP`, `USE`, transaction control, a small
@@ -54,15 +54,15 @@ still enforced entirely at the API, per statement:
   the staging prefix; arbitrary `INSTALL`/`LOAD`; `ATTACH` of anything else; and any `SET` that could widen the sandbox
   (memory, external access, filesystem allowlists). Anything the parser can't classify is rejected.
 
-This is what keeps a broadened SQL surface from becoming an open one: dbt/dlt get a bigger box, not an unbounded box,
+This is what keeps a broadened SQL surface from becoming an open one: a session gets a bigger box, not an unbounded box,
 and every rejection is counted for monitoring.
 
 ## Staging and credentials
 
-Bulk data does **not** flow through the API. Following the Databricks/MotherDuck pattern, a dlt load stages Parquet to
-the workspace's object storage and then issues a `COPY` **command** through the session; only the command crosses the
-API. Each session is given a scoped `staging_uri` (a unique prefix under its catalog's storage) that the statement
-policy is pinned to — a `COPY` may only read or write there.
+Bulk data does **not** flow through the API. A bulk load stages Parquet to the workspace's object storage and then
+issues a `COPY` **command** through the session; only the command crosses the API. Each session is given a scoped
+`staging_uri` (a unique prefix under its catalog's storage) that the statement policy is pinned to — a `COPY` may only
+read or write there.
 
 The API is the credential vendor for a session: it supplies the Polaris connection the agent's session uses, rather than
 the agent reading a static secret from its own config. Today that identity is still DuckHaven's shared Polaris service

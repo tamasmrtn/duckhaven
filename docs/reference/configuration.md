@@ -126,16 +126,16 @@ Postgres advisory lock, so only one replica advances a given migration — leave
 
 ### SQL sessions
 
-Gates and tunes the [SQL session layer](../concepts/sql-sessions.md) (persistent agent-held connections for
-dbt/dlt). Disabled by default — enable it **only after** deploying the hardened agent, because turning sessions on also
-enables the broader per-statement policy. The idle/max-lifetime reaper is leader-elected via a Postgres advisory lock,
-like the scheduler, so leave it enabled everywhere.
+Gates and tunes the [SQL session layer](../concepts/sql-sessions.md) (persistent agent-held connections for external
+warehouse-style clients). Disabled by default — enable it **only after** deploying the hardened agent, because turning
+sessions on also enables the broader per-statement policy. The idle/max-lifetime reaper is leader-elected via a Postgres
+advisory lock, like the scheduler, so leave it enabled everywhere.
 
 | Variable | Default | Description |
 |---|---|---|
 | `SQL_SESSIONS_ENABLED` | `false` | Master switch for the session endpoints and the reaper. When `false`, the `/sql/sessions` routes return 404. |
 | `SQL_SESSION_IDLE_TIMEOUT_S` | `900` | Close a session after this many seconds without a statement. Reset on each statement. |
-| `SQL_SESSION_MAX_LIFETIME_S` | `14400` | Hard cap on a session's total lifetime, regardless of activity. Must exceed your longest single dbt/dlt run. |
+| `SQL_SESSION_MAX_LIFETIME_S` | `14400` | Hard cap on a session's total lifetime, regardless of activity. Must exceed your longest single session's run. |
 | `SQL_SESSION_REAPER_TICK_S` | `30` | How often (seconds) the reaper wakes to close idle/expired sessions. |
 | `SQL_SESSION_OPEN_TIMEOUT_S` | `30` | How long the open endpoint waits for the agent to acknowledge the new session before returning a timeout. |
 | `SQL_SESSION_STAGING_PREFIX_SEGMENT` | `_staging` | Object-storage path segment for a session's scoped staging area (`<catalog root>/<segment>/<session_id>/`); the statement policy confines `COPY`/`read_*` to this prefix. |

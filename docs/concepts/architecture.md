@@ -50,9 +50,9 @@ agent host when you need more compute).
 ## 2. Purpose & Philosophy
 
 **Why DuckHaven exists.** Teams that love DuckDB end up sharing `.duckdb`
-files over chat. DuckHaven provides the worksheet/collaboration experience
-of MotherDuck or Databricks while keeping data on your own infrastructure,
-with no SaaS lock-in and no opaque billing.
+files over chat. DuckHaven provides a governed worksheet/collaboration
+experience while keeping data on your own infrastructure, with no SaaS
+lock-in and no opaque billing.
 
 Two ideas shape nearly every design decision:
 
@@ -67,15 +67,15 @@ Two ideas shape nearly every design decision:
 
 ### Non-goals (explicit boundaries)
 
-- **Not a Spark/Databricks replacement.** No distributed query plan; agents
-  are independent DuckDB processes with no cross-agent atomicity.
+- **Not a distributed-warehouse replacement.** No distributed query plan;
+  agents are independent DuckDB processes with no cross-agent atomicity.
 - **Not multi-engine (yet).** DuckDB only. The agent contract is drawn so a
   second engine type can be added without re-architecting the control plane.
 - **Not a notebook platform.** SQL worksheets only.
 - **Not internet-exposed.** The private network (Tailscale/WireGuard) is the
   security perimeter; the API speaks plain HTTP behind it.
 - **Not authoritative storage and not an ingestion engine.** Source data
-  lives in the backends; external tools (PyIceberg, dlt, Spark) write it.
+  lives in the backends; external tools (PyIceberg, Spark) write it.
 - **No cross-workspace joins, no row/column security** in the current scope.
   Permissions are workspace-level. (DDL and destructive DML — `CREATE`/`ALTER`/
   `DROP`, `UPDATE`/`DELETE`/`MERGE` — *are* supported; see Invariant I8.)
@@ -190,9 +190,11 @@ format. Tiny by design (only depends on `pydantic`).
 | `schemas.py` | `AgentCapabilities` — the document an agent advertises (DuckDB version, loaded extensions, memory ceiling, cores, host) |
 
 `FrameType` values: `auth`, `auth_ok`, `dispatch_query`, `query_progress`,
-`query_done`, `cancel_query`, `heartbeat`, `agent_status`. **Adding or
-changing a frame means editing this package** — both sides pick it up by
-import, which is how the contract stays in sync (Invariant I5).
+`query_done`, `cancel_query`, `heartbeat`, `agent_status`, `metrics_sample`,
+`set_concurrency`, and the SQL-session frames `open_session`, `session_opened`,
+`exec_statement`, `close_session`, `session_closed`. **Adding or changing a
+frame means editing this package** — both sides pick it up by import, which is
+how the contract stays in sync (Invariant I5).
 
 ### 6.2 `api/` — `duckhaven-api` (control plane)
 
@@ -230,7 +232,10 @@ surface:
 | `services/query.py` | Dispatches a query to an agent over the registry socket; handles `query_progress`/`query_done` frames coming back; fetches the result Parquet from the agent and decodes it to JSON rows (`decode_parquet_page`); also drives the synchronous table-sample preview and persists agent-reported table stats. **The heart of the system.** | `agent_registry`, the `Query`/`TableMetadata` models |
 | `services/agent_registry.py` | In-memory `ConnectionManager` (`registry`) mapping `agent_id → live WebSocket`. The only place that knows which agents are connected *right now*. | `routers/agents_ws.py`, `services/query.py` |
 | `services/polaris.py` | Async client for Polaris: catalogs (management API) + namespaces/tables (Iceberg REST), with OAuth2 client-credentials auth. Speaks REST directly via `httpx`. | Polaris container |
-| `services/sql_guard.py` | The SQL allowlist. Uses `duckdb.extract_statements` to **parse only** and allow data + catalog DDL statements (`SELECT`/`INSERT`/`UPDATE`/`DELETE`/`MERGE`/`CREATE`/`ALTER`/`DROP`), rejecting sandbox-escaping ones (`ATTACH`, `COPY`, `LOAD`, `SET`, …). No connection, no execution. | `routers/queries.py` |
+| `services/sql_guard.py` | The SQL allowlist for the one-shot query path. Uses `duckdb.extract_statements` to **parse only** and allow data + catalog DDL statements (`SELECT`/`INSERT`/`UPDATE`/`DELETE`/`MERGE`/`CREATE`/`ALTER`/`DROP`), rejecting sandbox-escaping ones (`ATTACH`, `COPY`, `LOAD`, `SET`, …). No connection, no execution. | `routers/queries.py` |
+| `services/statement_policy.py` | The capability-scoped policy for the **SQL session** path (relaxes the allowlist). A `sqlglot` AST classifier that admits a safe `SET` subset, `COPY`/`read_*` confined to the session's staging prefix, and `ATTACH` of the managed catalog, rejecting everything else fail-closed. Runs at the API, per statement. | `routers/sql_sessions.py` |
+| `services/sql_sessions/` | SQL session brokering (package): dispatches `open_session`/`exec_statement`/`close_session` frames, applies the agent's lifecycle acks, reconciles sessions on agent disconnect, and runs a leader-elected idle/max-lifetime reaper. | `routers/sql_sessions.py`, `routers/agents_ws.py`, the `SqlSession`/`Query` models |
+| `services/session_credentials.py` | The per-session credential-vending seam: supplies the Polaris connection block placed in `open_session` (the API is the vendor, not the agent's static config) and computes a session's scoped `staging_uri`. | `services/sql_sessions/`, `routers/sql_sessions.py` |
 | `services/agent_capabilities.py` | Maps a backend kind to its required DuckDB extension and checks an agent's advertised capabilities at dispatch time. | `routers/queries.py` |
 | `services/workspace.py` | Membership/role checks (`assert_workspace_member`), workspace lookup, lazy Polaris catalog creation (`ensure_polaris_catalog`), backend→storage mapping (`polaris_storage`). | Polaris, the `Workspace`/`WorkspaceMember` models |
 | `services/auth.py` | bcrypt password hashing/verification and session-cookie handling. | `routers/auth.py`, `routers/setup.py` |
@@ -246,10 +251,14 @@ tasks (`src/agent/main.py` gathers them):
 
 1. **Control channel** (`control/channel.py`) — opens the outbound WebSocket,
    authenticates, advertises `AgentCapabilities`, then loops handling frames
-   (`dispatch_query`, `cancel_query`, `heartbeat`, `set_concurrency`). Reconnects
+   (`dispatch_query`, `cancel_query`, `heartbeat`, `set_concurrency`, and the
+   SQL-session frames `open_session`/`exec_statement`/`close_session`). Reconnects
    with backoff if the socket drops. On each heartbeat it re-advertises
    capabilities; each `metrics_sample` also carries the live running/queued query
-   counts and active concurrency profile.
+   counts, active concurrency profile, and held-session count. Held SQL-session
+   connections live in `control/session.py` (a `session_id → DuckDBPyConnection`
+   registry, cleared on every reconnect), each holding an admission slot for its
+   lifetime; a statement runs on its held connection via `run_statement_sync`.
 2. **Result server** (`results/server.py`) — an HTTP server bound to
    `RESULTS_HTTP_HOST` (`0.0.0.0` in compose) that advertises its port to the
    control plane, serving `results/{query_id}.parquet` with **HTTP `Range`**
@@ -335,6 +344,9 @@ erDiagram
     catalogs ||--o{ catalog_migrations : migrates
     agents ||--o{ credentials : "session token"
     agents ||--o{ queries : executes
+    workspaces ||--o{ sql_sessions : hosts
+    agents ||--o{ sql_sessions : holds
+    sql_sessions ||--o{ queries : "statements"
     workspaces ||--o{ assistant_conversations : has
     users ||--o{ assistant_conversations : owns
     assistant_conversations ||--o{ assistant_messages : contains
@@ -402,6 +414,7 @@ erDiagram
         uuid workspace_id
         uuid agent_id
         uuid user_id
+        uuid session_id
         text sql
         string status
         string origin
@@ -409,6 +422,16 @@ erDiagram
         json progress
         string result_path
         jsonb profile
+    }
+    sql_sessions {
+        uuid id
+        uuid workspace_id
+        uuid agent_id
+        uuid user_id
+        string status
+        string active_catalog
+        string staging_uri
+        datetime last_active_at
     }
     saved_queries {
         uuid id
@@ -480,6 +503,12 @@ Notes that matter for changes:
   internal rows (`origin = "sample"`, used by the table-sample preview). It is
   workspace-scoped for members; an admin may pass `all_workspaces` (and the
   `user_id`/`agent_id`/`since`/`until` filters) for the cross-workspace audit view.
+- **`sql_sessions` is the state-of-record for the [SQL session layer](sql-sessions.md)**
+  (I9) — the agent's held connection is ephemeral socket state. A row pins one
+  `agent_id` (every statement routes there), records the requesting `user_id` for
+  per-statement authorization, the scoped `staging_uri`, and the timestamps the
+  idle-reaper uses. Session statements are ordinary `queries` rows tagged with
+  `session_id` (`origin = "session"`), so they reuse the poll/fetch/audit pipeline.
 - **Catalogs are decoupled (M:N).** `catalogs` is a first-class entity (own
   Polaris catalog + storage backend); `workspace_catalogs` binds catalogs to
   workspaces many-to-many, with exactly one `is_default` per workspace. Storage
@@ -730,9 +759,9 @@ it explicitly rather than working around it.
   catalog DDL (create/drop schema, create/drop table) is **also** exposed as REST
   endpoints driving the catalog UI; ALTER from the UI is generated as SQL and run
   through the query path. The opt-in [SQL session layer](sql-sessions.md) relaxes
-  this allowlist to a **capability-scoped per-statement policy** (admitting the
-  `SET`/`COPY`-to-staging/`ATTACH`-managed-catalog statements dbt/dlt need) — still
-  enforced at the API, per statement, never on the agent.
+  this allowlist to a **capability-scoped per-statement policy** (admitting a safe
+  `SET` subset, `COPY` to the session's staging prefix, and `ATTACH` of the managed
+  catalog) — still enforced at the API, per statement, never on the agent.
 - **I9 — Postgres is the only state-of-record.** No second source of truth
   (no Redis, no in-memory queue surviving a restart). The in-memory agent
   registry is an ephemeral index of live sockets, not state.
@@ -756,6 +785,7 @@ A quick "if you want to do X, start here" index for contributors and agents.
 | Add/alter a Postgres table | `api/.../models/` | a new migration in `api/alembic/versions/` (`make migrate-new name=...`) |
 | Change query execution (extensions, pragmas, attach) | `agent/.../executor/runner.py` | `supervisor.py` if it affects timeout/cancel |
 | Widen/narrow the SQL allowlist | `api/.../services/sql_guard.py` | its test in `tests/unit/services/test_sql_guard.py`; the runner's single-`SELECT` branch in `agent/.../executor/runner.py` |
+| Change the SQL-session statement policy | `api/.../services/statement_policy.py` | its test in `tests/unit/services/test_statement_policy.py`; `routers/sql_sessions.py` (where it is enforced) |
 | Add a catalog DDL UI action | `api/.../routers/schemas.py` (REST endpoint) + `services/polaris.py` | web `src/features/catalog/CatalogNodeMenu.tsx` (+ dialogs), `src/api/schemas.ts`, `src/queries/schemas.mutations.ts`, MSW handler, tests |
 | Add a storage backend kind | `api/.../services/agent_capabilities.py` (required extension) + `services/workspace.py` (`polaris_storage`) | `agent/.../executor/runner.py` (iceberg attach), `StorageBackend` validation, web `StorageIcon`/wizard |
 | Change catalog credentials | `agent/.../config.py` + `api/.../config.py` (Polaris client id/secret) | `agent/.../executor/runner.py` (iceberg `SECRET`) |
@@ -816,6 +846,7 @@ the *categories* a contributor should be aware of.
 | **Bootstrap token** | A single-use credential an operator generates so a new agent can register. Exchanged once for a long-lived agent session token. |
 | **Capabilities** | The document an agent advertises (DuckDB version, loaded extensions, memory ceiling) used to match agents to workspace backends. |
 | **Frame** | One JSON message on the control WebSocket: `{type, payload}`, defined in `duckhaven-shared`. |
+| **SQL session** | An agent-held, persistent DuckDB connection the API brokers for an external client so it can run many statements with connection-scoped state. Off by default; see [SQL sessions](sql-sessions.md). |
 | **Vended credentials** | Short-lived storage credentials minted by Apache Polaris per `(agent, workspace)` and applied as a connection-scoped DuckDB `SECRET`. |
 
 ---

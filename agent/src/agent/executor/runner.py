@@ -490,6 +490,90 @@ def _capture_profile(conn: duckdb.DuckDBPyConnection, profile_path: Path) -> dic
         return None
 
 
+def _run_one_statement(
+    conn: duckdb.DuckDBPyConnection,
+    sql: str,
+    result_path: Path,
+    *,
+    memory_bytes: int,
+    threads: int,
+    enable_profiling: bool,
+) -> dict[str, Any]:
+    """Set the connection's resource slice and run one statement.
+
+    A single `SELECT` is materialized to Parquet (`wrote_result=True`, profiled);
+    any other statement — DDL/DML or a multi-statement script — is executed
+    directly with no result file. Returns the base result dict
+    (`row_count`, `duration_ms`, `wrote_result`, `result_bytes`, `profile`).
+
+    Shared by the per-query path (`run_query_sync`) and the per-session path
+    (`run_statement_sync`); it owns the profile sidecar file but NOT the
+    connection lifecycle (the caller opens/closes/holds the connection).
+    """
+    # The admission manager sizes each query's slice of the agent's budget
+    # (memory_bytes + threads) so concurrent sessions never oversubscribe the
+    # cgroup memory limit. DuckDB's default thread count ignores the cgroup CPU
+    # quota, so `threads` is set explicitly. (For a held session these are the
+    # session's fixed reservation, re-applied harmlessly per statement.)
+    mem_gb = memory_bytes / 1024**3
+    conn.execute(f"SET memory_limit='{mem_gb}GB'")
+    conn.execute(f"SET threads={threads}")
+    # Sibling of the result file; retention only sweeps `*.parquet`, so we own
+    # this file's lifecycle and unlink it ourselves.
+    profile_path = result_path.with_suffix(".profile.json")
+
+    start = time.monotonic()
+    wrote_result = _is_single_select(sql)
+    result_bytes: int | None = None
+    profile: dict[str, Any] | None = None
+    try:
+        if wrote_result:
+            # A single SELECT is materialized to Parquet so the control plane can
+            # page through its rows. Profile only this path so DDL/DML carry no
+            # profile (the UI shows a no-profile state for them).
+            if enable_profiling:
+                conn.execute("PRAGMA enable_profiling='json'")
+                conn.execute(f"PRAGMA profiling_output='{profile_path}'")
+                conn.execute(f"PRAGMA custom_profiling_settings='{_PROFILE_SETTINGS_JSON}'")
+            conn.execute(f"COPY ({sql}) TO '{result_path}' (FORMAT PARQUET)")
+            duration_ms = int((time.monotonic() - start) * 1000)
+            if enable_profiling:
+                conn.execute("PRAGMA disable_profiling")
+                profile = _capture_profile(conn, profile_path)
+            row_count_result = conn.execute(
+                f"SELECT count(*) FROM read_parquet('{result_path}')"
+            ).fetchone()
+            row_count = row_count_result[0] if row_count_result else 0
+            # DuckDB's profile reports the COPY's returned-row count (1), not the
+            # SELECT's result size. Surface the real result row count so the UI's
+            # summary and the scan-blow-up heuristic compare against it. Also
+            # record the admission reservation this query ran under so the UI can
+            # show actual peak/spill against what it was granted.
+            if profile is not None:
+                profile["summary"]["rows_returned"] = row_count
+                profile["summary"]["reserved_memory_bytes"] = memory_bytes
+                profile["summary"]["reserved_threads"] = threads
+            # Size of the materialized result so the UI can show how large it is.
+            if result_path.exists():
+                result_bytes = result_path.stat().st_size
+        else:
+            # DDL/DML (and multi-statement scripts) produce no result grid. Run
+            # the body directly: DuckDB returns an affected-row count for
+            # INSERT/UPDATE/DELETE and no result set for pure DDL.
+            affected = conn.execute(sql).fetchone()
+            duration_ms = int((time.monotonic() - start) * 1000)
+            row_count = affected[0] if affected and isinstance(affected[0], int) else 0
+    finally:
+        profile_path.unlink(missing_ok=True)
+    return {
+        "row_count": row_count,
+        "duration_ms": duration_ms,
+        "wrote_result": wrote_result,
+        "result_bytes": result_bytes,
+        "profile": profile,
+    }
+
+
 def run_query_sync(
     sql: str,
     result_path: Path,
@@ -545,68 +629,18 @@ def run_query_sync(
         conn = _open_fresh()
     elif on_connect is not None:
         on_connect(conn)
-    # Sibling of the result file; retention only sweeps `*.parquet`, so we own
-    # this file's lifecycle and unlink it ourselves.
-    profile_path = result_path.with_suffix(".profile.json")
     # We can transparently re-vend credentials only when we know how to re-ATTACH.
     can_reattach = bool(catalogs and polaris)
 
     def _execute() -> dict[str, Any]:
-        # The admission manager sizes each query's slice of the agent's budget
-        # (memory_bytes + threads) so concurrent sessions never oversubscribe the
-        # cgroup memory limit. DuckDB's default thread count ignores the cgroup
-        # CPU quota, so `threads` is set explicitly.
-        mem_gb = memory_bytes / 1024**3
-        conn.execute(f"SET memory_limit='{mem_gb}GB'")
-        conn.execute(f"SET threads={threads}")
-
-        start = time.monotonic()
-        wrote_result = _is_single_select(sql)
-        result_bytes: int | None = None
-        profile: dict[str, Any] | None = None
-        if wrote_result:
-            # A single SELECT is materialized to Parquet so the control plane can
-            # page through its rows. Profile only this path so DDL/DML carry no
-            # profile (the UI shows a no-profile state for them).
-            if enable_profiling:
-                conn.execute("PRAGMA enable_profiling='json'")
-                conn.execute(f"PRAGMA profiling_output='{profile_path}'")
-                conn.execute(f"PRAGMA custom_profiling_settings='{_PROFILE_SETTINGS_JSON}'")
-            conn.execute(f"COPY ({sql}) TO '{result_path}' (FORMAT PARQUET)")
-            duration_ms = int((time.monotonic() - start) * 1000)
-            if enable_profiling:
-                conn.execute("PRAGMA disable_profiling")
-                profile = _capture_profile(conn, profile_path)
-            row_count_result = conn.execute(
-                f"SELECT count(*) FROM read_parquet('{result_path}')"
-            ).fetchone()
-            row_count = row_count_result[0] if row_count_result else 0
-            # DuckDB's profile reports the COPY's returned-row count (1), not the
-            # SELECT's result size. Surface the real result row count so the UI's
-            # summary and the scan-blow-up heuristic compare against it. Also
-            # record the admission reservation this query ran under so the UI can
-            # show actual peak/spill against what it was granted.
-            if profile is not None:
-                profile["summary"]["rows_returned"] = row_count
-                profile["summary"]["reserved_memory_bytes"] = memory_bytes
-                profile["summary"]["reserved_threads"] = threads
-            # Size of the materialized result so the UI can show how large it is.
-            if result_path.exists():
-                result_bytes = result_path.stat().st_size
-        else:
-            # DDL/DML (and multi-statement scripts) produce no result grid. Run
-            # the body directly: DuckDB returns an affected-row count for
-            # INSERT/UPDATE/DELETE and no result set for pure DDL.
-            affected = conn.execute(sql).fetchone()
-            duration_ms = int((time.monotonic() - start) * 1000)
-            row_count = affected[0] if affected and isinstance(affected[0], int) else 0
-        result: dict[str, Any] = {
-            "row_count": row_count,
-            "duration_ms": duration_ms,
-            "wrote_result": wrote_result,
-            "result_bytes": result_bytes,
-            "profile": profile,
-        }
+        result = _run_one_statement(
+            conn,
+            sql,
+            result_path,
+            memory_bytes=memory_bytes,
+            threads=threads,
+            enable_profiling=enable_profiling,
+        )
 
         # When asked, compute true table stats on the same attached connection.
         # size_bytes has no reliable cross-backend source yet, so it stays null.
@@ -666,4 +700,33 @@ def run_query_sync(
             return _execute()
     finally:
         conn.close()
-        profile_path.unlink(missing_ok=True)
+
+
+def run_statement_sync(
+    sql: str,
+    result_path: Path,
+    *,
+    conn: duckdb.DuckDBPyConnection,
+    memory_bytes: int,
+    threads: int,
+    enable_profiling: bool = True,
+) -> dict[str, Any]:
+    """Run one statement on a held SQL-session connection.
+
+    Unlike `run_query_sync`, this runs against an already-open, already-attached
+    connection and **does not close it** — the session owns the connection for its
+    whole lifetime (`agent.control.session`). Reuses the same
+    materialize-single-SELECT-to-Parquet path so the control plane pages statement
+    results through the identical fetch pipeline as ordinary queries.
+
+    `memory_bytes`/`threads` are the session's fixed reservation, re-applied per
+    statement (harmless) so the profile records what the statement ran under.
+    """
+    return _run_one_statement(
+        conn,
+        sql,
+        result_path,
+        memory_bytes=memory_bytes,
+        threads=threads,
+        enable_profiling=enable_profiling,
+    )

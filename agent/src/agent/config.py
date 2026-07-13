@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     memory_headroom_fraction: float = 0.10
     max_queue_depth: int = 100
     queued_timeout_s: float = 0.0
+    # Memory a held SQL session reserves for its whole lifetime (occupying an
+    # admission slot so long-lived sessions can't oversubscribe the budget or
+    # starve interactive queries). Fixes the session connection's `memory_limit`
+    # at open (DuckDB has no live resize), clamped to the agent's budget.
+    session_reservation_bytes: int = 256 * 1024 * 1024
 
     # EXPLAIN-based cost estimation (the `auto` profile). Each query's reservation
     # is sized from its EXPLAIN estimate * safety, snapped to a T-shirt bucket, and

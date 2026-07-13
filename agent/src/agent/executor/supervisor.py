@@ -5,7 +5,7 @@ from typing import Any
 import duckdb
 from opentelemetry import trace
 
-from agent.executor.runner import run_query_sync
+from agent.executor.runner import run_query_sync, run_statement_sync
 from duckhaven_shared.telemetry import inject_trace_context
 
 _tracer = trace.get_tracer("duckhaven.agent")
@@ -78,6 +78,56 @@ async def run_query(
             return await loop.run_in_executor(None, _run, trace_headers)
     except duckdb.InterruptException as exc:
         raise TimeoutError("query exceeded statement timeout") from exc
+    except asyncio.CancelledError:
+        _interrupt()
+        raise
+    finally:
+        handle.cancel()
+
+
+async def run_statement(
+    sql: str,
+    result_path: Path,
+    timeout_s: float,
+    *,
+    conn: duckdb.DuckDBPyConnection,
+    memory_bytes: int,
+    threads: int,
+    enable_profiling: bool = True,
+) -> dict[str, Any]:
+    """Run one statement on a held SQL-session connection with a wall-clock
+    timeout (and cancellation) enforced via DuckDB's thread-safe `interrupt()`.
+
+    Mirrors `run_query`, but the connection is owned by the session and is never
+    closed here; `run_statement_sync` runs the materialize-or-execute path on it.
+    """
+    loop = asyncio.get_running_loop()
+
+    def _run() -> dict[str, Any]:
+        return run_statement_sync(
+            sql,
+            result_path,
+            conn=conn,
+            memory_bytes=memory_bytes,
+            threads=threads,
+            enable_profiling=enable_profiling,
+        )
+
+    def _interrupt() -> None:
+        conn.interrupt()
+
+    handle = loop.call_later(timeout_s, _interrupt)
+    try:
+        with _tracer.start_as_current_span(
+            "duckdb.execute_statement",
+            attributes={
+                "db.system.name": "duckdb",
+                "duckhaven.statement_id": result_path.stem,
+            },
+        ):
+            return await loop.run_in_executor(None, _run)
+    except duckdb.InterruptException as exc:
+        raise TimeoutError("statement exceeded timeout") from exc
     except asyncio.CancelledError:
         _interrupt()
         raise

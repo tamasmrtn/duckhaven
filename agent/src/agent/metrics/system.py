@@ -139,15 +139,18 @@ class MetricsSampler:
         running_queries: int = 0,
         queued_queries: int = 0,
         active_profile: str = DEFAULT_PROFILE,
+        session_count: int = 0,
     ) -> MetricsSample:
-        # Resource percentages are sampled here; the admission counts/profile are
-        # supplied by the caller (channel) so this stays a pure resource sampler.
+        # Resource percentages are sampled here; the admission counts/profile and
+        # held-session count are supplied by the caller (channel) so this stays a
+        # pure resource sampler.
         return MetricsSample(
             cpu_percent=self._cpu_percent(),
             memory_percent=self._memory_percent(),
             running_queries=running_queries,
             queued_queries=queued_queries,
             active_profile=active_profile,
+            session_count=session_count,
             sampled_at=datetime.now(tz=UTC),
         )
 

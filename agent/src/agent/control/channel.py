@@ -11,6 +11,7 @@ from websockets.exceptions import ConnectionClosed
 
 from agent.auth import TokenHolder, load_session_token, save_session_token
 from agent.config import settings
+from agent.control import session
 from agent.executor.admission import (
     Admission,
     QueuedTimeout,
@@ -20,7 +21,7 @@ from agent.executor.admission import (
 )
 from agent.executor.estimator import bucket_for, estimate_memory_bytes
 from agent.executor.runner import open_and_attach
-from agent.executor.supervisor import run_query
+from agent.executor.supervisor import run_query, run_statement
 from agent.metrics.system import MetricsSampler, cpu_capability, effective_memory_bytes
 from duckhaven_shared.concurrency import BUCKET_FRACTIONS
 from duckhaven_shared.protocol import Frame, FrameType
@@ -138,6 +139,174 @@ async def _traced_dispatch(ws, msg: Frame, results_dir: Path, admission: Admissi
         attributes={"duckhaven.query_id": msg.payload.get("query_id", "")},
     ):
         await _handle_dispatch(ws, msg.payload, results_dir, admission)
+
+
+def _session_reservation_request(admission: Admission) -> ReservationRequest:
+    """Size a held session's reservation: the configured session memory clamped to
+    the agent's budget, with threads proportional to that fraction."""
+    budget = admission.budget_bytes
+    mem = max(1, min(settings.session_reservation_bytes, budget))
+    frac = mem / budget
+    threads = max(1, round(admission.cores * frac))
+    return ReservationRequest(memory_bytes=mem, threads=threads)
+
+
+async def _send_session_opened(ws, session_id: str, status: str, error: str | None = None) -> None:
+    payload: dict[str, object] = {"session_id": session_id, "status": status}
+    if error is not None:
+        payload["error"] = error
+    await ws.send(Frame(type=FrameType.SESSION_OPENED, payload=payload).model_dump_json())
+
+
+async def _handle_open_session(ws, payload: dict, admission: Admission) -> None:
+    """Open a held DuckDB connection for a session and hold an admission slot.
+
+    Acquires a reservation (auto profile sizes it from ``session_reservation_bytes``;
+    static profiles take a ladder slot), opens+attaches the connection with the
+    API-supplied Polaris credentials, fixes its ``memory_limit``/``threads``, and
+    registers it. Any failure releases the slot and reports ``status="failed"`` so
+    the control plane marks the session failed rather than pinning the agent."""
+    session_id = payload["session_id"]
+    catalogs = payload.get("catalogs") or []
+    active_catalog = payload.get("active_catalog")
+    # Polaris connection info is vended by the API in the frame (the session
+    # credential seam); fall back to agent config for older control planes.
+    polaris = payload.get("polaris") or {
+        "endpoint": settings.polaris_base_url,
+        "client_id": settings.polaris_client_id,
+        "client_secret": settings.polaris_client_secret,
+    }
+
+    request = _session_reservation_request(admission)
+    try:
+        reservation = await admission.acquire(request if admission.is_auto else None)
+    except (QueueFull, QueuedTimeout) as exc:
+        await _send_session_opened(ws, session_id, "failed", str(exc))
+        return
+    except asyncio.CancelledError:
+        raise
+
+    loop = asyncio.get_running_loop()
+    trace_headers = inject_trace_context()
+
+    def _open() -> object:
+        conn = open_and_attach(
+            catalogs=catalogs,
+            active_catalog=active_catalog,
+            polaris=polaris,
+            trace_headers=trace_headers,
+            disabled_filesystems=settings.sandbox_disabled_filesystems,
+        )
+        # Fix the session's resource slice once; statements run within it.
+        conn.execute(f"SET memory_limit='{reservation.memory_bytes / 1024**3}GB'")
+        conn.execute(f"SET threads={reservation.threads}")
+        return conn
+
+    try:
+        conn = await loop.run_in_executor(None, _open)
+    except Exception as exc:  # noqa: BLE001 - report and release on any open failure
+        admission.release(reservation)
+        trace.get_current_span().set_status(Status(StatusCode.ERROR, "session open failed"))
+        await _send_session_opened(ws, session_id, "failed", str(exc))
+        return
+
+    session.register(
+        session.SessionState(
+            session_id=session_id,
+            conn=conn,
+            reservation=reservation,
+            memory_bytes=reservation.memory_bytes,
+            threads=reservation.threads,
+        )
+    )
+    await _send_session_opened(ws, session_id, "open")
+
+
+async def _handle_exec_statement(ws, payload: dict, results_dir: Path) -> None:
+    """Run one statement on a held session connection and reply with QUERY_DONE.
+
+    Statements reuse the query id / QUERY_DONE plumbing so their results page
+    through the identical fetch pipeline as ordinary queries. One statement runs
+    at a time per session (the session lock)."""
+    session_id = payload["session_id"]
+    statement_id = payload["query_id"]
+    sql = payload["sql"]
+    timeout_s = min(float(payload.get("timeout_s", 600.0)), settings.max_timeout_s)
+
+    state = session.get(session_id)
+    if state is None:
+        await _send_failed(ws, statement_id, "session not found")
+        _in_flight.pop(statement_id, None)
+        return
+
+    result_path = results_dir / f"{statement_id}.parquet"
+    try:
+        async with state.lock:
+            stats = await run_statement(
+                sql,
+                result_path,
+                timeout_s,
+                conn=state.conn,
+                memory_bytes=state.memory_bytes,
+                threads=state.threads,
+                enable_profiling=settings.profiling_enabled,
+            )
+        done_payload: dict[str, object] = {
+            "query_id": statement_id,
+            "status": "done",
+            "row_count": stats["row_count"],
+            "duration_ms": stats["duration_ms"],
+            "result_bytes": stats["result_bytes"],
+            "result_path": str(result_path) if stats["wrote_result"] else None,
+            "profile": stats["profile"],
+        }
+        await ws.send(Frame(type=FrameType.QUERY_DONE, payload=done_payload).model_dump_json())
+    except TimeoutError as exc:
+        trace.get_current_span().set_status(Status(StatusCode.ERROR, "statement timeout"))
+        await _send_failed(ws, statement_id, str(exc))
+    except asyncio.CancelledError:
+        _in_flight.pop(statement_id, None)
+        raise
+    except Exception as exc:  # noqa: BLE001 - surface any DuckDB error to the client
+        trace.get_current_span().set_status(Status(StatusCode.ERROR, str(exc)))
+        await _send_failed(ws, statement_id, str(exc))
+    finally:
+        _in_flight.pop(statement_id, None)
+
+
+async def _handle_close_session(ws, payload: dict, admission: Admission) -> None:
+    """Close a held session: drop the connection, free the admission slot, ack."""
+    session_id = payload["session_id"]
+    session.remove(session_id, admission)
+    await ws.send(
+        Frame(
+            type=FrameType.SESSION_CLOSED,
+            payload={"session_id": session_id, "status": "closed"},
+        ).model_dump_json()
+    )
+
+
+async def _traced_open_session(ws, msg: Frame, admission: Admission) -> None:
+    with _tracer.start_as_current_span(
+        "handle_open_session",
+        context=extract_trace_context(msg.trace_context),
+        kind=trace.SpanKind.CONSUMER,
+        attributes={"duckhaven.session_id": msg.payload.get("session_id", "")},
+    ):
+        await _handle_open_session(ws, msg.payload, admission)
+
+
+async def _traced_exec_statement(ws, msg: Frame, results_dir: Path) -> None:
+    with _tracer.start_as_current_span(
+        "handle_exec_statement",
+        context=extract_trace_context(msg.trace_context),
+        kind=trace.SpanKind.CONSUMER,
+        attributes={
+            "duckhaven.session_id": msg.payload.get("session_id", ""),
+            "duckhaven.statement_id": msg.payload.get("query_id", ""),
+        },
+    ):
+        await _handle_exec_statement(ws, msg.payload, results_dir)
 
 
 async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admission) -> None:
@@ -286,6 +455,7 @@ async def _push_metrics(ws, sampler: MetricsSampler, admission: Admission) -> No
             running_queries=admission.running_count,
             queued_queries=admission.queued_count,
             active_profile=admission.active_profile,
+            session_count=session.count(),
         )
         frame = Frame(type=FrameType.METRICS_SAMPLE, payload=sample.model_dump(mode="json"))
         await ws.send(frame.model_dump_json())
@@ -355,6 +525,12 @@ async def run_control_channel(
                 caps = Frame(type=FrameType.AGENT_STATUS, payload=_get_capabilities().model_dump())
                 await ws.send(caps.model_dump_json())
 
+                # Reconnect reconciliation: the control plane fails this agent's
+                # sessions on disconnect (Postgres is the state-of-record), so a
+                # resumed socket must not resurrect a stale held connection or leak
+                # its admission slot. Drop everything from a prior socket.
+                session.clear_all(admission)
+
                 # Push live utilization on its own cadence; cancelled on disconnect.
                 metrics_task = asyncio.create_task(_push_metrics(ws, MetricsSampler(), admission))
                 try:
@@ -397,3 +573,14 @@ async def _consume(ws, results_dir: Path, admission: Admission) -> None:
             task = _in_flight.pop(query_id, None)
             if task:
                 task.cancel()
+
+        elif msg.type == FrameType.OPEN_SESSION:
+            asyncio.create_task(_traced_open_session(ws, msg, admission))
+
+        elif msg.type == FrameType.EXEC_STATEMENT:
+            statement_id = msg.payload.get("query_id", str(uuid.uuid4()))
+            task = asyncio.create_task(_traced_exec_statement(ws, msg, results_dir))
+            _in_flight[statement_id] = task
+
+        elif msg.type == FrameType.CLOSE_SESSION:
+            asyncio.create_task(_handle_close_session(ws, msg, admission))

@@ -40,6 +40,12 @@ class Query(Base):
     schedule_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("schedules.id", ondelete="SET NULL"), nullable=True
     )
+    # Set when this row is a statement run inside a SQL session (origin="session");
+    # null for interactive/scheduled queries. Ties the statement to its session for
+    # audit and lets one session's statements be listed together.
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("sql_sessions.id", ondelete="SET NULL"), nullable=True
+    )
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

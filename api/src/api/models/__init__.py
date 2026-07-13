@@ -18,6 +18,7 @@ from api.models.maintenance import (
 )
 from api.models.query import Query, SavedQuery
 from api.models.rbac import Role, RolePermission
+from api.models.sql_session import SqlSession
 from api.models.storage_backend import StorageBackend
 from api.models.table_metadata import TableMetadata
 from api.models.user import Credential, User
@@ -40,6 +41,7 @@ __all__ = [
     "Role",
     "RolePermission",
     "SavedQuery",
+    "SqlSession",
     "StorageBackend",
     "TableHealthSample",
     "TableMetadata",

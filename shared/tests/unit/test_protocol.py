@@ -26,3 +26,18 @@ def test_unknown_extra_field_is_ignored():
     future_json = '{"type": "heartbeat", "payload": {}, "some_future_field": 1}'
     parsed = Frame.model_validate_json(future_json)
     assert parsed.type == FrameType.HEARTBEAT
+
+
+def test_session_frame_types_round_trip():
+    # Every SQL-session frame type serializes to its wire string and back.
+    for frame_type in (
+        FrameType.OPEN_SESSION,
+        FrameType.SESSION_OPENED,
+        FrameType.EXEC_STATEMENT,
+        FrameType.CLOSE_SESSION,
+        FrameType.SESSION_CLOSED,
+    ):
+        frame = Frame(type=frame_type, payload={"session_id": "s1"})
+        parsed = Frame.model_validate_json(frame.model_dump_json())
+        assert parsed.type == frame_type
+        assert parsed.payload == {"session_id": "s1"}

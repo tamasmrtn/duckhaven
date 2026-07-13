@@ -409,12 +409,30 @@ def _attach_catalogs(
         conn.execute(f'USE "{aslug}"."{schema}"')
 
 
+def _apply_fs_sandbox(conn: duckdb.DuckDBPyConnection, disabled_filesystems: str | None) -> None:
+    """Apply the DuckDB filesystem sandbox (defense-in-depth beneath the API
+    statement policy). ``disabled_filesystems`` is a DuckDB ``disabled_filesystems``
+    value (e.g. ``"HTTPFileSystem"``); empty/None is a no-op. See
+    ``agent.config.Settings.sandbox_disabled_filesystems`` for why this is off by
+    default on the bundled plain-HTTP topology and the verified 1.5.4 limits of
+    ``allowed_directories``/``disabled_filesystems`` for the local FS."""
+    if not disabled_filesystems or not disabled_filesystems.strip():
+        return
+    value = disabled_filesystems.replace(",", " ").split()
+    escaped = ",".join(v.replace("'", "''") for v in value)
+    try:
+        conn.execute(f"SET disabled_filesystems='{escaped}'")
+    except duckdb.Error as exc:
+        logger.warning("Could not apply disabled_filesystems sandbox: %s", exc)
+
+
 def open_and_attach(
     *,
     catalogs: list[dict[str, Any]] | None = None,
     active_catalog: str | None = None,
     polaris: dict[str, Any] | None = None,
     trace_headers: dict[str, str] | None = None,
+    disabled_filesystems: str | None = None,
 ) -> duckdb.DuckDBPyConnection:
     """Open a DuckDB connection, load the storage IO extensions, and ATTACH every
     catalog bound to the workspace so table names bind.
@@ -451,6 +469,10 @@ def open_and_attach(
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Polaris ATTACH failed: %s", exc)
+    # Apply the FS sandbox last: the IO extensions are loaded and catalogs are
+    # attached, so disabling a filesystem here only constrains subsequent
+    # user-statement access, not the trusted attach/credential-vending path.
+    _apply_fs_sandbox(conn, disabled_filesystems)
     return conn
 
 
@@ -483,6 +505,7 @@ def run_query_sync(
     enable_profiling: bool = True,
     on_connect: Callable[[duckdb.DuckDBPyConnection], None] | None = None,
     trace_headers: dict[str, str] | None = None,
+    disabled_filesystems: str | None = None,
 ) -> dict[str, Any]:
     """Run a query through DuckDB.
 
@@ -512,6 +535,7 @@ def run_query_sync(
             active_catalog=active_catalog,
             polaris=polaris,
             trace_headers=trace_headers,
+            disabled_filesystems=disabled_filesystems,
         )
         if on_connect is not None:
             on_connect(c)

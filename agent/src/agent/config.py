@@ -59,6 +59,20 @@ class Settings(BaseSettings):
     # it in QUERY_DONE. Best-effort; this flag is the kill switch.
     profiling_enabled: bool = True
 
+    # DuckDB filesystem sandbox (defense-in-depth beneath the API statement
+    # policy). A DuckDB `disabled_filesystems` value applied to every connection,
+    # e.g. "HTTPFileSystem" to block `COPY … TO 'http(s)://…'` exfiltration.
+    # DEFAULT EMPTY / OFF because DuckHaven's bundled Polaris + MinIO speak plain
+    # HTTP: disabling HTTPFileSystem can break the iceberg REST catalog against
+    # such a topology. Verified on DuckDB 1.5.4: `allowed_directories`/
+    # `allowed_paths` are NOT enforced while `enable_external_access` is on (which
+    # the agent requires for S3/Polaris), and `LocalFileSystem` cannot be disabled
+    # without breaking result-Parquet materialization — so local-FS containment is
+    # carried by the read-only container rootfs + the API statement policy.
+    # Operators with an HTTPS-only, egress-firewalled deployment may set
+    # "HTTPFileSystem" (comma/space-separated for several).
+    sandbox_disabled_filesystems: str = ""
+
     # OpenTelemetry tracing. Unset endpoint (the default) disables the SDK
     # entirely — no spans, no exporter. Maps from the standard
     # OTEL_EXPORTER_OTLP_ENDPOINT / OTEL_SERVICE_NAME env vars.

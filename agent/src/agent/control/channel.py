@@ -187,6 +187,7 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
                 catalogs=catalogs,
                 active_catalog=active_catalog,
                 polaris=polaris,
+                disabled_filesystems=settings.sandbox_disabled_filesystems,
             )
             reservation: Reservation = await admission.acquire(_build_request(estimate, admission))
         else:
@@ -230,6 +231,7 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
             health_for=health_for,
             conn=conn,
             enable_profiling=settings.profiling_enabled,
+            disabled_filesystems=settings.sandbox_disabled_filesystems,
         )
         done_payload: dict[str, object] = {
             "query_id": query_id,

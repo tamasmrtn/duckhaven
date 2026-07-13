@@ -104,6 +104,27 @@ async def test_query_done_persists_profile(db_session):
     assert query.profile == profile
 
 
+async def test_session_statement_done_records_statement_metric(db_session):
+    from api.config import settings
+    from api.metrics import SQL_STATEMENTS
+
+    ws, _catalog = await _make_workspace(db_session)
+    query = Query(workspace_id=ws.id, sql="SELECT 1", status="running", origin="session")
+    db_session.add(query)
+    await db_session.commit()
+    await db_session.refresh(query)
+
+    before = SQL_STATEMENTS.labels(settings.replica_id, "done")._value.get()
+    frame = Frame(
+        type=FrameType.QUERY_DONE,
+        payload={"query_id": str(query.id), "status": "done", "row_count": 1},
+    )
+    await query_service.handle_agent_frame(db_session, frame)
+    await db_session.refresh(query)
+    assert query.status == "done"
+    assert SQL_STATEMENTS.labels(settings.replica_id, "done")._value.get() == before + 1
+
+
 async def test_query_done_without_profile_stays_null(db_session):
     ws, _catalog = await _make_workspace(db_session)
     query = Query(workspace_id=ws.id, sql="CREATE TABLE t (x INT)", status="running")

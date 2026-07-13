@@ -15,6 +15,17 @@ class FrameType(StrEnum):
     AGENT_STATUS = "agent_status"
     METRICS_SAMPLE = "metrics_sample"
     SET_CONCURRENCY = "set_concurrency"
+    # SQL session layer: the control plane opens a session bound to one agent,
+    # which holds a persistent DuckDB connection; statements run against it, then
+    # the session is closed. OPEN_SESSION/EXEC_STATEMENT/CLOSE_SESSION are sent by
+    # the API; SESSION_OPENED/SESSION_CLOSED are the agent's lifecycle acks.
+    # A statement's completion reuses QUERY_DONE/QUERY_PROGRESS (keyed by the
+    # statement's query_id), so no new completion frame is needed.
+    OPEN_SESSION = "open_session"
+    SESSION_OPENED = "session_opened"
+    EXEC_STATEMENT = "exec_statement"
+    CLOSE_SESSION = "close_session"
+    SESSION_CLOSED = "session_closed"
 
 
 class Frame(BaseModel):

@@ -107,6 +107,27 @@ QUERY_QUEUE_REJECTED = Counter(
 # Agent admission-reject error strings (see agent control/channel.py) -> reason label.
 _QUEUE_REJECT_REASONS = {"queue full": "queue_full", "queued timeout": "queued_timeout"}
 
+SQL_SESSIONS_OPENED = Counter(
+    "duckhaven_sql_sessions_opened",
+    "SQL sessions successfully opened (held-connection sessions for dbt/dlt).",
+    ["replica_id"],
+)
+SQL_SESSIONS_CLOSED = Counter(
+    "duckhaven_sql_sessions_closed",
+    "SQL sessions closed, by reason (client/idle/max_lifetime/agent_disconnect/failed).",
+    ["replica_id", "reason"],
+)
+SQL_STATEMENTS = Counter(
+    "duckhaven_sql_statements",
+    "Statements run inside SQL sessions reaching a terminal state, by outcome.",
+    ["replica_id", "status"],
+)
+STATEMENT_POLICY_REJECTIONS = Counter(
+    "duckhaven_statement_policy_rejections",
+    "Session statements rejected by the capability-scoped policy, by rule.",
+    ["replica_id", "rule"],
+)
+
 
 # ── Inline instrumentation helpers (called from the query service) ────────────
 
@@ -144,6 +165,22 @@ def record_query_queue_rejection(error: str | None) -> bool:
 def record_polaris_request(operation: str, status: str, duration_s: float) -> None:
     POLARIS_REQUESTS.labels(settings.replica_id, operation, status).inc()
     POLARIS_DURATION.labels(settings.replica_id, operation).observe(duration_s)
+
+
+def record_sql_session_opened() -> None:
+    SQL_SESSIONS_OPENED.labels(settings.replica_id).inc()
+
+
+def record_sql_session_closed(reason: str) -> None:
+    SQL_SESSIONS_CLOSED.labels(settings.replica_id, reason).inc()
+
+
+def record_sql_statement(status: str) -> None:
+    SQL_STATEMENTS.labels(settings.replica_id, status).inc()
+
+
+def record_statement_policy_rejection(rule: str) -> None:
+    STATEMENT_POLICY_REJECTIONS.labels(settings.replica_id, rule).inc()
 
 
 # ── Scanner leadership flag (set by the maintenance scanner loop) ─────────────
@@ -195,6 +232,7 @@ class _Snapshot:
     agents: list[dict] = field(default_factory=list)
     pool: dict | None = None
     maintenance: dict | None = None
+    sql_sessions_active: int = 0
 
 
 _snapshot = _Snapshot()
@@ -208,6 +246,12 @@ class _ScrapeCollector:
     def collect(self) -> Iterator[GaugeMetricFamily]:
         snap = _snapshot
         yield from _agent_families(snap.agents)
+        active = GaugeMetricFamily(
+            "duckhaven_sql_sessions_active",
+            "Open SQL sessions (held connections); a DB-wide count (use max across replicas).",
+        )
+        active.add_metric([], snap.sql_sessions_active)
+        yield active
         if snap.pool is not None:
             for key, doc in (
                 ("size", "Configured connection pool size."),
@@ -263,6 +307,11 @@ def _agent_families(agents: list[dict]) -> Iterator[GaugeMetricFamily]:
         "Active concurrency profile of the agent (value is always 1).",
         labels=[*_AGENT_LABELS, "profile"],
     )
+    sessions = GaugeMetricFamily(
+        "duckhaven_agent_held_sessions",
+        "Open SQL sessions holding a connection + admission slot on the agent.",
+        labels=_AGENT_LABELS,
+    )
     for a in agents:
         base = [settings.replica_id, a["agent_id"], a["agent_name"]]
         up.add_metric(base, 1)
@@ -271,7 +320,8 @@ def _agent_families(agents: list[dict]) -> Iterator[GaugeMetricFamily]:
         running.add_metric(base, a["running_queries"])
         queued.add_metric(base, a["queued_queries"])
         profile.add_metric([*base, a["active_profile"]], 1)
-    yield from (up, cpu, mem, running, queued, profile)
+        sessions.add_metric(base, a["session_count"])
+    yield from (up, cpu, mem, running, queued, profile, sessions)
 
 
 REGISTRY.register(_ScrapeCollector())
@@ -298,6 +348,7 @@ async def _collect_agents(db: AsyncSession) -> list[dict]:
                 "running_queries": latest.get("running_queries", 0),
                 "queued_queries": latest.get("queued_queries", 0),
                 "active_profile": latest.get("active_profile", "auto"),
+                "session_count": latest.get("session_count", 0),
             }
         )
     return out
@@ -337,6 +388,16 @@ async def _collect_maintenance(db: AsyncSession) -> dict:
     }
 
 
+async def _collect_sql_sessions_active(db: AsyncSession) -> int:
+    from api.models.sql_session import SqlSession
+
+    return (
+        await db.execute(
+            sa.select(sa.func.count()).select_from(SqlSession).where(SqlSession.status == "open")
+        )
+    ).scalar_one()
+
+
 async def render(db: AsyncSession) -> tuple[bytes, str]:
     """Refresh the scrape-time snapshot and return the exposition payload."""
     global _snapshot
@@ -345,5 +406,6 @@ async def render(db: AsyncSession) -> tuple[bytes, str]:
             agents=await _collect_agents(db),
             pool=_collect_pool(),
             maintenance=await _collect_maintenance(db) if is_scan_leader() else None,
+            sql_sessions_active=await _collect_sql_sessions_active(db),
         )
         return generate_latest(REGISTRY), CONTENT_TYPE_LATEST

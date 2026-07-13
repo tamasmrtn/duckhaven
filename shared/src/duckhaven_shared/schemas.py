@@ -42,4 +42,7 @@ class MetricsSample(BaseModel):
     running_queries: int = 0
     queued_queries: int = 0
     active_profile: str = DEFAULT_PROFILE
+    # Number of open SQL sessions holding a persistent connection (+ admission
+    # reservation) on this agent. Defaulted for back-compat with older agents.
+    session_count: int = 0
     sampled_at: datetime

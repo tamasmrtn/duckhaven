@@ -223,6 +223,23 @@ services:
     # end to end. Remove or raise via AGENT_MEM_LIMIT= for an unconstrained agent
     # that advertises full host RAM.
     mem_limit: ${AGENT_MEM_LIMIT:-4g}
+    # Sandbox hardening. Because the API statement policy (not a hard SQL
+    # allowlist) now governs which statements reach DuckDB, the agent must be
+    # contained at the OS layer: a read-only root filesystem means any local
+    # write outside the results volume fails at the kernel, dropped Linux
+    # capabilities + no-new-privileges shrink the blast radius, and a pids cap
+    # bounds fork bombs. The agent runs non-root already (see agent/Dockerfile).
+    # DuckDB's extensions are baked into the image (read-only-safe: INSTALL is a
+    # no-op when present) and it writes temp/spill + result Parquet only under the
+    # writable results volume + /tmp tmpfs.
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 512
     depends_on:
       api:
         condition: service_healthy
@@ -236,6 +253,10 @@ services:
       # The control plane reaches the result server across the compose network,
       # so bind all interfaces rather than loopback.
       RESULTS_HTTP_HOST: 0.0.0.0
+      # DuckDB filesystem sandbox (off by default — the bundled Polaris + MinIO
+      # speak plain HTTP, so disabling HTTPFileSystem would break them). Set to
+      # "HTTPFileSystem" only on an HTTPS-only, egress-firewalled deployment.
+      SANDBOX_DISABLED_FILESYSTEMS: ${SANDBOX_DISABLED_FILESYSTEMS:-}
       # OpenTelemetry tracing (empty = disabled), same collector as the api.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
     volumes:

@@ -124,6 +124,22 @@ Postgres advisory lock, so only one replica advances a given migration — leave
 | `MIGRATION_RUNNER_TICK_S` | `30` | How often (seconds) the runner wakes to claim and advance an in-flight migration. |
 | `MIGRATION_RETENTION_DAYS` | `7` | How long the old backend's data is retained after a successful cutover before the source Polaris catalog is dropped. The window during which a migration can be reversed. |
 
+### SQL sessions
+
+Gates and tunes the [SQL session layer](../concepts/sql-sessions.md) (persistent agent-held connections for external
+warehouse-style clients). Disabled by default — enable it **only after** deploying the hardened agent, because turning
+sessions on also enables the broader per-statement policy. The idle/max-lifetime reaper is leader-elected via a Postgres
+advisory lock, like the scheduler, so leave it enabled everywhere.
+
+| Variable | Default | Description |
+|---|---|---|
+| `SQL_SESSIONS_ENABLED` | `false` | Master switch for the session endpoints and the reaper. When `false`, the `/sql/sessions` routes return 404. |
+| `SQL_SESSION_IDLE_TIMEOUT_S` | `900` | Close a session after this many seconds without a statement. Reset on each statement. |
+| `SQL_SESSION_MAX_LIFETIME_S` | `14400` | Hard cap on a session's total lifetime, regardless of activity. Must exceed your longest single session's run. |
+| `SQL_SESSION_REAPER_TICK_S` | `30` | How often (seconds) the reaper wakes to close idle/expired sessions. |
+| `SQL_SESSION_OPEN_TIMEOUT_S` | `30` | How long the open endpoint waits for the agent to acknowledge the new session before returning a timeout. |
+| `SQL_SESSION_STAGING_PREFIX_SEGMENT` | `_staging` | Object-storage path segment for a session's scoped staging area (`<catalog root>/<segment>/<session_id>/`); the statement policy confines `COPY`/`read_*` to this prefix. |
+
 ### AI assistant
 
 Configures the governed [AI data assistant](../concepts/assistant.md). Disabled by default; enable it by pointing it at
@@ -174,6 +190,8 @@ Source of truth: the [Agent reference](agent-reference.md). An agent needs only 
 | `MEMORY_LIMIT_BYTES` | No | `6442450944` (6 GB) | Per-query memory ceiling. |
 | `MAX_CONCURRENCY_PROFILE` | No | `auto` | Reservation sizing: `auto` (EXPLAIN-estimated per query) or a static slot ladder (`single`/`equal_2`/`decaying_2`/`decaying_3`). See [Runbook §6](../operations/runbook.md#6-query-queueing-concurrency). |
 | `PROFILING_ENABLED` | No | `true` | Capture DuckDB's post-execution query profile and return it on `query_done`. Set `false` to disable. |
+| `SESSION_RESERVATION_BYTES` | No | `268435456` (256 MB) | Memory a held [SQL session](../concepts/sql-sessions.md) reserves for its lifetime (fixes the connection's `memory_limit`), clamped to the agent's budget. |
+| `SANDBOX_DISABLED_FILESYSTEMS` | No | — | DuckDB `disabled_filesystems` applied to every connection, e.g. `HTTPFileSystem` to block `COPY … TO 'http://…'`. Off by default; the bundled plain-HTTP Polaris/MinIO would break if HTTP is disabled, so set only on an HTTPS-only, egress-restricted deployment. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | No | — | OTLP (http/protobuf) endpoint to export traces to; the compose files default it to the bundled collector. Unset/empty disables tracing entirely. See [Distributed tracing](../operations/tracing.md). |
 | `OTEL_SERVICE_NAME` | No | `duckhaven-agent` | Service name reported on spans. |
 

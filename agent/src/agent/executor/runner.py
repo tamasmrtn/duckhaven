@@ -409,12 +409,30 @@ def _attach_catalogs(
         conn.execute(f'USE "{aslug}"."{schema}"')
 
 
+def _apply_fs_sandbox(conn: duckdb.DuckDBPyConnection, disabled_filesystems: str | None) -> None:
+    """Apply the DuckDB filesystem sandbox (defense-in-depth beneath the API
+    statement policy). ``disabled_filesystems`` is a DuckDB ``disabled_filesystems``
+    value (e.g. ``"HTTPFileSystem"``); empty/None is a no-op. See
+    ``agent.config.Settings.sandbox_disabled_filesystems`` for why this is off by
+    default on the bundled plain-HTTP topology and the verified 1.5.4 limits of
+    ``allowed_directories``/``disabled_filesystems`` for the local FS."""
+    if not disabled_filesystems or not disabled_filesystems.strip():
+        return
+    value = disabled_filesystems.replace(",", " ").split()
+    escaped = ",".join(v.replace("'", "''") for v in value)
+    try:
+        conn.execute(f"SET disabled_filesystems='{escaped}'")
+    except duckdb.Error as exc:
+        logger.warning("Could not apply disabled_filesystems sandbox: %s", exc)
+
+
 def open_and_attach(
     *,
     catalogs: list[dict[str, Any]] | None = None,
     active_catalog: str | None = None,
     polaris: dict[str, Any] | None = None,
     trace_headers: dict[str, str] | None = None,
+    disabled_filesystems: str | None = None,
 ) -> duckdb.DuckDBPyConnection:
     """Open a DuckDB connection, load the storage IO extensions, and ATTACH every
     catalog bound to the workspace so table names bind.
@@ -451,6 +469,10 @@ def open_and_attach(
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Polaris ATTACH failed: %s", exc)
+    # Apply the FS sandbox last: the IO extensions are loaded and catalogs are
+    # attached, so disabling a filesystem here only constrains subsequent
+    # user-statement access, not the trusted attach/credential-vending path.
+    _apply_fs_sandbox(conn, disabled_filesystems)
     return conn
 
 
@@ -468,78 +490,43 @@ def _capture_profile(conn: duckdb.DuckDBPyConnection, profile_path: Path) -> dic
         return None
 
 
-def run_query_sync(
+def _run_one_statement(
+    conn: duckdb.DuckDBPyConnection,
     sql: str,
     result_path: Path,
     *,
     memory_bytes: int,
     threads: int,
-    catalogs: list[dict[str, Any]] | None = None,
-    active_catalog: str | None = None,
-    polaris: dict[str, Any] | None = None,
-    stats_for: dict[str, str] | None = None,
-    health_for: dict[str, Any] | None = None,
-    conn: duckdb.DuckDBPyConnection | None = None,
-    enable_profiling: bool = True,
-    on_connect: Callable[[duckdb.DuckDBPyConnection], None] | None = None,
-    trace_headers: dict[str, str] | None = None,
+    enable_profiling: bool,
 ) -> dict[str, Any]:
-    """Run a query through DuckDB.
+    """Set the connection's resource slice and run one statement.
 
-    A single `SELECT` is materialized to Parquet (`wrote_result=True`); any other
-    statement — DDL or DML, including multi-statement scripts — is executed
-    directly with no result file (`wrote_result=False`).
+    A single `SELECT` is materialized to Parquet (`wrote_result=True`, profiled);
+    any other statement — DDL/DML or a multi-statement script — is executed
+    directly with no result file. Returns the base result dict
+    (`row_count`, `duration_ms`, `wrote_result`, `result_bytes`, `profile`).
 
-    Optional kwargs (passed by the control plane):
-    - `catalogs`: the workspace's catalog descriptors (each `{slug, polaris_name,
-      backend, default_schema}`); all are ATTACHed (multi-attach).
-    - `active_catalog`: slug `USE`d for unqualified table names.
-    - `polaris`: `{endpoint, client_id, client_secret}`. When set together with
-      `catalogs`, ATTACH them before running the user SQL.
-    - `conn`: a pre-opened+attached connection (the `auto` profile reuses the
-      one it ran EXPLAIN on). When omitted, the runner opens and attaches its own.
-    - `enable_profiling`: capture DuckDB's JSON profile for a materialized SELECT
-      and return it under `result["profile"]` (best-effort).
-    - `on_connect`: called with the connection so the supervisor can
-      `interrupt()` it on timeout/cancel (G-D2-a).
-    - `trace_headers`: forwarded to `open_and_attach` when this call opens its
-      own connection (ignored when `conn` is already attached).
+    Shared by the per-query path (`run_query_sync`) and the per-session path
+    (`run_statement_sync`); it owns the profile sidecar file but NOT the
+    connection lifecycle (the caller opens/closes/holds the connection).
     """
-
-    def _open_fresh() -> duckdb.DuckDBPyConnection:
-        c = open_and_attach(
-            catalogs=catalogs,
-            active_catalog=active_catalog,
-            polaris=polaris,
-            trace_headers=trace_headers,
-        )
-        if on_connect is not None:
-            on_connect(c)
-        return c
-
-    if conn is None:
-        conn = _open_fresh()
-    elif on_connect is not None:
-        on_connect(conn)
+    # The admission manager sizes each query's slice of the agent's budget
+    # (memory_bytes + threads) so concurrent sessions never oversubscribe the
+    # cgroup memory limit. DuckDB's default thread count ignores the cgroup CPU
+    # quota, so `threads` is set explicitly. (For a held session these are the
+    # session's fixed reservation, re-applied harmlessly per statement.)
+    mem_gb = memory_bytes / 1024**3
+    conn.execute(f"SET memory_limit='{mem_gb}GB'")
+    conn.execute(f"SET threads={threads}")
     # Sibling of the result file; retention only sweeps `*.parquet`, so we own
     # this file's lifecycle and unlink it ourselves.
     profile_path = result_path.with_suffix(".profile.json")
-    # We can transparently re-vend credentials only when we know how to re-ATTACH.
-    can_reattach = bool(catalogs and polaris)
 
-    def _execute() -> dict[str, Any]:
-        # The admission manager sizes each query's slice of the agent's budget
-        # (memory_bytes + threads) so concurrent sessions never oversubscribe the
-        # cgroup memory limit. DuckDB's default thread count ignores the cgroup
-        # CPU quota, so `threads` is set explicitly.
-        mem_gb = memory_bytes / 1024**3
-        conn.execute(f"SET memory_limit='{mem_gb}GB'")
-        conn.execute(f"SET threads={threads}")
-
-        start = time.monotonic()
-        wrote_result = _is_single_select(sql)
-        result_bytes: int | None = None
-        profile: dict[str, Any] | None = None
+    start = time.monotonic()
+    wrote_result = _is_single_select(sql)
+    result_bytes: int | None = None
+    profile: dict[str, Any] | None = None
+    try:
         if wrote_result:
             # A single SELECT is materialized to Parquet so the control plane can
             # page through its rows. Profile only this path so DDL/DML carry no
@@ -576,13 +563,84 @@ def run_query_sync(
             affected = conn.execute(sql).fetchone()
             duration_ms = int((time.monotonic() - start) * 1000)
             row_count = affected[0] if affected and isinstance(affected[0], int) else 0
-        result: dict[str, Any] = {
-            "row_count": row_count,
-            "duration_ms": duration_ms,
-            "wrote_result": wrote_result,
-            "result_bytes": result_bytes,
-            "profile": profile,
-        }
+    finally:
+        profile_path.unlink(missing_ok=True)
+    return {
+        "row_count": row_count,
+        "duration_ms": duration_ms,
+        "wrote_result": wrote_result,
+        "result_bytes": result_bytes,
+        "profile": profile,
+    }
+
+
+def run_query_sync(
+    sql: str,
+    result_path: Path,
+    *,
+    memory_bytes: int,
+    threads: int,
+    catalogs: list[dict[str, Any]] | None = None,
+    active_catalog: str | None = None,
+    polaris: dict[str, Any] | None = None,
+    stats_for: dict[str, str] | None = None,
+    health_for: dict[str, Any] | None = None,
+    conn: duckdb.DuckDBPyConnection | None = None,
+    enable_profiling: bool = True,
+    on_connect: Callable[[duckdb.DuckDBPyConnection], None] | None = None,
+    trace_headers: dict[str, str] | None = None,
+    disabled_filesystems: str | None = None,
+) -> dict[str, Any]:
+    """Run a query through DuckDB.
+
+    A single `SELECT` is materialized to Parquet (`wrote_result=True`); any other
+    statement — DDL or DML, including multi-statement scripts — is executed
+    directly with no result file (`wrote_result=False`).
+
+    Optional kwargs (passed by the control plane):
+    - `catalogs`: the workspace's catalog descriptors (each `{slug, polaris_name,
+      backend, default_schema}`); all are ATTACHed (multi-attach).
+    - `active_catalog`: slug `USE`d for unqualified table names.
+    - `polaris`: `{endpoint, client_id, client_secret}`. When set together with
+      `catalogs`, ATTACH them before running the user SQL.
+    - `conn`: a pre-opened+attached connection (the `auto` profile reuses the
+      one it ran EXPLAIN on). When omitted, the runner opens and attaches its own.
+    - `enable_profiling`: capture DuckDB's JSON profile for a materialized SELECT
+      and return it under `result["profile"]` (best-effort).
+    - `on_connect`: called with the connection so the supervisor can
+      `interrupt()` it on timeout/cancel (G-D2-a).
+    - `trace_headers`: forwarded to `open_and_attach` when this call opens its
+      own connection (ignored when `conn` is already attached).
+    """
+
+    def _open_fresh() -> duckdb.DuckDBPyConnection:
+        c = open_and_attach(
+            catalogs=catalogs,
+            active_catalog=active_catalog,
+            polaris=polaris,
+            trace_headers=trace_headers,
+            disabled_filesystems=disabled_filesystems,
+        )
+        if on_connect is not None:
+            on_connect(c)
+        return c
+
+    if conn is None:
+        conn = _open_fresh()
+    elif on_connect is not None:
+        on_connect(conn)
+    # We can transparently re-vend credentials only when we know how to re-ATTACH.
+    can_reattach = bool(catalogs and polaris)
+
+    def _execute() -> dict[str, Any]:
+        result = _run_one_statement(
+            conn,
+            sql,
+            result_path,
+            memory_bytes=memory_bytes,
+            threads=threads,
+            enable_profiling=enable_profiling,
+        )
 
         # When asked, compute true table stats on the same attached connection.
         # size_bytes has no reliable cross-backend source yet, so it stays null.
@@ -642,4 +700,33 @@ def run_query_sync(
             return _execute()
     finally:
         conn.close()
-        profile_path.unlink(missing_ok=True)
+
+
+def run_statement_sync(
+    sql: str,
+    result_path: Path,
+    *,
+    conn: duckdb.DuckDBPyConnection,
+    memory_bytes: int,
+    threads: int,
+    enable_profiling: bool = True,
+) -> dict[str, Any]:
+    """Run one statement on a held SQL-session connection.
+
+    Unlike `run_query_sync`, this runs against an already-open, already-attached
+    connection and **does not close it** — the session owns the connection for its
+    whole lifetime (`agent.control.session`). Reuses the same
+    materialize-single-SELECT-to-Parquet path so the control plane pages statement
+    results through the identical fetch pipeline as ordinary queries.
+
+    `memory_bytes`/`threads` are the session's fixed reservation, re-applied per
+    statement (harmless) so the profile records what the statement ran under.
+    """
+    return _run_one_statement(
+        conn,
+        sql,
+        result_path,
+        memory_bytes=memory_bytes,
+        threads=threads,
+        enable_profiling=enable_profiling,
+    )

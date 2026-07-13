@@ -205,6 +205,12 @@ async def agent_connect(
 
                     async with session_factory() as db:
                         await handle_agent_frame(db, msg_frame)
+
+                elif msg_frame.type in (FrameType.SESSION_OPENED, FrameType.SESSION_CLOSED):
+                    from api.services.sql_sessions.service import handle_session_frame
+
+                    async with session_factory() as db:
+                        await handle_session_frame(db, msg_frame)
             except WebSocketDisconnect:
                 raise
             except Exception:
@@ -219,3 +225,8 @@ async def agent_connect(
             registry.unregister(agent_id)
             async with session_factory() as db:
                 await release_agent_owner(db, agent_id)
+                # Reconcile SQL sessions: this agent's held connections are gone, so
+                # its non-terminal sessions can't continue (Postgres decides — I9).
+                from api.services.sql_sessions.service import fail_sessions_for_agent
+
+                await fail_sessions_for_agent(db, agent_id)

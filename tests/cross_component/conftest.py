@@ -83,6 +83,8 @@ def _api_env(db_url: str, setup_token_file: Path) -> dict[str, str]:
             "SETUP_TOKEN_PATH": str(setup_token_file),
             "SECRET_KEY": "xc-test-secret",
             "COOKIE_SECURE": "false",
+            # Exercise the SQL session layer end to end (off by default in prod).
+            "SQL_SESSIONS_ENABLED": "true",
         }
     )
     if endpoint := os.getenv("POLARIS_S3_ENDPOINT"):

@@ -30,6 +30,7 @@ from api.routers import (
     schedules,
     schemas,
     setup,
+    sql_sessions,
     workspaces,
 )
 from api.routers import (
@@ -109,6 +110,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         migration_task = asyncio.create_task(
             migration_loop(async_session_factory, app.state.polaris_client)
         )
+
+    reaper_task: asyncio.Task | None = None
+    if settings.sql_sessions_enabled:
+        from api.services.sql_sessions.reaper import reaper_loop
+
+        reaper_task = asyncio.create_task(reaper_loop(async_session_factory))
     try:
         yield
     finally:
@@ -116,7 +123,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # then hand our agents to other replicas before tearing down.
         app.state.draining = True
         await drain_local_agents(async_session_factory)
-        for task in (scanner_task, scheduler_task, migration_task):
+        for task in (scanner_task, scheduler_task, migration_task, reaper_task):
             if task is not None:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -177,6 +184,7 @@ api_app.include_router(catalogs.router, tags=["catalog"])
 api_app.include_router(schemas.router, tags=["catalog"])
 api_app.include_router(grants.router, tags=["grants"])
 api_app.include_router(queries.router, tags=["queries"])
+api_app.include_router(sql_sessions.router, tags=["sql-sessions"])
 api_app.include_router(schedules.router, tags=["schedules"])
 api_app.include_router(agents.router, tags=["agents"])
 api_app.include_router(assistant.router, tags=["assistant"])

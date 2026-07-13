@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     memory_headroom_fraction: float = 0.10
     max_queue_depth: int = 100
     queued_timeout_s: float = 0.0
+    # Memory a held SQL session reserves for its whole lifetime (occupying an
+    # admission slot so long-lived sessions can't oversubscribe the budget or
+    # starve interactive queries). Fixes the session connection's `memory_limit`
+    # at open (DuckDB has no live resize), clamped to the agent's budget.
+    session_reservation_bytes: int = 256 * 1024 * 1024
 
     # EXPLAIN-based cost estimation (the `auto` profile). Each query's reservation
     # is sized from its EXPLAIN estimate * safety, snapped to a T-shirt bucket, and
@@ -58,6 +63,20 @@ class Settings(BaseSettings):
     # Post-execution profiling: capture DuckDB's JSON profile per query and ship
     # it in QUERY_DONE. Best-effort; this flag is the kill switch.
     profiling_enabled: bool = True
+
+    # DuckDB filesystem sandbox (defense-in-depth beneath the API statement
+    # policy). A DuckDB `disabled_filesystems` value applied to every connection,
+    # e.g. "HTTPFileSystem" to block `COPY … TO 'http(s)://…'` exfiltration.
+    # DEFAULT EMPTY / OFF because DuckHaven's bundled Polaris + MinIO speak plain
+    # HTTP: disabling HTTPFileSystem can break the iceberg REST catalog against
+    # such a topology. Verified on DuckDB 1.5.4: `allowed_directories`/
+    # `allowed_paths` are NOT enforced while `enable_external_access` is on (which
+    # the agent requires for S3/Polaris), and `LocalFileSystem` cannot be disabled
+    # without breaking result-Parquet materialization — so local-FS containment is
+    # carried by the read-only container rootfs + the API statement policy.
+    # Operators with an HTTPS-only, egress-firewalled deployment may set
+    # "HTTPFileSystem" (comma/space-separated for several).
+    sandbox_disabled_filesystems: str = ""
 
     # OpenTelemetry tracing. Unset endpoint (the default) disables the SDK
     # entirely — no spans, no exporter. Maps from the standard

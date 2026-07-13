@@ -113,6 +113,24 @@ class Settings(BaseSettings):
     # to roll back (reverse-migrate) if a problem surfaces post-cutover.
     migration_retention_days: int = 7
 
+    # ── SQL sessions (dbt/dlt session layer) ──────────────────────────────────
+    # The whole session surface — and thus the relaxed statement policy — is
+    # OFF by default: an operator enables it only after deploying the hardened
+    # agent (sandbox-before-relaxed-policy). Idle sessions are reaped after
+    # sql_session_idle_timeout_s of inactivity; every session is force-closed at
+    # sql_session_max_lifetime_s. The reaper is a leader-elected loop like the
+    # scheduler/scanner. sql_session_open_timeout_s bounds how long the open
+    # endpoint waits for the agent's SESSION_OPENED ack.
+    sql_sessions_enabled: bool = False
+    sql_session_idle_timeout_s: float = 900.0
+    sql_session_max_lifetime_s: float = 14400.0
+    sql_session_reaper_tick_s: float = 30.0
+    sql_session_open_timeout_s: float = 30.0
+    # Object-storage path segment for a session's scoped staging area
+    # (<catalog root>/<segment>/<session_id>/); the statement policy confines
+    # COPY/read_* to this prefix.
+    sql_session_staging_prefix_segment: str = "_staging"
+
     # ── High availability (multi-replica control plane) ───────────────────────
     # Identity of this API replica and the URL peers use to reach it for
     # inter-replica agent-dispatch forwarding. The defaults make a single-replica

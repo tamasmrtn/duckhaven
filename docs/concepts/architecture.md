@@ -729,7 +729,10 @@ it explicitly rather than working around it.
   to Parquet; other statements run directly and return no result grid. Structured
   catalog DDL (create/drop schema, create/drop table) is **also** exposed as REST
   endpoints driving the catalog UI; ALTER from the UI is generated as SQL and run
-  through the query path.
+  through the query path. The opt-in [SQL session layer](sql-sessions.md) relaxes
+  this allowlist to a **capability-scoped per-statement policy** (admitting the
+  `SET`/`COPY`-to-staging/`ATTACH`-managed-catalog statements dbt/dlt need) — still
+  enforced at the API, per statement, never on the agent.
 - **I9 — Postgres is the only state-of-record.** No second source of truth
   (no Redis, no in-memory queue surviving a restart). The in-memory agent
   registry is an ephemeral index of live sockets, not state.

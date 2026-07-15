@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 
 import duckdb
@@ -35,9 +36,18 @@ class SessionState:
     reservation: Reservation
     memory_bytes: int
     threads: int
+    # Lease clocks (monotonic seconds): ``opened_at`` bounds a session's total
+    # lifetime; ``last_active_at`` (bumped by ``touch`` on each statement) bounds
+    # its idle time. The agent self-expires orphaned sessions from these so a lost
+    # CLOSE_SESSION never strands a slot until the next reconnect.
+    opened_at: float
+    last_active_at: float
     # Serializes statements on the shared connection: a session runs one
     # statement at a time (dbt/dlt use a connection serially).
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    def touch(self) -> None:
+        self.last_active_at = time.monotonic()
 
 
 _sessions: dict[str, SessionState] = {}
@@ -79,3 +89,26 @@ def clear_all(admission: Admission) -> None:
     """Tear down every held session (reconnect reconciliation)."""
     for session_id in list(_sessions):
         remove(session_id, admission)
+
+
+def sweep_expired(admission: Admission, idle_s: float, max_life_s: float) -> list[str]:
+    """Tear down held sessions past their idle or max-lifetime lease, freeing the
+    connection + admission slot. Returns the reaped session ids.
+
+    This is the agent-owned backstop: even if a CLOSE_SESSION is lost or a client
+    exits without closing, the slot is reclaimed here rather than pinned until the
+    next reconnect. Timeouts <= 0 disable the respective check. Sessions mid-statement
+    (``lock`` held) are skipped and revisited on a later sweep so a connection is
+    never closed out from under a running statement. Teardown funnels through
+    ``remove`` (dict-pop guarded), so a reservation is released at most once."""
+    now = time.monotonic()
+    reaped: list[str] = []
+    for state in list(_sessions.values()):
+        if state.lock.locked():
+            continue
+        idle_expired = idle_s > 0 and now - state.last_active_at > idle_s
+        life_expired = max_life_s > 0 and now - state.opened_at > max_life_s
+        if idle_expired or life_expired:
+            if remove(state.session_id, admission):
+                reaped.append(state.session_id)
+    return reaped

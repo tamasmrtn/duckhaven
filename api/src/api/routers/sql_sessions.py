@@ -11,15 +11,17 @@ Statements are ordinary ``queries`` rows (``origin="session"``); poll and fetch
 them through the existing ``GET /queries/{id}`` (+ ``/rows``).
 """
 
+import contextlib
 import uuid
 from datetime import UTC, datetime
 
+import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
 from api.deps import get_current_user, get_db
-from api.metrics import record_statement_policy_rejection
+from api.metrics import record_sql_session_closed, record_statement_policy_rejection
 from api.models.agent import Agent
 from api.models.query import Query
 from api.models.sql_session import SqlSession
@@ -140,9 +142,30 @@ async def open_session(
     if session.status == "open":
         return session
     if session.status == "opening":
-        raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="Session open timed out"
+        # Time out the row with a compare-and-set so we never clobber a session the
+        # agent opened between our last poll and here (it would flip opening→open in
+        # a separate DB session). Capture the ids before the commit expires the row.
+        session_id, agent_id = session.id, session.agent_id
+        result = await db.execute(
+            sa.update(SqlSession)
+            .where(SqlSession.id == session_id, SqlSession.status == "opening")
+            .values(status="failed", error="open_timeout", closed_at=datetime.now(tz=UTC))
+            .execution_options(synchronize_session=False)
         )
+        await db.commit()
+        if result.rowcount == 1:
+            record_sql_session_closed("open_timeout")
+            # The agent may still be finishing the open (and holding a slot); tell it
+            # to drop. Best-effort — the agent's lease sweep is the durable backstop.
+            with contextlib.suppress(Exception):
+                await session_service.dispatch_close_session(db, agent_id, session_id)
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="Session open timed out"
+            )
+        # Agent won the race: the row is now open (or otherwise terminal). Reload.
+        await db.refresh(session)
+        if session.status == "open":
+            return session
     raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail={"error": "session_open_failed", "detail": session.error or "unknown"},

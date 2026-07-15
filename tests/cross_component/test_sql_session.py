@@ -87,3 +87,51 @@ async def test_close_releases_agent_slot(api_client, workspace, healthy_agent) -
         f"/api/sql/sessions/{session['id']}/statements", json={"sql": "SELECT 1"}
     )
     assert resp.status_code == 409
+
+
+async def _wait_new_agent_id(api_client, before: set[str], timeout_s: float = 90.0) -> str:
+    """Poll until a healthy agent whose id is not in ``before`` has advertised the
+    ``httpfs`` extension. An agent is marked healthy on auth, but its capabilities
+    arrive in a slightly later AGENT_STATUS frame — opening a session before then is
+    rejected as agent_incompatible for the object-store catalog."""
+    deadline = asyncio.get_event_loop().time() + timeout_s
+    while asyncio.get_event_loop().time() < deadline:
+        agents = (await api_client.get("/api/agents")).json()
+        for a in agents:
+            if a["id"] in before or a["status"] != "healthy":
+                continue
+            caps = a.get("capabilities") or {}
+            if "httpfs" in caps.get("extensions", []):
+                return a["id"]
+        await asyncio.sleep(0.5)
+    raise AssertionError("spawned agent did not advertise httpfs in time")
+
+
+async def test_abandoned_session_reclaimed_by_agent_lease(
+    api_client, workspace, spawn_agent
+) -> None:
+    """Regression for the churn leak (#152): a session the client abandons without
+    DELETE must be reclaimed by the agent's own idle lease — freeing its admission
+    slot — rather than pinning the agent until reconnect. A short-lease disposable
+    agent lets the backstop fire within the test window."""
+    before = {a["id"] for a in (await api_client.get("/api/agents")).json()}
+    spawn_agent({"SESSION_IDLE_TIMEOUT_S": "3", "SESSION_MAX_LIFETIME_S": "0"})
+    agent_id = await _wait_new_agent_id(api_client, before)
+
+    # Open a session against the disposable agent, then abandon it (never DELETE).
+    session = await _open(api_client, workspace, agent_id)
+
+    # The agent's idle sweep (idle 3s, on the 2s metrics tick) tears the held
+    # connection down and reports SESSION_CLOSED, which flips the row to closed.
+    deadline = asyncio.get_event_loop().time() + 30.0
+    status = "open"
+    while asyncio.get_event_loop().time() < deadline:
+        status = (await api_client.get(f"/api/sql/sessions/{session['id']}")).json()["status"]
+        if status == "closed":
+            break
+        await asyncio.sleep(0.5)
+    assert status == "closed", f"abandoned session was not reclaimed by the agent lease: {status}"
+
+    # The reclaimed slot is reusable: a fresh session opens on the same agent.
+    reopened = await _open(api_client, workspace, agent_id)
+    await api_client.delete(f"/api/sql/sessions/{reopened['id']}")

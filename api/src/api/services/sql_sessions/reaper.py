@@ -68,18 +68,28 @@ async def run_cycle(session_factory: async_sessionmaker[AsyncSession]) -> dict[s
     now = datetime.now(tz=UTC)
     idle_cutoff = now - timedelta(seconds=settings.sql_session_idle_timeout_s)
     lifetime_cutoff = now - timedelta(seconds=settings.sql_session_max_lifetime_s)
+    opening_cutoff = now - timedelta(seconds=settings.sql_session_opening_deadline_s)
 
-    reaped = {"idle": 0, "max_lifetime": 0}
+    reaped = {"idle": 0, "max_lifetime": 0, "open_timeout": 0}
     async with session_factory() as db:
         rows = (
             (
                 await db.execute(
                     sa.select(SqlSession).where(
-                        SqlSession.status == "open",
                         sa.or_(
-                            SqlSession.last_active_at < idle_cutoff,
-                            SqlSession.created_at < lifetime_cutoff,
-                        ),
+                            sa.and_(
+                                SqlSession.status == "open",
+                                sa.or_(
+                                    SqlSession.last_active_at < idle_cutoff,
+                                    SqlSession.created_at < lifetime_cutoff,
+                                ),
+                            ),
+                            # Stuck opening: the agent never acked but may hold a slot.
+                            sa.and_(
+                                SqlSession.status == "opening",
+                                SqlSession.created_at < opening_cutoff,
+                            ),
+                        )
                     )
                 )
             )
@@ -87,10 +97,15 @@ async def run_cycle(session_factory: async_sessionmaker[AsyncSession]) -> dict[s
             .all()
         )
         for session in rows:
-            reason = "max_lifetime" if _aware(session.created_at) < lifetime_cutoff else "idle"
-            session.status = "expired"
+            if session.status == "opening":
+                reason = "open_timeout"
+                session.status = "failed"
+                session.error = "open_timeout"
+            else:
+                reason = "max_lifetime" if _aware(session.created_at) < lifetime_cutoff else "idle"
+                session.status = "expired"
+                session.error = f"reaped ({reason})"
             session.closed_at = now
-            session.error = f"reaped ({reason})"
             reaped[reason] += 1
         await db.commit()
 
@@ -125,7 +140,7 @@ async def reaper_loop(session_factory: async_sessionmaker[AsyncSession]) -> None
     while True:
         try:
             result = await run_tick(session_factory)
-            if result and (result["idle"] or result["max_lifetime"]):
+            if result and any(result.values()):
                 logger.info("SQL session reaper cycle: %s", result)
         except Exception as exc:  # noqa: BLE001 - the loop must survive any cycle failure
             logger.exception("SQL session reaper cycle failed: %s", exc)

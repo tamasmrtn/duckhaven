@@ -36,10 +36,19 @@ than a single huge query.
 
 To keep a crashed client from pinning an agent forever, a background reaper closes sessions that have been **idle** past
 `SQL_SESSION_IDLE_TIMEOUT_S` (default 15 minutes) or have run longer than `SQL_SESSION_MAX_LIFETIME_S` (default 4
-hours). If the agent's connection drops, DuckHaven fails that agent's sessions immediately — the held connection is gone
-and Postgres is the source of truth — and the next statement on the session returns `409`; the client simply opens a new
-one. Sessions survive an API restart or failover as long as their pinned agent stays connected, because every statement
-is routed by the agent's recorded owner, not by in-memory state.
+hours). A session that never finishes opening — the agent's acknowledgement is lost, so its row is stuck `opening` — is
+reaped once it is older than `SQL_SESSION_OPENING_DEADLINE_S` (default 2 minutes, and must exceed the open timeout), so
+a slot the agent did manage to reserve is never stranded. If the agent's connection drops, DuckHaven fails that agent's
+sessions immediately — the held connection is gone and Postgres is the source of truth — and the next statement on the
+session returns `409`; the client simply opens a new one. Sessions survive an API restart or failover as long as their
+pinned agent stays connected, because every statement is routed by the agent's recorded owner, not by in-memory state.
+
+As a backstop beneath the control-plane reaper, each **agent also holds its own lease** on every session it is running
+and self-expires one that goes idle past `SESSION_IDLE_TIMEOUT_S` or outlives `SESSION_MAX_LIFETIME_S` (both agent
+settings, deliberately larger than the API's so the reaper stays primary). This is what guarantees a slot is reclaimed
+even if a close instruction from the API is lost in flight — the agent that owns the slot frees it on its own clock
+rather than holding it until its next reconnect. This is the churn safeguard: a client that opens many sessions and
+exits without closing them (repeated `dbt` runs, for instance) can never slowly exhaust an agent's admission budget.
 
 ## Statement policy
 
@@ -82,10 +91,12 @@ still needs network egress to Polaris and the storage backend, so restrict it to
 
 ## Observability
 
-Sessions emit their own metrics — sessions opened, sessions closed by reason (client, idle, max-lifetime,
-agent-disconnect, failed), statements by outcome, statement-policy rejections by rule, an active-sessions gauge, and a
-per-agent held-session count — alongside OpenTelemetry spans for open/exec/close that continue the same trace across the
-API→agent hop. See [Monitoring](../operations/monitoring.md).
+Sessions emit their own metrics — sessions opened, sessions closed by reason (client, idle, max-lifetime, open-timeout,
+agent-disconnect, agent-self-reap, failed), statements by outcome, statement-policy rejections by rule, an
+active-sessions gauge, and a per-agent held-session count — alongside OpenTelemetry spans for open/exec/close that
+continue the same trace across the API→agent hop. To watch for a leak, alert when a per-agent held-session count stays
+above that agent's share of the active-sessions gauge, or when the `agent-self-reap` close reason is firing at all: the
+backstop only fires when a normal close was dropped. See [Monitoring](../operations/monitoring.md).
 
 ## Not this
 

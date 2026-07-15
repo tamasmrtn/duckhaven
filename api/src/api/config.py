@@ -126,6 +126,10 @@ class Settings(BaseSettings):
     sql_session_max_lifetime_s: float = 14400.0
     sql_session_reaper_tick_s: float = 30.0
     sql_session_open_timeout_s: float = 30.0
+    # A row stuck in `opening` past this deadline (agent never acked SESSION_OPENED)
+    # is reaped as `open_timeout`, freeing any slot the agent did acquire. Must
+    # exceed sql_session_open_timeout_s so a merely-slow open isn't reaped mid-flight.
+    sql_session_opening_deadline_s: float = 120.0
     # Object-storage path segment for a session's scoped staging area
     # (<catalog root>/<segment>/<session_id>/); the statement policy confines
     # COPY/read_* to this prefix.

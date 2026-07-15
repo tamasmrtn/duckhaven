@@ -89,16 +89,22 @@ async def test_close_releases_agent_slot(api_client, workspace, healthy_agent) -
     assert resp.status_code == 409
 
 
-async def _wait_new_agent_id(api_client, before: set[str], timeout_s: float = 60.0) -> str:
-    """Poll until a healthy agent whose id is not in ``before`` appears."""
+async def _wait_new_agent_id(api_client, before: set[str], timeout_s: float = 90.0) -> str:
+    """Poll until a healthy agent whose id is not in ``before`` has advertised the
+    ``httpfs`` extension. An agent is marked healthy on auth, but its capabilities
+    arrive in a slightly later AGENT_STATUS frame — opening a session before then is
+    rejected as agent_incompatible for the object-store catalog."""
     deadline = asyncio.get_event_loop().time() + timeout_s
     while asyncio.get_event_loop().time() < deadline:
         agents = (await api_client.get("/api/agents")).json()
-        new = [a for a in agents if a["id"] not in before and a["status"] == "healthy"]
-        if new:
-            return new[0]["id"]
+        for a in agents:
+            if a["id"] in before or a["status"] != "healthy":
+                continue
+            caps = a.get("capabilities") or {}
+            if "httpfs" in caps.get("extensions", []):
+                return a["id"]
         await asyncio.sleep(0.5)
-    raise AssertionError("spawned agent did not register healthy in time")
+    raise AssertionError("spawned agent did not advertise httpfs in time")
 
 
 async def test_abandoned_session_reclaimed_by_agent_lease(

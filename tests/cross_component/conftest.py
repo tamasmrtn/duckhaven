@@ -22,7 +22,7 @@ import os
 import socket
 import subprocess
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -284,9 +284,12 @@ async def healthy_agent(api_client) -> dict:
 
 
 @pytest.fixture
-def spawn_agent(stack: Stack, tmp_path_factory) -> Iterator[Callable[[], subprocess.Popen]]:
+def spawn_agent(
+    stack: Stack, tmp_path_factory
+) -> Iterator[Callable[[Mapping[str, str] | None], subprocess.Popen]]:
     """Start an *extra*, disposable agent against the live API (so disconnect
-    tests never disturb the session-scoped agent). All spawned agents are
+    tests never disturb the session-scoped agent). ``extra_env`` overrides agent
+    settings (e.g. a short ``SESSION_IDLE_TIMEOUT_S``). All spawned agents are
     terminated on teardown."""
     api_port = int(stack.base_url.rsplit(":", 1)[1])
     started: list[subprocess.Popen] = []
@@ -302,13 +305,15 @@ def spawn_agent(stack: Stack, tmp_path_factory) -> Iterator[Callable[[], subproc
             resp.raise_for_status()
             return resp.json()["token"]
 
-    def _spawn() -> subprocess.Popen:
+    def _spawn(extra_env: Mapping[str, str] | None = None) -> subprocess.Popen:
         d = tmp_path_factory.mktemp("xc-agent")
         results_dir = d / "results"
         results_dir.mkdir()
         log = d / "agent.log"
         env = _agent_env(api_port, results_dir, _free_port())
         env["BOOTSTRAP_TOKEN"] = _mint_bootstrap_token()
+        if extra_env:
+            env.update(extra_env)
         with log.open("w") as fh:
             proc = subprocess.Popen(
                 ["uv", "run", "--package", "duckhaven-agent", "python", "-m", "agent.main"],

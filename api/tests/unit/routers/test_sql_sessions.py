@@ -105,6 +105,77 @@ async def test_open_session_success(
     assert body["agent_id"] == str(connected_agent.id)
 
 
+async def test_open_session_timeout_marks_failed_and_dispatches_close(
+    authed_client, db_session, workspace, connected_agent, enabled, monkeypatch
+):
+    # Dispatch succeeds but the agent never acks: the open must time out (504), CAS
+    # the row to failed/open_timeout, and dispatch a close to reclaim any held slot.
+    async def fake_open(db, session, catalogs):
+        return True
+
+    closed: list = []
+
+    async def fake_close(db, agent_id, session_id):
+        closed.append((agent_id, session_id))
+        return True
+
+    monkeypatch.setattr(session_service, "dispatch_open_session", fake_open)
+    monkeypatch.setattr(session_service, "dispatch_close_session", fake_close)
+    monkeypatch.setattr(settings, "sql_session_open_timeout_s", 0.05)
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/sql/sessions", json={"agent_id": str(connected_agent.id)}
+    )
+    assert resp.status_code == 504, resp.text
+    assert len(closed) == 1
+    sess = await db_session.get(SqlSession, closed[0][1])
+    assert sess.status == "failed"
+    assert sess.error == "open_timeout"
+
+
+async def test_open_session_timeout_does_not_clobber_late_open(
+    authed_client, db_session, workspace, connected_agent, enabled, monkeypatch
+):
+    # The agent wins the race: the row flips to open between our last poll and the
+    # timeout CAS. The compare-and-set must not overwrite it — return the open row.
+    import sqlalchemy as sa
+
+    from api.services.sql_sessions import service as svc
+
+    async def fake_await(db, session, timeout_s, poll_interval_s=0.1):
+        # Flip the DB row open without touching the in-memory ORM object (still
+        # "opening"), so the endpoint reaches the opening-timeout CAS branch.
+        await db.execute(
+            sa.update(SqlSession)
+            .where(SqlSession.id == session.id)
+            .values(status="open")
+            .execution_options(synchronize_session=False)
+        )
+        await db.commit()
+        return session
+
+    closed: list = []
+
+    async def fake_open(db, session, catalogs):
+        return True
+
+    async def fake_close(db, agent_id, session_id):
+        closed.append((agent_id, session_id))
+        return True
+
+    monkeypatch.setattr(session_service, "dispatch_open_session", fake_open)
+    monkeypatch.setattr(session_service, "dispatch_close_session", fake_close)
+    monkeypatch.setattr(svc, "await_session_open", fake_await)
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/sql/sessions", json={"agent_id": str(connected_agent.id)}
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["status"] == "open"
+    # No spurious close was dispatched for a session the agent legitimately opened.
+    assert closed == []
+
+
 async def test_open_session_agent_not_connected(authed_client, workspace, agent, enabled):
     resp = await authed_client.post(
         f"/workspaces/{workspace.slug}/sql/sessions", json={"agent_id": str(agent.id)}

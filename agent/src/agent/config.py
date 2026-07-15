@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     # starve interactive queries). Fixes the session connection's `memory_limit`
     # at open (DuckDB has no live resize), clamped to the agent's budget.
     session_reservation_bytes: int = 256 * 1024 * 1024
+    # Agent-owned session lease (the backstop under the API reaper). The agent
+    # self-expires a held session idle past ``session_idle_timeout_s`` or older than
+    # ``session_max_lifetime_s``, freeing its connection + admission slot even if a
+    # CLOSE_SESSION was lost. Deliberately LARGER than the API defaults (900 / 14400)
+    # so the control-plane reaper stays primary and the agent only reclaims true
+    # orphans; <= 0 disables the respective check.
+    session_idle_timeout_s: float = 1200.0
+    session_max_lifetime_s: float = 18000.0
 
     # EXPLAIN-based cost estimation (the `auto` profile). Each query's reservation
     # is sized from its EXPLAIN estimate * safety, snapped to a T-shirt bucket, and

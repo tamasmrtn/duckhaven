@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import platform
+import time
 import uuid
 from pathlib import Path
 
@@ -210,6 +211,7 @@ async def _handle_open_session(ws, payload: dict, admission: Admission) -> None:
         await _send_session_opened(ws, session_id, "failed", str(exc))
         return
 
+    opened_at = time.monotonic()
     session.register(
         session.SessionState(
             session_id=session_id,
@@ -217,6 +219,8 @@ async def _handle_open_session(ws, payload: dict, admission: Admission) -> None:
             reservation=reservation,
             memory_bytes=reservation.memory_bytes,
             threads=reservation.threads,
+            opened_at=opened_at,
+            last_active_at=opened_at,
         )
     )
     await _send_session_opened(ws, session_id, "open")
@@ -238,6 +242,7 @@ async def _handle_exec_statement(ws, payload: dict, results_dir: Path) -> None:
         await _send_failed(ws, statement_id, "session not found")
         _in_flight.pop(statement_id, None)
         return
+    state.touch()
 
     result_path = results_dir / f"{statement_id}.parquet"
     try:
@@ -448,9 +453,20 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
 
 
 async def _push_metrics(ws, sampler: MetricsSampler, admission: Admission) -> None:
-    """Push live CPU/memory utilization + admission counts on a fixed cadence."""
+    """Push live CPU/memory utilization + admission counts on a fixed cadence, and
+    sweep any held session past its idle / max-lifetime lease (the agent-owned
+    backstop that reclaims slots orphaned by a lost close or a vanished client)."""
     while True:
         await asyncio.sleep(settings.metrics_sample_interval_s)
+        for session_id in session.sweep_expired(
+            admission, settings.session_idle_timeout_s, settings.session_max_lifetime_s
+        ):
+            # Best-effort: let the control plane flip a still-open row to closed.
+            frame = Frame(
+                type=FrameType.SESSION_CLOSED,
+                payload={"session_id": session_id, "status": "closed", "reason": "agent_self_reap"},
+            )
+            await ws.send(frame.model_dump_json())
         sample = sampler.sample(
             running_queries=admission.running_count,
             queued_queries=admission.queued_count,

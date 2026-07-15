@@ -139,6 +139,11 @@ async def handle_session_frame(db: AsyncSession, frame: Frame) -> None:
         elif session.status not in _TERMINAL:
             session.status = "closed"
             session.closed_at = now
+            # The agent self-reaped an orphaned held session (lease expiry); count it
+            # under the reason it reports so the backstop is observable.
+            reason = frame.payload.get("reason")
+            if reason:
+                record_sql_session_closed(reason)
     await db.commit()
 
 

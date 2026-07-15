@@ -114,7 +114,8 @@ SQL_SESSIONS_OPENED = Counter(
 )
 SQL_SESSIONS_CLOSED = Counter(
     "duckhaven_sql_sessions_closed",
-    "SQL sessions closed, by reason (client/idle/max_lifetime/agent_disconnect/failed).",
+    "SQL sessions closed, by reason "
+    "(client/idle/max_lifetime/open_timeout/agent_disconnect/agent_self_reap/failed).",
     ["replica_id", "reason"],
 )
 SQL_STATEMENTS = Counter(

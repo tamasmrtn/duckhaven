@@ -34,6 +34,9 @@ ALLOWED = [
     "ATTACH 'sales' AS sales (TYPE ICEBERG)",
     # A URL-looking string as data (not a file arg) is fine.
     "SELECT 'http://not-a-file' AS c",
+    # DESCRIBE is read-only introspection dbt relies on for column metadata.
+    "DESCRIBE sales.analytics.orders",
+    'DESCRIBE "sales"."analytics"."orders"',
 ]
 
 DENIED = [

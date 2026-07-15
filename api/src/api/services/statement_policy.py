@@ -58,6 +58,9 @@ _ALLOWED_STATEMENT_NODES = (
     exp.Transaction,
     exp.Commit,
     exp.Rollback,
+    # DESCRIBE is read-only relation/column introspection (dbt uses it for column
+    # metadata, contracts, and `dbt show`); it reads no files and mutates nothing.
+    exp.Describe,
 )
 
 

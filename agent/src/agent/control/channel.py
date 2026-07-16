@@ -599,4 +599,4 @@ async def _consume(ws, results_dir: Path, admission: Admission) -> None:
             _in_flight[statement_id] = task
 
         elif msg.type == FrameType.CLOSE_SESSION:
-            asyncio.create_task(_handle_close_session(ws, msg, admission))
+            asyncio.create_task(_handle_close_session(ws, msg.payload, admission))

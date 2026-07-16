@@ -1,13 +1,24 @@
 import asyncio
 import uuid
 
+import pytest
 import websockets
 from opentelemetry import trace
 from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags, set_span_in_context
 
+from agent.control import session
 from agent.executor.admission import Admission
 from duckhaven_shared.protocol import Frame, FrameType
 from duckhaven_shared.telemetry import inject_trace_context
+
+
+@pytest.fixture(autouse=True)
+def _clear_sessions():
+    # The session registry is process-global; keep tests isolated (mirrors the
+    # fixture in tests/unit/control/test_session.py).
+    session._sessions.clear()
+    yield
+    session._sessions.clear()
 
 
 def _admission(profile: str = "single", **kwargs) -> Admission:
@@ -1071,3 +1082,33 @@ async def test_dispatch_failure_sets_span_error_status(tmp_path, monkeypatch, sp
     assert len(spans) == 1
     assert spans[0].status.status_code == trace.StatusCode.ERROR
     assert len(spans[0].events) == 1  # record_exception
+
+
+async def test_close_session_dispatch_frees_admission_slot(tmp_path):
+    """CLOSE_SESSION dispatch must hand the handler the payload dict, not the
+    Frame itself (regression for #154): passing the raw Frame raised
+    "'Frame' object is not subscriptable" inside the detached task, so the
+    session was never removed and its admission slot leaked. Unlike calling
+    `_handle_close_session` directly, driving the frame through `_consume`
+    exercises the actual dispatch wiring where the bug lived."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="single")
+    await ch_module._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
+    assert admission.running_count == 1
+
+    close_frame = Frame(
+        type=FrameType.CLOSE_SESSION, payload={"session_id": "s1"}
+    ).model_dump_json()
+
+    class _OneShotWS(_FakeWS):
+        async def __aiter__(self):
+            yield close_frame
+
+    ws = _OneShotWS()
+    await ch_module._consume(ws, tmp_path, admission)
+    await asyncio.sleep(0.05)  # let the detached close task run
+
+    assert session.get("s1") is None
+    assert admission.running_count == 0
+    assert FrameType.SESSION_CLOSED in _frame_types(ws)

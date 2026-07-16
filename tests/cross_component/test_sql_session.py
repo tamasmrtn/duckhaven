@@ -82,6 +82,21 @@ async def test_close_releases_agent_slot(api_client, workspace, healthy_agent) -
     session = await _open(api_client, workspace, healthy_agent["id"])
     close = await api_client.delete(f"/api/sql/sessions/{session['id']}")
     assert close.status_code == 204
+
+    # The agent's SESSION_CLOSED ack must actually arrive and flip the row to
+    # "closed" (regression for #154: a dispatch bug dropped the ack silently, so
+    # the row stayed "closing" forever even though the DELETE itself returned
+    # 204 and a follow-up statement 409s regardless — that 409 alone does not
+    # prove the agent ever freed its slot).
+    deadline = asyncio.get_event_loop().time() + 30.0
+    row_status = "closing"
+    while asyncio.get_event_loop().time() < deadline:
+        row_status = (await api_client.get(f"/api/sql/sessions/{session['id']}")).json()["status"]
+        if row_status == "closed":
+            break
+        await asyncio.sleep(0.5)
+    assert row_status == "closed", f"session never reached closed after DELETE: {row_status}"
+
     # The session is no longer usable; a further statement conflicts.
     resp = await api_client.post(
         f"/api/sql/sessions/{session['id']}/statements", json={"sql": "SELECT 1"}
@@ -135,3 +150,37 @@ async def test_abandoned_session_reclaimed_by_agent_lease(
     # The reclaimed slot is reusable: a fresh session opens on the same agent.
     reopened = await _open(api_client, workspace, agent_id)
     await api_client.delete(f"/api/sql/sessions/{reopened['id']}")
+
+
+async def test_close_frees_slot_for_reuse(api_client, workspace, spawn_agent) -> None:
+    """Regression for #154: the CLOSE_SESSION dispatch bug meant an explicit
+    DELETE never freed the agent's admission slot at all — only the idle lease
+    eventually reclaimed it (see test_abandoned_session_reclaimed_by_agent_lease).
+    A single-slot disposable agent with a short queued timeout proves the
+    *explicit* close path frees the slot promptly, rather than relying on that
+    backstop: fill the one slot, prove a second open is refused, DELETE the
+    first, then prove a third open succeeds on the now-freed slot."""
+    before = {a["id"] for a in (await api_client.get("/api/agents")).json()}
+    spawn_agent({"MAX_CONCURRENCY_PROFILE": "single", "QUEUED_TIMEOUT_S": "2"})
+    agent_id = await _wait_new_agent_id(api_client, before)
+
+    # Fill the agent's one admission slot.
+    first = await _open(api_client, workspace, agent_id)
+
+    # A second session on the same agent cannot be admitted: it queues for
+    # QUEUED_TIMEOUT_S=2s, the agent reports the open failed, and the API's
+    # blocking open call surfaces that as a 503 rather than 201.
+    refused = await api_client.post(
+        f"/api/workspaces/{workspace}/sql/sessions", json={"agent_id": agent_id}
+    )
+    assert refused.status_code == 503, refused.text
+    assert refused.json()["detail"]["error"] == "session_open_failed"
+
+    # Close the first session explicitly.
+    close = await api_client.delete(f"/api/sql/sessions/{first['id']}")
+    assert close.status_code == 204
+
+    # A third session now succeeds on the same agent — the explicit close freed
+    # the slot rather than leaving it leaked until the idle lease fires.
+    third = await _open(api_client, workspace, agent_id)
+    await api_client.delete(f"/api/sql/sessions/{third['id']}")

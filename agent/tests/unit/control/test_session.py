@@ -3,6 +3,7 @@ admission slot, EXEC_STATEMENT runs on the held connection without closing it,
 CLOSE_SESSION / reconnect release the slot."""
 
 import asyncio
+import time
 
 import pytest
 
@@ -111,6 +112,142 @@ async def test_close_session_releases_reservation(tmp_path):
     assert admission.running_count == 0
 
 
+# ── Non-blocking close (#158) ─────────────────────────────────────────────────
+# Closing a session used to call DuckDB's blocking close() directly on the
+# event-loop thread: with a statement mid-flight, close() waits for it to finish
+# rather than interrupting it, freezing the whole agent (every other session,
+# heartbeats, metrics) for as long as that statement would otherwise have run.
+# Teardown must now interrupt the statement, wait for it via the session lock
+# (never race close() against it), and run close() off the event loop.
+
+
+class _SpyConn:
+    """Wraps a real DuckDB connection: records interrupt/close call order and
+    optionally delays close() to simulate DuckDB's close() blocking on an
+    in-flight query."""
+
+    def __init__(self, conn, close_delay: float = 0.0) -> None:
+        self._conn = conn
+        self.calls: list[str] = []
+        self._close_delay = close_delay
+
+    def interrupt(self) -> None:
+        self.calls.append("interrupt")
+        self._conn.interrupt()
+
+    def close(self) -> None:
+        self.calls.append("close")
+        if self._close_delay:
+            time.sleep(self._close_delay)
+        self._conn.close()
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
+async def test_teardown_interrupts_before_closing(tmp_path):
+    import agent.control.channel as ch
+
+    admission = _admission()
+    await ch._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
+    state = session.get("s1")
+    spy = _SpyConn(state.conn)
+    state.conn = spy
+
+    assert await session.remove("s1", admission) is True
+    assert spy.calls == ["interrupt", "close"]
+
+
+async def test_teardown_close_does_not_block_the_event_loop(tmp_path):
+    """The regression test: against the old synchronous _teardown, a slow
+    close() would starve every other coroutine on the loop, so the ticker below
+    would make ~0 ticks instead of running alongside remove()."""
+    import agent.control.channel as ch
+
+    admission = _admission()
+    await ch._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
+    state = session.get("s1")
+    state.conn = _SpyConn(state.conn, close_delay=1.0)
+
+    ticks = 0
+
+    async def _ticker() -> None:
+        nonlocal ticks
+        for _ in range(20):
+            await asyncio.sleep(0.05)
+            ticks += 1
+
+    ticker_task = asyncio.create_task(_ticker())
+    start = time.monotonic()
+    assert await session.remove("s1", admission) is True
+    elapsed = time.monotonic() - start
+    assert elapsed >= 1.0, f"close_delay did not actually run ({elapsed:.2f}s)"
+
+    await ticker_task
+    assert ticks >= 15, f"event loop was stalled during close() (only {ticks}/20 ticks)"
+
+
+async def test_remove_awaits_the_session_lock_before_closing(tmp_path):
+    import agent.control.channel as ch
+
+    admission = _admission()
+    await ch._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
+    state = session.get("s1")
+    spy = _SpyConn(state.conn)
+    state.conn = spy
+
+    await state.lock.acquire()
+    try:
+        task = asyncio.create_task(session.remove("s1", admission))
+        await asyncio.sleep(0.05)
+        # Interrupt fires immediately (independent of the lock); close waits.
+        assert spy.calls == ["interrupt"]
+        assert not task.done()
+    finally:
+        state.lock.release()
+
+    assert await task is True
+    assert spy.calls == ["interrupt", "close"]
+
+
+async def test_remove_interrupts_a_genuinely_running_statement(tmp_path):
+    """End-to-end proof at unit scope: a real long-running statement on the
+    session's connection is stopped promptly by remove(), not run to completion,
+    and resolves as a failed QUERY_DONE rather than racing the close."""
+    import agent.control.channel as ch
+
+    admission = _admission()
+    await ch._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
+
+    # Minutes of work if uninterrupted (mirrors
+    # agent/tests/unit/executor/test_runner.py::test_timeout_interrupts_running_query);
+    # timeout_s is generous so only the close-triggered interrupt can be
+    # responsible for stopping it this fast.
+    sql = "SELECT sum(t1.range + t2.range) FROM range(1000000) t1, range(1000000) t2"
+    stmt_ws = _FakeWS()
+    stmt_task = asyncio.create_task(
+        ch._handle_exec_statement(
+            stmt_ws,
+            {"session_id": "s1", "query_id": "slow1", "sql": sql, "timeout_s": 300},
+            tmp_path,
+        )
+    )
+    await asyncio.sleep(0.2)
+    assert not stmt_task.done()
+
+    start = time.monotonic()
+    assert await session.remove("s1", admission) is True
+    elapsed = time.monotonic() - start
+    assert elapsed < 10, (
+        f"remove() did not interrupt the running statement promptly ({elapsed:.1f}s)"
+    )
+
+    await stmt_task
+    assert _last(stmt_ws).payload["status"] == "failed"
+    assert session.count() == 0
+    assert admission.running_count == 0
+
+
 async def test_clear_all_on_reconnect_releases_slots(tmp_path):
     import agent.control.channel as ch
 
@@ -118,7 +255,7 @@ async def test_clear_all_on_reconnect_releases_slots(tmp_path):
     await ch._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
     assert admission.running_count == 1
 
-    session.clear_all(admission)
+    await session.clear_all(admission)
     assert session.count() == 0
     assert admission.running_count == 0
 
@@ -130,7 +267,7 @@ async def test_sweep_reaps_idle_session_and_frees_slot(tmp_path):
     await ch._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
     session.get("s1").last_active_at -= 10_000  # age past any idle timeout
 
-    reaped = session.sweep_expired(admission, idle_s=1.0, max_life_s=0)
+    reaped = await session.sweep_expired(admission, idle_s=1.0, max_life_s=0)
     assert reaped == ["s1"]
     assert session.count() == 0
     assert admission.running_count == 0
@@ -143,7 +280,7 @@ async def test_sweep_reaps_over_max_lifetime(tmp_path):
     await ch._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
     session.get("s1").opened_at -= 10_000  # aged past max lifetime, but not idle
 
-    reaped = session.sweep_expired(admission, idle_s=0, max_life_s=1.0)
+    reaped = await session.sweep_expired(admission, idle_s=0, max_life_s=1.0)
     assert reaped == ["s1"]
     assert admission.running_count == 0
 
@@ -157,7 +294,7 @@ async def test_sweep_skips_session_running_a_statement(tmp_path):
     state.last_active_at -= 10_000  # idle by the clock, but a statement is executing
     await state.lock.acquire()
     try:
-        assert session.sweep_expired(admission, idle_s=1.0, max_life_s=0) == []
+        assert await session.sweep_expired(admission, idle_s=1.0, max_life_s=0) == []
         assert session.count() == 1
         assert admission.running_count == 1
     finally:
@@ -174,7 +311,7 @@ async def test_sweep_keeps_active_session(tmp_path):
         _FakeWS(), {"session_id": "s1", "query_id": "q1", "sql": "SELECT 1"}, tmp_path
     )
 
-    assert session.sweep_expired(admission, idle_s=60.0, max_life_s=0) == []
+    assert await session.sweep_expired(admission, idle_s=60.0, max_life_s=0) == []
     assert session.count() == 1
 
 
@@ -185,10 +322,10 @@ async def test_sweep_is_idempotent_after_remove(tmp_path):
     await ch._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
     session.get("s1").last_active_at -= 10_000
 
-    assert session.remove("s1", admission) is True
+    assert await session.remove("s1", admission) is True
     assert admission.running_count == 0
     # A sweep after the session is already gone must not double-release the slot.
-    assert session.sweep_expired(admission, idle_s=1.0, max_life_s=0) == []
+    assert await session.sweep_expired(admission, idle_s=1.0, max_life_s=0) == []
     assert admission.running_count == 0
 
 

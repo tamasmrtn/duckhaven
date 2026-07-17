@@ -26,6 +26,14 @@ class FrameType(StrEnum):
     EXEC_STATEMENT = "exec_statement"
     CLOSE_SESSION = "close_session"
     SESSION_CLOSED = "session_closed"
+    # Receipt (not outcome) for EXEC_STATEMENT, keyed by the statement's query_id.
+    # Sent the moment the agent takes the frame off the wire, before the session
+    # lock, so a statement that never arrives is distinguishable from one that is
+    # merely slow: it flips the row queued -> running, and the reaper fails rows
+    # left queued past the short ack deadline. An old agent never sends it, so the
+    # reaper only applies that deadline to agents advertising the "statement_ack"
+    # protocol feature (see AgentCapabilities.protocol_features).
+    STATEMENT_ACK = "statement_ack"
 
 
 class Frame(BaseModel):

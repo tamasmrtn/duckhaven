@@ -41,3 +41,22 @@ def test_session_frame_types_round_trip():
         parsed = Frame.model_validate_json(frame.model_dump_json())
         assert parsed.type == frame_type
         assert parsed.payload == {"session_id": "s1"}
+
+
+def test_statement_ack_round_trips():
+    frame = Frame(type=FrameType.STATEMENT_ACK, payload={"query_id": "abc"})
+    parsed = Frame.model_validate_json(frame.model_dump_json())
+    assert parsed.type == FrameType.STATEMENT_ACK
+    assert parsed.payload["query_id"] == "abc"
+
+
+def test_agent_capabilities_protocol_features_default_empty():
+    """An older agent sends no protocol_features. The API reads its absence as
+    "does not support it", which is what keeps the ack deadline from failing every
+    statement on an agent that predates acks (#156)."""
+    from duckhaven_shared.schemas import AgentCapabilities
+
+    legacy = AgentCapabilities.model_validate(
+        {"duckdb_version": "1.1.0", "extensions": ["httpfs"], "memory_limit_gb": 8.0, "cores": 4}
+    )
+    assert legacy.protocol_features == []

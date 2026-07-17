@@ -240,6 +240,50 @@ async def test_statement_ack_marks_running_over_the_real_channel(
     assert done["status"] == "done"
 
 
+# ── Non-blocking close mid-statement (#158) ────────────────────────────────────
+# Closing a session used to call DuckDB's blocking close() directly on the
+# agent's event-loop thread: with a statement mid-flight, close() waited for it
+# to finish rather than interrupting it, freezing the whole agent (every other
+# session, heartbeats) for as long as that statement would otherwise have run.
+
+
+async def test_close_session_interrupts_in_flight_statement_without_blocking_other_sessions(
+    api_client, workspace, healthy_agent
+) -> None:
+    """Regression for #158: CLOSE_SESSION used to call DuckDB's blocking close()
+    directly on the agent's event-loop thread, which waits for the in-flight
+    statement to finish rather than interrupting it — stalling every other
+    session and the agent's heartbeats for as long as that statement would
+    otherwise have run. Close must now interrupt + free the connection promptly,
+    and an unrelated concurrent session on the same agent must not stall behind
+    it."""
+    session_a = await _open(api_client, workspace, healthy_agent["id"])
+    slow_id = await _submit(api_client, session_a["id"], _SLOW_SQL)
+    await _poll_until(api_client, slow_id, lambda b: b["status"] == "running", 20.0)
+
+    start = asyncio.get_event_loop().time()
+    close_task = asyncio.create_task(api_client.delete(f"/api/sql/sessions/{session_a['id']}"))
+
+    # Concurrently, exercise an unrelated session B on the same agent.
+    session_b = await _open(api_client, workspace, healthy_agent["id"])
+    probe_id = await _submit(api_client, session_b["id"], "SELECT 1 AS n")
+    probe = await _poll_until(api_client, probe_id, lambda b: b["status"] == "done", 10.0)
+    b_elapsed = asyncio.get_event_loop().time() - start
+    assert probe["status"] == "done"
+    assert b_elapsed < 10.0, (
+        f"session B was head-of-line blocked behind A's close ({b_elapsed:.1f}s)"
+    )
+
+    close = await close_task
+    assert close.status_code == 204
+
+    # A's interrupted statement resolves to failed, not stuck queued/running.
+    failed = await _poll_until(api_client, slow_id, lambda b: b["status"] == "failed", 30.0)
+    assert failed["status"] == "failed", failed
+
+    await api_client.delete(f"/api/sql/sessions/{session_b['id']}")
+
+
 async def test_lost_exec_statement_frame_fails_fast_instead_of_hanging(
     api_client, workspace, spawn_agent, tmp_path
 ) -> None:

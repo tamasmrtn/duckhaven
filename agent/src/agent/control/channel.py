@@ -318,7 +318,7 @@ async def _handle_exec_statement(ws, payload: dict, results_dir: Path) -> None:
 async def _handle_close_session(ws, payload: dict, admission: Admission) -> None:
     """Close a held session: drop the connection, free the admission slot, ack."""
     session_id = payload["session_id"]
-    session.remove(session_id, admission)
+    await session.remove(session_id, admission)
     await ws.send(
         Frame(
             type=FrameType.SESSION_CLOSED,
@@ -494,7 +494,7 @@ async def _push_metrics(ws, sampler: MetricsSampler, admission: Admission) -> No
     backstop that reclaims slots orphaned by a lost close or a vanished client)."""
     while True:
         await asyncio.sleep(settings.metrics_sample_interval_s)
-        for session_id in session.sweep_expired(
+        for session_id in await session.sweep_expired(
             admission, settings.session_idle_timeout_s, settings.session_max_lifetime_s
         ):
             # Best-effort: let the control plane flip a still-open row to closed.
@@ -581,7 +581,7 @@ async def run_control_channel(
                 # sessions on disconnect (Postgres is the state-of-record), so a
                 # resumed socket must not resurrect a stale held connection or leak
                 # its admission slot. Drop everything from a prior socket.
-                session.clear_all(admission)
+                await session.clear_all(admission)
 
                 # Push live utilization on its own cadence; cancelled on disconnect.
                 metrics_task = asyncio.create_task(_push_metrics(ws, MetricsSampler(), admission))

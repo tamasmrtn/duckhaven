@@ -3,7 +3,18 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -46,6 +57,11 @@ class Query(Base):
     session_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("sql_sessions.id", ondelete="SET NULL"), nullable=True
     )
+    # Client-requested wall-clock budget for this run. Enforced agent-side around
+    # execution, and persisted so the reaper can also bound a run that never
+    # starts (a lost dispatch frame). Null for rows written before it was
+    # recorded; the reaper falls back to the configured default.
+    timeout_s: Mapped[float | None] = mapped_column(Float, nullable=True)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

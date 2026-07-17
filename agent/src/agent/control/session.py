@@ -65,33 +65,63 @@ def count() -> int:
     return len(_sessions)
 
 
-def _teardown(state: SessionState, admission: Admission) -> None:
-    """Close the held connection and release its admission reservation (both
-    best-effort so one failure never strands the other)."""
+async def _teardown(state: SessionState, admission: Admission) -> None:
+    """Interrupt any statement running on this connection, wait for it to unwind
+    (via the session's own lock — never by racing close() against it), then close
+    off the event-loop thread and release the reservation.
+
+    All three steps are best-effort with respect to each other: interrupt/close
+    failures are logged, not raised, and the reservation is always released even
+    if this task is itself cancelled mid-teardown (e.g. while awaiting the lock)."""
+    loop = asyncio.get_running_loop()
     try:
-        state.conn.close()
-    except Exception as exc:  # noqa: BLE001 - close is best-effort
-        logger.warning("Closing session %s connection failed: %s", state.session_id, exc)
-    admission.release(state.reservation)
+        try:
+            # Thread-safe (same mechanism as executor.supervisor's timeout path):
+            # unwinds any in-flight statement now instead of letting close() wait
+            # for it to run to completion.
+            state.conn.interrupt()
+        except Exception as exc:  # noqa: BLE001 - interrupt is best-effort
+            logger.warning("Interrupting session %s connection failed: %s", state.session_id, exc)
+        # _handle_exec_statement holds this lock for one statement and releases
+        # it on every exit path (success/timeout/cancel). Awaiting it here means
+        # close() never races a still-unwinding statement ("Connection already
+        # closed!"). Awaiting a lock never blocks the event loop, so other
+        # sessions/heartbeats keep running while we wait.
+        async with state.lock:
+            try:
+                # Off the event-loop thread: even a slow close() can't stall it.
+                await loop.run_in_executor(None, state.conn.close)
+            except Exception as exc:  # noqa: BLE001 - close is best-effort
+                logger.warning("Closing session %s connection failed: %s", state.session_id, exc)
+    finally:
+        admission.release(state.reservation)
 
 
-def remove(session_id: str, admission: Admission) -> bool:
+async def remove(session_id: str, admission: Admission) -> bool:
     """Drop a session, freeing its connection + admission slot. Returns whether a
     session was present."""
     state = _sessions.pop(session_id, None)
     if state is None:
         return False
-    _teardown(state, admission)
+    await _teardown(state, admission)
     return True
 
 
-def clear_all(admission: Admission) -> None:
-    """Tear down every held session (reconnect reconciliation)."""
-    for session_id in list(_sessions):
-        remove(session_id, admission)
+async def clear_all(admission: Admission) -> None:
+    """Tear down every held session (reconnect reconciliation), concurrently.
+
+    This runs before the new socket starts consuming frames (heartbeats
+    included), so serializing several stale sessions — each possibly waiting out
+    an interrupt — would reproduce the same head-of-line stall a single slow
+    close now avoids, just at reconnect time instead. Gathering bounds total
+    reconciliation time by the slowest single teardown rather than their sum."""
+    await asyncio.gather(
+        *(remove(session_id, admission) for session_id in list(_sessions)),
+        return_exceptions=True,
+    )
 
 
-def sweep_expired(admission: Admission, idle_s: float, max_life_s: float) -> list[str]:
+async def sweep_expired(admission: Admission, idle_s: float, max_life_s: float) -> list[str]:
     """Tear down held sessions past their idle or max-lifetime lease, freeing the
     connection + admission slot. Returns the reaped session ids.
 
@@ -109,6 +139,6 @@ def sweep_expired(admission: Admission, idle_s: float, max_life_s: float) -> lis
         idle_expired = idle_s > 0 and now - state.last_active_at > idle_s
         life_expired = max_life_s > 0 and now - state.opened_at > max_life_s
         if idle_expired or life_expired:
-            if remove(state.session_id, admission):
+            if await remove(state.session_id, admission):
                 reaped.append(state.session_id)
     return reaped

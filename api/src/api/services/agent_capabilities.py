@@ -26,3 +26,13 @@ def agent_supports_backend(capabilities: dict | None, backend_kind: str) -> bool
         return True
     extensions = (capabilities or {}).get("extensions") or []
     return ext in extensions
+
+
+def agent_supports_feature(capabilities: dict | None, feature: str) -> bool:
+    """Whether an agent advertises a control-plane protocol feature.
+
+    Absent for agents older than the feature, which is exactly what "does not
+    support it" means — so behavior gated on this degrades instead of breaking
+    when the API is upgraded ahead of its agents.
+    """
+    return feature in ((capabilities or {}).get("protocol_features") or [])

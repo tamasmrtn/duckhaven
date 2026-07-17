@@ -134,6 +134,19 @@ class Settings(BaseSettings):
     # (<catalog root>/<segment>/<session_id>/); the statement policy confines
     # COPY/read_* to this prefix.
     sql_session_staging_prefix_segment: str = "_staging"
+    # Statement deadlines, enforced by the same reaper loop. A statement the agent
+    # has not acked within sql_statement_ack_deadline_s is failed as undelivered —
+    # this bounds a lost EXEC_STATEMENT frame in seconds rather than never (#156).
+    # Applies only to agents advertising the "statement_ack" protocol feature;
+    # statements on older agents fall back to the timeout bound below.
+    sql_statement_ack_deadline_s: float = 15.0
+    # Slack over a statement's own timeout_s before the server declares it lost.
+    # Must comfortably exceed the reaper tick so the agent's own timeout (and its
+    # QUERY_DONE) always wins the race for a statement that is merely slow.
+    sql_statement_timeout_grace_s: float = 30.0
+    # Fallback budget for statements with no recorded timeout_s (rows predating
+    # the column). Mirrors the agent's own default.
+    sql_statement_default_timeout_s: float = 600.0
 
     # ── High availability (multi-replica control plane) ───────────────────────
     # Identity of this API replica and the URL peers use to reach it for

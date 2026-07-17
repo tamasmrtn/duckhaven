@@ -18,7 +18,7 @@ import sqlalchemy as sa
 from opentelemetry import trace
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.metrics import record_sql_session_closed, record_sql_session_opened
+from api.metrics import record_sql_session_closed, record_sql_session_opened, record_sql_statement
 from api.models.catalog import Catalog
 from api.models.query import Query
 from api.models.sql_session import SqlSession
@@ -113,6 +113,50 @@ async def dispatch_close_session(
         return await send_to_agent(db, agent_id, frame.model_dump_json())
 
 
+_IN_FLIGHT = ("queued", "running")
+
+
+async def fail_inflight_statements(
+    db: AsyncSession, session_ids: list[uuid.UUID], error: str
+) -> int:
+    """Resolve the statements still in flight on sessions that just went terminal.
+
+    A session's statements can only run on its agent's held connection, so once the
+    session is gone they never will. Without this they stay ``queued`` forever and
+    every client polls one until its own deadline (#156). Returns the row count;
+    the caller commits.
+    """
+    if not session_ids:
+        return 0
+    result = await db.execute(
+        sa.update(Query)
+        .where(
+            Query.session_id.in_(session_ids),
+            Query.origin == "session",
+            Query.status.in_(_IN_FLIGHT),
+        )
+        .values(status="failed", error=error, finished_at=datetime.now(tz=UTC))
+    )
+    count = result.rowcount or 0
+    for _ in range(max(0, count)):
+        record_sql_statement("failed")
+    return count
+
+
+async def handle_statement_ack(db: AsyncSession, frame: Frame) -> None:
+    """Apply an agent's STATEMENT_ACK receipt: the statement reached the agent.
+
+    Only ``queued`` -> ``running``. A fast statement's QUERY_DONE can beat its own
+    ack (both are sent by the agent but applied by separate DB sessions), so an
+    already-terminal row is left alone rather than resurrected.
+    """
+    query = await db.get(Query, uuid.UUID(frame.payload["query_id"]))
+    if query is None or query.status != "queued":
+        return
+    query.status = "running"
+    await db.commit()
+
+
 async def handle_session_frame(db: AsyncSession, frame: Frame) -> None:
     """Apply an agent's SESSION_OPENED / SESSION_CLOSED lifecycle ack to the row."""
     session = await db.get(SqlSession, uuid.UUID(frame.payload["session_id"]))
@@ -144,6 +188,9 @@ async def handle_session_frame(db: AsyncSession, frame: Frame) -> None:
             reason = frame.payload.get("reason")
             if reason:
                 record_sql_session_closed(reason)
+        # The held connection is gone either way, so nothing still queued on this
+        # session can ever run.
+        await fail_inflight_statements(db, [session.id], "session closed")
     await db.commit()
 
 
@@ -152,7 +199,9 @@ async def fail_sessions_for_agent(db: AsyncSession, agent_id: uuid.UUID) -> None
 
     Postgres is the state-of-record: the agent's held connections are gone (or will
     be dropped on its reconnect), so the sessions cannot continue. The next
-    statement on such a session returns 409; the client reopens."""
+    statement on such a session returns 409; the client reopens. Their in-flight
+    statements are resolved too — they were running on the connections that just
+    died."""
     now = datetime.now(tz=UTC)
     result = await db.execute(
         sa.update(SqlSession)
@@ -161,9 +210,12 @@ async def fail_sessions_for_agent(db: AsyncSession, agent_id: uuid.UUID) -> None
             SqlSession.status.in_(["opening", "open", "closing"]),
         )
         .values(status="failed", error="agent disconnected", closed_at=now)
+        .returning(SqlSession.id)
     )
+    session_ids = list(result.scalars().all())
+    await fail_inflight_statements(db, session_ids, "agent disconnected")
     await db.commit()
-    for _ in range(max(0, result.rowcount or 0)):
+    for _ in range(len(session_ids)):
         record_sql_session_closed("agent_disconnect")
 
 

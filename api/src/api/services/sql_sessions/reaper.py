@@ -1,4 +1,5 @@
-"""Idle / max-lifetime reaper for SQL sessions.
+"""Idle / max-lifetime reaper for SQL sessions, and the deadline reaper for their
+statements.
 
 A leader-elected background loop (Postgres advisory lock, mirroring the scheduler
 and maintenance scanners) that force-closes sessions which have gone idle past
@@ -7,6 +8,13 @@ dispatches CLOSE_SESSION to the pinned agent (freeing its held connection +
 admission slot) and marks the row ``expired`` — so a crashed client never pins an
 agent forever. Sessions whose agent is gone are already ``failed`` by the
 disconnect reconciler; the reaper only handles live-but-idle/old ones.
+
+The same loop bounds individual statements (#156). A statement's timeout used to be
+enforced only inside the agent, around execution, so nothing bounded one whose
+dispatch frame was lost: the row stayed ``queued`` forever and the client hung
+until its own poll deadline. ``_reap_statements`` gives every statement a
+server-side deadline, and every terminal session path now resolves the statements
+still in flight on it.
 """
 
 from __future__ import annotations
@@ -21,9 +29,12 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import settings
-from api.metrics import record_sql_session_closed
+from api.metrics import record_sql_session_closed, record_sql_statement
+from api.models.agent import Agent
+from api.models.query import Query
 from api.models.sql_session import SqlSession
-from api.services.sql_sessions.service import dispatch_close_session
+from api.services.agent_capabilities import agent_supports_feature
+from api.services.sql_sessions.service import dispatch_close_session, fail_inflight_statements
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +71,62 @@ async def reaper_leadership(
             if got:
                 await db.execute(sa.text("SELECT pg_advisory_unlock(:k)"), {"k": _REAPER_LOCK_KEY})
                 await db.commit()
+
+
+async def _reap_statements(db: AsyncSession, now: datetime) -> dict[str, int]:
+    """Fail session statements that have outlived their deadline.
+
+    Two deadlines, because ``queued`` and ``running`` mean different things once the
+    agent acks receipt (#156):
+
+    * ``queued`` past ``sql_statement_ack_deadline_s`` — the agent never acked, so
+      the EXEC_STATEMENT frame never landed. Failed as undelivered, never retried:
+      if the frame *did* land and only the ack was lost, a retry would double-run a
+      CREATE/INSERT/MERGE. Only applied to agents advertising ``statement_ack``;
+      an older agent never acks, so its statements are bounded by the timeout below
+      instead of being failed the moment they are submitted.
+    * ``running`` (or queued, on an agent without acks) past its own ``timeout_s``
+      plus a grace — the agent should have enforced this itself and reported it, so
+      reaching here means the agent or its reply is gone.
+    """
+    reaped = {"statement_unacked": 0, "statement_timeout": 0}
+    ack_cutoff = now - timedelta(seconds=settings.sql_statement_ack_deadline_s)
+
+    rows = (
+        (
+            await db.execute(
+                sa.select(Query, Agent.capabilities)
+                .outerjoin(Agent, Query.agent_id == Agent.id)
+                .where(Query.origin == "session", Query.status.in_(("queued", "running")))
+            )
+        )
+        .tuples()
+        .all()
+    )
+
+    for query, capabilities in rows:
+        acks = agent_supports_feature(capabilities, "statement_ack")
+        started = _aware(query.started_at)
+        budget = query.timeout_s or settings.sql_statement_default_timeout_s
+        timeout_cutoff = now - timedelta(seconds=budget + settings.sql_statement_timeout_grace_s)
+
+        if acks and query.status == "queued" and started < ack_cutoff:
+            reason, error = "statement_unacked", "agent did not ack statement"
+        elif started < timeout_cutoff:
+            reason, error = "statement_timeout", "statement exceeded timeout"
+        else:
+            continue
+
+        query.status = "failed"
+        query.error = error
+        query.finished_at = now
+        reaped[reason] += 1
+
+    await db.commit()
+    for count in reaped.values():
+        for _ in range(count):
+            record_sql_statement("failed")
+    return reaped
 
 
 async def run_cycle(session_factory: async_sessionmaker[AsyncSession]) -> dict[str, int]:
@@ -107,7 +174,12 @@ async def run_cycle(session_factory: async_sessionmaker[AsyncSession]) -> dict[s
                 session.error = f"reaped ({reason})"
             session.closed_at = now
             reaped[reason] += 1
+        # These sessions' held connections are being dropped, so anything still in
+        # flight on them can never complete.
+        await fail_inflight_statements(db, [s.id for s in rows], "session expired")
         await db.commit()
+
+        statements_reaped = await _reap_statements(db, now)
 
         # Best-effort: tell the pinned agents to drop the connections + free slots.
         for session in rows:
@@ -115,10 +187,12 @@ async def run_cycle(session_factory: async_sessionmaker[AsyncSession]) -> dict[s
                 with contextlib.suppress(Exception):
                     await dispatch_close_session(db, session.agent_id, session.id)
 
+    # Only the session reasons are session-close events; the statement counts are
+    # metered inside fail_inflight_statements / _reap_statements.
     for reason, count in reaped.items():
         for _ in range(count):
             record_sql_session_closed(reason)
-    return reaped
+    return reaped | statements_reaped
 
 
 async def run_tick(session_factory: async_sessionmaker[AsyncSession]) -> dict[str, int] | None:

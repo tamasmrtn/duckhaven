@@ -21,11 +21,37 @@ inbound agent port is ever opened.
    auto-picked compatible one), tells it to open and attach a DuckDB connection to the workspace's catalogs, and returns
    a `session_id` once the agent acknowledges. The session **pins** that agent: every later statement routes to it.
 2. **Run statements** — `POST /api/sql/sessions/{id}/statements`. Each statement is checked against the
-   [statement policy](#statement-policy) and the caller's [permissions](permissions.md), then executed on the held
-   connection. A statement is recorded as an ordinary query row, so you poll and fetch it through the same
-   `GET /api/queries/{id}` and `/rows` endpoints as any query — and it appears in the audit history tagged to its
-   session.
+   [statement policy](#statement-policy) and the caller's [permissions](permissions.md), then dispatched to the held
+   connection. A statement is recorded as an ordinary query row — `queued`, then `running` once the agent acknowledges
+   receipt, then a terminal `done`/`failed` — so you poll and fetch it through the same `GET /api/queries/{id}` and
+   `/rows` endpoints as any query, and it appears in the audit history tagged to its session.
 3. **Close** — `DELETE /api/sql/sessions/{id}`. The agent drops the connection and frees the compute slot it held.
+
+## Statement delivery and deadlines
+
+A statement's own execution timeout (`timeout_s` on the request, 600s default) is enforced by the agent around
+execution, but that alone can't bound a statement whose dispatch frame never arrives — nothing would ever revisit a row
+that stays `queued`. Two server-side deadlines close that gap:
+
+- **Ack deadline** (`SQL_STATEMENT_ACK_DEADLINE_S`, default 15s) — the agent acknowledges receipt of a statement before
+  doing anything else, flipping the row `queued` → `running`. A row still `queued` past this deadline never reached the
+  agent and is failed with `agent did not ack statement`.
+- **Timeout + grace** (`SQL_STATEMENT_TIMEOUT_GRACE_S`, default 30s on top of the statement's own `timeout_s`) — a
+  `running` statement past this bound should have already been resolved by the agent's own timeout; reaching here means
+  its reply is gone too, and it is failed with `statement exceeded timeout`.
+
+A statement that fails this way is **never automatically retried**: if the original frame actually did reach the agent
+and only the acknowledgement was lost, retrying would re-run the statement a second time, which can duplicate or
+corrupt output for non-idempotent DDL/DML (`CREATE TABLE`, `INSERT`, `MERGE`). The client is expected to resubmit if it
+still wants the statement run.
+
+The ack deadline only applies to agents that advertise support for it in their capabilities; an older agent's
+statements fall back to the timeout-based bound instead, so a rolling upgrade never fails every in-flight statement the
+moment the API is upgraded ahead of its agents.
+
+Terminating a session for any reason — an explicit close, the idle/lifetime reaper, or an agent disconnect — also
+resolves any statement still `queued` or `running` on it, rather than leaving the row to be discovered only by a
+client's own poll deadline.
 
 ## Pinning, lifetime, and failure
 

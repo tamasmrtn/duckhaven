@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 
 from api.services.agent_registry import ConnectionManager
@@ -56,3 +57,80 @@ def test_registry_metrics_ring_buffer_bounded():
     assert len(samples) == _METRICS_WINDOW
     # Oldest evicted; newest retained.
     assert samples[-1]["cpu_percent"] == float(_METRICS_WINDOW + 49)
+
+
+# ── Concurrent send safety (#156) ─────────────────────────────────────────────
+# One websocket per agent is shared by every concurrent request handler that
+# dispatches to it. Sends must be serialized: unsynchronized concurrent writes to
+# that shared socket were a prime suspect for frames vanishing between the API and
+# the agent.
+
+
+class _RecordingWS:
+    """A socket that yields mid-send, so an unsynchronized caller interleaves."""
+
+    def __init__(self) -> None:
+        self.events: list[str] = []
+
+    async def send_text(self, payload: str) -> None:
+        self.events.append(f"enter:{payload}")
+        await asyncio.sleep(0)  # a real send awaits the transport here
+        self.events.append(f"exit:{payload}")
+
+
+class _BrokenWS:
+    async def send_text(self, payload: str) -> None:
+        raise RuntimeError("socket is gone")
+
+
+async def test_concurrent_sends_do_not_interleave():
+    """Two handlers sending at once must produce two whole frames on the wire, not
+    two half-frames spliced together."""
+    mgr = ConnectionManager()
+    agent_id = uuid.uuid4()
+    ws = _RecordingWS()
+    mgr.register(agent_id, ws)  # type: ignore[arg-type]
+
+    await asyncio.gather(*(mgr.send(agent_id, f"frame-{i}") for i in range(5)))
+
+    assert len(ws.events) == 10
+    # Every enter is immediately followed by its own exit.
+    for i in range(0, len(ws.events), 2):
+        enter, exit_ = ws.events[i], ws.events[i + 1]
+        assert enter.startswith("enter:")
+        assert exit_ == enter.replace("enter:", "exit:", 1), f"interleaved: {ws.events}"
+
+
+async def test_send_delivers_and_reports_success():
+    mgr = ConnectionManager()
+    agent_id = uuid.uuid4()
+    ws = _RecordingWS()
+    mgr.register(agent_id, ws)  # type: ignore[arg-type]
+
+    assert await mgr.send(agent_id, "hello") is True
+    assert "enter:hello" in ws.events
+
+
+async def test_send_to_unknown_agent_returns_false():
+    mgr = ConnectionManager()
+    assert await mgr.send(uuid.uuid4(), "hello") is False
+
+
+async def test_failed_send_unregisters_the_agent():
+    mgr = ConnectionManager()
+    agent_id = uuid.uuid4()
+    mgr.register(agent_id, _BrokenWS())  # type: ignore[arg-type]
+
+    assert await mgr.send(agent_id, "hello") is False
+    assert str(agent_id) not in mgr.connected_ids()
+
+
+async def test_send_lock_is_released_after_a_failed_send():
+    """A raising send must not strand the lock, or the agent wedges permanently."""
+    mgr = ConnectionManager()
+    agent_id = uuid.uuid4()
+    mgr.register(agent_id, _BrokenWS())  # type: ignore[arg-type]
+    conn = mgr._connections[str(agent_id)]
+
+    assert await mgr.send(agent_id, "hello") is False
+    assert not conn.send_lock.locked()

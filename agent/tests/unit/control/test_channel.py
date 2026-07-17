@@ -1112,3 +1112,101 @@ async def test_close_session_dispatch_frees_admission_slot(tmp_path):
     assert session.get("s1") is None
     assert admission.running_count == 0
     assert FrameType.SESSION_CLOSED in _frame_types(ws)
+
+
+# ── _consume frame handling (#156) ────────────────────────────────────────────
+
+
+class _IterWS:
+    """A websocket that yields a fixed script of frames, then ends the loop."""
+
+    def __init__(self, msgs):
+        self._msgs = msgs
+        self.sent: list[str] = []
+
+    async def send(self, msg):
+        self.sent.append(msg)
+
+    async def __aiter__(self):
+        for msg in self._msgs:
+            yield msg
+
+
+@pytest.mark.parametrize(
+    ("frame_type", "handler"),
+    [
+        (FrameType.OPEN_SESSION, "_traced_open_session"),
+        (FrameType.CLOSE_SESSION, "_handle_close_session"),
+    ],
+)
+async def test_consume_holds_strong_ref_to_session_tasks(
+    tmp_path, monkeypatch, frame_type, handler
+):
+    """The session-lifecycle handlers run as detached tasks, and the event loop
+    keeps only *weak* references to tasks — so a bare create_task() whose result
+    nobody holds may be garbage-collected mid-execution. The query/statement paths
+    are safe because _in_flight holds their tasks; these two had no ref at all.
+
+    Asserted structurally (the task is registered while it runs) rather than by
+    forcing a collection: a task suspended on a sleep is kept alive by its timer
+    handle, so gc.collect() would pass even against the bug.
+    """
+    import agent.control.channel as ch_module
+
+    release = asyncio.Event()
+    registered: list[set] = []
+
+    async def _blocking_handler(ws, msg, admission):
+        # Snapshot the registry while this task is mid-flight — the exact window
+        # in which a weakly-referenced task could be collected.
+        registered.append(set(ch_module._background_tasks))
+        await release.wait()
+
+    monkeypatch.setattr(ch_module, handler, _blocking_handler)
+
+    payload = {"session_id": "s1"}
+    ws = _IterWS([Frame(type=frame_type, payload=payload).model_dump_json()])
+    await ch_module._consume(ws, tmp_path, _admission())
+    await asyncio.sleep(0)  # let the spawned task reach its first await
+
+    assert registered and registered[0], "handler task must be strongly referenced while running"
+    current = asyncio.current_task()
+    assert any(t is not current for t in registered[0])
+
+    release.set()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)  # let the task finish and its done-callback run
+    assert ch_module._background_tasks == set(), "the finished task must not leak"
+
+
+async def test_consume_survives_unparseable_frame(tmp_path):
+    """One malformed frame must not kill the channel: _consume's caller only
+    catches (ConnectionClosed, OSError), so a ValidationError escaping here would
+    stop the reconnect loop entirely."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="decaying_3")
+    ws = _IterWS(
+        [
+            "{not valid json",
+            Frame(type=FrameType.SET_CONCURRENCY, payload={"profile": "single"}).model_dump_json(),
+        ]
+    )
+    await ch_module._consume(ws, tmp_path, admission)
+    # The loop kept going and handled the frame after the bad one.
+    assert admission.active_profile == "single"
+
+
+async def test_consume_ignores_unknown_frame_type(tmp_path):
+    """An unknown/unhandled type is logged and skipped, not fatal."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="decaying_3")
+    ws = _IterWS(
+        [
+            Frame(type=FrameType.AUTH_OK, payload={}).model_dump_json(),
+            Frame(type=FrameType.SET_CONCURRENCY, payload={"profile": "single"}).model_dump_json(),
+        ]
+    )
+    await ch_module._consume(ws, tmp_path, admission)
+    assert admission.active_profile == "single"

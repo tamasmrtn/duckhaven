@@ -241,16 +241,28 @@ async def run_statement(
         status="queued",
         origin="session",
         session_id=session.id,
+        # Persisted so the reaper can bound this statement server-side; the agent
+        # enforces the same budget around execution.
+        timeout_s=body.timeout_s,
     )
     db.add(query)
-    await db.flush()
+    session.last_active_at = datetime.now(tz=UTC)
+    # Commit before dispatching: STATEMENT_ACK is applied by a separate DB
+    # connection (the websocket receive loop), and can round-trip back from the
+    # agent faster than this transaction would otherwise commit. A merely
+    # flush()ed row is invisible to that connection under read-committed
+    # isolation, so the ack would silently no-op and the row would never leave
+    # `queued` until QUERY_DONE arrives.
+    await db.commit()
 
     if not await session_service.dispatch_exec_statement(db, session, query, body.timeout_s):
+        query.status = "failed"
+        query.error = "agent not connected"
+        query.finished_at = datetime.now(tz=UTC)
+        await db.commit()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Agent not connected"
         )
-    session.last_active_at = datetime.now(tz=UTC)
-    await db.commit()
     return query
 
 

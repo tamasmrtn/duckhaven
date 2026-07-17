@@ -14,6 +14,11 @@ class AgentCapabilities(BaseModel):
     cpu_cores_physical: int | None = None
     tailscale_ip: str | None = None
     host: str | None = None
+    # Optional control-plane protocol features this agent implements, letting the
+    # API gate behavior on agent version without a version number. Empty for older
+    # agents, which is what the absence of a feature means. See
+    # api.services.agent_capabilities.
+    protocol_features: list[str] = []
 
 
 class CatalogAttach(BaseModel):

@@ -11,6 +11,7 @@ statement policy, and confirms close frees the agent's admission slot.
 from __future__ import annotations
 
 import asyncio
+import os
 
 import pytest
 
@@ -184,3 +185,155 @@ async def test_close_frees_slot_for_reuse(api_client, workspace, spawn_agent) ->
     # the slot rather than leaving it leaked until the idle lease fires.
     third = await _open(api_client, workspace, agent_id)
     await api_client.delete(f"/api/sql/sessions/{third['id']}")
+
+
+# ── Statement delivery over the real control channel (#156) ───────────────────
+# An EXEC_STATEMENT frame was occasionally lost between the API and the agent. The
+# API returned 202, the agent never ran it, and nothing server-side noticed: the
+# row stayed `queued` until the client's own 630s poll deadline. These exercise
+# the ack + server-side deadline over a real websocket between real processes.
+
+
+async def _submit(api_client, session_id: str, sql: str, **body) -> str:
+    resp = await api_client.post(
+        f"/api/sql/sessions/{session_id}/statements", json={"sql": sql, **body}
+    )
+    assert resp.status_code == 202, resp.text
+    return resp.json()["id"]
+
+
+# Heavy enough to reliably still be running when polled/killed (plain range()
+# counts finish in well under 100ms on modern hardware, which raced the assertions
+# below). Correctness does not depend on the exact margin, only on it staying
+# in-flight for the first poll.
+_SLOW_SQL = (
+    "SELECT count(*) FROM range(100000000) t(i) WHERE regexp_matches(i::VARCHAR, '[0-9]+[0-9]')"
+)
+
+
+async def _poll_until(api_client, query_id: str, predicate, timeout: float) -> dict:
+    deadline = asyncio.get_event_loop().time() + timeout
+    last: dict = {}
+    while asyncio.get_event_loop().time() < deadline:
+        last = (await api_client.get(f"/api/queries/{query_id}")).json()
+        if predicate(last):
+            return last
+        await asyncio.sleep(0.25)
+    raise AssertionError(f"statement {query_id} never matched; last state: {last}")
+
+
+async def test_statement_ack_marks_running_over_the_real_channel(
+    api_client, workspace, healthy_agent
+) -> None:
+    """The agent acks receipt before running, so the row passes through `running`
+    on its way to `done`. That transition is what lets the server tell "never
+    arrived" apart from "still working"."""
+    session = await _open(api_client, workspace, healthy_agent["id"])
+    # Long enough that the statement is observably mid-flight.
+    query_id = await _submit(api_client, session["id"], _SLOW_SQL)
+
+    running = await _poll_until(
+        api_client, query_id, lambda b: b["status"] in ("running", "done", "failed"), 30.0
+    )
+    assert running["status"] in ("running", "done"), running
+    done = await _poll_until(api_client, query_id, lambda b: b["status"] == "done", 60.0)
+    assert done["status"] == "done"
+
+
+async def test_lost_exec_statement_frame_fails_fast_instead_of_hanging(
+    api_client, workspace, spawn_agent, tmp_path
+) -> None:
+    """The #156 regression, reproduced deterministically.
+
+    A dedicated agent is spawned with a sitecustomize that swallows the first
+    EXEC_STATEMENT it receives — the agent never acks and never runs it, exactly
+    as if the frame had been lost on the wire. Before the fix this row stayed
+    `queued` forever (the client hung ~10.5 minutes, then reported a misleading
+    adapter-side timeout). It must now fail quickly, with an error naming the real
+    cause, and the session must stay healthy.
+    """
+    inject = tmp_path / "inject"
+    inject.mkdir()
+    (inject / "sitecustomize.py").write_text(
+        """
+import agent.control.channel as ch
+
+_orig = ch._handle_exec_statement
+_dropped = []
+
+
+async def _drop_first(ws, payload, results_dir):
+    # Swallow the first statement whole: no ack, no QUERY_DONE, no execution —
+    # indistinguishable from the frame never arriving.
+    if not _dropped:
+        _dropped.append(payload["query_id"])
+        return
+    await _orig(ws, payload, results_dir)
+
+
+ch._handle_exec_statement = _drop_first
+"""
+    )
+    before = {a["id"] for a in (await api_client.get("/api/agents")).json()}
+    proc = spawn_agent({"PYTHONPATH": f"{inject}:{os.environ.get('PYTHONPATH', '')}"})
+    agent_id = await _wait_new_agent_id(api_client, before)
+
+    session = await _open(api_client, workspace, agent_id)
+    lost = await _submit(api_client, session["id"], "SELECT 1 AS n")
+
+    # Bounded in seconds by the ack deadline + a reaper tick, not by the client.
+    failed = await _poll_until(api_client, lost, lambda b: b["status"] == "failed", 120.0)
+    assert failed["error"] == "agent did not ack statement", failed
+    assert failed["duration_ms"] is None, "the statement never ran, so it has no duration"
+
+    # The session and its agent are unharmed: the next statement runs normally.
+    # (This mirrors the report's `select 42` probe, which returned in 2ms while a
+    # sibling statement sat wedged.)
+    probe = await _submit(api_client, session["id"], "SELECT 42 AS n")
+    body = await _poll_until(api_client, probe, lambda b: b["status"] == "done", 60.0)
+    assert body["status"] == "done"
+    assert proc.poll() is None, "the agent must still be running"
+
+
+async def test_agent_disconnect_resolves_in_flight_statements(
+    api_client, workspace, spawn_agent
+) -> None:
+    """A session's statements can only run on its agent's held connection. When
+    the agent dies they never will — previously they were orphaned `queued`
+    forever (the report had rows queued 4.4h whose session was long expired)."""
+    before = {a["id"] for a in (await api_client.get("/api/agents")).json()}
+    proc = spawn_agent()
+    agent_id = await _wait_new_agent_id(api_client, before)
+    session = await _open(api_client, workspace, agent_id)
+
+    query_id = await _submit(api_client, session["id"], _SLOW_SQL)
+    # Wait for the ack (queued -> running), so the kill lands on a statement
+    # confirmed in flight rather than possibly racing its initial submit.
+    await _poll_until(api_client, query_id, lambda b: b["status"] == "running", 20.0)
+
+    proc.terminate()
+    proc.wait(timeout=15)
+
+    failed = await _poll_until(api_client, query_id, lambda b: b["status"] == "failed", 60.0)
+    assert failed["error"] is not None, failed
+
+
+async def test_concurrent_statements_on_one_agent_all_complete(
+    api_client, workspace, healthy_agent
+) -> None:
+    """Every dispatch to an agent shares one websocket. Frames sent concurrently
+    must all arrive intact — an interleaved write would corrupt or lose one."""
+    sessions = await asyncio.gather(
+        *(_open(api_client, workspace, healthy_agent["id"]) for _ in range(4))
+    )
+    query_ids = await asyncio.gather(
+        *(_submit(api_client, s["id"], f"SELECT {i} AS n") for i, s in enumerate(sessions))
+    )
+
+    def _is_terminal(b: dict) -> bool:
+        return b["status"] in ("done", "failed")
+
+    results = await asyncio.gather(
+        *(_poll_until(api_client, q, _is_terminal, 60.0) for q in query_ids)
+    )
+    assert [r["status"] for r in results] == ["done"] * 4, results

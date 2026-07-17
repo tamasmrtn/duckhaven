@@ -223,6 +223,70 @@ async def test_statement_success_creates_session_query(
     assert query.session_id == session.id
 
 
+async def test_statement_persists_its_timeout_budget(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    """The budget used to travel only on the wire, so nothing server-side could
+    bound a statement whose dispatch frame was lost (#156). The reaper reads it
+    off the row."""
+    session = await _open_session_row(db_session, workspace, agent, user)
+
+    async def fake_exec(db, sess, query, timeout_s):
+        return True
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements", json={"sql": "SELECT 1", "timeout_s": 42.0}
+    )
+    assert resp.status_code == 202, resp.text
+    query = await db_session.get(Query, uuid.UUID(resp.json()["id"]))
+    assert query.timeout_s == 42.0
+
+
+async def test_statement_persists_the_default_timeout_budget(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    session = await _open_session_row(db_session, workspace, agent, user)
+
+    async def fake_exec(db, sess, query, timeout_s):
+        return True
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements", json={"sql": "SELECT 1"}
+    )
+    query = await db_session.get(Query, uuid.UUID(resp.json()["id"]))
+    assert query.timeout_s == 600.0
+
+
+async def test_statement_dispatch_failure_marks_the_row_failed(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    """Previously a dispatch failure left the just-committed `queued` row to be
+    silently abandoned rather than resolved (#156's defect 1). It must come back
+    503 *and* leave the row in a terminal state, not a dangling queued one."""
+    session = await _open_session_row(db_session, workspace, agent, user)
+
+    async def fake_exec(db, sess, query, timeout_s):
+        return False
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements", json={"sql": "SELECT 1"}
+    )
+    assert resp.status_code == 503
+
+    result = await db_session.execute(
+        Query.__table__.select().where(Query.session_id == session.id)
+    )
+    row = result.mappings().one()
+    assert row["status"] == "failed"
+    assert row["error"] == "agent not connected"
+
+
 async def test_close_session(
     authed_client, db_session, workspace, agent, user, enabled, monkeypatch
 ):

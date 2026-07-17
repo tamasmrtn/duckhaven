@@ -211,6 +211,12 @@ async def agent_connect(
 
                     async with session_factory() as db:
                         await handle_session_frame(db, msg_frame)
+
+                elif msg_frame.type == FrameType.STATEMENT_ACK:
+                    from api.services.sql_sessions.service import handle_statement_ack
+
+                    async with session_factory() as db:
+                        await handle_statement_ack(db, msg_frame)
             except WebSocketDisconnect:
                 raise
             except Exception:

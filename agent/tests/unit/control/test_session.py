@@ -2,6 +2,8 @@
 admission slot, EXEC_STATEMENT runs on the held connection without closing it,
 CLOSE_SESSION / reconnect release the slot."""
 
+import asyncio
+
 import pytest
 
 from agent.control import session
@@ -228,3 +230,78 @@ async def test_push_metrics_emits_self_reap_close(monkeypatch):
     assert reaps and reaps[0].payload["reason"] == "agent_self_reap"
     assert session.count() == 0
     assert admission.running_count == 0
+
+
+# ── STATEMENT_ACK receipt (#156) ──────────────────────────────────────────────
+# A lost EXEC_STATEMENT frame used to leave the statement queued forever with no
+# signal anywhere. The ack is the receipt that makes "never arrived"
+# distinguishable from "still running", so it must be sent on arrival — before
+# anything that can block or fail.
+
+
+def _frames(ws: _FakeWS) -> list[Frame]:
+    return [Frame.model_validate_json(m) for m in ws.sent]
+
+
+async def test_exec_statement_acks_before_running(tmp_path):
+    import agent.control.channel as ch
+
+    admission = _admission()
+    await ch._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
+
+    ws = _FakeWS()
+    await ch._handle_exec_statement(
+        ws, {"session_id": "s1", "query_id": "stmt1", "sql": "SELECT 1 AS n"}, tmp_path
+    )
+    types = [f.type for f in _frames(ws)]
+    assert types == [FrameType.STATEMENT_ACK, FrameType.QUERY_DONE]
+    assert _frames(ws)[0].payload["query_id"] == "stmt1"
+
+
+async def test_exec_statement_acks_before_taking_the_session_lock(tmp_path):
+    """The ack must mean "the frame arrived", not "the statement started" — so it
+    is sent even while another statement holds the session lock. Otherwise a
+    statement queued behind a slow one would be reaped as undelivered."""
+    import agent.control.channel as ch
+
+    admission = _admission()
+    await ch._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
+    state = session.get("s1")
+
+    ws = _FakeWS()
+    await state.lock.acquire()
+    try:
+        task = asyncio.create_task(
+            ch._handle_exec_statement(
+                ws, {"session_id": "s1", "query_id": "stmt1", "sql": "SELECT 1"}, tmp_path
+            )
+        )
+        # Let the handler run up to the lock, where it must now block.
+        await asyncio.sleep(0.05)
+        assert not task.done()
+        assert [f.type for f in _frames(ws)] == [FrameType.STATEMENT_ACK]
+    finally:
+        state.lock.release()
+    await task
+    assert _frames(ws)[-1].payload["status"] == "done"
+
+
+async def test_exec_statement_acks_even_when_session_missing(tmp_path):
+    """Receipt is not success: an unknown session still acks, then fails."""
+    import agent.control.channel as ch
+
+    ws = _FakeWS()
+    await ch._handle_exec_statement(
+        ws, {"session_id": "missing", "query_id": "x", "sql": "SELECT 1"}, tmp_path
+    )
+    frames = _frames(ws)
+    assert [f.type for f in frames] == [FrameType.STATEMENT_ACK, FrameType.QUERY_DONE]
+    assert frames[1].payload["status"] == "failed"
+
+
+def test_capabilities_advertise_statement_ack():
+    """The API gates the short ack deadline on this feature; without it an older
+    agent's statements would all be reaped as undelivered."""
+    import agent.control.channel as ch
+
+    assert "statement_ack" in ch._PROTOCOL_FEATURES

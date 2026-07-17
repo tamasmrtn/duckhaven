@@ -8,6 +8,7 @@ from pathlib import Path
 import websockets
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
+from pydantic import ValidationError
 from websockets.exceptions import ConnectionClosed
 
 from agent.auth import TokenHolder, load_session_token, save_session_token
@@ -33,6 +34,29 @@ logger = logging.getLogger(__name__)
 _tracer = trace.get_tracer("duckhaven.agent")
 
 _in_flight: dict[str, asyncio.Task] = {}
+
+# Strong refs for handler tasks that are not keyed by a query id (session
+# lifecycle). The event loop only keeps weak references to tasks, so a bare
+# create_task() can be garbage-collected mid-execution; _in_flight covers the
+# query/statement tasks, this covers the rest.
+_background_tasks: set[asyncio.Task] = set()
+
+# Control-plane protocol features this agent implements, advertised so the API can
+# gate on them without a version number (see duckhaven_shared.schemas).
+_PROTOCOL_FEATURES = ["statement_ack"]
+
+
+def _spawn(coro) -> None:
+    """Run a handler as a detached task, holding a strong ref until it finishes."""
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
+def _frame_ref(payload: dict) -> str:
+    """The ids that identify a frame in the logs, for correlating with the API."""
+    parts = [f" {key}={payload[key]}" for key in ("session_id", "query_id") if payload.get(key)]
+    return "".join(parts)
 
 
 def _get_capabilities() -> AgentCapabilities:
@@ -65,7 +89,14 @@ def _get_capabilities() -> AgentCapabilities:
         cpu_model=cpu["cpu_model"],
         cpu_cores_physical=cpu["cpu_cores_physical"],
         host=platform.node() or None,
+        protocol_features=list(_PROTOCOL_FEATURES),
     )
+
+
+async def _send_statement_ack(ws, statement_id: str) -> None:
+    """Acknowledge receipt of an EXEC_STATEMENT. Receipt only — not success."""
+    ack = Frame(type=FrameType.STATEMENT_ACK, payload={"query_id": statement_id})
+    await ws.send(ack.model_dump_json())
 
 
 async def _send_failed(ws, query_id: str, error: str) -> None:
@@ -236,6 +267,11 @@ async def _handle_exec_statement(ws, payload: dict, results_dir: Path) -> None:
     statement_id = payload["query_id"]
     sql = payload["sql"]
     timeout_s = min(float(payload.get("timeout_s", 600.0)), settings.max_timeout_s)
+
+    # Ack before anything that can block (the session lock) or fail, so the ack
+    # means "this frame arrived" and nothing else. Without it a lost frame is
+    # indistinguishable from a slow statement and the row stays queued forever.
+    await _send_statement_ack(ws, statement_id)
 
     state = session.get(session_id)
     if state is None:
@@ -561,7 +597,21 @@ async def run_control_channel(
 
 async def _consume(ws, results_dir: Path, admission: Admission) -> None:
     async for raw_msg in ws:
-        msg = Frame.model_validate_json(raw_msg)
+        try:
+            msg = Frame.model_validate_json(raw_msg)
+        except ValidationError as exc:
+            # Never let one bad frame kill the channel: run_control_channel only
+            # catches (ConnectionClosed, OSError), so this would escape and stop
+            # the reconnect loop entirely.
+            logger.warning("Ignoring unparseable frame: %s", exc)
+            continue
+
+        # Per-frame receive log: the only evidence that a frame actually arrived.
+        # Pairs with the API's post-send log to localize a lost frame to the send
+        # or the receive side. Heartbeats are excluded — they are periodic and
+        # would bury the frames worth seeing.
+        if msg.type != FrameType.HEARTBEAT:
+            logger.info("Frame received: %s%s", msg.type, _frame_ref(msg.payload))
 
         if msg.type == FrameType.HEARTBEAT:
             await ws.send(Frame(type=FrameType.HEARTBEAT).model_dump_json())
@@ -591,7 +641,7 @@ async def _consume(ws, results_dir: Path, admission: Admission) -> None:
                 task.cancel()
 
         elif msg.type == FrameType.OPEN_SESSION:
-            asyncio.create_task(_traced_open_session(ws, msg, admission))
+            _spawn(_traced_open_session(ws, msg, admission))
 
         elif msg.type == FrameType.EXEC_STATEMENT:
             statement_id = msg.payload.get("query_id", str(uuid.uuid4()))
@@ -599,4 +649,7 @@ async def _consume(ws, results_dir: Path, admission: Admission) -> None:
             _in_flight[statement_id] = task
 
         elif msg.type == FrameType.CLOSE_SESSION:
-            asyncio.create_task(_handle_close_session(ws, msg.payload, admission))
+            _spawn(_handle_close_session(ws, msg.payload, admission))
+
+        else:
+            logger.warning("Ignoring unhandled frame type: %s", msg.type)

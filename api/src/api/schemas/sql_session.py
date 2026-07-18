@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class SqlSessionCreate(BaseModel):
@@ -29,3 +29,34 @@ class SqlSessionOut(BaseModel):
 class SqlStatementCreate(BaseModel):
     sql: str
     timeout_s: float = 600.0
+
+
+class StagingFilesCreate(BaseModel):
+    # File names to stage; each becomes a key under the session's staging prefix.
+    files: list[str]
+
+    @field_validator("files")
+    @classmethod
+    def _validate_files(cls, files: list[str]) -> list[str]:
+        if not files:
+            raise ValueError("files must not be empty")
+        for name in files:
+            # A key traversal (slashes / ..) could escape the session's prefix.
+            if not name or "/" in name or "\\" in name or ".." in name:
+                raise ValueError(f"invalid staging file name: {name!r}")
+        return files
+
+
+class StagedFileOut(BaseModel):
+    name: str
+    # The assigned object-storage key (s3://… / abfss://…) under the stage.
+    key: str
+    # Presigned upload (client HTTP PUT) and read (agent httpfs GET) URLs.
+    put_url: str
+    get_url: str
+
+
+class StagingFilesOut(BaseModel):
+    files: list[StagedFileOut]
+    # RFC 3339; applies to every presigned URL in this response.
+    expires_at: datetime

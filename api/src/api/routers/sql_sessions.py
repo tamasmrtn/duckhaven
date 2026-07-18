@@ -11,6 +11,7 @@ Statements are ordinary ``queries`` rows (``origin="session"``); poll and fetch
 them through the existing ``GET /queries/{id}`` (+ ``/rows``).
 """
 
+import asyncio
 import contextlib
 import uuid
 from datetime import UTC, datetime
@@ -27,8 +28,15 @@ from api.models.query import Query
 from api.models.sql_session import SqlSession
 from api.models.user import User
 from api.schemas.query import QueryOut
-from api.schemas.sql_session import SqlSessionCreate, SqlSessionOut, SqlStatementCreate
-from api.services import session_credentials
+from api.schemas.sql_session import (
+    SqlSessionCreate,
+    SqlSessionOut,
+    SqlStatementCreate,
+    StagedFileOut,
+    StagingFilesCreate,
+    StagingFilesOut,
+)
+from api.services import session_credentials, staging_presign
 from api.services import statement_policy as policy
 from api.services.agent_capabilities import agent_supports_backend, required_extension
 from api.services.agent_dispatch import is_agent_connected
@@ -199,7 +207,13 @@ async def run_statement(
 
     catalogs = await resolve_workspace_catalogs(db, session.workspace_id)
     managed = {c.slug for c in catalogs} | {c.polaris_name for c in catalogs}
+    # Admit both the object-storage staging prefix (COPY / s3:// reads) and its
+    # HTTPS form so a staged `read_parquet('<presigned get_url>')` is allowed,
+    # while arbitrary local-FS / external URLs still reject.
     prefixes = session_credentials.staging_prefixes(session.staging_uri)
+    active = next((c for c in catalogs if c.slug == session.active_catalog), None)
+    if active is not None:
+        prefixes = prefixes + staging_presign.staging_read_prefixes(active, session.id)
 
     # Capability-scoped statement policy (the session path's relaxed I8).
     try:
@@ -264,6 +278,51 @@ async def run_statement(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Agent not connected"
         )
     return query
+
+
+@router.post("/sql/sessions/{session_id}/staging-files", response_model=StagingFilesOut)
+async def create_staging_files(
+    session_id: uuid.UUID,
+    body: StagingFilesCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> StagingFilesOut:
+    """Presign a PUT (upload) and GET (read) URL per file under the session's
+    stage. Backend-specific presigning stays in the API; the client uploads with a
+    plain HTTP PUT and the agent reads the GET URL over httpfs (no storage secret).
+    """
+    _require_enabled()
+    session = await _load_session(db, session_id, user)
+    # A reaped/closed session (or one whose agent dropped — the reaper reflects it
+    # in status) can no longer stage; mirror the statement path's lost-session 409.
+    if session.status != "open":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": "session_not_open", "detail": f"session is {session.status}"},
+        )
+
+    catalog = await resolve_catalog(db, session.workspace_id, session.active_catalog)
+    try:
+        files, expires_at = await asyncio.to_thread(
+            staging_presign.presign_staging_files,
+            catalog,
+            session.id,
+            body.files,
+            ttl_s=settings.sql_session_staging_url_ttl_s,
+        )
+    except staging_presign.StagingUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"error": "staging_unavailable", "detail": str(exc)},
+        ) from exc
+
+    return StagingFilesOut(
+        files=[
+            StagedFileOut(name=f.name, key=f.key, put_url=f.put_url, get_url=f.get_url)
+            for f in files
+        ],
+        expires_at=expires_at,
+    )
 
 
 @router.delete("/sql/sessions/{session_id}", status_code=204)

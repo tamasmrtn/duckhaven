@@ -57,6 +57,11 @@ class Settings(BaseSettings):
     s3_endpoint_internal: str = "http://minio:9000"
     s3_region: str = "us-east-1"
     s3_bucket: str = "warehouse"
+    # Static MinIO credentials the API uses to presign staging URLs for the
+    # bundled object_store backend (the MinIO root user/password). Only used for
+    # presigning; external s3 backends assume their role instead.
+    s3_access_key: str = "minioadmin"
+    s3_secret_key: str = "minioadmin"
     secret_key: str = "change-me-in-production"
     session_max_age_seconds: int = 86400 * 7
     cors_origins: list[str] = ["http://localhost:5173"]
@@ -134,6 +139,9 @@ class Settings(BaseSettings):
     # (<catalog root>/<segment>/<session_id>/); the statement policy confines
     # COPY/read_* to this prefix.
     sql_session_staging_prefix_segment: str = "_staging"
+    # Lifetime of the presigned staging PUT/GET URLs handed out by
+    # POST /sql/sessions/{id}/staging-files. Long enough to upload + run the load.
+    sql_session_staging_url_ttl_s: float = 900.0
     # Statement deadlines, enforced by the same reaper loop. A statement the agent
     # has not acked within sql_statement_ack_deadline_s is failed as undelivered —
     # this bounds a lost EXEC_STATEMENT frame in seconds rather than never (#156).

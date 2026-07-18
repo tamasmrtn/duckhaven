@@ -563,6 +563,7 @@ dependencies = [
     { name = "prometheus-client" },
     { name = "pydantic-ai-slim", extra = ["anthropic", "mistral", "openai"] },
     { name = "pydantic-settings" },
+    { name = "pytz" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "sqlglot" },
     { name = "uvicorn", extra = ["standard"] },
@@ -594,6 +595,7 @@ requires-dist = [
     { name = "prometheus-client", specifier = ">=0.20" },
     { name = "pydantic-ai-slim", extras = ["anthropic", "mistral", "openai"], specifier = ">=2.9.0" },
     { name = "pydantic-settings", specifier = ">=2.0" },
+    { name = "pytz", specifier = ">=2024.1" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.51" },
     { name = "sqlglot", specifier = ">=25" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.51.0" },
@@ -1515,6 +1517,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/82/ed/0301aeeac3e5353ef3d94b6ec08bbcabd04a72018415dcb29e588514bba8/python_dotenv-1.2.2.tar.gz", hash = "sha256:2c371a91fbd7ba082c2c1dc1f8bf89ca22564a087c2c287cd9b662adde799cf3", size = 50135, upload-time = "2026-03-01T16:00:26.196Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0b/d7/1959b9648791274998a9c3526f6d0ec8fd2233e4d4acce81bbae76b44b2a/python_dotenv-1.2.2-py3-none-any.whl", hash = "sha256:1d8214789a24de455a8b8bd8ae6fe3c6b69a5e3d64aa8a8e5d68e694bbcb285a", size = 22101, upload-time = "2026-03-01T16:00:25.09Z" },
+]
+
+[[package]]
+name = "pytz"
+version = "2026.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ff/46/dd499ec9038423421951e4fad73051febaa13d2df82b4064f87af8b8c0c3/pytz-2026.2.tar.gz", hash = "sha256:0e60b47b29f21574376f218fe21abc009894a2321ea16c6754f3cad6eb7cdd6a", size = 320861, upload-time = "2026-05-04T01:35:29.667Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ec/dd/96da98f892250475bdf2328112d7468abdd4acc7b902b6af23f4ed958ea0/pytz-2026.2-py2.py3-none-any.whl", hash = "sha256:04156e608bee23d3792fd45c94ae47fae1036688e75032eea2e3bf0323d1f126", size = 510141, upload-time = "2026-05-04T01:35:27.408Z" },
 ]
 
 [[package]]

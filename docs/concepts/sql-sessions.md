@@ -102,9 +102,32 @@ read or write there.
 The API is the credential vendor for a session: it supplies the Polaris connection the agent's session uses, rather than
 the agent reading a static secret from its own config. Today that identity is still DuckHaven's shared Polaris service
 principal — governance rests on the API's per-statement authorization and the catalog grants, not on the token's
-identity. Per-principal Polaris identities and short-lived STS credentials for external S3 staging are planned; on the
-bundled MinIO backend (which has no STS) staging is scoped by the unique prefix plus the policy that confines `COPY` to
-it.
+identity. Per-principal Polaris identities are still planned; the staging-write leg, however, no longer needs raw
+credentials at all — see below.
+
+## Staging files (presigned URLs)
+
+To get bulk bytes *into* the stage, a client asks the API to presign them rather than handing out storage credentials.
+`POST /api/sql/sessions/{session_id}/staging-files` takes a list of file names and returns, per file, a short-lived
+presigned **`put_url`** (upload) and **`get_url`** (read) scoped to a key under that session's staging prefix, plus an
+`expires_at`. This models a Snowflake internal stage: the broker vends time-boxed, single-key access and bulk bytes flow
+directly between the client, the object store, and the agent — never through the control plane.
+
+A load then looks like:
+
+1. `POST …/staging-files` with `{"files": ["orders.parquet"]}` → `put_url` / `get_url`.
+2. The client uploads the Parquet with a plain HTTP `PUT` to `put_url` — no storage SDK, no secret.
+3. The client runs `INSERT INTO … SELECT * FROM read_parquet('<get_url>')` through the session; the agent reads the
+   `get_url` over its httpfs extension with **no staging credential of its own** — all authorization is in the URL
+   signature.
+
+Because backend-specific signing lives only in the API, the client and agent treat every backend uniformly as opaque
+HTTPS: S3 and the bundled MinIO use SigV4 presigned URLs, Azure ADLS/Blob uses the equivalent SAS URLs. This is why it
+works on the bundled MinIO backend, which has **no STS** — a presigned URL is a signature, not a vended session token,
+so it grants genuinely narrow, time-boxed access there (narrower than the static credentials Polaris would otherwise
+vend). The statement policy admits `read_parquet('https://…')` only when the URL points at the session's own staging
+prefix; arbitrary local-FS or external reads are still rejected. Presigned URLs expire, and a request against a
+reaped/closed session returns `409` (the client reconnects, exactly as for statement execution).
 
 ## Sandboxing
 

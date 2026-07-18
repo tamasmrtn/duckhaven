@@ -28,7 +28,8 @@ boot, so every variable below is optional.
 | `S3_BUCKET` | `warehouse` | Bucket that backs the bundled object store. |
 | `S3_REGION` | `us-east-1` | Region reported to DuckDB / Polaris. |
 | `S3_ENDPOINT` | `http://minio:9000` | The MinIO URL Polaris vends to DuckDB. For agents on **other** hosts, set this to an address reachable from the agent host. |
-| `S3_ENDPOINT_INTERNAL` | `http://minio:9000` | The endpoint Polaris uses inside the Compose network; rarely needs changing. |
+| `S3_ENDPOINT_INTERNAL` | `http://minio:9000` | The endpoint Polaris uses inside the Compose network, and that the agent's httpfs GET reaches for a presigned staging read; rarely needs changing. |
+| `S3_ACCESS_KEY` / `S3_SECRET_KEY` | `minioadmin` | MinIO credentials the API uses to presign SQL-session staging URLs for the bundled `object_store` backend (default to `MINIO_ROOT_USER`/`PASSWORD`). External `s3` backends assume their role instead, so these apply only to MinIO. |
 | `polaris.features."SUPPORTED_CATALOG_STORAGE_TYPES"` | `["S3","AZURE"]` | Storage types Polaris will provision (set in `docker-compose.yml`). `S3` covers the bundled MinIO and external AWS S3; `AZURE` enables external ADLS Gen2. |
 | `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` | _(empty)_ | Service principal Polaris uses to mint ADLS Gen2 SAS tokens (Azure `DefaultAzureCredential`). Needs **Storage Blob Data Contributor** on the account. Empty disables ADLS vending; AWS S3 and MinIO are unaffected. |
 | `AWS_ENDPOINT_URL_STS` | _(empty)_ | Override the STS endpoint Polaris uses to assume external `s3` roles. Empty = real AWS STS. Set to a private/emulated STS (LocalStack, a VPC STS endpoint, GovCloud) for testing or non-public deployments. |
@@ -139,6 +140,7 @@ advisory lock, like the scheduler, so leave it enabled everywhere.
 | `SQL_SESSION_REAPER_TICK_S` | `30` | How often (seconds) the reaper wakes to close idle/expired sessions. |
 | `SQL_SESSION_OPEN_TIMEOUT_S` | `30` | How long the open endpoint waits for the agent to acknowledge the new session before returning a timeout. |
 | `SQL_SESSION_STAGING_PREFIX_SEGMENT` | `_staging` | Object-storage path segment for a session's scoped staging area (`<catalog root>/<segment>/<session_id>/`); the statement policy confines `COPY`/`read_*` to this prefix. |
+| `SQL_SESSION_STAGING_URL_TTL_S` | `900` | Lifetime (seconds) of the presigned `PUT`/`GET` staging URLs handed out by `POST /sql/sessions/{id}/staging-files`. Long enough to upload a load's files and run the `read_parquet` that consumes them. |
 | `SQL_STATEMENT_ACK_DEADLINE_S` | `15` | Fail a session statement that stays `queued` past this many seconds — its dispatch frame never reached the agent. Only applied to agents that advertise ack support; see [SQL sessions](../concepts/sql-sessions.md#statement-delivery-and-deadlines). |
 | `SQL_STATEMENT_TIMEOUT_GRACE_S` | `30` | Extra seconds beyond a statement's own `timeout_s` before the reaper fails a `running` statement whose agent reply never arrived. |
 | `SQL_STATEMENT_DEFAULT_TIMEOUT_S` | `600` | Fallback timeout budget used by the reaper for statement rows with no recorded `timeout_s` (written before that column existed). |

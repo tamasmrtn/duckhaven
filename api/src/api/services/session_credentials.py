@@ -20,6 +20,7 @@ import uuid
 
 from api.config import settings
 from api.models import Catalog
+from api.services.workspace import polaris_storage
 
 
 def build_polaris_block() -> dict[str, str]:
@@ -36,12 +37,20 @@ def build_polaris_block() -> dict[str, str]:
 
 def staging_uri_for(catalog: Catalog, session_id: uuid.UUID) -> str | None:
     """The scoped object-storage staging prefix for a session, under the active
-    catalog's storage root: ``<root_uri>/<segment>/<session_id>/``. Returns
-    ``None`` when the backend has no usable root URI."""
-    root = (catalog.storage_backend.root_uri or "").rstrip("/")
-    if not root:
+    catalog's storage root: ``<base>/<segment>/<session_id>/``. Returns ``None``
+    when the backend has no usable base location.
+
+    The base comes from ``polaris_storage`` (not the raw ``root_uri``) so the
+    bundled ``object_store`` backend — whose ``root_uri`` is a bucket-relative
+    prefix label, not a real URI — resolves to a real ``s3://<bucket>[/<prefix>]``
+    location that can be presigned. External backends' ``root_uri`` already carries
+    a scheme, so their base is unchanged."""
+    backend = catalog.storage_backend
+    _, base, _ = polaris_storage(backend.kind, backend.root_uri or "", backend.config)
+    base = base.rstrip("/")
+    if not base:
         return None
-    return f"{root}/{settings.sql_session_staging_prefix_segment}/{session_id}/"
+    return f"{base}/{settings.sql_session_staging_prefix_segment}/{session_id}/"
 
 
 def staging_prefixes(staging_uri: str | None) -> list[str]:

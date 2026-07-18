@@ -44,6 +44,15 @@ def test_decode_parquet_page_json_coerces_types():
     assert rows == [{"d": "2026-01-02", "amt": 1.5}]
 
 
+def test_decode_parquet_page_handles_timestamptz():
+    # DuckDB materializes a TIMESTAMP WITH TIME ZONE cell via pytz; without that
+    # dep fetchall() raises and the rows endpoint 500s (issue #162).
+    content = _parquet_bytes("SELECT TIMESTAMPTZ '2026-01-02 03:04:05+00' AS ts")
+    rows, columns = query_service.decode_parquet_page(content, limit=10, offset=0)
+    assert columns == ["ts"]
+    assert rows[0]["ts"].startswith("2026-01-02")
+
+
 async def _make_workspace(db_session):
     user = User(email="svc@test.local", password_hash=hash_password("pw"), name="Svc", role="user")
     db_session.add(user)

@@ -301,3 +301,139 @@ async def test_close_session(
     assert resp.status_code == 204
     await db_session.refresh(session)
     assert session.status == "closing"
+
+
+# ── Staging files (presigned URLs, issue #160) ────────────────────────────────
+
+
+def _patch_presign(monkeypatch):
+    """Patch the presign service so the router test needs no real MinIO/boto3."""
+    from datetime import UTC, datetime
+
+    from api.routers import sql_sessions
+    from api.services.staging_presign import StagedFile
+
+    expires = datetime(2026, 7, 18, tzinfo=UTC)
+
+    def fake_presign(catalog, session_id, names, *, ttl_s):
+        files = [
+            StagedFile(
+                name=n,
+                key=f"s3://warehouse/_staging/{session_id}/{n}",
+                put_url=f"http://localhost:9000/warehouse/_staging/{session_id}/{n}?put",
+                get_url=f"http://minio:9000/warehouse/_staging/{session_id}/{n}?get",
+            )
+            for n in names
+        ]
+        return files, expires
+
+    monkeypatch.setattr(sql_sessions.staging_presign, "presign_staging_files", fake_presign)
+    return expires
+
+
+async def test_staging_files_disabled_returns_404(
+    authed_client, db_session, workspace, agent, user
+):
+    session = await _open_session_row(db_session, workspace, agent, user)
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/staging-files", json={"files": ["o.parquet"]}
+    )
+    assert resp.status_code == 404
+
+
+async def test_staging_files_success(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    _patch_presign(monkeypatch)
+    session = await _open_session_row(db_session, workspace, agent, user)
+
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/staging-files",
+        json={"files": ["orders.parquet", "items.parquet"]},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert [f["name"] for f in body["files"]] == ["orders.parquet", "items.parquet"]
+    first = body["files"][0]
+    assert first["put_url"].startswith("http://localhost:9000/")
+    assert first["get_url"].startswith("http://minio:9000/")
+    assert str(session.id) in first["key"]
+    assert body["expires_at"].startswith("2026-07-18")
+
+
+async def test_staging_files_non_open_conflicts(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    _patch_presign(monkeypatch)
+    session = await _open_session_row(db_session, workspace, agent, user, status="closed")
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/staging-files", json={"files": ["o.parquet"]}
+    )
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["error"] == "session_not_open"
+
+
+async def test_staging_files_rejects_path_traversal(
+    authed_client, db_session, workspace, agent, user, enabled
+):
+    session = await _open_session_row(db_session, workspace, agent, user)
+    for bad in (["a/b.parquet"], ["../escape"], [""], []):
+        resp = await authed_client.post(
+            f"/sql/sessions/{session.id}/staging-files", json={"files": bad}
+        )
+        assert resp.status_code == 422, bad
+
+
+async def test_staging_files_unavailable_backend_422(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    from api.routers import sql_sessions
+    from api.services.staging_presign import StagingUnavailable
+
+    def boom(catalog, session_id, names, *, ttl_s):
+        raise StagingUnavailable("no staging location")
+
+    monkeypatch.setattr(sql_sessions.staging_presign, "presign_staging_files", boom)
+    session = await _open_session_row(db_session, workspace, agent, user)
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/staging-files", json={"files": ["o.parquet"]}
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["error"] == "staging_unavailable"
+
+
+async def test_read_parquet_of_own_staging_get_url_is_admitted(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    from api.config import settings as cfg
+
+    session = await _open_session_row(db_session, workspace, agent, user)
+
+    async def fake_exec(db, sess, query, timeout_s):
+        return True
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+
+    # A get_url under this session's own staging prefix (object_store catalog with
+    # root_uri="/tmp/test" -> internal-endpoint https prefix) must be admitted.
+    url = (
+        f"{cfg.s3_endpoint_internal}/{cfg.s3_bucket}/tmp/test/_staging/"
+        f"{session.id}/o.parquet?X-Amz-Signature=abc"
+    )
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements",
+        json={"sql": f"SELECT * FROM read_parquet('{url}')"},
+    )
+    assert resp.status_code == 202, resp.text
+
+
+async def test_read_parquet_of_foreign_url_is_rejected(
+    authed_client, db_session, workspace, agent, user, enabled
+):
+    session = await _open_session_row(db_session, workspace, agent, user)
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements",
+        json={"sql": "SELECT * FROM read_parquet('https://evil.example.com/secret.parquet')"},
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["error"] == "statement_not_allowed"

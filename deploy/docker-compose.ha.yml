@@ -48,6 +48,15 @@ x-api-base: &api-base
     S3_ENDPOINT_INTERNAL: ${S3_ENDPOINT_INTERNAL:-http://minio:9000}
     S3_REGION: ${S3_REGION:-us-east-1}
     S3_BUCKET: ${S3_BUCKET:-warehouse}
+    # MinIO credentials the API uses to presign SQL-session staging URLs for the
+    # bundled object_store backend (external s3 backends assume their role).
+    S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+    S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    # AAD identity for user-delegation SAS on external adls_gen2 staging (same
+    # instance creds Polaris uses; leave empty to keep ADLS staging disabled).
+    AZURE_TENANT_ID: ${AZURE_TENANT_ID:-}
+    AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-}
+    AZURE_CLIENT_SECRET: ${AZURE_CLIENT_SECRET:-}
     AGENT_BOOTSTRAP_TOKEN: ${AGENT_BOOTSTRAP_TOKEN:-dh_boot_localdev_seed}
     COOKIE_SECURE: ${COOKIE_SECURE:-false}
     # Shared secret guarding the private /internal dispatch endpoints between

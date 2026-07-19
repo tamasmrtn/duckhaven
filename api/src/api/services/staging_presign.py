@@ -14,8 +14,9 @@ Per backend kind:
   (single key, time-boxed) is the only genuinely *scoped* access available — and
   narrower than the broad static creds Polaris otherwise vends there. Because
   SigV4 signs the host+port, the ``put_url`` is signed for the client-facing
-  endpoint and the ``get_url`` for the agent-facing internal endpoint (the agent
-  is the sole GET consumer).
+  endpoint (``s3_endpoint_public``, falling back to ``s3_endpoint``) and the
+  ``get_url`` for the agent-facing internal endpoint (the agent is the sole GET
+  consumer).
 - ``s3`` (external): the API assumes the backend's role (boto3 STS) and presigns
   with the returned short-lived credentials. One endpoint, so no put/get split.
 - ``adls_gen2`` (external): a user-delegation SAS (AAD identity) per blob — the
@@ -179,10 +180,14 @@ def _presign_s3(
     bucket, key_prefix = _s3_bucket_key(staging_uri)
     creds, region = _s3_creds(kind, config, session_id)
     get_endpoint = _s3_get_endpoint(kind, config)
-    # object_store: the client PUTs to the external endpoint, the agent GETs the
-    # internal one, and SigV4 binds each URL to its host — so sign each leg with
-    # its own client. External s3 has a single endpoint for both.
-    put_endpoint = settings.s3_endpoint if kind == "object_store" else get_endpoint
+    # object_store: the client PUTs to the client-facing endpoint, the agent GETs
+    # the internal one, and SigV4 binds each URL to its host — so sign each leg
+    # with its own client. External s3 has a single endpoint for both.
+    put_endpoint = (
+        (settings.s3_endpoint_public or settings.s3_endpoint)
+        if kind == "object_store"
+        else get_endpoint
+    )
     put_client = _s3_client(put_endpoint, region, creds)
     get_client = (
         put_client if put_endpoint == get_endpoint else _s3_client(get_endpoint, region, creds)

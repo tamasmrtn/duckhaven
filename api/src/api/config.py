@@ -49,12 +49,18 @@ class Settings(BaseSettings):
     # data access). Defaults to the bootstrap root principal.
     polaris_principal: str = "root"
     polaris_http_timeout_s: float = 10.0
-    # Bundled MinIO object store backing the object_store catalogs. `s3_endpoint`
-    # is the externally-reachable URL Polaris vends to DuckDB agents (must be
-    # reachable from the agent host); `s3_endpoint_internal` is what Polaris uses
-    # to reach MinIO inside the compose network.
+    # Bundled MinIO object store backing the object_store catalogs. Three tiers,
+    # most-internal to most-external: `s3_endpoint_internal` is what Polaris uses
+    # to reach MinIO inside the compose network (and what the agent's httpfs GET
+    # of a presigned staging read reaches); `s3_endpoint` is the agent-facing URL
+    # Polaris vends to DuckDB agents (must be reachable from the agent host);
+    # `s3_endpoint_public` is the client-facing endpoint used to presign SQL-session
+    # staging *upload* (PUT) URLs. Empty -> falls back to `s3_endpoint`. Only
+    # differs in the bundled single-host compose, where the agent reaches MinIO at
+    # `minio:9000` but a dlt client on the host reaches it at `localhost:9000`.
     s3_endpoint: str = "http://localhost:9000"
     s3_endpoint_internal: str = "http://minio:9000"
+    s3_endpoint_public: str = ""
     s3_region: str = "us-east-1"
     s3_bucket: str = "warehouse"
     # Static MinIO credentials the API uses to presign staging URLs for the

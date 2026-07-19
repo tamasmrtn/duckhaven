@@ -81,6 +81,28 @@ def test_object_store_splits_put_external_get_internal(fake_boto):
     assert fake_boto.clients[0]["creds"]["aws_access_key_id"] == settings.s3_access_key
 
 
+def test_object_store_put_uses_public_endpoint_when_set(fake_boto, monkeypatch):
+    # A distinct client-facing endpoint signs the PUT; the GET and read prefix
+    # stay on the agent-facing internal endpoint (issue #168).
+    public = "http://box.example:9000"  # distinct from s3_endpoint's default
+    monkeypatch.setattr(settings, "s3_endpoint_public", public)
+    session_id = uuid.uuid4()
+    catalog = _catalog("object_store", "")
+    files, _ = sp.presign_staging_files(catalog, session_id, ["orders.parquet"], ttl_s=900)
+    prefixes = sp.staging_read_prefixes(catalog, session_id)
+
+    f = files[0]
+    prefix = f"_staging/{session_id}/orders.parquet"
+    assert f.put_url.startswith(f"{public}/{settings.s3_bucket}/{prefix}")
+    assert f.get_url.startswith(f"{settings.s3_endpoint_internal}/{settings.s3_bucket}/{prefix}")
+    # The read prefix (statement policy) is unchanged by the public PUT endpoint.
+    assert prefixes == [
+        f"{settings.s3_endpoint_internal}/{settings.s3_bucket}/_staging/{session_id}/"
+    ]
+    endpoints = {c["endpoint"] for c in fake_boto.clients}
+    assert endpoints == {public, settings.s3_endpoint_internal}
+
+
 def test_object_store_read_prefix_matches_get_url(fake_boto):
     session_id = uuid.uuid4()
     catalog = _catalog("object_store", "")

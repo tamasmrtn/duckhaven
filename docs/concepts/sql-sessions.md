@@ -131,12 +131,53 @@ reaped/closed session returns `409` (the client reconnects, exactly as for state
 
 ## Sandboxing
 
-With the allowlist relaxed, the agent is contained at the OS layer instead: the container runs with a **read-only root
-filesystem** (only its results volume is writable), dropped Linux capabilities, and `no-new-privileges`, so a stray
-local write outside the results volume fails at the kernel. An optional `SANDBOX_DISABLED_FILESYSTEMS` setting can also
-disable DuckDB's generic HTTP filesystem to block `COPY … TO 'http://…'` exfiltration; it is **off by default** because
-the bundled Polaris and MinIO speak plain HTTP, and is meant for HTTPS-only, egress-restricted deployments. The agent
-still needs network egress to Polaris and the storage backend, so restrict it to those at the network layer.
+With the allowlist relaxed, the statement policy is no longer the only thing standing between a statement and the
+outside world. The agent is contained at three further layers, all on by default.
+
+### The container
+
+The agent container runs with a **read-only root filesystem** (only its results volume and a `/tmp` tmpfs are
+writable), dropped Linux capabilities, `no-new-privileges`, a process cap, and a non-root user — so a stray local write
+outside the results volume fails at the kernel rather than at a parser.
+
+### Network egress
+
+The agent is attached to an **isolated Docker network with no route off the host**. It can reach the API, Polaris, the
+object store, and the trace collector; it cannot reach anything else. This is what contains a statement that tries to
+read from or write to an arbitrary address — the second layer the design called for, enforced by the kernel rather than
+by SQL parsing.
+
+You can verify it on a running stack:
+
+```sh
+docker compose -f deploy/docker-compose.yml exec -T agent python -c "
+import duckdb; c = duckdb.connect(); c.execute('LOAD httpfs')
+c.execute(\"SELECT content FROM read_text('https://example.com/')\").fetchone()"
+# expected: a network/IO error, not a result
+```
+
+!!! warning "Some deployments must opt out — and then this layer is gone"
+    An agent whose catalogs use **external** storage (`s3`, `adls_gen2`), or that must reach an off-host Polaris or
+    collector, needs real outbound access. Those deployments apply `deploy/docker-compose.egress-opt-out.yml`, which
+    puts the agent back on the default network. When you do that, **the API statement policy becomes the only remaining
+    layer** between a session statement and arbitrary egress. Prefer restricting egress to the specific hosts you need
+    (a host firewall, or a Kubernetes `NetworkPolicy` — see [Install](../deployment/install.md)) over removing the
+    restriction outright.
+
+### DuckDB configuration
+
+After the agent has set a connection up — extensions loaded, catalogs attached, credentials vended — it **locks
+DuckDB's configuration** (`SANDBOX_LOCK_CONFIGURATION`, on by default). A session statement can no longer widen its own
+sandbox with `SET`: `disabled_filesystems`, `enable_external_access`, `secret_directory`, `extension_directory`,
+`home_directory`, `custom_extension_repository`, and `allow_unsigned_extensions` all become read-only for the life of
+the connection, as does the lock itself. A small exception list keeps writable only what the agent needs afterwards —
+the per-statement memory/thread slice, the profiler, and the `SET timezone` the statement policy admits.
+
+`SANDBOX_DISABLED_FILESYSTEMS` can additionally disable a whole DuckDB filesystem. It is **off by default** because the
+agent reads [staged files](#staging-files-presigned-urls) over presigned HTTP(S) URLs, and disabling `HTTPFileSystem`
+would break that. Set it to `HTTPFileSystem` on a deployment that does not use staging. (Contrary to earlier guidance,
+it does *not* break the bundled Polaris or MinIO: the Iceberg REST client and the S3 filesystem are independent of the
+generic HTTP one.)
 
 ## Observability
 

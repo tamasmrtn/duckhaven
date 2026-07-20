@@ -468,8 +468,7 @@ export function WorksheetPage() {
 
   function insertMetaViewSnippet(catalog: string, view: string) {
     // information_schema is DuckDB's global view set (not per-catalog), so scope
-    // it by catalog. schemata keys on catalog_name; tables/columns/views on
-    // table_catalog.
+    // it by catalog. schemata keys on catalog_name; tables/views on table_catalog.
     const col = view === "schemata" ? "catalog_name" : "table_catalog";
     const snippet = `SELECT * FROM information_schema.${view} WHERE ${col} = '${catalog}' LIMIT 100`;
     setTabs((prev) =>

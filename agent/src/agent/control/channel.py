@@ -301,6 +301,7 @@ async def _handle_exec_statement(ws, payload: dict, results_dir: Path) -> None:
             "result_bytes": stats["result_bytes"],
             "result_path": str(result_path) if stats["wrote_result"] else None,
             "profile": stats["profile"],
+            "result_schema": stats["result_schema"],
         }
         await ws.send(Frame(type=FrameType.QUERY_DONE, payload=done_payload).model_dump_json())
     except TimeoutError as exc:
@@ -457,6 +458,9 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
             # Normalized post-execution profile (best-effort; null for DDL/DML or
             # when profiling is disabled/failed).
             "profile": stats.get("profile"),
+            # The result's column types, read off the DuckDB relation before the
+            # Parquet hop (null for DDL/DML). See runner._result_schema.
+            "result_schema": stats.get("result_schema"),
         }
         if stats_for:
             done_payload["stats_table"] = {

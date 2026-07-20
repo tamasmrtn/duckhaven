@@ -228,6 +228,7 @@ async def _handle_open_session(ws, payload: dict, admission: Admission) -> None:
             polaris=polaris,
             trace_headers=trace_headers,
             disabled_filesystems=settings.sandbox_disabled_filesystems,
+            lock_config=settings.sandbox_lock_configuration,
         )
         # Fix the session's resource slice once; statements run within it.
         conn.execute(f"SET memory_limit='{reservation.memory_bytes / 1024**3}GB'")
@@ -398,6 +399,7 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
                 active_catalog=active_catalog,
                 polaris=polaris,
                 disabled_filesystems=settings.sandbox_disabled_filesystems,
+                lock_config=settings.sandbox_lock_configuration,
             )
             reservation: Reservation = await admission.acquire(_build_request(estimate, admission))
         else:
@@ -442,6 +444,7 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
             conn=conn,
             enable_profiling=settings.profiling_enabled,
             disabled_filesystems=settings.sandbox_disabled_filesystems,
+            lock_config=settings.sandbox_lock_configuration,
         )
         done_payload: dict[str, object] = {
             "query_id": query_id,

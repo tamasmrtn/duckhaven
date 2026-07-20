@@ -74,17 +74,40 @@ class Settings(BaseSettings):
 
     # DuckDB filesystem sandbox (defense-in-depth beneath the API statement
     # policy). A DuckDB `disabled_filesystems` value applied to every connection,
-    # e.g. "HTTPFileSystem" to block `COPY … TO 'http(s)://…'` exfiltration.
-    # DEFAULT EMPTY / OFF because DuckHaven's bundled Polaris + MinIO speak plain
-    # HTTP: disabling HTTPFileSystem can break the iceberg REST catalog against
-    # such a topology. Verified on DuckDB 1.5.4: `allowed_directories`/
-    # `allowed_paths` are NOT enforced while `enable_external_access` is on (which
-    # the agent requires for S3/Polaris), and `LocalFileSystem` cannot be disabled
-    # without breaking result-Parquet materialization — so local-FS containment is
-    # carried by the read-only container rootfs + the API statement policy.
-    # Operators with an HTTPS-only, egress-firewalled deployment may set
-    # "HTTPFileSystem" (comma/space-separated for several).
+    # comma/space-separated; unknown names are warned about and skipped (DuckDB
+    # accepts any string silently, so a typo would otherwise disable nothing).
+    #
+    # DEFAULT EMPTY / OFF, but NOT for the reason previously recorded here.
+    # Re-verified empirically on DuckDB 1.5.4 against the bundled stack:
+    #   - Disabling HTTPFileSystem does NOT break plain-HTTP Polaris or MinIO. The
+    #     iceberg REST client and S3FileSystem are independent of HTTPFileSystem:
+    #     ATTACH over `http://polaris:8181` and SELECT from an Iceberg table on
+    #     MinIO both still work. (The older comment claiming otherwise was wrong.)
+    #   - It DOES break presigned-URL staging (#160/#169): the agent reads staged
+    #     files via `read_parquet('http(s)://…?X-Amz-…')`, which is HTTPFileSystem.
+    #     That is the real reason this ships off — a shipped feature depends on it.
+    #   - `COPY … TO 'http://…'` is not a vector at all: DuckDB answers "Writing to
+    #     HTTP files not implemented". The HTTP risk is READ, and it is contained by
+    #     the agent's network egress restriction (see deploy/docker-compose.yml).
+    #   - `allowed_directories`/`allowed_paths` are NOT enforced while
+    #     `enable_external_access` is on (which the agent requires for S3/Polaris),
+    #     and cannot be set before the database starts; `LocalFileSystem` cannot be
+    #     disabled without breaking result-Parquet materialization. Local-FS
+    #     containment is therefore carried by the read-only container rootfs + the
+    #     API statement policy.
+    # Set "HTTPFileSystem" on a deployment that does not use presigned staging.
     sandbox_disabled_filesystems: str = ""
+
+    # Lock DuckDB's configuration (`allowed_configs` + `lock_configuration`) once
+    # the agent has finished setting a connection up. This is what stops a session
+    # statement re-widening the sandbox with `SET` — verified on 1.5.4 to block
+    # `disabled_filesystems`, `enable_external_access`, `secret_directory`,
+    # `extension_directory`, `home_directory`, `custom_extension_repository`,
+    # `allow_unsigned_extensions`, and both `lock_configuration` and
+    # `allowed_configs` themselves, while leaving the runner's own needs writable
+    # (see `_ALLOWED_CONFIGS` in executor/runner.py). On by default; the kill
+    # switch exists because it is applied to every connection.
+    sandbox_lock_configuration: bool = True
 
     # OpenTelemetry tracing. Unset endpoint (the default) disables the SDK
     # entirely — no spans, no exporter. Maps from the standard

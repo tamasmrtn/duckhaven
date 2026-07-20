@@ -26,6 +26,7 @@ async def run_query(
     conn: duckdb.DuckDBPyConnection | None = None,
     enable_profiling: bool = True,
     disabled_filesystems: str | None = None,
+    lock_config: bool = False,
 ) -> dict[str, Any]:
     loop = asyncio.get_running_loop()
     # In the `auto` profile the connection is opened+attached before admission
@@ -50,6 +51,7 @@ async def run_query(
             on_connect=lambda c: conn_box.__setitem__("conn", c),
             trace_headers=trace_headers,
             disabled_filesystems=disabled_filesystems,
+            lock_config=lock_config,
         )
 
     def _interrupt() -> None:

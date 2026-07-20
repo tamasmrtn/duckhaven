@@ -162,6 +162,11 @@ services:
   minio:
     image: minio/minio:${MINIO_IMAGE_TAG:-latest}
     restart: unless-stopped
+    # Joins the agent's isolated network in addition to `default`, so the
+    # agent can reach it while this service keeps its own outbound access.
+    networks:
+      - default
+      - duckhaven_internal
     entrypoint:
       - /bin/sh
       - -c
@@ -206,6 +211,11 @@ services:
   polaris:
     image: apache/polaris:${POLARIS_IMAGE_TAG:-latest}
     restart: unless-stopped
+    # Joins the agent's isolated network in addition to `default`, so the
+    # agent can reach it while this service keeps its own outbound access.
+    networks:
+      - default
+      - duckhaven_internal
     depends_on:
       polaris-bootstrap:
         condition: service_completed_successfully
@@ -241,6 +251,7 @@ services:
   # ── API replicas behind Caddy ───────────────────────────────────────────────
   api-1:
     <<: *api-base
+    networks: [default, duckhaven_internal]
     environment:
       <<: *api-env
       REPLICA_ID: api-1
@@ -250,6 +261,7 @@ services:
 
   api-2:
     <<: *api-base
+    networks: [default, duckhaven_internal]
     environment:
       <<: *api-env
       REPLICA_ID: api-2
@@ -260,6 +272,11 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    # Joins the agent's isolated network in addition to `default`, so the
+    # agent can reach it while this service keeps its own outbound access.
+    networks:
+      - default
+      - duckhaven_internal
     depends_on:
       api-1:
         condition: service_started
@@ -278,6 +295,27 @@ services:
     image: ghcr.io/tamasmrtn/duckhaven-agent:${DUCKHAVEN_IMAGE_TAG:-latest}
     restart: unless-stopped
     mem_limit: ${AGENT_MEM_LIMIT:-4g}
+    # Sandbox hardening, identical to the dev compose file. Because the API
+    # statement policy (not a hard SQL allowlist) governs which statements reach
+    # DuckDB, the agent must be contained at the OS layer: a read-only root
+    # filesystem means any local write outside the results volume fails at the
+    # kernel, dropped capabilities + no-new-privileges shrink the blast radius,
+    # and a pids cap bounds fork bombs. DuckDB's extensions are baked into the
+    # image (INSTALL is a no-op when present) and it writes temp/spill + result
+    # Parquet only under the writable results volume + /tmp tmpfs.
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 512
+    # Egress restriction: the agent is on the isolated network ONLY, so it can
+    # reach caddy/api/polaris/minio/otel-collector and nothing else. See the
+    # networks block at the bottom of this file.
+    networks:
+      - duckhaven_internal
     depends_on:
       caddy:
         condition: service_started
@@ -289,6 +327,9 @@ services:
       POLARIS_CLIENT_ID: ${POLARIS_CLIENT_ID:-root}
       POLARIS_CLIENT_SECRET: ${POLARIS_CLIENT_SECRET:-s3cr3t}
       RESULTS_HTTP_HOST: 0.0.0.0
+      # See deploy/docker-compose.yml for the rationale on both sandbox knobs.
+      SANDBOX_DISABLED_FILESYSTEMS: ${SANDBOX_DISABLED_FILESYSTEMS:-}
+      SANDBOX_LOCK_CONFIGURATION: ${SANDBOX_LOCK_CONFIGURATION:-true}
       # OpenTelemetry tracing (empty = disabled), same collector as the api.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
     volumes:
@@ -314,6 +355,11 @@ services:
   otel-collector:
     image: otel/opentelemetry-collector:${OTEL_COLLECTOR_IMAGE_TAG:-latest}
     restart: unless-stopped
+    # Joins the agent's isolated network in addition to `default`, so the
+    # agent can reach it while this service keeps its own outbound access.
+    networks:
+      - default
+      - duckhaven_internal
     command: ["--config=/etc/otelcol/config.yaml"]
     depends_on:
       tempo:
@@ -331,3 +377,14 @@ volumes:
   caddy_data:
   caddy_config:
   tempo_data:
+
+# Agent egress restriction — see deploy/docker-compose.yml for the full rationale.
+# `duckhaven_internal` is an isolated bridge with no route off the host, so the
+# agent (attached to it alone) cannot reach an arbitrary address even if a
+# statement slips past the API policy. Opt out with
+# deploy/docker-compose.egress-opt-out.yml when the agent needs real internet
+# (external s3/adls_gen2 storage, off-host Polaris).
+networks:
+  default:
+  duckhaven_internal:
+    internal: true

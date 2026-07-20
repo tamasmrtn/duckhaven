@@ -69,6 +69,14 @@ async def test_session_multi_statement_script(api_client, workspace, healthy_age
         "ATTACH 'evil.db' AS evil",
         "INSTALL spatial",
         "SELECT * FROM read_parquet('/etc/passwd')",
+        # Parser-divergence escapes: statements sqlglot models differently from
+        # DuckDB, which the policy admitted until they were closed. Each is a real
+        # DuckDB read, so they are asserted over the live API->agent path too.
+        "SELECT * FROM 'http://attacker.example/x.parquet'",
+        "SELECT * FROM sniff_csv('http://attacker.example/a.csv')",
+        "SELECT * FROM parquet_metadata('/etc/passwd')",
+        # A SET that would re-widen the agent's DuckDB sandbox.
+        "SET disabled_filesystems = ''",
     ],
 )
 async def test_hostile_statements_rejected(api_client, workspace, healthy_agent, sql) -> None:

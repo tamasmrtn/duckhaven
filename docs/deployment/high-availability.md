@@ -187,6 +187,17 @@ See the [HA failover runbook](../operations/ha-failover.md) for the drills:
 killing the Postgres primary, killing an API replica mid-query, and confirming
 the scanner and migrations don't double-run across replicas.
 
+## Agent sandboxing
+
+The bundled agent in `docker-compose.ha.yml` carries the same containment as the
+single-node stack: a read-only root filesystem, dropped capabilities,
+`no-new-privileges`, a process cap, and attachment to the isolated
+`duckhaven_internal` network only — so it can reach Caddy, Polaris, MinIO, and the
+collector, and nothing else. Opting out (for external cloud storage) works the
+same way as on the single-node stack; see
+[Install](./install.md#agent-network-egress) and
+[Sandboxing](../concepts/sql-sessions.md#sandboxing).
+
 ## Limitations
 
 - **In-flight queries on a hard replica kill.** If a replica is killed

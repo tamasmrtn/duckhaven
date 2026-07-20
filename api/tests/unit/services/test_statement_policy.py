@@ -82,3 +82,59 @@ def test_read_parquet_with_non_literal_path_is_denied():
     with pytest.raises(StatementNotAllowed) as exc:
         _check("SELECT * FROM read_parquet(concat('s3://', 'x'))")
     assert exc.value.rule == "read_path"
+
+
+# ── Parser divergence between sqlglot (this policy) and DuckDB (the agent) ────
+#
+# Each case below was verified to be a real, working DuckDB read/write that this
+# policy previously admitted. They are the structural risk of an API-side-only
+# policy, so they get explicit regression coverage.
+
+DIVERGENCE_DENIED = [
+    # DuckDB's replacement scan: a bare path/URL in FROM is a file read. sqlglot
+    # models it exactly like a quoted identifier, so it slipped through.
+    ("SELECT * FROM 'http://attacker.example/x.parquet'", "read_path"),
+    ("SELECT * FROM '/etc/passwd'", "read_path"),
+    ("SELECT * FROM 's3://other-bucket/secrets.parquet'", "read_path"),
+    ("INSERT INTO t SELECT * FROM 'http://attacker.example/x.parquet'", "read_path"),
+    # File-reading functions the original list missed.
+    ("SELECT * FROM sniff_csv('http://attacker.example/a.csv')", "read_path"),
+    ("SELECT * FROM parquet_metadata('http://attacker.example/a.parquet')", "read_path"),
+    ("SELECT * FROM parquet_schema('/etc/passwd')", "read_path"),
+    ("SELECT * FROM iceberg_scan('http://attacker.example/meta.json')", "read_path"),
+    ("SELECT * FROM delta_scan('http://attacker.example/')", "read_path"),
+    # `..` resolved outside the staging prefix after a naive startswith check.
+    (
+        "COPY (SELECT 1) TO 's3://warehouse/analytics/_staging/sess-1/../../evil.parquet'",
+        "copy_path",
+    ),
+    (
+        "SELECT * FROM read_parquet('s3://warehouse/analytics/_staging/sess-1/../../../x.parquet')",
+        "read_path",
+    ),
+]
+
+
+@pytest.mark.parametrize(("sql", "rule"), DIVERGENCE_DENIED)
+def test_parser_divergence_escapes_are_denied(sql, rule):
+    with pytest.raises(StatementNotAllowed) as exc:
+        _check(sql)
+    assert exc.value.rule == rule
+
+
+DIVERGENCE_ALLOWED = [
+    # Ordinary quoted identifiers must not be mistaken for paths — dbt quotes
+    # names with spaces, case, or reserved words all the time.
+    'SELECT * FROM "my table"',
+    'SELECT * FROM "my cat"."my schema"."my table"',
+    'SELECT "select" FROM "order"',
+    # A staged file read through the replacement scan is legitimate.
+    "SELECT * FROM 's3://warehouse/analytics/_staging/sess-1/part-0.parquet'",
+    # `.` segments inside the staging prefix normalize back into it.
+    "SELECT * FROM read_parquet('s3://warehouse/analytics/_staging/sess-1/./part-0.parquet')",
+]
+
+
+@pytest.mark.parametrize("sql", DIVERGENCE_ALLOWED)
+def test_divergence_fixes_do_not_over_reject(sql):
+    _check(sql)  # must not raise

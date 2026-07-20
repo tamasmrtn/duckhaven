@@ -108,6 +108,26 @@ would hide:
   `status="error"` (or 5xx) here to catch catalog-layer degradation before it manifests as
   mysterious query failures.
 
+### Blocked sandbox escapes
+
+A [SQL session](../concepts/sql-sessions.md) statement that tries to leave its sandbox is
+rejected at one of two layers, and each is observable:
+
+- **At the API** — `duckhaven_statement_policy_rejections_total{rule}` counts statements the
+  capability-scoped policy refused, broken down by rule (`read_path`, `copy_path`,
+  `attach_target`, `set_name`, `install`, `command`, `unparseable`, …). A steady trickle is
+  normal for an exploratory user; a sustained rate on `read_path`/`copy_path` from one
+  principal is worth looking at.
+- **At the agent** — a statement blocked by DuckDB's own guards (a disabled filesystem, or a
+  `SET` refused because the configuration is locked) is logged at `WARNING` as
+  `Statement blocked by the DuckDB sandbox: …` and also lands in
+  `duckhaven_sql_statements_total{status="failed"}`. Reaching this layer means the statement
+  got past the API policy, so a recurring one is worth investigating rather than tuning away.
+
+Note that the **network egress** restriction has no metric of its own: a blocked connection
+surfaces as an ordinary statement failure with a connection error. It is verified by the
+runtime check in [Sandboxing](../concepts/sql-sessions.md#sandboxing), not by a counter.
+
 ### Behavior under high availability
 
 Under the opt-in [HA topology](../deployment/high-availability.md) several API replicas run at

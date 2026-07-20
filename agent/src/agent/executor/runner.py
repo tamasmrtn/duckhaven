@@ -409,21 +409,111 @@ def _attach_catalogs(
         conn.execute(f'USE "{aslug}"."{schema}"')
 
 
-def _apply_fs_sandbox(conn: duckdb.DuckDBPyConnection, disabled_filesystems: str | None) -> None:
-    """Apply the DuckDB filesystem sandbox (defense-in-depth beneath the API
-    statement policy). ``disabled_filesystems`` is a DuckDB ``disabled_filesystems``
-    value (e.g. ``"HTTPFileSystem"``); empty/None is a no-op. See
-    ``agent.config.Settings.sandbox_disabled_filesystems`` for why this is off by
-    default on the bundled plain-HTTP topology and the verified 1.5.4 limits of
-    ``allowed_directories``/``disabled_filesystems`` for the local FS."""
-    if not disabled_filesystems or not disabled_filesystems.strip():
-        return
-    value = disabled_filesystems.replace(",", " ").split()
-    escaped = ",".join(v.replace("'", "''") for v in value)
-    try:
-        conn.execute(f"SET disabled_filesystems='{escaped}'")
-    except duckdb.Error as exc:
-        logger.warning("Could not apply disabled_filesystems sandbox: %s", exc)
+# Filesystem names DuckDB actually registers (core + the httpfs/azure extensions
+# the agent loads). Verified on 1.5.4: `SET disabled_filesystems` accepts ANY
+# string without error, so a typo silently disables nothing — exactly the
+# "comment that looks like a defense" failure this sandbox exists to avoid. We
+# therefore validate against this list and warn on anything unrecognized.
+_KNOWN_FILESYSTEMS = frozenset(
+    {
+        "LocalFileSystem",
+        "HTTPFileSystem",
+        "S3FileSystem",
+        "GCSFileSystem",
+        "AzureBlobStorageFileSystem",
+        "AzureDfsStorageFileSystem",
+        "HuggingFaceFileSystem",
+    }
+)
+
+# Settings that must remain writable after `lock_configuration` — DuckDB's
+# `allowed_configs` exception list. Each entry is a legitimate need of code that
+# runs AFTER the sandbox is applied:
+#   memory_limit / threads              -> _run_one_statement, per statement
+#   enable_profiling / profiling_output /
+#     custom_profiling_settings         -> _run_one_statement's profile capture
+#   TimeZone                            -> the `SET timezone` the API statement
+#                                          policy deliberately admits
+# Everything else — disabled_filesystems, enable_external_access,
+# secret_directory, extension_directory, home_directory, custom_extension_repository,
+# allow_unsigned_extensions, and `allowed_configs`/`lock_configuration` themselves
+# — becomes un-widenable for the life of the connection. `SET search_path`/`SET
+# schema`/`USE` are unaffected: they are not configuration options.
+_ALLOWED_CONFIGS = (
+    "memory_limit",
+    "threads",
+    "TimeZone",
+    "enable_profiling",
+    "profiling_output",
+    "custom_profiling_settings",
+)
+
+
+# Wording DuckDB uses when one of the sandbox's own guards refuses a statement:
+# a disabled filesystem, or a `SET` refused because the configuration is locked.
+# Matched on the message because DuckDB reuses the same exception types for
+# ordinary user errors (see `_is_sandbox_denial`).
+_SANDBOX_DENIAL_MARKERS = (
+    "has been disabled by configuration",
+    "the configuration has been locked",
+    "file system operations are disabled by configuration",
+)
+
+
+def _is_sandbox_denial(exc: Exception) -> bool:
+    """True when ``exc`` is the sandbox refusing a statement, not a user error."""
+    msg = str(exc).lower()
+    return any(marker in msg for marker in _SANDBOX_DENIAL_MARKERS)
+
+
+def _apply_sandbox(
+    conn: duckdb.DuckDBPyConnection,
+    disabled_filesystems: str | None,
+    *,
+    lock_config: bool,
+) -> None:
+    """Apply the DuckDB sandbox (defense-in-depth beneath the API statement policy).
+
+    Two independent controls, both verified on DuckDB 1.5.4:
+
+    - ``disabled_filesystems`` — a one-way latch. Once a filesystem is disabled,
+      neither ``SET disabled_filesystems=''`` nor ``RESET`` can restore it
+      ("has been disabled previously, it cannot be re-enabled"). Empty/None is a
+      no-op; see ``agent.config.Settings.sandbox_disabled_filesystems`` for why it
+      ships off.
+    - ``lock_config`` — ``allowed_configs`` + ``lock_configuration``, so a session
+      statement cannot re-widen the sandbox with ``SET``. Applied last, after the
+      IO extensions are loaded, the catalogs are attached, and the secrets exist,
+      so only subsequent user statements are constrained.
+
+    Best-effort throughout: a DuckDB error is logged rather than raised, so an
+    unexpected engine change degrades the sandbox instead of failing every query.
+    """
+    if disabled_filesystems and disabled_filesystems.strip():
+        names = disabled_filesystems.replace(",", " ").split()
+        known = [n for n in names if n in _KNOWN_FILESYSTEMS]
+        for unknown in (n for n in names if n not in _KNOWN_FILESYSTEMS):
+            logger.warning(
+                "Ignoring unknown filesystem %r in sandbox_disabled_filesystems "
+                "(DuckDB accepts unknown names silently, so this would disable nothing); "
+                "known names: %s",
+                unknown,
+                ", ".join(sorted(_KNOWN_FILESYSTEMS)),
+            )
+        if known:
+            escaped = ",".join(n.replace("'", "''") for n in known)
+            try:
+                conn.execute(f"SET disabled_filesystems='{escaped}'")
+            except duckdb.Error as exc:
+                logger.warning("Could not apply disabled_filesystems sandbox: %s", exc)
+
+    if lock_config:
+        allowed = ",".join(f"'{name}'" for name in _ALLOWED_CONFIGS)
+        try:
+            conn.execute(f"SET allowed_configs=[{allowed}]")
+            conn.execute("SET lock_configuration=true")
+        except duckdb.Error as exc:
+            logger.warning("Could not lock DuckDB configuration: %s", exc)
 
 
 def open_and_attach(
@@ -433,6 +523,7 @@ def open_and_attach(
     polaris: dict[str, Any] | None = None,
     trace_headers: dict[str, str] | None = None,
     disabled_filesystems: str | None = None,
+    lock_config: bool = False,
 ) -> duckdb.DuckDBPyConnection:
     """Open a DuckDB connection, load the storage IO extensions, and ATTACH every
     catalog bound to the workspace so table names bind.
@@ -469,10 +560,11 @@ def open_and_attach(
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Polaris ATTACH failed: %s", exc)
-    # Apply the FS sandbox last: the IO extensions are loaded and catalogs are
-    # attached, so disabling a filesystem here only constrains subsequent
-    # user-statement access, not the trusted attach/credential-vending path.
-    _apply_fs_sandbox(conn, disabled_filesystems)
+    # Apply the sandbox last: the IO extensions are loaded and catalogs are
+    # attached, so disabling a filesystem (and locking the configuration) here
+    # only constrains subsequent user-statement access, not the trusted
+    # attach/credential-vending path.
+    _apply_sandbox(conn, disabled_filesystems, lock_config=lock_config)
     return conn
 
 
@@ -563,6 +655,14 @@ def _run_one_statement(
             affected = conn.execute(sql).fetchone()
             duration_ms = int((time.monotonic() - start) * 1000)
             row_count = affected[0] if affected and isinstance(affected[0], int) else 0
+    except duckdb.Error as exc:
+        # A defeated escape attempt is worth a WARNING operators can alert on, but
+        # only when it really is one: DuckDB raises InvalidInputException for
+        # plenty of ordinary user mistakes, so match the sandbox's own wording
+        # rather than the exception type alone.
+        if _is_sandbox_denial(exc):
+            logger.warning("Statement blocked by the DuckDB sandbox: %s", exc)
+        raise
     finally:
         profile_path.unlink(missing_ok=True)
     return {
@@ -590,6 +690,7 @@ def run_query_sync(
     on_connect: Callable[[duckdb.DuckDBPyConnection], None] | None = None,
     trace_headers: dict[str, str] | None = None,
     disabled_filesystems: str | None = None,
+    lock_config: bool = False,
 ) -> dict[str, Any]:
     """Run a query through DuckDB.
 
@@ -620,6 +721,7 @@ def run_query_sync(
             polaris=polaris,
             trace_headers=trace_headers,
             disabled_filesystems=disabled_filesystems,
+            lock_config=lock_config,
         )
         if on_connect is not None:
             on_connect(c)

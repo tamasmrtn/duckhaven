@@ -1,0 +1,27 @@
+# Opt out of the agent's network egress restriction.
+#
+# By default the agent sits on `duckhaven_internal` alone — an isolated bridge
+# with no route off the host — so a session statement cannot reach an arbitrary
+# address even if it slips past the API statement policy. This override re-adds
+# the agent to the default network, restoring full outbound access.
+#
+# You need this when the agent must reach something outside the compose network:
+#
+#   - a catalog whose storage backend is external (`s3`, `adls_gen2`)
+#   - an off-host Apache Polaris
+#   - an OTLP collector outside the stack
+#
+# Understand the trade before using it: with the agent back on the default
+# network, the only remaining layer between a session statement and arbitrary
+# egress is the API's statement policy. If you can, prefer restricting egress to
+# the specific hosts you need (host firewall, or a Kubernetes NetworkPolicy —
+# see docs/deployment/install.md) over removing the restriction entirely.
+#
+# Usage:
+#   docker compose -f deploy/docker-compose.yml \
+#                  -f deploy/docker-compose.egress-opt-out.yml up -d
+services:
+  agent:
+    networks:
+      - duckhaven_internal
+      - default

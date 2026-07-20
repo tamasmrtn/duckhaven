@@ -15,6 +15,8 @@ opened. Unparseable or unrecognized SQL is rejected fail-closed.
 
 from __future__ import annotations
 
+import posixpath
+
 import sqlglot
 from sqlglot import exp
 
@@ -40,6 +42,15 @@ _FILE_FUNCTION_NAMES = {
     "read_parquet",
     "parquet_scan",
     "glob",
+    # Metadata/probe readers. They return schema rather than data, but they still
+    # perform a fetch of an arbitrary path — enough to work as a read oracle and
+    # to reach a host the agent should not touch.
+    "sniff_csv",
+    "parquet_metadata",
+    "parquet_schema",
+    # Table-format scanners that take a location instead of a catalog relation.
+    "iceberg_scan",
+    "delta_scan",
 }
 
 # Statement node types admitted outright (their file-function args are still
@@ -76,8 +87,23 @@ class StatementNotAllowed(ValueError):
         self.rule = rule
 
 
+def _normalize(path: str) -> str:
+    """Collapse ``.``/``..`` segments before a prefix compare.
+
+    Without this, ``'<staging>/../../escaped.parquet'`` passes ``startswith`` and
+    then resolves *outside* the prefix — verified against DuckDB, which wrote the
+    escaped file. ``normpath`` is applied to the path portion only so a scheme's
+    ``//`` (``s3://``, ``https://``) survives.
+    """
+    scheme, sep, rest = path.partition("://")
+    if sep:
+        return f"{scheme}{sep}{posixpath.normpath(rest)}"
+    return posixpath.normpath(path)
+
+
 def _is_under_staging(path: str, staging_prefixes: list[str]) -> bool:
-    return any(path.startswith(prefix) for prefix in staging_prefixes if prefix)
+    normalized = _normalize(path)
+    return any(normalized.startswith(_normalize(prefix)) for prefix in staging_prefixes if prefix)
 
 
 def _positional_path_arg(node: exp.Expression) -> exp.Expression | None:
@@ -100,6 +126,35 @@ def _paths_from_arg(arg: exp.Expression | None) -> list[str] | None:
         if len(literals) == len(arg.expressions) and literals:
             return [e.this for e in literals]
     return None
+
+
+def _looks_like_a_path(name: str) -> bool:
+    """True when a quoted relation name is really a file/URL for DuckDB's
+    replacement scan, rather than an ordinary quoted identifier.
+
+    ``SELECT * FROM 'http://host/x.parquet'`` is a valid DuckDB read, but sqlglot
+    models the literal exactly like a double-quoted identifier (``Table`` with a
+    ``quoted=True`` Identifier), so the two are indistinguishable by shape alone.
+    A URL scheme or a path separator is the discriminator: dbt quotes identifiers
+    containing spaces, case, or reserved words — never ``://`` or ``/``.
+    """
+    return "://" in name or "/" in name
+
+
+def _check_replacement_scans(stmt: exp.Expression, staging_prefixes: list[str]) -> None:
+    """Confine DuckDB replacement scans (``FROM '<path or URL>'``) to staging."""
+    for table in stmt.find_all(exp.Table):
+        ident = table.this
+        if not (isinstance(ident, exp.Identifier) and ident.quoted):
+            continue
+        name = ident.name
+        if not _looks_like_a_path(name):
+            continue
+        if not _is_under_staging(name, staging_prefixes):
+            raise StatementNotAllowed(
+                f"Reading directly from a path may only target the staging prefix, not {name!r}",
+                "read_path",
+            )
 
 
 def _check_file_functions(stmt: exp.Expression, staging_prefixes: list[str]) -> None:
@@ -169,9 +224,11 @@ def _check_attach(stmt: exp.Attach, managed_catalogs: set[str]) -> None:
 def _check_statement(
     stmt: exp.Expression, staging_prefixes: list[str], managed_catalogs: set[str]
 ) -> None:
-    # File-reading functions are checked in every statement type (a SELECT/INSERT
-    # can embed read_parquet('s3://…')).
+    # File-reading functions and bare-path replacement scans are checked in every
+    # statement type (a SELECT/INSERT can embed read_parquet('s3://…') or
+    # FROM 'http://…').
     _check_file_functions(stmt, staging_prefixes)
+    _check_replacement_scans(stmt, staging_prefixes)
 
     if isinstance(stmt, exp.Set):
         _check_set(stmt)

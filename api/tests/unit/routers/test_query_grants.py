@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 import pytest_asyncio
 from conftest import seed_workspace
 from httpx import AsyncClient
@@ -159,11 +160,90 @@ async def test_alter_requires_writer_on_target(
     assert resp.status_code == 403
 
 
-async def test_info_schema_is_exempt(authed_client, scoped_ws, connected_agent, db_session):
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM information_schema.tables",
+        "SELECT * FROM system.information_schema.tables",
+        "SELECT * FROM duckdb_tables()",
+        "SHOW TABLES",
+        "PRAGMA table_info('analytics.leads')",
+    ],
+)
+async def test_metadata_enumeration_denied_in_scoped_catalog(
+    authed_client, scoped_ws, connected_agent, db_session, sql
+):
+    """A principal with no grant must not be able to learn that a table exists.
+
+    The browse endpoints filter their listings by grant; DuckDB computes these
+    views across every attached catalog and cannot, so they are rejected instead.
+    """
     ws, _cat = scoped_ws
-    # No grant, scoped catalog — but the metadata surface is always readable.
+    resp = await _run(authed_client, ws, connected_agent, sql)
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["error"] == "grant_denied"
+
+
+async def test_metadata_enumeration_denied_even_with_a_grant(
+    authed_client, scoped_ws, connected_agent, db_session, user
+):
+    """Holding a grant on one table does not re-open the unfiltered listing —
+    it would still enumerate every other table in the catalog."""
+    ws, cat = scoped_ws
+    _grant(db_session, user, cat, "reader", table="leads")
+    await db_session.commit()
+    resp = await _run(authed_client, ws, connected_agent, "SELECT * FROM information_schema.tables")
+    assert resp.status_code == 403
+
+
+async def test_info_schema_still_exempt_in_open_catalog(
+    authed_client, db_session, user, connected_agent
+):
+    """The rejection is scoped-only: an `open` attachment (the default) keeps
+    today's behavior, so no existing workspace loses `information_schema`."""
+    ws, _cat = await seed_workspace(db_session, user_id=user.id, slug="open-info-ws")
     resp = await _run(authed_client, ws, connected_agent, "SELECT * FROM information_schema.tables")
     assert resp.status_code == 202
+
+
+async def test_describe_needs_only_metadata_tier(
+    authed_client, scoped_ws, connected_agent, db_session, user
+):
+    """DESCRIBE is the supported column path for Iceberg relations, and it reads
+    no rows — so the discovery tier that can already see the columns through the
+    browse endpoint can run it in SQL too."""
+    ws, cat = scoped_ws
+    _grant(db_session, user, cat, "metadata", table="leads")
+    await db_session.commit()
+    resp = await _run(authed_client, ws, connected_agent, "DESCRIBE analytics.leads")
+    assert resp.status_code == 202
+    resp = await _run(
+        authed_client, ws, connected_agent, "SELECT * FROM (DESCRIBE analytics.leads)"
+    )
+    assert resp.status_code == 202
+    # The same tier still cannot read the rows.
+    resp = await _run(authed_client, ws, connected_agent, "SELECT * FROM analytics.leads")
+    assert resp.status_code == 403
+
+
+async def test_describe_denied_without_any_grant(
+    authed_client, scoped_ws, connected_agent, db_session
+):
+    ws, _cat = scoped_ws
+    resp = await _run(authed_client, ws, connected_agent, "DESCRIBE analytics.leads")
+    assert resp.status_code == 403
+
+
+async def test_summarize_still_needs_reader(
+    authed_client, scoped_ws, connected_agent, db_session, user
+):
+    """SUMMARIZE scans the rows to compute its statistics, so the metadata tier
+    must not reach it even though its output looks like a describe."""
+    ws, cat = scoped_ws
+    _grant(db_session, user, cat, "metadata", table="leads")
+    await db_session.commit()
+    resp = await _run(authed_client, ws, connected_agent, "SUMMARIZE analytics.leads")
+    assert resp.status_code == 403
 
 
 async def test_open_mode_dispatch_needs_no_grant(authed_client, db_session, user, connected_agent):

@@ -46,7 +46,10 @@ ROLE_CAP: dict[str, str] = {"reader": "reader", "writer": "writer", "owner": "wr
 
 # Built-in discovery surfaces that are never grant-checked: the read-only system
 # catalog and the metadata namespaces. This is what lets a `metadata`-tier
-# principal query `information_schema` while being denied table rows.
+# principal query `information_schema` while being denied table rows — but only
+# in an `open` catalog. Under a `scoped` attachment the metadata namespaces are
+# rejected instead (`metadata_enumeration_reason`), because the engine computes
+# them across every attachment and cannot narrow them to the principal's grants.
 SYSTEM_CATALOGS: frozenset[str] = frozenset({"duckhaven", "system", "temp"})
 METADATA_SCHEMAS: frozenset[str] = frozenset({"info_schema", "information_schema"})
 
@@ -68,6 +71,11 @@ class TableRef:
     schema: str | None
     table: str
     is_target: bool  # True = the write target (needs `writer`), else a source
+    # True when the statement only reads the relation's *shape*, never its rows —
+    # i.e. it sits under a `DESCRIBE`. Such a ref needs only `metadata`, matching
+    # what the REST browse endpoint (`routers/schemas.py::get_table`) requires to
+    # return the very same column list.
+    is_metadata_only: bool = False
 
 
 def tier_rank(tier: str | None) -> int:
@@ -298,6 +306,11 @@ def extract_table_refs(sql: str) -> list[TableRef]:
             continue
         cte_names = {c.alias_or_name for c in stmt.find_all(exp.CTE)}
         targets = _target_tables(stmt)
+        # Tables under a DESCRIBE, by identity. Collected from anywhere in the
+        # tree rather than only the top level, so `SELECT … FROM (DESCRIBE t)` —
+        # the form dlt and dbt emit — is recognized as well as a bare `DESCRIBE t`.
+        # Deliberately not SUMMARIZE: that one scans the rows.
+        described = {id(t) for d in stmt.find_all(exp.Describe) for t in d.find_all(exp.Table)}
         for t in stmt.find_all(exp.Table):
             cat = t.catalog or None
             schema = t.db or None
@@ -310,8 +323,97 @@ def extract_table_refs(sql: str) -> list[TableRef]:
             if cat is None and schema is None and t.name in cte_names:
                 continue
             is_target = any(t is x for x in targets)
-            refs.append(TableRef(catalog=cat, schema=schema, table=t.name, is_target=is_target))
+            refs.append(
+                TableRef(
+                    catalog=cat,
+                    schema=schema,
+                    table=t.name,
+                    is_target=is_target,
+                    is_metadata_only=id(t) in described,
+                )
+            )
     return refs
+
+
+# DuckDB meta table-functions that enumerate catalog objects. They are a second
+# door onto the same listing as `information_schema` (verified live: both span
+# every attached catalog), and `extract_table_refs` cannot see them — a table
+# function parses as an `exp.Table` with an empty name and is skipped there — so
+# they are matched here by function name instead.
+_CATALOG_META_FUNCTIONS = frozenset(
+    {
+        "duckdb_tables",
+        "duckdb_columns",
+        "duckdb_views",
+        "duckdb_schemas",
+        "duckdb_databases",
+        "duckdb_constraints",
+    }
+)
+
+# Row-returning PRAGMAs with no grant-checkable object. `show_tables` and
+# `database_list` enumerate; `table_info` does name one table, but only as an
+# opaque string literal, so the parser sees no `exp.Table` to resolve a tier
+# against — it would read any table's columns unchecked. `DESCRIBE` is the
+# equivalent that *is* checkable, which is why it stays allowed. `PRAGMA version`
+# touches no catalog object at all and is unaffected.
+_UNCHECKABLE_PRAGMAS = frozenset({"show_tables", "database_list", "table_info"})
+
+_ENUMERATION_HINT = (
+    "Enumerating metadata is not available in a scoped catalog because the engine "
+    "cannot filter it by grant. List catalogs, schemas and tables with the "
+    "workspace catalog API instead, and use DESCRIBE <catalog>.<schema>.<table> "
+    "for column detail."
+)
+
+
+def metadata_enumeration_reason(sql: str) -> str | None:
+    """Why ``sql`` reaches catalog metadata in a way grants cannot check.
+
+    ``information_schema`` and its siblings are computed by DuckDB across every
+    attached catalog, so a scoped principal sees objects they hold no grant on —
+    the browse endpoints filter their listings (``visible_schemas`` /
+    ``visible_tables``) but the engine has no way to. Since the rows cannot be
+    filtered, the statement is rejected instead, and callers are pointed at the
+    REST browse endpoints that *can* filter.
+
+    Only consulted for **scoped** attachments (see :func:`assert_query_access`), so
+    open workspaces — the default — never reach this and keep today's behavior.
+    ``DESCRIBE`` is deliberately not covered: it names its object, so it is
+    grant-checked per object at ``metadata`` tier like any other ref.
+
+    Returns a user-facing reason, or ``None`` when nothing enumerates.
+    """
+    try:
+        statements = sqlglot.parse(sql, read="duckdb")
+    except Exception as exc:  # sqlglot.errors.ParseError et al - fail closed
+        raise GrantDenied(f"Could not parse SQL for grant check: {exc}") from exc
+
+    for stmt in statements:
+        if stmt is None:
+            continue
+        for table in stmt.find_all(exp.Table):
+            if table.db and table.db.lower() in METADATA_SCHEMAS:
+                # Matched on the schema, so this catches both the bare
+                # `information_schema.tables` and dbt-duckdb's
+                # `system.information_schema.tables` spelling.
+                return f"`{table.db}.{table.name}` cannot be queried. {_ENUMERATION_HINT}"
+        for fn in stmt.find_all(exp.Anonymous):
+            if isinstance(fn.this, str) and fn.this.lower() in _CATALOG_META_FUNCTIONS:
+                return f"`{fn.this}()` cannot be called. {_ENUMERATION_HINT}"
+        if isinstance(stmt, exp.Show):
+            return f"`SHOW` cannot be used. {_ENUMERATION_HINT}"
+        if isinstance(stmt, exp.Pragma):
+            node = stmt.this
+            if isinstance(node, exp.Anonymous) and isinstance(node.this, str):
+                name = node.this.lower()
+            elif isinstance(node, exp.Column):
+                name = node.name.lower()
+            else:
+                name = ""
+            if name in _UNCHECKABLE_PRAGMAS:
+                return f"`PRAGMA {name}` cannot be used. {_ENUMERATION_HINT}"
+    return None
 
 
 def is_exempt_ref(catalog: str | None, schema: str | None) -> bool:
@@ -330,10 +432,12 @@ async def assert_query_access(
     """Reject a query before dispatch if the principal lacks tier on any object.
 
     Every referenced table needs at least ``reader`` (``writer`` for the write
-    target) on any catalog whose attachment is scoped. Runs for both interactive
-    and scheduled dispatch — the shared chokepoint. It is a **no-op** when no
-    attached catalog is scoped, so open workspaces never even parse the SQL and
-    keep today's behavior byte-for-byte.
+    target, ``metadata`` for a ``DESCRIBE``) on any catalog whose attachment is
+    scoped, and statements that enumerate catalog objects the engine cannot filter
+    by grant are rejected outright (:func:`metadata_enumeration_reason`). Runs for
+    both interactive and scheduled dispatch — the shared chokepoint. It is a
+    **no-op** when no attached catalog is scoped, so open workspaces never even
+    parse the SQL and keep today's behavior byte-for-byte.
 
     Raises :class:`GrantDenied` (a ``ValueError``) on any shortfall, an
     unresolvable/unattached catalog reference, an unparseable statement, or a
@@ -345,6 +449,12 @@ async def assert_query_access(
     scoped_ids = {c.id for c in catalogs if await is_scoped(db, workspace_id, c)}
     if not scoped_ids:
         return
+
+    # Unfilterable engine-side enumeration is rejected outright once any attached
+    # catalog is scoped: DuckDB computes those listings across every attachment
+    # and cannot narrow them to the principal's grants.
+    if (reason := metadata_enumeration_reason(sql)) is not None:
+        raise GrantDenied(reason)
 
     by_slug = {c.slug: c for c in catalogs}
     for ref in extract_table_refs(sql):
@@ -358,7 +468,12 @@ async def assert_query_access(
         if principal_id is None:
             raise GrantDenied("A scoped catalog requires an authenticated principal")
         schema = ref.schema or DEFAULT_SCHEMA
-        need = "writer" if ref.is_target else "reader"
+        if ref.is_target:
+            need = "writer"
+        elif ref.is_metadata_only:
+            need = "metadata"
+        else:
+            need = "reader"
         tier = await node_tier(db, workspace_id, cat, principal_id, schema, ref.table)
         if tier_rank(tier) < TIER_SCALE[need]:
             raise GrantDenied(f"Not authorized ({need}) on {cat.slug}.{schema}.{ref.table}")

@@ -118,9 +118,15 @@ def _is_credential_error(exc: Exception) -> bool:
 
 
 def _is_single_select(sql: str) -> bool:
-    """True when the body is exactly one `SELECT` — the only shape we materialize
-    to Parquet. Everything else (DDL/DML, multi-statement scripts) is executed
-    directly and produces no result file."""
+    """True when the body is exactly one row-producing statement — the only shape
+    we materialize to Parquet. Everything else (DDL/DML, multi-statement scripts)
+    is executed directly and produces no result file.
+
+    Note this is broader than a literal `SELECT`: DuckDB also reports `DESCRIBE`,
+    `SHOW`, `SUMMARIZE` and the row-returning `PRAGMA`s as `StatementType.SELECT`
+    (a config-setting `PRAGMA x = y` is typed `SET`, not SELECT). They all return
+    a result grid, so they all belong on the materialize path — see
+    `_run_one_statement` for why that path cannot use `COPY (…) TO`."""
     try:
         statements = duckdb.extract_statements(sql)
     except Exception:  # noqa: BLE001 - a parse failure surfaces when executed
@@ -627,7 +633,15 @@ def _run_one_statement(
                 conn.execute("PRAGMA enable_profiling='json'")
                 conn.execute(f"PRAGMA profiling_output='{profile_path}'")
                 conn.execute(f"PRAGMA custom_profiling_settings='{_PROFILE_SETTINGS_JSON}'")
-            conn.execute(f"COPY ({sql}) TO '{result_path}' (FORMAT PARQUET)")
+            # Materialize through the relational API rather than a string-built
+            # `COPY ({sql}) TO …`. `COPY`'s source may only be a table name or a
+            # query, so every other shape `_is_single_select` admits — `DESCRIBE`,
+            # `SHOW`, `SUMMARIZE`, `PRAGMA` — is a parser error there. Wrapping the
+            # body in `SELECT * FROM (…)` would rescue all but `PRAGMA`, leaving the
+            # same trap set. `conn.sql()` builds a lazy relation and `write_parquet`
+            # streams it through the identical `BATCH_COPY_TO_FILE` operator, so the
+            # Parquet output and the captured profile are unchanged for a SELECT.
+            conn.sql(sql).write_parquet(str(result_path))
             duration_ms = int((time.monotonic() - start) * 1000)
             if enable_profiling:
                 conn.execute("PRAGMA disable_profiling")

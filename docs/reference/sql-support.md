@@ -13,6 +13,10 @@ executes user SQL) before dispatching it to an [agent](../concepts/agents.md).
 These run on the agent against the workspace's attached Polaris REST catalogs. A single `SELECT` is materialized to
 Parquet and returned as a result grid; other statements run and report status without a grid.
 
+DuckDB also classifies its read-only introspection statements — `DESCRIBE`, `SHOW`, `SUMMARIZE`, and the `PRAGMA`s that
+return rows (`PRAGMA version`, `PRAGMA table_info(…)`, `PRAGMA database_list`, `PRAGMA show_tables`) — as queries. They
+are allowed on the same footing as a `SELECT` and return a result grid too. They read no files and change nothing.
+
 ### Addressing catalogs
 
 Every catalog attached to the workspace is available in a query. Unqualified names (`schema.table`) resolve against the
@@ -73,7 +77,10 @@ See [Snapshots & time travel](../guides/snapshots-time-travel.md) for more on sn
 
 Anything that could break out of the per-query sandbox is rejected, including:
 
-`ATTACH` / `DETACH`, `COPY` / `EXPORT`, `INSTALL` / `LOAD`, `SET` / `PRAGMA`, `CALL`, `VACUUM`, and transaction control.
+`ATTACH` / `DETACH`, `COPY` / `EXPORT`, `INSTALL` / `LOAD`, `SET`, `CALL`, `EXPLAIN`, `VACUUM`, and transaction control.
+
+This includes the configuration-setting form of `PRAGMA` — `PRAGMA <name> = <value>`, which DuckDB treats as a `SET` —
+since it could widen the per-query sandbox. The read-only `PRAGMA`s that return rows are allowed, as described above.
 
 ## Time-travel syntax
 

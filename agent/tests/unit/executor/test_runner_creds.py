@@ -33,6 +33,23 @@ def _catalog(slug: str, polaris_name: str, kind: str, root_uri: str) -> dict[str
     }
 
 
+class _Materialization:
+    """Stands in for the ``DuckDBPyRelation`` ``conn.sql()`` returns.
+
+    The relation is lazy — nothing runs until ``write_parquet``, which is where
+    the runner materializes the result grid (and so where a stale storage
+    credential surfaces)."""
+
+    def __init__(self, on_write, error: Exception | None = None) -> None:
+        self._on_write = on_write
+        self._error = error
+
+    def write_parquet(self, path: str) -> None:
+        self._on_write()
+        if self._error is not None:
+            raise self._error
+
+
 class FakeConn:
     def __init__(self) -> None:
         self.commands: list[tuple[str, list[Any]]] = []
@@ -40,6 +57,9 @@ class FakeConn:
     def execute(self, sql: str, params: list[Any] | None = None):
         self.commands.append((sql, list(params or [])))
         return self
+
+    def sql(self, sql: str) -> _Materialization:
+        return _Materialization(lambda: self.commands.append((f"MATERIALIZE {sql}", [])))
 
     def fetchone(self):
         # `SELECT count(*) FROM read_parquet(...)` is the only fetchone
@@ -258,17 +278,22 @@ _EXPIRED_S3 = (
 
 
 class RetryConn:
-    """A FakeConn that optionally raises a credential error on the COPY."""
+    """A FakeConn that optionally raises a credential error when the result is
+    materialized."""
 
-    def __init__(self, fail_on_copy: bool) -> None:
+    def __init__(self, fail_on_write: bool) -> None:
         self.commands: list[str] = []
-        self._fail_on_copy = fail_on_copy
+        self._fail_on_write = fail_on_write
 
     def execute(self, sql: str, params: list[Any] | None = None):
         self.commands.append(sql)
-        if self._fail_on_copy and sql.startswith("COPY"):
-            raise RuntimeError(_EXPIRED_S3)
         return self
+
+    def sql(self, sql: str) -> _Materialization:
+        return _Materialization(
+            lambda: self.commands.append(f"MATERIALIZE {sql}"),
+            RuntimeError(_EXPIRED_S3) if self._fail_on_write else None,
+        )
 
     def fetchone(self):
         return (0,)
@@ -302,9 +327,11 @@ def test_is_credential_error_matches_expiry_but_not_other_errors():
 def test_expired_credentials_are_re_vended_and_retried_once(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
-    # First connection's COPY fails with an expired-key S3 error; the runner
-    # should re-vend a fresh connection and succeed on the retry.
-    made = _conn_factory(monkeypatch, [RetryConn(fail_on_copy=True), RetryConn(fail_on_copy=False)])
+    # First connection fails materializing the result with an expired-key S3
+    # error; the runner should re-vend a fresh connection and succeed on the retry.
+    made = _conn_factory(
+        monkeypatch, [RetryConn(fail_on_write=True), RetryConn(fail_on_write=False)]
+    )
     result = runner_module.run_query_sync(
         "SELECT 1",
         tmp_path / "out.parquet",
@@ -317,18 +344,20 @@ def test_expired_credentials_are_re_vended_and_retried_once(
     assert result["row_count"] == 0
     # Two connections were opened: the stale one and the re-vended one.
     assert len(made) == 2
-    assert any(c.startswith("COPY") for c in made[1].commands)
+    assert any(c.startswith("MATERIALIZE") for c in made[1].commands)
 
 
 def test_non_credential_error_is_not_retried(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     class BoomConn(RetryConn):
-        def execute(self, sql: str, params: list[Any] | None = None):
-            self.commands.append(sql)
-            if sql.startswith("COPY"):
-                raise RuntimeError("Catalog Error: Table with name users does not exist!")
-            return self
+        def sql(self, sql: str) -> _Materialization:
+            return _Materialization(
+                lambda: self.commands.append(f"MATERIALIZE {sql}"),
+                RuntimeError("Catalog Error: Table with name users does not exist!"),
+            )
 
-    made = _conn_factory(monkeypatch, [BoomConn(fail_on_copy=False), RetryConn(fail_on_copy=False)])
+    made = _conn_factory(
+        monkeypatch, [BoomConn(fail_on_write=False), RetryConn(fail_on_write=False)]
+    )
     with pytest.raises(RuntimeError, match="does not exist"):
         runner_module.run_query_sync(
             "SELECT 1",

@@ -118,6 +118,58 @@ def test_empty_result_produces_zero_rows(tmp_path):
     assert stats["row_count"] == 0
 
 
+# DuckDB reports all of these as StatementType.SELECT, so they reach the
+# materialize path -- but none of them is a legal source for `COPY (...) TO`,
+# which accepts only a table name or a query. Materializing them by string-
+# building a COPY therefore failed with a ParserException instead of returning
+# rows; `DESCRIBE` broke `dbt snapshot` outright. Wrapping the body in
+# `SELECT * FROM (...)` rescues the first three but NOT `PRAGMA`, which is why
+# the runner materializes through the relational API instead.
+@pytest.mark.parametrize(
+    ("sql", "expected_rows"),
+    [
+        ("DESCRIBE (SELECT 1 AS a, 2 AS b)", 2),
+        ("DESCRIBE SELECT 1 AS a", 1),
+        ("SHOW DATABASES", 1),
+        ("SUMMARIZE SELECT 1 AS a", 1),
+        ("PRAGMA version", 1),
+        ("PRAGMA database_list", 1),
+    ],
+)
+def test_select_shaped_meta_statements_materialize(tmp_path, sql, expected_rows):
+    """Statements DuckDB types as SELECT return a result grid, not a parser error."""
+    result_path = tmp_path / "out.parquet"
+    stats = _run(sql, result_path)
+    assert result_path.exists()
+    assert stats["wrote_result"] is True
+    assert stats["row_count"] == expected_rows
+
+
+def test_describe_result_carries_the_column_metadata(tmp_path):
+    """The materialized DESCRIBE holds DuckDB's real describe columns -- the
+    metadata dbt/dlt read for column schema and schema evolution."""
+    import duckdb
+
+    result_path = tmp_path / "out.parquet"
+    _run("DESCRIBE (SELECT 1 AS a, 'x' AS b)", result_path)
+    rows = duckdb.connect().execute(
+        f"SELECT column_name, column_type FROM read_parquet('{result_path}') ORDER BY column_name"
+    )
+    assert rows.fetchall() == [("a", "INTEGER"), ("b", "VARCHAR")]
+
+
+def test_select_profile_reports_true_result_row_count(tmp_path):
+    """DuckDB's profile reports the copy's returned-row count (1), not the
+    SELECT's result size, so the runner overwrites `rows_returned` with the true
+    count. Guards that fixup -- and the result_bytes accounting beside it."""
+    result_path = tmp_path / "out.parquet"
+    stats = _run("SELECT * FROM range(37) t(n)", result_path)
+    assert stats["row_count"] == 37
+    assert stats["profile"] is not None
+    assert stats["profile"]["summary"]["rows_returned"] == 37
+    assert stats["result_bytes"] == result_path.stat().st_size
+
+
 def test_iceberg_metadata_parses_snapshot_and_deletes():
     """The probe maps iceberg_snapshots + iceberg_metadata rows to the wire
     shape, classifying data/delete files via the newer `manifest_content`."""

@@ -126,6 +126,39 @@ async def test_write_requires_writer_on_target(
     assert resp.status_code == 202
 
 
+async def test_truncate_requires_writer_on_target(
+    authed_client, scoped_ws, connected_agent, db_session, user
+):
+    # TRUNCATE destroys every row, so `reader` must not be enough. DuckDB parses
+    # it as a DELETE, so the one-shot allowlist admits it — the grant check is
+    # the only thing standing between a reader and an empty table.
+    ws, cat = scoped_ws
+    _grant(db_session, user, cat, "reader", table="t")
+    await db_session.commit()
+    resp = await _run(authed_client, ws, connected_agent, "TRUNCATE TABLE analytics.t")
+    assert resp.status_code == 403
+
+    await db_session.execute(
+        update(CatalogGrant)
+        .where(CatalogGrant.catalog_id == cat.id, CatalogGrant.table_name == "t")
+        .values(tier="writer")
+    )
+    await db_session.commit()
+    resp = await _run(authed_client, ws, connected_agent, "TRUNCATE TABLE analytics.t")
+    assert resp.status_code == 202
+
+
+async def test_alter_requires_writer_on_target(
+    authed_client, scoped_ws, connected_agent, db_session, user
+):
+    ws, cat = scoped_ws
+    _grant(db_session, user, cat, "reader", table="t")
+    await db_session.commit()
+    sql = "ALTER TABLE analytics.t ADD COLUMN c INTEGER"
+    resp = await _run(authed_client, ws, connected_agent, sql)
+    assert resp.status_code == 403
+
+
 async def test_info_schema_is_exempt(authed_client, scoped_ws, connected_agent, db_session):
     ws, _cat = scoped_ws
     # No grant, scoped catalog — but the metadata surface is always readable.

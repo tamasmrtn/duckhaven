@@ -160,6 +160,19 @@ def test_extract_drop_target():
     assert len(refs) == 1 and refs[0].is_target and refs[0].table == "t"
 
 
+@pytest.mark.parametrize("sql", ["TRUNCATE TABLE cat.s.t", "TRUNCATE cat.s.t"])
+def test_extract_truncate_target(sql):
+    # sqlglot parses TRUNCATE to its own node whose target lives in `expressions`,
+    # not `this` — so it needs `writer`, like the DELETE DuckDB turns it into.
+    refs = extract_table_refs(sql)
+    assert len(refs) == 1 and refs[0].is_target and refs[0].table == "t"
+
+
+def test_extract_alter_target():
+    refs = extract_table_refs("ALTER TABLE cat.s.t ADD COLUMN c INTEGER")
+    assert len(refs) == 1 and refs[0].is_target and refs[0].table == "t"
+
+
 def test_extract_cross_catalog_join():
     refs = _tuples("SELECT * FROM cat_a.s.t JOIN cat_b.s.u ON t.id=u.id")
     assert ("cat_a", "s", "t", False) in refs

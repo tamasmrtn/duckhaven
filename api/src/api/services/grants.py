@@ -260,17 +260,23 @@ async def delete_schema_grants(db: AsyncSession, catalog_id: uuid.UUID, schema: 
 
 # --- SQL object-reference extraction ----------------------------------------
 
-_WRITE_NODES = (exp.Insert, exp.Update, exp.Delete, exp.Merge, exp.Create, exp.Drop)
+_WRITE_NODES = (exp.Insert, exp.Update, exp.Delete, exp.Merge, exp.Create, exp.Drop, exp.Alter)
 
 
-def _target_table(stmt: exp.Expression) -> exp.Table | None:
-    """The write target table of a statement, or None for a pure read."""
+def _target_tables(stmt: exp.Expression) -> list[exp.Table]:
+    """The write target table(s) of a statement; empty for a pure read."""
+    if isinstance(stmt, exp.TruncateTable):
+        # TRUNCATE keeps its target(s) in `expressions` (`this` is None) and
+        # destroys every row in them — a write, exactly like the DELETE that
+        # DuckDB's grammar turns it into.
+        return [t for e in stmt.expressions for t in e.find_all(exp.Table)]
     if not isinstance(stmt, _WRITE_NODES):
-        return None
+        return []
     this = stmt.this
     if isinstance(this, exp.Table):
-        return this
-    return this.find(exp.Table) if this is not None else None
+        return [this]
+    found = this.find(exp.Table) if this is not None else None
+    return [found] if found is not None else []
 
 
 def extract_table_refs(sql: str) -> list[TableRef]:
@@ -291,7 +297,7 @@ def extract_table_refs(sql: str) -> list[TableRef]:
         if stmt is None:
             continue
         cte_names = {c.alias_or_name for c in stmt.find_all(exp.CTE)}
-        target = _target_table(stmt)
+        targets = _target_tables(stmt)
         for t in stmt.find_all(exp.Table):
             cat = t.catalog or None
             schema = t.db or None
@@ -303,7 +309,8 @@ def extract_table_refs(sql: str) -> list[TableRef]:
             # An unqualified name matching a CTE alias is not a real table.
             if cat is None and schema is None and t.name in cte_names:
                 continue
-            refs.append(TableRef(catalog=cat, schema=schema, table=t.name, is_target=t is target))
+            is_target = any(t is x for x in targets)
+            refs.append(TableRef(catalog=cat, schema=schema, table=t.name, is_target=is_target))
     return refs
 
 

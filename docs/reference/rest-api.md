@@ -41,6 +41,29 @@ See [Permissions](../concepts/permissions.md) for the underlying model.
     DuckHaven has no public ingress; the API is reachable only on your private network (Tailscale recommended). The
     agent control channel is a separate WebSocket at `/agents/connect`, not part of this REST surface.
 
+## Result column types
+
+`GET /api/queries/{id}` and `GET /api/queries/{id}/rows` both return a **`column_schema`** field describing the
+result's columns:
+
+```json
+"column_schema": [
+  { "name": "shipped_at", "type": "TIMESTAMP WITH TIME ZONE" },
+  { "name": "amount", "type": "DECIMAL(38,10)" }
+]
+```
+
+`type` is DuckDB's own logical-type spelling — the same string `DESCRIBE` prints, and the same one you can cast back to
+(`SELECT NULL::DECIMAL(38,10)`). It is complete on its own: precision, scale and nested field types are inside the
+string, so there are no separate `precision`/`scale` fields. See
+[Column types](../concepts/query-execution.md#column-types) for how the types are captured and why.
+
+The field is **additive** — `columns` still carries the names-only list it always has — and is `null` in two cases:
+
+- the statement produced no result grid (DDL and DML), and
+- the query ran on an agent older than this feature. The control plane reports nothing rather than deriving types from
+  the result Parquet, whose writer is lossy.
+
 ## Catalog storage migrations
 
 Move a catalog to a different [storage backend](../concepts/storage-backends.md). All endpoints require the catalog's

@@ -82,9 +82,11 @@ The one-shot query path enforces a fixed allowlist (data + catalog DDL only). Se
 `SET`s and `COPY` from staged files — so the session path replaces the allowlist with a **capability-scoped policy**,
 still enforced entirely at the API, per statement:
 
-- **Allowed:** `SELECT`/`INSERT`/`UPDATE`/`DELETE`/`MERGE`, `CREATE`/`ALTER`/`DROP`, `DESCRIBE` (read-only relation
-  introspection that dbt relies on), `USE`, transaction control, a small safe subset of `SET` (e.g. `timezone`), `COPY`
-  **to or from the session's staging prefix only**, and `ATTACH` of the workspace's own managed catalog.
+- **Allowed:** `SELECT`/`INSERT`/`UPDATE`/`DELETE`/`TRUNCATE`/`MERGE`, `CREATE`/`ALTER`/`DROP`, `DESCRIBE` (read-only
+  relation introspection that dbt relies on), `USE`, transaction control, a small safe subset of `SET` (e.g.
+  `timezone`), `COPY` **to or from the session's staging prefix only**, and `ATTACH` of the workspace's own managed
+  catalog. `TRUNCATE` is DuckDB's alias for `DELETE FROM` without a `WHERE` (dbt's seed reset emits it), and is
+  authorized as a write against its target — see [SQL support](../reference/sql-support.md).
 - **Rejected:** `COPY` or `read_parquet`/`read_csv` to a local file, an arbitrary URL, or any object-store path outside
   the staging prefix; arbitrary `INSTALL`/`LOAD`; `ATTACH` of anything else; and any `SET` that could widen the sandbox
   (memory, external access, filesystem allowlists). Anything the parser can't classify is rejected.

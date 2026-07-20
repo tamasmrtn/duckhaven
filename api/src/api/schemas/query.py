@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class QueryCreate(BaseModel):
@@ -15,6 +15,24 @@ class QueryCreate(BaseModel):
     # The worksheet's active catalog (slug) — `USE`d for unqualified table names.
     # When omitted the workspace's default catalog is used.
     catalog: str | None = None
+
+
+class ColumnSchemaOut(BaseModel):
+    """One result column's name and DuckDB logical type.
+
+    ``type`` is spelled the way DuckDB itself prints a logical type — the same
+    string ``DESCRIBE`` returns in its ``column_type`` column. That spelling is
+    self-describing and re-parses exactly, including parameterized and nested
+    types (``DECIMAL(38,10)``, ``STRUCT(a INTEGER, b VARCHAR)``, ``ENUM('e', 'f')``,
+    ``INTEGER[2]``), so no separate precision/scale fields are carried.
+
+    No ``nullable`` field: DuckDB relations carry no reliable nullability
+    (``DESCRIBE`` reports ``YES`` unconditionally), so reporting it would be
+    inventing data.
+    """
+
+    name: str
+    type: str
 
 
 class QueryOut(BaseModel):
@@ -39,6 +57,13 @@ class QueryOut(BaseModel):
     result_bytes: int | None = None
     error: str | None
     progress: dict[str, Any] | None = None
+    # The result's column types, available as soon as the query is done — a client
+    # can learn them without fetching a page. Null for DDL/DML and for runs by an
+    # agent older than the field. Read off the ORM's `result_schema`; the wire name
+    # matches RowsPageOut's so the two surfaces spell the same thing identically.
+    column_schema: list[ColumnSchemaOut] | None = Field(
+        default=None, validation_alias=AliasChoices("column_schema", "result_schema")
+    )
     started_at: datetime
     finished_at: datetime | None
 
@@ -48,6 +73,11 @@ class RowsPageOut(BaseModel):
     columns: list[str]
     cursor: str | None
     total: int
+    # The columns' types, as the executing agent reported them. Additive: `columns`
+    # keeps its names-only shape for clients already in the field. Null for DDL/DML
+    # and for runs by an agent older than this field. Values are still JSON-encoded,
+    # so DECIMAL and HUGEINT arrive as floats regardless of what this says.
+    column_schema: list[ColumnSchemaOut] | None = None
 
 
 class SqlFunctionOut(BaseModel):

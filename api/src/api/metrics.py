@@ -69,6 +69,12 @@ QUERY_RESULT_BYTES = Histogram(
     ["replica_id"],
     buckets=(1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10),
 )
+QUERY_ROWS_DECODE = Histogram(
+    "duckhaven_query_rows_decode_seconds",
+    "Time to decode one proxied result page into the response format.",
+    ["replica_id", "format"],
+    buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5),
+)
 
 HTTP_REQUESTS = Counter(
     "duckhaven_http_requests",
@@ -178,6 +184,15 @@ def record_sql_session_closed(reason: str) -> None:
 
 def record_sql_statement(status: str) -> None:
     SQL_STATEMENTS.labels(settings.replica_id, status).inc()
+
+
+def record_rows_decode(seconds: float, fmt: str = "json") -> None:
+    """Time spent turning a proxied result page into the response body.
+
+    Labelled by response format so a future typed transport (Arrow, external
+    links) is measured against today's JSON decode rather than replacing it.
+    """
+    QUERY_ROWS_DECODE.labels(settings.replica_id, fmt).observe(seconds)
 
 
 def record_statement_policy_rejection(rule: str) -> None:

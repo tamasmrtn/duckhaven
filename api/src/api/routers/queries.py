@@ -1,13 +1,16 @@
+import time
 import uuid
 from datetime import UTC, datetime
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi import Query as QueryParam
+from opentelemetry import trace
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user, get_db
+from api.metrics import record_rows_decode
 from api.models.agent import Agent
 from api.models.query import Query, SavedQuery
 from api.models.user import User
@@ -339,7 +342,7 @@ async def get_query_rows(
     # DDL/DML statements complete without a result file. Report an empty page
     # rather than a 404 so the UI shows a clean "ran, no rows" state.
     if query.result_path is None:
-        return RowsPageOut(rows=[], columns=[], cursor=None, total=0)
+        return RowsPageOut(rows=[], columns=[], cursor=None, total=0, column_schema=None)
     if query.agent_id is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No results available")
 
@@ -374,11 +377,22 @@ async def get_query_rows(
     # starts at the requested rows, so decode at offset 0. An older agent that
     # ignored the params returns the whole file — fall back to decoding at offset.
     decode_offset = 0 if "X-DH-Row-Offset" in upstream.headers else offset
+    started = time.monotonic()
     rows, columns = query_service.decode_parquet_page(upstream.content, limit, decode_offset)
+    record_rows_decode(time.monotonic() - started)
+    trace.get_current_span().set_attribute(
+        "duckhaven.result_schema", query.result_schema is not None
+    )
     total = query.row_count or 0
     next_offset = offset + limit
     next_cursor = str(next_offset) if next_offset < total else None
-    return RowsPageOut(rows=rows, columns=columns, cursor=next_cursor, total=total)
+    return RowsPageOut(
+        rows=rows,
+        columns=columns,
+        cursor=next_cursor,
+        total=total,
+        column_schema=query.result_schema,
+    )
 
 
 @router.get("/workspaces/{ws}/saved-queries", response_model=list[SavedQueryOut])

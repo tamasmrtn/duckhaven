@@ -42,6 +42,56 @@ async def test_select_one_roundtrip(api_client, workspace, healthy_agent) -> Non
     assert rows["total"] == 1
 
 
+async def test_result_schema_crosses_the_agent_boundary(
+    api_client, workspace, healthy_agent
+) -> None:
+    """The `result_schema` field on QUERY_DONE survives a real api↔agent round
+    trip, and carries the *query's* types rather than the Parquet file's.
+
+    HUGEINT, ENUM and fixed-size ARRAY are degraded by DuckDB's Parquet writer
+    (to DOUBLE, VARCHAR and INTEGER[]), so their surviving here proves the agent
+    captured the schema off the relation before materializing it.
+    """
+    body = await _run(
+        api_client,
+        workspace,
+        healthy_agent["id"],
+        "SELECT TIMESTAMPTZ '2026-01-02 03:04:05+00' AS ts, "
+        "1.5::DECIMAL(38,10) AS amt, "
+        "123456789012345678901::HUGEINT AS h, "
+        "'e'::ENUM('e', 'f') AS en, "
+        "[1, 2]::INT[2] AS arr, "
+        "{'a': 1, 'b': 'x'} AS st",
+    )
+    assert body["status"] == "done", body
+    expected = [
+        {"name": "ts", "type": "TIMESTAMP WITH TIME ZONE"},
+        {"name": "amt", "type": "DECIMAL(38,10)"},
+        {"name": "h", "type": "HUGEINT"},
+        {"name": "en", "type": "ENUM('e', 'f')"},
+        {"name": "arr", "type": "INTEGER[2]"},
+        {"name": "st", "type": "STRUCT(a INTEGER, b VARCHAR)"},
+    ]
+    # Available from the status response, before any page is fetched.
+    assert body["column_schema"] == expected
+
+    rows = (await api_client.get(f"/api/queries/{body['id']}/rows")).json()
+    assert rows["column_schema"] == expected
+    assert rows["columns"] == [c["name"] for c in expected]
+
+
+async def test_ddl_reports_no_result_schema(api_client, workspace, healthy_agent) -> None:
+    """A statement with no result grid reports no types."""
+    body = await _run(
+        api_client, workspace, healthy_agent["id"], "CREATE OR REPLACE TEMP TABLE t (x INT)"
+    )
+    assert body["status"] == "done", body
+    assert body["column_schema"] is None
+    rows = (await api_client.get(f"/api/queries/{body['id']}/rows")).json()
+    assert rows["column_schema"] is None
+    assert rows["rows"] == []
+
+
 async def test_paginate_thousand_rows(api_client, workspace, healthy_agent) -> None:
     """A 1000-row result pages 100 at a time into exactly 10 pages.
 

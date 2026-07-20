@@ -194,6 +194,36 @@ async def test_statement_policy_rejection(
     assert resp.json()["detail"]["error"] == "statement_not_allowed"
 
 
+async def test_truncate_statement_is_accepted(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    """dbt's seed reset emits `TRUNCATE TABLE`; the policy used to reject it as an
+    unknown statement type even though the one-shot path already allowed it."""
+    session = await _open_session_row(db_session, workspace, agent, user)
+
+    async def fake_exec(db, sess, query, timeout_s):
+        return True
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements",
+        json={"sql": "TRUNCATE TABLE analytics.seed_countries"},
+    )
+    assert resp.status_code == 202, resp.text
+
+
+async def test_truncate_database_is_rejected(
+    authed_client, db_session, workspace, agent, user, enabled
+):
+    session = await _open_session_row(db_session, workspace, agent, user)
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements", json={"sql": "TRUNCATE DATABASE d"}
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["error"] == "statement_not_allowed"
+
+
 async def test_statement_on_non_open_session_conflicts(
     authed_client, db_session, workspace, agent, user, enabled
 ):

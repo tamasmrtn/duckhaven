@@ -7,11 +7,17 @@ executes user SQL) before dispatching it to an [agent](../concepts/agents.md).
 
 | Category | Statements |
 |---|---|
-| Data | `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `MERGE` |
+| Data | `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, `MERGE` |
 | Catalog DDL | `CREATE`, `ALTER`, `DROP` (schemas and tables) |
 
 These run on the agent against the workspace's attached Polaris REST catalogs. A single `SELECT` is materialized to
 Parquet and returned as a result grid; other statements run and report status without a grid.
+
+`TRUNCATE` is DuckDB's spelling of `DELETE FROM` without a `WHERE` clause — the two compile to exactly the same plan.
+That is worth knowing on Iceberg, where it is **not** the cheap metadata-only operation the name suggests elsewhere:
+emptying a table writes positional delete files proportional to its size, just as the equivalent `DELETE` would. To
+discard a large table cheaply, drop and recreate it instead. Like any write, `TRUNCATE` requires `writer` access on its
+target in a [scoped catalog](../concepts/permissions.md).
 
 DuckDB also classifies its read-only introspection statements — `DESCRIBE`, `SHOW`, `SUMMARIZE`, and the `PRAGMA`s that
 return rows (`PRAGMA version`, `PRAGMA table_info(…)`, `PRAGMA database_list`, `PRAGMA show_tables`) — as queries. They

@@ -213,6 +213,63 @@ async def test_truncate_statement_is_accepted(
     assert resp.status_code == 202, resp.text
 
 
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "DESCRIBE analytics.events",
+        # The subquery form dlt and dbt emit for column metadata.
+        "SELECT column_name, column_type FROM (DESCRIBE analytics.events)",
+        "SHOW TABLES",
+        "SHOW ALL TABLES",
+        "SUMMARIZE analytics.events",
+        "PRAGMA table_info('analytics.events')",
+        "PRAGMA database_list",
+        "PRAGMA version",
+    ],
+)
+async def test_introspection_statements_are_accepted(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch, sql
+):
+    """Relation introspection is how every client discovers schemas and columns.
+
+    These already passed the one-shot `/queries` allowlist and the agent already
+    materializes them, but the session policy rejected them as unknown statement
+    types — so dbt and dlt, which live on the session path, could not introspect
+    at all. `information_schema.columns` cannot substitute: it does not work for
+    attached Iceberg relations (see docs/reference/sql-support.md).
+    """
+    session = await _open_session_row(db_session, workspace, agent, user)
+
+    async def fake_exec(db, sess, query, timeout_s):
+        return True
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+
+    resp = await authed_client.post(f"/sql/sessions/{session.id}/statements", json={"sql": sql})
+    assert resp.status_code == 202, resp.text
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        # PRAGMA is also DuckDB's spelling of SET; the sandbox-widening ones must
+        # stay rejected even though the row-returning ones are now admitted.
+        "PRAGMA memory_limit = '8GB'",
+        "PRAGMA enable_external_access = true",
+        "PRAGMA disable_verification",
+        # Only the argument-less SHOW forms are admitted.
+        "SHOW DATABASES",
+    ],
+)
+async def test_sandbox_widening_pragmas_stay_rejected(
+    authed_client, db_session, workspace, agent, user, enabled, sql
+):
+    session = await _open_session_row(db_session, workspace, agent, user)
+    resp = await authed_client.post(f"/sql/sessions/{session.id}/statements", json={"sql": sql})
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["error"] == "statement_not_allowed"
+
+
 async def test_truncate_database_is_rejected(
     authed_client, db_session, workspace, agent, user, enabled
 ):

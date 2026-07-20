@@ -45,8 +45,8 @@ every table has been copied and verified.
 1. Open **Admin → Migrations**.
 2. Find the catalog in the list and click **Migrate…**.
 3. Choose the **target backend** from the dropdown (the catalog's current backend is excluded) and **Start migration**.
-4. The migration appears under **Migrations for &lt;catalog&gt;** with a live status badge and progress bar. Select it to
-   watch the streamed log and per-table progress.
+4. The migration appears under **Migrations for &lt;catalog&gt;** with a live status badge and progress bar. Select
+   it to watch the streamed log and per-table progress.
 
 The status moves through `pending → copying → verifying → cutover → completed`. You can **Cancel** a migration any time
 before cutover; the shadow catalog and its partial copy are torn down and the catalog stays on its original backend.

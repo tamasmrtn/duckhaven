@@ -110,9 +110,44 @@ describe('CatalogTree', () => {
 
     // Expanding reveals the supported views.
     await userEvent.click(infoNode)
-    for (const view of ['schemata', 'tables', 'columns', 'views']) {
+    for (const view of ['schemata', 'tables', 'views']) {
       expect(screen.getByRole('button', { name: view })).toBeInTheDocument()
     }
+    // `columns` is not offered: DuckDB cannot introspect an attached Iceberg
+    // relation's columns through it, so the seeded query would return an
+    // UNKNOWN placeholder rather than the table's real columns.
+    expect(
+      screen.queryByRole('button', { name: 'columns' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('hides the information_schema node for a scoped catalog', async () => {
+    // Under a scoped attachment the API rejects these views: DuckDB computes
+    // them across every attached catalog and cannot narrow them to the
+    // principal's grants, so listing tables through them would leak. Offering
+    // the node would only lead the user to a 403.
+    server.use(
+      http.get('/api/workspaces/:ws/catalogs', () =>
+        HttpResponse.json([
+          {
+            id: 'cat-scoped',
+            slug: 'acme_analytics',
+            name: 'acme_analytics',
+            polaris_name: 'acme_analytics',
+            storage_backend_kind: 's3',
+            is_default: true,
+            attached_workspaces: 1,
+            access_mode: 'scoped',
+          },
+        ]),
+      ),
+    )
+    renderTree(() => {})
+
+    await screen.findByRole('button', { name: /events/i })
+    expect(
+      screen.queryByRole('button', { name: /information_schema/i }),
+    ).not.toBeInTheDocument()
   })
 
   it('seeds a scoped query when an information_schema view is clicked', async () => {

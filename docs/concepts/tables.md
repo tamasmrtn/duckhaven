@@ -13,6 +13,13 @@ Tables can be created two ways, both backed by Polaris:
 The breadth of `CREATE` / `ALTER` support is bounded by the DuckDB `iceberg` extension version on the executing
 [agent](agents.md); unsupported operations surface as query errors rather than silent no-ops.
 
+## Inspecting a table's columns
+
+Clicking a table in the catalog browser shows its columns as Polaris holds them. From SQL, use
+`DESCRIBE <catalog>.<schema>.<table>` — the supported path, and the one every DuckHaven client uses.
+`information_schema.columns` cannot introspect an Iceberg table; see
+[SQL support](../reference/sql-support.md#columns-and-types-use-describe) for why and what it returns instead.
+
 ## Snapshots and time travel
 
 Each table keeps an Iceberg **snapshot history**. DuckHaven reads it live from Polaris (it is never persisted) and lets

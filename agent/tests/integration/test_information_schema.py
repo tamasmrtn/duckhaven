@@ -17,6 +17,11 @@ It pins the facts the design depends on, including a DuckDB limitation:
    when a future DuckDB starts populating it, this test fails so we update docs.
 3. `<catalog>.information_schema` is not a per-catalog schema inside an attached
    Iceberg catalog, so qualifying with the alias fails to resolve a table there.
+
+`test_relation_metadata_matrix` pins the full surface — which statements DuckHaven
+can rely on for relation metadata and which are broken — against a single held
+connection, because whether a metadata view has been *hydrated* depends on what
+else that connection touched (see the docstring there).
 """
 
 from __future__ import annotations
@@ -116,3 +121,116 @@ async def test_information_schema_lists_attached_catalog_objects(
             run(f"SELECT * FROM {catalog}.information_schema.tables")
     finally:
         run(f"DROP TABLE {table}")
+
+
+async def test_relation_metadata_matrix(
+    polaris_s3_catalog: tuple[str, str], attach_factory
+) -> None:
+    """The full relation-metadata surface for an attached Iceberg catalog.
+
+    Runs on **one held connection** (the `attach_factory` fixture attaches under
+    the alias `dh_catalog`) rather than through `run_query_sync`, because the
+    single most surprising fact here is order-dependent: DuckDB loads an Iceberg
+    table's schema *lazily*, per table, on first touch. `information_schema.columns`
+    circumvents that (duckdb/duckdb-iceberg#1146), so it reports a `('__','UNKNOWN')`
+    placeholder for every untouched table — and real columns for tables the same
+    connection has already described or scanned. Both halves are asserted below.
+
+    This distinction is exactly the single-shot/session split in DuckHaven: the
+    `/queries` path opens a fresh connection per statement, so the view is
+    *always* placeholders there; a SQL session holds its connection, so the view
+    is *inconsistent* — correct for whatever that session happened to touch. In
+    neither case can a client trust it, which is why `DESCRIBE` is the contract.
+
+    The placeholder assertions are canaries: if a future DuckDB populates these
+    views eagerly, they fail, and `docs/reference/sql-support.md` should be updated.
+    """
+    catalog, ns = polaris_s3_catalog
+    conn = attach_factory(catalog, ns)
+    alias = "dh_catalog"
+    described = f"dh_desc_{uuid4().hex[:8]}"
+    untouched = f"dh_untouched_{uuid4().hex[:8]}"
+    # A deliberately non-trivial schema: decimal, timestamptz, list and nested
+    # struct are the types a client is most likely to get wrong.
+    conn.execute(
+        f'CREATE TABLE "{alias}"."{ns}"."{described}" '
+        "(id BIGINT, amount DECIMAL(18,4), ts TIMESTAMPTZ, "
+        "tags VARCHAR[], addr STRUCT(city VARCHAR, zip INT))"
+    )
+    conn.execute(f'CREATE TABLE "{alias}"."{ns}"."{untouched}" (a INTEGER)')
+    expected_columns = [
+        ("id", "BIGINT"),
+        ("amount", "DECIMAL(18,4)"),
+        ("ts", "TIMESTAMP WITH TIME ZONE"),
+        ("tags", "VARCHAR[]"),
+        ("addr", "STRUCT(city VARCHAR, zip INTEGER)"),
+    ]
+
+    def rows(sql: str) -> list[tuple]:
+        return conn.execute(sql).fetchall()
+
+    try:
+        # --- Listing: works, and spans every attached catalog -----------------
+        schemata = rows("SELECT catalog_name, schema_name FROM information_schema.schemata")
+        assert (alias, ns) in schemata
+        listed = rows(
+            "SELECT table_name FROM information_schema.tables "
+            f"WHERE table_catalog = '{alias}' AND table_schema = '{ns}'"
+        )
+        assert {described, untouched} <= {r[0] for r in listed}
+        # duckdb_tables()/duckdb_schemas() are a second, equally working listing
+        # door — which is why the scoped-catalog grant check has to close both.
+        assert {described, untouched} <= {
+            r[0]
+            for r in rows(f"SELECT table_name FROM duckdb_tables() WHERE database_name = '{alias}'")
+        }
+        assert (alias, ns) in rows("SELECT database_name, schema_name FROM duckdb_schemas()")
+        assert {described, untouched} <= {r[0] for r in rows("SHOW TABLES")}
+
+        # --- Columns: the working paths --------------------------------------
+        assert (
+            rows(f'SELECT column_name, column_type FROM (DESCRIBE "{alias}"."{ns}"."{described}")')
+            == expected_columns
+        )
+        # PRAGMA table_info is a second correct path (name/type in cols 1 and 2).
+        assert [
+            (r[1], r[2]) for r in rows(f"PRAGMA table_info('{alias}.{ns}.{described}')")
+        ] == expected_columns
+
+        # --- Columns: the broken paths (canaries) ----------------------------
+        # `described` was hydrated by the DESCRIBE above; `untouched` was not.
+        info_columns = dict(
+            rows(
+                "SELECT table_name, column_name FROM information_schema.columns "
+                f"WHERE table_catalog = '{alias}' AND table_name = '{untouched}'"
+            )
+        )
+        assert info_columns == {untouched: "__"}
+        assert rows(
+            f"SELECT column_name, data_type FROM duckdb_columns() "
+            f"WHERE database_name = '{alias}' AND table_name = '{untouched}'"
+        ) == [("__", "UNKNOWN")]
+        # SHOW ALL TABLES advertises column_names/column_types and gets them
+        # wrong for the same reason (duckdb/duckdb-iceberg#560).
+        assert [(r[3], r[4]) for r in rows("SHOW ALL TABLES") if r[2] == untouched] == [
+            (["__"], ["UNKNOWN"])
+        ]
+
+        # The hydration half: touching the table repairs the view for it alone.
+        conn.execute(f'SELECT * FROM "{alias}"."{ns}"."{untouched}" LIMIT 0')
+        assert rows(
+            "SELECT column_name FROM information_schema.columns "
+            f"WHERE table_catalog = '{alias}' AND table_name = '{untouched}'"
+        ) == [("a",)]
+
+        # --- Qualification ----------------------------------------------------
+        # dbt-duckdb's `system.information_schema.<view>` spelling resolves.
+        assert {described, untouched} <= {
+            r[0] for r in rows("SELECT table_name FROM system.information_schema.tables")
+        }
+        # But there is no per-catalog information_schema inside the Iceberg catalog.
+        with pytest.raises(duckdb.Error):
+            rows(f'SELECT * FROM "{alias}".information_schema.tables')
+    finally:
+        for name in (described, untouched):
+            conn.execute(f'DROP TABLE IF EXISTS "{alias}"."{ns}"."{name}"')

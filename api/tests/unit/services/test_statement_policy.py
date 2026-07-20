@@ -37,6 +37,19 @@ ALLOWED = [
     # DESCRIBE is read-only introspection dbt relies on for column metadata.
     "DESCRIBE sales.analytics.orders",
     'DESCRIBE "sales"."analytics"."orders"',
+    # DESCRIBE as a subquery — how dlt and dbt actually wrap it, since
+    # `information_schema.columns` cannot introspect Iceberg relations.
+    "SELECT column_name, column_type FROM (DESCRIBE sales.analytics.orders)",
+    # The remaining read-only introspection statements. They return a result grid
+    # and change nothing, and the single-shot `sql_guard` path has always allowed
+    # them (DuckDB types them `StatementType.SELECT`).
+    "SHOW TABLES",
+    "SHOW ALL TABLES",
+    "SUMMARIZE sales.analytics.orders",
+    "PRAGMA version",
+    "PRAGMA table_info('sales.analytics.orders')",
+    "PRAGMA database_list",
+    "PRAGMA show_tables",
     # TRUNCATE is DuckDB's alias for DELETE FROM without a WHERE; dbt's seed
     # reset emits it. Both the `TABLE` and the bare form parse to TruncateTable.
     "TRUNCATE TABLE sales.analytics.orders",
@@ -61,6 +74,22 @@ DENIED = [
     # sqlglot reports no table for this form while DuckDB truncates one named
     # `database`, so the grant check would never see the object.
     ("TRUNCATE DATABASE d", "truncate_database"),
+    # PRAGMA is also DuckDB's spelling of SET, so admitting the row-returning
+    # PRAGMAs must not admit the ones that widen the sandbox. The setting form
+    # parses as the same node type, so the gate is the name.
+    ("PRAGMA memory_limit = '8GB'", "pragma_name"),
+    ("PRAGMA memory_limit='8GB'", "pragma_name"),
+    ("PRAGMA threads = 8", "pragma_name"),
+    ("PRAGMA enable_external_access = true", "pragma_name"),
+    # A valueless state toggle: no `=` to key off, so the name allowlist is what
+    # rejects it.
+    ("PRAGMA disable_verification", "pragma_name"),
+    ("PRAGMA storage_info('t')", "pragma_name"),
+    # Only the two argument-less SHOW forms parse as `exp.Show`; everything else
+    # degrades to a raw Command and stays rejected.
+    ("SHOW DATABASES", "command"),
+    ("SHOW sales.analytics.orders", "command"),
+    ("CALL pragma_table_info('t')", "command"),
     ("this is not sql at all ;;;", "unparseable"),
     ("", "empty"),
 ]

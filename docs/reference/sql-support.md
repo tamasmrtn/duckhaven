@@ -21,7 +21,10 @@ target in a [scoped catalog](../concepts/permissions.md).
 
 DuckDB also classifies its read-only introspection statements — `DESCRIBE`, `SHOW`, `SUMMARIZE`, and the `PRAGMA`s that
 return rows (`PRAGMA version`, `PRAGMA table_info(…)`, `PRAGMA database_list`, `PRAGMA show_tables`) — as queries. They
-are allowed on the same footing as a `SELECT` and return a result grid too. They read no files and change nothing.
+are allowed on the same footing as a `SELECT` and return a result grid too. They read no files and change nothing. This
+holds on both execution paths: a single query and a [SQL session](../concepts/query-execution.md) statement. `SUMMARIZE`
+is the one that is not merely introspection — it scans the table to compute its statistics, so it needs read access to
+the data, not just to the schema.
 
 ### Addressing catalogs
 
@@ -57,18 +60,42 @@ FROM information_schema.schemata
 WHERE catalog_name = 'analytics';
 ```
 
-For a table's columns and types, use `DESCRIBE` (which DuckHaven treats as a read-only query):
+### Columns and types: use `DESCRIBE`
+
+**`DESCRIBE` is the supported way to get a relation's columns and their types.** It is a read-only query to DuckHaven,
+it works on any attached catalog, and — unlike the `information_schema` views — it can be wrapped in a `SELECT`, so
+tools can filter and project it:
 
 ```sql
 DESCRIBE analytics.analytics.events;
 SELECT column_name, column_type FROM (DESCRIBE analytics.analytics.events);
 ```
 
-!!! note "`information_schema.columns` and Iceberg"
-    DuckDB's `information_schema.columns` (and `duckdb_columns()`) cannot yet introspect the columns of an attached
-    Iceberg REST table — they return a placeholder rather than the real columns. Use `DESCRIBE` (above) or the
-    [catalog browser](../guides/run-queries.md), which reads columns directly from Polaris. Constraint/key views
-    (`table_constraints`, `key_column_usage`) are intentionally absent: Iceberg has no enforced primary or foreign keys.
+It reports DuckDB type names, which is what a `SELECT` on the same table returns —
+`DECIMAL(18,4)`, `TIMESTAMP WITH TIME ZONE`, `VARCHAR[]`, `STRUCT(city VARCHAR, zip INTEGER)`, and so on. `PRAGMA
+table_info('catalog.schema.table')` returns the same information in a different shape, but only `DESCRIBE` composes
+into a larger query, so prefer it.
+
+!!! warning "`information_schema.columns` does not work for Iceberg tables"
+    DuckDB cannot introspect the columns of an attached Iceberg REST table through `information_schema.columns`,
+    `duckdb_columns()`, or the `column_names`/`column_types` of `SHOW ALL TABLES`. Instead of the real columns you get a
+    single placeholder row — column name `__`, type `UNKNOWN`. Use `DESCRIBE`.
+
+The reason is that DuckDB loads an Iceberg table's schema **lazily**, one table at a time, on first use: populating
+those views eagerly would mean one `LoadTable` request to Polaris for every table in the catalog. Querying them does not
+trigger that load ([duckdb/duckdb-iceberg#1146](https://github.com/duckdb/duckdb-iceberg/issues/1146)), and the
+maintainers have [declined](https://github.com/duckdb/duckdb-iceberg/issues/515) to make it eager, placing the real fix
+in DuckDB core. It is therefore **not** something a DuckHaven or DuckDB upgrade is expected to resolve, and you should
+not write tooling against it.
+
+Worse than being empty, the view is *inconsistent*. Once something in the same connection has touched a table, that
+table's columns appear correctly while every other table still shows the placeholder. A single query opens a fresh
+connection, so there you always get placeholders; a [SQL session](../concepts/query-execution.md) holds its connection
+across statements, so there you can get a result that is correct for the tables you happen to have queried already and
+wrong for the rest — which is the more dangerous failure, because it looks like it works.
+
+Constraint and key views (`table_constraints`, `key_column_usage`) are absent for an unrelated reason: Iceberg has no
+enforced primary or foreign keys.
 
 For Iceberg-native facts — snapshot history, file and manifest details — use the `iceberg` table functions:
 

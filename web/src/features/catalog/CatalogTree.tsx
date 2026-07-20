@@ -253,12 +253,11 @@ function SchemaNode({
 // native, live `information_schema`, surfaced here as a virtual node. The views
 // listed are the ones DuckHaven supports — see docs/reference/sql-support.md.
 const INFORMATION_SCHEMA = "information_schema";
-const INFORMATION_SCHEMA_VIEWS = [
-  "schemata",
-  "tables",
-  "columns",
-  "views",
-] as const;
+// `columns` is deliberately absent: DuckDB cannot introspect the columns of an
+// attached Iceberg relation through it — it returns an `UNKNOWN` placeholder —
+// so offering it here would seed a query that looks broken. Column detail comes
+// from `DESCRIBE`, or from clicking a table (which reads Polaris directly).
+const INFORMATION_SCHEMA_VIEWS = ["schemata", "tables", "views"] as const;
 
 interface InformationSchemaNodeProps {
   catalog: string;
@@ -481,12 +480,18 @@ function CatalogNode({
                   onSchemaClick={onSchemaClick}
                 />
               ))}
-              {/* Always-present, read-only metadata schema (virtual). */}
-              <InformationSchemaNode
-                catalog={catalog.slug}
-                filter={filter}
-                onMetaViewClick={onMetaViewClick}
-              />
+              {/* Read-only metadata schema (virtual). Hidden for a scoped
+                  catalog: DuckDB computes these views across every attachment
+                  and cannot filter them by grant, so querying them is rejected
+                  there — offering the node would only lead to an error. The
+                  tree itself is the grant-filtered way to browse. */}
+              {catalog.access_mode !== "scoped" && (
+                <InformationSchemaNode
+                  catalog={catalog.slug}
+                  filter={filter}
+                  onMetaViewClick={onMetaViewClick}
+                />
+              )}
             </>
           )}
         </div>

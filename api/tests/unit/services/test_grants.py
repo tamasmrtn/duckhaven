@@ -10,6 +10,7 @@ from api.services.grants import (
     access_tier,
     extract_table_refs,
     is_exempt_ref,
+    metadata_enumeration_reason,
     schema_visible,
     tier_rank,
 )
@@ -191,3 +192,91 @@ def test_system_catalog_and_info_schema_exempt():
     assert is_exempt_ref("duckhaven", "info_schema") is True
     assert is_exempt_ref(None, "information_schema") is True
     assert is_exempt_ref("mycatalog", "analytics") is False
+
+
+# --- DESCRIBE is metadata-only ----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "DESCRIBE cat.s.t",
+        # The subquery form dlt and dbt emit, since `information_schema.columns`
+        # cannot introspect an attached Iceberg relation.
+        "SELECT * FROM (DESCRIBE cat.s.t)",
+        "SELECT column_name, column_type FROM (DESCRIBE cat.s.t) WHERE column_name <> 'x'",
+    ],
+)
+def test_describe_ref_is_metadata_only(sql):
+    """DESCRIBE reads a relation's shape, never its rows, so it needs only the
+    `metadata` tier — the same tier the REST browse endpoint requires to return
+    the identical column list."""
+    refs = extract_table_refs(sql)
+    assert len(refs) == 1
+    assert refs[0].table == "t"
+    assert refs[0].is_metadata_only is True
+    assert refs[0].is_target is False
+
+
+@pytest.mark.parametrize("sql", ["SUMMARIZE cat.s.t", "SELECT * FROM cat.s.t"])
+def test_row_reading_refs_are_not_metadata_only(sql):
+    """SUMMARIZE scans the rows to compute its statistics, so it must keep
+    needing `reader` — it is not introspection despite returning a shape-like grid."""
+    refs = extract_table_refs(sql)
+    assert refs[0].is_metadata_only is False
+
+
+# --- unfilterable metadata enumeration ---------------------------------------
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM information_schema.tables",
+        "SELECT * FROM information_schema.schemata",
+        # dbt-duckdb qualifies with the `system` catalog; same schema, same leak.
+        "SELECT * FROM system.information_schema.tables",
+        "SELECT * FROM INFORMATION_SCHEMA.COLUMNS",
+        # The meta table functions are a second door onto the same listing, and
+        # they parse as a table with an empty name so `extract_table_refs` never
+        # sees them.
+        "SELECT * FROM duckdb_tables()",
+        "SELECT * FROM duckdb_schemas()",
+        "SELECT database_name FROM duckdb_columns() WHERE table_name = 'x'",
+        "SHOW TABLES",
+        "SHOW ALL TABLES",
+        "PRAGMA show_tables",
+        "PRAGMA database_list",
+        # Names one table, but only as a string literal — there is no `exp.Table`
+        # to resolve a tier against, so it would read any table's columns unchecked.
+        "PRAGMA table_info('cat.s.t')",
+        # Any statement in a multi-statement body is enough.
+        "SELECT 1; SELECT * FROM duckdb_tables()",
+    ],
+)
+def test_metadata_enumeration_is_rejected(sql):
+    reason = metadata_enumeration_reason(sql)
+    assert reason is not None
+    # The message has to tell the caller where to go instead.
+    assert "DESCRIBE" in reason
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        # DESCRIBE names its object, so it is grant-checked per object instead.
+        "DESCRIBE cat.s.t",
+        "SELECT * FROM (DESCRIBE cat.s.t)",
+        # Touches no catalog object at all.
+        "PRAGMA version",
+        "SELECT * FROM cat.s.t",
+        "SELECT * FROM cat.s.t JOIN cat.s.u ON t.id = u.id",
+    ],
+)
+def test_ordinary_statements_are_not_enumeration(sql):
+    assert metadata_enumeration_reason(sql) is None
+
+
+def test_enumeration_check_fails_closed_on_unparseable_sql():
+    with pytest.raises(GrantDenied):
+        metadata_enumeration_reason("SELECT FROM WHERE ) (")

@@ -3,10 +3,12 @@
 This relaxes the hard ``sql_guard`` allowlist (which stays in force on the
 single-shot ``/queries`` path) into a per-statement policy that admits the
 statements dbt/dlt need — ``COPY`` to/from the session's scoped staging prefix,
-a safe subset of ``SET``, ``ATTACH`` of only the managed catalog, and transaction
-control — while still rejecting sandbox escapes: local-FS or arbitrary-URL
-``COPY``/``read_*``, arbitrary ``INSTALL``/``LOAD``, and ``ATTACH`` of anything
-but the managed catalog.
+a safe subset of ``SET``, ``ATTACH`` of only the managed catalog, transaction
+control, and the read-only introspection statements (``DESCRIBE``, ``SHOW``,
+``SUMMARIZE``, the row-returning ``PRAGMA``s) clients use for relation metadata —
+while still rejecting sandbox escapes: local-FS or arbitrary-URL
+``COPY``/``read_*``, arbitrary ``INSTALL``/``LOAD``, ``ATTACH`` of anything
+but the managed catalog, and the configuration-setting form of ``PRAGMA``.
 
 It runs **at the API** (I1/I8 stay enforced at the boundary) using ``sqlglot`` —
 the same pure-Python parser ``grants.py`` uses — so no DuckDB connection is
@@ -71,13 +73,31 @@ _ALLOWED_STATEMENT_NODES = (
     exp.Rollback,
     # DESCRIBE is read-only relation/column introspection (dbt uses it for column
     # metadata, contracts, and `dbt show`); it reads no files and mutates nothing.
+    # It is *the* supported column-metadata path for attached Iceberg catalogs —
+    # `information_schema.columns` cannot introspect them (see
+    # docs/reference/sql-support.md).
     exp.Describe,
+    # SHOW TABLES / SHOW ALL TABLES. Only these two argument-less forms parse as
+    # `exp.Show`; `SHOW <relation>` and `SHOW DATABASES` fall back to `exp.Command`
+    # and stay rejected by the branch below, so no extra guard is needed here.
+    exp.Show,
+    # SUMMARIZE is a read: it scans the relation to compute min/max/approx_unique.
+    # Admitted like a SELECT, and grant-checked like one (`reader`, not `metadata`).
+    exp.Summarize,
     # TRUNCATE is DuckDB's spelling of `DELETE FROM` without a `WHERE` — its
     # grammar builds the very same DeleteStatement — so it is admitted on the
     # same footing as DELETE, which it already shares a plan with. dbt's seed
     # reset emits it. Its target is grant-checked as a write.
     exp.TruncateTable,
 )
+
+# The row-returning PRAGMAs, allowlisted by name. DuckDB types these as queries
+# (`StatementType.SELECT`) and the agent materializes them like a SELECT, but a
+# PRAGMA is also DuckDB's spelling of `SET` — `PRAGMA memory_limit = '10GB'`
+# parses as the same `exp.Pragma` node — so the gate has to be the *name*, not the
+# shape. Naming them also rejects valueless state toggles (`PRAGMA
+# disable_verification`), which an `EQ`-shape check would let through.
+_ALLOWED_PRAGMA_NAMES = {"version", "table_info", "database_list", "show_tables"}
 
 
 class StatementNotAllowed(ValueError):
@@ -216,6 +236,31 @@ def _check_copy(stmt: exp.Copy, staging_prefixes: list[str]) -> None:
             )
 
 
+def _pragma_name(stmt: exp.Pragma) -> str | None:
+    """The pragma's name, across its three parsed shapes: a call
+    (``PRAGMA table_info('t')`` -> ``Anonymous``), a bare name (``PRAGMA version``
+    -> ``Column``), and the setting form (``PRAGMA x = y`` -> ``EQ`` over a
+    ``Column``). ``None`` when the shape is unrecognized, which rejects."""
+    node = stmt.this
+    if isinstance(node, exp.EQ):
+        node = node.this
+    if isinstance(node, exp.Anonymous) and isinstance(node.this, str):
+        return node.this.lower()
+    if isinstance(node, exp.Column):
+        return node.name.lower()
+    return None
+
+
+def _check_pragma(stmt: exp.Pragma) -> None:
+    name = _pragma_name(stmt)
+    if name not in _ALLOWED_PRAGMA_NAMES:
+        raise StatementNotAllowed(
+            f"PRAGMA {name or '?'} is not permitted (allowed: "
+            f"{', '.join(sorted(_ALLOWED_PRAGMA_NAMES))})",
+            "pragma_name",
+        )
+
+
 def _check_attach(stmt: exp.Attach, managed_catalogs: set[str]) -> None:
     literal = stmt.find(exp.Literal)
     name = literal.this if literal is not None and literal.is_string else None
@@ -241,6 +286,8 @@ def _check_statement(
         _check_copy(stmt, staging_prefixes)
     elif isinstance(stmt, exp.Attach):
         _check_attach(stmt, managed_catalogs)
+    elif isinstance(stmt, exp.Pragma):
+        _check_pragma(stmt)
     elif isinstance(stmt, exp.TruncateTable) and stmt.args.get("is_database"):
         # sqlglot reads `TRUNCATE DATABASE d` as a database-wide form and reports
         # an *empty* table name, so grants.py sees no object to check. DuckDB

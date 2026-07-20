@@ -90,7 +90,7 @@ level:
 
 | Tier | Can do |
 |---|---|
-| `metadata` | Discover and describe the object (list it, read its columns and `information_schema`) — but **not** read its rows |
+| `metadata` | Discover and describe the object (list it, `DESCRIBE` it to read its columns) — but **not** read its rows |
 | `reader` | Everything `metadata` can, plus read rows (query / sample) |
 | `writer` | Everything `reader` can, plus write and run DDL |
 
@@ -113,6 +113,36 @@ equally to human members and [service accounts](../guides/service-accounts.md), 
 are managed from the **catalog view** — right-click a catalog, schema, or table (or
 open a table's **Permissions** tab) to grant a principal access at that level, the
 same object-first workflow as Databricks Unity Catalog's Catalog Explorer.
+
+### Discovering objects in a scoped catalog
+
+In a scoped catalog, **browse the catalog tree (or the REST catalog endpoints) to find out what exists, and use
+`DESCRIBE <catalog>.<schema>.<table>` for a table's columns.** Both are filtered by your grants: you see the schemas
+and tables you were granted and nothing else, and a `DESCRIBE` needs only the `metadata` tier on its table.
+
+What you cannot do in a scoped catalog is ask the query engine to *enumerate* objects for you. These are rejected:
+
+- `information_schema.tables`, `information_schema.schemata`, `information_schema.columns` (and the
+  `system.information_schema.…` spelling of the same views)
+- the `duckdb_tables()`, `duckdb_schemas()`, `duckdb_columns()`, `duckdb_views()` family
+- `SHOW TABLES` / `SHOW ALL TABLES`, `PRAGMA show_tables`, `PRAGMA database_list`
+- `PRAGMA table_info(…)` — it names its table only as a text string, which DuckHaven cannot resolve to an object to
+  check a grant against; `DESCRIBE` is the equivalent that can be checked
+
+The reason is mechanical: DuckDB computes these across *every* catalog attached to the worksheet and offers no way to
+filter their rows, so allowing them would reveal the names of tables you have not been granted — the very thing scoped
+access exists to prevent. Rejecting them is a deliberate trade: the engine cannot filter, so the answer must come from
+the API, which can.
+
+This applies **only** to catalogs attached in `scoped` mode. In an `open` catalog — the default — all of the above keep
+working exactly as before, since there is nothing to hide.
+
+!!! note "Tools that enumerate"
+    A tool that discovers relations through `information_schema` (dbt does, for instance) will fail against a scoped
+    catalog. Point it at an open catalog, or have it list objects through the catalog API. Note that column metadata is
+    unaffected either way: `information_schema.columns`
+    [does not work for Iceberg tables](../reference/sql-support.md#columns-and-types-use-describe) regardless of access
+    mode, so any tool that works against DuckHaven at all is already using `DESCRIBE` for that.
 
 ## What is not in scope
 

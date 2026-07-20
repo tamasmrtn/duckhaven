@@ -37,6 +37,10 @@ ALLOWED = [
     # DESCRIBE is read-only introspection dbt relies on for column metadata.
     "DESCRIBE sales.analytics.orders",
     'DESCRIBE "sales"."analytics"."orders"',
+    # TRUNCATE is DuckDB's alias for DELETE FROM without a WHERE; dbt's seed
+    # reset emits it. Both the `TABLE` and the bare form parse to TruncateTable.
+    "TRUNCATE TABLE sales.analytics.orders",
+    "TRUNCATE orders",
 ]
 
 DENIED = [
@@ -54,6 +58,9 @@ DENIED = [
     ("SELECT * FROM read_csv('s3://other/x.csv')", "read_path"),
     ("SELECT * FROM read_json_auto('/tmp/x.json')", "read_path"),
     ("SELECT * FROM glob('/**')", "read_path"),
+    # sqlglot reports no table for this form while DuckDB truncates one named
+    # `database`, so the grant check would never see the object.
+    ("TRUNCATE DATABASE d", "truncate_database"),
     ("this is not sql at all ;;;", "unparseable"),
     ("", "empty"),
 ]

@@ -72,6 +72,11 @@ _ALLOWED_STATEMENT_NODES = (
     # DESCRIBE is read-only relation/column introspection (dbt uses it for column
     # metadata, contracts, and `dbt show`); it reads no files and mutates nothing.
     exp.Describe,
+    # TRUNCATE is DuckDB's spelling of `DELETE FROM` without a `WHERE` — its
+    # grammar builds the very same DeleteStatement — so it is admitted on the
+    # same footing as DELETE, which it already shares a plan with. dbt's seed
+    # reset emits it. Its target is grant-checked as a write.
+    exp.TruncateTable,
 )
 
 
@@ -236,6 +241,12 @@ def _check_statement(
         _check_copy(stmt, staging_prefixes)
     elif isinstance(stmt, exp.Attach):
         _check_attach(stmt, managed_catalogs)
+    elif isinstance(stmt, exp.TruncateTable) and stmt.args.get("is_database"):
+        # sqlglot reads `TRUNCATE DATABASE d` as a database-wide form and reports
+        # an *empty* table name, so grants.py sees no object to check. DuckDB
+        # reads the same text as `TRUNCATE TABLE "database" AS d` and empties a
+        # real table. Reject the form outright rather than ship that divergence.
+        raise StatementNotAllowed("TRUNCATE DATABASE is not permitted", "truncate_database")
     elif isinstance(stmt, exp.Install):
         raise StatementNotAllowed("INSTALL is not permitted", "install")
     elif isinstance(stmt, exp.Command):

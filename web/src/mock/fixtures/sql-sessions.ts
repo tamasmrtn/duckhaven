@@ -1,0 +1,186 @@
+import type { Query } from "@/types/query";
+import type { SqlSession } from "@/types/sql-session";
+
+// One session per outcome the audit UI claims to distinguish, so the Live tab,
+// the close-reason column and the statement timeline all have something real to
+// render.
+function makeSqlSessions(): SqlSession[] {
+  return [
+    {
+      id: "sess-live",
+      workspace_id: "ws-1",
+      status: "open",
+      agent_id: "ag-1",
+      user_id: "u-1",
+      active_catalog: "analytics",
+      staging_uri: "s3://lake/_staging/sess-live/",
+      error: null,
+      close_reason: null,
+      client_name: "dbt-duckhaven",
+      client_version: "1.2.0",
+      created_at: "2026-06-30T09:00:00Z",
+      opened_at: "2026-06-30T09:00:01Z",
+      last_active_at: "2026-06-30T09:12:00Z",
+      closed_at: null,
+      user_name: "Ada Lovelace",
+      agent_name: "warehouse-a",
+      statement_count: 3,
+    },
+    {
+      id: "sess-closed",
+      workspace_id: "ws-1",
+      status: "closed",
+      agent_id: "ag-1",
+      user_id: "u-1",
+      active_catalog: "analytics",
+      staging_uri: "s3://lake/_staging/sess-closed/",
+      error: null,
+      close_reason: "client",
+      client_name: "dlt-duckhaven",
+      client_version: "0.4.1",
+      created_at: "2026-06-30T08:00:00Z",
+      opened_at: "2026-06-30T08:00:01Z",
+      last_active_at: "2026-06-30T08:05:00Z",
+      closed_at: "2026-06-30T08:05:02Z",
+      user_name: "Ada Lovelace",
+      agent_name: "warehouse-a",
+      statement_count: 2,
+    },
+    {
+      id: "sess-expired",
+      workspace_id: "ws-1",
+      status: "expired",
+      agent_id: "ag-1",
+      user_id: "u-1",
+      active_catalog: "analytics",
+      staging_uri: null,
+      error: "reaped (idle)",
+      close_reason: "idle",
+      client_name: "dbt-duckhaven",
+      client_version: "1.1.0",
+      created_at: "2026-06-29T22:00:00Z",
+      opened_at: "2026-06-29T22:00:01Z",
+      last_active_at: "2026-06-29T22:01:00Z",
+      closed_at: "2026-06-29T22:31:00Z",
+      user_name: "Ada Lovelace",
+      agent_name: "warehouse-a",
+      statement_count: 1,
+    },
+    {
+      id: "sess-failed",
+      workspace_id: "ws-1",
+      status: "failed",
+      agent_id: "ag-1",
+      user_id: "u-1",
+      active_catalog: "analytics",
+      staging_uri: null,
+      error: "agent disconnected",
+      close_reason: "agent_disconnect",
+      client_name: "duckhaven-sql-connector",
+      client_version: "0.9.0",
+      created_at: "2026-06-29T18:00:00Z",
+      opened_at: "2026-06-29T18:00:01Z",
+      last_active_at: "2026-06-29T18:02:00Z",
+      closed_at: "2026-06-29T18:02:30Z",
+      user_name: "Ada Lovelace",
+      agent_name: "warehouse-a",
+      statement_count: 0,
+    },
+  ];
+}
+
+// Statements are ordinary queries rows tagged origin="session"; the timeline
+// endpoint returns them in execution order.
+function makeSessionStatements(): Query[] {
+  const base = {
+    workspace_id: "ws-1",
+    agent_id: "ag-1",
+    user_id: "u-1",
+    user_name: "Ada Lovelace",
+    origin: "session",
+    result_bytes: null,
+    progress: null,
+  };
+  return [
+    {
+      ...base,
+      id: "sessq-1",
+      session_id: "sess-live",
+      sql: "CREATE OR REPLACE TABLE analytics.stg_orders AS SELECT * FROM raw.orders",
+      status: "done",
+      row_count: 0,
+      duration_ms: 820,
+      error: null,
+      started_at: "2026-06-30T09:00:05Z",
+      finished_at: "2026-06-30T09:00:05.82Z",
+    },
+    {
+      ...base,
+      id: "sessq-2",
+      session_id: "sess-live",
+      sql: "CREATE OR REPLACE TABLE analytics.fct_orders AS SELECT * FROM analytics.stg_orders",
+      status: "failed",
+      row_count: null,
+      duration_ms: null,
+      error: 'Binder Error: table "analytics.stg_ordres" does not exist',
+      started_at: "2026-06-30T09:06:00Z",
+      finished_at: "2026-06-30T09:06:00.4Z",
+    },
+    {
+      ...base,
+      id: "sessq-3",
+      session_id: "sess-live",
+      sql: "SELECT count(*) FROM analytics.stg_orders",
+      status: "running",
+      row_count: null,
+      duration_ms: null,
+      error: null,
+      started_at: "2026-06-30T09:12:00Z",
+      finished_at: null,
+    },
+    {
+      ...base,
+      id: "sessq-4",
+      session_id: "sess-closed",
+      sql: "COPY raw.events FROM 's3://lake/_staging/sess-closed/0.parquet'",
+      status: "done",
+      row_count: 12000,
+      duration_ms: 3100,
+      error: null,
+      started_at: "2026-06-30T08:01:00Z",
+      finished_at: "2026-06-30T08:01:03.1Z",
+    },
+    {
+      ...base,
+      id: "sessq-5",
+      session_id: "sess-closed",
+      sql: "SELECT count(*) FROM raw.events",
+      status: "done",
+      row_count: 1,
+      duration_ms: 120,
+      error: null,
+      started_at: "2026-06-30T08:04:00Z",
+      finished_at: "2026-06-30T08:04:00.12Z",
+    },
+    {
+      ...base,
+      id: "sessq-6",
+      session_id: "sess-expired",
+      sql: "SELECT 1",
+      status: "done",
+      row_count: 1,
+      duration_ms: 30,
+      error: null,
+      started_at: "2026-06-29T22:01:00Z",
+      finished_at: "2026-06-29T22:01:00.03Z",
+    },
+  ];
+}
+
+export let SQL_SESSIONS = makeSqlSessions();
+export let SESSION_STATEMENTS = makeSessionStatements();
+
+export function resetSqlSessions(): void {
+  SQL_SESSIONS = makeSqlSessions();
+  SESSION_STATEMENTS = makeSessionStatements();
+}

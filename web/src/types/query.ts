@@ -14,6 +14,9 @@ export interface Query {
   origin?: string | null;
   // Set when the run was produced by a schedule; maps a run to its schedule.
   schedule_id?: string | null;
+  // Set when the run is a statement inside a SQL session (origin="session");
+  // maps a statement to the workload it belonged to.
+  session_id?: string | null;
   row_count: number | null;
   duration_ms: number | null;
   result_bytes: number | null;

@@ -40,6 +40,17 @@ class SqlSession(Base):
     )
     # opening -> open -> closing -> closed; or failed/expired terminal states.
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="opening")
+    # Why the session ended, as a typed value: client / idle / max_lifetime /
+    # open_timeout / agent_disconnect / agent_lease / failed. Mirrors the taxonomy
+    # `record_sql_session_closed` meters, so the audit UI never has to parse the
+    # free-text `error`. Null while the session lives, and on rows that ended
+    # before this column existed.
+    close_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Which tool opened the session, parsed from the request's `User-Agent`
+    # (`dbt-duckhaven/1.2.0`). Postgres' `application_name` analog; null when the
+    # header is absent or unparseable.
+    client_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    client_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     active_catalog: Mapped[str | None] = mapped_column(String(255), nullable=True)
     staging_uri: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)

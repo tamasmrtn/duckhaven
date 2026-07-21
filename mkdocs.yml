@@ -122,6 +122,7 @@ nav:
       - Read query profiles: guides/query-profiles.md
       - Saved queries: guides/saved-queries.md
       - Schedule queries: guides/schedule-queries.md
+      - Read the session audit trail: guides/session-audit.md
       - Use the AI assistant: guides/using-the-assistant.md
       - How access works: guides/access-levels.md
       - Manage users & access: guides/users-access.md

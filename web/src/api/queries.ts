@@ -20,11 +20,20 @@ export const queriesApi = {
 
   listForWorkspace: (
     ws: string,
-    params?: { all_workspaces?: boolean; user_id?: string },
+    params?: {
+      all_workspaces?: boolean;
+      user_id?: string;
+      // "session" / "scheduled", or "interactive" for the user-initiated runs
+      // the server stores with a null origin.
+      origin?: string;
+      session_id?: string;
+    },
   ) => {
     const qs = new URLSearchParams();
     if (params?.all_workspaces) qs.set("all_workspaces", "true");
     if (params?.user_id) qs.set("user_id", params.user_id);
+    if (params?.origin) qs.set("origin", params.origin);
+    if (params?.session_id) qs.set("session_id", params.session_id);
     const suffix = qs.toString();
     return get<Query[]>(
       `/workspaces/${ws}/queries${suffix ? `?${suffix}` : ""}`,

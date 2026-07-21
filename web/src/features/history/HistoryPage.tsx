@@ -24,6 +24,17 @@ function formatDuration(ms: number | null) {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+// Interactive runs are stored with a null origin, so "interactive" is the
+// server's spelling for that case rather than a real column value.
+type OriginFilter = "all" | "interactive" | "scheduled" | "session";
+
+const ORIGIN_FILTERS: { value: OriginFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "interactive", label: "Interactive" },
+  { value: "scheduled", label: "Scheduled" },
+  { value: "session", label: "Session" },
+];
+
 export function HistoryPage() {
   const { ws } = useParams({ from: "/$ws/history" });
   const navigate = useNavigate();
@@ -32,6 +43,7 @@ export function HistoryPage() {
 
   const [allWorkspaces, setAllWorkspaces] = useState(false);
   const [userFilter, setUserFilter] = useState("");
+  const [origin, setOrigin] = useState<OriginFilter>("all");
   const trimmed = userFilter.trim();
   // Cross-workspace + user filtering are admin-only affordances; a non-admin
   // never sends them, so the endpoint only ever returns their workspace.
@@ -39,6 +51,7 @@ export function HistoryPage() {
   const { data: wsQueries = [], isLoading } = useWorkspaceQueries(ws, {
     all_workspaces: all,
     user_id: all && trimmed ? trimmed : undefined,
+    origin: origin === "all" ? undefined : origin,
   });
   const { data: agents = [] } = useAgents();
   const { data: workspaces = [] } = useWorkspaces();
@@ -48,6 +61,10 @@ export function HistoryPage() {
   function openProfile(queryId: string) {
     navigate({ to: "/$ws/queries/$queryId", params: { ws, queryId } });
   }
+
+  // Only worth a column when something in view actually belongs to a session,
+  // so the ordinary history table keeps its existing shape.
+  const anySession = wsQueries.some((q) => q.session_id);
 
   const columns = all
     ? [
@@ -60,12 +77,45 @@ export function HistoryPage() {
         "Duration",
         "Started",
       ]
-    : ["Status", "SQL", "Agent", "User", "Rows", "Duration", "Started"];
+    : [
+        "Status",
+        "SQL",
+        "Agent",
+        "User",
+        ...(anySession ? ["Session"] : []),
+        "Rows",
+        "Duration",
+        "Started",
+      ];
 
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-4 shrink-0">
         <h1 className="text-md font-semibold">History</h1>
+        <div className="ml-auto flex items-center gap-3">
+          <div
+            className="flex rounded-md border border-[var(--border-subtle)] p-0.5 text-xs"
+            role="group"
+            aria-label="filter by origin"
+          >
+            {ORIGIN_FILTERS.map(({ value, label }) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setOrigin(value)}
+                aria-pressed={origin === value}
+                className={cn(
+                  "rounded px-2 py-1 transition-colors",
+                  origin === value
+                    ? "bg-accent text-text-primary font-medium"
+                    : "text-text-secondary hover:text-text-primary",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
         {isAdmin && (
           <div className="flex items-center gap-3">
             {all && (
@@ -178,6 +228,29 @@ export function HistoryPage() {
                   <TableCell className="px-4 py-2 text-xs text-text-secondary">
                     {q.user_name ?? "—"}
                   </TableCell>
+                  {!all && anySession && (
+                    <TableCell className="px-4 py-2 text-xs">
+                      {q.session_id ? (
+                        <button
+                          type="button"
+                          aria-label={`session ${shortId(q.session_id)}`}
+                          onClick={(e) => {
+                            // The row itself opens the query profile.
+                            e.stopPropagation();
+                            navigate({
+                              to: "/$ws/sessions/$sessionId",
+                              params: { ws, sessionId: q.session_id! },
+                            });
+                          }}
+                          className="font-mono text-xs text-text-secondary underline-offset-2 hover:text-text-primary hover:underline"
+                        >
+                          {shortId(q.session_id)}
+                        </button>
+                      ) : (
+                        <span className="text-text-tertiary">—</span>
+                      )}
+                    </TableCell>
+                  )}
                   {all && (
                     <TableCell className="px-4 py-2 max-w-xs">
                       <pre className="truncate font-mono text-xs text-text-primary">

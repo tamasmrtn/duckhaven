@@ -16,14 +16,34 @@ class SqlSessionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    workspace_id: uuid.UUID
     status: str
     agent_id: uuid.UUID | None
+    user_id: uuid.UUID | None = None
     active_catalog: str | None
     # Scoped object-storage prefix a load may COPY to/from (dlt staging).
     staging_uri: str | None
     error: str | None
+    # Why the session ended: client / idle / max_lifetime / open_timeout /
+    # agent_disconnect / agent_lease / failed. Null while it lives, and on sessions
+    # that ended before the field existed.
+    close_reason: str | None = None
+    # The tool that opened it, from the request's User-Agent.
+    client_name: str | None = None
+    client_version: str | None = None
     created_at: datetime
+    opened_at: datetime | None = None
     last_active_at: datetime
+    closed_at: datetime | None = None
+
+
+class SqlSessionSummaryOut(SqlSessionOut):
+    """A session as the audit list renders it: the row plus the joined display
+    names and statement count, so the UI needs no follow-up request per row."""
+
+    user_name: str | None = None
+    agent_name: str | None = None
+    statement_count: int = 0
 
 
 class SqlStatementCreate(BaseModel):

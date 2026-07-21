@@ -17,7 +17,8 @@ import uuid
 from datetime import UTC, datetime
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import Query as QueryParam
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
@@ -31,6 +32,7 @@ from api.schemas.query import QueryOut
 from api.schemas.sql_session import (
     SqlSessionCreate,
     SqlSessionOut,
+    SqlSessionSummaryOut,
     SqlStatementCreate,
     StagedFileOut,
     StagingFilesCreate,
@@ -42,9 +44,12 @@ from api.services.agent_capabilities import agent_supports_backend, required_ext
 from api.services.agent_dispatch import is_agent_connected
 from api.services.grants import GrantDenied, assert_query_access
 from api.services.migration.service import workspace_has_active_migration
+from api.services.permissions import Permission
 from api.services.query import pick_agent_for
+from api.services.rbac import has_permission
 from api.services.sql_guard import is_read_only
 from api.services.sql_sessions import service as session_service
+from api.services.sql_sessions.client_info import parse_user_agent
 from api.services.workspace import (
     assert_workspace_member,
     get_default_catalog,
@@ -75,6 +80,7 @@ async def _load_session(db: AsyncSession, session_id: uuid.UUID, user: User) -> 
 async def open_session(
     ws: str,
     body: SqlSessionCreate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> SqlSession:
@@ -124,12 +130,20 @@ async def open_session(
         active = await get_default_catalog(db, workspace.id)
     active = active or catalogs[0]
 
+    # Which tool this is, from the User-Agent the connector already sends. Recorded
+    # here (once, at open) rather than per statement — the lesson of dbt-snowflake
+    # #199, where a per-statement ALTER SESSION tag both cost a round trip each time
+    # and survived a failed materialization with the wrong value.
+    client_name, client_version = parse_user_agent(request.headers.get("user-agent"))
+
     session = SqlSession(
         workspace_id=workspace.id,
         agent_id=agent.id,
         user_id=user.id,
         status="opening",
         active_catalog=active.slug,
+        client_name=client_name,
+        client_version=client_version,
     )
     db.add(session)
     await db.flush()
@@ -157,7 +171,12 @@ async def open_session(
         result = await db.execute(
             sa.update(SqlSession)
             .where(SqlSession.id == session_id, SqlSession.status == "opening")
-            .values(status="failed", error="open_timeout", closed_at=datetime.now(tz=UTC))
+            .values(
+                status="failed",
+                error="open_timeout",
+                close_reason="open_timeout",
+                closed_at=datetime.now(tz=UTC),
+            )
             .execution_options(synchronize_session=False)
         )
         await db.commit()
@@ -177,6 +196,102 @@ async def open_session(
     raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail={"error": "session_open_failed", "detail": session.error or "unknown"},
+    )
+
+
+@router.get("/workspaces/{ws}/sql/sessions", response_model=list[SqlSessionSummaryOut])
+async def list_sessions(
+    ws: str,
+    status_filter: list[str] | None = QueryParam(default=None, alias="status"),
+    user_id: uuid.UUID | None = QueryParam(default=None),
+    agent_id: uuid.UUID | None = QueryParam(default=None),
+    since: datetime | None = QueryParam(default=None),
+    limit: int = QueryParam(default=100, le=500),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[SqlSessionSummaryOut]:
+    """The workspace's SQL sessions, newest first — the audit list.
+
+    Any workspace member sees every session in the workspace, consistent with
+    ``GET /workspaces/{ws}/queries``, which already returns every member's SQL.
+    The ``user_id``/``agent_id``/``since`` filters are admin-only affordances and
+    rejected with 403 for non-admins, mirroring that endpoint exactly.
+
+    Each row carries the joined principal/agent names and its statement count so
+    the list renders without a request per session.
+    """
+    _require_enabled()
+    workspace = await get_workspace(db, ws)
+    if workspace is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+    await assert_workspace_member(db, workspace.id, user.id)
+
+    # Statement counts in one grouped pass rather than N+1 per row.
+    counts = (
+        sa.select(Query.session_id, sa.func.count().label("statement_count"))
+        .where(Query.session_id.isnot(None))
+        .group_by(Query.session_id)
+        .subquery()
+    )
+    stmt = (
+        sa.select(SqlSession, User.name, Agent.name, sa.func.coalesce(counts.c.statement_count, 0))
+        .outerjoin(User, SqlSession.user_id == User.id)
+        .outerjoin(Agent, SqlSession.agent_id == Agent.id)
+        .outerjoin(counts, counts.c.session_id == SqlSession.id)
+        .where(SqlSession.workspace_id == workspace.id)
+        .order_by(SqlSession.created_at.desc())
+        .limit(limit)
+    )
+    if status_filter:
+        stmt = stmt.where(SqlSession.status.in_(status_filter))
+
+    if any(f is not None for f in (user_id, agent_id, since)):
+        if not await has_permission(db, user, Permission.QUERIES_ADMIN):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+        if user_id:
+            stmt = stmt.where(SqlSession.user_id == user_id)
+        if agent_id:
+            stmt = stmt.where(SqlSession.agent_id == agent_id)
+        if since:
+            stmt = stmt.where(SqlSession.created_at >= since)
+
+    return [
+        SqlSessionSummaryOut.model_validate(session).model_copy(
+            update={
+                "user_name": user_name,
+                "agent_name": agent_name,
+                "statement_count": statement_count,
+            }
+        )
+        for session, user_name, agent_name, statement_count in (await db.execute(stmt)).all()
+    ]
+
+
+@router.get("/sql/sessions/{session_id}/statements", response_model=list[QueryOut])
+async def list_session_statements(
+    session_id: uuid.UUID,
+    limit: int = QueryParam(default=200, le=500),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[Query]:
+    """A session's statements in execution order — the statement timeline.
+
+    Ascending, unlike the newest-first history feeds: a session is one workload
+    read top to bottom, so a `dbt run` reads as the sequence it actually was.
+    """
+    _require_enabled()
+    session = await _load_session(db, session_id, user)
+    return list(
+        (
+            await db.execute(
+                sa.select(Query)
+                .where(Query.session_id == session.id)
+                .order_by(Query.started_at.asc())
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
     )
 
 

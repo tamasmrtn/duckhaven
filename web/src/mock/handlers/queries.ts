@@ -175,6 +175,8 @@ export const queryHandlers = [
     const url = new URL(request.url);
     const allWorkspaces = url.searchParams.get("all_workspaces") === "true";
     const userId = url.searchParams.get("user_id");
+    const origin = url.searchParams.get("origin");
+    const sessionId = url.searchParams.get("session_id");
 
     let pool = QUERY_HISTORY;
     if (!allWorkspaces) {
@@ -184,6 +186,15 @@ export const queryHandlers = [
     }
     const rows = pool
       .filter((q) => !userId || q.user_id === userId)
+      // Interactive runs carry a null origin; mirror the server's alias for it.
+      .filter((q) =>
+        !origin
+          ? true
+          : origin === "interactive"
+            ? !q.origin
+            : q.origin === origin,
+      )
+      .filter((q) => !sessionId || q.session_id === sessionId)
       .slice()
       .sort((a, b) => b.started_at.localeCompare(a.started_at));
     return HttpResponse.json(rows);

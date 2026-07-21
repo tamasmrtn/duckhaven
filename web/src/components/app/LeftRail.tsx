@@ -5,6 +5,7 @@ import {
   BookMarked,
   CalendarClock,
   Clock,
+  Plug,
   Settings,
   HeartPulse,
 } from "lucide-react";
@@ -51,6 +52,12 @@ const navItems: NavItem[] = [
     icon: CalendarClock,
     label: "Schedules",
     matchSegment: "schedules",
+  },
+  {
+    segment: "sessions",
+    icon: Plug,
+    label: "Sessions",
+    matchSegment: "sessions",
   },
   {
     segment: "history",

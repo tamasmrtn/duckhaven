@@ -91,6 +91,11 @@ async def test_reaps_idle_and_old_but_keeps_fresh(session_factory, _spy_agent_di
         assert (await db.get(SqlSession, ids["fresh"])).status == "open"
         assert (await db.get(SqlSession, ids["idle"])).status == "expired"
         assert (await db.get(SqlSession, ids["old"])).status == "expired"
+        # The audit surface reads the reason off a typed column, never by parsing
+        # the free-text `error`.
+        assert (await db.get(SqlSession, ids["fresh"])).close_reason is None
+        assert (await db.get(SqlSession, ids["idle"])).close_reason == "idle"
+        assert (await db.get(SqlSession, ids["old"])).close_reason == "max_lifetime"
 
     # Both reaped rows had their slot released via a dispatched CLOSE_SESSION.
     reaped_ids = {sid for _, sid in _spy_agent_dispatch}
@@ -140,6 +145,7 @@ async def test_reaps_stuck_opening_but_keeps_recent_opening(session_factory, _sp
         reaped_row = await db.get(SqlSession, stuck_id)
         assert reaped_row.status == "failed"
         assert reaped_row.error == "open_timeout"
+        assert reaped_row.close_reason == "open_timeout"
         assert (await db.get(SqlSession, recent_id)).status == "opening"
 
     # The slot a stuck open may have acquired is reclaimed via a dispatched close.

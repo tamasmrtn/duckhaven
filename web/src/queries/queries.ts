@@ -131,7 +131,12 @@ export function useDeleteSavedQuery(ws: string) {
 
 export function useWorkspaceQueries(
   ws: string,
-  opts?: { all_workspaces?: boolean; user_id?: string },
+  opts?: {
+    all_workspaces?: boolean;
+    user_id?: string;
+    origin?: string;
+    session_id?: string;
+  },
 ) {
   return useQuery({
     queryKey: [
@@ -140,6 +145,8 @@ export function useWorkspaceQueries(
       "queries",
       opts?.all_workspaces ? "all" : "ws",
       opts?.user_id ?? "",
+      opts?.origin ?? "",
+      opts?.session_id ?? "",
     ],
     queryFn: () => queriesApi.listForWorkspace(ws, opts),
     enabled: !!ws,

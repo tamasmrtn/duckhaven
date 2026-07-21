@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -13,6 +14,8 @@ from api.models.user import User
 from api.services.agent_registry import registry
 from api.services.auth import hash_password
 from api.services.sql_sessions import service as session_service
+from api.services.sql_sessions.client_info import parse_user_agent
+from duckhaven_shared.protocol import Frame, FrameType
 
 
 class MockWebSocket:
@@ -524,3 +527,209 @@ async def test_read_parquet_of_foreign_url_is_rejected(
     )
     assert resp.status_code == 422
     assert resp.json()["detail"]["error"] == "statement_not_allowed"
+
+
+# ── Audit surface: close reason, client identity, list, statement timeline ────
+
+
+def _statement(session: SqlSession, sql: str, *, status: str = "done") -> Query:
+    return Query(
+        workspace_id=session.workspace_id,
+        agent_id=session.agent_id,
+        user_id=session.user_id,
+        sql=sql,
+        status=status,
+        origin="session",
+        session_id=session.id,
+    )
+
+
+@pytest.mark.parametrize(
+    ("header", "expected"),
+    [
+        ("dbt-duckhaven/1.2.0", ("dbt-duckhaven", "1.2.0")),
+        ("dlt-duckhaven/0.4.1 (linux; cpython 3.12)", ("dlt-duckhaven", "0.4.1")),
+        ("curl", ("curl", None)),
+        ("", (None, None)),
+        (None, (None, None)),
+        ("   ", (None, None)),
+        ("/1.0", (None, None)),
+    ],
+)
+def test_parse_user_agent(header, expected):
+    assert parse_user_agent(header) == expected
+
+
+def test_parse_user_agent_truncates_absurd_values():
+    name, version = parse_user_agent("x" * 500 + "/" + "9" * 500)
+    assert len(name) == 64
+    assert len(version) == 32
+
+
+async def test_open_session_records_the_client(
+    authed_client, db_session, workspace, connected_agent, enabled, monkeypatch
+):
+    async def fake_dispatch(db, session, catalogs):
+        session.status = "open"
+        await db.commit()
+        return True
+
+    monkeypatch.setattr(session_service, "dispatch_open_session", fake_dispatch)
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/sql/sessions",
+        json={"agent_id": str(connected_agent.id)},
+        headers={"User-Agent": "dbt-duckhaven/1.2.0"},
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["client_name"] == "dbt-duckhaven"
+    assert body["client_version"] == "1.2.0"
+    assert body["close_reason"] is None
+
+
+async def test_explicit_close_records_the_client_reason(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    session = await _open_session_row(db_session, workspace, agent, user)
+
+    async def fake_close(db, agent_id, session_id):
+        return True
+
+    monkeypatch.setattr(session_service, "dispatch_close_session", fake_close)
+    session_id = session.id
+    await authed_client.delete(f"/sql/sessions/{session_id}")
+    # The request ran on its own DB session; drop this one's cached copy so the
+    # frame handler below sees the committed `closing` status.
+    db_session.expire_all()
+
+    # The reason lands when the agent acks the close, not when it is requested.
+    await session_service.handle_session_frame(
+        db_session,
+        Frame(type=FrameType.SESSION_CLOSED, payload={"session_id": str(session_id)}),
+    )
+    reloaded = await db_session.get(SqlSession, session_id)
+    assert reloaded.status == "closed"
+    assert reloaded.close_reason == "client"
+
+
+async def test_agent_disconnect_records_its_reason(db_session, workspace, agent, user):
+    session = await _open_session_row(db_session, workspace, agent, user)
+    await session_service.fail_sessions_for_agent(db_session, agent.id)
+    await db_session.refresh(session)
+    assert session.status == "failed"
+    assert session.close_reason == "agent_disconnect"
+
+
+# The idle / max_lifetime / open_timeout reasons are covered where the reaper
+# lives: tests/unit/services/sql_sessions/test_reaper.py.
+
+
+# ── Session list ──────────────────────────────────────────────────────────────
+
+
+async def test_list_sessions_is_newest_first_with_counts_and_names(
+    authed_client, db_session, workspace, agent, user, enabled
+):
+    older = await _open_session_row(db_session, workspace, agent, user, status="closed")
+    newer = await _open_session_row(db_session, workspace, agent, user)
+    older.created_at = datetime.now(tz=UTC) - timedelta(hours=1)
+    db_session.add_all([_statement(newer, "SELECT 1"), _statement(newer, "SELECT 2")])
+    await db_session.commit()
+
+    resp = await authed_client.get(f"/workspaces/{workspace.slug}/sql/sessions")
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()
+    assert [r["id"] for r in rows] == [str(newer.id), str(older.id)]
+    assert rows[0]["statement_count"] == 2
+    assert rows[1]["statement_count"] == 0
+    assert rows[0]["user_name"] == "Sess"
+    assert rows[0]["agent_name"] == "sess-agent"
+
+
+async def test_list_sessions_filters_by_status(
+    authed_client, db_session, workspace, agent, user, enabled
+):
+    await _open_session_row(db_session, workspace, agent, user)
+    closed = await _open_session_row(db_session, workspace, agent, user, status="closed")
+
+    resp = await authed_client.get(
+        f"/workspaces/{workspace.slug}/sql/sessions", params={"status": "closed"}
+    )
+    assert [r["id"] for r in resp.json()] == [str(closed.id)]
+
+
+async def test_list_sessions_disabled_returns_404(authed_client, workspace):
+    resp = await authed_client.get(f"/workspaces/{workspace.slug}/sql/sessions")
+    assert resp.status_code == 404
+
+
+async def test_list_sessions_rejects_admin_filters_for_non_admin(
+    authed_client, workspace, user, enabled
+):
+    resp = await authed_client.get(
+        f"/workspaces/{workspace.slug}/sql/sessions", params={"user_id": str(user.id)}
+    )
+    assert resp.status_code == 403
+
+
+async def test_non_member_cannot_list_sessions(client, db_session, workspace, enabled):
+    outsider = User(
+        email="out@sessions.local",
+        password_hash=hash_password("pw"),
+        name="Outsider",
+        role="user",
+    )
+    db_session.add(outsider)
+    await db_session.commit()
+    await client.post("/auth/login", json={"email": "out@sessions.local", "password": "pw"})
+
+    resp = await client.get(f"/workspaces/{workspace.slug}/sql/sessions")
+    assert resp.status_code == 403
+
+
+# ── Statement timeline ────────────────────────────────────────────────────────
+
+
+async def test_statement_timeline_is_ordered_and_scoped(
+    authed_client, db_session, workspace, agent, user, enabled
+):
+    session = await _open_session_row(db_session, workspace, agent, user)
+    other = await _open_session_row(db_session, workspace, agent, user)
+    first = _statement(session, "CREATE TABLE t (a INT)")
+    second = _statement(session, "INSERT INTO t VALUES (1)")
+    first.started_at = datetime.now(tz=UTC) - timedelta(minutes=5)
+    db_session.add_all([second, first, _statement(other, "SELECT 99")])
+    await db_session.commit()
+
+    resp = await authed_client.get(f"/sql/sessions/{session.id}/statements")
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()
+    assert [r["sql"] for r in rows] == ["CREATE TABLE t (a INT)", "INSERT INTO t VALUES (1)"]
+    assert all(r["session_id"] == str(session.id) for r in rows)
+
+
+async def test_statement_timeline_disabled_returns_404(
+    authed_client, db_session, workspace, agent, user
+):
+    session = await _open_session_row(db_session, workspace, agent, user)
+    resp = await authed_client.get(f"/sql/sessions/{session.id}/statements")
+    assert resp.status_code == 404
+
+
+async def test_non_member_cannot_read_the_statement_timeline(
+    client, db_session, workspace, agent, user, enabled
+):
+    session = await _open_session_row(db_session, workspace, agent, user)
+    outsider = User(
+        email="out2@sessions.local",
+        password_hash=hash_password("pw"),
+        name="Outsider",
+        role="user",
+    )
+    db_session.add(outsider)
+    await db_session.commit()
+    await client.post("/auth/login", json={"email": "out2@sessions.local", "password": "pw"})
+
+    resp = await client.get(f"/sql/sessions/{session.id}/statements")
+    assert resp.status_code == 403

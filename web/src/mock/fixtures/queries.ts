@@ -85,6 +85,45 @@ function makeQueryHistory(): Query[] {
       started_at: "2026-05-13T11:00:00Z",
       finished_at: "2026-05-13T11:00:02.1Z",
     },
+    // Statements run inside a SQL session (a dbt build): ordinary queries rows
+    // tagged origin="session", so History can group them under one workload
+    // instead of showing N unattributed rows.
+    {
+      id: "q-sess-1",
+      workspace_id: "ws-1",
+      agent_id: "ag-1",
+      user_id: "u-1",
+      user_name: "Marton",
+      session_id: "sess-live",
+      sql: "CREATE OR REPLACE TABLE analytics.stg_orders AS SELECT * FROM raw.orders",
+      status: "done",
+      origin: "session",
+      row_count: 0,
+      duration_ms: 820,
+      result_bytes: null,
+      error: null,
+      progress: null,
+      started_at: "2026-05-15T11:00:00Z",
+      finished_at: "2026-05-15T11:00:00.82Z",
+    },
+    {
+      id: "q-sess-2",
+      workspace_id: "ws-1",
+      agent_id: "ag-1",
+      user_id: "u-1",
+      user_name: "Marton",
+      session_id: "sess-live",
+      sql: "SELECT count(*) FROM analytics.stg_orders",
+      status: "done",
+      origin: "session",
+      row_count: 1,
+      duration_ms: 90,
+      result_bytes: null,
+      error: null,
+      progress: null,
+      started_at: "2026-05-15T11:01:00Z",
+      finished_at: "2026-05-15T11:01:00.09Z",
+    },
   ];
 }
 

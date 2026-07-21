@@ -640,6 +640,8 @@ async def test_rows_done_without_result_returns_empty_page(
     assert body["rows"] == []
     assert body["columns"] == []
     assert body["total"] == 0
+    # No result grid, so no types to report.
+    assert body["column_schema"] is None
 
 
 # --- saved queries ---
@@ -772,7 +774,9 @@ def _make_parquet(select_sql: str) -> bytes:
         os.unlink(path)
 
 
-async def _done_query_with_agent(db_session, workspace, agent, *, row_count: int):
+async def _done_query_with_agent(
+    db_session, workspace, agent, *, row_count: int, result_schema: list | None = None
+):
     from datetime import UTC, datetime
 
     from api.models.query import Query
@@ -789,6 +793,7 @@ async def _done_query_with_agent(db_session, workspace, agent, *, row_count: int
         status="done",
         row_count=row_count,
         result_path="/var/duckhaven-agent/results/x.parquet",
+        result_schema=result_schema,
         started_at=datetime.now(UTC),
     )
     db_session.add(query)
@@ -870,6 +875,85 @@ async def test_get_query_rows_swept_result_returns_410(
 
     resp = await authed_client.get(f"/queries/{query.id}/rows")
     assert resp.status_code == 410
+
+
+async def test_get_query_rows_reports_column_schema(
+    authed_client: AsyncClient, workspace: Workspace, agent: Agent, db_session, monkeypatch
+):
+    """The types the agent reported are surfaced verbatim, in DuckDB's spelling,
+    alongside the unchanged names-only `columns` list."""
+    import httpx
+
+    from api.services import query as query_service
+
+    schema = [
+        {"name": "ts", "type": "TIMESTAMP WITH TIME ZONE"},
+        {"name": "amt", "type": "DECIMAL(38,10)"},
+    ]
+    query = await _done_query_with_agent(
+        db_session, workspace, agent, row_count=1, result_schema=schema
+    )
+
+    async def fake_proxy(agent_arg, query_arg, *, row_offset=None, row_limit=None, token=None):
+        content = _make_parquet(
+            "SELECT TIMESTAMPTZ '2026-01-02 03:04:05+00' AS ts, 1.5::DECIMAL(38,10) AS amt"
+        )
+        return httpx.Response(200, content=content, headers={"X-DH-Row-Offset": "0"})
+
+    monkeypatch.setattr(query_service, "proxy_rows", fake_proxy)
+
+    resp = await authed_client.get(f"/queries/{query.id}/rows")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["column_schema"] == schema
+    assert body["columns"] == ["ts", "amt"]
+
+
+async def test_get_query_from_older_agent_omits_column_schema(
+    authed_client: AsyncClient, workspace: Workspace, agent: Agent, db_session, monkeypatch
+):
+    """Backward compatibility: an agent that never reported a schema leaves the
+    page exactly as it was, plus a null `column_schema`. The API does not derive
+    one from the Parquet, which is lossy (HUGEINT -> DOUBLE, ENUM -> VARCHAR)."""
+    import httpx
+
+    from api.services import query as query_service
+
+    query = await _done_query_with_agent(db_session, workspace, agent, row_count=1)
+
+    async def fake_proxy(agent_arg, query_arg, *, row_offset=None, row_limit=None, token=None):
+        content = _make_parquet("SELECT 123456789012345678901::HUGEINT AS h")
+        return httpx.Response(200, content=content, headers={"X-DH-Row-Offset": "0"})
+
+    monkeypatch.setattr(query_service, "proxy_rows", fake_proxy)
+
+    resp = await authed_client.get(f"/queries/{query.id}/rows")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["column_schema"] is None
+    # Every pre-existing key is untouched — the only change is the added key.
+    assert set(body) == {"rows", "columns", "cursor", "total", "column_schema"}
+    assert body["columns"] == ["h"]
+    assert body["total"] == 1
+    assert body["cursor"] is None
+
+    # And the same schema is (absent) on the status endpoint.
+    status_body = (await authed_client.get(f"/queries/{query.id}")).json()
+    assert status_body["column_schema"] is None
+
+
+async def test_get_query_reports_column_schema_before_fetching_rows(
+    authed_client: AsyncClient, workspace: Workspace, agent: Agent, db_session
+):
+    """A client learns the result types from the status response, without paging."""
+    schema = [{"name": "en", "type": "ENUM('e', 'f')"}]
+    query = await _done_query_with_agent(
+        db_session, workspace, agent, row_count=1, result_schema=schema
+    )
+
+    resp = await authed_client.get(f"/queries/{query.id}")
+    assert resp.status_code == 200
+    assert resp.json()["column_schema"] == schema
 
 
 async def test_proxy_rows_sets_bearer_and_window(monkeypatch):

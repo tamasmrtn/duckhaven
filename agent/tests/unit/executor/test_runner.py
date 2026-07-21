@@ -2,7 +2,7 @@ import time
 
 import pytest
 
-from agent.executor.runner import run_query_sync
+from agent.executor.runner import _result_schema, run_query_sync
 from agent.executor.supervisor import run_query
 
 # The admission manager normally supplies per-query sizing; tests that don't
@@ -42,6 +42,78 @@ def test_ddl_runs_without_result_file(tmp_path):
     assert stats["wrote_result"] is False
     assert stats["row_count"] == 0
     assert stats["result_bytes"] is None
+    assert stats["result_schema"] is None
+
+
+def test_result_schema_reports_duckdb_type_spellings(tmp_path):
+    """The reported types are DuckDB's own logical-type spellings, including
+    parameterized and nested ones (the same strings DESCRIBE prints)."""
+    result_path = tmp_path / "out.parquet"
+    stats = _run(
+        """
+        SELECT
+          TIMESTAMPTZ '2024-03-01 12:00:00+01' AS ts_tz,
+          123.4567::DECIMAL(38,10) AS dec,
+          'abc'::BLOB AS b,
+          [1, 2, 3] AS lst,
+          {'a': 1, 'b': 'x'} AS st,
+          MAP {'k': 1} AS mp,
+          NULL::INTEGER AS n
+        """,
+        result_path,
+    )
+    assert stats["result_schema"] == [
+        {"name": "ts_tz", "type": "TIMESTAMP WITH TIME ZONE"},
+        {"name": "dec", "type": "DECIMAL(38,10)"},
+        {"name": "b", "type": "BLOB"},
+        {"name": "lst", "type": "INTEGER[]"},
+        {"name": "st", "type": "STRUCT(a INTEGER, b VARCHAR)"},
+        {"name": "mp", "type": "MAP(VARCHAR, INTEGER)"},
+        {"name": "n", "type": "INTEGER"},
+    ]
+
+
+def test_result_schema_survives_the_lossy_parquet_write(tmp_path):
+    """The types come off the relation, not the Parquet file.
+
+    DuckDB's Parquet writer degrades these four (HUGEINT loses its values too),
+    so a schema derived from the materialized file would report the wrong type.
+    """
+    result_path = tmp_path / "out.parquet"
+    stats = _run(
+        "SELECT 123456789012345678901::HUGEINT AS h, 'e'::ENUM('e', 'f') AS en, "
+        "[1, 2]::INT[2] AS arr, bitstring('0101', 4) AS bs",
+        result_path,
+    )
+    assert stats["result_schema"] == [
+        {"name": "h", "type": "HUGEINT"},
+        {"name": "en", "type": "ENUM('e', 'f')"},
+        {"name": "arr", "type": "INTEGER[2]"},
+        {"name": "bs", "type": "BIT"},
+    ]
+
+    import duckdb
+
+    conn = duckdb.connect()
+    try:
+        readback = conn.sql(f"SELECT * FROM read_parquet('{result_path}')")
+        # What the API would have derived instead, had it read the file.
+        assert [str(t) for t in readback.types] == ["DOUBLE", "VARCHAR", "INTEGER[]", "VARCHAR"]
+    finally:
+        conn.close()
+
+
+def test_result_schema_capture_failure_degrades_to_none():
+    """A capture failure yields no schema rather than failing the query."""
+
+    class Broken:
+        columns = ["a"]
+
+        @property
+        def types(self):
+            raise RuntimeError("relation gone")
+
+    assert _result_schema(Broken()) is None
 
 
 def test_dml_reports_affected_count(tmp_path):

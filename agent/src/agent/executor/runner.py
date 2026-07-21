@@ -588,6 +588,26 @@ def _capture_profile(conn: duckdb.DuckDBPyConnection, profile_path: Path) -> dic
         return None
 
 
+def _result_schema(rel: duckdb.DuckDBPyRelation) -> list[dict[str, str]] | None:
+    """``[{"name", "type"}, ...]`` for a materialized result, or ``None``.
+
+    ``type`` is DuckDB's own logical-type spelling — the same string ``DESCRIBE``
+    prints in its ``column_type`` column, and the repo's established
+    column-metadata contract. It is fully self-describing: nested and
+    parameterized types (``DECIMAL(38,10)``, ``STRUCT(a INTEGER, b VARCHAR)``,
+    ``ENUM('e', 'f')``, ``INTEGER[2]``) re-parse to themselves, so no separate
+    precision/scale fields are needed.
+
+    Best-effort (mirrors ``_capture_profile``): any failure returns ``None``, so
+    a client sees no schema rather than a wrong one.
+    """
+    try:
+        return [{"name": n, "type": str(t)} for n, t in zip(rel.columns, rel.types, strict=True)]
+    except Exception as exc:  # noqa: BLE001 - schema capture is best-effort
+        logger.warning("Result schema capture failed: %s", exc)
+        return None
+
+
 def _run_one_statement(
     conn: duckdb.DuckDBPyConnection,
     sql: str,
@@ -602,7 +622,8 @@ def _run_one_statement(
     A single `SELECT` is materialized to Parquet (`wrote_result=True`, profiled);
     any other statement — DDL/DML or a multi-statement script — is executed
     directly with no result file. Returns the base result dict
-    (`row_count`, `duration_ms`, `wrote_result`, `result_bytes`, `profile`).
+    (`row_count`, `duration_ms`, `wrote_result`, `result_bytes`, `profile`,
+    `result_schema`).
 
     Shared by the per-query path (`run_query_sync`) and the per-session path
     (`run_statement_sync`); it owns the profile sidecar file but NOT the
@@ -624,6 +645,7 @@ def _run_one_statement(
     wrote_result = _is_single_select(sql)
     result_bytes: int | None = None
     profile: dict[str, Any] | None = None
+    result_schema: list[dict[str, str]] | None = None
     try:
         if wrote_result:
             # A single SELECT is materialized to Parquet so the control plane can
@@ -641,8 +663,15 @@ def _run_one_statement(
             # same trap set. `conn.sql()` builds a lazy relation and `write_parquet`
             # streams it through the identical `BATCH_COPY_TO_FILE` operator, so the
             # Parquet output and the captured profile are unchanged for a SELECT.
-            conn.sql(sql).write_parquet(str(result_path))
+            rel = conn.sql(sql)
+            rel.write_parquet(str(result_path))
             duration_ms = int((time.monotonic() - start) * 1000)
+            # The relation's own types, read before the Parquet hop: the writer
+            # is lossy (HUGEINT -> DOUBLE, ENUM -> VARCHAR, INTEGER[2] -> INTEGER[],
+            # BIT -> VARCHAR), so the control plane cannot recover these from the
+            # file it proxies. This is the only place the query's real result
+            # types exist.
+            result_schema = _result_schema(rel)
             if enable_profiling:
                 conn.execute("PRAGMA disable_profiling")
                 profile = _capture_profile(conn, profile_path)
@@ -685,6 +714,7 @@ def _run_one_statement(
         "wrote_result": wrote_result,
         "result_bytes": result_bytes,
         "profile": profile,
+        "result_schema": result_schema,
     }
 
 

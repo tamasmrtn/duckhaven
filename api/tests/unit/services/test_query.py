@@ -113,6 +113,44 @@ async def test_query_done_persists_profile(db_session):
     assert query.profile == profile
 
 
+async def test_query_done_persists_result_schema(db_session):
+    ws, _catalog = await _make_workspace(db_session)
+    query = Query(workspace_id=ws.id, sql="SELECT 1", status="running")
+    db_session.add(query)
+    await db_session.commit()
+    await db_session.refresh(query)
+
+    schema = [
+        {"name": "ts", "type": "TIMESTAMP WITH TIME ZONE"},
+        {"name": "amt", "type": "DECIMAL(38,10)"},
+    ]
+    frame = Frame(
+        type=FrameType.QUERY_DONE,
+        payload={"query_id": str(query.id), "status": "done", "result_schema": schema},
+    )
+    await query_service.handle_agent_frame(db_session, frame)
+    await db_session.refresh(query)
+    assert query.result_schema == schema
+
+
+async def test_query_done_without_result_schema_leaves_it_null(db_session):
+    """An agent that predates the field reports nothing; the API stores nothing
+    rather than deriving a schema from the (lossy) result Parquet."""
+    ws, _catalog = await _make_workspace(db_session)
+    query = Query(workspace_id=ws.id, sql="SELECT 1", status="running")
+    db_session.add(query)
+    await db_session.commit()
+    await db_session.refresh(query)
+
+    frame = Frame(
+        type=FrameType.QUERY_DONE,
+        payload={"query_id": str(query.id), "status": "done", "row_count": 1},
+    )
+    await query_service.handle_agent_frame(db_session, frame)
+    await db_session.refresh(query)
+    assert query.result_schema is None
+
+
 async def test_session_statement_done_records_statement_metric(db_session):
     from api.config import settings
     from api.metrics import SQL_STATEMENTS

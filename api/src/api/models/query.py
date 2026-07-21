@@ -46,6 +46,13 @@ class Query(Base):
         JSON().with_variant(JSONB, "postgresql"), nullable=True
     )
     result_path: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    # The result's column types as the agent reported them: `[{"name", "type"}, ...]`
+    # where `type` is DuckDB's own logical-type spelling. Null for DDL/DML (no
+    # result grid) and for runs by an agent that predates the field — the API
+    # never derives it from the Parquet, which is lossy. JSONB on Postgres.
+    result_schema: Mapped[list | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=True
+    )
     # Set when this run was produced by a schedule (origin="scheduled"); null for
     # interactive runs. Powers the per-schedule run-history list.
     schedule_id: Mapped[uuid.UUID | None] = mapped_column(

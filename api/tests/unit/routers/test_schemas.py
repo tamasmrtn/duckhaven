@@ -620,6 +620,7 @@ async def test_sample_returns_rows(auth_client: AsyncClient, backend: StorageBac
             status="done",
             row_count=1,
             result_path="/results/x.parquet",
+            result_schema=[{"name": "id", "type": "INTEGER"}],
         )
 
     async def fake_token(db, agent_id):
@@ -638,6 +639,8 @@ async def test_sample_returns_rows(auth_client: AsyncClient, backend: StorageBac
     body = resp.json()
     assert body["columns"] == ["id"]
     assert body["rows"] == [{"id": 7}]
+    # The preview is typed too — it runs through the same query path.
+    assert body["column_schema"] == [{"name": "id", "type": "INTEGER"}]
 
 
 async def test_drop_table_requires_writer(

@@ -9,6 +9,12 @@ class FrameType(StrEnum):
     AUTH_OK = "auth_ok"
     DISPATCH_QUERY = "dispatch_query"
     QUERY_PROGRESS = "query_progress"
+    # Terminal outcome for a query or session statement. Its payload carries
+    # `result_schema` — `[{"name", "type"}, ...]` where `type` is DuckDB's own
+    # logical-type spelling — captured off the relation *before* materialization,
+    # because the Parquet write is lossy (HUGEINT -> DOUBLE, ENUM -> VARCHAR).
+    # Null for DDL/DML, and absent from an agent older than this field, in which
+    # case the control plane reports no schema rather than deriving a wrong one.
     QUERY_DONE = "query_done"
     CANCEL_QUERY = "cancel_query"
     HEARTBEAT = "heartbeat"

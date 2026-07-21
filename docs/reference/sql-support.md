@@ -76,6 +76,33 @@ It reports DuckDB type names, which is what a `SELECT` on the same table returns
 table_info('catalog.schema.table')` returns the same information in a different shape, but only `DESCRIBE` composes
 into a larger query, so prefer it.
 
+The same spelling is what a query result reports in its `column_schema`
+(see [Column types](../concepts/query-execution.md#column-types)), so the type you read from `DESCRIBE` and the type you
+get back with your rows are the same string.
+
+#### Types whose *values* are degraded in results
+
+Result rows travel as Parquet from the agent and then as JSON to the client. `column_schema` always reports the query's
+real type, but for a few types the values you receive are not exact:
+
+| Type | What you receive |
+|---|---|
+| `HUGEINT`, `UHUGEINT` | A JSON number — **precision is lost**; the value passes through `DOUBLE` in the Parquet file |
+| `DECIMAL(p, s)` | A JSON number — **precision is lost** beyond what a float64 holds (`1.5`, not `"1.5000000000"`) |
+| `BLOB` | Lowercase hex text (`"616263"`) |
+| `BIT` | Bit-string text (`"0101"`) |
+| `ENUM(…)` | The label text (`"e"`) |
+| `UUID` | The canonical hyphenated string |
+| `INTERVAL` | An ISO-8601 duration (`"P3D"`) |
+| `DATE`, `TIME`, `TIMESTAMP`, `TIMESTAMPTZ` | ISO-8601 strings |
+
+Nested types (`LIST`, `STRUCT`, `MAP`, `ARRAY`) come back as JSON arrays and objects with the same per-element rules
+applied. A fixed-size `INTEGER[2]` is *reported* as `INTEGER[2]` but arrives as an ordinary JSON array.
+
+The two precision-losing rows are the ones to watch: `column_schema` will correctly tell you a column is
+`DECIMAL(38,10)`, but the number you get alongside it has already been through a float. Exact decimal round-tripping is
+not yet available.
+
 !!! warning "`information_schema.columns` does not work for Iceberg tables"
     DuckDB cannot introspect the columns of an attached Iceberg REST table through `information_schema.columns`,
     `duckdb_columns()`, or the `column_names`/`column_types` of `SHOW ALL TABLES`. Instead of the real columns you get a

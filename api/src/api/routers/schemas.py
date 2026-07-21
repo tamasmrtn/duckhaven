@@ -627,7 +627,13 @@ async def sample_table(
             status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to fetch preview rows."
         )
     rows, columns = query_service.decode_parquet_page(upstream.content, _SAMPLE_LIMIT, 0)
-    return RowsPageOut(rows=rows, columns=columns, cursor=None, total=query.row_count or len(rows))
+    return RowsPageOut(
+        rows=rows,
+        columns=columns,
+        cursor=None,
+        total=query.row_count or len(rows),
+        column_schema=query.result_schema,
+    )
 
 
 async def recount_table(

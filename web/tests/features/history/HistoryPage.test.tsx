@@ -147,6 +147,73 @@ describe('HistoryPage', () => {
     expect(screen.getByText('Workspace')).toBeInTheDocument()
   })
 
+  it('keeps the default view unchanged when nothing came from a session', async () => {
+    // Regression: the Session column is adaptive, so an ordinary history table
+    // must keep exactly the shape it had before sessions existed.
+    server.use(
+      http.get('/api/workspaces/:ws/queries', () =>
+        HttpResponse.json([
+          {
+            id: 'q-plain',
+            workspace_id: '137f7947-0000-4000-8000-000000000001',
+            agent_id: 'ag-1',
+            user_id: 'u-1',
+            sql: 'SELECT plain_marker',
+            status: 'done',
+            row_count: 1,
+            duration_ms: 5,
+            error: null,
+            progress: null,
+            started_at: '2026-05-15T10:00:00Z',
+            finished_at: '2026-05-15T10:00:00.005Z',
+          },
+        ]),
+      ),
+    )
+    renderWithProviders({ initialRoute: '/acme-analytics/history' })
+    await screen.findByText('SELECT plain_marker')
+
+    expect(
+      screen.queryByRole('columnheader', { name: 'Session' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('narrows history to a kind of run with the origin filter', async () => {
+    renderWithProviders({ initialRoute: '/acme-analytics/history' })
+    // The seeded workspace mixes interactive runs with a session's statements.
+    await screen.findByText(/raw\.users/)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Session' }))
+
+    expect(
+      await screen.findByText(/analytics\.stg_orders AS SELECT/),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/raw\.users/)).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Interactive' }))
+    expect(await screen.findByText(/raw\.users/)).toBeInTheDocument()
+    expect(
+      screen.queryByText(/analytics\.stg_orders AS SELECT/),
+    ).not.toBeInTheDocument()
+  })
+
+  it('links a session statement to the session it belonged to', async () => {
+    const { router } = renderWithProviders({
+      initialRoute: '/acme-analytics/history',
+    })
+    await screen.findByText(/raw\.users/)
+
+    // The Session column only appears once something in view has a session.
+    expect(
+      screen.getByRole('columnheader', { name: 'Session' }),
+    ).toBeInTheDocument()
+    fireEvent.click(screen.getAllByRole('button', { name: /^session / })[0])
+
+    expect(router.state.location.pathname).toBe(
+      '/acme-analytics/sessions/sess-live',
+    )
+  })
+
   it('hides the cross-workspace toggle from non-admins', async () => {
     server.use(
       http.get('/api/me', () =>

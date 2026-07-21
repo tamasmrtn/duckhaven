@@ -344,6 +344,70 @@ async def test_list_workspace_queries_resolves_user_name(
     assert by_sql["SELECT 'no user'"]["user_name"] is None
 
 
+async def test_list_workspace_queries_filters_by_origin_and_session(
+    authed_client: AsyncClient, workspace: Workspace, agent: Agent, db_session, user: User
+):
+    """A member may narrow History to a kind of run, or to one session's
+    statements. These reveal nothing they could not already see in this list, so
+    unlike the cross-principal filters they are not admin-gated."""
+    from datetime import UTC, datetime
+
+    from api.models.query import Query
+    from api.models.sql_session import SqlSession
+
+    session = SqlSession(workspace_id=workspace.id, agent_id=agent.id, user_id=user.id)
+    other_session = SqlSession(workspace_id=workspace.id, agent_id=agent.id, user_id=user.id)
+    db_session.add_all([session, other_session])
+    await db_session.flush()
+    now = datetime.now(UTC)
+    db_session.add_all(
+        [
+            Query(
+                workspace_id=workspace.id,
+                agent_id=agent.id,
+                sql="SELECT 'interactive'",
+                status="done",
+                started_at=now,
+            ),
+            Query(
+                workspace_id=workspace.id,
+                agent_id=agent.id,
+                sql="SELECT 'mine'",
+                status="done",
+                origin="session",
+                session_id=session.id,
+                started_at=now,
+            ),
+            Query(
+                workspace_id=workspace.id,
+                agent_id=agent.id,
+                sql="SELECT 'theirs'",
+                status="done",
+                origin="session",
+                session_id=other_session.id,
+                started_at=now,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    base = f"/workspaces/{workspace.slug}/queries"
+
+    resp = await authed_client.get(base, params={"origin": "session"})
+    assert resp.status_code == 200, resp.text
+    assert sorted(r["sql"] for r in resp.json()) == ["SELECT 'mine'", "SELECT 'theirs'"]
+
+    # Interactive runs carry a null origin; the filter spells that case out.
+    resp = await authed_client.get(base, params={"origin": "interactive"})
+    assert [r["sql"] for r in resp.json()] == ["SELECT 'interactive'"]
+
+    resp = await authed_client.get(base, params={"session_id": str(session.id)})
+    rows = resp.json()
+    assert [r["sql"] for r in rows] == ["SELECT 'mine'"]
+    # History needs the id on the wire to link a statement to its session.
+    assert rows[0]["session_id"] == str(session.id)
+
+
 async def test_list_workspace_queries_non_member_forbidden(
     client: AsyncClient, workspace: Workspace, db_session
 ):

@@ -223,6 +223,8 @@ async def list_workspace_queries(
     agent_id: uuid.UUID | None = QueryParam(default=None),
     since: datetime | None = QueryParam(default=None),
     until: datetime | None = QueryParam(default=None),
+    origin: str | None = QueryParam(default=None),
+    session_id: uuid.UUID | None = QueryParam(default=None),
     limit: int = QueryParam(default=100, le=1000),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -234,6 +236,11 @@ async def list_workspace_queries(
     ``since``/``until`` filters; those affordances are admin-only and rejected
     with 403 for non-admins. Internal queries (e.g. table-sample previews) are
     excluded.
+
+    ``origin`` and ``session_id`` narrow to a kind of run (``"session"``,
+    ``"scheduled"``) or to one session's statements. They reveal nothing a member
+    could not already see in this list, so they are open to any member — unlike
+    the cross-principal filters above.
     """
     is_admin = await has_permission(db, user, Permission.QUERIES_ADMIN)
 
@@ -256,6 +263,16 @@ async def list_workspace_queries(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
         await assert_workspace_member(db, workspace.id, user.id)
         stmt = stmt.where(Query.workspace_id == workspace.id)
+
+    if origin is not None:
+        # Interactive runs are stored with a null origin (the column only tags
+        # non-interactive ones), so the filter spells that case explicitly rather
+        # than leaving the UI unable to ask for it.
+        stmt = stmt.where(
+            Query.origin.is_(None) if origin == "interactive" else Query.origin == origin
+        )
+    if session_id is not None:
+        stmt = stmt.where(Query.session_id == session_id)
 
     if any(f is not None for f in (user_id, agent_id, since, until)):
         if not is_admin:

@@ -134,12 +134,30 @@ filter their rows, so allowing them would reveal the names of tables you have no
 access exists to prevent. Rejecting them is a deliberate trade: the engine cannot filter, so the answer must come from
 the API, which can.
 
-This applies **only** to catalogs attached in `scoped` mode. In an `open` catalog — the default — all of the above keep
-working exactly as before, since there is nothing to hide.
+#### The rejection is workspace-wide, not per catalog
+
+That same mechanic has a consequence worth knowing before you scope anything. A worksheet does not attach only the
+catalog you are working in — it attaches **every** catalog the workspace binds, and
+[these views span all of them](../reference/sql-support.md#inspecting-metadata-information_schema) at once. There is
+therefore no such thing as enumerating "just the open catalog": the rows come back for the scoped one too.
+
+So the moment **one** catalog in a workspace is switched to `scoped`, engine-side enumeration is rejected for **every**
+session in that workspace, whichever catalog is active. A worksheet pointed at an entirely open catalog will still be
+refused `information_schema.tables`. This is deliberate — the alternative leaks the scoped catalog's object names — and
+the error message names the scoped catalog responsible, so a denial from an open catalog is explicable.
+
+Nothing else changes for the open catalogs: querying their rows, `DESCRIBE`, and the catalog tree all keep working
+exactly as before. Only the unfilterable listings go away.
+
+!!! tip "Give scoped catalogs their own workspace"
+    If tools in a workspace rely on `information_schema` — dbt and most BI connectors do — attach the scoped catalog to
+    a **separate** workspace rather than alongside them. Scoping in place is not a local change; it withdraws
+    enumeration from everyone in the workspace.
 
 !!! note "Tools that enumerate"
-    A tool that discovers relations through `information_schema` (dbt does, for instance) will fail against a scoped
-    catalog. Point it at an open catalog, or have it list objects through the catalog API. Note that column metadata is
+    A tool that discovers relations through `information_schema` (dbt does, for instance) will fail in any workspace
+    holding a scoped catalog. Have it list objects through the catalog API, or point it at a workspace with no scoped
+    catalogs. Note that column metadata is
     unaffected either way: `information_schema.columns`
     [does not work for Iceberg tables](../reference/sql-support.md#columns-and-types-use-describe) regardless of access
     mode, so any tool that works against DuckHaven at all is already using `DESCRIBE` for that.

@@ -60,6 +60,12 @@ FROM information_schema.schemata
 WHERE catalog_name = 'analytics';
 ```
 
+!!! warning "Not available in a workspace with a scoped catalog"
+    Spanning every attachment is also why these views cannot be filtered by grant. They are rejected outright in any
+    workspace that has at least one catalog attached in `scoped` mode — including from a worksheet whose active catalog
+    is open, and even with a `table_catalog` filter. See
+    [Discovering objects in a scoped catalog](../concepts/permissions.md#discovering-objects-in-a-scoped-catalog).
+
 ### Columns and types: use `DESCRIBE`
 
 **`DESCRIBE` is the supported way to get a relation's columns and their types.** It is a read-only query to DuckHaven,

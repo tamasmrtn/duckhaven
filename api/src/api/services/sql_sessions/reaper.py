@@ -172,6 +172,7 @@ async def run_cycle(session_factory: async_sessionmaker[AsyncSession]) -> dict[s
                 reason = "max_lifetime" if _aware(session.created_at) < lifetime_cutoff else "idle"
                 session.status = "expired"
                 session.error = f"reaped ({reason})"
+            session.close_reason = reason
             session.closed_at = now
             reaped[reason] += 1
         # These sessions' held connections are being dropped, so anything still in

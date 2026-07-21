@@ -173,11 +173,13 @@ async def handle_session_frame(db: AsyncSession, frame: Frame) -> None:
         elif session.status not in _TERMINAL:
             session.status = "failed"
             session.error = frame.payload.get("error")
+            session.close_reason = "failed"
             session.closed_at = now
             record_sql_session_closed("failed")
     elif frame.type == FrameType.SESSION_CLOSED:
         if session.status == "closing":
             session.status = "closed"
+            session.close_reason = "client"
             session.closed_at = now
             record_sql_session_closed("client")
         elif session.status not in _TERMINAL:
@@ -187,6 +189,7 @@ async def handle_session_frame(db: AsyncSession, frame: Frame) -> None:
             # under the reason it reports so the backstop is observable.
             reason = frame.payload.get("reason")
             if reason:
+                session.close_reason = reason
                 record_sql_session_closed(reason)
         # The held connection is gone either way, so nothing still queued on this
         # session can ever run.
@@ -209,7 +212,12 @@ async def fail_sessions_for_agent(db: AsyncSession, agent_id: uuid.UUID) -> None
             SqlSession.agent_id == agent_id,
             SqlSession.status.in_(["opening", "open", "closing"]),
         )
-        .values(status="failed", error="agent disconnected", closed_at=now)
+        .values(
+            status="failed",
+            error="agent disconnected",
+            close_reason="agent_disconnect",
+            closed_at=now,
+        )
         .returning(SqlSession.id)
     )
     session_ids = list(result.scalars().all())

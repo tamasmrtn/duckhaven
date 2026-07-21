@@ -52,6 +52,10 @@ class QueryOut(BaseModel):
     # Set when the run was produced by a schedule; lets the runs feed map a run
     # back to its schedule. Null for interactive runs.
     schedule_id: uuid.UUID | None = None
+    # Set when this row is a statement run inside a SQL session; lets History link
+    # a statement back to the workload it belonged to. Null for interactive and
+    # scheduled runs.
+    session_id: uuid.UUID | None = None
     row_count: int | None
     duration_ms: int | None
     result_bytes: int | None = None

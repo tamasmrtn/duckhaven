@@ -190,6 +190,55 @@ continue the same trace across the API→agent hop. To watch for a leak, alert w
 above that agent's share of the active-sessions gauge, or when the `agent-self-reap` close reason is firing at all: the
 backstop only fires when a normal close was dropped. See [Monitoring](../operations/monitoring.md).
 
+### The audit trail
+
+Metrics tell you *how many* sessions ended badly; the audit trail tells you *which one*. Every session is a row in
+Postgres and every statement it runs is an ordinary query row tagged `origin="session"` with its `session_id`, so a
+whole `dbt run` is one workload you can read top to bottom instead of a few hundred unattributed history entries. The
+**Sessions** screen in the UI renders both — see
+[Read the session audit trail](../guides/session-audit.md) for the walkthrough.
+
+Two things the row records that are worth knowing about:
+
+**Why a session ended.** A session's final status (`closed`, `expired`, `failed`) does not say *why*, and "expired"
+covers two quite different situations. The row therefore also carries a typed **close reason**:
+
+| Reason | What happened |
+| --- | --- |
+| `client` | The client called `DELETE /sql/sessions/{id}` — a clean shutdown |
+| `idle` | Reaped: no statement for `SQL_SESSION_IDLE_TIMEOUT_S`. Usually a client that crashed or forgot to close |
+| `max_lifetime` | Reaped: alive longer than `SQL_SESSION_MAX_LIFETIME_S`, however busy it was |
+| `open_timeout` | The agent never confirmed the open, so the session never became usable |
+| `agent_disconnect` | The agent holding the connection dropped; everything in flight on it died with it |
+| `agent_lease` | The agent self-reaped an orphan it was still holding — the backstop for a lost close |
+| `failed` | The agent reported it could not open the connection at all |
+
+An idle reap and an explicit close look identical in an aggregate; here they do not. Sessions that ended before this
+field existed have no reason recorded, and the UI reports them as unknown rather than guessing.
+
+**Which tool opened it.** The API reads the request's `User-Agent` when the session opens and stores the product name
+and version on the row — `dbt-duckhaven 1.2.0`, `dlt-duckhaven 0.4.1`. This is deliberately server-captured rather than
+client-declared: the client cannot forge it, cannot forget to set it, and cannot leave a stale value behind after a
+failure. It is the same idea as PostgreSQL's `application_name` or Databricks' `client_application` column.
+
+Richer, client-supplied context — a dbt model name, a dlt load id — is **not** yet part of the contract. When it lands
+it will be an optional set of labels supplied once at session open, and it will live on the session row rather than
+being smuggled through the SQL text.
+
+### Who can see what
+
+**Any member of a workspace can see every session in that workspace, including the SQL each statement ran.** This is
+the same visibility the query history has always had, and it is deliberate: sessions run against shared catalogs and
+consume shared agent capacity, so "who is running what right now" is workspace-level information. If you need SQL that
+one member cannot read, it belongs in a different workspace.
+
+Two capabilities are narrower. Filtering sessions by principal, agent, or time requires the `queries:admin` permission,
+matching the query history's audit filters. Force-closing someone else's session — which drops its connection and fails
+whatever it had in flight — is likewise admin-only.
+
+Sessions and their statements are kept for as long as the rows are: there is **no** retention sweep for them today, so
+plan for the table to grow with your session volume.
+
 ## Not this
 
 Sessions are for tool connections, not a second interactive UI: the DuckHaven worksheet still uses the one-shot query

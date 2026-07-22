@@ -9,8 +9,9 @@ from httpx import AsyncClient
 from sqlalchemy import update
 
 from api.models.agent import Agent
-from api.models.catalog import WorkspaceCatalog
+from api.models.catalog import Catalog, WorkspaceCatalog
 from api.models.catalog_grant import CatalogGrant
+from api.models.storage_backend import StorageBackend
 from api.models.user import User
 from api.services.agent_registry import registry
 from api.services.auth import hash_password
@@ -62,6 +63,41 @@ async def scoped_ws(db_session, user: User):
     )
     await db_session.commit()
     return ws, cat
+
+
+@pytest_asyncio.fixture
+async def mixed_ws(db_session, user: User):
+    """A workspace holding one `open` catalog (the default) and one `scoped` one.
+
+    The shape issue #177 is about: the session's active catalog is open, but the
+    worksheet still attaches the scoped catalog alongside it."""
+    ws, open_cat = await seed_workspace(db_session, user_id=user.id, slug="mixed-ws")
+    backend = StorageBackend(
+        kind="object_store", name="mixed-ws-scoped-store", root_uri="/tmp/test", created_by=user.id
+    )
+    db_session.add(backend)
+    await db_session.flush()
+    scoped_cat = Catalog(
+        slug="sales",
+        name="Sales",
+        polaris_name="mixed-ws-sales",
+        storage_backend_id=backend.id,
+        created_by=user.id,
+    )
+    db_session.add(scoped_cat)
+    await db_session.flush()
+    db_session.add(
+        WorkspaceCatalog(
+            workspace_id=ws.id,
+            catalog_id=scoped_cat.id,
+            is_default=False,
+            access_mode="scoped",
+            attached_by=user.id,
+        )
+    )
+    await db_session.commit()
+    await db_session.refresh(scoped_cat)
+    return ws, open_cat, scoped_cat
 
 
 def _grant(db_session, user, cat, tier, schema="analytics", table=None):
@@ -203,6 +239,33 @@ async def test_info_schema_still_exempt_in_open_catalog(
     today's behavior, so no existing workspace loses `information_schema`."""
     ws, _cat = await seed_workspace(db_session, user_id=user.id, slug="open-info-ws")
     resp = await _run(authed_client, ws, connected_agent, "SELECT * FROM information_schema.tables")
+    assert resp.status_code == 202
+
+
+async def test_enumeration_denied_from_the_open_catalog_of_a_mixed_workspace(
+    authed_client, mixed_ws, connected_agent
+):
+    """Deliberately workspace-wide (issue #177): the worksheet attaches every
+    catalog the workspace binds, so this listing would return the scoped
+    catalog's objects even though the active catalog is open. The reason names
+    the scoped catalog so the denial is explicable from the open one."""
+    ws, _open_cat, scoped_cat = mixed_ws
+    resp = await _run(authed_client, ws, connected_agent, "SELECT * FROM information_schema.tables")
+    assert resp.status_code == 403
+    detail = resp.json()["detail"]
+    assert detail["error"] == "grant_denied"
+    assert scoped_cat.slug in detail["detail"]
+
+
+async def test_open_catalog_of_a_mixed_workspace_still_queryable(
+    authed_client, mixed_ws, connected_agent
+):
+    """Only the unfilterable listings go away — ordinary access to the open
+    catalog is untouched by the neighbouring scoped attachment."""
+    ws, open_cat, _scoped_cat = mixed_ws
+    resp = await _run(
+        authed_client, ws, connected_agent, f"SELECT * FROM {open_cat.slug}.analytics.leads"
+    )
     assert resp.status_code == 202
 
 

@@ -47,9 +47,11 @@ ROLE_CAP: dict[str, str] = {"reader": "reader", "writer": "writer", "owner": "wr
 # Built-in discovery surfaces that are never grant-checked: the read-only system
 # catalog and the metadata namespaces. This is what lets a `metadata`-tier
 # principal query `information_schema` while being denied table rows — but only
-# in an `open` catalog. Under a `scoped` attachment the metadata namespaces are
-# rejected instead (`metadata_enumeration_reason`), because the engine computes
-# them across every attachment and cannot narrow them to the principal's grants.
+# in a workspace with no scoped attachment. Once any catalog the workspace
+# attaches is `scoped`, the metadata namespaces are rejected instead
+# (`metadata_enumeration_reason`) for every session in that workspace, because the
+# engine computes them across every attachment at once and cannot narrow them to
+# the principal's grants.
 SYSTEM_CATALOGS: frozenset[str] = frozenset({"duckhaven", "system", "temp"})
 METADATA_SCHEMAS: frozenset[str] = frozenset({"info_schema", "information_schema"})
 
@@ -367,7 +369,24 @@ _ENUMERATION_HINT = (
 )
 
 
-def metadata_enumeration_reason(sql: str) -> str | None:
+def _enumeration_hint(scoped_slugs: list[str] | None) -> str:
+    """The rejection hint, naming the scoped catalogs that caused it when known.
+
+    The denial is workspace-wide, so a caller whose active catalog is `open` gets
+    it too; without the cause named, that reads as an unexplained regression.
+    """
+    if not scoped_slugs:
+        return _ENUMERATION_HINT
+    named = ", ".join(f"`{slug}`" for slug in scoped_slugs)
+    noun = "Catalog" if len(scoped_slugs) == 1 else "Catalogs"
+    verb = "is" if len(scoped_slugs) == 1 else "are"
+    return (
+        f"{_ENUMERATION_HINT} {noun} {named} {verb} attached in scoped mode, which "
+        "disables engine-side enumeration for every catalog in this workspace."
+    )
+
+
+def metadata_enumeration_reason(sql: str, scoped_slugs: list[str] | None = None) -> str | None:
     """Why ``sql`` reaches catalog metadata in a way grants cannot check.
 
     ``information_schema`` and its siblings are computed by DuckDB across every
@@ -377,13 +396,19 @@ def metadata_enumeration_reason(sql: str) -> str | None:
     filtered, the statement is rejected instead, and callers are pointed at the
     REST browse endpoints that *can* filter.
 
-    Only consulted for **scoped** attachments (see :func:`assert_query_access`), so
-    open workspaces — the default — never reach this and keep today's behavior.
-    ``DESCRIBE`` is deliberately not covered: it names its object, so it is
-    grant-checked per object at ``metadata`` tier like any other ref.
+    Consulted whenever **any** catalog attached to the workspace is scoped (see
+    :func:`assert_query_access`), not only when the statement names that catalog:
+    the listings span every attachment at once, so they would expose the scoped
+    catalog's objects from a session whose active catalog is open. Workspaces with
+    no scoped attachment — the default — never reach this and keep today's
+    behavior. ``DESCRIBE`` is deliberately not covered: it names its object, so it
+    is grant-checked per object at ``metadata`` tier like any other ref.
+
+    ``scoped_slugs``, when given, names those catalogs in the returned reason.
 
     Returns a user-facing reason, or ``None`` when nothing enumerates.
     """
+    hint = _enumeration_hint(scoped_slugs)
     try:
         statements = sqlglot.parse(sql, read="duckdb")
     except Exception as exc:  # sqlglot.errors.ParseError et al - fail closed
@@ -397,12 +422,12 @@ def metadata_enumeration_reason(sql: str) -> str | None:
                 # Matched on the schema, so this catches both the bare
                 # `information_schema.tables` and dbt-duckdb's
                 # `system.information_schema.tables` spelling.
-                return f"`{table.db}.{table.name}` cannot be queried. {_ENUMERATION_HINT}"
+                return f"`{table.db}.{table.name}` cannot be queried. {hint}"
         for fn in stmt.find_all(exp.Anonymous):
             if isinstance(fn.this, str) and fn.this.lower() in _CATALOG_META_FUNCTIONS:
-                return f"`{fn.this}()` cannot be called. {_ENUMERATION_HINT}"
+                return f"`{fn.this}()` cannot be called. {hint}"
         if isinstance(stmt, exp.Show):
-            return f"`SHOW` cannot be used. {_ENUMERATION_HINT}"
+            return f"`SHOW` cannot be used. {hint}"
         if isinstance(stmt, exp.Pragma):
             node = stmt.this
             if isinstance(node, exp.Anonymous) and isinstance(node.this, str):
@@ -412,7 +437,7 @@ def metadata_enumeration_reason(sql: str) -> str | None:
             else:
                 name = ""
             if name in _UNCHECKABLE_PRAGMAS:
-                return f"`PRAGMA {name}` cannot be used. {_ENUMERATION_HINT}"
+                return f"`PRAGMA {name}` cannot be used. {hint}"
     return None
 
 
@@ -434,7 +459,9 @@ async def assert_query_access(
     Every referenced table needs at least ``reader`` (``writer`` for the write
     target, ``metadata`` for a ``DESCRIBE``) on any catalog whose attachment is
     scoped, and statements that enumerate catalog objects the engine cannot filter
-    by grant are rejected outright (:func:`metadata_enumeration_reason`). Runs for
+    by grant are rejected outright (:func:`metadata_enumeration_reason`) — the
+    latter for the whole workspace once *any* attachment is scoped, including
+    sessions whose active catalog is open. Runs for
     both interactive and scheduled dispatch — the shared chokepoint. It is a
     **no-op** when no attached catalog is scoped, so open workspaces never even
     parse the SQL and keep today's behavior byte-for-byte.
@@ -452,8 +479,13 @@ async def assert_query_access(
 
     # Unfilterable engine-side enumeration is rejected outright once any attached
     # catalog is scoped: DuckDB computes those listings across every attachment
-    # and cannot narrow them to the principal's grants.
-    if (reason := metadata_enumeration_reason(sql)) is not None:
+    # and cannot narrow them to the principal's grants. Deliberately workspace-
+    # wide, not per referenced catalog — the agent multi-ATTACHes every catalog
+    # the workspace binds, so these listings expose the scoped catalog's objects
+    # even from a session whose active catalog is open. The reason names the
+    # scoped catalogs so that denial is explicable from an open one.
+    scoped_slugs = sorted(c.slug for c in catalogs if c.id in scoped_ids)
+    if (reason := metadata_enumeration_reason(sql, scoped_slugs)) is not None:
         raise GrantDenied(reason)
 
     by_slug = {c.slug: c for c in catalogs}

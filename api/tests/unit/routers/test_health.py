@@ -1,5 +1,8 @@
+import pytest
 from httpx import AsyncClient
 
+from api import features
+from api.config import settings
 from api.deps import get_db, get_polaris_client
 from api.main import api_app
 
@@ -8,6 +11,22 @@ async def test_healthz_ok(client: AsyncClient):
     resp = await client.get("/healthz")
     assert resp.status_code == 200
     assert resp.json() == {"status": "ok"}
+
+
+async def test_version_ok(client: AsyncClient):
+    resp = await client.get("/version")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body.keys() == {"version", "api_version", "features"}
+    assert body["api_version"] == features.API_VERSION
+    assert set(body["features"]) == set(features.FEATURES)
+
+
+async def test_version_reflects_app_version(client: AsyncClient, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(settings, "app_version", "9.9.9")
+    resp = await client.get("/version")
+    assert resp.status_code == 200
+    assert resp.json()["version"] == "9.9.9"
 
 
 async def test_readyz_ok(client: AsyncClient):

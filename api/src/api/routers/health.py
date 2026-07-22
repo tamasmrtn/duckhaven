@@ -12,13 +12,34 @@ the container alive.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api import features
+from api.config import settings
 from api.deps import get_db, get_polaris_client
 from api.services.polaris import PolarisClient
 
 router = APIRouter()
+
+
+class VersionOut(BaseModel):
+    # Release/build version (git tag) — provenance, "what build is running".
+    version: str
+    # API contract version — negotiated compatibility, bumped only on breaks.
+    api_version: int
+    # Additive, stable capability slugs; clients branch on these, not `version`.
+    features: list[str]
+
+
+@router.get("/version")
+async def version() -> VersionOut:
+    return VersionOut(
+        version=settings.app_version,
+        api_version=features.API_VERSION,
+        features=list(features.FEATURES),
+    )
 
 
 @router.get("/healthz")

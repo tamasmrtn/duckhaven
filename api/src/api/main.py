@@ -133,7 +133,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 # The browser-facing REST API. Mounted under /api on the outer app so it shares
 # an origin with the SPA; owns the lifespan-managed PolarisClient state.
-api_app = FastAPI(title="duckhaven-api", lifespan=lifespan)
+api_app = FastAPI(title="duckhaven-api", version=settings.app_version, lifespan=lifespan)
 
 # Record request count/latency by route template (skips the /metrics scrape).
 api_app.add_middleware(PrometheusMiddleware)

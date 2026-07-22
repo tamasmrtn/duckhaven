@@ -14,6 +14,26 @@ documentation generated from the running server:
 Because the schema is generated from the server, it always matches the deployed version — prefer it over any static
 list.
 
+## Server version
+
+`GET /api/version` is an unauthenticated endpoint that reports which build is running:
+
+```json
+{
+  "version": "1.4.0",
+  "api_version": 1
+}
+```
+
+The two fields are distinct on purpose:
+
+- **`version`** — the release/build version of the running server (the git tag it was built from). Use it for
+  provenance and bug reports — *"which build is this?"*. It moves with every release.
+- **`api_version`** — the API contract version, a single integer bumped only when a change breaks the contract. It does
+  not move on ordinary releases.
+
+A server old enough to lack this endpoint returns **404**; treat that as the oldest supported version.
+
 ## Resource groups
 
 | Group | Covers |

@@ -28,6 +28,10 @@ class OidcProvider(BaseModel):
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # Release/build version, surfaced at GET /api/version and as OpenAPI info.version.
+    # Injected from the git tag at image build time (DUCKHAVEN_APP_VERSION build-arg);
+    # local/dev runs report the placeholder.
+    app_version: str = Field(default="0.0.0-dev", validation_alias="DUCKHAVEN_APP_VERSION")
     database_url: str = "postgresql+asyncpg://duckhaven:duckhaven@localhost:5432/duckhaven"
     # Root log level. uvicorn configures only its own loggers (and leaves the root
     # logger handler-less), so without this the API's module loggers — scanner

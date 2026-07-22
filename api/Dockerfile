@@ -40,10 +40,16 @@ RUN uv sync --frozen --no-dev --no-editable --package duckhaven-api
 # ── Runtime ──────────────────────────────────────────────────────────────────
 FROM python:3.14-slim AS runtime
 
+# Release version, injected from the git tag by CI (docker/metadata-action).
+# Surfaced at GET /api/version and as OpenAPI info.version; defaults to a dev
+# placeholder for local builds that pass no build-arg.
+ARG DUCKHAVEN_APP_VERSION=0.0.0-dev
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONOPTIMIZE=1 \
-    PATH="/app/.venv/bin:$PATH"
+    PATH="/app/.venv/bin:$PATH" \
+    DUCKHAVEN_APP_VERSION=$DUCKHAVEN_APP_VERSION
 
 WORKDIR /app
 

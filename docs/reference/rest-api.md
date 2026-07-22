@@ -14,35 +14,25 @@ documentation generated from the running server:
 Because the schema is generated from the server, it always matches the deployed version — prefer it over any static
 list.
 
-## Server version and capabilities
+## Server version
 
-`GET /api/version` is an unauthenticated discovery endpoint that tells a client what the server it is talking to
-supports, so a client can adapt its behaviour instead of sending a statement and inspecting whether it fails.
+`GET /api/version` is an unauthenticated endpoint that reports which build is running:
 
 ```json
 {
   "version": "1.4.0",
-  "api_version": 1,
-  "features": ["column_schema", "truncate_table", "meta_statement_materialization"]
+  "api_version": 1
 }
 ```
 
-The three fields are distinct on purpose:
+The two fields are distinct on purpose:
 
 - **`version`** — the release/build version of the running server (the git tag it was built from). Use it for
-  provenance and bug reports — *"which build is this?"*. It moves with every release, so it is not a reliable signal for
-  *what the server can do*.
+  provenance and bug reports — *"which build is this?"*. It moves with every release.
 - **`api_version`** — the API contract version, a single integer bumped only when a change breaks the contract. It does
   not move on ordinary releases.
-- **`features`** — the list a client should actually branch on. Each slug names a capability; its presence means the
-  behaviour is available on this server.
 
-!!! tip "Feature-detect, don't version-parse"
-    Branch on the `features` list, not the `version` string. Slugs are **additive and stable** — new capabilities are
-    appended and existing ones are never renamed or removed — so a client that checks `"truncate_table" in features`
-    keeps working across upgrades and backports. Treat the endpoint itself as feature-detectable: a server old enough
-    to lack `GET /api/version` (404) is also old enough to lack every capability it would list, so a missing endpoint
-    means *assume the oldest supported behaviour*.
+A server old enough to lack this endpoint returns **404**; treat that as the oldest supported version.
 
 ## Resource groups
 

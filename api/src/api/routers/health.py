@@ -16,12 +16,15 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api import features
 from api.config import settings
 from api.deps import get_db, get_polaris_client
 from api.services.polaris import PolarisClient
 
 router = APIRouter()
+
+# API contract version — bump only on a breaking change to the API contract,
+# not per release (the release/build version is settings.app_version).
+API_VERSION = 1
 
 
 class VersionOut(BaseModel):
@@ -29,17 +32,11 @@ class VersionOut(BaseModel):
     version: str
     # API contract version — negotiated compatibility, bumped only on breaks.
     api_version: int
-    # Additive, stable capability slugs; clients branch on these, not `version`.
-    features: list[str]
 
 
 @router.get("/version")
 async def version() -> VersionOut:
-    return VersionOut(
-        version=settings.app_version,
-        api_version=features.API_VERSION,
-        features=list(features.FEATURES),
-    )
+    return VersionOut(version=settings.app_version, api_version=API_VERSION)
 
 
 @router.get("/healthz")

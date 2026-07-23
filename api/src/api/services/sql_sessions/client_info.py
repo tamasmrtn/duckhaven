@@ -1,10 +1,17 @@
 """Identify the tool that opened a SQL session, from its ``User-Agent``.
 
-Attribution's minimal, zero-contract form: the connector already sends
-``dbt-duckhaven/1.2.0`` / ``dlt-duckhaven/0.4.1``, so the API can record *what
+Attribution's minimal, zero-contract form: clients are expected to lead their
+``User-Agent`` with the calling application, ``<product>/<version>`` (e.g.
+``dbt-duckhaven/0.1.0`` / ``dlt-duckhaven/0.2.0``), so the API can record *what
 workload this is* without adding a request field the published client would have to
 learn. Same idea as Postgres' ``application_name`` (set once, on connect) and
 Databricks' ``system.query.history.client_application``.
+
+The connector leads with the application from ``duckhaven-sql-connector`` 0.3.0. A
+connector older than that — or one opened with no ``application=`` set — leads with
+its own token and is recorded as ``duckhaven-sql-connector``, so the workload is not
+distinguished. ``sql_sessions`` rows written before that client fix carry that value,
+and audit history will show it.
 
 Deliberately not a general User-Agent parser: DuckHaven's clients emit a fixed
 ``product/version`` shape, and a browser's sprawling UA string is not something the

@@ -46,9 +46,11 @@ class SqlSession(Base):
     # free-text `error`. Null while the session lives, and on rows that ended
     # before this column existed.
     close_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    # Which tool opened the session, parsed from the request's `User-Agent`
-    # (`dbt-duckhaven/1.2.0`). Postgres' `application_name` analog; null when the
-    # header is absent or unparseable.
+    # Which tool opened the session, parsed from the leading `product/version` token
+    # of the request's `User-Agent` (`dbt-duckhaven/0.1.0`) — the calling application
+    # a client is expected to lead with. Postgres' `application_name` analog; null when
+    # the header is absent or unparseable, `duckhaven-sql-connector` for a connector
+    # older than 0.3.0 that led with its own token.
     client_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     client_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     active_catalog: Mapped[str | None] = mapped_column(String(255), nullable=True)

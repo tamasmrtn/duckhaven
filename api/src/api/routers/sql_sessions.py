@@ -130,10 +130,11 @@ async def open_session(
         active = await get_default_catalog(db, workspace.id)
     active = active or catalogs[0]
 
-    # Which tool this is, from the User-Agent the connector already sends. Recorded
-    # here (once, at open) rather than per statement — the lesson of dbt-snowflake
-    # #199, where a per-statement ALTER SESSION tag both cost a round trip each time
-    # and survived a failed materialization with the wrong value.
+    # Which tool this is, from the User-Agent the client is expected to lead with its
+    # calling application. Recorded here (once, at open) rather than per statement —
+    # the lesson of dbt-snowflake #199, where a per-statement ALTER SESSION tag both
+    # cost a round trip each time and survived a failed materialization with the wrong
+    # value.
     client_name, client_version = parse_user_agent(request.headers.get("user-agent"))
 
     session = SqlSession(

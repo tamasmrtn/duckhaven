@@ -549,6 +549,18 @@ def _statement(session: SqlSession, sql: str, *, status: str = "done") -> Query:
     [
         ("dbt-duckhaven/1.2.0", ("dbt-duckhaven", "1.2.0")),
         ("dlt-duckhaven/0.4.1 (linux; cpython 3.12)", ("dlt-duckhaven", "0.4.1")),
+        # Client leads with the calling application (connector >= 0.3.0): the
+        # workload is recorded, the trailing connector token is dropped.
+        (
+            "dbt-duckhaven/0.1.0 duckhaven-sql-connector/0.3.0",
+            ("dbt-duckhaven", "0.1.0"),
+        ),
+        # Legacy/misordered order (connector < 0.3.0): the connector's own leading
+        # token wins and the workload is lost — the shape of issue #179.
+        (
+            "duckhaven-sql-connector/0.2.0 dbt-duckhaven/0.1.0",
+            ("duckhaven-sql-connector", "0.2.0"),
+        ),
         ("curl", ("curl", None)),
         ("", (None, None)),
         (None, (None, None)),

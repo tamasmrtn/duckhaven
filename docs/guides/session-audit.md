@@ -22,9 +22,11 @@ Each row shows who opened the session, which client did it, which agent is holdi
 statements it has run, and when it was last active. A session with an old **Last active** and a low statement count is
 the classic leak.
 
-The **Client** column is the tool itself — `dbt-duckhaven 1.2.0`, `dlt-duckhaven 0.4.1`. DuckHaven reads this from the
+The **Client** column is the tool itself — `dbt-duckhaven 0.1.0`, `dlt-duckhaven 0.2.0`. DuckHaven reads this from the
 connection's `User-Agent` when the session opens, so it is recorded whether or not the client thought to identify
-itself.
+itself. Sessions opened by a connector older than `duckhaven-sql-connector` 0.3.0 show `duckhaven-sql-connector` here
+instead of the workload — those clients led their `User-Agent` with their own token, so historical audit rows are
+attributed to the connector rather than the dbt or dlt run that opened them.
 
 ### Force-closing a session
 

@@ -217,9 +217,13 @@ An idle reap and an explicit close look identical in an aggregate; here they do 
 field existed have no reason recorded, and the UI reports them as unknown rather than guessing.
 
 **Which tool opened it.** The API reads the request's `User-Agent` when the session opens and stores the product name
-and version on the row — `dbt-duckhaven 1.2.0`, `dlt-duckhaven 0.4.1`. This is deliberately server-captured rather than
-client-declared: the client cannot forge it, cannot forget to set it, and cannot leave a stale value behind after a
-failure. It is the same idea as PostgreSQL's `application_name` or Databricks' `client_application` column.
+and version on the row — `dbt-duckhaven 0.1.0`, `dlt-duckhaven 0.2.0`. It takes the *first* `product/version` token, so
+clients are expected to lead their `User-Agent` with the calling application; the connector does so from
+`duckhaven-sql-connector` 0.3.0. A session opened by an older connector (or one with no application set) is recorded as
+`duckhaven-sql-connector` rather than the workload, so audit rows written before that client fix are attributed to the
+connector, not the tool. This is deliberately server-captured rather than client-declared: the client cannot forge it,
+cannot forget to set it, and cannot leave a stale value behind after a failure. It is the same idea as PostgreSQL's
+`application_name` or Databricks' `client_application` column.
 
 Richer, client-supplied context — a dbt model name, a dlt load id — is **not** yet part of the contract. When it lands
 it will be an optional set of labels supplied once at session open, and it will live on the session row rather than

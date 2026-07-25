@@ -256,7 +256,7 @@ jobs:
           token=$(docker compose -f deploy/docker-compose.yml exec -T api \
             cat /var/duckhaven/setup_token)
           echo "DH_SETUP_TOKEN=$token" >> "$GITHUB_ENV"
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: 'npm'
@@ -287,7 +287,7 @@ jobs:
     if: needs.changes.outputs.web == 'true'
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: 'npm'
@@ -308,7 +308,7 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: 'npm'

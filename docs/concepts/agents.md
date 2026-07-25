@@ -15,6 +15,9 @@ An agent needs only a control-plane URL and a one-time [bootstrap token](../depl
 itself, advertises its capabilities, and holds one outbound WebSocket open. The control plane keeps no static
 inventory of agent addresses and never dials an agent's control channel.
 
+Agents can be run by an operator (static) or provisioned automatically and torn down when idle — see
+[Elastic compute](elastic-compute.md).
+
 ## Capabilities and backend compatibility
 
 On connect (and on every heartbeat) an agent advertises its capabilities — DuckDB version, loaded extensions, memory

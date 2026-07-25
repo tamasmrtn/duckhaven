@@ -726,6 +726,10 @@ it explicitly rather than working around it.
   not.** The control plane holds no static agent inventory and never dials an
   agent's control channel. Its only outbound reach to an agent is the HTTP
   result read (the API fetches the result Parquet and decodes it to JSON).
+  [Elastic compute](elastic-compute.md) adds a control-plane→cloud outbound
+  dependency (creating/terminating the *container* that runs an agent), which is
+  not an I2 violation: the provisioned agent still dials home, and the control
+  plane never opens the agent's control channel.
 - **I3 — Apache Polaris owns catalog metadata; Postgres owns DuckHaven
   entities.** Never persist catalog *structure* (schemas, tables, columns) into
   Postgres or treat DuckHaven's database as a catalog cache. Postgres may hold

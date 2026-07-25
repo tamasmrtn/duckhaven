@@ -12,10 +12,11 @@ from api.deps import get_db, require_permission
 from api.models.agent import Agent
 from api.models.user import Credential, User
 from api.schemas.agent import (
-    AgentCapabilitiesOut,
     AgentMetricsOut,
     AgentOut,
     BootstrapTokenOut,
+    ComputeOptionsOut,
+    ElasticAgentCreate,
     MetricsSampleOut,
 )
 from api.services.agent_dispatch import (
@@ -23,6 +24,9 @@ from api.services.agent_dispatch import (
     disconnect_agent,
     gather_agent_metrics,
 )
+from api.services.agent_view import build_agent_out
+from api.services.compute import pricing
+from api.services.compute import service as compute_service
 from api.services.permissions import Permission
 
 router = APIRouter(prefix="/agents")
@@ -40,22 +44,10 @@ async def list_agents(
     connected = await connected_agent_ids(db)
     out = []
     for agent in agents:
-        caps = None
-        if agent.capabilities:
-            caps = AgentCapabilitiesOut(**agent.capabilities)
         effective_status = agent.status
         if str(agent.id) in connected and effective_status == "unavailable":
             effective_status = "healthy"
-        out.append(
-            AgentOut(
-                id=agent.id,
-                name=agent.name,
-                status=effective_status,
-                capabilities=caps,
-                last_ping_at=agent.last_ping_at,
-                created_at=agent.created_at,
-            )
-        )
+        out.append(build_agent_out(agent, status=effective_status))
     return out
 
 
@@ -122,6 +114,126 @@ async def bootstrap(
         control_plane_url=_agent_dial_url(request),
         agent_image=settings.agent_image,
     )
+
+
+@router.get("/compute-options", response_model=ComputeOptionsOut)
+async def compute_options(
+    admin: User = Depends(require_permission(Permission.AGENTS_MANAGE)),
+) -> ComputeOptionsOut:
+    """vCPU/memory ranges + rates for the create-compute dialog's sliders."""
+    return ComputeOptionsOut(
+        enabled=settings.elastic_compute_enabled,
+        provider=settings.elastic_provider,
+        currency=settings.elastic_currency,
+        cpu_min=pricing.CPU_MIN,
+        cpu_max=pricing.CPU_MAX,
+        cpu_step=pricing.CPU_STEP,
+        memory_min_gb=pricing.MEMORY_MIN_GB,
+        memory_max_gb=pricing.MEMORY_MAX_GB,
+        memory_step_gb=pricing.MEMORY_STEP_GB,
+        price_vcpu_hour=settings.elastic_azure_price_vcpu_hour,
+        price_memory_gb_hour=settings.elastic_azure_price_memory_gb_hour,
+        default_idle_minutes=round(settings.elastic_idle_timeout_s / 60),
+    )
+
+
+@router.post("/elastic", response_model=AgentOut, status_code=status.HTTP_202_ACCEPTED)
+async def create_elastic_agent(
+    body: ElasticAgentCreate,
+    admin: User = Depends(require_permission(Permission.AGENTS_MANAGE)),
+    db: AsyncSession = Depends(get_db),
+) -> AgentOut:
+    """Provision an elastic agent at a chosen vCPU/memory size (the "new compute"
+    action), optionally with a per-agent idle-terminate timeout."""
+    if not settings.elastic_compute_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": "elastic_disabled", "detail": "Elastic compute is not enabled."},
+        )
+    if not pricing.clamp_cpu(body.cpu) or not pricing.clamp_memory(body.memory_gb):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "error": "invalid_size",
+                "detail": (
+                    f"cpu must be {pricing.CPU_MIN}-{pricing.CPU_MAX} and memory "
+                    f"{pricing.MEMORY_MIN_GB}-{pricing.MEMORY_MAX_GB} GB."
+                ),
+            },
+        )
+    idle_s = body.idle_timeout_minutes * 60 if body.idle_timeout_minutes else None
+    name = body.name or f"elastic-{secrets.token_hex(3)}"
+    agent = await compute_service.provision_elastic_agent(
+        db, name=name, cpu=body.cpu, memory_gb=body.memory_gb, idle_timeout_s=idle_s
+    )
+    if agent is None:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"error": "provision_failed", "detail": "Failed to provision the agent."},
+        )
+    return build_agent_out(agent, status=agent.status)
+
+
+@router.post("/{agent_id}/restart", response_model=AgentOut, status_code=status.HTTP_202_ACCEPTED)
+async def restart_elastic_agent(
+    agent_id: uuid.UUID,
+    admin: User = Depends(require_permission(Permission.AGENTS_MANAGE)),
+    db: AsyncSession = Depends(get_db),
+) -> AgentOut:
+    """Re-provision a terminated/failed elastic agent, reusing its row + settings."""
+    agent = (await db.execute(select(Agent).where(Agent.id == agent_id))).scalar_one_or_none()
+    if agent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    if agent.provider is None or agent.lifecycle not in ("terminated", "failed"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "not_restartable",
+                "detail": "Only a terminated elastic agent can be restarted.",
+            },
+        )
+    restarted = await compute_service.restart_elastic_agent(db, agent)
+    if restarted is None:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"error": "provision_failed", "detail": "Failed to restart the agent."},
+        )
+    return build_agent_out(restarted, status=restarted.status)
+
+
+@router.post("/{agent_id}/terminate", response_model=AgentOut, status_code=status.HTTP_202_ACCEPTED)
+async def terminate_elastic_agent(
+    agent_id: uuid.UUID,
+    admin: User = Depends(require_permission(Permission.AGENTS_MANAGE)),
+    db: AsyncSession = Depends(get_db),
+) -> AgentOut:
+    """Scale a running/provisioning elastic agent in now (destroy its instance)."""
+    agent = (await db.execute(select(Agent).where(Agent.id == agent_id))).scalar_one_or_none()
+    if agent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    if agent.provider is None or agent.lifecycle not in ("provisioning", "running"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "not_terminable",
+                "detail": "Only a running elastic agent can be terminated.",
+            },
+        )
+    await compute_service.terminate_agent(db, agent, reason="manual")
+    return build_agent_out(agent, status=agent.status)
+
+
+@router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_agent(
+    agent_id: uuid.UUID,
+    admin: User = Depends(require_permission(Permission.AGENTS_MANAGE)),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Permanently remove an agent (terminating a live instance first). Irreversible."""
+    agent = (await db.execute(select(Agent).where(Agent.id == agent_id))).scalar_one_or_none()
+    if agent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    await compute_service.delete_agent(db, agent)
 
 
 @router.delete("/{agent_id}/credential", status_code=status.HTTP_204_NO_CONTENT)

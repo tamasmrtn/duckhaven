@@ -1257,3 +1257,72 @@ async def test_run_with_unknown_saved_query_id_still_runs(
 async def test_sql_metadata_no_agent_returns_503(authed_client: AsyncClient, workspace: Workspace):
     resp = await authed_client.get(f"/workspaces/{workspace.slug}/sql-metadata")
     assert resp.status_code == 503
+
+
+# --- elastic pool target (agent_id omitted) ---
+
+
+@pytest_asyncio.fixture
+def elastic_enabled(monkeypatch):
+    from api.config import settings
+    from api.services.compute.backends import get_backend
+
+    monkeypatch.setattr(settings, "elastic_compute_enabled", True)
+    monkeypatch.setattr(settings, "elastic_provider", "null")
+    monkeypatch.setattr(settings, "elastic_max_agents_per_pool", 1)
+    backend = get_backend("null")
+    backend._instances.clear()
+    yield
+    backend._instances.clear()
+
+
+async def test_elastic_pool_target_requires_flag(authed_client: AsyncClient, workspace: Workspace):
+    """With elastic disabled, omitting agent_id is a 422, not a silent pool run."""
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries", json={"sql": "SELECT 1"}
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["error"] == "agent_required"
+
+
+async def test_elastic_pool_parks_queued_and_provisions(
+    authed_client: AsyncClient, workspace: Workspace, db_session, elastic_enabled
+):
+    """No compatible agent connected → run parked queued, one elastic agent provisioned."""
+    import sqlalchemy as sa
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries", json={"sql": "SELECT 1"}
+    )
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["status"] == "queued"
+    assert body["agent_id"] is None
+    assert body["origin"] == "elastic"
+
+    provisioned = (
+        (await db_session.execute(sa.select(Agent).where(Agent.provider.is_not(None))))
+        .scalars()
+        .all()
+    )
+    assert len(provisioned) == 1
+    assert provisioned[0].lifecycle == "provisioning"
+    assert provisioned[0].pool_key == "object_store"
+
+
+async def test_elastic_pool_dispatches_to_connected_agent(
+    authed_client: AsyncClient,
+    workspace: Workspace,
+    connected_agent,
+    elastic_enabled,
+):
+    """A compatible agent is already up → dispatch to it instead of provisioning."""
+    agent, mock_ws = connected_agent
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries", json={"sql": "SELECT 1"}
+    )
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["agent_id"] == str(agent.id)
+    assert body["origin"] == "elastic"
+    assert len(mock_ws.sent) == 1

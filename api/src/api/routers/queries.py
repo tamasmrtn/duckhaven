@@ -9,6 +9,7 @@ from opentelemetry import trace
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.config import settings
 from api.deps import get_current_user, get_db
 from api.metrics import record_rows_decode
 from api.models.agent import Agent
@@ -27,6 +28,7 @@ from api.services import query as query_service
 from api.services import sql_metadata as sql_metadata_service
 from api.services.agent_capabilities import agent_supports_backend, required_extension
 from api.services.agent_dispatch import is_agent_connected, send_to_agent
+from api.services.compute import service as compute_service
 from api.services.grants import GrantDenied
 from api.services.migration.service import workspace_has_active_migration
 from api.services.permissions import Permission
@@ -86,6 +88,16 @@ async def create_query(
                 "detail": "A storage backend migration is in progress; the catalog is read-only.",
             },
         )
+
+    # Elastic-pool target: no specific agent chosen. Dispatch to a compatible
+    # connected agent if one exists, else park the run queued and provision one.
+    if body.agent_id is None:
+        if not settings.elastic_compute_enabled:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail={"error": "agent_required", "detail": "agent_id is required"},
+            )
+        return await _create_elastic_query(db, workspace, user.id, body)
 
     result = await db.execute(select(Agent).where(Agent.id == body.agent_id))
     agent = result.scalar_one_or_none()
@@ -147,6 +159,43 @@ async def create_query(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"error": "grant_denied", "detail": str(exc)},
         ) from exc
+    return query
+
+
+async def _create_elastic_query(
+    db: AsyncSession, workspace, user_id: uuid.UUID, body: QueryCreate
+) -> Query:
+    """Run against the elastic pool: dispatch now if a compatible agent is up,
+    otherwise park the run ``queued`` and provision one (bound on registration)."""
+    agent = await query_service.pick_agent_for(db, workspace)
+    query = Query(
+        workspace_id=workspace.id,
+        agent_id=agent.id if agent is not None else None,
+        user_id=user_id,
+        sql=body.sql,
+        status="queued",
+        origin="elastic",
+    )
+    db.add(query)
+    await db.flush()
+
+    if agent is not None:
+        try:
+            await query_service.dispatch_query(
+                db, query, timeout_s=body.timeout_s, active_catalog=body.catalog
+            )
+        except GrantDenied as exc:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"error": "grant_denied", "detail": str(exc)},
+            ) from exc
+        return query
+
+    # No compatible agent connected: coalesced scale-out. The run stays queued
+    # (agent_id NULL) until the provisioned agent registers and binds it.
+    pool_key = await compute_service.resolve_pool_key(db, workspace)
+    await compute_service.ensure_agent(db, pool_key)
+    await db.commit()
     return query
 
 

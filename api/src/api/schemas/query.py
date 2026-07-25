@@ -7,7 +7,10 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 class QueryCreate(BaseModel):
     sql: str
-    agent_id: uuid.UUID
+    # A specific agent (the worksheet engine picker), or omitted to target the
+    # elastic pool: the API dispatches to a compatible connected agent, or parks
+    # the run queued and provisions one on demand (requires elastic compute).
+    agent_id: uuid.UUID | None = None
     timeout_s: float = 600.0
     # When the run originates from a saved query, its id is sent so the backend
     # can stamp the saved query's last_run_at.

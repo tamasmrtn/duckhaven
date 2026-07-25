@@ -547,3 +547,99 @@ async def test_ws_query_done_visible_to_separate_session(ws_client, db_engine):
                 assert done.status == "done"
                 assert done.row_count == 7
                 assert done.duration_ms == 123
+
+
+async def test_ws_bootstrap_rebinds_precreated_elastic_agent(ws_client, db_engine):
+    """An elastic bootstrap token (bound to a pre-created row) rebinds that row on
+    dial-home — provisioning -> running — instead of minting a second agent."""
+    from datetime import datetime, timedelta
+
+    from sqlalchemy import func, select
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.models.user import Credential
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    token = "dh_boot_elastic789"
+
+    async with factory() as db:
+        agent = Agent(
+            name="elastic-precreated",
+            status="unavailable",
+            provider="null",
+            lifecycle="provisioning",
+            pool_key="object_store",
+            instance_id="dh-agent-precreated",
+            provisioned_at=datetime.now(tz=UTC),
+        )
+        db.add(agent)
+        await db.flush()
+        agent_id = agent.id
+        db.add(
+            Credential(
+                user_id=None,
+                agent_id=agent_id,
+                kind="agent_bootstrap",
+                token=token,
+                expires_at=datetime.now(tz=UTC) + timedelta(hours=1),
+            )
+        )
+        await db.commit()
+
+    received = await _connect_once(
+        ws_client, {"token": token, "name": "elastic", "result_port": 8020}
+    )
+
+    assert received.get("type") == "auth_ok"
+    # Rebinds the pre-created row, not a new one.
+    assert received["payload"]["agent_id"] == str(agent_id)
+    async with factory() as db:
+        assert (await db.execute(select(func.count()).select_from(Agent))).scalar_one() == 1
+        rebound = await db.get(Agent, agent_id)
+        # lifecycle flips provisioning -> running on dial-home (and survives the
+        # subsequent disconnect, which only clears socket presence, not lifecycle).
+        assert rebound.lifecycle == "running"
+        assert rebound.result_port == 8020
+        # The idle clock starts at registration so a fresh agent gets a full idle
+        # window even if it never runs work (not reaped against provisioned_at).
+        assert rebound.last_active_at is not None
+
+
+async def test_ws_agent_advertised_result_host_wins_over_peer(ws_client, db_engine):
+    """An agent that advertises result_host (e.g. an ACI public DNS label) has it
+    persisted verbatim, not overwritten by the socket peer address."""
+    from datetime import datetime, timedelta
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.models.user import Credential
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    token = "dh_boot_advertise123"
+    async with factory() as db:
+        db.add(
+            Credential(
+                user_id=None,
+                agent_id=None,
+                kind="agent_bootstrap",
+                token=token,
+                expires_at=datetime.now(tz=UTC) + timedelta(hours=1),
+            )
+        )
+        await db.commit()
+
+    received = await _connect_once(
+        ws_client,
+        {
+            "token": token,
+            "name": "aci",
+            "result_port": 8001,
+            "result_host": "dh-agent-abc.eastus.azurecontainer.io",
+        },
+    )
+
+    agent_id = uuid.UUID(received["payload"]["agent_id"])
+    async with factory() as db:
+        agent = await db.get(Agent, agent_id)
+        assert agent.result_host == "dh-agent-abc.eastus.azurecontainer.io"
+        assert agent.result_port == 8001

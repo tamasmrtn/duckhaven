@@ -63,7 +63,10 @@ async def agent_connect(
         # the peer is the proxy. There the agent's real address is the left-most
         # X-Forwarded-For hop, mirroring how the add-agent dial URL trusts
         # X-Forwarded-* (routers/agents._agent_dial_url).
-        result_host = _result_host(ws)
+        # An agent whose result server is reached at a different address than its
+        # socket peer (e.g. ACI behind a public DNS label) advertises it explicitly;
+        # otherwise the peer/X-Forwarded-For hop is used.
+        result_host = frame.payload.get("result_host") or _result_host(ws)
         result_port = frame.payload.get("result_port")
         result_port_int = int(result_port) if result_port is not None else None
 
@@ -91,26 +94,57 @@ async def agent_connect(
                 # minting a new one. The session token is long-lived and is not
                 # consumed.
                 agent_id = cred.agent_id
+                # Reset the idle clock on reconnect so a just-reconnected elastic
+                # agent isn't reaped against a stale last_active_at (harmless for
+                # static agents, which are never reaped).
                 await db.execute(
                     sa.update(Agent)
                     .where(Agent.id == agent_id)
-                    .values(status="healthy", result_host=result_host, result_port=result_port_int)
+                    .values(
+                        status="healthy",
+                        last_active_at=datetime.now(tz=UTC),
+                        result_host=result_host,
+                        result_port=result_port_int,
+                    )
                 )
                 session_token = token
                 await db.commit()
             else:
                 # First registration: the bootstrap token is single-use.
+                boot_agent_id = cred.agent_id
                 await db.delete(cred)
-                label = frame.payload.get("name", f"agent-{secrets.token_hex(4)}")
-                agent = Agent(
-                    name=label,
-                    status="healthy",
-                    result_host=result_host,
-                    result_port=result_port_int,
-                )
-                db.add(agent)
-                await db.flush()
-                agent_id = agent.id
+                if boot_agent_id is not None:
+                    # Elastic: the token was minted for a pre-created row (see
+                    # compute.service.ensure_agent). Rebind that row instead of
+                    # minting a new one — it is the row that provisioned the
+                    # instance — and flip its lifecycle provisioning -> running.
+                    # Start the idle clock now (last_active_at): a freshly
+                    # registered agent must get a full idle window even if it never
+                    # runs work, rather than being reaped against provisioned_at
+                    # (which is already old after a slow cold start).
+                    agent_id = boot_agent_id
+                    await db.execute(
+                        sa.update(Agent)
+                        .where(Agent.id == agent_id)
+                        .values(
+                            status="healthy",
+                            lifecycle="running",
+                            last_active_at=datetime.now(tz=UTC),
+                            result_host=result_host,
+                            result_port=result_port_int,
+                        )
+                    )
+                else:
+                    label = frame.payload.get("name", f"agent-{secrets.token_hex(4)}")
+                    agent = Agent(
+                        name=label,
+                        status="healthy",
+                        result_host=result_host,
+                        result_port=result_port_int,
+                    )
+                    db.add(agent)
+                    await db.flush()
+                    agent_id = agent.id
 
                 session_token = secrets.token_urlsafe(32)
                 session_cred = Credential(
@@ -140,6 +174,13 @@ async def agent_connect(
         # replica can route dispatch frames here.
         async with session_factory() as db:
             await claim_agent_owner(db, agent_id)
+            # If an elastic agent just came up, dispatch any queued work parked
+            # while it was provisioning.
+            agent_row = await db.get(Agent, agent_id)
+            if agent_row is not None and agent_row.provider is not None:
+                from api.services.compute.service import bind_queued_work
+
+                await bind_queued_work(db, agent_row)
         last_presence_refresh = datetime.now(tz=UTC)
 
         async for raw_msg in ws.iter_text():

@@ -134,6 +134,11 @@ async def dispatch_query(
             # The socket vanished between the presence check and the send, or its
             # owning replica is unreachable. Fail fast so the caller surfaces it.
             raise ValueError("Agent not connected")
+    # Mark the (possibly elastic) agent as having done work now, so the idle
+    # reaper doesn't scale it in under an active workload. No-op for static agents.
+    from api.services.compute.service import record_activity
+
+    await record_activity(db, query.agent_id)
     # Status stays "queued" until the agent admits the query and emits
     # QUERY_PROGRESS; the agent may hold it in its admission queue first.
     if query.origin is None:

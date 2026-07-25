@@ -166,6 +166,58 @@ class Settings(BaseSettings):
     # the column). Mirrors the agent's own default.
     sql_statement_default_timeout_s: float = 600.0
 
+    # ── Elastic compute (scale-to-zero agents) ────────────────────────────────
+    # OFF by default: an operator enables it to let the control plane provision
+    # agents on demand and terminate them when idle. The reaper is a leader-elected
+    # loop like the scheduler/scanner. `elastic_provider` selects the compute
+    # backend; "null" is a no-op backend for tests, "azure_aci" provisions Azure
+    # Container Instances. An elastic agent is terminated when it has been idle
+    # (no work dispatched) for elastic_idle_timeout_s AND has no in-flight queries
+    # or open SQL sessions; it is force-terminated at elastic_max_lifetime_s once
+    # its work drains. A row stuck `provisioning` past elastic_provisioning_deadline_s
+    # (the agent never dialed home) is failed and its instance cleaned up.
+    elastic_compute_enabled: bool = False
+    elastic_provider: str = "null"
+    # The wss:// URL a provisioned agent dials home to. The interactive add-agent
+    # flow derives this from the request headers, but elastic provisioning has no
+    # request, so it must be configured. Unused by the "null" backend.
+    elastic_control_plane_url: str | None = None
+    # Apache Polaris URL a provisioned agent attaches catalogs against. A remote
+    # (e.g. ACI) agent cannot use the API's in-cluster polaris_base_url, so this is
+    # the externally reachable Polaris endpoint. Falls back to polaris_base_url.
+    # The agent authenticates with polaris_client_id / polaris_client_secret.
+    elastic_agent_polaris_base_url: str | None = None
+    elastic_idle_timeout_s: float = 900.0
+    elastic_max_lifetime_s: float = 14400.0
+    elastic_provisioning_deadline_s: float = 300.0
+    elastic_reaper_tick_s: float = 30.0
+    # Cap on concurrent elastic agents per pool_key; ensure_agent will not
+    # provision beyond it (a cost guardrail). Phase 1 keeps this at 1.
+    elastic_max_agents_per_pool: int = 1
+    # Azure Container Instances backend (used when elastic_provider="azure_aci").
+    # The subscription/resource-group DuckHaven provisions agent container groups
+    # into, and the region. Credentials come from the ambient identity
+    # (DefaultAzureCredential: managed identity in Azure, env vars locally).
+    elastic_azure_subscription_id: str | None = None
+    elastic_azure_resource_group: str | None = None
+    elastic_azure_location: str = "eastus"
+    # CPU cores and memory (GiB) requested per elastic agent container. The
+    # default size for pool-triggered provisioning; the admin UI can pick a named
+    # size per agent.
+    elastic_azure_cpu: float = 2.0
+    elastic_azure_memory_gb: float = 8.0
+    # Azure Container Instances pay-as-you-go rates, surfaced so the UI shows the
+    # hourly cost of a size before it is created (Databricks-style). Defaults are
+    # approximate Linux/eastus list prices — override per region/agreement.
+    elastic_azure_price_vcpu_hour: float = 0.0486
+    elastic_azure_price_memory_gb_hour: float = 0.0054
+    elastic_currency: str = "USD"
+    # Pull credentials for a private registry hosting the agent image (e.g. ACR).
+    # ACI cannot pull a private image without them; leave unset for a public image.
+    elastic_registry_server: str | None = None
+    elastic_registry_username: str | None = None
+    elastic_registry_password: str | None = None
+
     # ── High availability (multi-replica control plane) ───────────────────────
     # Identity of this API replica and the URL peers use to reach it for
     # inter-replica agent-dispatch forwarding. The defaults make a single-replica

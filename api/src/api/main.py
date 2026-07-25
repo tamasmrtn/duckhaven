@@ -116,6 +116,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from api.services.sql_sessions.reaper import reaper_loop
 
         reaper_task = asyncio.create_task(reaper_loop(async_session_factory))
+
+    compute_reaper_task: asyncio.Task | None = None
+    if settings.elastic_compute_enabled:
+        from api.services.compute.reaper import reaper_loop as compute_reaper_loop
+
+        compute_reaper_task = asyncio.create_task(compute_reaper_loop(async_session_factory))
     try:
         yield
     finally:
@@ -123,7 +129,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # then hand our agents to other replicas before tearing down.
         app.state.draining = True
         await drain_local_agents(async_session_factory)
-        for task in (scanner_task, scheduler_task, migration_task, reaper_task):
+        for task in (
+            scanner_task,
+            scheduler_task,
+            migration_task,
+            reaper_task,
+            compute_reaper_task,
+        ):
             if task is not None:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):

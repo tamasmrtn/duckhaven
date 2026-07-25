@@ -1,0 +1,359 @@
+"""Scale-out: provision an elastic agent on demand, coalescing concurrent asks.
+
+``ensure_agent`` is the scale-out primitive. It is safe to call from many requests
+at once: a per-``pool_key`` Postgres advisory lock (the coalescing primitive used
+throughout the repo) means concurrent callers that find no compatible agent
+provision *one*, not one each.
+
+The row is written (``lifecycle="provisioning"`` with a deterministic
+``instance_id``) *before* the backend is asked to create the instance, so a crash
+between the two leaves a reconcilable record — the reaper's leak sweep can always
+tie a cloud instance back to a row (or terminate an orphan). Postgres is the
+state-of-record (I9); the backend is reconciled to it.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import hashlib
+import logging
+import secrets
+import uuid
+from datetime import UTC, datetime, timedelta
+
+import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from api.config import settings
+from api.models.agent import Agent
+from api.models.query import Query, SavedQuery
+from api.models.table_metadata import TableMetadata
+from api.models.user import Credential
+from api.models.workspace import Workspace
+from api.services.agent_dispatch import disconnect_agent
+from api.services.compute.backends import ProvisionRequest, get_backend
+from api.services.workspace import resolve_workspace_catalogs
+
+logger = logging.getLogger(__name__)
+
+# Elastic lifecycle states that count as "supply already exists / on its way" so
+# ensure_agent doesn't provision a duplicate.
+_ACTIVE_LIFECYCLE = ("provisioning", "running")
+
+BOOTSTRAP_TTL_HOURS = 24
+
+
+async def resolve_pool_key(db: AsyncSession, workspace: Workspace) -> str:
+    """The capability scope a workspace needs, as a stable string.
+
+    An agent can serve the workspace iff it supports every backend kind across the
+    workspace's attached catalogs (the same rule ``pick_agent_for`` matches on). We
+    key the elastic pool on the sorted set of those kinds so one provisioned agent
+    serves every workspace with the same storage shape.
+    """
+    catalogs = await resolve_workspace_catalogs(db, workspace.id)
+    kinds = sorted({c.storage_backend.kind for c in catalogs}) or ["object_store"]
+    return ",".join(kinds)
+
+
+def _lock_key(pool_key: str) -> int:
+    """A stable signed-64-bit advisory-lock key for a pool (pg needs a bigint)."""
+    digest = hashlib.blake2b(pool_key.encode(), digest_size=8).digest()
+    return int.from_bytes(digest, "big", signed=True)
+
+
+def _instance_id(agent_id: uuid.UUID) -> str:
+    """Deterministic, DNS-safe instance name derived from the agent id.
+
+    Deterministic so provision is idempotent on it and the leak sweep can match a
+    cloud instance to its row without extra bookkeeping.
+    """
+    return f"dh-agent-{agent_id.hex[:20]}"
+
+
+async def _count_active(db: AsyncSession, pool_key: str) -> int:
+    return (
+        await db.execute(
+            sa.select(sa.func.count())
+            .select_from(Agent)
+            .where(
+                Agent.provider.is_not(None),
+                Agent.pool_key == pool_key,
+                Agent.lifecycle.in_(_ACTIVE_LIFECYCLE),
+            )
+        )
+    ).scalar_one()
+
+
+async def ensure_agent(db: AsyncSession, pool_key: str) -> Agent | None:
+    """Ensure at least one elastic agent is provisioning/running for ``pool_key``.
+
+    Returns the newly-provisioned agent, or ``None`` when supply already exists or
+    the per-pool cap is reached. Concurrent callers coalesce on the advisory lock,
+    so exactly one provisions.
+    """
+    if not settings.elastic_compute_enabled:
+        return None
+
+    # Serialize the check-then-provision against other callers for this pool.
+    if db.bind.dialect.name == "postgresql":
+        await db.execute(sa.text("SELECT pg_advisory_xact_lock(:k)"), {"k": _lock_key(pool_key)})
+
+    if await _count_active(db, pool_key) >= settings.elastic_max_agents_per_pool:
+        return None
+
+    return await _create_and_provision(
+        db,
+        name=f"elastic-{secrets.token_hex(4)}",
+        pool_key=pool_key,
+        cpu=settings.elastic_azure_cpu,
+        memory_gb=settings.elastic_azure_memory_gb,
+        idle_timeout_s=None,
+    )
+
+
+async def provision_elastic_agent(
+    db: AsyncSession,
+    *,
+    name: str,
+    cpu: float,
+    memory_gb: float,
+    idle_timeout_s: float | None = None,
+) -> Agent | None:
+    """Provision one elastic agent at an explicit size (admin-initiated).
+
+    Unlike ``ensure_agent`` this is a deliberate action — no pool coalescing or cap
+    — mirroring starting a Databricks cluster. The agent is not bound to a pool
+    (``pool_key`` NULL); it serves interactive queries once it registers, and the
+    idle reaper (using ``idle_timeout_s``, or the global default when None)
+    auto-terminates it. Returns the agent, or ``None`` if elastic compute is
+    disabled or provisioning failed.
+    """
+    if not settings.elastic_compute_enabled:
+        return None
+    return await _create_and_provision(
+        db, name=name, pool_key=None, cpu=cpu, memory_gb=memory_gb, idle_timeout_s=idle_timeout_s
+    )
+
+
+async def terminate_agent(db: AsyncSession, agent: Agent, *, reason: str) -> None:
+    """Scale an elastic agent in now: destroy its instance and mark it terminated.
+
+    Shared by the idle reaper and the admin/worksheet "terminate" action. The
+    backend call is best-effort — if it raises, the row is still marked so the leak
+    sweep retries against the still-present instance next cycle."""
+    agent.lifecycle = "terminating"
+    await db.commit()
+    if agent.instance_id:
+        with contextlib.suppress(Exception):
+            await get_backend(agent.provider).terminate(agent.instance_id)
+    agent.lifecycle = "terminated"
+    agent.status = "unavailable"
+    agent.terminated_at = datetime.now(tz=UTC)
+    await db.commit()
+    logger.info("Terminated elastic agent %s (%s)", agent.id, reason)
+
+
+async def delete_agent(db: AsyncSession, agent: Agent) -> None:
+    """Permanently remove an agent row. Irreversible.
+
+    Destroys a live elastic instance first, then clears the references that would
+    otherwise block the delete (queries/saved-queries/table-metadata keep their
+    rows but lose the agent link), and deletes the row. Credentials cascade;
+    schedules and SQL sessions null their agent by FK.
+    """
+    if agent.provider is not None and agent.lifecycle in ("provisioning", "running", "terminating"):
+        if agent.instance_id:
+            with contextlib.suppress(Exception):
+                await get_backend(agent.provider).terminate(agent.instance_id)
+    with contextlib.suppress(Exception):
+        await disconnect_agent(db, agent.id)
+
+    # Null the RESTRICT-guarded references so the row can be deleted while keeping
+    # the audit rows themselves (they just show an unknown agent afterwards).
+    await db.execute(sa.update(Query).where(Query.agent_id == agent.id).values(agent_id=None))
+    await db.execute(
+        sa.update(SavedQuery)
+        .where(SavedQuery.default_agent_id == agent.id)
+        .values(default_agent_id=None)
+    )
+    await db.execute(
+        sa.update(TableMetadata)
+        .where(TableMetadata.last_write_agent_id == agent.id)
+        .values(last_write_agent_id=None)
+    )
+    await db.delete(agent)
+    await db.commit()
+    logger.info("Deleted agent %s", agent.id)
+
+
+async def restart_elastic_agent(db: AsyncSession, agent: Agent) -> Agent | None:
+    """Re-provision a terminated/failed elastic agent, reusing its row.
+
+    Restarting keeps the agent's identity (name, size, idle timeout) and gives it a
+    fresh instance + bootstrap token. Returns the agent, or ``None`` if it is not a
+    restartable elastic agent or elastic compute is disabled.
+    """
+    if not settings.elastic_compute_enabled or agent.provider is None:
+        return None
+    if agent.lifecycle not in ("terminated", "failed"):
+        return None
+
+    now = datetime.now(tz=UTC)
+    agent.lifecycle = "provisioning"
+    agent.status = "unavailable"
+    agent.provisioned_at = now
+    agent.terminated_at = None
+    agent.last_active_at = None
+    agent.instance_id = _instance_id(agent.id)
+    await db.commit()
+    return await _mint_and_provision(
+        db,
+        agent,
+        cpu=agent.requested_cpu or settings.elastic_azure_cpu,
+        memory_gb=agent.requested_memory_gb or settings.elastic_azure_memory_gb,
+    )
+
+
+async def _create_and_provision(
+    db: AsyncSession,
+    *,
+    name: str,
+    pool_key: str | None,
+    cpu: float,
+    memory_gb: float,
+    idle_timeout_s: float | None,
+) -> Agent | None:
+    """Write the agent row, then mint + provision it. The row (with a deterministic
+    ``instance_id`` and the requested size) is committed *before* the backend call,
+    so a crash mid-provision always leaves a reconcilable record — never a leak."""
+    now = datetime.now(tz=UTC)
+    agent = Agent(
+        name=name,
+        status="unavailable",
+        provider=settings.elastic_provider,
+        lifecycle="provisioning",
+        pool_key=pool_key,
+        requested_cpu=cpu,
+        requested_memory_gb=memory_gb,
+        idle_timeout_s=idle_timeout_s,
+        provisioned_at=now,
+    )
+    db.add(agent)
+    await db.flush()  # assign agent.id
+    agent.instance_id = _instance_id(agent.id)
+    await db.commit()
+    return await _mint_and_provision(db, agent, cpu=cpu, memory_gb=memory_gb)
+
+
+async def _mint_and_provision(
+    db: AsyncSession, agent: Agent, *, cpu: float, memory_gb: float
+) -> Agent | None:
+    """Mint a fresh bootstrap credential for ``agent`` and ask the backend to create
+    its instance. Shared by first-time create and restart. On backend failure the
+    row is marked ``failed`` (reconcilable), and ``None`` returned."""
+    provider = settings.elastic_provider
+    token = f"dh_boot_{secrets.token_urlsafe(16)}"
+    db.add(
+        Credential(
+            user_id=None,
+            agent_id=agent.id,
+            kind="agent_bootstrap",
+            token=token,
+            expires_at=datetime.now(tz=UTC) + timedelta(hours=BOOTSTRAP_TTL_HOURS),
+        )
+    )
+    await db.commit()
+
+    req = ProvisionRequest(
+        instance_id=agent.instance_id,
+        image=settings.agent_image,
+        control_plane_url=settings.elastic_control_plane_url or "",
+        bootstrap_token=token,
+        cpu=cpu,
+        memory_gb=memory_gb,
+        tags={"duckhaven-managed": "true", "duckhaven-agent-id": str(agent.id)},
+    )
+    try:
+        await get_backend(provider).provision(req)
+    except Exception:
+        logger.exception("Elastic provision failed for agent %s", agent.id)
+        agent.lifecycle = "failed"
+        agent.terminated_at = datetime.now(tz=UTC)
+        await db.commit()
+        return None
+
+    logger.info(
+        "Provisioned elastic agent %s (instance %s, size %svCPU/%sGiB)",
+        agent.id,
+        agent.instance_id,
+        cpu,
+        memory_gb,
+    )
+    return agent
+
+
+async def bind_queued_work(db: AsyncSession, agent: Agent) -> int:
+    """Dispatch queued, agent-less elastic queries this agent can now serve.
+
+    Called right after an elastic agent registers (dials home). A query that
+    triggered scale-out was parked ``queued`` with ``agent_id=NULL`` and
+    ``origin="elastic"``; now that a compatible agent is up, bind and dispatch each
+    one whose workspace matches this agent's ``pool_key``. Returns the count bound.
+
+    Failures are isolated per query (a bad dispatch fails that one run, not the
+    batch) — mirrors the scheduler's per-schedule isolation.
+    """
+    if agent.pool_key is None:
+        return 0
+
+    # Lazy import breaks the query <-> compute import cycle at module load.
+    from api.services.query import dispatch_query
+
+    queued = (
+        (
+            await db.execute(
+                sa.select(Query).where(
+                    Query.agent_id.is_(None),
+                    Query.origin == "elastic",
+                    Query.status == "queued",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    bound = 0
+    for query in queued:
+        workspace = await db.get(Workspace, query.workspace_id)
+        if workspace is None:
+            continue
+        if await resolve_pool_key(db, workspace) != agent.pool_key:
+            continue
+        query.agent_id = agent.id
+        try:
+            await dispatch_query(db, query, principal_id=query.user_id)
+            bound += 1
+        except Exception:
+            logger.exception("Failed to bind queued query %s to agent %s", query.id, agent.id)
+            query.status = "failed"
+            query.error = "dispatch failed after provisioning"
+            query.finished_at = datetime.now(tz=UTC)
+    await db.commit()
+    if bound:
+        logger.info("Bound %d queued queries to elastic agent %s", bound, agent.id)
+    return bound
+
+
+async def record_activity(db: AsyncSession, agent_id: uuid.UUID) -> None:
+    """Stamp ``last_active_at`` when work is dispatched to an elastic agent.
+
+    A no-op for static agents (``provider IS NULL``): their idle state is
+    irrelevant and we never terminate them. The caller commits.
+    """
+    await db.execute(
+        sa.update(Agent)
+        .where(Agent.id == agent_id, Agent.provider.is_not(None))
+        .values(last_active_at=datetime.now(tz=UTC))
+    )

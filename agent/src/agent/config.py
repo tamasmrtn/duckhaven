@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     # remote-agent topology; the endpoint is Bearer-gated by the session token.
     results_http_host: str = "0.0.0.0"  # noqa: S104 - intentional; Bearer-gated endpoint
     results_http_port: int = 8001
+    # Address the control plane should use to reach this agent's result server.
+    # Normally the API derives it from the socket peer (works when the agent's
+    # inbound and outbound addresses match). Set this when they differ — e.g. an
+    # Azure Container Instances agent whose result server is reached via a public
+    # DNS label distinct from its egress IP. Empty => fall back to the peer address.
+    result_advertise_host: str = ""
     # Operator-set, non-overridable ceiling: per-query timeout overrides clamp to this.
     max_timeout_s: float = 600.0
     result_retention_hours: float = 24.0

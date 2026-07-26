@@ -109,6 +109,46 @@ user — push and pull across every repository — and that credential would liv
 API's environment and in every provisioned agent's container spec. Premium buys the
 scoped, pull-only alternative.
 
+## Cost, and the staging environment
+
+Figures below are rough order-of-magnitude monthly list prices to show *relative*
+weight — check the Azure pricing calculator for real numbers. What matters is which
+resources bill hourly whether or not anything uses them.
+
+| Resource | Prod | Staging | Notes |
+|---|---|---|---|
+| PostgreSQL | ~$155 | ~$16 | `GP_Standard_D2ds_v5` + zone-redundant HA + 128 GiB, versus Burstable `B1ms` + 32 GiB and no standby. HA roughly doubles compute. |
+| Container registry | ~$50 | ~$5 | Premium versus Basic. See the trade below. |
+| NAT gateway + public IP | ~$36 | $0 | Disabled in staging; bills hourly regardless of traffic. |
+| Private endpoints | ~$29 | ~$29 | 4 × ~$7/mo. Deliberately *not* reduced — see below. |
+| Private DNS zones | ~$2 | ~$2 | 4 × $0.50. |
+| Storage account | pennies | pennies | Standard, small data volume. |
+| Log Analytics | per GB | per GB | Capped at 1 GB/day in staging. |
+
+Three things are worth knowing:
+
+**Destroying staging is the real lever.** Everything above bills for existing, not for
+being used, and the whole environment is reproducible from one `terraform apply`. For a
+trial subscription with a fixed credit, `terraform destroy` between test sessions saves
+more than any SKU choice. Postgres can also be paused for up to 7 days
+(`az postgres flexible-server stop`) if you want to keep the data.
+
+**Private endpoints are still the largest staging line item after Postgres**, and they
+are intentionally left in place: they *are* the topology under test, so an environment
+without them would not verify the thing staging exists to verify. If the credit is
+tight enough that ~$29/mo matters more than validating private networking, the endpoints
+would need to become conditional — that is a deliberate change, not a default.
+
+**Basic registry means no scoped token.** Staging agents pull with the registry admin
+user, which can also push to every repository. Acceptable only because that registry
+holds nothing that matters and the environment is disposable; `acr_sku` controls it, and
+the deployment switches credential strategy automatically.
+
+`nat_gateway_enabled = false` in staging is a real functional limitation, not just a
+saving: Azure has retired default outbound access, so a VNet-injected agent has no route
+to the API's public ingress and cannot dial home. Turn it on for the session where
+elastic compute is being tested.
+
 ## The Terraform runner needs data-plane access
 
 Creating the warehouse filesystem and writing Key Vault secrets are data-plane calls,

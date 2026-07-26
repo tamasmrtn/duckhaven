@@ -97,19 +97,50 @@ variable "agent_result_port" {
 
 variable "postgres_sku_name" {
   description = <<-EOT
-    Flexible Server SKU. GP_Standard_D2ds_v5 (2 vCore / 8 GiB) is verified available
-    in France Central with ZoneRedundant HA. Note that PostgreSQL Flexible Server is
-    offer-restricted in some regions on some subscriptions -- check with
-    `az postgres flexible-server list-skus -l <region>` before changing region.
+    Flexible Server SKU, which encodes both the compute tier and the compute size as
+    <tier>_<size>: B_Standard_B1ms is Burstable/1 vCore/2 GiB (the cheapest server
+    Azure sells), GP_Standard_D2ds_v5 is GeneralPurpose/2 vCore/8 GiB, and
+    MO_Standard_E2ds_v5 is MemoryOptimized. Azure exposes no way to set tier and size
+    independently, so one variable covers both.
+
+    GP_Standard_D2ds_v5 is verified available in France Central with ZoneRedundant HA.
+    PostgreSQL Flexible Server is offer-restricted in some regions on some
+    subscriptions -- check `az postgres flexible-server list-skus -l <region>` before
+    changing region, and note that Burstable does not support zone-redundant HA.
   EOT
   type        = string
   default     = "GP_Standard_D2ds_v5"
 }
 
 variable "postgres_storage_mb" {
-  description = "Allocated storage in MB. 131072 = 128 GiB."
+  description = <<-EOT
+    Allocated storage in MB: 32768 = 32 GiB, which is the smallest Flexible Server
+    allows; 131072 = 128 GiB. Storage can only ever be grown, never shrunk, so start
+    small -- an over-provisioned server bills for the larger size permanently.
+  EOT
   type        = number
   default     = 131072
+}
+
+variable "postgres_storage_tier" {
+  description = <<-EOT
+    Provisioned IOPS tier for the storage. Billed independently of capacity, so a
+    larger tier costs more at the same size. Leave null to take Azure's default for
+    the chosen storage_mb (P4 at 32 GiB, P10 at 128 GiB), which is also the cheapest
+    tier valid for that size.
+  EOT
+  type        = string
+  default     = null
+}
+
+variable "postgres_zone" {
+  description = <<-EOT
+    Availability zone for the primary. Leave null to let Azure place it, which is the
+    safer choice on subscriptions with constrained zone capacity -- a trial account can
+    fail to provision into a specific zone. Changing this replaces the server.
+  EOT
+  type        = string
+  default     = "1"
 }
 
 variable "postgres_high_availability_enabled" {
@@ -178,7 +209,57 @@ variable "storage_soft_delete_days" {
   default     = 7
 }
 
+# ── Container registry ────────────────────────────────────────────────────────
+
+variable "acr_sku" {
+  description = <<-EOT
+    Registry SKU, and the largest single fixed cost in this deployment: Premium is
+    roughly 10x Basic per month.
+
+    Premium is the production choice because repository-scoped tokens require it, and
+    that scoped, pull-only token is the credential handed to every provisioned agent's
+    container spec. On Basic or Standard there is no such token, so the deployment
+    falls back to the registry admin user -- push and pull across every repository --
+    which is acceptable only for a throwaway environment.
+  EOT
+  type        = string
+  default     = "Premium"
+
+  validation {
+    condition     = contains(["Basic", "Standard", "Premium"], var.acr_sku)
+    error_message = "acr_sku must be one of Basic, Standard, Premium."
+  }
+}
+
+# ── Cost controls ─────────────────────────────────────────────────────────────
+
+variable "nat_gateway_enabled" {
+  description = <<-EOT
+    Whether to provision the NAT gateway that gives the agent and Container Apps
+    subnets outbound internet access. It bills hourly whether or not traffic flows,
+    plus its public IP.
+
+    Disabling it saves that standing cost but breaks elastic compute: Azure has retired
+    default outbound access, so a VNet-injected agent would have no route to the API's
+    public ingress and could never dial home. Private endpoints and intra-VNet traffic
+    still work. Leave it off while testing everything except elastic agents.
+  EOT
+  type        = bool
+  default     = true
+}
+
 # ── Observability ─────────────────────────────────────────────────────────────
+
+variable "log_analytics_daily_quota_gb" {
+  description = <<-EOT
+    Hard cap on daily ingestion, in GB. Log Analytics bills per GB ingested with no
+    ceiling by default, which is the one line item here that can run away unattended.
+    Set a small cap on non-production environments; -1 means unlimited. Ingestion
+    stops for the rest of the UTC day once the cap is hit.
+  EOT
+  type        = number
+  default     = -1
+}
 
 variable "log_retention_days" {
   description = "Log Analytics retention in days."

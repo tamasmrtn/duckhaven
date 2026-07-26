@@ -8,5 +8,10 @@ resource "azurerm_log_analytics_workspace" "main" {
   resource_group_name = azurerm_resource_group.main.name
   sku                 = "PerGB2018"
   retention_in_days   = var.log_retention_days
-  tags                = local.tags
+
+  # Ingestion is billed per GB with no ceiling by default, making this the one line
+  # item that can run away while nobody is watching.
+  daily_quota_gb = var.log_analytics_daily_quota_gb
+
+  tags = local.tags
 }

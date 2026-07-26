@@ -57,7 +57,11 @@ resource "azurerm_subnet" "aci" {
 # Azure is retiring default outbound access, so the agent subnet needs an explicit
 # egress path. Attaching the same gateway to the Container Apps subnet gives the
 # whole deployment one predictable egress IP.
+# Both the gateway and its public IP bill hourly whether or not traffic flows, which is
+# why they can be switched off for an environment that is not exercising elastic agents.
 resource "azurerm_public_ip" "natgw" {
+  count = var.nat_gateway_enabled ? 1 : 0
+
   name                = "pip-natgw-${local.name}"
   location            = var.location
   resource_group_name = azurerm_resource_group.main.name
@@ -68,6 +72,8 @@ resource "azurerm_public_ip" "natgw" {
 }
 
 resource "azurerm_nat_gateway" "main" {
+  count = var.nat_gateway_enabled ? 1 : 0
+
   name                    = "natgw-${local.name}"
   location                = var.location
   resource_group_name     = azurerm_resource_group.main.name
@@ -77,18 +83,24 @@ resource "azurerm_nat_gateway" "main" {
 }
 
 resource "azurerm_nat_gateway_public_ip_association" "main" {
-  nat_gateway_id       = azurerm_nat_gateway.main.id
-  public_ip_address_id = azurerm_public_ip.natgw.id
+  count = var.nat_gateway_enabled ? 1 : 0
+
+  nat_gateway_id       = azurerm_nat_gateway.main[0].id
+  public_ip_address_id = azurerm_public_ip.natgw[0].id
 }
 
 resource "azurerm_subnet_nat_gateway_association" "aci" {
+  count = var.nat_gateway_enabled ? 1 : 0
+
   subnet_id      = azurerm_subnet.aci.id
-  nat_gateway_id = azurerm_nat_gateway.main.id
+  nat_gateway_id = azurerm_nat_gateway.main[0].id
 }
 
 resource "azurerm_subnet_nat_gateway_association" "aca" {
+  count = var.nat_gateway_enabled ? 1 : 0
+
   subnet_id      = azurerm_subnet.aca.id
-  nat_gateway_id = azurerm_nat_gateway.main.id
+  nat_gateway_id = azurerm_nat_gateway.main[0].id
 }
 
 # ── Agent subnet NSG ──────────────────────────────────────────────────────────

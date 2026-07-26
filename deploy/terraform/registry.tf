@@ -14,27 +14,36 @@ resource "azurerm_container_registry" "main" {
   resource_group_name = azurerm_resource_group.main.name
   location            = var.location
 
-  # Premium is required for repository-scoped tokens. On Standard the only credential
-  # a container instance could use is the registry admin user, which grants push as
-  # well as pull across every repository -- and that credential would sit in the API's
-  # environment and in every provisioned agent's container spec. Paying for Premium to
-  # avoid handing out registry-admin rights is the trade being made here.
-  sku           = "Premium"
-  admin_enabled = false
+  # Premium is required for repository-scoped tokens. On a cheaper SKU the only
+  # credential a container instance could use is the registry admin user, which grants
+  # push as well as pull across every repository -- and that credential would sit in
+  # the API's environment and in every provisioned agent's container spec. Production
+  # pays for Premium to avoid handing that out; a throwaway environment need not.
+  sku = var.acr_sku
+
+  # Enabled only as the fallback credential when scoped tokens are unavailable.
+  admin_enabled = !local.acr_scoped_tokens_supported
 
   public_network_access_enabled = true
-  zone_redundancy_enabled       = true
+
+  # Zone redundancy, network rule sets and retention policies are all Premium-only
+  # features, so they follow the SKU rather than being stated unconditionally.
+  zone_redundancy_enabled = local.acr_is_premium
 
   # Set explicitly rather than left to default. Disabling public access on a registry
   # leaves networkRuleSet.defaultAction on Deny, and re-enabling public access does not
   # reset it -- a registry can therefore look public while still refusing every pull.
   # Stating the intended value keeps that state unambiguous.
-  network_rule_set {
-    default_action = "Allow"
+  dynamic "network_rule_set" {
+    for_each = local.acr_is_premium ? [1] : []
+
+    content {
+      default_action = "Allow"
+    }
   }
 
   # Untagged manifests are build residue; they accumulate and are billed as storage.
-  retention_policy_in_days = 30
+  retention_policy_in_days = local.acr_is_premium ? 30 : null
 
   tags = local.tags
 }
@@ -44,6 +53,8 @@ resource "azurerm_container_registry" "main" {
 # Scoped to reading one repository. A leak of this credential exposes the agent image
 # and nothing else -- no push rights, no other repository, no registry management.
 resource "azurerm_container_registry_scope_map" "agent_pull" {
+  count = local.acr_scoped_tokens_supported ? 1 : 0
+
   name                    = "agent-pull"
   container_registry_name = azurerm_container_registry.main.name
   resource_group_name     = azurerm_resource_group.main.name
@@ -55,15 +66,19 @@ resource "azurerm_container_registry_scope_map" "agent_pull" {
 }
 
 resource "azurerm_container_registry_token" "agent_pull" {
+  count = local.acr_scoped_tokens_supported ? 1 : 0
+
   name                    = "agent-pull-token"
   container_registry_name = azurerm_container_registry.main.name
   resource_group_name     = azurerm_resource_group.main.name
-  scope_map_id            = azurerm_container_registry_scope_map.agent_pull.id
+  scope_map_id            = azurerm_container_registry_scope_map.agent_pull[0].id
   enabled                 = true
 }
 
 resource "azurerm_container_registry_token_password" "agent_pull" {
-  container_registry_token_id = azurerm_container_registry_token.agent_pull.id
+  count = local.acr_scoped_tokens_supported ? 1 : 0
+
+  container_registry_token_id = azurerm_container_registry_token.agent_pull[0].id
 
   password1 {}
 }
@@ -72,7 +87,7 @@ resource "azurerm_container_registry_token_password" "agent_pull" {
 # container group's registry credential.
 resource "azurerm_key_vault_secret" "acr_agent_pull_password" {
   name         = "acr-agent-pull-password"
-  value        = azurerm_container_registry_token_password.agent_pull.password1[0].value
+  value        = local.agent_pull_password
   key_vault_id = azurerm_key_vault.main.id
   tags         = local.tags
 

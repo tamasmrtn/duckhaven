@@ -28,11 +28,6 @@ output "private_endpoint_subnet_id" {
   value       = azurerm_subnet.pe.id
 }
 
-output "nat_gateway_public_ip" {
-  description = "Egress IP for the Container Apps and agent subnets. Allowlist this on external services."
-  value       = azurerm_public_ip.natgw.ip_address
-}
-
 output "log_analytics_workspace_id" {
   description = "Log Analytics workspace resource ID."
   value       = azurerm_log_analytics_workspace.main.id
@@ -73,9 +68,20 @@ output "container_registry_login_server" {
   value       = azurerm_container_registry.main.login_server
 }
 
-output "agent_pull_token_name" {
-  description = "Registry token username for container instances (ELASTIC_REGISTRY_USERNAME)."
-  value       = azurerm_container_registry_token.agent_pull.name
+output "agent_pull_username" {
+  description = <<-EOT
+    Registry username for container instances (ELASTIC_REGISTRY_USERNAME): the
+    repository-scoped token on Premium, otherwise the registry admin user.
+  EOT
+  value       = local.agent_pull_username
+}
+
+output "nat_gateway_public_ip" {
+  description = <<-EOT
+    Egress IP for the Container Apps and agent subnets; null when the NAT gateway is
+    disabled, in which case elastic agents have no outbound route.
+  EOT
+  value       = var.nat_gateway_enabled ? azurerm_public_ip.natgw[0].ip_address : null
 }
 
 output "private_dns_zone_ids" {

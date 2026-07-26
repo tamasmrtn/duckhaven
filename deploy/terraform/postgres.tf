@@ -8,6 +8,7 @@ resource "azurerm_postgresql_flexible_server" "main" {
   version             = "17"
   sku_name            = var.postgres_sku_name
   storage_mb          = var.postgres_storage_mb
+  storage_tier        = var.postgres_storage_tier
 
   administrator_login    = "dhadmin"
   administrator_password = random_password.postgres_admin.result
@@ -22,7 +23,7 @@ resource "azurerm_postgresql_flexible_server" "main" {
   # same pattern serve every other private service here.
   public_network_access_enabled = false
 
-  zone = "1"
+  zone = var.postgres_zone
 
   dynamic "high_availability" {
     for_each = var.postgres_high_availability_enabled ? [1] : []

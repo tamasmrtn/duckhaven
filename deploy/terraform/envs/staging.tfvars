@@ -6,24 +6,57 @@ location_short = "frc"
 
 name_suffix = "b3n8q4"
 
-log_retention_days = 30
-
-allow_management_plane_public_access = true
-management_plane_allowed_ips         = []
+# This environment exists to verify that the topology applies and works. It is not
+# production-shaped and is not meant to survive anything. Every value below is chosen
+# to be the cheapest Azure offers, because it runs on a trial subscription with a fixed
+# credit -- see the cost notes in ../README.md.
+#
+# The single biggest saving is not in this file: destroy the environment between test
+# runs. Idle infrastructure still bills, and everything here is reproducible from
+# `terraform apply`.
 
 # A separate VNet range so staging and prod can be peered or share a runner later
-# without renumbering.
+# without renumbering. Networking itself is free.
 vnet_address_space = "10.43.0.0/16"
 subnet_prefix_aca  = "10.43.0.0/23"
 subnet_prefix_pe   = "10.43.2.0/24"
 subnet_prefix_aci  = "10.43.3.0/24"
 
-# Cheaper data plane: burstable Postgres with no hot standby and no cross-region
-# backup, and single-zone storage. Staging exists to exercise the topology, not to
-# survive a zone loss.
+# Burstable, 1 vCore / 2 GiB, at the 32 GiB storage floor: the cheapest server Azure
+# sells. No hot standby, no cross-region backup, shortest retention. Burstable does not
+# support zone-redundant HA anyway. zone is null so Azure places the server wherever it
+# has capacity, which a trial subscription may not have in a specific zone.
 postgres_sku_name                     = "B_Standard_B1ms"
 postgres_storage_mb                   = 32768
+postgres_storage_tier                 = null
+postgres_zone                         = null
 postgres_high_availability_enabled    = false
 postgres_backup_retention_days        = 7
 postgres_geo_redundant_backup_enabled = false
-storage_replication_type              = "LRS"
+
+# Single-zone storage and the shortest soft-delete window, so deleted blobs stop being
+# billed almost immediately.
+storage_replication_type = "LRS"
+storage_soft_delete_days = 1
+
+# Basic instead of Premium, roughly a tenth of the cost. The trade is real: Basic has no
+# repository-scoped tokens, so provisioned agents pull with the registry admin user,
+# which can also push to every repository. Acceptable only because this registry holds
+# nothing that matters and the environment is disposable.
+acr_sku = "Basic"
+
+# Off by default here: the gateway and its public IP bill hourly regardless of traffic.
+# Turn this on for the session where elastic agents are being tested -- without it a
+# VNet-injected agent has no outbound route and cannot dial the control plane.
+nat_gateway_enabled = false
+
+# Retention is already at the 30-day floor; the cap is what actually bounds the bill,
+# since ingestion is charged per GB.
+log_retention_days           = 30
+log_analytics_daily_quota_gb = 1
+
+# Replace with the Terraform runner's egress address (`curl -s https://api.ipify.org`).
+# Without it the storage firewall refuses the data-plane call that creates the warehouse
+# filesystem, and the plan fails with that explanation.
+allow_management_plane_public_access = true
+management_plane_allowed_ips         = []

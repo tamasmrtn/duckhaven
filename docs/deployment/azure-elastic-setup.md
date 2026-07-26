@@ -15,7 +15,34 @@ Instances (ACI)** backend, provisioning agents into **your own Azure subscriptio
   [`DefaultAzureCredential`](https://learn.microsoft.com/azure/developer/python/sdk/authentication/credential-chains)
   — a managed identity when the control plane runs in Azure, or `AZURE_*` environment variables
   otherwise.
+- A **virtual network subnet delegated to `Microsoft.ContainerInstance/containerGroups`**, with an
+  outbound route (a NAT gateway). Agents are placed in this subnet — see
+  [Agent networking](#agent-networking) below.
 - The agent image reachable from ACI (the default public image works out of the box).
+
+## Agent networking
+
+Each agent is created as a **subnet-injected container group with a private address and no public
+DNS name**. Nothing about an agent is reachable from the internet; the control plane reaches its
+result server over the virtual network.
+
+Two consequences are worth understanding before you configure this:
+
+- **The subnet needs its own outbound route.** An agent dials the control plane at whatever
+  `ELASTIC_CONTROL_PLANE_URL` points at, and Azure has retired default outbound access for new
+  deployments. Without a NAT gateway (or equivalent) on the subnet, an agent provisions, never
+  registers, and is failed at `ELASTIC_PROVISIONING_DEADLINE_S`.
+- **The control plane must share the network.** It fetches result data directly from each agent, so
+  it has to be able to route to the subnet — running in the same virtual network, a peered one, or
+  otherwise connected.
+
+Container Instances offers *either* a public address with a DNS label *or* subnet injection with a
+private address, never both, so this is not configurable: agents are always private.
+
+!!! note "Restrict inbound to the control plane"
+    An agent's result server listens on port 8001 and is protected by a bearer token, but it has no
+    other reason to accept connections. A network security group on the agent subnet that allows
+    inbound 8001 only from the control plane's subnet is worth adding.
 
 ## 1. Create the resource group and grant access
 
@@ -23,17 +50,25 @@ Create a resource group and give the control plane's identity permission to mana
 in it. Least privilege is a **custom role** scoped to that resource group; the built-in `Contributor`
 role also works for a first pass.
 
+The identity needs two things: managing container groups in the resource group, and joining them to
+the agent subnet.
+
 ```bash
 az group create --name duckhaven-agents --location eastus
 
-# Custom role: manage container groups only, scoped to the resource group.
+# Custom role: manage container groups, and place them in a subnet.
 az role definition create --role-definition '{
   "Name": "DuckHaven Elastic Agents",
-  "AssignableScopes": ["/subscriptions/<sub>/resourceGroups/duckhaven-agents"],
+  "AssignableScopes": [
+    "/subscriptions/<sub>/resourceGroups/duckhaven-agents",
+    "/subscriptions/<sub>/resourceGroups/<network-rg>/providers/Microsoft.Network/virtualNetworks/<vnet>"
+  ],
   "Actions": [
     "Microsoft.ContainerInstance/containerGroups/read",
     "Microsoft.ContainerInstance/containerGroups/write",
-    "Microsoft.ContainerInstance/containerGroups/delete"
+    "Microsoft.ContainerInstance/containerGroups/delete",
+    "Microsoft.Network/virtualNetworks/subnets/read",
+    "Microsoft.Network/virtualNetworks/subnets/join/action"
   ]
 }'
 
@@ -41,6 +76,12 @@ az role assignment create \
   --assignee <control-plane-identity-object-id> \
   --role "DuckHaven Elastic Agents" \
   --scope /subscriptions/<sub>/resourceGroups/duckhaven-agents
+
+# The same role at the subnet, for the join.
+az role assignment create \
+  --assignee <control-plane-identity-object-id> \
+  --role "DuckHaven Elastic Agents" \
+  --scope <subnet-resource-id>
 ```
 
 ## 2. Configure the control plane
@@ -57,9 +98,26 @@ ELASTIC_CONTROL_PLANE_URL=wss://duckhaven.example.com/agents/connect
 ELASTIC_AZURE_SUBSCRIPTION_ID=<sub>
 ELASTIC_AZURE_RESOURCE_GROUP=duckhaven-agents
 ELASTIC_AZURE_LOCATION=eastus
+# The delegated subnet agents are placed in, as a full resource id. Required.
+ELASTIC_AZURE_SUBNET_ID=/subscriptions/<sub>/resourceGroups/<network-rg>/providers/Microsoft.Network/virtualNetworks/<vnet>/subnets/<subnet>
 ELASTIC_AZURE_CPU=2
 ELASTIC_AZURE_MEMORY_GB=8
 ```
+
+If the agent image lives in a private registry, add pull credentials — container instances cannot
+authenticate with a managed identity, so they need an explicit credential (a repository-scoped
+registry token is the least-privilege option):
+
+```bash
+ELASTIC_REGISTRY_SERVER=<registry>.azurecr.io
+ELASTIC_REGISTRY_USERNAME=<token-name>
+ELASTIC_REGISTRY_PASSWORD=<token-password>
+```
+
+!!! warning "The registry must stay publicly reachable"
+    Container Instances pulls images from its own control plane, outside your virtual network, so a
+    registry restricted to a private endpoint is rejected before the container is scheduled. Keep
+    the registry's public endpoint enabled and rely on the credential above.
 
 Tuning knobs (all optional, sensible defaults):
 

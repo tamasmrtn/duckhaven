@@ -146,6 +146,46 @@ advisory lock, like the scheduler, so leave it enabled everywhere.
 | `SQL_STATEMENT_TIMEOUT_GRACE_S` | `30` | Extra seconds beyond a statement's own `timeout_s` before the reaper fails a `running` statement whose agent reply never arrived. |
 | `SQL_STATEMENT_DEFAULT_TIMEOUT_S` | `600` | Fallback timeout budget used by the reaper for statement rows with no recorded `timeout_s` (written before that column existed). |
 
+### Elastic compute
+
+Lets the control plane provision [agents](../concepts/agents.md) on demand instead of requiring them to be run by an
+operator — see [Elastic compute](../concepts/elastic-compute.md) for the concept and
+[Elastic compute on Azure](../deployment/azure-elastic-setup.md) for the cloud setup. Off by default and purely
+additive: static agents behave the same whether or not this is enabled. The scale-in reaper is leader-elected via a
+Postgres advisory lock, like the scheduler, so leave it enabled on every replica.
+
+| Variable | Default | Description |
+|---|---|---|
+| `ELASTIC_COMPUTE_ENABLED` | `false` | Master switch. When `false`, the admin *New compute* action and elastic-pool query dispatch return 422 and no reaper runs. |
+| `ELASTIC_PROVIDER` | `null` | Compute backend: `null` is a no-op used in tests, `azure_aci` provisions Azure Container Instances. |
+| `ELASTIC_CONTROL_PLANE_URL` | — | The `wss://…/agents/connect` URL a provisioned agent dials home to. Required: unlike the interactive add-agent flow there is no HTTP request to derive it from. |
+| `ELASTIC_AGENT_POLARIS_BASE_URL` | `POLARIS_BASE_URL` | Catalog endpoint provisioned agents attach against, when it differs from the control plane's own (a remote agent usually cannot use an in-cluster address). |
+| `ELASTIC_IDLE_TIMEOUT_S` | `900` | Terminate an agent after this long with no work dispatched — and only when it has no in-flight queries or open SQL sessions. |
+| `ELASTIC_MAX_LIFETIME_S` | `14400` | Hard lifetime backstop, applied once the agent's work drains. |
+| `ELASTIC_PROVISIONING_DEADLINE_S` | `300` | Fail an agent that never dials home within this window and clean up its instance. |
+| `ELASTIC_REAPER_TICK_S` | `30` | How often the scale-in and leak-reconciliation loop runs. |
+| `ELASTIC_MAX_AGENTS_PER_POOL` | `1` | Cap on concurrent elastic agents per storage shape. A cost guardrail. |
+| `ELASTIC_CURRENCY` | `USD` | Currency label shown next to the prices below. |
+
+#### Azure Container Instances backend
+
+Used when `ELASTIC_PROVIDER=azure_aci`. Credentials come from the ambient identity
+(`DefaultAzureCredential`): a managed identity in Azure, or `AZURE_*` variables elsewhere.
+
+| Variable | Default | Description |
+|---|---|---|
+| `ELASTIC_AZURE_SUBSCRIPTION_ID` | — | Subscription agent container groups are created in. Required. |
+| `ELASTIC_AZURE_RESOURCE_GROUP` | — | Resource group they are created in. Required, and it must be dedicated: the reaper terminates every `duckhaven-managed` container group there that has no live agent row. |
+| `ELASTIC_AZURE_SUBNET_ID` | — | Resource id of a subnet delegated to `Microsoft.ContainerInstance/containerGroups`. Required. Agents are injected into it with private addresses and no public DNS name, so the subnet needs its own outbound route and the control plane must be able to route to it. |
+| `ELASTIC_AZURE_LOCATION` | `eastus` | Region the container groups are created in. |
+| `ELASTIC_AZURE_CPU` | `2` | vCPU per agent for pool-triggered provisioning; the admin UI picks a size per agent. |
+| `ELASTIC_AZURE_MEMORY_GB` | `8` | Memory (GiB) per agent, same. |
+| `ELASTIC_AZURE_PRICE_VCPU_HOUR` | `0.0486` | Per-vCPU hourly rate, used only to show a size's cost in the admin UI. Override per region or agreement. |
+| `ELASTIC_AZURE_PRICE_MEMORY_GB_HOUR` | `0.0054` | Per-GiB hourly rate, same. |
+| `ELASTIC_REGISTRY_SERVER` | — | Registry host for a private agent image. Container instances cannot pull with a managed identity, so a credential is required; a repository-scoped token is the least-privilege choice. Leave unset for a public image. |
+| `ELASTIC_REGISTRY_USERNAME` | — | Registry username or token name. |
+| `ELASTIC_REGISTRY_PASSWORD` | — | Registry password or token password. |
+
 ### AI assistant
 
 Configures the governed [AI data assistant](../concepts/assistant.md). Disabled by default; enable it by pointing it at

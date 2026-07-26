@@ -1,9 +1,14 @@
 """Compute backends, selected by the ``provider`` string.
 
-A backend knows how to create, destroy, and enumerate the *instances* that run an
-agent container. It knows nothing about DuckHaven's Agent rows or lifecycle — that
+A backend knows how to create, destroy, enumerate and locate the *instances* that run
+an agent container. It knows nothing about DuckHaven's Agent rows or lifecycle — that
 is the service/reaper's job. Keeping the surface this narrow is what lets a second
 cloud be added later as one module without a premature Protocol/registry.
+
+``address`` exists because an instance on a private network cannot report its own
+reachable address: it is assigned after the container's configuration is fixed, and the
+socket it dials home on may arrive translated. Backends that have nothing to add return
+``None`` and the socket's peer address is used instead.
 
 Phase 0 ships only ``NullBackend``: a no-op, in-process backend that lets the whole
 lifecycle (coalescing, idle reaping, leak reconciliation) be unit-tested without a
@@ -57,6 +62,11 @@ class NullBackend:
 
     async def terminate(self, instance_id: str) -> None:
         self._instances.discard(instance_id)
+
+    async def address(self, instance_id: str) -> str | None:
+        """No network to report: a null instance is reached over the socket it dialed
+        in on, the same as a static agent."""
+        return None
 
     async def status(self, instance_id: str) -> str:
         return "running" if instance_id in self._instances else "gone"

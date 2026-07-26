@@ -14,6 +14,10 @@ needs it.
 
 ``instance_id`` is the container-group name (deterministic, from the agent id), so
 provision is idempotent and the leak sweep matches instances to rows by name.
+
+Groups are injected into a delegated subnet and carry a private address only, so an
+agent's result server is reachable from the control plane's network and nowhere else.
+The address is assigned after creation, which is why ``address`` exists.
 """
 
 from __future__ import annotations
@@ -50,19 +54,12 @@ class AzureAciBackend:
     def _result_port(self) -> int:
         return 8001
 
-    def _dns_fqdn(self, instance_id: str) -> str:
-        """Public FQDN of the container group's result server.
-
-        ACI assigns ``<dns_label>.<region>.azurecontainer.io`` to a public IP; the
-        agent advertises this as its result host so the API (whose outbound differs
-        from the agent's inbound) can fetch result Parquet."""
-        return f"{instance_id}.{settings.elastic_azure_location}.azurecontainer.io"
-
     def _build_group(self, req: ProvisionRequest):
         from azure.mgmt.containerinstance.models import (
             Container,
             ContainerGroup,
             ContainerGroupIpAddressType,
+            ContainerGroupSubnetId,
             ContainerPort,
             EnvironmentVariable,
             IpAddress,
@@ -71,6 +68,10 @@ class AzureAciBackend:
             ResourceRequests,
             ResourceRequirements,
         )
+
+        subnet_id = settings.elastic_azure_subnet_id
+        if not subnet_id:
+            raise RuntimeError("azure_aci backend requires elastic_azure_subnet_id")
 
         result_port = self._result_port()
         polaris_url = settings.elastic_agent_polaris_base_url or settings.polaris_base_url
@@ -84,12 +85,12 @@ class AzureAciBackend:
             EnvironmentVariable(
                 name="POLARIS_CLIENT_SECRET", secure_value=settings.polaris_client_secret
             ),
-            # Bind all interfaces and tell the API to fetch results at the public
-            # DNS label (its egress IP differs from this inbound address).
+            # Bind all interfaces. The agent is not told its own address: a
+            # subnet-injected group is assigned its private IP *after* creation, and
+            # environment variables are fixed at creation, so there is nothing to put
+            # in RESULT_ADVERTISE_HOST. The control plane resolves the address from
+            # ARM instead — see ``address`` below.
             EnvironmentVariable(name="RESULTS_HTTP_HOST", value="0.0.0.0"),
-            EnvironmentVariable(
-                name="RESULT_ADVERTISE_HOST", value=self._dns_fqdn(req.instance_id)
-            ),
         ]
 
         container = Container(
@@ -111,10 +112,13 @@ class AzureAciBackend:
             # The agent manages its own lifecycle; on a crash it should redial, but
             # DuckHaven decides when it is torn down (via delete), not Azure.
             restart_policy="OnFailure",
-            # Public IP + DNS label so the API can reach the result server.
+            # Injected into a delegated subnet with a private address and no DNS label.
+            # ACI allows either a public IP with a label or subnet injection, never
+            # both, so this is what keeps an agent's result server off the internet:
+            # the only route to it is from inside the virtual network.
+            subnet_ids=[ContainerGroupSubnetId(id=subnet_id)],
             ip_address=IpAddress(
-                type=ContainerGroupIpAddressType.PUBLIC,
-                dns_name_label=req.instance_id,
+                type=ContainerGroupIpAddressType.PRIVATE,
                 ports=[Port(port=result_port)],
             ),
             image_registry_credentials=self._registry_credentials(req.image),
@@ -159,6 +163,30 @@ class AzureAciBackend:
             client.container_groups.begin_delete(rg, instance_id)
 
         await asyncio.to_thread(_delete)
+
+    async def address(self, instance_id: str) -> str | None:
+        """The instance's private address, or ``None`` if it has none yet.
+
+        This is how the control plane learns where to fetch an agent's results.
+        Nothing else can tell it: a subnet-injected group has no DNS name, the address
+        is assigned after creation so it cannot be passed to the container as
+        configuration, and the socket the agent dials home on arrives through a NAT
+        gateway, so its peer address is the gateway's rather than the agent's.
+
+        Returns ``None`` rather than raising, so a transient ARM failure leaves the
+        caller free to fall back instead of failing the registration.
+        """
+        client, rg = self._client_and_rg()
+
+        def _get() -> str | None:
+            group = client.container_groups.get(rg, instance_id)
+            return getattr(group.ip_address, "ip", None)
+
+        try:
+            return await asyncio.to_thread(_get)
+        except Exception:
+            logger.warning("Could not resolve address for instance %s", instance_id)
+            return None
 
     async def status(self, instance_id: str) -> str:
         client, rg = self._client_and_rg()

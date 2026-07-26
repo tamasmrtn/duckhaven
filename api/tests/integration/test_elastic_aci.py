@@ -12,11 +12,16 @@ Enable by setting, in addition to Azure credentials in the ambient environment
     RUN_AZURE_TESTS=1
     ELASTIC_AZURE_SUBSCRIPTION_ID=<sub>
     ELASTIC_AZURE_RESOURCE_GROUP=<rg>
+    ELASTIC_AZURE_SUBNET_ID=<subnet delegated to Microsoft.ContainerInstance/containerGroups>
+
+The subnet must carry that delegation and have an outbound route (a NAT gateway), or
+the group will be rejected at creation.
 """
 
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import os
 import uuid
 
@@ -33,6 +38,7 @@ def _gated() -> bool:
         os.getenv("RUN_AZURE_TESTS")
         and os.getenv("ELASTIC_AZURE_SUBSCRIPTION_ID")
         and os.getenv("ELASTIC_AZURE_RESOURCE_GROUP")
+        and os.getenv("ELASTIC_AZURE_SUBNET_ID")
     )
 
 
@@ -46,6 +52,7 @@ async def test_aci_provision_list_terminate_roundtrip(monkeypatch) -> None:
     monkeypatch.setattr(
         settings, "elastic_azure_resource_group", os.environ["ELASTIC_AZURE_RESOURCE_GROUP"]
     )
+    monkeypatch.setattr(settings, "elastic_azure_subnet_id", os.environ["ELASTIC_AZURE_SUBNET_ID"])
     monkeypatch.setattr(settings, "elastic_azure_cpu", 1.0)
     monkeypatch.setattr(settings, "elastic_azure_memory_gb", 1.0)
 
@@ -72,6 +79,20 @@ async def test_aci_provision_list_terminate_roundtrip(monkeypatch) -> None:
             await asyncio.sleep(2)
         else:
             pytest.fail("provisioned group never appeared in list_managed")
+
+        # The address the control plane will fetch results from. It is assigned after
+        # creation, so it may lag the listing; poll for it. A private address here is
+        # the whole point of subnet injection -- a public one would mean the group came
+        # up internet-reachable.
+        for _ in range(30):
+            address = await backend.address(instance_id)
+            if address:
+                break
+            await asyncio.sleep(2)
+        else:
+            pytest.fail("provisioned group never reported an address")
+
+        assert ipaddress.ip_address(address).is_private
     finally:
         await backend.terminate(instance_id)
 

@@ -201,6 +201,13 @@ class Settings(BaseSettings):
     elastic_azure_subscription_id: str | None = None
     elastic_azure_resource_group: str | None = None
     elastic_azure_location: str = "eastus"
+    # Subnet the agent container groups are injected into, as a full ARM resource id.
+    # Required by the azure_aci backend: Container Instances offers either a public IP
+    # with a DNS label or subnet injection with a private address, never both, and
+    # DuckHaven takes the latter so an agent's result server is reachable only from the
+    # control plane's own network. The subnet must be delegated to
+    # Microsoft.ContainerInstance/containerGroups.
+    elastic_azure_subnet_id: str | None = None
     # CPU cores and memory (GiB) requested per elastic agent container. The
     # default size for pool-triggered provisioning; the admin UI can pick a named
     # size per agent.

@@ -169,3 +169,42 @@ async def test_record_activity_only_touches_elastic(db_session):
 
     assert static.last_active_at is None
     assert elastic.last_active_at is not None
+
+
+async def test_null_backend_reports_no_address(null_backend):
+    """Nothing to report: a null instance is reached over the socket it dialed in on,
+    exactly like a static agent."""
+    assert await null_backend.address("dh-agent-whatever") is None
+
+
+async def test_resolve_result_host_asks_the_backend(monkeypatch, null_backend):
+    """For an elastic agent the control plane created the instance, so the cloud is the
+    authority on where it can be reached."""
+
+    async def _address(instance_id):
+        assert instance_id == "dh-agent-1"
+        return "10.42.3.7"
+
+    monkeypatch.setattr(null_backend, "address", _address)
+    agent = Agent(name="e", status="unavailable", provider="null", instance_id="dh-agent-1")
+
+    assert await service.resolve_result_host(agent) == "10.42.3.7"
+
+
+async def test_resolve_result_host_ignores_static_agents():
+    """A static agent's address is whatever it connected from; there is no backend to
+    ask, and asking one would be wrong."""
+    assert await service.resolve_result_host(Agent(name="s", status="healthy")) is None
+
+
+async def test_resolve_result_host_survives_a_backend_failure(monkeypatch, null_backend):
+    """A transient cloud error must not fail the agent's registration; the caller falls
+    back to the connection's peer address."""
+
+    async def _boom(instance_id):
+        raise RuntimeError("ARM unavailable")
+
+    monkeypatch.setattr(null_backend, "address", _boom)
+    agent = Agent(name="e", status="unavailable", provider="null", instance_id="dh-agent-2")
+
+    assert await service.resolve_result_host(agent) is None

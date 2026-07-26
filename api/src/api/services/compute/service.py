@@ -293,6 +293,27 @@ async def _mint_and_provision(
     return agent
 
 
+async def resolve_result_host(agent: Agent) -> str | None:
+    """Where the control plane should fetch ``agent``'s results, per its backend.
+
+    Only meaningful for elastic agents: the control plane created the instance, so the
+    cloud is the authority on its address. A subnet-injected instance cannot be told
+    its own address (it is assigned after the container's configuration is fixed) and
+    cannot be inferred from the connection either, because the agent dials home through
+    a NAT gateway and so appears to come from the gateway.
+
+    ``None`` for static agents, for backends with no address to report, and on any
+    backend error — in each case the caller falls back to the connection's peer.
+    """
+    if agent.provider is None or not agent.instance_id:
+        return None
+    try:
+        return await get_backend(agent.provider).address(agent.instance_id)
+    except Exception:
+        logger.exception("Could not resolve result host for agent %s", agent.id)
+        return None
+
+
 async def bind_queued_work(db: AsyncSession, agent: Agent) -> int:
     """Dispatch queued, agent-less elastic queries this agent can now serve.
 

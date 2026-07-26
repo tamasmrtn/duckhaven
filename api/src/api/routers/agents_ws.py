@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.deps import get_session_factory
 from api.models.agent import Agent
@@ -40,6 +40,29 @@ def _result_host(ws: WebSocket) -> str | None:
     return ws.client.host if ws.client else None
 
 
+async def _elastic_result_host(db: AsyncSession, agent_id: uuid.UUID | None) -> str | None:
+    """The backend-reported address of an elastic agent's result server.
+
+    Neither mechanism above works for an agent on a private network: it cannot be told
+    its own address (that is assigned after its configuration is fixed) and its socket
+    reaches us through a NAT gateway, so the peer and the ``X-Forwarded-For`` hop are
+    both the gateway. The cloud is the only authority, so ask it.
+
+    ``None`` for a static agent, for a bootstrap token not yet bound to a row, and for
+    a backend with no address to report — in each of those the peer address is right.
+    """
+    if agent_id is None:
+        return None
+    agent = await db.get(Agent, agent_id)
+    if agent is None:
+        return None
+    # Lazy, matching the bind_queued_work import below: keeps this router free of a
+    # load-time dependency on the compute stack.
+    from api.services.compute.service import resolve_result_host
+
+    return await resolve_result_host(agent)
+
+
 @router.websocket("/agents/connect")
 async def agent_connect(
     ws: WebSocket,
@@ -64,9 +87,9 @@ async def agent_connect(
         # X-Forwarded-For hop, mirroring how the add-agent dial URL trusts
         # X-Forwarded-* (routers/agents._agent_dial_url).
         # An agent whose result server is reached at a different address than its
-        # socket peer (e.g. ACI behind a public DNS label) advertises it explicitly;
-        # otherwise the peer/X-Forwarded-For hop is used.
-        result_host = frame.payload.get("result_host") or _result_host(ws)
+        # socket peer advertises it explicitly; otherwise the peer/X-Forwarded-For hop
+        # is used. Elastic agents fall between the two: see _resolve_result_host.
+        advertised_host = frame.payload.get("result_host")
         result_port = frame.payload.get("result_port")
         result_port_int = int(result_port) if result_port is not None else None
 
@@ -88,6 +111,9 @@ async def agent_connect(
             if cred is None:
                 await ws.close(code=1008, reason="Invalid token")
                 return
+
+            result_host = advertised_host or await _elastic_result_host(db, cred.agent_id)
+            result_host = result_host or _result_host(ws)
 
             if cred.kind == "agent_session":
                 # Re-authentication: rebind the existing agent row instead of

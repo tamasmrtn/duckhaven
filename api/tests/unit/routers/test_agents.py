@@ -643,3 +643,87 @@ async def test_ws_agent_advertised_result_host_wins_over_peer(ws_client, db_engi
         agent = await db.get(Agent, agent_id)
         assert agent.result_host == "dh-agent-abc.eastus.azurecontainer.io"
         assert agent.result_port == 8001
+
+
+async def _add_elastic_agent(factory, token: str, *, instance_id: str):
+    """A pre-created elastic row plus the bootstrap credential bound to it, as
+    compute.service leaves things after provisioning."""
+    from datetime import datetime, timedelta
+
+    from api.models.user import Credential
+
+    async with factory() as db:
+        agent = Agent(
+            name="elastic-vnet",
+            status="unavailable",
+            provider="null",
+            lifecycle="provisioning",
+            instance_id=instance_id,
+            provisioned_at=datetime.now(tz=UTC),
+        )
+        db.add(agent)
+        await db.flush()
+        agent_id = agent.id
+        db.add(
+            Credential(
+                user_id=None,
+                agent_id=agent_id,
+                kind="agent_bootstrap",
+                token=token,
+                expires_at=datetime.now(tz=UTC) + timedelta(hours=1),
+            )
+        )
+        await db.commit()
+    return agent_id
+
+
+async def test_ws_elastic_result_host_comes_from_the_backend(ws_client, db_engine, monkeypatch):
+    """A subnet-injected agent cannot report its own address, and its socket reaches the
+    control plane through a NAT gateway, so the peer address is the gateway's. The
+    backend-reported address must win -- storing the peer would send result fetches to
+    the gateway and fail confusingly."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.services.compute.backends import get_backend
+
+    async def _address(instance_id):
+        return "10.42.3.9"
+
+    monkeypatch.setattr(get_backend("null"), "address", _address)
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    agent_id = await _add_elastic_agent(factory, "dh_boot_vnet1", instance_id="dh-agent-vnet1")
+
+    received = await _connect_once(ws_client, {"token": "dh_boot_vnet1", "result_port": 8001})
+    assert received.get("type") == "auth_ok"
+
+    async with factory() as db:
+        agent = await db.get(Agent, agent_id)
+        assert agent.result_host == "10.42.3.9"
+        assert agent.result_port == 8001
+
+
+async def test_ws_advertised_result_host_wins_over_the_backend(ws_client, db_engine, monkeypatch):
+    """An agent that states its own address is taken at its word: the setting exists for
+    deployments where the operator knows better than the cloud metadata."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.services.compute.backends import get_backend
+
+    async def _address(instance_id):
+        return "10.42.3.9"
+
+    monkeypatch.setattr(get_backend("null"), "address", _address)
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    agent_id = await _add_elastic_agent(factory, "dh_boot_vnet2", instance_id="dh-agent-vnet2")
+
+    received = await _connect_once(
+        ws_client,
+        {"token": "dh_boot_vnet2", "result_port": 8001, "result_host": "agent.example.internal"},
+    )
+    assert received.get("type") == "auth_ok"
+
+    async with factory() as db:
+        agent = await db.get(Agent, agent_id)
+        assert agent.result_host == "agent.example.internal"

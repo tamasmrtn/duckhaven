@@ -12,7 +12,9 @@ maintenance scanner, and SQL-session reaper) that:
   ``elastic_provisioning_deadline_s`` is failed and its instance cleaned up;
 * **reconciles leaks** — cloud instances with no live row are terminated, and rows
   whose instance has vanished are failed. Postgres is the state-of-record (I9);
-  the cloud is reconciled to it.
+  the cloud is reconciled to it;
+* **fails stranded pool runs** — a queued run that no agent will ever bind is failed
+  rather than left waiting indefinitely.
 """
 
 from __future__ import annotations
@@ -152,6 +154,46 @@ async def _reap_lifecycle(db: AsyncSession, now: datetime) -> dict[str, int]:
     return reaped
 
 
+async def _fail_stranded_queued(db: AsyncSession, now: datetime) -> int:
+    """Fail elastic pool runs that no agent is ever going to pick up.
+
+    A run against the pool is parked ``queued`` with no agent and only leaves that state
+    when a provisioned agent registers and binds it. Several things stop that happening:
+    the per-pool cap was already reached by a row that never registers, provisioning
+    failed outright, or the agent was failed at its deadline. None of them touch the
+    parked run, so it stayed ``queued`` forever and the client polled an answer that was
+    never coming.
+
+    Bounding it here rather than at submission covers every one of those causes with one
+    rule, and does not risk failing a run that supply was genuinely still arriving for.
+    The budget is the provisioning deadline: once it passes, the agent that would have
+    served this run has been failed too.
+    """
+    cutoff = now - timedelta(seconds=settings.elastic_provisioning_deadline_s)
+    stranded = (
+        (
+            await db.execute(
+                sa.select(Query).where(
+                    Query.agent_id.is_(None),
+                    Query.origin == "elastic",
+                    Query.status == "queued",
+                    Query.started_at < cutoff,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for query in stranded:
+        query.status = "failed"
+        query.error = "No compute became available for this run."
+        query.finished_at = now
+        logger.warning("Failed stranded elastic query %s: no agent registered", query.id)
+    if stranded:
+        await db.commit()
+    return len(stranded)
+
+
 async def _reconcile_leaks(db: AsyncSession, provider: str) -> dict[str, int]:
     """Reconcile the cloud against Postgres for one provider.
 
@@ -182,8 +224,22 @@ async def _reconcile_leaks(db: AsyncSession, provider: str) -> dict[str, int]:
         logger.warning("Terminated orphan instance %s (provider %s)", instance_id, provider)
 
     now = datetime.now(tz=UTC)
+    # A row is committed with its instance_id *before* the backend is asked to create
+    # the instance, so that a crash between the two is always reconcilable. That leaves a
+    # window in which an instance legitimately does not exist yet, and a cycle landing
+    # inside it would fail a perfectly healthy agent that was still being created -- and
+    # then terminate the instance as an orphan on the next pass, because its row is no
+    # longer active.
+    #
+    # The exemption is deliberately narrow: only a row still *provisioning*, and only
+    # inside the provisioning deadline. An agent that reached "running" has demonstrably
+    # had an instance, so if it is missing now it really is gone, whatever its age; and
+    # _reap_lifecycle fails a provisioning row once the deadline passes anyway.
+    settle_cutoff = now - timedelta(seconds=settings.elastic_provisioning_deadline_s)
     for agent in rows:
         if agent.instance_id and agent.instance_id not in live:
+            if agent.lifecycle == "provisioning" and _aware(agent.provisioned_at) >= settle_cutoff:
+                continue
             agent.lifecycle = "failed"
             agent.status = "unavailable"
             agent.terminated_at = now
@@ -198,6 +254,7 @@ async def run_cycle(session_factory: async_sessionmaker[AsyncSession]) -> dict[s
     async with session_factory() as db:
         reaped = await _reap_lifecycle(db, now)
         reaped.update(await _reconcile_leaks(db, settings.elastic_provider))
+        reaped["stranded_queries_failed"] = await _fail_stranded_queued(db, now)
     return reaped
 
 

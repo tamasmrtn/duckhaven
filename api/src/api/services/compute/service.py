@@ -388,7 +388,17 @@ async def bind_queued_work(db: AsyncSession, agent: Agent) -> int:
             continue
         query.agent_id = agent.id
         try:
-            await dispatch_query(db, query, principal_id=query.user_id)
+            # Replay what the requester actually asked for. These were recorded on the
+            # row when the run was parked precisely because this dispatch happens
+            # outside that request; passing neither meant a parked run silently used the
+            # workspace default catalog and the default timeout.
+            await dispatch_query(
+                db,
+                query,
+                principal_id=query.user_id,
+                active_catalog=query.active_catalog,
+                **({} if query.timeout_s is None else {"timeout_s": query.timeout_s}),
+            )
             bound += 1
         except Exception:
             logger.exception("Failed to bind queued query %s to agent %s", query.id, agent.id)

@@ -178,6 +178,13 @@ async def _create_elastic_query(
         sql=body.sql,
         status="queued",
         origin="elastic",
+        # Recorded because this run may be dispatched long after this request: a run
+        # parked during a cold start is replayed by compute.service.bind_queued_work,
+        # which has no access to the request that created it. Without these the replay
+        # used the workspace default catalog and the default timeout, so unqualified
+        # table names resolved somewhere the user had not chosen.
+        timeout_s=body.timeout_s,
+        active_catalog=body.catalog,
     )
     db.add(query)
     await db.flush()

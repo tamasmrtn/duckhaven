@@ -291,3 +291,90 @@ async def test_terminate_agent_gives_up_presence(session_factory, elastic_on, nu
         assert row.owner_id is None
         # The point of the fix: no longer advertised as connected anywhere.
         assert str(agent_id) not in await connected_agent_ids(db)
+
+
+async def test_bind_queued_work_replays_the_requested_catalog_and_timeout(
+    session_factory, elastic_on, null_backend, monkeypatch
+):
+    """A run parked during a cold start is dispatched from here, outside the request that
+    created it, so the catalog and timeout the user chose have to come off the row. Losing
+    the catalog meant unqualified table names resolved against the workspace default
+    instead of the worksheet's selection."""
+    import uuid as _uuid
+
+    from conftest import seed_workspace
+
+    from api.models.query import Query
+
+    captured: dict = {}
+
+    async def _fake_dispatch(db, query, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr("api.services.query.dispatch_query", _fake_dispatch)
+
+    async with session_factory() as db:
+        ws, _ = await seed_workspace(db, user_id=_uuid.uuid4(), backend_kind="object_store")
+        agent = Agent(
+            name="e",
+            status="healthy",
+            provider="null",
+            lifecycle="running",
+            pool_key="object_store",
+            instance_id="dh-agent-bind",
+        )
+        db.add(agent)
+        db.add(
+            Query(
+                workspace_id=ws.id,
+                sql="SELECT 1",
+                status="queued",
+                origin="elastic",
+                timeout_s=42.0,
+                active_catalog="sales",
+            )
+        )
+        await db.commit()
+
+        assert await service.bind_queued_work(db, agent) == 1
+
+    assert captured["active_catalog"] == "sales"
+    assert captured["timeout_s"] == 42.0
+
+
+async def test_bind_queued_work_omits_an_unrecorded_timeout(
+    session_factory, elastic_on, null_backend, monkeypatch
+):
+    """Rows written before the timeout was recorded must keep the dispatch default rather
+    than being handed None."""
+    import uuid as _uuid
+
+    from conftest import seed_workspace
+
+    from api.models.query import Query
+
+    captured: dict = {}
+
+    async def _fake_dispatch(db, query, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr("api.services.query.dispatch_query", _fake_dispatch)
+
+    async with session_factory() as db:
+        ws, _ = await seed_workspace(db, user_id=_uuid.uuid4(), backend_kind="object_store")
+        agent = Agent(
+            name="e",
+            status="healthy",
+            provider="null",
+            lifecycle="running",
+            pool_key="object_store",
+            instance_id="dh-agent-bind2",
+        )
+        db.add(agent)
+        db.add(Query(workspace_id=ws.id, sql="SELECT 1", status="queued", origin="elastic"))
+        await db.commit()
+
+        assert await service.bind_queued_work(db, agent) == 1
+
+    assert "timeout_s" not in captured
+    assert captured["active_catalog"] is None

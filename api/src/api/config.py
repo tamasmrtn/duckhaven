@@ -1,9 +1,32 @@
 import json
+import os
+import socket
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+# Sentinel for the replica identity settings below: makes a replica work out who it is
+# at startup rather than being told.
+REPLICA_AUTO = "auto"
+
+# Port the API listens on inside its container (api/Dockerfile's CMD). Peers address
+# each other directly on it, bypassing any ingress or load balancer.
+REPLICA_INTERNAL_PORT = 8000
+
+
+def _own_address() -> str:
+    """This container's own address, as a peer would reach it.
+
+    Falls back to a loopback name if resolution fails, which is correct for a
+    single-replica deployment (where peer forwarding is disabled anyway) and visibly
+    wrong for a multi-replica one.
+    """
+    try:
+        return socket.gethostbyname(socket.gethostname())
+    except OSError:
+        return "localhost"
 
 
 class OidcProvider(BaseModel):
@@ -229,6 +252,14 @@ class Settings(BaseSettings):
     # Identity of this API replica and the URL peers use to reach it for
     # inter-replica agent-dispatch forwarding. The defaults make a single-replica
     # deploy forward to itself, i.e. behave exactly as a single node.
+    #
+    # Set either to "auto" to have the replica derive it at startup. That is required
+    # on platforms that give every replica of an app identical configuration and no
+    # individually addressable hostname — Azure Container Apps is one. There, a static
+    # value would make every replica claim the same owner_url on an agent row, and
+    # services/agent_dispatch.send_to_agent would see its own URL recorded as the owner
+    # and give up instead of forwarding, silently failing any query that landed on a
+    # replica not holding that agent's socket.
     replica_id: str = "api"
     replica_internal_url: str = "http://localhost:8000"
     # Shared secret guarding the network-private /internal/* forwarding endpoints.
@@ -328,6 +359,22 @@ class Settings(BaseSettings):
     # OIDC_PROVIDERS=[{"id":"entra","label":"Microsoft","server_metadata_url":"…",
     #   "client_id":"…","client_secret":"…"}]
     oidc_providers: Annotated[list[OidcProvider], NoDecode] = []
+
+    @model_validator(mode="after")
+    def _resolve_replica_identity(self) -> Settings:
+        """Fill in this replica's identity when either setting is ``auto``.
+
+        ``replica_id`` only has to be distinct and recognisable in logs, so the
+        platform's replica name is ideal and the hostname is a fine fallback.
+        ``replica_internal_url`` has to be *reachable by peers*, which means the
+        container's own address and the port it listens on — not any ingress hostname,
+        which would load-balance the forward back to an arbitrary replica.
+        """
+        if self.replica_id == REPLICA_AUTO:
+            self.replica_id = os.environ.get("CONTAINER_APP_REPLICA_NAME") or socket.gethostname()
+        if self.replica_internal_url == REPLICA_AUTO:
+            self.replica_internal_url = f"http://{_own_address()}:{REPLICA_INTERNAL_PORT}"
+        return self
 
     @field_validator("oidc_providers", mode="before")
     @classmethod

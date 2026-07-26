@@ -78,8 +78,8 @@ or not.
 
 | Variable | Default | Description |
 |---|---|---|
-| `REPLICA_ID` | `api` | Identifier for this API replica, recorded as the owner of agents whose WebSocket it holds. The HA compose sets one per replica (`api-1`, `api-2`). |
-| `REPLICA_INTERNAL_URL` | `http://localhost:8000` | URL peer replicas use to forward agent-dispatch frames to this replica's private `/internal` endpoints. |
+| `REPLICA_ID` | `api` | Identifier for this API replica, recorded as the owner of agents whose WebSocket it holds. The HA compose sets one per replica (`api-1`, `api-2`). Set to `auto` to use the platform's replica name, falling back to the hostname. |
+| `REPLICA_INTERNAL_URL` | `http://localhost:8000` | URL peer replicas use to forward agent-dispatch frames to this replica's private `/internal` endpoints. Set to `auto` on platforms that give every replica identical configuration (Azure Container Apps) to resolve this container's own address — a shared value there breaks forwarding silently, see [High availability](../deployment/high-availability.md#replicas-that-cannot-be-configured-individually). |
 | `INTERNAL_API_SECRET` | _(empty)_ | Shared secret guarding the `/internal` cross-replica dispatch endpoints. Must be identical on every replica. When empty, peer forwarding is disabled (single-replica mode). |
 | `AGENT_PRESENCE_TTL_S` | `90` | How recently an agent must have pinged for another replica to consider it connected; covers a replica that died without clearing its ownership. |
 | `DB_POOL_SIZE` | `5` | SQLAlchemy connection-pool size per replica. Keep `replicas × (DB_POOL_SIZE + DB_MAX_OVERFLOW)` under the Postgres `max_connections`. |

@@ -114,6 +114,7 @@ nav:
       - Configure storage: deployment/storage.md
       - Reverse proxy & TLS: deployment/reverse-proxy-tls.md
       - High availability: deployment/high-availability.md
+      - Azure with Terraform: deployment/azure-terraform.md
       - Updating: deployment/updating.md
       - Backup & restore: deployment/backup-restore.md
   - Guides:

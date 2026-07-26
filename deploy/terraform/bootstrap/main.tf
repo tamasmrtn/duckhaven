@@ -21,15 +21,22 @@ provider "azurerm" {
   features {}
 }
 
+locals {
+  # "shared" rather than a single environment: one state account holds the state for
+  # every environment, keyed per environment inside the container.
+  tags = {
+    app        = "duckhaven"
+    env        = "shared"
+    purpose    = "terraform-state"
+    managed-by = "terraform"
+  }
+}
+
 resource "azurerm_resource_group" "state" {
   name     = var.resource_group_name
   location = var.location
 
-  tags = {
-    app        = "duckhaven"
-    purpose    = "terraform-state"
-    managed-by = "terraform"
-  }
+  tags = local.tags
 }
 
 resource "azurerm_storage_account" "state" {
@@ -61,11 +68,7 @@ resource "azurerm_storage_account" "state" {
     }
   }
 
-  tags = {
-    app        = "duckhaven"
-    purpose    = "terraform-state"
-    managed-by = "terraform"
-  }
+  tags = local.tags
 }
 
 resource "azurerm_storage_container" "state" {

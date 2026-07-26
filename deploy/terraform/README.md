@@ -14,6 +14,7 @@ private IPs in a delegated subnet.
 ## Prerequisites
 
 - Terraform >= 1.9 (`sudo pacman -S terraform`, or download from HashiCorp).
+- TFLint >= 0.64 for linting, then `tflint --init` once to fetch the azurerm ruleset.
 - Azure CLI, logged in to the target subscription (`az login`).
 - Permission to create resource groups, role assignments and a custom role
   definition in the subscription.
@@ -61,6 +62,27 @@ Switching environments re-initialises the backend:
 terraform init -reconfigure -backend-config=envs/staging.backend.hcl
 terraform apply -var-file=envs/staging.tfvars
 ```
+
+## Linting
+
+```sh
+cd deploy/terraform
+tflint --init                                    # once, fetches the azurerm ruleset
+TFLINT_CONFIG_FILE="$PWD/.tflint.hcl" tflint --recursive
+```
+
+**`TFLINT_CONFIG_FILE` must be absolute, and it matters.** With `--recursive` tflint
+changes into each subdirectory and looks for a `.tflint.hcl` *there*. Without the
+environment variable, `bootstrap/` and `modules/` are linted with default
+configuration — no azurerm plugin — and report a misleading clean result. The
+pre-commit hook sets it for you.
+
+Two rules are configured deliberately, both explained in `.tflint.hcl`:
+`azurerm_resource_missing_tags` is switched **on** to enforce the tagging convention,
+and `azurerm_resources_missing_prevent_destroy` is switched **off** because deletion
+protection is enforced Azure-side (purge protection, soft delete, PITR) and
+`lifecycle` blocks cannot be parameterised per environment — setting it would make the
+staging environment undestroyable.
 
 ## Two documented deviations
 

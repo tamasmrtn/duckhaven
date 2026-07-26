@@ -3,7 +3,11 @@ resource "azurerm_private_endpoint" "this" {
   location            = var.location
   resource_group_name = var.resource_group_name
   subnet_id           = var.subnet_id
-  tags                = var.tags
+
+  # The caller passes local.tags, which carries the required keys; the rule cannot
+  # see through a variable.
+  # tflint-ignore: azurerm_resource_missing_tags
+  tags = var.tags
 
   private_service_connection {
     name                           = "${var.name}-connection"

@@ -5,12 +5,14 @@ the infrastructure the API needs to create elastic agent container groups at run
 
 Only the DuckHaven API is reachable from the internet. Postgres, storage and Key Vault
 sit behind private endpoints; Polaris uses internal-only ingress; elastic agents get
-private IPs in a delegated subnet.
+private addresses in a delegated subnet, with a network security group admitting only
+the Container Apps subnet to their result port. The one exception is the container
+registry, for a reason Azure forces — see below.
 
-> **Status:** phases 1-4 of 7. The full control plane is provisioned and reachable.
-> Elastic compute is provisioned but switched **off**: enabling it needs the
-> agent-networking code change described in phase 5 of the plan, without which agents
-> would come up on public addresses. Multi-replica API and the alerting/CI work follow.
+> **Status:** phases 1-5 of 7. The full control plane is provisioned and reachable, and
+> elastic compute is enabled in prod: agents are created as subnet-injected container
+> groups with private addresses only. Multi-replica API (which needs a further code
+> change) and the alerting/CI work follow.
 
 ## Prerequisites
 

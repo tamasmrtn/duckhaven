@@ -204,6 +204,14 @@ resource "azurerm_container_app" "api" {
         value = var.location
       }
 
+      # Delegated subnet the agent container groups are injected into. This is what
+      # gives each agent a private address instead of a public one, so its result
+      # server is reachable only from this virtual network.
+      env {
+        name  = "ELASTIC_AZURE_SUBNET_ID"
+        value = azurerm_subnet.aci.id
+      }
+
       env {
         name  = "AGENT_IMAGE"
         value = "${azurerm_container_registry.main.login_server}/${local.agent_image_repository}:${var.duckhaven_image_tag}"

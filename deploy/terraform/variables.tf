@@ -285,16 +285,20 @@ variable "api_memory" {
 variable "elastic_compute_enabled" {
   description = <<-EOT
     Whether the control plane may provision agents on demand as container instances.
+    Agents are injected into the delegated agent subnet with private addresses only.
 
-    Left off until the phase 5 code change lands: the shipped backend gives every agent
-    a public IP and a DNS label, which cannot coexist with subnet injection, so enabling
-    it before then would put agents on public addresses and force the storage account
-    and Polaris back onto public endpoints. The surrounding infrastructure -- resource
-    group, role, subnet -- is provisioned regardless, so enabling it later is a variable
-    change.
+    Requires nat_gateway_enabled: an agent dials the control plane at its public
+    ingress, and with Azure's default outbound access retired a subnet-injected group
+    has no route there without a NAT gateway. It would provision, fail to register, and
+    be reaped at the provisioning deadline.
   EOT
   type        = bool
   default     = false
+
+  validation {
+    condition     = !var.elastic_compute_enabled || var.nat_gateway_enabled
+    error_message = "elastic_compute_enabled requires nat_gateway_enabled: agents cannot reach the control plane without an outbound route."
+  }
 }
 
 # ── Polaris ───────────────────────────────────────────────────────────────────

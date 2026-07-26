@@ -19,6 +19,10 @@ duckhaven_image_tag = "latest"
 
 log_retention_days = 30
 
+# Agents are provisioned into the delegated agent subnet with private addresses, so
+# their result servers are reachable only from this virtual network.
+elastic_compute_enabled = true
+
 # The public endpoints of Key Vault and the storage account stay open only to the
 # addresses listed here, and only with Entra authentication. Replace with the CI
 # runner's egress IP; set allow_management_plane_public_access = false once applies

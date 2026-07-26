@@ -1,0 +1,62 @@
+name: Terraform
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/terraform/**'
+      - '.github/workflows/terraform.yml'
+  pull_request:
+    paths:
+      - 'deploy/terraform/**'
+      - '.github/workflows/terraform.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: deploy/terraform
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.6
+          terraform_wrapper: false
+
+      # Enforced unconditionally here. The pre-commit hook skips when Terraform is
+      # absent, so that contributors who never touch this deployment are not required
+      # to install it; CI is where that leniency ends.
+      - name: Format
+        run: terraform fmt -check -recursive
+
+      # -backend=false: validation needs the providers and modules, not remote state,
+      # and CI has no credentials for the state account. A plan would need both.
+      - name: Validate root module
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+
+      - name: Validate bootstrap module
+        working-directory: deploy/terraform/bootstrap
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+
+      - uses: terraform-linters/setup-tflint@v6
+        with:
+          tflint_version: v0.64.0
+
+      # TFLINT_CONFIG_FILE must be absolute: with --recursive tflint changes into each
+      # subdirectory and looks for a config there, so bootstrap/ and modules/ would
+      # otherwise be linted with no azurerm plugin and wrongly report clean.
+      - name: TFLint
+        env:
+          TFLINT_CONFIG_FILE: ${{ github.workspace }}/deploy/terraform/.tflint.hcl
+        run: |
+          tflint --init
+          tflint --recursive

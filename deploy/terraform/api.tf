@@ -184,6 +184,16 @@ resource "azurerm_container_app" "api" {
         secret_name = "polaris-client-secret"
       }
 
+      # Raised from the 10s default after watching a first storage-backend health check
+      # time out at 10s while Polaris was still working: its first write to a new
+      # account spends several seconds acquiring a managed-identity token and loading
+      # the ADLS FileIO implementation, and the commit alone took 12s. Later calls are
+      # fast because the token is cached, but the cold path has to fit inside this.
+      env {
+        name  = "POLARIS_HTTP_TIMEOUT_S"
+        value = "45"
+      }
+
       # ── Azure identity ──
       # Points DefaultAzureCredential at the user-assigned identity, for both the ADLS
       # user-delegation SAS the API mints itself and the ARM calls that create container

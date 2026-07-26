@@ -7,9 +7,10 @@ Only the DuckHaven API is reachable from the internet. Postgres, storage and Key
 sit behind private endpoints; Polaris uses internal-only ingress; elastic agents get
 private IPs in a delegated subnet.
 
-> **Status:** phases 1-3 of 7. Networking, Log Analytics, Key Vault, PostgreSQL, the
-> ADLS Gen2 warehouse, the container registry, the Container Apps environment and
-> Polaris are in place. The API app and elastic agents land in later phases.
+> **Status:** phases 1-4 of 7. The full control plane is provisioned and reachable.
+> Elastic compute is provisioned but switched **off**: enabling it needs the
+> agent-networking code change described in phase 5 of the plan, without which agents
+> would come up on public addresses. Multi-replica API and the alerting/CI work follow.
 
 ## Prerequisites
 
@@ -97,6 +98,32 @@ az containerapp job start -n polaris-bootstrap -g "$(terraform output -raw resou
 It is safe to re-run. The admin tool exits 3 when the realm already exists, and the
 job's command treats that as success — the same contract as
 `deploy/polaris-bootstrap.sh`.
+
+## Creating the first admin
+
+The API writes a one-time setup token to its own filesystem on first boot, which gates
+`POST /api/setup/admin`. Read it from the running replica and spend it:
+
+```sh
+RG="$(terraform output -raw resource_group_name)"
+API="$(terraform output -raw api_url)"
+
+TOKEN="$(az containerapp exec -n api -g "$RG" \
+  --command 'cat /var/duckhaven/setup_token' | tr -d '\r')"
+
+curl -sS -X POST "$API/api/setup/admin" \
+  -H "X-Setup-Token: $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"email":"admin@example.com","password":"...","name":"Admin"}'
+```
+
+The token lives on the container filesystem, which is ephemeral here, so it is
+regenerated if the replica is replaced before the first admin exists — read it again
+rather than reusing an old value. It is deleted once an admin has been created.
+
+Then register the warehouse as an `adls_gen2` storage backend, using
+`terraform output -raw warehouse_root_uri` as the root URI with `hierarchical: true` and
+the subscription's tenant id, and run **Test access**. A `valid: true` result means
+Polaris vended a SAS and reached the account over the private endpoint.
 
 ## Linting
 

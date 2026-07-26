@@ -9,11 +9,12 @@ This is the cloud counterpart to the [Docker Compose install](install.md). Compo
 still the right choice for a single host; this is for a deployment that has to survive
 a node failure and be reproducible from source.
 
-!!! note "Not yet exercised end to end"
-    Every phase of this deployment is verified by `terraform validate`, TFLint and a
-    `terraform plan`, and the platform behaviour it relies on was confirmed with a
-    throwaway spike. It has not yet been applied to a subscription from start to
-    finish. Treat the first apply as a bring-up, and read
+!!! note "Verified on a staging subscription"
+    This has been applied end to end to a staging environment in France Central: the API
+    serves, Polaris answers, a storage-backend health check vends credentials and reaches
+    ADLS over its private endpoint, and an elastic agent has been created, queried,
+    terminated and restarted. It has not been applied to a production environment. The
+    first apply for any environment is staged — read
     [Before the first apply](#before-the-first-apply).
 
 ## What the network looks like
@@ -44,11 +45,11 @@ internet; everything else is private or internal.
 | DuckHaven API and UI | **yes** | the internet |
 | Agent dial-home (WSS) | **yes** | agents, through the NAT gateway |
 | Container registry | **yes**, credential-gated | Container Apps, container instances, CI |
-| Polaris | no | the Container Apps and agent subnets |
+| Polaris | only with elastic compute, restricted to one address | the Container Apps and agent subnets |
 | PostgreSQL, storage, Key Vault | no | private endpoints |
 | Agent result servers | no | the Container Apps subnet only |
 
-Two of those deserve explanation, because both are forced by the platform rather than
+Three of those deserve explanation, because each is forced by the platform rather than
 chosen.
 
 **Agents have no public address.** Each is a container group injected into a delegated
@@ -57,6 +58,18 @@ subnet injection with a private address — never both — so this also means th
 plane fetches result data over the virtual network rather than the internet. It is why
 the subnet needs a NAT gateway: an agent still has to reach the API's public ingress to
 register, and Azure has retired default outbound access.
+
+**Polaris is exposed once elastic compute is enabled.** Only replicas inside a Container
+Apps environment resolve an internal-ingress app. An agent sits in its own subnet,
+outside the environment, so it resolves Polaris' internal hostname to the environment's
+public address and receives a 404. A private endpoint cannot bridge the gap either:
+Azure refuses one unless the environment's public network access is disabled, which
+would take the API down with it. Polaris therefore switches to external ingress with a
+single allow rule — the deployment's NAT gateway, which is the egress address of both
+the control plane and its agents — and a Container Apps ingress with any allow rule
+denies everything else. Turning elastic compute off removes the listener entirely. The
+fully-private alternative is a second, internal-only environment for Polaris, which this
+deployment does not implement.
 
 **The container registry stays public.** Container Instances pulls images from its own
 control plane, outside the virtual network, so a registry restricted to a private

@@ -35,6 +35,12 @@ Two consequences are worth understanding before you configure this:
 - **The control plane must share the network.** It fetches result data directly from each agent, so
   it has to be able to route to the subnet — running in the same virtual network, a peered one, or
   otherwise connected.
+- **The catalog must be reachable from the subnet.** An agent attaches catalogs against Polaris
+  itself, at `ELASTIC_AGENT_POLARIS_BASE_URL`, so whatever that points at has to resolve and answer
+  from inside the agent subnet. On Container Apps that is a real constraint, not a formality: only
+  replicas *inside* an environment can resolve an app with internal-only ingress, so an agent
+  resolves such a hostname to the environment's public address and gets a 404. See
+  [Azure with Terraform](azure-terraform.md) for how that deployment handles it.
 
 Container Instances offers *either* a public address with a DNS label *or* subnet injection with a
 private address, never both, so this is not configurable: agents are always private.

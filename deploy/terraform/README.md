@@ -4,10 +4,12 @@ Provisions DuckHaven on Azure Container Apps with managed PostgreSQL, ADLS Gen2,
 the infrastructure the API needs to create elastic agent container groups at runtime.
 
 Only the DuckHaven API is reachable from the internet. Postgres, storage and Key Vault
-sit behind private endpoints; Polaris uses internal-only ingress; elastic agents get
-private addresses in a delegated subnet, with a network security group admitting only
-the Container Apps subnet to their result port. The one exception is the container
-registry, for a reason Azure forces — see below.
+sit behind private endpoints; elastic agents get private addresses in a delegated
+subnet, with a network security group admitting only the Container Apps subnet to their
+result port. Polaris uses internal-only ingress — except when elastic compute is
+enabled, which forces a listener restricted to this deployment's own egress address.
+The container registry is the other exception. Both are forced by Azure, not chosen; see
+[the deviations](#three-documented-deviations).
 
 > **Status:** applied and verified end to end in **staging** (France Central, 68
 > resources): the API is reachable, Polaris answers over internal ingress, and a
@@ -176,7 +178,7 @@ protection is enforced Azure-side (purge protection, soft delete, PITR) and
 `lifecycle` blocks cannot be parameterised per environment — setting it would make the
 staging environment undestroyable.
 
-## Two documented deviations
+## Three documented deviations
 
 **Region is France Central, not Germany West Central.** PostgreSQL Flexible Server
 cannot be provisioned in Germany West Central on this subscription — the capability
@@ -200,6 +202,24 @@ Standard the only credential a container instance could use is the registry admi
 user — push and pull across every repository — and that credential would live in the
 API's environment and in every provisioned agent's container spec. Premium buys the
 scoped, pull-only alternative.
+
+**Enabling elastic compute exposes Polaris.** Only replicas *inside* a Container Apps
+environment can resolve an internal-ingress app. An agent runs in its own subnet,
+outside the environment, so it resolves Polaris' internal hostname to the environment's
+*public* address and gets a 404 — measured from the agent subnet. A private endpoint
+cannot bridge it either: Azure rejects one unless the environment's public network
+access is disabled, which would take the API offline with it.
+
+So when `elastic_compute_enabled` is true, Polaris switches to external ingress with an
+allow rule for exactly one address: this deployment's NAT gateway, which is the egress
+for both the control plane and its agents. A Container Apps ingress with any allow rule
+denies everything unmatched, so the listener is public but reachable only from our own
+traffic — verified by getting 403 from elsewhere. With elastic compute off, Polaris has
+no public listener at all.
+
+If that is not acceptable, the fully-private alternative is a second, internal-only
+Container Apps environment in the same VNet to host Polaris. That is a larger change and
+is not implemented here.
 
 ## Cost, and the staging environment
 

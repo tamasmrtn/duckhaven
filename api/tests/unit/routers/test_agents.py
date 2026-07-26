@@ -703,6 +703,34 @@ async def test_ws_elastic_result_host_comes_from_the_backend(ws_client, db_engin
         assert agent.result_port == 8001
 
 
+async def test_ws_elastic_result_host_left_unset_when_backend_cannot_answer(
+    ws_client, db_engine, monkeypatch
+):
+    """The address is assigned after the instance is created, so ARM may not report it
+    by the time the agent dials home -- seen against a real deployment. Falling back to
+    the socket peer would store the NAT gateway's address, and every result fetch would
+    hang until it timed out. Unset fails fast and is resolved on first use instead."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.services.compute.backends import get_backend
+
+    async def _no_address(instance_id):
+        return None
+
+    monkeypatch.setattr(get_backend("null"), "address", _no_address)
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    agent_id = await _add_elastic_agent(factory, "dh_boot_vnet3", instance_id="dh-agent-vnet3")
+
+    received = await _connect_once(ws_client, {"token": "dh_boot_vnet3", "result_port": 8001})
+    assert received.get("type") == "auth_ok"
+
+    async with factory() as db:
+        agent = await db.get(Agent, agent_id)
+        assert agent.result_host is None
+        assert agent.result_port == 8001
+
+
 async def test_ws_advertised_result_host_wins_over_the_backend(ws_client, db_engine, monkeypatch):
     """An agent that states its own address is taken at its word: the setting exists for
     deployments where the operator knows better than the cloud metadata."""
@@ -727,3 +755,56 @@ async def test_ws_advertised_result_host_wins_over_the_backend(ws_client, db_eng
     async with factory() as db:
         agent = await db.get(Agent, agent_id)
         assert agent.result_host == "agent.example.internal"
+
+
+async def test_ws_restart_replaces_the_session_credential(ws_client, db_engine, monkeypatch):
+    """Restarting an elastic agent reuses its row and enrols again with a fresh bootstrap
+    token. Each enrolment mints a session credential, so without replacing the previous
+    one the row ends up with two -- and services/query.agent_session_token expects at
+    most one, so the next result fetch fails with MultipleResultsFound. Seen after
+    restarting a real agent."""
+    from datetime import datetime, timedelta
+
+    from sqlalchemy import func, select
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.models.user import Credential
+    from api.services.compute.backends import get_backend
+
+    async def _address(instance_id):
+        return "10.42.3.9"
+
+    monkeypatch.setattr(get_backend("null"), "address", _address)
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    agent_id = await _add_elastic_agent(factory, "dh_boot_restart1", instance_id="dh-agent-restart")
+
+    first = await _connect_once(ws_client, {"token": "dh_boot_restart1", "result_port": 8001})
+    assert first.get("type") == "auth_ok"
+
+    # A restart: same row, a second bootstrap token.
+    async with factory() as db:
+        db.add(
+            Credential(
+                user_id=None,
+                agent_id=agent_id,
+                kind="agent_bootstrap",
+                token="dh_boot_restart2",
+                expires_at=datetime.now(tz=UTC) + timedelta(hours=1),
+            )
+        )
+        await db.commit()
+
+    second = await _connect_once(ws_client, {"token": "dh_boot_restart2", "result_port": 8001})
+    assert second.get("type") == "auth_ok"
+    assert second["payload"]["session_token"] != first["payload"]["session_token"]
+
+    async with factory() as db:
+        count = (
+            await db.execute(
+                select(func.count())
+                .select_from(Credential)
+                .where(Credential.agent_id == agent_id, Credential.kind == "agent_session")
+            )
+        ).scalar_one()
+        assert count == 1

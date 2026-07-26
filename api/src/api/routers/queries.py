@@ -414,6 +414,15 @@ async def get_query_rows(
 
     agent_result = await db.execute(select(Agent).where(Agent.id == query.agent_id))
     agent = agent_result.scalar_one_or_none()
+
+    # An elastic agent's address is assigned after its instance is created, so it can be
+    # unknown at registration time. Resolve it on first use, when the cloud is certain
+    # to be able to answer.
+    if agent is not None and agent.provider is not None and agent.result_host is None:
+        from api.services.compute.service import ensure_result_host
+
+        await ensure_result_host(db, agent)
+
     if agent is None or agent.result_host is None or agent.result_port is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

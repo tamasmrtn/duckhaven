@@ -208,3 +208,49 @@ async def test_resolve_result_host_survives_a_backend_failure(monkeypatch, null_
     agent = Agent(name="e", status="unavailable", provider="null", instance_id="dh-agent-2")
 
     assert await service.resolve_result_host(agent) is None
+
+
+async def test_ensure_result_host_resolves_and_persists(session_factory, monkeypatch, null_backend):
+    """Registration can legitimately leave the address unknown, so it is resolved when
+    first needed and stored so the next fetch does not pay for it again."""
+
+    async def _address(instance_id):
+        return "10.42.3.11"
+
+    monkeypatch.setattr(null_backend, "address", _address)
+
+    async with session_factory() as db:
+        agent = Agent(
+            name="e", status="healthy", provider="null", instance_id="dh-agent-3", result_host=None
+        )
+        db.add(agent)
+        await db.commit()
+        agent_id = agent.id
+
+        assert await service.ensure_result_host(db, agent) == "10.42.3.11"
+
+    async with session_factory() as db:
+        assert (await db.get(Agent, agent_id)).result_host == "10.42.3.11"
+
+
+async def test_ensure_result_host_keeps_a_known_address(session_factory, monkeypatch, null_backend):
+    """A host already on the row wins: it may have been advertised by the agent, which
+    is more authoritative than cloud metadata."""
+
+    async def _boom(instance_id):
+        raise AssertionError("backend must not be consulted when the host is known")
+
+    monkeypatch.setattr(null_backend, "address", _boom)
+
+    async with session_factory() as db:
+        agent = Agent(
+            name="e",
+            status="healthy",
+            provider="null",
+            instance_id="dh-agent-4",
+            result_host="agent.internal",
+        )
+        db.add(agent)
+        await db.commit()
+
+        assert await service.ensure_result_host(db, agent) == "agent.internal"

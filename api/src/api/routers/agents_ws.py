@@ -40,27 +40,32 @@ def _result_host(ws: WebSocket) -> str | None:
     return ws.client.host if ws.client else None
 
 
-async def _elastic_result_host(db: AsyncSession, agent_id: uuid.UUID | None) -> str | None:
-    """The backend-reported address of an elastic agent's result server.
+async def _elastic_result_host(
+    db: AsyncSession, agent_id: uuid.UUID | None
+) -> tuple[str | None, bool]:
+    """The backend-reported address of an elastic agent's result server, and whether the
+    agent is elastic at all.
 
     Neither mechanism above works for an agent on a private network: it cannot be told
     its own address (that is assigned after its configuration is fixed) and its socket
     reaches us through a NAT gateway, so the peer and the ``X-Forwarded-For`` hop are
     both the gateway. The cloud is the only authority, so ask it.
 
-    ``None`` for a static agent, for a bootstrap token not yet bound to a row, and for
-    a backend with no address to report — in each of those the peer address is right.
+    The address may legitimately be unknown here, because it is assigned after the
+    instance is created and the agent can dial home before ARM reports it. The caller
+    uses the second element to decide what to do with that: for an elastic agent no
+    address is better than the wrong one.
     """
     if agent_id is None:
-        return None
+        return None, False
     agent = await db.get(Agent, agent_id)
-    if agent is None:
-        return None
+    if agent is None or agent.provider is None:
+        return None, False
     # Lazy, matching the bind_queued_work import below: keeps this router free of a
     # load-time dependency on the compute stack.
     from api.services.compute.service import resolve_result_host
 
-    return await resolve_result_host(agent)
+    return await resolve_result_host(agent), True
 
 
 @router.websocket("/agents/connect")
@@ -112,8 +117,18 @@ async def agent_connect(
                 await ws.close(code=1008, reason="Invalid token")
                 return
 
-            result_host = advertised_host or await _elastic_result_host(db, cred.agent_id)
-            result_host = result_host or _result_host(ws)
+            elastic_host, is_elastic = await _elastic_result_host(db, cred.agent_id)
+            if advertised_host:
+                result_host = advertised_host
+            elif is_elastic:
+                # Deliberately not falling back to the socket peer: an elastic agent
+                # reaches us through a NAT gateway, so the peer is the gateway, and
+                # storing it makes every result fetch hang until it times out. Leaving
+                # it unset fails fast instead, and compute.service.ensure_result_host
+                # fills it in when the address is first needed.
+                result_host = elastic_host
+            else:
+                result_host = _result_host(ws)
 
             if cred.kind == "agent_session":
                 # Re-authentication: rebind the existing agent row instead of
@@ -172,6 +187,17 @@ async def agent_connect(
                     await db.flush()
                     agent_id = agent.id
 
+                # An agent has exactly one live session credential. Restarting an
+                # elastic agent reuses its row and enrolls again with a fresh bootstrap
+                # token, so without clearing the previous one the row accumulates
+                # credentials and services/query.agent_session_token — which expects at
+                # most one — fails the next result fetch outright.
+                await db.execute(
+                    sa.delete(Credential).where(
+                        Credential.agent_id == agent_id,
+                        Credential.kind == "agent_session",
+                    )
+                )
                 session_token = secrets.token_urlsafe(32)
                 session_cred = Credential(
                     user_id=None,

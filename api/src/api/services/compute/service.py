@@ -314,6 +314,26 @@ async def resolve_result_host(agent: Agent) -> str | None:
         return None
 
 
+async def ensure_result_host(db: AsyncSession, agent: Agent) -> str | None:
+    """Resolve and store an elastic agent's result address if it is not known yet.
+
+    Registration can legitimately find nothing: the address is assigned after the
+    container group is created, and ARM does not always report it by the time the agent
+    dials home -- observed against a real deployment, where the agent registered about
+    30 seconds in and the address appeared later. Asking again when the address is
+    actually needed costs one read and is reliable, because by then the agent has
+    accepted and finished work.
+    """
+    if agent.result_host:
+        return agent.result_host
+    host = await resolve_result_host(agent)
+    if host:
+        agent.result_host = host
+        await db.commit()
+        logger.info("Resolved result host %s for elastic agent %s", host, agent.id)
+    return host
+
+
 async def bind_queued_work(db: AsyncSession, agent: Agent) -> int:
     """Dispatch queued, agent-less elastic queries this agent can now serve.
 

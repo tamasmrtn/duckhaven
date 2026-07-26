@@ -7,9 +7,9 @@ Only the DuckHaven API is reachable from the internet. Postgres, storage and Key
 sit behind private endpoints; Polaris uses internal-only ingress; elastic agents get
 private IPs in a delegated subnet.
 
-> **Status:** phases 1-2 of 7. Networking, Log Analytics, Key Vault, PostgreSQL, the
-> ADLS Gen2 warehouse and the container registry are in place. The Container Apps
-> environment, Polaris and the API app land in later phases.
+> **Status:** phases 1-3 of 7. Networking, Log Analytics, Key Vault, PostgreSQL, the
+> ADLS Gen2 warehouse, the container registry, the Container Apps environment and
+> Polaris are in place. The API app and elastic agents land in later phases.
 
 ## Prerequisites
 
@@ -62,6 +62,41 @@ Switching environments re-initialises the backend:
 terraform init -reconfigure -backend-config=envs/staging.backend.hcl
 terraform apply -var-file=envs/staging.tfvars
 ```
+
+## Images must be in the registry before the apps are created
+
+Terraform references images by digest-less tag inside your own registry. A Container App
+whose image cannot be pulled never becomes healthy, and the apply either fails or leaves
+a broken revision, so populate the registry between the data-plane apply and the app
+apply. `ACR` below is the `container_registry_login_server` output.
+
+```sh
+# DuckHaven's own images, built from the repo root.
+az acr login -n "$ACR"
+docker build --platform linux/amd64 -f api/Dockerfile   -t "$ACR/duckhaven-api:$TAG" .
+docker build --platform linux/amd64 -f agent/Dockerfile -t "$ACR/duckhaven-agent:$TAG" .
+docker push "$ACR/duckhaven-api:$TAG"
+docker push "$ACR/duckhaven-agent:$TAG"
+
+# Polaris, mirrored so runtime does not depend on Docker Hub availability or its
+# anonymous pull limits. The tag must match polaris_image_tag, and both images must be
+# the same version -- the admin tool owns the schema the server reads.
+az acr import -n "$ACR" --source docker.io/apache/polaris:1.6.0            --image polaris:1.6.0
+az acr import -n "$ACR" --source docker.io/apache/polaris-admin-tool:1.6.0 --image polaris-admin-tool:1.6.0
+```
+
+## Bootstrapping the Polaris realm
+
+The realm and root principal are created by a manual-trigger job, not by the apply,
+because it must run once against a given database before the server starts:
+
+```sh
+az containerapp job start -n polaris-bootstrap -g "$(terraform output -raw resource_group_name)"
+```
+
+It is safe to re-run. The admin tool exits 3 when the realm already exists, and the
+job's command treats that as success — the same contract as
+`deploy/polaris-bootstrap.sh`.
 
 ## Linting
 
@@ -124,6 +159,7 @@ resources bill hourly whether or not anything uses them.
 | Private DNS zones | ~$2 | ~$2 | 4 × $0.50. |
 | Storage account | pennies | pennies | Standard, small data volume. |
 | Log Analytics | per GB | per GB | Capped at 1 GB/day in staging. |
+| Container Apps | per vCPU-second | per vCPU-second | Prod runs Polaris at 2 × 1 vCPU/2 GiB, staging at 1 × 0.5 vCPU/1 GiB. Always-on replicas bill continuously, at a reduced idle rate when serving no requests. Neither app can scale to zero. |
 
 Three things are worth knowing:
 

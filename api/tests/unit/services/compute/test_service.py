@@ -254,3 +254,40 @@ async def test_ensure_result_host_keeps_a_known_address(session_factory, monkeyp
         await db.commit()
 
         assert await service.ensure_result_host(db, agent) == "agent.internal"
+
+
+async def test_terminate_agent_gives_up_presence(session_factory, elastic_on, null_backend):
+    """Deleting a container group is not instant, and until it completes the agent keeps
+    heartbeating -- refreshing last_ping_at and re-asserting healthy. Presence is read
+    from those columns, so a terminated agent that keeps its ownership row stays
+    selectable by the picker and queries get dispatched into a dying container."""
+    from datetime import UTC, datetime
+
+    from api.services.agent_dispatch import connected_agent_ids
+
+    async with session_factory() as db:
+        agent = Agent(
+            name="e",
+            status="healthy",
+            provider="null",
+            lifecycle="running",
+            instance_id="dh-agent-term",
+            owner_id="api",
+            owner_url="http://10.0.0.1:8000",
+            last_ping_at=datetime.now(tz=UTC),
+        )
+        db.add(agent)
+        await db.commit()
+        agent_id = agent.id
+        assert str(agent_id) in await connected_agent_ids(db)
+
+        await service.terminate_agent(db, agent, reason="test")
+
+    async with session_factory() as db:
+        row = await db.get(Agent, agent_id)
+        assert row.lifecycle == "terminated"
+        assert row.status == "unavailable"
+        assert row.owner_url is None
+        assert row.owner_id is None
+        # The point of the fix: no longer advertised as connected anywhere.
+        assert str(agent_id) not in await connected_agent_ids(db)

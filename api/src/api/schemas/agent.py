@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AgentCapabilitiesOut(BaseModel):
@@ -60,7 +60,10 @@ class ElasticAgentCreate(BaseModel):
     cpu: float
     memory_gb: float
     # Idle scale-in timeout in minutes; omit to use the control plane's default.
-    idle_timeout_minutes: int | None = None
+    # Bounded because the value is converted to seconds and compared against the idle
+    # clock: anything at or below zero makes the reaper terminate the agent on its first
+    # tick, seconds after it was asked for. The dialog's min/max are presentation only.
+    idle_timeout_minutes: int | None = Field(default=None, ge=1, le=1440)
     name: str | None = None
 
 

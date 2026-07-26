@@ -46,6 +46,17 @@ from duckhaven_shared.telemetry import inject_trace_context
 _tracer = trace.get_tracer("duckhaven.api")
 
 
+class AgentUnavailable(ValueError):
+    """The agent a query targets has no usable socket.
+
+    Distinguished from the other dispatch failures so a caller can react to it
+    specifically: for a run against the elastic pool this is not an error at all, it
+    just means supply has to be provisioned. A ``ValueError`` subclass so callers with
+    an existing blanket ``except ValueError`` — the scheduler and maintenance scanner —
+    keep behaving as they did.
+    """
+
+
 async def dispatch_query(
     db: AsyncSession,
     query: Query,
@@ -57,7 +68,7 @@ async def dispatch_query(
     health_for: dict[str, object] | None = None,
 ) -> None:
     if query.agent_id is None or not await is_agent_connected(db, query.agent_id):
-        raise ValueError("Agent not connected")
+        raise AgentUnavailable("Agent not connected")
 
     workspace = await db.get(Workspace, query.workspace_id)
     if workspace is None:
@@ -133,7 +144,7 @@ async def dispatch_query(
         if not await send_to_agent(db, query.agent_id, frame.model_dump_json()):
             # The socket vanished between the presence check and the send, or its
             # owning replica is unreachable. Fail fast so the caller surfaces it.
-            raise ValueError("Agent not connected")
+            raise AgentUnavailable("Agent not connected")
     # Mark the (possibly elastic) agent as having done work now, so the idle
     # reaper doesn't scale it in under an active workload. No-op for static agents.
     from api.services.compute.service import record_activity

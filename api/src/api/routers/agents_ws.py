@@ -138,16 +138,18 @@ async def agent_connect(
                 # Reset the idle clock on reconnect so a just-reconnected elastic
                 # agent isn't reaped against a stale last_active_at (harmless for
                 # static agents, which are never reaped).
-                await db.execute(
-                    sa.update(Agent)
-                    .where(Agent.id == agent_id)
-                    .values(
-                        status="healthy",
-                        last_active_at=datetime.now(tz=UTC),
-                        result_host=result_host,
-                        result_port=result_port_int,
-                    )
-                )
+                values: dict[str, object] = {
+                    "status": "healthy",
+                    "last_active_at": datetime.now(tz=UTC),
+                    "result_port": result_port_int,
+                }
+                # Only overwrite a known address with another one. resolve_result_host
+                # returns None on any transient cloud error, so writing it
+                # unconditionally would blank an address that was already correct and
+                # break result fetches until something resolved it again.
+                if result_host is not None:
+                    values["result_host"] = result_host
+                await db.execute(sa.update(Agent).where(Agent.id == agent_id).values(**values))
                 session_token = token
                 await db.commit()
             else:

@@ -147,8 +147,22 @@ async def terminate_agent(db: AsyncSession, agent: Agent, *, reason: str) -> Non
     if agent.instance_id:
         with contextlib.suppress(Exception):
             await get_backend(agent.provider).terminate(agent.instance_id)
+
+    # Close the socket and give up ownership before marking the row terminated.
+    # Deleting a container group is not instant, and until it completes the agent keeps
+    # heartbeating -- which refreshes last_ping_at and re-asserts status="healthy" from
+    # its AGENT_STATUS frames. Presence is read from those columns, so without this the
+    # agent stays in connected_agent_ids for tens of seconds after termination: it is
+    # still offered by the picker, still shown healthy, and a query dispatched to it is
+    # either refused or sent to a container that is about to be destroyed, leaving the
+    # run stuck. Mirrors what delete_agent already does.
+    with contextlib.suppress(Exception):
+        await disconnect_agent(db, agent.id)
+
     agent.lifecycle = "terminated"
     agent.status = "unavailable"
+    agent.owner_id = None
+    agent.owner_url = None
     agent.terminated_at = datetime.now(tz=UTC)
     await db.commit()
     logger.info("Terminated elastic agent %s (%s)", agent.id, reason)

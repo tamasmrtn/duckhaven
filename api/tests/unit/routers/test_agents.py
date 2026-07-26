@@ -808,3 +808,49 @@ async def test_ws_restart_replaces_the_session_credential(ws_client, db_engine, 
             )
         ).scalar_one()
         assert count == 1
+
+
+async def test_ws_reconnect_keeps_a_known_result_host(ws_client, db_engine, monkeypatch):
+    """resolve_result_host returns None on any transient cloud error, so a reconnect that
+    wrote it unconditionally would blank an address that was already correct and break
+    result fetches until something resolved it again."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.models.user import Credential
+    from api.services.compute.backends import get_backend
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    async with factory() as db:
+        agent = Agent(
+            name="elastic-reconnect",
+            status="healthy",
+            provider="null",
+            lifecycle="running",
+            instance_id="dh-agent-reconn",
+            result_host="10.42.3.50",
+            result_port=8001,
+        )
+        db.add(agent)
+        await db.flush()
+        agent_id = agent.id
+        db.add(
+            Credential(
+                user_id=None,
+                agent_id=agent_id,
+                kind="agent_session",
+                token="dh_sess_reconn",
+                expires_at=None,
+            )
+        )
+        await db.commit()
+
+    async def _unavailable(instance_id):
+        return None
+
+    monkeypatch.setattr(get_backend("null"), "address", _unavailable)
+
+    received = await _connect_once(ws_client, {"token": "dh_sess_reconn", "result_port": 8001})
+    assert received.get("type") == "auth_ok"
+
+    async with factory() as db:
+        assert (await db.get(Agent, agent_id)).result_host == "10.42.3.50"

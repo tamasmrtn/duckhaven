@@ -319,3 +319,27 @@ async def test_delete_agent_removes_row_and_nulls_query_link(
     assert "dh-doomed" not in get_backend("null")._instances
     await db_session.refresh(q)
     assert q.agent_id is None
+
+
+async def test_create_elastic_agent_rejects_a_nonpositive_idle_timeout(
+    admin_client: AsyncClient, elastic_enabled
+):
+    """The value becomes seconds and is compared against the idle clock, so anything at
+    or below zero makes the reaper terminate the agent on its first tick -- seconds after
+    it was asked for. The dialog's min is presentation only."""
+    resp = await admin_client.post(
+        "/admin/agents/elastic",
+        json={"cpu": 1, "memory_gb": 2, "idle_timeout_minutes": -5},
+    )
+    assert resp.status_code == 422
+
+
+async def test_create_elastic_agent_accepts_a_sane_idle_timeout(
+    admin_client: AsyncClient, elastic_enabled
+):
+    resp = await admin_client.post(
+        "/admin/agents/elastic",
+        json={"cpu": 1, "memory_gb": 2, "idle_timeout_minutes": 30},
+    )
+    assert resp.status_code == 202
+    assert resp.json()["idle_timeout_minutes"] == 30

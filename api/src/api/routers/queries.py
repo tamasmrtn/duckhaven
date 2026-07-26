@@ -1,3 +1,4 @@
+import logging
 import time
 import uuid
 from datetime import UTC, datetime
@@ -41,6 +42,8 @@ from api.services.workspace import (
 )
 from duckhaven_shared.concurrency import parse_set_concurrency
 from duckhaven_shared.protocol import Frame, FrameType
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -189,7 +192,16 @@ async def _create_elastic_query(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={"error": "grant_denied", "detail": str(exc)},
             ) from exc
-        return query
+        except query_service.AgentUnavailable:
+            # Presence is read from Postgres with a TTL, so the agent picked above can
+            # have lost its socket already -- and a terminating agent keeps its
+            # ownership row until the container actually goes away. For a pool run that
+            # is not a failure: unbind and fall through to scale-out, exactly as if no
+            # agent had been available. Raising here would surface as a 500.
+            logger.info("Elastic pool agent %s was unavailable; provisioning", agent.id)
+            query.agent_id = None
+        else:
+            return query
 
     # No compatible agent connected: coalesced scale-out. The run stays queued
     # (agent_id NULL) until the provisioned agent registers and binds it.

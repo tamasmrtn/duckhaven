@@ -1326,3 +1326,44 @@ async def test_elastic_pool_dispatches_to_connected_agent(
     assert body["agent_id"] == str(agent.id)
     assert body["origin"] == "elastic"
     assert len(mock_ws.sent) == 1
+
+
+async def test_elastic_pool_provisions_when_the_picked_agent_has_gone(
+    authed_client: AsyncClient, workspace: Workspace, db_session, elastic_enabled
+):
+    """Presence is read from Postgres with a TTL, so the agent the picker returns can
+    have lost its socket already. Dispatch then fails, and for a pool run that is not an
+    error -- it means supply has to be provisioned. Previously the ValueError escaped as
+    a 500."""
+    from datetime import UTC, datetime
+
+    import sqlalchemy as sa
+
+    # Fresh presence on the row, but no socket in the registry: exactly the state a
+    # terminating agent, or one whose replica died, leaves behind.
+    agent = Agent(
+        name="ghost",
+        status="healthy",
+        capabilities={"extensions": ["httpfs"]},
+        owner_id="api",
+        owner_url="http://127.0.0.1:8000",
+        last_ping_at=datetime.now(tz=UTC),
+    )
+    db_session.add(agent)
+    await db_session.commit()
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries", json={"sql": "SELECT 1"}
+    )
+
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["status"] == "queued"
+    assert body["agent_id"] is None
+
+    provisioned = (
+        (await db_session.execute(sa.select(Agent).where(Agent.provider.is_not(None))))
+        .scalars()
+        .all()
+    )
+    assert len(provisioned) == 1

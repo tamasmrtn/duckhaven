@@ -54,6 +54,12 @@ resource "azurerm_container_app" "api" {
     identity            = azurerm_user_assigned_identity.api.id
   }
 
+  secret {
+    name                = "internal-api-secret"
+    key_vault_secret_id = azurerm_key_vault_secret.main["internal-api-secret"].versionless_id
+    identity            = azurerm_user_assigned_identity.api.id
+  }
+
   ingress {
     external_enabled = true
     target_port      = 8000
@@ -124,6 +130,30 @@ resource "azurerm_container_app" "api" {
       env {
         name  = "COOKIE_SECURE"
         value = "true"
+      }
+
+      # ── Replica identity ──
+      # Container Apps gives every replica identical configuration and no
+      # individually addressable hostname, so each one derives its own: "auto" makes it
+      # read the platform's replica name and its own container address. A static value
+      # would have every replica claim the same owner_url on an agent row, and
+      # cross-replica dispatch would give up rather than forward.
+      env {
+        name  = "REPLICA_ID"
+        value = "auto"
+      }
+
+      env {
+        name  = "REPLICA_INTERNAL_URL"
+        value = "auto"
+      }
+
+      # Guards the /internal forwarding endpoints, which are reachable on the replica
+      # address above. Without it peer forwarding stays disabled and an agent held by
+      # another replica is treated as unreachable.
+      env {
+        name        = "INTERNAL_API_SECRET"
+        secret_name = "internal-api-secret"
       }
 
       # The SPA is served from this same origin, so this only matters for external API

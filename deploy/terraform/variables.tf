@@ -245,24 +245,26 @@ variable "duckhaven_image_tag" {
 
 variable "api_min_replicas" {
   description = <<-EOT
-    Replica floor.
+    Replica floor. Two keeps the control plane available while one is replaced.
 
-    Do not raise this above 1 without the per-replica identity change described in
-    phase 6 of the plan. Container Apps gives every replica identical environment
-    variables and no individually addressable hostname, so today every replica records
-    the same owner_url on an agent row, and api/src/api/services/agent_dispatch.py
-    short-circuits rather than forwarding -- a query landing on a replica that does not
-    hold the agent's WebSocket fails instead of being routed. The failure is silent,
-    which is why this is a comment and not merely a default.
+    Multi-replica operation relies on each replica deriving its own identity
+    (REPLICA_ID and REPLICA_INTERNAL_URL are set to "auto" on the app), because
+    Container Apps gives every replica identical configuration and no individually
+    addressable hostname. Without that, every replica records the same owner_url on an
+    agent row and cross-replica dispatch gives up instead of forwarding.
   EOT
   type        = number
-  default     = 1
+  default     = 2
 }
 
 variable "api_max_replicas" {
-  description = "Replica ceiling. See api_min_replicas before raising it above 1."
+  description = <<-EOT
+    Replica ceiling. Equal to the floor by default: agent WebSockets pin to a replica
+    and query work is offloaded to agents, so autoscaling would mismeasure load and
+    churn socket ownership for no gain.
+  EOT
   type        = number
-  default     = 1
+  default     = 2
 }
 
 variable "api_cpu" {
@@ -369,6 +371,16 @@ variable "nat_gateway_enabled" {
 }
 
 # ── Observability ─────────────────────────────────────────────────────────────
+
+variable "alert_email_addresses" {
+  description = <<-EOT
+    Addresses notified by the alert rules. Empty disables the action group and every
+    alert with it, which is the right default for a throwaway environment -- an alert
+    nobody reads is worse than no alert, since it trains people to ignore the channel.
+  EOT
+  type        = list(string)
+  default     = []
+}
 
 variable "log_analytics_daily_quota_gb" {
   description = <<-EOT

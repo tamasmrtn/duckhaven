@@ -55,9 +55,9 @@ polaris_max_replicas = 1
 polaris_cpu          = 0.5
 polaris_memory       = "1Gi"
 
-# The API is already single-replica everywhere until the phase 6 identity change, so only
-# its size is reduced here. 0.5 vCPU / 1 GiB is enough to run migrations and serve the
-# SPA; query execution happens on agents.
+# One small replica. Staging is not trying to survive a replica being replaced, and a
+# single replica also sidesteps cross-replica dispatch entirely. 0.5 vCPU / 1 GiB is
+# enough to run migrations and serve the SPA; query execution happens on agents.
 api_min_replicas = 1
 api_max_replicas = 1
 api_cpu          = 0.5

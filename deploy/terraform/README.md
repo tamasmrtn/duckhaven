@@ -9,12 +9,12 @@ private addresses in a delegated subnet, with a network security group admitting
 the Container Apps subnet to their result port. The one exception is the container
 registry, for a reason Azure forces — see below.
 
-> **Status:** complete, but **never applied end to end**. Every resource is verified by
-> `terraform validate`, TFLint and a `terraform plan`, and the platform behaviour the
-> design depends on was confirmed with a throwaway spike that has since been destroyed.
-> Treat the first apply as a bring-up and work through
-> [the prerequisites](#images-must-be-in-the-registry-before-the-apps-are-created)
-> first.
+> **Status:** applied and verified end to end in **staging** (France Central, 68
+> resources): the API is reachable, Polaris answers over internal ingress, and a
+> storage-backend health check vends credentials and reaches ADLS over its private
+> endpoint. Elastic compute is untested there because staging runs without a NAT
+> gateway. Prod has not been applied. The first apply for any environment is
+> [staged](#the-first-apply-is-staged).
 
 ## Prerequisites
 
@@ -66,6 +66,32 @@ Switching environments re-initialises the backend:
 ```sh
 terraform init -reconfigure -backend-config=envs/staging.backend.hcl
 terraform apply -var-file=envs/staging.tfvars
+```
+
+## The first apply is staged
+
+A Container App whose image cannot be pulled never becomes healthy, and the images can
+only be pushed once the registry exists — so the first apply for an environment runs in
+two passes. Later applies are a single `terraform apply`.
+
+```sh
+# 1. The registry alone. -target pulls in the resource group it needs.
+terraform apply -target=azurerm_container_registry.main
+
+# 2. Push the images (below), then everything else.
+terraform apply
+```
+
+Optionally, apply the slow resources in the first pass too so they build while the
+images do — PostgreSQL takes about ten minutes and the Container Apps environment about
+four:
+
+```sh
+terraform apply \
+  -target=azurerm_container_app_environment.main \
+  -target=azurerm_storage_data_lake_gen2_filesystem.warehouse \
+  -target=azurerm_postgresql_flexible_server_database.duckhaven \
+  -target=azurerm_postgresql_flexible_server_database.polaris
 ```
 
 ## Images must be in the registry before the apps are created

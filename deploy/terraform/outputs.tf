@@ -48,6 +48,36 @@ output "key_vault_uri" {
   value       = azurerm_key_vault.main.vault_uri
 }
 
+output "postgres_fqdn" {
+  description = "Postgres host (POSTGRES_HOST). Resolves to a private endpoint address inside the VNet."
+  value       = azurerm_postgresql_flexible_server.main.fqdn
+}
+
+output "postgres_administrator_login" {
+  description = "Postgres admin user (POSTGRES_USER). The password is in Key Vault."
+  value       = azurerm_postgresql_flexible_server.main.administrator_login
+}
+
+output "storage_account_name" {
+  description = "ADLS Gen2 account holding the Iceberg warehouse."
+  value       = azurerm_storage_account.warehouse.name
+}
+
+output "warehouse_root_uri" {
+  description = "Root URI to register as an adls_gen2 storage backend (hierarchical = true)."
+  value       = "abfss://${azurerm_storage_data_lake_gen2_filesystem.warehouse.name}@${azurerm_storage_account.warehouse.name}.dfs.core.windows.net/duckhaven/"
+}
+
+output "container_registry_login_server" {
+  description = "Registry hostname (ELASTIC_REGISTRY_SERVER)."
+  value       = azurerm_container_registry.main.login_server
+}
+
+output "agent_pull_token_name" {
+  description = "Registry token username for container instances (ELASTIC_REGISTRY_USERNAME)."
+  value       = azurerm_container_registry_token.agent_pull.name
+}
+
 output "private_dns_zone_ids" {
   description = "Private DNS zone IDs, keyed by service."
   value       = { for k, z in azurerm_private_dns_zone.main : k => z.id }

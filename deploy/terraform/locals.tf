@@ -15,6 +15,9 @@ locals {
     var.tags,
   )
 
+  # Named because the registry pull token is scoped to exactly this repository.
+  agent_image_repository = "duckhaven-agent"
+
   # Private DNS zones needed by the private endpoints created in this deployment.
   # privatelink.azurecr.io is deliberately absent: the registry keeps a public
   # endpoint because Azure Container Instances pulls images from its own control

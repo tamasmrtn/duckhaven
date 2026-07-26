@@ -93,6 +93,91 @@ variable "agent_result_port" {
   default     = 8001
 }
 
+# ── PostgreSQL ────────────────────────────────────────────────────────────────
+
+variable "postgres_sku_name" {
+  description = <<-EOT
+    Flexible Server SKU. GP_Standard_D2ds_v5 (2 vCore / 8 GiB) is verified available
+    in France Central with ZoneRedundant HA. Note that PostgreSQL Flexible Server is
+    offer-restricted in some regions on some subscriptions -- check with
+    `az postgres flexible-server list-skus -l <region>` before changing region.
+  EOT
+  type        = string
+  default     = "GP_Standard_D2ds_v5"
+}
+
+variable "postgres_storage_mb" {
+  description = "Allocated storage in MB. 131072 = 128 GiB."
+  type        = number
+  default     = 131072
+}
+
+variable "postgres_high_availability_enabled" {
+  description = <<-EOT
+    Zone-redundant HA: a hot standby in a second availability zone with automatic
+    failover. Roughly doubles the compute cost, so staging turns it off.
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "postgres_backup_retention_days" {
+  description = "Point-in-time restore window, in days."
+  type        = number
+  default     = 14
+
+  validation {
+    condition     = var.postgres_backup_retention_days >= 7 && var.postgres_backup_retention_days <= 35
+    error_message = "postgres_backup_retention_days must be between 7 and 35."
+  }
+}
+
+variable "postgres_geo_redundant_backup_enabled" {
+  description = "Replicate backups to the paired region. Cannot be changed after creation."
+  type        = bool
+  default     = true
+}
+
+variable "postgres_entra_admin" {
+  description = <<-EOT
+    Optional Entra principal (ideally a group) granted PostgreSQL administrator, for
+    human break-glass access without sharing the generated admin password. Leave null
+    to skip. object_id is the directory object id; principal_name is its display name.
+  EOT
+  type = object({
+    object_id      = string
+    principal_name = string
+    principal_type = optional(string, "Group")
+  })
+  default = null
+}
+
+# ── Storage ───────────────────────────────────────────────────────────────────
+
+variable "storage_replication_type" {
+  description = <<-EOT
+    Replication for the Iceberg warehouse. ZRS spreads across three availability
+    zones in the region, matching the zone-redundant posture of the rest of the
+    deployment; staging can drop to LRS.
+  EOT
+  type        = string
+  default     = "ZRS"
+
+  validation {
+    condition     = contains(["LRS", "ZRS", "GRS", "GZRS"], var.storage_replication_type)
+    error_message = "storage_replication_type must be one of LRS, ZRS, GRS, GZRS."
+  }
+}
+
+variable "storage_soft_delete_days" {
+  description = <<-EOT
+    Blob and container soft-delete window. This is the recovery path for an
+    accidental table drop, since Iceberg deletes data files outright.
+  EOT
+  type        = number
+  default     = 7
+}
+
 # ── Observability ─────────────────────────────────────────────────────────────
 
 variable "log_retention_days" {

@@ -19,12 +19,17 @@ resource "azurerm_key_vault" "main" {
   public_network_access_enabled = var.allow_management_plane_public_access
 
   network_acls {
-    # Application traffic arrives over the private endpoint below; the public
-    # endpoint exists only so a Terraform runner outside the VNet can write secrets.
-    default_action             = "Deny"
-    bypass                     = "AzureServices"
-    ip_rules                   = var.management_plane_allowed_ips
-    virtual_network_subnet_ids = [azurerm_subnet.aca.id]
+    # Application traffic arrives over the private endpoint below, which bypasses
+    # these rules entirely; the public endpoint exists only so a Terraform runner
+    # outside the VNet can write secrets.
+    #
+    # No virtual_network_subnet_ids: a Key Vault network rule requires the subnet to
+    # carry the Microsoft.KeyVault service endpoint, which these subnets deliberately
+    # do not (the private endpoint is the access path). Listing a subnet without it
+    # fails the apply.
+    default_action = "Deny"
+    bypass         = "AzureServices"
+    ip_rules       = var.management_plane_allowed_ips
   }
 
   tags = local.tags

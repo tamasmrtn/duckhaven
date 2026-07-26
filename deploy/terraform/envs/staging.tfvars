@@ -17,3 +17,13 @@ vnet_address_space = "10.43.0.0/16"
 subnet_prefix_aca  = "10.43.0.0/23"
 subnet_prefix_pe   = "10.43.2.0/24"
 subnet_prefix_aci  = "10.43.3.0/24"
+
+# Cheaper data plane: burstable Postgres with no hot standby and no cross-region
+# backup, and single-zone storage. Staging exists to exercise the topology, not to
+# survive a zone loss.
+postgres_sku_name                     = "B_Standard_B1ms"
+postgres_storage_mb                   = 32768
+postgres_high_availability_enabled    = false
+postgres_backup_retention_days        = 7
+postgres_geo_redundant_backup_enabled = false
+storage_replication_type              = "LRS"

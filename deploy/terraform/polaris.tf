@@ -162,14 +162,33 @@ resource "azurerm_container_app" "polaris" {
     identity            = azurerm_user_assigned_identity.polaris.id
   }
 
-  # Internal ingress: reachable from the Container Apps subnet and from VNet-injected
-  # agents, and from nowhere on the internet. This is the difference from the manual
-  # deployment, which exposed Polaris publicly because its agents had public IPs.
+  # Internal ingress by default: reachable from inside the environment and from nowhere
+  # else, which is the difference from the manual deployment that exposed Polaris
+  # publicly.
+  #
+  # Enabling elastic compute flips this, because an agent container group runs outside
+  # the environment and cannot resolve an internal-ingress app -- see local.polaris_url
+  # for why a private endpoint is not an option. The listener is then public but the
+  # allow rule below is the only way in, and a Container Apps ingress with any allow
+  # rule denies everything unmatched.
   ingress {
-    external_enabled           = false
+    external_enabled           = var.elastic_compute_enabled
     target_port                = 8181
     transport                  = "http"
     allow_insecure_connections = false
+
+    # Both the control plane and the agents leave through the same NAT gateway, so one
+    # address covers every legitimate caller and nothing else on the internet matches.
+    dynamic "ip_security_restriction" {
+      for_each = var.elastic_compute_enabled ? [1] : []
+
+      content {
+        name             = "AllowDeploymentEgressOnly"
+        action           = "Allow"
+        ip_address_range = "${azurerm_public_ip.natgw[0].ip_address}/32"
+        description      = "This deployment's NAT gateway; the control plane and its agents."
+      }
+    }
 
     traffic_weight {
       latest_revision = true

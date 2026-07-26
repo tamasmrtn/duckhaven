@@ -166,7 +166,7 @@ resource "azurerm_container_app" "api" {
       # ── Catalog ──
       env {
         name  = "POLARIS_BASE_URL"
-        value = local.polaris_internal_url
+        value = local.polaris_url
       }
 
       env {
@@ -226,7 +226,7 @@ resource "azurerm_container_app" "api" {
       # Agents reach Polaris over internal ingress, same as the API.
       env {
         name  = "ELASTIC_AGENT_POLARIS_BASE_URL"
-        value = local.polaris_internal_url
+        value = local.polaris_url
       }
 
       env {

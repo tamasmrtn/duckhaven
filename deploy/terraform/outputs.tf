@@ -103,12 +103,13 @@ output "container_app_environment_default_domain" {
   value       = azurerm_container_app_environment.main.default_domain
 }
 
-output "polaris_internal_url" {
+output "polaris_url" {
   description = <<-EOT
     Polaris catalog REST endpoint (POLARIS_BASE_URL and ELASTIC_AGENT_POLARIS_BASE_URL).
-    Resolves only inside the VNet.
+    Internal to the Container Apps environment unless elastic compute is enabled, in
+    which case it is a public listener restricted to this deployment's egress address.
   EOT
-  value       = local.polaris_internal_url
+  value       = local.polaris_url
 }
 
 output "private_dns_zone_ids" {

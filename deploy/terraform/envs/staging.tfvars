@@ -63,10 +63,11 @@ api_max_replicas = 1
 api_cpu          = 0.5
 api_memory       = "1Gi"
 
-# Off by default here: the gateway and its public IP bill hourly regardless of traffic.
-# Turn this on for the session where elastic agents are being tested -- without it a
-# VNet-injected agent has no outbound route and cannot dial the control plane.
-nat_gateway_enabled = false
+# On so elastic compute can be exercised. The gateway and its public IP bill hourly
+# regardless of traffic, so turn both this and elastic_compute_enabled back off (or
+# destroy the environment) once agent testing is done.
+nat_gateway_enabled     = true
+elastic_compute_enabled = true
 
 # Disposable environment, so a floating tag is acceptable here.
 duckhaven_image_tag = "latest"

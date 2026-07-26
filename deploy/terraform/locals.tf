@@ -40,10 +40,26 @@ locals {
   # exists, and an external-ingress app is always <name>.<domain>.
   api_fqdn = "api.${azurerm_container_app_environment.main.default_domain}"
 
-  # Polaris is reached over internal ingress, which resolves only inside the VNet. The
-  # platform issues a certificate covering this name, so the API and the agents can
-  # verify TLS against it (confirmed during the Phase 0 spike).
-  polaris_internal_url = "https://polaris.internal.${azurerm_container_app_environment.main.default_domain}"
+  # Polaris' hostname, which depends on how it has to be reached.
+  #
+  # Internal ingress is the default and the better posture: the name resolves only
+  # inside the environment and there is no public listener at all.
+  #
+  # Elastic compute forces the alternative. An agent runs in its own subnet, outside the
+  # environment, and only replicas *inside* an environment resolve an internal-ingress
+  # app -- measured from the agent subnet, Polaris' internal name resolved to the
+  # environment's public address and returned 404. A private endpoint cannot fix it
+  # either: Azure rejects one unless the environment's public access is disabled, which
+  # would take the API offline with it. So when agents exist, Polaris takes external
+  # ingress locked to this deployment's single egress address (see polaris.tf).
+  #
+  # The platform issues a certificate covering either name, so callers verify TLS
+  # normally.
+  polaris_url = var.elastic_compute_enabled ? (
+    "https://polaris.${azurerm_container_app_environment.main.default_domain}"
+    ) : (
+    "https://polaris.internal.${azurerm_container_app_environment.main.default_domain}"
+  )
 
   # sslmode=require rather than the driver default of prefer: Azure enforces TLS, and
   # stating it means a misconfiguration fails loudly instead of silently downgrading.

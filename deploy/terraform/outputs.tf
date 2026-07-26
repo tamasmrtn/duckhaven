@@ -84,6 +84,16 @@ output "nat_gateway_public_ip" {
   value       = var.nat_gateway_enabled ? azurerm_public_ip.natgw[0].ip_address : null
 }
 
+output "api_url" {
+  description = "The only public endpoint in this deployment: the DuckHaven UI and REST API."
+  value       = "https://${local.api_fqdn}"
+}
+
+output "agent_control_plane_url" {
+  description = "WebSocket URL provisioned agents dial home to (ELASTIC_CONTROL_PLANE_URL)."
+  value       = "wss://${local.api_fqdn}/agents/connect"
+}
+
 output "container_app_environment_default_domain" {
   description = <<-EOT
     Domain the environment issues app hostnames under. Readable before any app exists,

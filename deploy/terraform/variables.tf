@@ -231,6 +231,72 @@ variable "acr_sku" {
   }
 }
 
+# ── DuckHaven API ─────────────────────────────────────────────────────────────
+
+variable "duckhaven_image_tag" {
+  description = <<-EOT
+    Tag for the duckhaven-api and duckhaven-agent images in the registry. Both are built
+    from the same commit, so they share a tag. No default: an implicit `latest` is how a
+    deployment silently changes version, and the tag also determines which agent image
+    provisioned container groups run.
+  EOT
+  type        = string
+}
+
+variable "api_min_replicas" {
+  description = <<-EOT
+    Replica floor.
+
+    Do not raise this above 1 without the per-replica identity change described in
+    phase 6 of the plan. Container Apps gives every replica identical environment
+    variables and no individually addressable hostname, so today every replica records
+    the same owner_url on an agent row, and api/src/api/services/agent_dispatch.py
+    short-circuits rather than forwarding -- a query landing on a replica that does not
+    hold the agent's WebSocket fails instead of being routed. The failure is silent,
+    which is why this is a comment and not merely a default.
+  EOT
+  type        = number
+  default     = 1
+}
+
+variable "api_max_replicas" {
+  description = "Replica ceiling. See api_min_replicas before raising it above 1."
+  type        = number
+  default     = 1
+}
+
+variable "api_cpu" {
+  description = <<-EOT
+    vCPU per replica. Container Apps requires exactly 2 GiB of memory per vCPU, so this
+    and api_memory move together. Query execution happens on agents, not here.
+  EOT
+  type        = number
+  default     = 1.0
+}
+
+variable "api_memory" {
+  description = "Memory per replica. Must equal 2 GiB per vCPU."
+  type        = string
+  default     = "2Gi"
+}
+
+# ── Elastic compute ───────────────────────────────────────────────────────────
+
+variable "elastic_compute_enabled" {
+  description = <<-EOT
+    Whether the control plane may provision agents on demand as container instances.
+
+    Left off until the phase 5 code change lands: the shipped backend gives every agent
+    a public IP and a DNS label, which cannot coexist with subnet injection, so enabling
+    it before then would put agents on public addresses and force the storage account
+    and Polaris back onto public endpoints. The surrounding infrastructure -- resource
+    group, role, subnet -- is provisioned regardless, so enabling it later is a variable
+    change.
+  EOT
+  type        = bool
+  default     = false
+}
+
 # ── Polaris ───────────────────────────────────────────────────────────────────
 
 variable "polaris_image_tag" {

@@ -15,7 +15,9 @@ locals {
     var.tags,
   )
 
-  # Named because the registry pull token is scoped to exactly this repository.
+  api_image_repository = "duckhaven-api"
+
+  # Named separately because the registry pull token is scoped to exactly this repository.
   agent_image_repository = "duckhaven-agent"
 
   aca_workload_profile = "Consumption"
@@ -30,6 +32,13 @@ locals {
   # prerequisite of the first apply -- see README.
   polaris_image            = "${azurerm_container_registry.main.login_server}/polaris:${var.polaris_image_tag}"
   polaris_admin_tool_image = "${azurerm_container_registry.main.login_server}/polaris-admin-tool:${var.polaris_image_tag}"
+
+  # The API's own public hostname, built from the environment's domain rather than read
+  # off the app resource. Reading it back would make ELASTIC_CONTROL_PLANE_URL -- an
+  # environment variable *on that app* -- depend on the app itself, which is a dependency
+  # cycle Terraform cannot resolve. The domain is known as soon as the environment
+  # exists, and an external-ingress app is always <name>.<domain>.
+  api_fqdn = "api.${azurerm_container_app_environment.main.default_domain}"
 
   # Polaris is reached over internal ingress, which resolves only inside the VNet. The
   # platform issues a certificate covering this name, so the API and the agents can

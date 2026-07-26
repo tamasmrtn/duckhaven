@@ -18,6 +18,34 @@ locals {
   # Named because the registry pull token is scoped to exactly this repository.
   agent_image_repository = "duckhaven-agent"
 
+  aca_workload_profile = "Consumption"
+
+  # The root principal the bootstrap creates and the API authenticates as. Not a
+  # variable: it has to match api/src/api/config.py's polaris_client_id default, and
+  # the two would drift silently if both were configurable.
+  polaris_client_id = "root"
+
+  # Mirrored into the registry rather than pulled from Docker Hub, so a deploy does not
+  # depend on Docker Hub availability or anonymous pull limits. The import is a
+  # prerequisite of the first apply -- see README.
+  polaris_image            = "${azurerm_container_registry.main.login_server}/polaris:${var.polaris_image_tag}"
+  polaris_admin_tool_image = "${azurerm_container_registry.main.login_server}/polaris-admin-tool:${var.polaris_image_tag}"
+
+  # Polaris is reached over internal ingress, which resolves only inside the VNet. The
+  # platform issues a certificate covering this name, so the API and the agents can
+  # verify TLS against it (confirmed during the Phase 0 spike).
+  polaris_internal_url = "https://polaris.internal.${azurerm_container_app_environment.main.default_domain}"
+
+  # sslmode=require rather than the driver default of prefer: Azure enforces TLS, and
+  # stating it means a misconfiguration fails loudly instead of silently downgrading.
+  polaris_jdbc_url = join("", [
+    "jdbc:postgresql://",
+    azurerm_postgresql_flexible_server.main.fqdn,
+    ":5432/",
+    azurerm_postgresql_flexible_server_database.polaris.name,
+    "?sslmode=require",
+  ])
+
   # Zone redundancy, network rule sets and retention policies are Premium-only
   # registry features; repository-scoped tokens are too. They are kept as separate
   # locals because they answer different questions, even though both currently reduce

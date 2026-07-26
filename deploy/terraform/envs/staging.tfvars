@@ -45,6 +45,16 @@ storage_soft_delete_days = 1
 # nothing that matters and the environment is disposable.
 acr_sku = "Basic"
 
+# One small replica instead of two. Container Apps bills per vCPU-second and
+# GiB-second, so replica count and size are the levers, and an always-on app is a
+# standing cost. 0.5 vCPU / 1 GiB is the smallest a Quarkus JVM starts reliably in --
+# Container Apps requires exactly 2 GiB per vCPU, so the two move together. There is no
+# scale-to-zero option: agents attach catalogs against Polaris directly.
+polaris_min_replicas = 1
+polaris_max_replicas = 1
+polaris_cpu          = 0.5
+polaris_memory       = "1Gi"
+
 # Off by default here: the gateway and its public IP bill hourly regardless of traffic.
 # Turn this on for the session where elastic agents are being tested -- without it a
 # VNet-injected agent has no outbound route and cannot dial the control plane.

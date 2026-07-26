@@ -231,6 +231,56 @@ variable "acr_sku" {
   }
 }
 
+# ── Polaris ───────────────────────────────────────────────────────────────────
+
+variable "polaris_image_tag" {
+  description = <<-EOT
+    Tag used for both apache/polaris and apache/polaris-admin-tool. The two must match:
+    the admin tool bootstraps and migrates the schema the server then reads. Pinned
+    rather than `latest` so a redeploy cannot silently move the schema version.
+  EOT
+  type        = string
+  default     = "1.6.0"
+}
+
+variable "polaris_realm" {
+  description = "Polaris realm bootstrapped and served. Must match the API's POLARIS_REALM."
+  type        = string
+  default     = "POLARIS"
+}
+
+variable "polaris_min_replicas" {
+  description = <<-EOT
+    Replica floor. Polaris is stateless on Postgres, so it scales horizontally; two
+    replicas keep the catalog available while one is replaced. It cannot scale to zero,
+    because agents attach catalogs against it directly.
+  EOT
+  type        = number
+  default     = 2
+}
+
+variable "polaris_max_replicas" {
+  description = "Replica ceiling."
+  type        = number
+  default     = 2
+}
+
+variable "polaris_cpu" {
+  description = <<-EOT
+    vCPU per replica. Container Apps requires memory to be exactly 2 GiB per vCPU, so
+    this and polaris_memory move together. Polaris is a JVM: below about 1 GiB of
+    memory it will not start reliably.
+  EOT
+  type        = number
+  default     = 1.0
+}
+
+variable "polaris_memory" {
+  description = "Memory per replica, as a Container Apps quantity. Must equal 2 GiB per vCPU."
+  type        = string
+  default     = "2Gi"
+}
+
 # ── Cost controls ─────────────────────────────────────────────────────────────
 
 variable "nat_gateway_enabled" {

@@ -84,6 +84,23 @@ output "nat_gateway_public_ip" {
   value       = var.nat_gateway_enabled ? azurerm_public_ip.natgw[0].ip_address : null
 }
 
+output "container_app_environment_default_domain" {
+  description = <<-EOT
+    Domain the environment issues app hostnames under. Readable before any app exists,
+    which is what lets the API's own FQDN be computed without a dependency cycle on
+    ELASTIC_CONTROL_PLANE_URL.
+  EOT
+  value       = azurerm_container_app_environment.main.default_domain
+}
+
+output "polaris_internal_url" {
+  description = <<-EOT
+    Polaris catalog REST endpoint (POLARIS_BASE_URL and ELASTIC_AGENT_POLARIS_BASE_URL).
+    Resolves only inside the VNet.
+  EOT
+  value       = local.polaris_internal_url
+}
+
 output "private_dns_zone_ids" {
   description = "Private DNS zone IDs, keyed by service."
   value       = { for k, z in azurerm_private_dns_zone.main : k => z.id }

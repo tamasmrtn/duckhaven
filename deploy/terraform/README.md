@@ -7,9 +7,9 @@ Only the DuckHaven API is reachable from the internet. Postgres, storage and Key
 sit behind private endpoints; Polaris uses internal-only ingress; elastic agents get
 private IPs in a delegated subnet.
 
-> **Status:** foundation only (phase 1 of 7). Networking, Log Analytics and Key Vault
-> are in place. Postgres, storage, the registry, the Container Apps environment and
-> the apps themselves land in later phases.
+> **Status:** phases 1-2 of 7. Networking, Log Analytics, Key Vault, PostgreSQL, the
+> ADLS Gen2 warehouse and the container registry are in place. The Container Apps
+> environment, Polaris and the API app land in later phases.
 
 ## Prerequisites
 
@@ -102,6 +102,20 @@ therefore stays publicly reachable with the admin user disabled, Container Apps
 pulling via managed identity and container instances via a repository-scoped,
 pull-only token. Everything else is private: a VNet-injected container group *does*
 resolve privatelink DNS and reach private endpoints.
+
+The registry is **Premium**, which is what repository-scoped tokens require. On
+Standard the only credential a container instance could use is the registry admin
+user — push and pull across every repository — and that credential would live in the
+API's environment and in every provisioned agent's container spec. Premium buys the
+scoped, pull-only alternative.
+
+## The Terraform runner needs data-plane access
+
+Creating the warehouse filesystem and writing Key Vault secrets are data-plane calls,
+and both firewalls deny by default. Set `management_plane_allowed_ips` to the runner's
+egress address (`curl -s https://api.ipify.org`), or apply from inside the VNet with
+`allow_management_plane_public_access = false`. A resource precondition fails the plan
+with this explanation rather than letting the apply get halfway and 403.
 
 ## State contains secrets
 

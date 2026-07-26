@@ -46,6 +46,17 @@ repos:
         files: ^web/src/.*\.[tj]sx?$
         pass_filenames: false
 
+      # Formatting only: `terraform validate` needs an initialised working directory
+      # (provider plugins downloaded), which is a CI concern rather than a per-commit
+      # one. Skips when Terraform is absent so contributors who never touch the Azure
+      # deployment are not forced to install it; CI enforces fmt unconditionally.
+      - id: terraform-fmt
+        name: terraform fmt
+        language: system
+        entry: bash -c 'command -v terraform >/dev/null || { echo "terraform not on PATH; skipping"; exit 0; }; cd deploy/terraform && terraform fmt -check -recursive'
+        files: ^deploy/terraform/.*\.tf$
+        pass_filenames: false
+
       - id: commitlint
         name: commitlint
         language: node

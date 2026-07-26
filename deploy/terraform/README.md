@@ -9,10 +9,12 @@ private addresses in a delegated subnet, with a network security group admitting
 the Container Apps subnet to their result port. The one exception is the container
 registry, for a reason Azure forces — see below.
 
-> **Status:** phases 1-5 of 7. The full control plane is provisioned and reachable, and
-> elastic compute is enabled in prod: agents are created as subnet-injected container
-> groups with private addresses only. Multi-replica API (which needs a further code
-> change) and the alerting/CI work follow.
+> **Status:** complete, but **never applied end to end**. Every resource is verified by
+> `terraform validate`, TFLint and a `terraform plan`, and the platform behaviour the
+> design depends on was confirmed with a throwaway spike that has since been destroyed.
+> Treat the first apply as a bring-up and work through
+> [the prerequisites](#images-must-be-in-the-registry-before-the-apps-are-created)
+> first.
 
 ## Prerequisites
 

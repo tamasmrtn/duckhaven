@@ -151,7 +151,9 @@ def _adls_container(ctx: StorageContext, uri: str):  # noqa: ANN202 - azure clie
 
     parsed = urlparse(uri)  # abfss://container@account.dfs.core.windows.net/path
     container, _, host = parsed.netloc.partition("@")
-    sas = next((v for k, v in ctx.creds.items() if k.startswith("adls.sas-token")), None)
+    # Trailing dot required: Iceberg also vends adls.sas-token-expires-at-ms.<account>,
+    # which a looser prefix can match instead of the token itself.
+    sas = next((v for k, v in ctx.creds.items() if k.startswith("adls.sas-token.")), None)
     if sas is None:
         raise ValueError("Polaris vended no ADLS SAS token")
     account_url = f"https://{host.replace('.dfs.', '.blob.')}"

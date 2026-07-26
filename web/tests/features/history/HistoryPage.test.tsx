@@ -242,4 +242,41 @@ describe('HistoryPage', () => {
     await screen.findByText('SELECT member_marker')
     expect(screen.queryByText('All workspaces')).not.toBeInTheDocument()
   })
+
+  it('sends the agent filter to the server rather than filtering the page', async () => {
+    // The list endpoint caps what it returns, so filtering that page in the browser
+    // showed nothing at all for an agent whose runs were older than the most recent
+    // hundred queries cluster-wide. "View audit for this agent" has to ask the server.
+    const seen: string[] = []
+    server.use(
+      http.get('/api/workspaces/:ws/queries', ({ request }) => {
+        seen.push(new URL(request.url).search)
+        return HttpResponse.json([
+          {
+            id: 'q-from-server',
+            workspace_id: '137f7947-0000-4000-8000-000000000001',
+            agent_id: 'ag-2',
+            user_id: 'u-1',
+            sql: 'SELECT server_filtered_marker',
+            status: 'done',
+            row_count: 1,
+            duration_ms: 12,
+            error: null,
+            progress: null,
+            started_at: '2026-05-15T10:00:00Z',
+            finished_at: '2026-05-15T10:00:00.012Z',
+          },
+        ])
+      }),
+    )
+
+    renderWithProviders({
+      initialRoute: '/acme-analytics/history?agent=ag-2',
+    })
+
+    expect(
+      await screen.findByText('SELECT server_filtered_marker'),
+    ).toBeInTheDocument()
+    expect(seen.some((q) => q.includes('agent_id=ag-2'))).toBe(true)
+  })
 })

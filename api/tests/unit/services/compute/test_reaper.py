@@ -322,3 +322,87 @@ async def test_stranded_queued_pool_run_is_failed(session_factory, elastic_on, m
         assert failed.finished_at is not None
         # Still inside its budget: supply may yet arrive.
         assert (await db.get(Query, fresh_id)).status == "queued"
+
+
+async def test_reconciles_a_provider_no_longer_configured(
+    session_factory, elastic_on, null_backend, monkeypatch
+):
+    """Reconciling only the configured provider strands instances the moment an operator
+    changes it: the previous provider's orphans are never enumerated again, so they are
+    never terminated and keep billing. The provider set comes from the rows, not the
+    setting."""
+    from datetime import UTC, datetime, timedelta
+
+    from api.config import settings
+
+    monkeypatch.setattr(settings, "elastic_provisioning_deadline_s", 300.0)
+
+    async with session_factory() as db:
+        agent = Agent(
+            name="left-over",
+            status="healthy",
+            provider="null",
+            lifecycle="running",
+            instance_id="dh-agent-leftover",
+            provisioned_at=datetime.now(tz=UTC) - timedelta(seconds=3600),
+            last_active_at=datetime.now(tz=UTC),
+        )
+        db.add(agent)
+        await db.commit()
+        agent_id = agent.id
+
+    # The operator has since pointed the deployment somewhere else.
+    monkeypatch.setattr(settings, "elastic_provider", "azure_aci")
+
+    result = await reaper.run_cycle(session_factory)
+
+    # The null-backed row is still reconciled: its instance is gone, so it is failed.
+    assert result["dead_rows_failed"] == 1
+    async with session_factory() as db:
+        assert (await db.get(Agent, agent_id)).lifecycle == "failed"
+
+
+async def test_one_broken_provider_does_not_stop_the_others(
+    session_factory, elastic_on, null_backend, monkeypatch
+):
+    """A provider left over from an earlier configuration is exactly the case where its
+    settings may be gone, so its backend can fail to build. That must not prevent the
+    remaining providers being reconciled."""
+    from datetime import UTC, datetime, timedelta
+
+    from api.config import settings
+
+    monkeypatch.setattr(settings, "elastic_provisioning_deadline_s", 300.0)
+    # azure_aci with no subscription configured raises when asked to do anything.
+    monkeypatch.setattr(settings, "elastic_azure_subscription_id", None)
+
+    async with session_factory() as db:
+        db.add(
+            Agent(
+                name="broken-provider",
+                status="healthy",
+                provider="azure_aci",
+                lifecycle="running",
+                instance_id="dh-agent-broken",
+                provisioned_at=datetime.now(tz=UTC) - timedelta(seconds=3600),
+                last_active_at=datetime.now(tz=UTC),
+            )
+        )
+        good = Agent(
+            name="reconcilable",
+            status="healthy",
+            provider="null",
+            lifecycle="running",
+            instance_id="dh-agent-good",
+            provisioned_at=datetime.now(tz=UTC) - timedelta(seconds=3600),
+            last_active_at=datetime.now(tz=UTC),
+        )
+        db.add(good)
+        await db.commit()
+        good_id = good.id
+
+    result = await reaper.run_cycle(session_factory)
+
+    assert result["dead_rows_failed"] == 1
+    async with session_factory() as db:
+        assert (await db.get(Agent, good_id)).lifecycle == "failed"

@@ -1367,3 +1367,71 @@ async def test_elastic_pool_provisions_when_the_picked_agent_has_gone(
         .all()
     )
     assert len(provisioned) == 1
+
+
+async def test_reading_results_advances_the_elastic_idle_clock(
+    authed_client: AsyncClient, workspace: Workspace, agent: Agent, db_session, monkeypatch
+):
+    """Results live on the agent, not in the control plane, so an agent reaped while
+    someone is still paging takes the Parquet with it. The idle clock previously only
+    advanced on dispatch, so a user who ran a query and came back later to scroll found
+    a terminated agent and a 503."""
+    import os
+    import tempfile
+    from datetime import UTC, datetime, timedelta
+
+    import duckdb
+    import httpx
+
+    from api.models.query import Query
+    from api.models.user import Credential
+    from api.services import query as query_service
+
+    def _parquet_bytes() -> bytes:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as fh:
+            path = fh.name
+        try:
+            duckdb.connect().execute(f"COPY (SELECT 1 AS a) TO '{path}' (FORMAT PARQUET)")
+            with open(path, "rb") as f:
+                return f.read()
+        finally:
+            os.unlink(path)
+
+    stale = datetime.now(tz=UTC) - timedelta(hours=2)
+    agent.result_host = "127.0.0.1"
+    agent.result_port = 8001
+    agent.provider = "null"
+    agent.lifecycle = "running"
+    agent.instance_id = "dh-agent-paging"
+    agent.provisioned_at = stale
+    agent.last_active_at = stale
+    db_session.add(agent)
+    db_session.add(
+        Credential(user_id=None, agent_id=agent.id, kind="agent_session", token="tok-paging")
+    )
+    query = Query(
+        workspace_id=workspace.id,
+        agent_id=agent.id,
+        sql="SELECT 1",
+        status="done",
+        row_count=1,
+        result_path="/var/duckhaven-agent/results/x.parquet",
+        started_at=stale,
+    )
+    db_session.add(query)
+    await db_session.commit()
+
+    async def fake_proxy(agent_arg, query_arg, *, row_offset=None, row_limit=None, token=None):
+        return httpx.Response(200, content=_parquet_bytes())
+
+    monkeypatch.setattr(query_service, "proxy_rows", fake_proxy)
+
+    resp = await authed_client.get(f"/queries/{query.id}/rows")
+    assert resp.status_code == 200
+
+    await db_session.refresh(agent)
+    # SQLite hands back naive timestamps; production normalises the same way.
+    last_active = agent.last_active_at
+    if last_active.tzinfo is None:
+        last_active = last_active.replace(tzinfo=UTC)
+    assert last_active > stale

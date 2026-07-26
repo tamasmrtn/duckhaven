@@ -249,11 +249,47 @@ async def _reconcile_leaks(db: AsyncSession, provider: str) -> dict[str, int]:
     return result
 
 
+async def _providers_to_reconcile(db: AsyncSession) -> list[str]:
+    """Every provider this deployment may still hold instances for.
+
+    Reconciling only the configured provider leaves instances stranded the moment an
+    operator changes it -- flipping back to "null", or over to a second cloud, means the
+    previous provider's orphans are never enumerated again, so they are never terminated
+    and keep billing, and rows whose instance has gone are never failed. The set is
+    therefore taken from the rows themselves, plus the configured provider so a cloud
+    with instances but no rows left is still swept.
+    """
+    from_rows = (
+        (
+            await db.execute(
+                sa.select(Agent.provider)
+                .where(Agent.provider.is_not(None), Agent.lifecycle.in_(_ACTIVE_LIFECYCLE))
+                .distinct()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return sorted({*from_rows, settings.elastic_provider})
+
+
 async def run_cycle(session_factory: async_sessionmaker[AsyncSession]) -> dict[str, int]:
     now = datetime.now(tz=UTC)
     async with session_factory() as db:
         reaped = await _reap_lifecycle(db, now)
-        reaped.update(await _reconcile_leaks(db, settings.elastic_provider))
+        totals = {"orphans_terminated": 0, "dead_rows_failed": 0}
+        for provider in await _providers_to_reconcile(db):
+            try:
+                result = await _reconcile_leaks(db, provider)
+            except Exception:
+                # One unreachable or unconfigured backend must not stop the others being
+                # reconciled -- a provider left over from an earlier configuration is
+                # exactly the case where its settings may no longer be present.
+                logger.exception("Reconciliation failed for provider %s", provider)
+                continue
+            for key, value in result.items():
+                totals[key] += value
+        reaped.update(totals)
         reaped["stranded_queries_failed"] = await _fail_stranded_queued(db, now)
     return reaped
 

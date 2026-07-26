@@ -51,14 +51,15 @@ export function HistoryPage() {
   // Filtering by agent spans workspaces (an agent is global), so fetch all when
   // an agent filter is active and an admin is viewing.
   const all = isAdmin && (allWorkspaces || !!agentFilter);
-  const { data: allQueries = [], isLoading } = useWorkspaceQueries(ws, {
+  // The agent filter goes to the server rather than being applied to the page it
+  // returns: that page is capped, so filtering it here showed nothing at all for an
+  // agent whose runs were older than the most recent hundred queries cluster-wide.
+  const { data: wsQueries = [], isLoading } = useWorkspaceQueries(ws, {
     all_workspaces: all,
     user_id: all && trimmed ? trimmed : undefined,
     origin: origin === "all" ? undefined : origin,
+    agent_id: all && agentFilter ? agentFilter : undefined,
   });
-  const wsQueries = agentFilter
-    ? allQueries.filter((q) => q.agent_id === agentFilter)
-    : allQueries;
   const { data: agents = [] } = useAgents();
   const { data: workspaces = [] } = useWorkspaces();
   const agentName = new Map(agents.map((a) => [a.id, a.name]));

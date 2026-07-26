@@ -27,6 +27,7 @@ export const queriesApi = {
       // the server stores with a null origin.
       origin?: string;
       session_id?: string;
+      agent_id?: string;
     },
   ) => {
     const qs = new URLSearchParams();
@@ -34,6 +35,7 @@ export const queriesApi = {
     if (params?.user_id) qs.set("user_id", params.user_id);
     if (params?.origin) qs.set("origin", params.origin);
     if (params?.session_id) qs.set("session_id", params.session_id);
+    if (params?.agent_id) qs.set("agent_id", params.agent_id);
     const suffix = qs.toString();
     return get<Query[]>(
       `/workspaces/${ws}/queries${suffix ? `?${suffix}` : ""}`,

@@ -184,10 +184,29 @@ Used when `ELASTIC_PROVIDER=azure_aci`. Credentials come from the ambient identi
 | `ELASTIC_AZURE_LOCATION` | `eastus` | Region the container groups are created in. |
 | `ELASTIC_AZURE_CPU` | `2` | vCPU per agent for pool-triggered provisioning; the admin UI picks a size per agent. |
 | `ELASTIC_AZURE_MEMORY_GB` | `8` | Memory (GiB) per agent, same. |
-| `ELASTIC_AZURE_PRICE_VCPU_HOUR` | `0.0486` | Per-vCPU hourly rate, used only to show a size's cost in the admin UI. Override per region or agreement. |
+| `ELASTIC_AZURE_PRICE_VCPU_HOUR` | `0.0486` | Per-vCPU hourly rate, used only to show a size's cost in the admin UI. Despite the name it applies to **whichever provider is configured**; zero it on a Docker host, where the marginal hourly cost is nil. |
 | `ELASTIC_AZURE_PRICE_MEMORY_GB_HOUR` | `0.0054` | Per-GiB hourly rate, same. |
 | `ELASTIC_REGISTRY_SERVER` | — | Registry host for a private agent image. Leave unset for a public image. |
 | `ELASTIC_REGISTRY_IDENTITY_ID` | — | Resource id of a user-assigned managed identity holding `AcrPull` on that registry. It is attached to each container group, which then pulls its image as itself, so no registry password exists. Container Instances supports user-assigned identities only for image pull, never system-assigned. |
+
+#### Docker host
+
+Used when `ELASTIC_PROVIDER=docker`, which provisions agents as containers on the single host
+already running the stack. Enable it with `deploy/docker-compose.elastic.yml` and read
+[Elastic compute on a single Docker host](../deployment/homelab-elastic-setup.md) first — giving the
+control plane a path to the Docker daemon is the most privileged grant in the stack, and the socket
+proxy narrows it without making container creation unprivileged.
+
+| Variable | Default | Description |
+|---|---|---|
+| `ELASTIC_DOCKER_HOST` | `tcp://docker-socket-proxy:2375` | Where the daemon is reached. Point it at a `docker-socket-proxy` rather than a mounted socket, so the API container never holds the socket itself. |
+| `ELASTIC_DOCKER_NETWORK` | `duckhaven_internal` | User-defined network agents are attached to. The bundled one is `internal: true`, which is what keeps an agent's result server reachable from the control plane and from nowhere off the host. |
+| `ELASTIC_DOCKER_CPU` | `2` | vCPU per agent for pool-triggered provisioning; the admin UI picks a size per agent. |
+| `ELASTIC_DOCKER_MEMORY_GB` | `4` | Memory (GiB) per agent, same. Becomes a real container memory limit, which the agent reads from its own cgroup to advertise capacity. |
+
+Provisioned agents reproduce the static agent's sandbox — read-only root, `no-new-privileges`, all
+capabilities dropped, a pids cap — so an agent you are given is contained exactly as tightly as one
+you start by hand.
 
 ### AI assistant
 

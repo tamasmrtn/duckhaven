@@ -11,10 +11,10 @@ nothing runs (and nothing is billed) while no queries are in flight.
     static agents behave. Static and elastic agents coexist; a static agent has no lifecycle fields,
     an elastic one carries a provisioning lifecycle alongside its normal presence.
 
-!!! note "Azure first"
-    The first backend is **Azure Container Instances**, provisioning into DuckHaven's own Azure
-    subscription. Bring-your-own-cloud (customer resource groups) and additional clouds are planned
-    but **not yet shipped**.
+!!! note "Two backends"
+    **Azure Container Instances**, provisioning into your own Azure subscription, and **Docker**,
+    provisioning containers on the single host already running your stack. Bring-your-own-cloud
+    (customer resource groups) and additional clouds are planned but **not yet shipped**.
 
 ## How it works
 
@@ -76,5 +76,8 @@ and a row whose instance has vanished is failed. The cloud is never a second sou
 ## Related
 
 - [Agents](agents.md) — the unit of compute elastic provisioning starts.
-- [Elastic compute on Azure](../deployment/azure-elastic-setup.md) — enabling and configuring it.
+- [Elastic compute on a single Docker host](../deployment/homelab-elastic-setup.md) — enabling it on
+  the box already running your stack.
+- [Elastic compute on Azure](../deployment/azure-elastic-setup.md) — enabling it against Container
+  Instances.
 - [Query execution](query-execution.md) — how an agent admits and runs a query.

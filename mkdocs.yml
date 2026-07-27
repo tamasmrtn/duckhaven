@@ -110,6 +110,7 @@ nav:
   - Deployment:
       - Docker Compose: deployment/install.md
       - Add an agent: deployment/add-agent.md
+      - Elastic compute on a single Docker host: deployment/homelab-elastic-setup.md
       - Elastic compute on Azure: deployment/azure-elastic-setup.md
       - Configure storage: deployment/storage.md
       - Reverse proxy & TLS: deployment/reverse-proxy-tls.md

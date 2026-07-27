@@ -34,41 +34,43 @@ validation. Let it finish.
 
 | Path | Purpose |
 |---|---|
-| `bootstrap/` | One-time creation of the remote state backend. Keeps local state. |
-| `*.tf` | The single root module, one file per concern. |
+| `modules/duckhaven-azure/` | The deployment itself, as one callable module. One file per concern. |
 | `modules/private-endpoint/` | Private endpoint + private DNS A records. Used for each privately-exposed service. |
-| `envs/<env>.tfvars` | Per-environment inputs. |
-| `envs/<env>.backend.hcl` | Per-environment state location. |
+| `examples/quickstart/` | Cheapest working configuration. Four inputs. |
+| `examples/production/` | Production posture; one root serving several environments via `envs/`. |
+| `bootstrap/` | One-time creation of the remote state backend. Keeps local state. |
 
-There is one root module rather than a directory per environment, because duplicated
-roots drift: a fix applied to prod silently misses staging. Environments differ only
-by their `.tfvars` and their state key. Individual Azure resources are not wrapped in
-modules — each is used exactly once, so a module would add indirection with no second
-caller.
+The module declares no `provider` and no `backend` — those belong to whichever root
+calls it, so that one deployment's state location and credentials are not baked into the
+thing being reused. Each example supplies its own.
+
+Individual Azure resources inside the module are not wrapped in further modules: each is
+used exactly once, so a module would add indirection with no second caller. The
+exception is `private-endpoint`, which has four.
+
+Pick an example and apply it, or copy one as the starting point for your own root. The
+two differ only in what they pass to the module — see each one's README.
 
 ## First deployment
 
 ```sh
+export ARM_SUBSCRIPTION_ID=<your subscription>
+
 # 1. State backend (once per subscription).
 cd deploy/terraform/bootstrap
 terraform init
-terraform apply \
-  -var subscription_id=<sub> \
-  -var storage_account_name=<globally-unique-name>
-# Copy storage_account_name into envs/<env>.backend.hcl.
+terraform apply -var storage_account_name=<globally-unique-name>
+# Copy storage_account_name into the example's backend config.
 
 # 2. The deployment itself.
-cd ..
-terraform init -backend-config=envs/prod.backend.hcl
-terraform apply -var-file=envs/prod.tfvars
+cd ../examples/quickstart
+terraform init -backend-config=backend.hcl
+terraform apply -var location=<region> -var name_suffix=<suffix> -var duckhaven_image_tag=<tag>
 ```
 
-Switching environments re-initialises the backend:
-
-```sh
-terraform init -reconfigure -backend-config=envs/staging.backend.hcl
-terraform apply -var-file=envs/staging.tfvars
-```
+`examples/production` takes the same shape with `-backend-config=envs/prod.backend.hcl`
+and `-var-file=envs/prod.tfvars`; switching environments there needs
+`terraform init -reconfigure`.
 
 ## The first apply is staged
 
@@ -78,7 +80,7 @@ two passes. Later applies are a single `terraform apply`.
 
 ```sh
 # 1. The registry alone. -target pulls in the resource group it needs.
-terraform apply -target=azurerm_container_registry.main
+terraform apply -target=module.duckhaven.azurerm_container_registry.main
 
 # 2. Push the images (below), then everything else.
 terraform apply
@@ -90,10 +92,10 @@ four:
 
 ```sh
 terraform apply \
-  -target=azurerm_container_app_environment.main \
-  -target=azurerm_storage_data_lake_gen2_filesystem.warehouse \
-  -target=azurerm_postgresql_flexible_server_database.duckhaven \
-  -target=azurerm_postgresql_flexible_server_database.polaris
+  -target=module.duckhaven.azurerm_container_app_environment.main \
+  -target=module.duckhaven.azurerm_storage_data_lake_gen2_filesystem.warehouse \
+  -target=module.duckhaven.azurerm_postgresql_flexible_server_database.duckhaven \
+  -target=module.duckhaven.azurerm_postgresql_flexible_server_database.polaris
 ```
 
 ## Images must be in the registry before the apps are created
@@ -167,7 +169,7 @@ TFLINT_CONFIG_FILE="$PWD/.tflint.hcl" tflint --recursive
 
 **`TFLINT_CONFIG_FILE` must be absolute, and it matters.** With `--recursive` tflint
 changes into each subdirectory and looks for a `.tflint.hcl` *there*. Without the
-environment variable, `bootstrap/` and `modules/` are linted with default
+environment variable, `bootstrap/`, `modules/` and `examples/` are linted with default
 configuration — no azurerm plugin — and report a misleading clean result. The
 pre-commit hook sets it for you.
 

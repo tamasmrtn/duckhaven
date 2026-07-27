@@ -9,13 +9,13 @@ This is the cloud counterpart to the [Docker Compose install](install.md). Compo
 still the right choice for a single host; this is for a deployment that has to survive
 a node failure and be reproducible from source.
 
-!!! note "Verified on a staging subscription"
-    This has been applied end to end to a staging environment in France Central: the API
-    serves, Polaris answers, a storage-backend health check vends credentials and reaches
-    ADLS over its private endpoint, and an elastic agent has been created, queried,
-    terminated and restarted. It has not been applied to a production environment. The
-    first apply for any environment is staged — read
-    [Before the first apply](#before-the-first-apply).
+!!! note "Maturity"
+    The topology has been applied and exercised end to end on a staging subscription: the
+    API serves, Polaris answers, a storage-backend health check vends credentials and
+    reaches ADLS over its private endpoint, and an elastic agent has been created,
+    queried, terminated and restarted. The passwordless database and registry paths are
+    newer and have not yet been through a full apply. The first apply for any environment
+    is staged — read [Before the first apply](#before-the-first-apply).
 
 ## What the network looks like
 
@@ -181,8 +181,8 @@ does not cover fails at plan time and tells you to set `location_short` yourself
 ## Before the first apply
 
 1. **Terraform state.** The `bootstrap/` stack creates the storage account holding
-   remote state. Run it once per subscription, then fill its output into
-   `envs/<env>.backend.hcl`.
+   remote state. Run it once per subscription, then fill its output into your root's
+   backend config.
 2. **An address the storage and vault firewalls will accept.** Creating the warehouse
    filesystem and writing secrets are data-plane calls, and both firewalls deny by
    default. Set `management_plane_allowed_ips` to the runner's egress address, or run
@@ -211,17 +211,22 @@ from the API replica and create the first admin, then register
 
 ## Environments and cost
 
-One root module serves every environment, selected by a `.tfvars` file and a state key,
-rather than a directory per environment — a fix applied to one environment cannot then
-miss another.
+The deployment is a callable module, `deploy/terraform/modules/duckhaven-azure/`, with
+two runnable roots beside it. `examples/production/` is the zone-redundant posture and
+serves several environments from one root — selected by a `.tfvars` file and a state key,
+rather than a directory each, so a fix applied to one environment cannot miss another.
+`examples/quickstart/` is the cheapest configuration that works.
 
-`envs/staging.tfvars` is tuned for a trial subscription: burstable PostgreSQL at the
-storage floor with no standby, a Basic registry, single small replicas, no NAT gateway,
-and a cap on log ingestion. The registry SKU costs nothing in security — access is
-managed-identity authenticated on every SKU — but the NAT gateway is a real functional
-limit: without it elastic compute cannot work at all, so it stays disabled until the
-gateway is turned on, and the configuration rejects that combination rather than letting
-agents fail to register.
+Quickstart drops SKUs and replica counts: burstable PostgreSQL at the storage floor with
+no standby, LRS storage, a Basic registry, single small replicas, and a cap on log
+ingestion. It does **not** drop the network — private endpoints, VNet injection and the
+agent subnet are identical, because agents move real data over them.
+
+Two things about it are worth stating plainly. The registry SKU costs nothing in
+security: access is managed-identity authenticated on every SKU. And the NAT gateway is
+a real functional limit rather than a saving — without it elastic compute cannot work at
+all, so both stay off together, and the module rejects that combination rather than
+letting agents fail to register.
 
 The largest saving is not a SKU choice. Everything bills for existing rather than for
 being used, so destroying an environment between test sessions saves more than any

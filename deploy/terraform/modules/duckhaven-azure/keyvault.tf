@@ -36,7 +36,7 @@ resource "azurerm_key_vault" "main" {
 }
 
 module "pe_keyvault" {
-  source = "./modules/private-endpoint"
+  source = "../private-endpoint"
 
   name                 = "pe-kv-${local.name}"
   location             = var.location

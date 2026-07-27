@@ -101,7 +101,7 @@ resource "azurerm_storage_data_lake_gen2_filesystem" "warehouse" {
 # while api/src/api/services/staging_presign.py rewrites .dfs. to .blob. to mint
 # user-delegation SAS, so both hostnames must resolve privately.
 module "pe_storage_blob" {
-  source = "./modules/private-endpoint"
+  source = "../private-endpoint"
 
   name                 = "pe-st-blob-${local.name}"
   location             = var.location
@@ -114,7 +114,7 @@ module "pe_storage_blob" {
 }
 
 module "pe_storage_dfs" {
-  source = "./modules/private-endpoint"
+  source = "../private-endpoint"
 
   name                 = "pe-st-dfs-${local.name}"
   location             = var.location

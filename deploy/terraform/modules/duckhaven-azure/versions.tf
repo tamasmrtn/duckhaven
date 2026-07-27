@@ -1,10 +1,8 @@
+# Version constraints only. A shared module must not declare a provider or a backend:
+# those belong to whichever root calls it, so that one deployment's state location and
+# credentials are not baked into the thing being reused. See examples/.
 terraform {
   required_version = ">= 1.9"
-
-  # Partial configuration: the rest comes from envs/<env>.backend.hcl, which is what
-  # keeps one root module serving several environments with isolated state.
-  #   terraform init -backend-config=envs/prod.backend.hcl
-  backend "azurerm" {}
 
   required_providers {
     azurerm = {

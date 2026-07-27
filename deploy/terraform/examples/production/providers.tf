@@ -1,10 +1,10 @@
-# The first apply against a fresh subscription may spend several minutes
-# registering resource providers (Microsoft.Network alone took ~4.5 minutes during
-# validation). That is the provider auto-registering; let it finish rather than
-# interrupting the apply.
 # The subscription comes from the environment (ARM_SUBSCRIPTION_ID, or the Azure CLI's
-# active subscription) rather than a variable. One less required input, and it cannot
+# active subscription) rather than a variable: one less required input, and it cannot
 # disagree with the credentials the apply is actually running under.
+#
+# The first apply against a fresh subscription may spend several minutes registering
+# resource providers (Microsoft.Network alone took ~4.5 minutes during validation).
+# That is the provider auto-registering; let it finish rather than interrupting.
 provider "azurerm" {
   # Data-plane calls (creating the ADLS filesystem, writing Key Vault secrets) use
   # Entra ID rather than shared keys, because the storage account sets

@@ -20,15 +20,16 @@ name_suffix = "REPLACE_ME"
 # run, so it has to exist in the registry before the apply.
 duckhaven_image_tag = "REPLACE_ME"
 
-log_retention_days = 30
-
 # Agents are provisioned into the delegated agent subnet with private addresses, so
 # their result servers are reachable only from this virtual network.
 elastic_compute_enabled = true
 
-# The public endpoints of Key Vault and the storage account stay open only to the
-# addresses listed here, and only with Entra authentication. Set this to the CI
-# runner's egress IP (`curl -s https://api.ipify.org`); set
-# allow_management_plane_public_access = false once applies run from inside the VNet.
-allow_management_plane_public_access = true
-management_plane_allowed_ips         = []
+# The Terraform runner's egress address (`curl -s https://api.ipify.org`). Without it
+# the storage firewall refuses the data-plane call that creates the warehouse
+# filesystem, and the plan fails with that explanation.
+management_plane_allowed_ips = []
+
+# Addresses notified by the alert rules. Empty disables the action group and every
+# alert with it, which is the right default only until someone is actually on the hook
+# -- an alert nobody reads trains people to ignore the channel.
+alert_email_addresses = []

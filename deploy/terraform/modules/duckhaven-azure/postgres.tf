@@ -228,7 +228,7 @@ resource "azurerm_container_app_job" "db_bootstrap" {
 
 module "pe_postgres" {
   count  = local.postgres_managed_here ? 1 : 0
-  source = "./modules/private-endpoint"
+  source = "../private-endpoint"
 
   name                 = "pe-psql-${local.name}"
   location             = var.location

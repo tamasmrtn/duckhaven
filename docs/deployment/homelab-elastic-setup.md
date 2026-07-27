@@ -31,10 +31,15 @@ does and does not buy you:**
 |---|---|
 | **Does** | Denies `/exec`, so the control plane cannot run commands inside other containers |
 | | Denies `/secrets`, `/configs`, `/swarm`, `/nodes` |
-| | Denies enumeration of this host's other containers, images and volumes |
+| | Denies `/volumes`, so it cannot enumerate storage the deployment does not own |
 | | Keeps the socket off the API container's filesystem, so a file-read bug in the API no longer hands over the daemon |
 | **Does not** | Inspect request bodies. It filters paths and methods only |
 | | Prevent a `POST /containers/create` carrying `Binds: ["/:/host"]` and `Privileged: true` — that request is indistinguishable from a legitimate agent create |
+
+It is also worth being clear about what the proxy does **not** hide. With `CONTAINERS`, `IMAGES`,
+`NETWORKS` and `INFO` granted, the control plane can list every container, image and network on
+this host and read its CPU, memory and kernel details. Those are reads it needs to do its job, but
+they cover the whole host rather than only what DuckHaven created.
 
 So the proxy narrows *what the control plane can reach*. It does not make container creation
 unprivileged, and it is not a sandbox.
@@ -57,7 +62,7 @@ equivalent notion of scope.
 
 Every section not listed here stays denied — that is the image's default, and it covers `AUTH`,
 `SECRETS`, `CONFIGS`, `EXEC`, `SWARM`, `NODES`, `TASKS`, `SERVICES`, `PLUGINS`, `VOLUMES`, `SYSTEM`,
-`INFO`, `BUILD` and `COMMIT`.
+`BUILD` and `COMMIT`.
 
 | Grant | Why the backend needs it |
 |---|---|
@@ -67,6 +72,7 @@ Every section not listed here stays denied — that is the image's default, and 
 | `ALLOW_STOP`, `ALLOW_RESTARTS` | Terminate an agent when it goes idle |
 | `IMAGES` | Pull the agent image the first time, on a host that has never run a static agent |
 | `NETWORKS` | Resolve the agent network when attaching a new container to it |
+| `INFO` | Read this host's CPU and memory, so the create-agent dialog can offer sizes it will actually run |
 
 `tests/deploy/test_compose_elastic.py` asserts both halves of this — the grants **and** the denials —
 so widening the proxy cannot land unnoticed.
@@ -99,7 +105,27 @@ This matters because the API's [statement policy](../concepts/query-execution.md
 allowlist, governs what reaches DuckDB — so the agent is contained at the OS layer instead. Anything
 less on the elastic path would be a downgrade disguised as a feature.
 
-## Sizing and cost
+## Sizing
+
+The create-agent dialog's sliders are bounded by **this host**, read from `docker info` — not by a
+fixed constant. The maximum offered is the machine's capacity minus a reserve for everything else
+on it:
+
+```text
+max vCPU  = host vCPU   - ELASTIC_DOCKER_RESERVE_CPU
+max GiB   = host memory - ELASTIC_DOCKER_RESERVE_MEMORY_GB
+```
+
+The reserve exists because a single-host deployment runs the API, Postgres, Polaris and MinIO on
+the same machine every agent lands on. Offering the whole host as an agent size would let one
+query starve the stack serving it. Both floors are 1, so a small machine still offers a usable
+size.
+
+If the daemon cannot be reached — or `INFO` is not granted on the proxy — the range falls back to
+a conservative 1–4 vCPU / 1–16 GiB rather than guessing high, since a size the platform then
+refuses surfaces as a provisioning failure minutes later instead of a narrower slider now.
+
+## Cost
 
 The admin UI shows an hourly rate per agent size. On hardware you already own the marginal hourly
 cost is zero, so the override zeroes it rather than leaving the Azure list prices it otherwise
@@ -121,8 +147,10 @@ They read `AZURE` for historical reasons but apply to whichever provider is conf
 | `ELASTIC_PROVIDER` | `null` | Set to `docker` for this backend |
 | `ELASTIC_DOCKER_HOST` | `tcp://docker-socket-proxy:2375` | Where the daemon is reached. Point it at the proxy, not at a socket |
 | `ELASTIC_DOCKER_NETWORK` | `duckhaven_internal` | The network agents are attached to |
-| `ELASTIC_DOCKER_CPU` | `2` | Default vCPU per agent when the request names no size |
-| `ELASTIC_DOCKER_MEMORY_GB` | `4` | Default memory per agent, same |
+| `ELASTIC_DOCKER_RESERVE_CPU` | `1` | vCPU held back from agent sizing for the rest of the stack |
+| `ELASTIC_DOCKER_RESERVE_MEMORY_GB` | `2` | Memory held back, same |
+| `ELASTIC_DEFAULT_CPU` | `2` | vCPU per agent when nothing names a size (provider-independent) |
+| `ELASTIC_DEFAULT_MEMORY_GB` | `4` | Memory per agent, same |
 
 The lifecycle knobs — `ELASTIC_IDLE_TIMEOUT_S`, `ELASTIC_MAX_LIFETIME_S`,
 `ELASTIC_MAX_AGENTS_PER_POOL` and the rest — are provider-independent and documented in the

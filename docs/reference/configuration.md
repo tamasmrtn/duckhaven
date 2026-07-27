@@ -169,6 +169,8 @@ Postgres advisory lock, like the scheduler, so leave it enabled on every replica
 | `ELASTIC_PROVISIONING_DEADLINE_S` | `300` | Fail an agent that never dials home within this window and clean up its instance. |
 | `ELASTIC_REAPER_TICK_S` | `30` | How often the scale-in and leak-reconciliation loop runs. |
 | `ELASTIC_MAX_AGENTS_PER_POOL` | `1` | Cap on concurrent elastic agents per storage shape. A cost guardrail. |
+| `ELASTIC_DEFAULT_CPU` | `2` | vCPU per agent when nothing names a size — pool-triggered provisioning, and restarting an agent whose row predates per-agent sizing. Provider-independent; the admin UI picks explicitly per agent. |
+| `ELASTIC_DEFAULT_MEMORY_GB` | `4` | Memory (GiB) per agent, same. Becomes a real limit the agent reads from its own cgroup to advertise capacity. |
 | `ELASTIC_CURRENCY` | `USD` | Currency label shown next to the prices below. |
 
 #### Azure Container Instances backend
@@ -182,8 +184,6 @@ Used when `ELASTIC_PROVIDER=azure_aci`. Credentials come from the ambient identi
 | `ELASTIC_AZURE_RESOURCE_GROUP` | — | Resource group they are created in. Required, and it must be dedicated: the reaper terminates every `duckhaven-managed` container group there that has no live agent row. |
 | `ELASTIC_AZURE_SUBNET_ID` | — | Resource id of a subnet delegated to `Microsoft.ContainerInstance/containerGroups`. Required. Agents are injected into it with private addresses and no public DNS name, so the subnet needs its own outbound route and the control plane must be able to route to it. |
 | `ELASTIC_AZURE_LOCATION` | `eastus` | Region the container groups are created in. |
-| `ELASTIC_AZURE_CPU` | `2` | vCPU per agent for pool-triggered provisioning; the admin UI picks a size per agent. |
-| `ELASTIC_AZURE_MEMORY_GB` | `8` | Memory (GiB) per agent, same. |
 | `ELASTIC_AZURE_PRICE_VCPU_HOUR` | `0.0486` | Per-vCPU hourly rate, used only to show a size's cost in the admin UI. Despite the name it applies to **whichever provider is configured**; zero it on a Docker host, where the marginal hourly cost is nil. |
 | `ELASTIC_AZURE_PRICE_MEMORY_GB_HOUR` | `0.0054` | Per-GiB hourly rate, same. |
 | `ELASTIC_REGISTRY_SERVER` | — | Registry host for a private agent image. Leave unset for a public image. |
@@ -201,8 +201,8 @@ proxy narrows it without making container creation unprivileged.
 |---|---|---|
 | `ELASTIC_DOCKER_HOST` | `tcp://docker-socket-proxy:2375` | Where the daemon is reached. Point it at a `docker-socket-proxy` rather than a mounted socket, so the API container never holds the socket itself. |
 | `ELASTIC_DOCKER_NETWORK` | `duckhaven_internal` | User-defined network agents are attached to. The bundled one is `internal: true`, which is what keeps an agent's result server reachable from the control plane and from nowhere off the host. |
-| `ELASTIC_DOCKER_CPU` | `2` | vCPU per agent for pool-triggered provisioning; the admin UI picks a size per agent. |
-| `ELASTIC_DOCKER_MEMORY_GB` | `4` | Memory (GiB) per agent, same. Becomes a real container memory limit, which the agent reads from its own cgroup to advertise capacity. |
+| `ELASTIC_DOCKER_RESERVE_CPU` | `1` | vCPU held back from agent sizing for the rest of the stack. The API, Postgres, Polaris and MinIO share the machine every agent is provisioned onto, so the maximum the UI offers is the host's capacity **minus** this. |
+| `ELASTIC_DOCKER_RESERVE_MEMORY_GB` | `2` | Memory (GiB) held back, same reasoning. |
 
 Provisioned agents reproduce the static agent's sandbox — read-only root, `no-new-privileges`, all
 capabilities dropped, a pids cap — so an agent you are given is contained exactly as tightly as one

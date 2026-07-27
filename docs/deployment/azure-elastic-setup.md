@@ -106,8 +106,8 @@ ELASTIC_AZURE_RESOURCE_GROUP=duckhaven-agents
 ELASTIC_AZURE_LOCATION=eastus
 # The delegated subnet agents are placed in, as a full resource id. Required.
 ELASTIC_AZURE_SUBNET_ID=/subscriptions/<sub>/resourceGroups/<network-rg>/providers/Microsoft.Network/virtualNetworks/<vnet>/subnets/<subnet>
-ELASTIC_AZURE_CPU=2
-ELASTIC_AZURE_MEMORY_GB=8
+ELASTIC_DEFAULT_CPU=2
+ELASTIC_DEFAULT_MEMORY_GB=4
 ```
 
 If the agent image lives in a private registry, point DuckHaven at a user-assigned managed identity

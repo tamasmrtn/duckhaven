@@ -1,10 +1,17 @@
 variable "environment" {
-  description = "Environment name; part of every resource name and the state key."
+  description = <<-EOT
+    Environment name; part of every resource name and the state key. Exactly three
+    lowercase alphanumeric characters -- dev, tst, acp, stg, prd.
+
+    Fixed-length on purpose. Key Vault names cap at 24 characters and the convention
+    lands on exactly 24, so a four-character environment would not fit. See the naming
+    notes in locals.tf.
+  EOT
   type        = string
 
   validation {
-    condition     = can(regex("^[a-z0-9]{2,10}$", var.environment))
-    error_message = "environment must be 2-10 lowercase alphanumeric characters."
+    condition     = can(regex("^[a-z0-9]{3}$", var.environment))
+    error_message = "environment must be exactly 3 lowercase alphanumeric characters (e.g. dev, stg, prd)."
   }
 }
 
@@ -24,26 +31,38 @@ variable "location" {
 
 variable "location_short" {
   description = <<-EOT
-    Short region code used in globally-unique resource names, which are length-capped.
-    Leave null to derive it from `location` -- set it only for a region the lookup in
-    locals.tf does not cover, where the apply will tell you it is required.
+    Three-character region code, the fourth segment of every resource name. Leave null
+    to derive it from `location` -- set it only for a region the lookup in locals.tf
+    does not cover, where the plan will tell you it is required.
   EOT
   type        = string
   default     = null
+
+  validation {
+    condition     = var.location_short == null || can(regex("^[a-z0-9]{3}$", var.location_short))
+    error_message = "location_short must be exactly 3 lowercase alphanumeric characters."
+  }
 }
 
 variable "name_suffix" {
   description = <<-EOT
-    Suffix for globally-unique names (storage account, registry, key vault). Keep it
-    stable for the lifetime of an environment: these names stay reserved during the
-    soft-delete window, so changing it is the documented way to recover from a
+    Final segment of every resource name, making the globally-scoped ones (storage
+    account, registry, key vault, PostgreSQL server) unique to you. Exactly three
+    lowercase alphanumeric characters, for the same length reason as `environment`.
+
+    Keep it stable for the lifetime of an environment: these names stay reserved during
+    the soft-delete window, so changing it is the documented way to recover from a
     destroy/apply cycle that collides with a soft-deleted name.
+
+    Three characters is 46,656 combinations against a namespace shared with every Azure
+    tenant, so a collision on `st<env>duckhaven<region><suffix>` is possible -- the
+    apply fails with a name-taken error, and you pick another.
   EOT
   type        = string
 
   validation {
-    condition     = can(regex("^[a-z0-9]{4,8}$", var.name_suffix))
-    error_message = "name_suffix must be 4-8 lowercase alphanumeric characters."
+    condition     = can(regex("^[a-z0-9]{3}$", var.name_suffix))
+    error_message = "name_suffix must be exactly 3 lowercase alphanumeric characters."
   }
 }
 
@@ -95,7 +114,8 @@ variable "postgres_existing_server_fqdn" {
     server must be reachable from the Container Apps subnet, and -- since the API
     authenticates with its managed identity -- the server must have Microsoft Entra
     authentication enabled with a login role for the API identity
-    (`id-duckhaven-api-<environment>`). See docs/deployment/azure-terraform.md.
+    (`id-<env>-duckhaven-api-<region>-<suffix>`, printed by the api_identity_name
+    output). See docs/deployment/azure-terraform.md.
   EOT
   type        = string
   default     = null

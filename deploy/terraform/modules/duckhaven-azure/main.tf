@@ -40,7 +40,7 @@ resource "azurerm_resource_group" "main" {
 # (api/src/api/services/compute/reaper.py::_reconcile_leaks). Nothing else may
 # share it.
 resource "azurerm_resource_group" "agents" {
-  name     = "rg-duckhaven-agents-${var.environment}-${local.location_short}"
+  name     = "rg-${var.environment}-${local.workload}-agents-${local.name_tail}"
   location = var.location
   tags     = merge(local.tags, { purpose = "elastic-agents" })
 }

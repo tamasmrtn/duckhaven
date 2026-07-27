@@ -28,8 +28,8 @@ internet; everything else is private or internal.
                            ▼
    ┌──────────────────────────────────────────────────────┐
    │ Container Apps environment (VNet-injected, zonal)    │
-   │   api      external ingress :8000                    │
-   │   polaris  internal ingress :8181                    │
+   │   ca-<env>-api-…      external ingress :8000         │
+   │   ca-<env>-polaris-…  internal ingress :8181         │
    └────────┬──────────────────────────────┬──────────────┘
   agent     │  http :8001, intra-VNet      │  private endpoints
   subnet    ▼                              ▼
@@ -77,6 +77,21 @@ endpoint is rejected before a container is ever scheduled. The registry therefor
 its public endpoint — but issues no credentials. The admin user is disabled and every
 pull is authenticated by a managed identity holding `AcrPull`, including the container
 groups, which each carry an identity and pull as themselves.
+
+## Naming
+
+Every resource is named `<abbr>-<env>-<workload>-<region>-<suffix>` —
+`kv-prd-duckhaven-frc-wej` — following the Cloud Adoption Framework, with the
+resource-type abbreviation leading so a resource group listing sorts by type. Storage
+accounts and container registries concatenate the same components, because their names
+admit no hyphens. Resources scoped inside a parent that already names the workload —
+subnets, container apps and jobs — drop that segment, which is also what keeps a
+container app inside its 32-character limit.
+
+`environment`, the region code and `name_suffix` are each exactly three characters,
+because `kv-prd-duckhaven-frc-wej` is exactly 24 and 24 is the Key Vault maximum. The
+names that could overflow are asserted at plan time. `deploy/terraform/README.md` has
+the full table.
 
 ## Identity
 
@@ -135,7 +150,7 @@ become yours to provide:
   `postgres_polaris_database_name`),
 - the server must be reachable from the Container Apps subnet,
 - Microsoft Entra authentication must be enabled, with a login role for the API's
-  identity — `id-duckhaven-api-<environment>` — holding `CONNECT` on the DuckHaven
+  identity — `terraform output -raw api_identity_name` — holding `CONNECT` on the DuckHaven
   database and `USAGE, CREATE` on its `public` schema, since the API runs its own
   migrations.
 
@@ -203,13 +218,14 @@ re-run:
 
 ```sh
 RG="$(terraform output -raw resource_group_name)"
-az containerapp job start -n db-bootstrap      -g "$RG"
-az containerapp job start -n polaris-bootstrap -g "$RG"
+az containerapp job start -n "$(terraform output -raw db_bootstrap_job_name)"      -g "$RG"
+az containerapp job start -n "$(terraform output -raw polaris_bootstrap_job_name)" -g "$RG"
 ```
 
-`db-bootstrap` creates the API's Entra login role — **the API cannot start until it has
-run**, since an identity that can authenticate still cannot log in without a database
-role. `polaris-bootstrap` creates the Polaris realm and root principal.
+The database job creates the API's Entra login role — **the API cannot start until it
+has run**, since an identity that can authenticate still cannot log in without a
+database role. The Polaris job creates the realm and root principal. Job names carry the
+environment, region and suffix, which is why they come from outputs.
 
 Finally create the first admin with `terraform output -raw setup_token`, and register
 `terraform output -raw warehouse_root_uri` as an `adls_gen2` storage backend with

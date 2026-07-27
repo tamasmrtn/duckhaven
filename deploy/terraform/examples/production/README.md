@@ -10,15 +10,15 @@ available while one is replaced.
 ```sh
 export ARM_SUBSCRIPTION_ID=<your subscription>
 
-terraform init -backend-config=envs/prod.backend.hcl
-terraform apply -var-file=envs/prod.tfvars
+terraform init -backend-config=envs/prd.backend.hcl
+terraform apply -var-file=envs/prd.tfvars
 ```
 
 Switching environments re-initialises the backend:
 
 ```sh
-terraform init -reconfigure -backend-config=envs/staging.backend.hcl
-terraform apply -var-file=envs/staging.tfvars
+terraform init -reconfigure -backend-config=envs/stg.backend.hcl
+terraform apply -var-file=envs/stg.tfvars
 ```
 
 ## One root, several environments
@@ -27,7 +27,7 @@ Rather than a directory per environment. Duplicated roots drift: a fix applied t
 silently misses staging. Environments differ only by their `.tfvars` and their state
 key.
 
-`envs/staging.tfvars` is therefore **production-shaped**, and costs roughly what
+`envs/stg.tfvars` is therefore **production-shaped**, and costs roughly what
 production costs. That is deliberate — an environment that differs from production does
 not verify production. For a cheap environment to try DuckHaven in, use
 [`../quickstart`](../quickstart), which keeps the same network topology and drops the

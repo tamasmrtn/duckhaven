@@ -1,4 +1,4 @@
-environment = "prod"
+environment = "prd"
 
 # Verify your subscription can actually provision PostgreSQL Flexible Server in this
 # region before applying -- it is offer-restricted in some regions on some
@@ -8,9 +8,9 @@ environment = "prod"
 # are available.
 location = "REPLACE_ME"
 
-# Suffix for globally-unique names (storage account, registry, key vault). Pick 4-8
-# lowercase alphanumeric characters and keep it stable: those names stay reserved
-# during their soft-delete window, so changing it is how you recover from a
+# Final segment of every resource name, making the globally-scoped ones unique to
+# you. Exactly 3 lowercase alphanumeric characters. Keep it stable: those names stay
+# reserved during their soft-delete window, so changing it is how you recover from a
 # destroy/apply name collision.
 name_suffix = "REPLACE_ME"
 

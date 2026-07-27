@@ -44,6 +44,13 @@ resource "azurerm_storage_account" "warehouse" {
   }
 
   tags = local.tags
+
+  lifecycle {
+    precondition {
+      condition     = length("st${local.name_short}") <= 24
+      error_message = "Storage account name \"st${local.name_short}\" is ${length("st${local.name_short}")} characters; the maximum is 24."
+    }
+  }
 }
 
 # ── Deployer access ───────────────────────────────────────────────────────────
@@ -103,7 +110,7 @@ resource "azurerm_storage_data_lake_gen2_filesystem" "warehouse" {
 module "pe_storage_blob" {
   source = "../private-endpoint"
 
-  name                 = "pe-st-blob-${local.name}"
+  name                 = "pep-${var.environment}-st-blob-${local.name_tail}"
   location             = var.location
   resource_group_name  = azurerm_resource_group.main.name
   subnet_id            = azurerm_subnet.pe.id
@@ -116,7 +123,7 @@ module "pe_storage_blob" {
 module "pe_storage_dfs" {
   source = "../private-endpoint"
 
-  name                 = "pe-st-dfs-${local.name}"
+  name                 = "pep-${var.environment}-st-dfs-${local.name_tail}"
   location             = var.location
   resource_group_name  = azurerm_resource_group.main.name
   subnet_id            = azurerm_subnet.pe.id

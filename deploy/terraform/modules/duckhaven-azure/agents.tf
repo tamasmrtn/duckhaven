@@ -13,7 +13,7 @@ data "azurerm_subscription" "current" {}
 resource "azurerm_role_definition" "elastic_agents" {
   # Scoped per environment: role definition names must be unique, so a shared
   # subscription hosting both prod and staging would otherwise collide.
-  name        = "DuckHaven Elastic Agents (${var.environment})"
+  name        = "DuckHaven Elastic Agents (${local.name})"
   scope       = data.azurerm_subscription.current.id
   description = "Create, read and delete DuckHaven elastic agent container groups, and join them to the agent subnet."
 

@@ -63,6 +63,63 @@ exception is `private-endpoint`, which has four.
 Pick an example and apply it, or copy one as the starting point for your own root. The
 two differ only in what they pass to the module — see each one's README.
 
+## Naming
+
+Every resource follows one pattern, based on the Cloud Adoption Framework's
+[resource naming guidance][caf]:
+
+[caf]: https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/ready/azure-best-practices/resource-naming
+
+```text
+<abbr>-<env>-<workload>-<region>-<suffix>        kv-prd-duckhaven-frc-wej
+```
+
+The resource-type abbreviation leads, so a resource group listing sorts by type. The
+abbreviations are CAF's own — `rg`, `kv`, `st`, `cr`, `cae`, `ca`, `caj`, `pgsql`,
+`vnet`, `snet`, `nsg`, `pip`, `ng`, `pep`, `id`, `log`, `ag`.
+
+Two deviations, both forced by Azure:
+
+**Storage accounts and container registries take no hyphens** — their names admit only
+letters and digits. They use the same components concatenated: `stprdduckhavenfrcwej`.
+
+**Resources scoped inside a parent that already names the workload drop that segment.**
+Subnets live in `vnet-prd-duckhaven-frc-wej`; apps and jobs live in
+`cae-prd-duckhaven-frc-wej`. So they are `snet-prd-aca-frc-wej` and
+`ca-prd-api-frc-wej`. This is not only brevity: a container app's name is capped at 32
+characters *and* becomes its public DNS label, which is the hostname your users see.
+
+### Every component is fixed-length, because Key Vault is
+
+`kv-prd-duckhaven-frc-wej` is exactly 24 characters, and 24 is the Key Vault maximum.
+There is no headroom at all, which is why `environment`, `location_short` and
+`name_suffix` are each validated to exactly three characters and why the workload name
+is a constant rather than a variable.
+
+The four names that could realistically overflow — Key Vault (24), the storage account
+(24), and the two container apps and two jobs (32) — carry `precondition` blocks that
+fail at plan time with the arithmetic, rather than letting Azure reject them partway
+through an apply.
+
+| Resource | Example | Limit |
+|---|---|---|
+| Key vault | `kv-prd-duckhaven-frc-wej` | 24 / **24** |
+| Storage account | `stprdduckhavenfrcwej` | 20 / 24 |
+| Container registry | `crprdduckhavenfrcwej` | 20 / 50 |
+| PostgreSQL server | `pgsql-prd-duckhaven-frc-wej` | 27 / 63 |
+| Container apps environment | `cae-prd-duckhaven-frc-wej` | 25 / 60 |
+| Container app | `ca-prd-api-frc-wej` | 18 / 32 |
+| Container app job | `caj-prd-polaris-boot-frc-wej` | 28 / 32 |
+| Managed identity | `id-prd-duckhaven-api-frc-wej` | 28 / 128 |
+| Virtual network | `vnet-prd-duckhaven-frc-wej` | 26 / 64 |
+| Subnet | `snet-prd-aca-frc-wej` | 20 / 80 |
+| Private endpoint | `pep-prd-st-blob-frc-wej` | 23 / 64 |
+
+Names that are *not* on the convention are functional identifiers rather than inventory
+keys: the two database names (`duckhaven`, `polaris`) and the ADLS filesystem
+(`warehouse`) appear in application configuration, the private DNS zones must be exactly
+`privatelink.*`, and the NSG rules are named for what they do.
+
 ## Authentication
 
 Four user-assigned managed identities do all the work, and none of them holds a stored
@@ -70,10 +127,10 @@ credential.
 
 | Identity | Holds | Used for |
 |---|---|---|
-| `id-duckhaven-api-<env>` | AcrPull, Key Vault Secrets User, Storage Blob Data Contributor + Delegator, the custom elastic-agent role | Pulling its image, reading secrets, connecting to Postgres, signing staging URLs, creating agent container groups |
-| `id-duckhaven-polaris-<env>` | AcrPull, Key Vault Secrets User, Storage Blob Data Contributor + Delegator | Pulling its image, reading secrets, minting the SAS it vends to agents |
-| `id-duckhaven-agent-<env>` | AcrPull | Carried by every provisioned container group; how it pulls its image |
-| `id-duckhaven-dbadmin-<env>` | AcrPull, and Entra administrator *on the server* | One job, once, creating the API's login role |
+| `id-<env>-duckhaven-api-<region>-<suffix>` | AcrPull, Key Vault Secrets User, Storage Blob Data Contributor + Delegator, the custom elastic-agent role | Pulling its image, reading secrets, connecting to Postgres, signing staging URLs, creating agent container groups |
+| `id-<env>-duckhaven-polaris-<region>-<suffix>` | AcrPull, Key Vault Secrets User, Storage Blob Data Contributor + Delegator | Pulling its image, reading secrets, minting the SAS it vends to agents |
+| `id-<env>-duckhaven-agent-<region>-<suffix>` | AcrPull | Carried by every provisioned container group; how it pulls its image |
+| `id-<env>-duckhaven-dbadmin-<region>-<suffix>` | AcrPull, and Entra administrator *on the server* | One job, once, creating the API's login role |
 
 **The database.** Azure Database for PostgreSQL accepts a Microsoft Entra access token in
 the password field, so the API connects as its own identity and the driver mints a token
@@ -125,8 +182,8 @@ make bootstrap ROOT=examples/quickstart
 make outputs   ROOT=examples/quickstart   # prints what is left to do
 ```
 
-`examples/production` is the same, with `BACKEND=envs/prod.backend.hcl` and
-`VARS=envs/prod.tfvars`; switching environments there needs `terraform init -reconfigure`.
+`examples/production` is the same, with `BACKEND=envs/prd.backend.hcl` and
+`VARS=envs/prd.tfvars`; switching environments there needs `terraform init -reconfigure`.
 
 The plain Terraform commands are in each example's README if you would rather not use
 `make`.
@@ -189,11 +246,11 @@ database before the thing that uses it starts. Both are safe to re-run.
 make bootstrap ROOT=examples/quickstart
 ```
 
-- **`db-bootstrap`** creates the API's Microsoft Entra login role. **The API cannot
+- **The database job** (`caj-<env>-db-boot-…`) creates the API's Microsoft Entra login role. **The API cannot
   start until this has run** — an Entra identity can authenticate to the server but
   cannot log in without a database role, so replicas fail their startup probe until it
   exists. Terraform can guarantee the job exists, not that it has been run.
-- **`polaris-bootstrap`** creates the Polaris realm and root principal. The admin tool
+- **The Polaris job** (`caj-<env>-polaris-boot-…`) creates the Polaris realm and root principal. The admin tool
   exits 3 when the realm already exists, and the job's command treats that as success —
   the same contract as `deploy/polaris-bootstrap.sh`.
 

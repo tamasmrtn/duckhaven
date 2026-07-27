@@ -150,12 +150,12 @@ output "next_steps" {
 
     # 2. Create the API's database login role. Must succeed before the API can start.
     ${local.postgres_managed_here
-  ? "az containerapp job start -n db-bootstrap -g ${azurerm_resource_group.main.name}"
+  ? "az containerapp job start -n ${one(azurerm_container_app_job.db_bootstrap[*].name)} -g ${azurerm_resource_group.main.name}"
   : "# Skipped: you own the server. Create a login role for ${azurerm_user_assigned_identity.api.name} yourself."}
 
     # 3. Create the Polaris realm and root principal. Safe to re-run.
     ${var.polaris_enabled
-  ? "az containerapp job start -n polaris-bootstrap -g ${azurerm_resource_group.main.name}"
+  ? "az containerapp job start -n ${one(azurerm_container_app_job.polaris_bootstrap[*].name)} -g ${azurerm_resource_group.main.name}"
 : "# Skipped: using an external Polaris at ${local.polaris_url}."}
 
     # 4. Create the first admin.
@@ -168,4 +168,22 @@ output "next_steps" {
     #    hierarchical = true and this root URI, then run Test access:
     #    abfss://${azurerm_storage_data_lake_gen2_filesystem.warehouse.name}@${azurerm_storage_account.warehouse.name}.dfs.core.windows.net/duckhaven/
   EOT
+}
+
+output "db_bootstrap_job_name" {
+  description = "Manual-trigger job that creates the API's Entra login role. Null when the server is not managed here."
+  value       = one(azurerm_container_app_job.db_bootstrap[*].name)
+}
+
+output "polaris_bootstrap_job_name" {
+  description = "Manual-trigger job that creates the Polaris realm and root principal. Null when Polaris is not deployed here."
+  value       = one(azurerm_container_app_job.polaris_bootstrap[*].name)
+}
+
+output "api_identity_name" {
+  description = <<-EOT
+    The API's managed identity, and therefore its PostgreSQL login role name. Needed by
+    hand only when bringing your own server, where creating that role is yours to do.
+  EOT
+  value       = azurerm_user_assigned_identity.api.name
 }

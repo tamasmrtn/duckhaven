@@ -28,3 +28,13 @@ output "next_steps" {
   description = "The commands to run after this apply, with every name already filled in."
   value       = module.duckhaven.next_steps
 }
+
+output "db_bootstrap_job_name" {
+  description = "Manual-trigger job that creates the API's Entra login role."
+  value       = module.duckhaven.db_bootstrap_job_name
+}
+
+output "polaris_bootstrap_job_name" {
+  description = "Manual-trigger job that creates the Polaris realm and root principal."
+  value       = module.duckhaven.polaris_bootstrap_job_name
+}

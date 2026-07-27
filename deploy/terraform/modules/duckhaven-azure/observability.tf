@@ -118,7 +118,7 @@ resource "azurerm_monitor_action_group" "main" {
 resource "azurerm_monitor_metric_alert" "postgres_storage" {
   count = local.postgres_managed_here && length(var.alert_email_addresses) > 0 ? 1 : 0
 
-  name                = "alert-psql-storage-${local.name}"
+  name                = "alert-${var.environment}-pgsql-storage-${local.name_tail}"
   resource_group_name = azurerm_resource_group.main.name
   scopes              = [azurerm_postgresql_flexible_server.main[0].id]
   description         = "PostgreSQL storage is nearly full. A full disk takes the server read-only."
@@ -144,7 +144,7 @@ resource "azurerm_monitor_metric_alert" "postgres_storage" {
 resource "azurerm_monitor_metric_alert" "postgres_cpu" {
   count = local.postgres_managed_here && length(var.alert_email_addresses) > 0 ? 1 : 0
 
-  name                = "alert-psql-cpu-${local.name}"
+  name                = "alert-${var.environment}-pgsql-cpu-${local.name_tail}"
   resource_group_name = azurerm_resource_group.main.name
   scopes              = [azurerm_postgresql_flexible_server.main[0].id]
   description         = "PostgreSQL CPU is saturated; the control plane will feel slow."
@@ -174,7 +174,7 @@ resource "azurerm_monitor_metric_alert" "postgres_cpu" {
 resource "azurerm_monitor_scheduled_query_rules_alert_v2" "elastic_provision_failed" {
   count = length(var.alert_email_addresses) > 0 ? 1 : 0
 
-  name                 = "alert-elastic-provision-${local.name}"
+  name                 = "alert-${var.environment}-elastic-provision-${local.name_tail}"
   resource_group_name  = azurerm_resource_group.main.name
   location             = var.location
   scopes               = [azurerm_log_analytics_workspace.main.id]
@@ -186,7 +186,7 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "elastic_provision_fai
   criteria {
     query                   = <<-KQL
       ContainerAppConsoleLogs_CL
-      | where ContainerAppName_s == "api"
+      | where ContainerAppName_s == "${local.api_app_name}"
       | where Log_s has "Elastic provision failed"
     KQL
     time_aggregation_method = "Count"
@@ -211,7 +211,7 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "elastic_provision_fai
 resource "azurerm_monitor_scheduled_query_rules_alert_v2" "elastic_agents_long_lived" {
   count = length(var.alert_email_addresses) > 0 ? 1 : 0
 
-  name                 = "alert-elastic-longlived-${local.name}"
+  name                 = "alert-${var.environment}-elastic-longlived-${local.name_tail}"
   resource_group_name  = azurerm_resource_group.main.name
   location             = var.location
   scopes               = [azurerm_log_analytics_workspace.main.id]

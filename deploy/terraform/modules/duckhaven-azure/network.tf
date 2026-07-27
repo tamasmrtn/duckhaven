@@ -9,7 +9,7 @@ resource "azurerm_virtual_network" "main" {
 # ── Subnets ───────────────────────────────────────────────────────────────────
 
 resource "azurerm_subnet" "aca" {
-  name                 = "snet-aca"
+  name                 = "snet-${var.environment}-aca-${local.name_tail}"
   resource_group_name  = azurerm_resource_group.main.name
   virtual_network_name = azurerm_virtual_network.main.name
   address_prefixes     = [var.subnet_prefix_aca]
@@ -25,7 +25,7 @@ resource "azurerm_subnet" "aca" {
 }
 
 resource "azurerm_subnet" "pe" {
-  name                 = "snet-pe"
+  name                 = "snet-${var.environment}-pe-${local.name_tail}"
   resource_group_name  = azurerm_resource_group.main.name
   virtual_network_name = azurerm_virtual_network.main.name
   address_prefixes     = [var.subnet_prefix_pe]
@@ -37,7 +37,7 @@ resource "azurerm_subnet" "pe" {
 }
 
 resource "azurerm_subnet" "aci" {
-  name                 = "snet-aci"
+  name                 = "snet-${var.environment}-aci-${local.name_tail}"
   resource_group_name  = azurerm_resource_group.main.name
   virtual_network_name = azurerm_virtual_network.main.name
   address_prefixes     = [var.subnet_prefix_aci]
@@ -62,7 +62,7 @@ resource "azurerm_subnet" "aci" {
 resource "azurerm_public_ip" "natgw" {
   count = var.nat_gateway_enabled ? 1 : 0
 
-  name                = "pip-natgw-${local.name}"
+  name                = "pip-${var.environment}-ng-${local.name_tail}"
   location            = var.location
   resource_group_name = azurerm_resource_group.main.name
   allocation_method   = "Static"
@@ -74,7 +74,7 @@ resource "azurerm_public_ip" "natgw" {
 resource "azurerm_nat_gateway" "main" {
   count = var.nat_gateway_enabled ? 1 : 0
 
-  name                    = "natgw-${local.name}"
+  name                    = "ng-${local.name}"
   location                = var.location
   resource_group_name     = azurerm_resource_group.main.name
   sku_name                = "Standard"
@@ -113,7 +113,7 @@ resource "azurerm_subnet_nat_gateway_association" "aca" {
 # connectivity, an incorrect rule breaks ingress in ways that are hard to diagnose,
 # and the meaningful restriction lives here instead.
 resource "azurerm_network_security_group" "aci" {
-  name                = "nsg-aci-${local.name}"
+  name                = "nsg-${var.environment}-aci-${local.name_tail}"
   location            = var.location
   resource_group_name = azurerm_resource_group.main.name
   tags                = local.tags
@@ -233,7 +233,7 @@ resource "azurerm_private_dns_zone" "main" {
 resource "azurerm_private_dns_zone_virtual_network_link" "main" {
   for_each = local.private_dns_zones
 
-  name                  = "link-${each.key}"
+  name                  = "link-${var.environment}-${each.key}-${local.name_tail}"
   resource_group_name   = azurerm_resource_group.main.name
   private_dns_zone_name = azurerm_private_dns_zone.main[each.key].name
   virtual_network_id    = azurerm_virtual_network.main.id

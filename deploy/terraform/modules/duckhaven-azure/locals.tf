@@ -1,19 +1,57 @@
 locals {
-  # Short codes for the regions this deployment has been reasoned about in. Not
-  # exhaustive on purpose -- Azure has sixty-odd regions and inventing an abbreviation
-  # for one nobody has tried here would imply it had been. An uncovered region is
-  # handled by setting location_short explicitly.
+  # ── Naming convention ───────────────────────────────────────────────────────
+  #
+  #   <abbr>-<env>-<workload>-<region>-<suffix>        kv-prd-duckhaven-frc-wej
+  #
+  # Following the Cloud Adoption Framework: the resource-type abbreviation leads, so a
+  # resource group listing sorts by type, and components are hyphen-separated. The
+  # abbreviations themselves are CAF's own (rg, kv, st, cr, cae, ca, caj, pgsql, vnet,
+  # snet, nsg, pip, ng, pep, id, log, ag).
+  #
+  # Three resource types cannot take hyphens at all -- storage accounts and container
+  # registries accept only letters and digits -- so they use `name_short`, the same
+  # components concatenated.
+  #
+  # Resources scoped inside a parent that already carries the workload name (subnets in
+  # the VNet, apps and jobs in the Container Apps environment) drop the workload segment:
+  # `snet-prd-aca-frc-wej`, `ca-prd-api-frc-wej`. That is not only brevity -- a container
+  # app's name is also its public DNS label, and the type caps at 32 characters.
+  #
+  # Key Vault is the binding constraint at 24 characters, and the default components
+  # land on exactly 24. There is no headroom: a longer environment, workload or suffix
+  # breaks it, which is why every one of them is fixed-length and why keyvault.tf
+  # asserts the result at plan time rather than letting Azure reject it mid-apply.
+
+  workload = "duckhaven"
+
+  # Exactly three characters each, per the convention. Not exhaustive on purpose --
+  # Azure has sixty-odd regions, and inventing an abbreviation for one nobody has tried
+  # here would imply it had been. An uncovered region is handled by setting
+  # location_short explicitly.
+  #
+  # Three characters is also what makes the US regions distinguishable: at two they all
+  # collapse to a letter plus "us".
   location_short_codes = {
     francecentral      = "frc"
     germanywestcentral = "gwc"
     westeurope         = "weu"
     northeurope        = "neu"
     swedencentral      = "sdc"
+    switzerlandnorth   = "chn"
+    norwayeast         = "nwe"
     uksouth            = "uks"
+    ukwest             = "ukw"
     eastus             = "eus"
-    eastus2            = "eus2"
-    westus2            = "wus2"
+    eastus2            = "eu2"
+    westus             = "wus"
+    westus2            = "wu2"
+    westus3            = "wu3"
     centralus          = "cus"
+    southcentralus     = "scu"
+    canadacentral      = "cnc"
+    australiaeast      = "aue"
+    southeastasia      = "sea"
+    japaneast          = "jpe"
   }
 
   # Empty rather than null when the region is uncovered, so the precondition in
@@ -23,16 +61,26 @@ locals {
     : lookup(local.location_short_codes, var.location, "")
   )
 
-  # Long form for resources whose names only need to be unique in the subscription.
-  name = "duckhaven-${var.environment}-${local.location_short}"
+  # The uniqueness tail, shared by every name. The region because one workload can be
+  # deployed to several; the suffix because storage accounts, key vaults and registries
+  # share a single global namespace with every other Azure tenant.
+  name_tail = "${local.location_short}-${var.name_suffix}"
 
-  # Short form for globally-unique names, which are length-capped (storage accounts
-  # allow 24 characters, key vaults 24). "dh" keeps headroom for the suffix.
-  name_short = "dh${var.environment}${var.name_suffix}"
+  # <env>-<workload>-<region>-<suffix>. Call sites prefix the CAF abbreviation:
+  # "kv-${local.name}" -> kv-prd-duckhaven-frc-wej.
+  name = "${var.environment}-${local.workload}-${local.name_tail}"
+
+  # The same components with no separators, for storage accounts and container
+  # registries, whose names admit only letters and digits.
+  name_short = "${var.environment}${local.workload}${local.location_short}${var.name_suffix}"
+
+  # <env>-<region>-<suffix>, for resources scoped inside a parent that already names the
+  # workload. Call sites insert the role: "snet-${var.environment}-aca-${local.name_tail}".
+  # Kept as a comment rather than a local because the role sits in the middle.
 
   tags = merge(
     {
-      app        = "duckhaven"
+      app        = local.workload
       env        = var.environment
       managed-by = "terraform"
     },
@@ -78,12 +126,18 @@ locals {
   polaris_image            = "${azurerm_container_registry.main.login_server}/polaris:${var.polaris_image_tag}"
   polaris_admin_tool_image = "${azurerm_container_registry.main.login_server}/polaris-admin-tool:${var.polaris_image_tag}"
 
+  # Container app names. Scoped inside the environment, which already carries the
+  # workload name, so they drop that segment -- and they have to, because a container
+  # app's name is capped at 32 characters *and* becomes its public DNS label.
+  api_app_name     = "ca-${var.environment}-api-${local.name_tail}"
+  polaris_app_name = "ca-${var.environment}-polaris-${local.name_tail}"
+
   # The API's own public hostname, built from the environment's domain rather than read
   # off the app resource. Reading it back would make ELASTIC_CONTROL_PLANE_URL -- an
   # environment variable *on that app* -- depend on the app itself, which is a dependency
   # cycle Terraform cannot resolve. The domain is known as soon as the environment
   # exists, and an external-ingress app is always <name>.<domain>.
-  api_fqdn = "api.${azurerm_container_app_environment.main.default_domain}"
+  api_fqdn = "${local.api_app_name}.${azurerm_container_app_environment.main.default_domain}"
 
   # Polaris' hostname, which depends on how it has to be reached.
   #
@@ -108,8 +162,8 @@ locals {
   polaris_url = (!var.polaris_enabled
     ? var.polaris_external_base_url
     : (var.elastic_compute_enabled
-      ? "https://polaris.${azurerm_container_app_environment.main.default_domain}"
-      : "https://polaris.internal.${azurerm_container_app_environment.main.default_domain}"
+      ? "https://${local.polaris_app_name}.${azurerm_container_app_environment.main.default_domain}"
+      : "https://${local.polaris_app_name}.internal.${azurerm_container_app_environment.main.default_domain}"
     )
   )
 

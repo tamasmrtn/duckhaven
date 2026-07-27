@@ -1,10 +1,10 @@
-# terraform init -backend-config=envs/prod.backend.hcl
+# terraform init -backend-config=envs/prd.backend.hcl
 #
 # Fill in storage_account_name from the bootstrap stack's backend_config output.
 resource_group_name  = "rg-duckhaven-tfstate"
 storage_account_name = "REPLACE_ME"
 container_name       = "tfstate"
-key                  = "prod.terraform.tfstate"
+key                  = "prd.terraform.tfstate"
 
 # No account key: the backend authenticates as the caller's Entra identity, matching
 # shared_access_key_enabled = false on the state account.

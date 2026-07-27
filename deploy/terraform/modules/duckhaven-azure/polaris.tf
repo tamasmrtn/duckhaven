@@ -3,7 +3,7 @@
 resource "azurerm_user_assigned_identity" "polaris" {
   count = var.polaris_enabled ? 1 : 0
 
-  name                = "id-duckhaven-polaris-${var.environment}"
+  name                = "id-${var.environment}-${local.workload}-polaris-${local.name_tail}"
   resource_group_name = azurerm_resource_group.main.name
   location            = var.location
   tags                = local.tags
@@ -22,7 +22,7 @@ resource "azurerm_user_assigned_identity" "polaris" {
 resource "azurerm_container_app_job" "polaris_bootstrap" {
   count = var.polaris_enabled ? 1 : 0
 
-  name                         = "polaris-bootstrap"
+  name                         = "caj-${var.environment}-polaris-boot-${local.name_tail}"
   resource_group_name          = azurerm_resource_group.main.name
   location                     = var.location
   container_app_environment_id = azurerm_container_app_environment.main.id
@@ -126,6 +126,13 @@ resource "azurerm_container_app_job" "polaris_bootstrap" {
     }
   }
 
+  lifecycle {
+    precondition {
+      condition     = length("caj-${var.environment}-polaris-boot-${local.name_tail}") <= 32
+      error_message = "Container app job name \"caj-${var.environment}-polaris-boot-${local.name_tail}\" exceeds the 32-character maximum."
+    }
+  }
+
   tags = local.tags
 
   depends_on = [
@@ -141,7 +148,7 @@ resource "azurerm_container_app_job" "polaris_bootstrap" {
 resource "azurerm_container_app" "polaris" {
   count = var.polaris_enabled ? 1 : 0
 
-  name                         = "polaris"
+  name                         = local.polaris_app_name
   resource_group_name          = azurerm_resource_group.main.name
   container_app_environment_id = azurerm_container_app_environment.main.id
   workload_profile_name        = local.aca_workload_profile
@@ -298,6 +305,13 @@ resource "azurerm_container_app" "polaris" {
         failure_count_threshold = 5
         success_count_threshold = 1
       }
+    }
+  }
+
+  lifecycle {
+    precondition {
+      condition     = length(local.polaris_app_name) <= 32
+      error_message = "Container app name \"${local.polaris_app_name}\" is ${length(local.polaris_app_name)} characters; the maximum is 32."
     }
   }
 

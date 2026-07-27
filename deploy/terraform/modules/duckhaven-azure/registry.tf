@@ -93,7 +93,7 @@ resource "null_resource" "polaris_image_mirror" {
 # ACI supports only *user-assigned* identities for image pull, which is why this is a
 # standalone resource rather than a system-assigned identity on each group.
 resource "azurerm_user_assigned_identity" "agent" {
-  name                = "id-duckhaven-agent-${var.environment}"
+  name                = "id-${var.environment}-${local.workload}-agent-${local.name_tail}"
   resource_group_name = azurerm_resource_group.main.name
   location            = var.location
   tags                = local.tags

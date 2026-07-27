@@ -1,5 +1,5 @@
 resource "azurerm_user_assigned_identity" "api" {
-  name                = "id-duckhaven-api-${var.environment}"
+  name                = "id-${var.environment}-${local.workload}-api-${local.name_tail}"
   resource_group_name = azurerm_resource_group.main.name
   location            = var.location
   tags                = local.tags
@@ -9,7 +9,7 @@ resource "azurerm_user_assigned_identity" "api" {
 #
 # The only resource in this deployment with external ingress.
 resource "azurerm_container_app" "api" {
-  name                         = "api"
+  name                         = local.api_app_name
   resource_group_name          = azurerm_resource_group.main.name
   container_app_environment_id = azurerm_container_app_environment.main.id
   workload_profile_name        = local.aca_workload_profile
@@ -316,6 +316,13 @@ resource "azurerm_container_app" "api" {
         failure_count_threshold = 3
         success_count_threshold = 1
       }
+    }
+  }
+
+  lifecycle {
+    precondition {
+      condition     = length(local.api_app_name) <= 32
+      error_message = "Container app name \"${local.api_app_name}\" is ${length(local.api_app_name)} characters; the maximum is 32."
     }
   }
 

@@ -51,13 +51,18 @@ images:
 apply:
 	$(TF) apply $(TFVARS)
 
-# Both jobs are manual-trigger and both are safe to re-run: db-bootstrap skips a role
-# that already exists, and the Polaris admin tool exits 3 on an existing realm, which
-# the job's command treats as success.
+# Both jobs are manual-trigger and both are safe to re-run: the database one skips a
+# role that already exists, and the Polaris admin tool exits 3 on an existing realm,
+# which the job's command treats as success.
+#
+# Names come from outputs rather than being hardcoded -- they carry the environment,
+# region and suffix, so they differ per deployment.
 bootstrap:
 	$(eval RG := $(shell $(TF) output -raw resource_group_name))
-	az containerapp job start -n db-bootstrap -g "$(RG)"
-	az containerapp job start -n polaris-bootstrap -g "$(RG)"
+	$(eval DBJOB := $(shell $(TF) output -raw db_bootstrap_job_name))
+	$(eval PLJOB := $(shell $(TF) output -raw polaris_bootstrap_job_name))
+	az containerapp job start -n "$(DBJOB)" -g "$(RG)"
+	az containerapp job start -n "$(PLJOB)" -g "$(RG)"
 
 outputs:
 	@$(TF) output -raw next_steps

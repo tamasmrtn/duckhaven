@@ -1,9 +1,9 @@
-environment = "staging"
+environment = "stg"
 
-# See envs/prod.tfvars for how to check the region is usable before applying.
+# See envs/prd.tfvars for how to check the region is usable before applying.
 location = "REPLACE_ME"
 
-# 4-8 lowercase alphanumeric characters, globally unique to you.
+# Exactly 3 lowercase alphanumeric characters, globally unique to you.
 name_suffix = "REPLACE_ME"
 
 duckhaven_image_tag = "REPLACE_ME"

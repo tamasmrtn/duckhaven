@@ -31,7 +31,7 @@ resource "azurerm_container_app_environment" "main" {
   }
 
   # Named explicitly; the platform otherwise invents ME_<env>_<rg>_<region>.
-  infrastructure_resource_group_name = "rg-${local.name}-aca"
+  infrastructure_resource_group_name = "rg-${var.environment}-${local.workload}-cae-${local.name_tail}"
 
   tags = local.tags
 }

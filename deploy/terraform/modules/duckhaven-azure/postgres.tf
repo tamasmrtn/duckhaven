@@ -9,7 +9,7 @@
 resource "azurerm_postgresql_flexible_server" "main" {
   count = local.postgres_managed_here ? 1 : 0
 
-  name                = "psql-${local.name}"
+  name                = "pgsql-${local.name}"
   resource_group_name = azurerm_resource_group.main.name
   location            = var.location
   version             = "17"
@@ -126,7 +126,7 @@ resource "azurerm_postgresql_flexible_server_active_directory_administrator" "op
 resource "azurerm_user_assigned_identity" "db_bootstrap" {
   count = local.postgres_managed_here ? 1 : 0
 
-  name                = "id-duckhaven-dbadmin-${var.environment}"
+  name                = "id-${var.environment}-${local.workload}-dbadmin-${local.name_tail}"
   resource_group_name = azurerm_resource_group.main.name
   location            = var.location
   tags                = local.tags
@@ -152,7 +152,7 @@ resource "azurerm_postgresql_flexible_server_active_directory_administrator" "db
 resource "azurerm_container_app_job" "db_bootstrap" {
   count = local.postgres_managed_here ? 1 : 0
 
-  name                         = "db-bootstrap"
+  name                         = "caj-${var.environment}-db-boot-${local.name_tail}"
   resource_group_name          = azurerm_resource_group.main.name
   location                     = var.location
   container_app_environment_id = azurerm_container_app_environment.main.id
@@ -217,6 +217,13 @@ resource "azurerm_container_app_job" "db_bootstrap" {
     }
   }
 
+  lifecycle {
+    precondition {
+      condition     = length("caj-${var.environment}-db-boot-${local.name_tail}") <= 32
+      error_message = "Container app job name \"caj-${var.environment}-db-boot-${local.name_tail}\" exceeds the 32-character maximum."
+    }
+  }
+
   tags = local.tags
 
   depends_on = [
@@ -230,7 +237,7 @@ module "pe_postgres" {
   count  = local.postgres_managed_here ? 1 : 0
   source = "../private-endpoint"
 
-  name                 = "pe-psql-${local.name}"
+  name                 = "pep-${var.environment}-pgsql-${local.name_tail}"
   location             = var.location
   resource_group_name  = azurerm_resource_group.main.name
   subnet_id            = azurerm_subnet.pe.id

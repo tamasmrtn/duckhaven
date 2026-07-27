@@ -1,5 +1,5 @@
 resource "azurerm_key_vault" "main" {
-  name                = "kv-${local.name_short}"
+  name                = "kv-${local.name}"
   location            = var.location
   resource_group_name = azurerm_resource_group.main.name
   tenant_id           = data.azurerm_client_config.current.tenant_id
@@ -17,6 +17,17 @@ resource "azurerm_key_vault" "main" {
   soft_delete_retention_days = 90
 
   public_network_access_enabled = var.allow_management_plane_public_access
+
+  lifecycle {
+    # The tightest name in the deployment: kv- plus the convention lands on exactly 24,
+    # which is the Key Vault maximum. Assert it here so a longer workload or a
+    # four-character region code fails at plan time with the arithmetic, rather than as
+    # an opaque Azure rejection partway through the apply.
+    precondition {
+      condition     = length("kv-${local.name}") <= 24
+      error_message = "Key Vault name \"kv-${local.name}\" is ${length("kv-${local.name}")} characters; the maximum is 24."
+    }
+  }
 
   network_acls {
     # Application traffic arrives over the private endpoint below, which bypasses
@@ -38,7 +49,7 @@ resource "azurerm_key_vault" "main" {
 module "pe_keyvault" {
   source = "../private-endpoint"
 
-  name                 = "pe-kv-${local.name}"
+  name                 = "pep-${var.environment}-kv-${local.name_tail}"
   location             = var.location
   resource_group_name  = azurerm_resource_group.main.name
   subnet_id            = azurerm_subnet.pe.id

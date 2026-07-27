@@ -16,6 +16,21 @@ resource "azurerm_resource_group" "main" {
         region to local.location_short_codes in locals.tf.
       EOT
     }
+
+    # DuckHaven cannot run without a catalog, so declining to deploy one has to say
+    # where the existing one is. Caught here rather than as a null POLARIS_BASE_URL on
+    # an app that then fails every catalog call at runtime.
+    precondition {
+      condition     = var.polaris_enabled || var.polaris_external_base_url != null
+      error_message = "polaris_enabled = false requires polaris_external_base_url: DuckHaven always needs a catalog to talk to."
+    }
+
+    # Polaris is the one component here that authenticates with a password, so it
+    # cannot run against a server that refuses them.
+    precondition {
+      condition     = !var.polaris_enabled || !local.postgres_managed_here || var.postgres_password_auth_enabled
+      error_message = "polaris_enabled = true requires postgres_password_auth_enabled: Polaris' Quarkus datasource has no Microsoft Entra path."
+    }
   }
 }
 

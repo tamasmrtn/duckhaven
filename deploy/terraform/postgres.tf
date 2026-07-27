@@ -1,7 +1,14 @@
 # Managed PostgreSQL, replacing the container that the manual deployment ran Postgres
 # in. One server hosts both databases DuckHaven needs, so the custom postgres image
 # whose only job was `CREATE DATABASE polaris` disappears.
+#
+# Skipped entirely when postgres_existing_server_fqdn points at a server you already
+# run -- along with the databases, the private endpoint, the Entra administrator and
+# the bootstrap job below. Everything downstream reads local.postgres_fqdn and the
+# database-name locals rather than these resources, so nothing else changes.
 resource "azurerm_postgresql_flexible_server" "main" {
+  count = local.postgres_managed_here ? 1 : 0
+
   name                = "psql-${local.name}"
   resource_group_name = azurerm_resource_group.main.name
   location            = var.location
@@ -10,8 +17,10 @@ resource "azurerm_postgresql_flexible_server" "main" {
   storage_mb          = var.postgres_storage_mb
   storage_tier        = var.postgres_storage_tier
 
-  administrator_login    = "dhadmin"
-  administrator_password = random_password.postgres_admin.result
+  # Only meaningful, and only accepted, when password auth is on. This account exists
+  # for Polaris; the API never uses it.
+  administrator_login    = var.postgres_password_auth_enabled ? "dhadmin" : null
+  administrator_password = var.postgres_password_auth_enabled ? random_password.postgres_admin.result : null
 
   backup_retention_days        = var.postgres_backup_retention_days
   geo_redundant_backup_enabled = var.postgres_geo_redundant_backup_enabled
@@ -29,8 +38,15 @@ resource "azurerm_postgresql_flexible_server" "main" {
     for_each = var.postgres_high_availability_enabled ? [1] : []
 
     content {
-      mode                      = "ZoneRedundant"
-      standby_availability_zone = "2"
+      mode = "ZoneRedundant"
+      # Derived from the primary's zone rather than fixed, so the two cannot end up
+      # the same -- which is what a hardcoded standby does the moment postgres_zone
+      # changes, and ZoneRedundant requires them to differ. Null when the primary is
+      # unpinned, letting Azure place both.
+      standby_availability_zone = (var.postgres_zone == null
+        ? null
+        : tostring((tonumber(var.postgres_zone) % 3) + 1)
+      )
     }
   }
 
@@ -62,8 +78,10 @@ resource "azurerm_postgresql_flexible_server" "main" {
 
 # DuckHaven's own schema, managed by Alembic on API container start.
 resource "azurerm_postgresql_flexible_server_database" "duckhaven" {
-  name      = "duckhaven"
-  server_id = azurerm_postgresql_flexible_server.main.id
+  count = local.postgres_managed_here ? 1 : 0
+
+  name      = local.duckhaven_database_name
+  server_id = azurerm_postgresql_flexible_server.main[0].id
   charset   = "UTF8"
   collation = "en_US.utf8"
 }
@@ -71,16 +89,18 @@ resource "azurerm_postgresql_flexible_server_database" "duckhaven" {
 # Polaris keeps its own relational-jdbc schema here. Separate database, same server:
 # the schemas never collide and there is one thing to back up and fail over.
 resource "azurerm_postgresql_flexible_server_database" "polaris" {
-  name      = "polaris"
-  server_id = azurerm_postgresql_flexible_server.main.id
+  count = local.postgres_managed_here && var.polaris_enabled ? 1 : 0
+
+  name      = local.polaris_database_name
+  server_id = azurerm_postgresql_flexible_server.main[0].id
   charset   = "UTF8"
   collation = "en_US.utf8"
 }
 
 resource "azurerm_postgresql_flexible_server_active_directory_administrator" "ops" {
-  count = var.postgres_entra_admin == null ? 0 : 1
+  count = local.postgres_managed_here && var.postgres_entra_admin != null ? 1 : 0
 
-  server_name         = azurerm_postgresql_flexible_server.main.name
+  server_name         = azurerm_postgresql_flexible_server.main[0].name
   resource_group_name = azurerm_resource_group.main.name
   tenant_id           = data.azurerm_client_config.current.tenant_id
   object_id           = var.postgres_entra_admin.object_id
@@ -99,7 +119,13 @@ resource "azurerm_postgresql_flexible_server_active_directory_administrator" "op
 # the internet-facing app azure_pg_admin over every database on the server. This
 # identity holds that instead, is used exactly once by the job below, and is never
 # attached to a running app.
+#
+# Only for a server this stack owns. On a server you already run, creating the API's
+# login role is yours to do -- this deployment has no administrator there to do it
+# with.
 resource "azurerm_user_assigned_identity" "db_bootstrap" {
+  count = local.postgres_managed_here ? 1 : 0
+
   name                = "id-duckhaven-dbadmin-${var.environment}"
   resource_group_name = azurerm_resource_group.main.name
   location            = var.location
@@ -107,11 +133,13 @@ resource "azurerm_user_assigned_identity" "db_bootstrap" {
 }
 
 resource "azurerm_postgresql_flexible_server_active_directory_administrator" "db_bootstrap" {
-  server_name         = azurerm_postgresql_flexible_server.main.name
+  count = local.postgres_managed_here ? 1 : 0
+
+  server_name         = azurerm_postgresql_flexible_server.main[0].name
   resource_group_name = azurerm_resource_group.main.name
   tenant_id           = data.azurerm_client_config.current.tenant_id
-  object_id           = azurerm_user_assigned_identity.db_bootstrap.principal_id
-  principal_name      = azurerm_user_assigned_identity.db_bootstrap.name
+  object_id           = azurerm_user_assigned_identity.db_bootstrap[0].principal_id
+  principal_name      = azurerm_user_assigned_identity.db_bootstrap[0].name
   principal_type      = "ServicePrincipal"
 }
 
@@ -122,6 +150,8 @@ resource "azurerm_postgresql_flexible_server_active_directory_administrator" "db
 #
 # Re-runnable: the tool skips a role that already exists and the grants are idempotent.
 resource "azurerm_container_app_job" "db_bootstrap" {
+  count = local.postgres_managed_here ? 1 : 0
+
   name                         = "db-bootstrap"
   resource_group_name          = azurerm_resource_group.main.name
   location                     = var.location
@@ -138,12 +168,12 @@ resource "azurerm_container_app_job" "db_bootstrap" {
 
   identity {
     type         = "UserAssigned"
-    identity_ids = [azurerm_user_assigned_identity.db_bootstrap.id]
+    identity_ids = [azurerm_user_assigned_identity.db_bootstrap[0].id]
   }
 
   registry {
     server   = azurerm_container_registry.main.login_server
-    identity = azurerm_user_assigned_identity.db_bootstrap.id
+    identity = azurerm_user_assigned_identity.db_bootstrap[0].id
   }
 
   template {
@@ -159,13 +189,13 @@ resource "azurerm_container_app_job" "db_bootstrap" {
 
       env {
         name  = "DB_BOOTSTRAP_HOST"
-        value = azurerm_postgresql_flexible_server.main.fqdn
+        value = local.postgres_fqdn
       }
 
       # The role name for an Entra login is the identity's own name.
       env {
         name  = "DB_BOOTSTRAP_USER"
-        value = azurerm_user_assigned_identity.db_bootstrap.name
+        value = azurerm_user_assigned_identity.db_bootstrap[0].name
       }
 
       # Only the API. Polaris authenticates with a password because its Quarkus
@@ -177,12 +207,12 @@ resource "azurerm_container_app_job" "db_bootstrap" {
 
       env {
         name  = "DB_BOOTSTRAP_DATABASES"
-        value = azurerm_postgresql_flexible_server_database.duckhaven.name
+        value = local.duckhaven_database_name
       }
 
       env {
         name  = "AZURE_CLIENT_ID"
-        value = azurerm_user_assigned_identity.db_bootstrap.client_id
+        value = azurerm_user_assigned_identity.db_bootstrap[0].client_id
       }
     }
   }
@@ -197,13 +227,14 @@ resource "azurerm_container_app_job" "db_bootstrap" {
 }
 
 module "pe_postgres" {
+  count  = local.postgres_managed_here ? 1 : 0
   source = "./modules/private-endpoint"
 
   name                 = "pe-psql-${local.name}"
   location             = var.location
   resource_group_name  = azurerm_resource_group.main.name
   subnet_id            = azurerm_subnet.pe.id
-  target_resource_id   = azurerm_postgresql_flexible_server.main.id
+  target_resource_id   = azurerm_postgresql_flexible_server.main[0].id
   subresource_names    = ["postgresqlServer"]
   private_dns_zone_ids = [azurerm_private_dns_zone.main["postgres"].id]
   tags                 = local.tags

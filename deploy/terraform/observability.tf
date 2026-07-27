@@ -27,8 +27,12 @@ resource "azurerm_log_analytics_workspace" "main" {
 # available categories differ per resource type and change between API versions; a
 # missing category fails the apply, and a stale list silently stops collecting.
 resource "azurerm_monitor_diagnostic_setting" "postgres" {
+  # Nothing to collect from a server this deployment does not own; its logs and
+  # metrics belong to whoever runs it.
+  count = local.postgres_managed_here ? 1 : 0
+
   name                       = "diag-to-law"
-  target_resource_id         = azurerm_postgresql_flexible_server.main.id
+  target_resource_id         = azurerm_postgresql_flexible_server.main[0].id
   log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
 
   enabled_log {
@@ -112,11 +116,11 @@ resource "azurerm_monitor_action_group" "main" {
 # This is the alert that matters most: it is the one failure here that is unrecoverable
 # without a maintenance window.
 resource "azurerm_monitor_metric_alert" "postgres_storage" {
-  count = length(var.alert_email_addresses) > 0 ? 1 : 0
+  count = local.postgres_managed_here && length(var.alert_email_addresses) > 0 ? 1 : 0
 
   name                = "alert-psql-storage-${local.name}"
   resource_group_name = azurerm_resource_group.main.name
-  scopes              = [azurerm_postgresql_flexible_server.main.id]
+  scopes              = [azurerm_postgresql_flexible_server.main[0].id]
   description         = "PostgreSQL storage is nearly full. A full disk takes the server read-only."
   severity            = 1
   frequency           = "PT5M"
@@ -138,11 +142,11 @@ resource "azurerm_monitor_metric_alert" "postgres_storage" {
 }
 
 resource "azurerm_monitor_metric_alert" "postgres_cpu" {
-  count = length(var.alert_email_addresses) > 0 ? 1 : 0
+  count = local.postgres_managed_here && length(var.alert_email_addresses) > 0 ? 1 : 0
 
   name                = "alert-psql-cpu-${local.name}"
   resource_group_name = azurerm_resource_group.main.name
-  scopes              = [azurerm_postgresql_flexible_server.main.id]
+  scopes              = [azurerm_postgresql_flexible_server.main[0].id]
   description         = "PostgreSQL CPU is saturated; the control plane will feel slow."
   severity            = 2
   frequency           = "PT5M"

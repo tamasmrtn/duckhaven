@@ -96,9 +96,9 @@ resource "azurerm_container_app" "api" {
           "postgresql+asyncpg://",
           azurerm_user_assigned_identity.api.name,
           "@",
-          azurerm_postgresql_flexible_server.main.fqdn,
+          local.postgres_fqdn,
           ":5432/",
-          azurerm_postgresql_flexible_server_database.duckhaven.name,
+          local.duckhaven_database_name,
           "?ssl=require",
         ])
       }

@@ -46,6 +46,27 @@ locals {
 
   aca_workload_profile = "Consumption"
 
+  # Port the agent result server listens on. The API fetches result Parquet from it
+  # over plain HTTP, which is acceptable only because the hop stays inside the VNet;
+  # nsg-aci restricts inbound on this port to the Container Apps subnet.
+  #
+  # A constant, not a variable: the agent binds 8001 unconditionally
+  # (api/src/api/services/compute/azure_aci.py::_result_port), so a configurable value
+  # here could only ever break the NSG rule.
+  agent_result_port = 8001
+
+  # Whether this stack owns the database server. Everything downstream reads the three
+  # locals below rather than the resource directly, so bringing your own server changes
+  # what they resolve to and nothing else.
+  postgres_managed_here = var.postgres_existing_server_fqdn == null
+
+  postgres_fqdn = (local.postgres_managed_here
+    ? azurerm_postgresql_flexible_server.main[0].fqdn
+    : var.postgres_existing_server_fqdn
+  )
+  duckhaven_database_name = var.postgres_database_name
+  polaris_database_name   = var.postgres_polaris_database_name
+
   # The root principal the bootstrap creates and the API authenticates as. Not a
   # variable: it has to match api/src/api/config.py's polaris_client_id default, and
   # the two would drift silently if both were configurable.
@@ -66,8 +87,13 @@ locals {
 
   # Polaris' hostname, which depends on how it has to be reached.
   #
-  # Internal ingress is the default and the better posture: the name resolves only
-  # inside the environment and there is no public listener at all.
+  # An externally operated catalog is taken as given -- the operator decides how it is
+  # exposed, and both the control plane and the agents reach it through this
+  # deployment's NAT gateway, so one firewall rule on their side covers everything here.
+  #
+  # For a Polaris deployed by this stack, internal ingress is the default and the better
+  # posture: the name resolves only inside the environment and there is no public
+  # listener at all.
   #
   # Elastic compute forces the alternative. An agent runs in its own subnet, outside the
   # environment, and only replicas *inside* an environment resolve an internal-ingress
@@ -79,19 +105,21 @@ locals {
   #
   # The platform issues a certificate covering either name, so callers verify TLS
   # normally.
-  polaris_url = var.elastic_compute_enabled ? (
-    "https://polaris.${azurerm_container_app_environment.main.default_domain}"
-    ) : (
-    "https://polaris.internal.${azurerm_container_app_environment.main.default_domain}"
+  polaris_url = (!var.polaris_enabled
+    ? var.polaris_external_base_url
+    : (var.elastic_compute_enabled
+      ? "https://polaris.${azurerm_container_app_environment.main.default_domain}"
+      : "https://polaris.internal.${azurerm_container_app_environment.main.default_domain}"
+    )
   )
 
   # sslmode=require rather than the driver default of prefer: Azure enforces TLS, and
   # stating it means a misconfiguration fails loudly instead of silently downgrading.
   polaris_jdbc_url = join("", [
     "jdbc:postgresql://",
-    azurerm_postgresql_flexible_server.main.fqdn,
+    local.postgres_fqdn,
     ":5432/",
-    azurerm_postgresql_flexible_server_database.polaris.name,
+    local.polaris_database_name,
     "?sslmode=require",
   ])
 

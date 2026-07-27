@@ -44,13 +44,20 @@ output "key_vault_uri" {
 }
 
 output "postgres_fqdn" {
-  description = "Postgres host (POSTGRES_HOST). Resolves to a private endpoint address inside the VNet."
-  value       = azurerm_postgresql_flexible_server.main.fqdn
+  description = <<-EOT
+    Postgres host. When this stack creates the server it resolves to a private endpoint
+    address inside the VNet; otherwise it echoes postgres_existing_server_fqdn.
+  EOT
+  value       = local.postgres_fqdn
 }
 
 output "postgres_administrator_login" {
-  description = "Postgres admin user (POSTGRES_USER). The password is in Key Vault."
-  value       = azurerm_postgresql_flexible_server.main.administrator_login
+  description = <<-EOT
+    Password-auth admin user, which exists for Polaris only -- the API connects with
+    its managed identity. The password is in Key Vault. Null when this stack does not
+    create the server.
+  EOT
+  value       = one(azurerm_postgresql_flexible_server.main[*].administrator_login)
 }
 
 output "storage_account_name" {

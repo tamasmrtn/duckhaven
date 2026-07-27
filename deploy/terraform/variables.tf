@@ -83,18 +83,38 @@ variable "subnet_prefix_aci" {
   default     = "10.42.3.0/24"
 }
 
-variable "agent_result_port" {
+# ── PostgreSQL ────────────────────────────────────────────────────────────────
+
+variable "postgres_existing_server_fqdn" {
   description = <<-EOT
-    Port the agent result server listens on. The API fetches result Parquet from it
-    over plain HTTP, which is acceptable only because the hop stays inside the VNet;
-    nsg-aci restricts inbound on this port to the Container Apps subnet. Hardcoded
-    to 8001 in api/src/api/services/compute/azure_aci.py.
+    Point at a PostgreSQL server you already run instead of creating one. Null (the
+    default) creates a Flexible Server, its databases, its private endpoint and the
+    Entra role bootstrap, and every postgres_* setting below applies.
+
+    When set, none of that is created and you own it: the two databases must exist, the
+    server must be reachable from the Container Apps subnet, and -- since the API
+    authenticates with its managed identity -- the server must have Microsoft Entra
+    authentication enabled with a login role for the API identity
+    (`id-duckhaven-api-<environment>`). See docs/deployment/azure-terraform.md.
   EOT
-  type        = number
-  default     = 8001
+  type        = string
+  default     = null
 }
 
-# ── PostgreSQL ────────────────────────────────────────────────────────────────
+variable "postgres_database_name" {
+  description = "Database holding DuckHaven's own schema, managed by Alembic."
+  type        = string
+  default     = "duckhaven"
+}
+
+variable "postgres_polaris_database_name" {
+  description = <<-EOT
+    Database holding Polaris' relational-jdbc schema. A separate database on the same
+    server: the schemas never collide and there is one thing to back up and fail over.
+  EOT
+  type        = string
+  default     = "polaris"
+}
 
 variable "postgres_sku_name" {
   description = <<-EOT
@@ -322,6 +342,39 @@ variable "elastic_compute_enabled" {
 }
 
 # ── Polaris ───────────────────────────────────────────────────────────────────
+
+variable "polaris_enabled" {
+  description = <<-EOT
+    Whether to deploy Apache Polaris as part of this stack.
+
+    Set false to point DuckHaven at a catalog you already run, via
+    polaris_external_base_url. That also removes the only component here that needs a
+    database password, so postgres_password_auth_enabled can go with it.
+
+    DuckHaven always needs *a* Polaris; this only decides who operates it.
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "polaris_external_base_url" {
+  description = <<-EOT
+    Base URL of an existing Polaris, used when polaris_enabled is false. Must be
+    reachable from the Container Apps environment and, when elastic compute is on, from
+    the agent subnet -- both leave through this deployment's NAT gateway, so one
+    firewall rule for that address covers them.
+
+    The credential DuckHaven authenticates with is still generated here and kept in Key
+    Vault; the principal must exist in that Polaris under polaris_client_id.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.polaris_external_base_url == null || can(regex("^https?://", var.polaris_external_base_url))
+    error_message = "polaris_external_base_url must be an http(s) URL."
+  }
+}
 
 variable "polaris_image_tag" {
   description = <<-EOT

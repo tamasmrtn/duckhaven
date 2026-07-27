@@ -1,4 +1,8 @@
+# Everything in this file is skipped when polaris_enabled is false, which is how a
+# deployment points at a catalog it already runs (polaris_external_base_url).
 resource "azurerm_user_assigned_identity" "polaris" {
+  count = var.polaris_enabled ? 1 : 0
+
   name                = "id-duckhaven-polaris-${var.environment}"
   resource_group_name = azurerm_resource_group.main.name
   location            = var.location
@@ -16,6 +20,8 @@ resource "azurerm_user_assigned_identity" "polaris" {
 # talking to a public endpoint -- a job in this VNet-injected environment resolves the
 # private endpoint and connects, which was verified directly during the Phase 0 spike.
 resource "azurerm_container_app_job" "polaris_bootstrap" {
+  count = var.polaris_enabled ? 1 : 0
+
   name                         = "polaris-bootstrap"
   resource_group_name          = azurerm_resource_group.main.name
   location                     = var.location
@@ -36,24 +42,24 @@ resource "azurerm_container_app_job" "polaris_bootstrap" {
 
   identity {
     type         = "UserAssigned"
-    identity_ids = [azurerm_user_assigned_identity.polaris.id]
+    identity_ids = [azurerm_user_assigned_identity.polaris[0].id]
   }
 
   registry {
     server   = azurerm_container_registry.main.login_server
-    identity = azurerm_user_assigned_identity.polaris.id
+    identity = azurerm_user_assigned_identity.polaris[0].id
   }
 
   secret {
     name                = "postgres-password"
     key_vault_secret_id = azurerm_key_vault_secret.main["postgres-admin-password"].versionless_id
-    identity            = azurerm_user_assigned_identity.polaris.id
+    identity            = azurerm_user_assigned_identity.polaris[0].id
   }
 
   secret {
     name                = "polaris-client-secret"
     key_vault_secret_id = azurerm_key_vault_secret.main["polaris-client-secret"].versionless_id
-    identity            = azurerm_user_assigned_identity.polaris.id
+    identity            = azurerm_user_assigned_identity.polaris[0].id
   }
 
   template {
@@ -95,7 +101,7 @@ resource "azurerm_container_app_job" "polaris_bootstrap" {
 
       env {
         name  = "QUARKUS_DATASOURCE_USERNAME"
-        value = azurerm_postgresql_flexible_server.main.administrator_login
+        value = azurerm_postgresql_flexible_server.main[0].administrator_login
       }
 
       env {
@@ -131,6 +137,8 @@ resource "azurerm_container_app_job" "polaris_bootstrap" {
 # ── Server ────────────────────────────────────────────────────────────────────
 
 resource "azurerm_container_app" "polaris" {
+  count = var.polaris_enabled ? 1 : 0
+
   name                         = "polaris"
   resource_group_name          = azurerm_resource_group.main.name
   container_app_environment_id = azurerm_container_app_environment.main.id
@@ -142,24 +150,24 @@ resource "azurerm_container_app" "polaris" {
 
   identity {
     type         = "UserAssigned"
-    identity_ids = [azurerm_user_assigned_identity.polaris.id]
+    identity_ids = [azurerm_user_assigned_identity.polaris[0].id]
   }
 
   registry {
     server   = azurerm_container_registry.main.login_server
-    identity = azurerm_user_assigned_identity.polaris.id
+    identity = azurerm_user_assigned_identity.polaris[0].id
   }
 
   secret {
     name                = "postgres-password"
     key_vault_secret_id = azurerm_key_vault_secret.main["postgres-admin-password"].versionless_id
-    identity            = azurerm_user_assigned_identity.polaris.id
+    identity            = azurerm_user_assigned_identity.polaris[0].id
   }
 
   secret {
     name                = "polaris-client-secret"
     key_vault_secret_id = azurerm_key_vault_secret.main["polaris-client-secret"].versionless_id
-    identity            = azurerm_user_assigned_identity.polaris.id
+    identity            = azurerm_user_assigned_identity.polaris[0].id
   }
 
   # Internal ingress by default: reachable from inside the environment and from nowhere
@@ -223,7 +231,7 @@ resource "azurerm_container_app" "polaris" {
 
       env {
         name  = "QUARKUS_DATASOURCE_USERNAME"
-        value = azurerm_postgresql_flexible_server.main.administrator_login
+        value = azurerm_postgresql_flexible_server.main[0].administrator_login
       }
 
       env {
@@ -264,7 +272,7 @@ resource "azurerm_container_app" "polaris" {
       # replaces the manual deployment's shared service principal.
       env {
         name  = "AZURE_CLIENT_ID"
-        value = azurerm_user_assigned_identity.polaris.client_id
+        value = azurerm_user_assigned_identity.polaris[0].client_id
       }
 
       # Management endpoint, on its own port. 8181 serves the catalog REST API.

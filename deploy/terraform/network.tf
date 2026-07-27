@@ -134,7 +134,7 @@ resource "azurerm_network_security_rule" "aci_in_result_server" {
   source_address_prefix       = var.subnet_prefix_aca
   source_port_range           = "*"
   destination_address_prefix  = var.subnet_prefix_aci
-  destination_port_ranges     = [tostring(var.agent_result_port)]
+  destination_port_ranges     = [tostring(local.agent_result_port)]
 }
 
 # The default AllowVnetInBound rule sits at priority 65000 and would otherwise let

@@ -88,8 +88,10 @@ def test_requested_size_becomes_concrete_limits(req):
 
 
 def test_size_falls_back_to_configured_defaults(req, monkeypatch):
-    monkeypatch.setattr(settings, "elastic_docker_cpu", 1.0)
-    monkeypatch.setattr(settings, "elastic_docker_memory_gb", 2.0)
+    """The defaults are provider-independent: an elastic agent is the same
+    container everywhere, so a second per-provider pair could only disagree."""
+    monkeypatch.setattr(settings, "elastic_default_cpu", 1.0)
+    monkeypatch.setattr(settings, "elastic_default_memory_gb", 2.0)
     req.cpu = None
     req.memory_gb = None
 
@@ -279,3 +281,73 @@ async def test_list_managed_filters_on_the_label(backend, req):
         "all": True,
         "filters": {"label": "duckhaven-managed=true"},
     }
+
+
+# ── Host capacity ─────────────────────────────────────────────────────────────
+
+
+class _FakeClientWithInfo(_FakeClient):
+    def __init__(self, ncpu: int, mem_gb: float) -> None:
+        super().__init__()
+        self._info = {"NCPU": ncpu, "MemTotal": int(mem_gb * 1024**3)}
+        self.info_calls = 0
+
+    def info(self) -> dict:
+        self.info_calls += 1
+        return self._info
+
+
+def _backend_with_host(monkeypatch, ncpu: int, mem_gb: float) -> DockerEngineBackend:
+    client = _FakeClientWithInfo(ncpu, mem_gb)
+    b = DockerEngineBackend()
+    monkeypatch.setattr(b, "_client", lambda: client)
+    b.fake = client  # type: ignore[attr-defined]
+    return b
+
+
+async def test_capacity_is_the_host_minus_the_reserve(monkeypatch):
+    """The whole host is the wrong ceiling on a single box: the API, Postgres,
+    Polaris and MinIO run on the same machine, so offering all of it would let one
+    query starve the stack serving it."""
+    monkeypatch.setattr(settings, "elastic_docker_reserve_cpu", 1.0)
+    monkeypatch.setattr(settings, "elastic_docker_reserve_memory_gb", 2.0)
+    b = _backend_with_host(monkeypatch, ncpu=8, mem_gb=30.0)
+
+    assert await b.capacity() == (7.0, 28.0)
+
+
+async def test_capacity_is_floored_to_whole_units(monkeypatch):
+    """Both sliders step in whole units, so a fractional ceiling would be an
+    unreachable maximum."""
+    monkeypatch.setattr(settings, "elastic_docker_reserve_cpu", 0.0)
+    monkeypatch.setattr(settings, "elastic_docker_reserve_memory_gb", 0.0)
+    b = _backend_with_host(monkeypatch, ncpu=4, mem_gb=7.7)
+
+    assert await b.capacity() == (4.0, 7.0)
+
+
+async def test_capacity_never_drops_below_one(monkeypatch):
+    """A small host still has to offer a usable size rather than a zero-width
+    slider, even when the reserve exceeds what it has."""
+    monkeypatch.setattr(settings, "elastic_docker_reserve_cpu", 4.0)
+    monkeypatch.setattr(settings, "elastic_docker_reserve_memory_gb", 8.0)
+    b = _backend_with_host(monkeypatch, ncpu=2, mem_gb=4.0)
+
+    assert await b.capacity() == (1.0, 1.0)
+
+
+async def test_capacity_is_cached(monkeypatch):
+    """Read whenever the create-agent dialog opens; the machine does not change
+    size while the process runs."""
+    b = _backend_with_host(monkeypatch, ncpu=8, mem_gb=16.0)
+
+    await b.capacity()
+    await b.capacity()
+
+    assert b.fake.info_calls == 1
+
+
+async def test_capacity_is_none_when_the_daemon_is_unreachable(backend):
+    """None degrades to the conservative default rather than breaking the dialog:
+    the fake client here has no info() at all."""
+    assert await backend.capacity() is None

@@ -120,17 +120,23 @@ async def bootstrap(
 async def compute_options(
     admin: User = Depends(require_permission(Permission.AGENTS_MANAGE)),
 ) -> ComputeOptionsOut:
-    """vCPU/memory ranges + rates for the create-compute dialog's sliders."""
+    """vCPU/memory ranges + rates for the create-compute dialog's sliders.
+
+    The range comes from the configured platform -- ACI's per-group quota, or the
+    host a Docker deployment provisions onto -- so the sliders cannot offer a size
+    that would be refused at create.
+    """
+    lim = await pricing.limits()
     return ComputeOptionsOut(
         enabled=settings.elastic_compute_enabled,
         provider=settings.elastic_provider,
         currency=settings.elastic_currency,
-        cpu_min=pricing.CPU_MIN,
-        cpu_max=pricing.CPU_MAX,
-        cpu_step=pricing.CPU_STEP,
-        memory_min_gb=pricing.MEMORY_MIN_GB,
-        memory_max_gb=pricing.MEMORY_MAX_GB,
-        memory_step_gb=pricing.MEMORY_STEP_GB,
+        cpu_min=lim.cpu_min,
+        cpu_max=lim.cpu_max,
+        cpu_step=lim.cpu_step,
+        memory_min_gb=lim.memory_min_gb,
+        memory_max_gb=lim.memory_max_gb,
+        memory_step_gb=lim.memory_step_gb,
         price_vcpu_hour=settings.elastic_azure_price_vcpu_hour,
         price_memory_gb_hour=settings.elastic_azure_price_memory_gb_hour,
         default_idle_minutes=round(settings.elastic_idle_timeout_s / 60),
@@ -150,14 +156,15 @@ async def create_elastic_agent(
             status_code=status.HTTP_409_CONFLICT,
             detail={"error": "elastic_disabled", "detail": "Elastic compute is not enabled."},
         )
-    if not pricing.clamp_cpu(body.cpu) or not pricing.clamp_memory(body.memory_gb):
+    lim = await pricing.limits()
+    if not lim.allows(body.cpu, body.memory_gb):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={
                 "error": "invalid_size",
                 "detail": (
-                    f"cpu must be {pricing.CPU_MIN}-{pricing.CPU_MAX} and memory "
-                    f"{pricing.MEMORY_MIN_GB}-{pricing.MEMORY_MAX_GB} GB."
+                    f"cpu must be {lim.cpu_min}-{lim.cpu_max} and memory "
+                    f"{lim.memory_min_gb}-{lim.memory_max_gb} GB."
                 ),
             },
         )

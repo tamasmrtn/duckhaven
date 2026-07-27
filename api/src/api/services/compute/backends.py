@@ -14,6 +14,11 @@ Phase 0 ships only ``NullBackend``: a no-op, in-process backend that lets the wh
 lifecycle (coalescing, idle reaping, leak reconciliation) be unit-tested without a
 cloud. ``azure_aci`` lands in Phase 1 as a sibling module and is wired into
 ``get_backend`` there.
+
+``capacity`` reports the largest agent the platform will actually run, because only
+the backend knows: for a cloud it is the provider's per-instance cap, for a single
+host it is the machine itself. Returning ``None`` means "no opinion", and the caller
+falls back to a conservative default.
 """
 
 from __future__ import annotations
@@ -74,6 +79,10 @@ class NullBackend:
     async def list_managed(self) -> set[str]:
         """Instance ids the backend currently holds (the leak-sweep source)."""
         return set(self._instances)
+
+    async def capacity(self) -> tuple[float, float] | None:
+        """No platform to measure, so no opinion on how big an agent may be."""
+        return None
 
 
 # One instance per provider string, built on first use. The null backend is a

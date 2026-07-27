@@ -95,6 +95,10 @@ def get_backend(provider: str) -> object:
             from api.services.compute.azure_aci import AzureAciBackend
 
             backend = AzureAciBackend()
+        elif provider == "docker":
+            from api.services.compute.docker_engine import DockerEngineBackend
+
+            backend = DockerEngineBackend()
         else:
             raise KeyError(provider)
         _BACKENDS[provider] = backend

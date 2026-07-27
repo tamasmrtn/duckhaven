@@ -248,6 +248,21 @@ class Settings(BaseSettings):
     elastic_azure_price_vcpu_hour: float = 0.0486
     elastic_azure_price_memory_gb_hour: float = 0.0054
     elastic_currency: str = "USD"
+    # Docker Engine backend (used when elastic_provider="docker"), for a single-host
+    # deployment. The daemon is addressed over TCP rather than a mounted socket, so
+    # the API container holds no socket file; in the shipped topology that endpoint
+    # is a docker-socket-proxy allowing only container and image calls. Read
+    # docs/deployment/homelab-elastic-setup.md before enabling it -- the proxy
+    # filters paths, not request bodies.
+    elastic_docker_host: str = "tcp://docker-socket-proxy:2375"
+    # The user-defined network agents are attached to. On the bundled stack this is
+    # the isolated `duckhaven_internal`, which is what keeps an agent's result server
+    # reachable from the control plane and from nowhere else.
+    elastic_docker_network: str = "duckhaven_internal"
+    # CPU cores and memory (GiB) requested per elastic agent container, when the
+    # request does not name a size.
+    elastic_docker_cpu: float = 2.0
+    elastic_docker_memory_gb: float = 4.0
     # Pull credentials for a private registry hosting the agent image (e.g. ACR).
     # ACI cannot pull a private image without them; leave unset for a public image.
     #

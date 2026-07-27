@@ -45,7 +45,8 @@ services:
   # `duckhaven_internal` — it publishes no ports, so nothing on the host's
   # interfaces can talk to it.
   docker-socket-proxy:
-    image: ghcr.io/tecnativa/docker-socket-proxy:0.3.0
+    # Tags carry a `v` prefix from 0.4.0 onward; 0.1.x-0.3.0 did not.
+    image: ghcr.io/tecnativa/docker-socket-proxy:v0.5.0
     restart: unless-stopped
     networks:
       - duckhaven_internal
@@ -53,10 +54,14 @@ services:
       # Read-only on the mount, which is defence in depth rather than a control:
       # the daemon's API is fully writable through this socket regardless.
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    # The proxy is haproxy and a config file; it needs nothing else.
+    # Read-only root with two writable tmpfs mounts. /tmp is not optional: the
+    # entrypoint renders haproxy.cfg there from the environment below on every
+    # start, and without it the container crash-loops on "can't create
+    # /tmp/haproxy.cfg: Read-only file system".
     read_only: true
     tmpfs:
       - /run
+      - /tmp
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -118,3 +123,12 @@ services:
   agent:
     profiles:
       - static-agent
+
+networks:
+  # Pin the network's real name. Compose otherwise prefixes it with the project
+  # name -- `deploy_duckhaven_internal` -- and an elastic agent is created through
+  # the Docker API, which knows nothing about compose projects: attaching it would
+  # fail with "network duckhaven_internal not found". Naming it explicitly is what
+  # makes ELASTIC_DOCKER_NETWORK mean the same thing to both.
+  duckhaven_internal:
+    name: duckhaven_internal

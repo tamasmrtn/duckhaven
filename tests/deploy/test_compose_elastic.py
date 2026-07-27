@@ -91,6 +91,24 @@ def test_proxy_container_is_hardened():
     assert PROXY.get("cap_add", []) == ["NET_BIND_SERVICE"]
 
 
+def test_proxy_has_the_tmpfs_its_entrypoint_needs():
+    """The entrypoint renders haproxy.cfg into /tmp on every start, so a read-only
+    root without this crash-loops on "can't create /tmp/haproxy.cfg". Pinned
+    because the failure only shows up at runtime — the manifest looks fine."""
+    assert "/tmp" in PROXY["tmpfs"]
+    assert "/run" in PROXY["tmpfs"]
+
+
+def test_agent_network_name_is_pinned():
+    """Compose prefixes network names with the project — `deploy_duckhaven_internal`
+    — but an elastic agent is created through the Docker API, which knows nothing
+    about compose projects. Without an explicit name the attach fails with "network
+    duckhaven_internal not found", and only a real stack reveals it."""
+    assert ELASTIC["networks"]["duckhaven_internal"]["name"] == "duckhaven_internal"
+    api_env = ELASTIC["services"]["api"]["environment"]
+    assert api_env["ELASTIC_DOCKER_NETWORK"] == "duckhaven_internal"
+
+
 def test_proxy_mounts_the_socket_read_only():
     assert "/var/run/docker.sock:/var/run/docker.sock:ro" in PROXY["volumes"]
 

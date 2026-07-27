@@ -27,10 +27,14 @@
 # on this host, and the proxy narrows *what the API can reach*, not what a
 # compromised API could do with container creation.
 #
-# What it does buy: no /exec, no /secrets, no /configs, no /swarm, no enumerating
-# this host's other containers, images or volumes — and the socket is off the API
-# container's filesystem, so a file-read bug in the API no longer hands over the
-# daemon.
+# What it does buy: no /exec, no /secrets, no /configs, no /swarm, no /volumes —
+# and the socket is off the API container's filesystem, so a file-read bug in the
+# API no longer hands over the daemon.
+#
+# What it does NOT hide: with CONTAINERS, IMAGES, NETWORKS and INFO granted, the
+# control plane can enumerate every container, image and network on this host and
+# read its CPU, memory and kernel details. Those are reads it needs to do its job,
+# but they are reads of the whole host, not just of what DuckHaven created.
 #
 # The real bound on blast radius is the daemon, not the proxy: run Docker
 # rootless, or enable userns-remap, so a container created through this path
@@ -72,8 +76,8 @@ services:
     environment:
       # Everything not listed here stays at the image's default of denied —
       # including AUTH, SECRETS, CONFIGS, EXEC, SWARM, NODES, TASKS, SERVICES,
-      # PLUGINS, VOLUMES, SYSTEM, INFO, BUILD and COMMIT. Add nothing without a
-      # reason: each one widens what a compromised control plane can reach.
+      # PLUGINS, VOLUMES, SYSTEM, BUILD and COMMIT. Add nothing without a reason:
+      # each one widens what a compromised control plane can reach.
       #
       # The master write switch. Without it every allowed section is read-only.
       POST: 1
@@ -88,6 +92,15 @@ services:
       IMAGES: 1
       # Resolve `duckhaven_internal` when attaching a new agent to it.
       NETWORKS: 1
+      # GET /info, for the host's CPU and memory. It is what bounds the sizes the
+      # create-agent dialog offers to what this machine can actually run; without
+      # it the UI falls back to a conservative default that ignores your hardware.
+      #
+      # This is a read-only disclosure of host details -- kernel, OS, total CPU and
+      # memory, container counts, storage driver. It grants no write of any kind,
+      # and it tells the control plane strictly less than CONTAINERS already does:
+      # that grant lets it enumerate every container on this host by name.
+      INFO: 1
 
   api:
     environment:
@@ -101,9 +114,15 @@ services:
       # Where a provisioned agent dials home. Elastic provisioning has no HTTP
       # request to derive this from, so it must be stated.
       ELASTIC_CONTROL_PLANE_URL: ws://api:8000/agents/connect
-      # Default size for pool-triggered provisioning; the admin UI picks per agent.
-      ELASTIC_DOCKER_CPU: ${ELASTIC_DOCKER_CPU:-2}
-      ELASTIC_DOCKER_MEMORY_GB: ${ELASTIC_DOCKER_MEMORY_GB:-4}
+      # Size used when nothing names one -- pool-triggered provisioning. The admin
+      # UI picks explicitly per agent, bounded by this host's real capacity.
+      ELASTIC_DEFAULT_CPU: ${ELASTIC_DEFAULT_CPU:-2}
+      ELASTIC_DEFAULT_MEMORY_GB: ${ELASTIC_DEFAULT_MEMORY_GB:-4}
+      # Held back from agent sizing for the rest of the stack: the API, Postgres,
+      # Polaris and MinIO share this machine with every agent provisioned onto it,
+      # so the maximum offered is the host minus this, not the whole host.
+      ELASTIC_DOCKER_RESERVE_CPU: ${ELASTIC_DOCKER_RESERVE_CPU:-1}
+      ELASTIC_DOCKER_RESERVE_MEMORY_GB: ${ELASTIC_DOCKER_RESERVE_MEMORY_GB:-2}
       # The admin UI shows an hourly rate, which it computes from these. On
       # hardware you already own the marginal hourly cost is zero, so both are
       # zeroed rather than left at the Azure list prices they default to — which

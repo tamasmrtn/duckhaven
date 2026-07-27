@@ -37,12 +37,19 @@ EXPECTED_GRANTS = {
     "ALLOW_RESTARTS",
     "IMAGES",
     "NETWORKS",
+    # Read-only host CPU/memory, so the create-agent dialog can bound its sliders
+    # to what this machine will actually run.
+    "INFO",
 }
 
 # Sections that must never be granted. EXEC would let the control plane run commands
 # in any container on the host; AUTH, SECRETS and CONFIGS expose credentials; SWARM,
-# NODES, TASKS and SERVICES reach cluster state; VOLUMES, SYSTEM and INFO enumerate
-# the host. None is needed to start an agent.
+# NODES, TASKS and SERVICES reach cluster state; VOLUMES and SYSTEM enumerate storage
+# the deployment does not own. None is needed to start an agent.
+#
+# INFO is deliberately *not* here: reading the host's CPU and memory is what lets the
+# create-agent dialog offer sizes this machine can run. It is a read, and a narrower
+# one than CONTAINERS, which already lists every container on the box.
 FORBIDDEN_GRANTS = {
     "EXEC",
     "AUTH",
@@ -55,7 +62,6 @@ FORBIDDEN_GRANTS = {
     "PLUGINS",
     "VOLUMES",
     "SYSTEM",
-    "INFO",
     "BUILD",
     "COMMIT",
     "DISTRIBUTION",

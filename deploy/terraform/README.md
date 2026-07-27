@@ -11,6 +11,12 @@ enabled, which forces a listener restricted to this deployment's own egress addr
 The container registry is the other exception. Both are forced by Azure, not chosen; see
 [the deviations](#three-documented-deviations).
 
+**Nothing in the running system holds a password it could leak.** The API connects to
+PostgreSQL with a Microsoft Entra token minted per connection, every image pull is
+authenticated by a managed identity, and the storage account has no account keys at all.
+One password remains, for Polaris, because its Quarkus datasource has no Entra path —
+see [Authentication](#authentication).
+
 > **Maturity:** the topology has been applied and exercised end to end on a staging
 > subscription — API reachable, Polaris answering, a storage-backend health check
 > vending credentials and reaching ADLS over its private endpoint, and an elastic
@@ -21,10 +27,16 @@ The container registry is the other exception. Both are forced by Azure, not cho
 ## Prerequisites
 
 - Terraform >= 1.9 (`sudo pacman -S terraform`, or download from HashiCorp).
-- TFLint >= 0.64 for linting, then `tflint --init` once to fetch the azurerm ruleset.
-- Azure CLI, logged in to the target subscription (`az login`).
+- Azure CLI, logged in to the target subscription (`az login`). The apply itself uses it
+  to mirror the Polaris images (`polaris_mirror_images`), and the bootstrap jobs are
+  started with it.
+- `ARM_SUBSCRIPTION_ID` exported, or an active CLI subscription. There is no
+  `subscription_id` variable — one less input, and it cannot disagree with the
+  credentials the apply is running under.
 - Permission to create resource groups, role assignments and a custom role
   definition in the subscription.
+- TFLint >= 0.64 for linting, then `tflint --init` once to fetch the azurerm ruleset.
+  Optional; the pre-commit hook skips when it is absent.
 
 The first `apply` against a fresh subscription may spend several minutes registering
 resource providers — `Microsoft.Network` alone took about 4.5 minutes during
@@ -50,6 +62,46 @@ exception is `private-endpoint`, which has four.
 
 Pick an example and apply it, or copy one as the starting point for your own root. The
 two differ only in what they pass to the module — see each one's README.
+
+## Authentication
+
+Four user-assigned managed identities do all the work, and none of them holds a stored
+credential.
+
+| Identity | Holds | Used for |
+|---|---|---|
+| `id-duckhaven-api-<env>` | AcrPull, Key Vault Secrets User, Storage Blob Data Contributor + Delegator, the custom elastic-agent role | Pulling its image, reading secrets, connecting to Postgres, signing staging URLs, creating agent container groups |
+| `id-duckhaven-polaris-<env>` | AcrPull, Key Vault Secrets User, Storage Blob Data Contributor + Delegator | Pulling its image, reading secrets, minting the SAS it vends to agents |
+| `id-duckhaven-agent-<env>` | AcrPull | Carried by every provisioned container group; how it pulls its image |
+| `id-duckhaven-dbadmin-<env>` | AcrPull, and Entra administrator *on the server* | One job, once, creating the API's login role |
+
+**The database.** Azure Database for PostgreSQL accepts a Microsoft Entra access token in
+the password field, so the API connects as its own identity and the driver mints a token
+per connection (`api/src/api/db/entra.py`). Nothing is generated, vaulted, kept in state
+or rotated — including for the Alembic migrations the API runs on start.
+
+An identity that can authenticate still cannot *log in* without a database role, and
+creating one means running `pgaadauth_create_principal` as an Entra administrator.
+Registering the API's own identity as that administrator would remove the bootstrap job
+entirely, at the cost of giving the internet-facing app `azure_pg_admin` over every
+database on the server. The `dbadmin` identity holds it instead.
+
+**Polaris is the exception.** Its Quarkus datasource would need
+`azure-identity-extensions` on the pgjdbc classpath to present an Entra token, and the
+stock `apache/polaris` image does not ship it. It keeps a generated password in Key
+Vault, which is why `postgres_password_auth_enabled` defaults to true. Running without
+Polaris lets you set it false and close password authentication off entirely.
+
+**The registry.** No credential is ever issued: `admin_enabled` is false and there are no
+scoped tokens. Container Apps pulls with its app identity; container instances carry the
+agent identity and pull as themselves, which Azure supports for *user-assigned*
+identities only. The control plane additionally needs
+`Microsoft.ManagedIdentity/userAssignedIdentities/assign/action` on the agent identity to
+attach it — that is in the custom role, and without it provisioning fails authorization
+before it ever reaches the pull.
+
+**Storage.** `shared_access_key_enabled` is false, so no account key exists to leak.
+Polaris and the API both mint short-lived user-delegation SAS with their identities.
 
 ## First deployment
 
@@ -186,8 +238,8 @@ Two rules are configured deliberately, both explained in `.tflint.hcl`:
 `azurerm_resource_missing_tags` is switched **on** to enforce the tagging convention,
 and `azurerm_resources_missing_prevent_destroy` is switched **off** because deletion
 protection is enforced Azure-side (purge protection, soft delete, PITR) and
-`lifecycle` blocks cannot be parameterised per environment — setting it would make the
-staging environment undestroyable.
+`lifecycle` blocks cannot be parameterised per environment — setting it would make a
+disposable environment undestroyable.
 
 ## Three documented deviations
 
@@ -233,45 +285,47 @@ If that is not acceptable, the fully-private alternative is a second, internal-o
 Container Apps environment in the same VNet to host Polaris. That is a larger change and
 is not implemented here.
 
-## Cost, and the staging environment
+## Cost
 
 Figures below are rough order-of-magnitude monthly list prices to show *relative*
 weight — check the Azure pricing calculator for real numbers. What matters is which
 resources bill hourly whether or not anything uses them.
 
-| Resource | Prod | Staging | Notes |
+| Resource | `production` | `quickstart` | Notes |
 |---|---|---|---|
 | PostgreSQL | ~$155 | ~$16 | `GP_Standard_D2ds_v5` + zone-redundant HA + 128 GiB, versus Burstable `B1ms` + 32 GiB and no standby. HA roughly doubles compute. |
-| Container registry | ~$50 | ~$5 | Premium versus Basic. See the trade below. |
-| NAT gateway + public IP | ~$36 | $0 | Disabled in staging; bills hourly regardless of traffic. |
+| Container registry | ~$50 | ~$5 | Premium versus Basic. |
+| NAT gateway + public IP | ~$36 | $0 | Off in quickstart; bills hourly regardless of traffic. |
 | Private endpoints | ~$29 | ~$29 | 4 × ~$7/mo. Deliberately *not* reduced — see below. |
 | Private DNS zones | ~$2 | ~$2 | 4 × $0.50. |
 | Storage account | pennies | pennies | Standard, small data volume. |
-| Log Analytics | per GB | per GB | Capped at 1 GB/day in staging. |
-| Container Apps | per vCPU-second | per vCPU-second | Prod runs Polaris at 2 × 1 vCPU/2 GiB, staging at 1 × 0.5 vCPU/1 GiB. Always-on replicas bill continuously, at a reduced idle rate when serving no requests. Neither app can scale to zero. |
+| Log Analytics | per GB | per GB | Capped at 1 GB/day in quickstart. |
+| Container Apps | per vCPU-second | per vCPU-second | Production runs each app at 2 × 1 vCPU/2 GiB, quickstart at 1 × 0.5 vCPU/1 GiB. Always-on replicas bill continuously, at a reduced idle rate when serving no requests. Neither app can scale to zero. |
 
 Three things are worth knowing:
 
-**Destroying staging is the real lever.** Everything above bills for existing, not for
-being used, and the whole environment is reproducible from one `terraform apply`. For a
-trial subscription with a fixed credit, `terraform destroy` between test sessions saves
-more than any SKU choice. Postgres can also be paused for up to 7 days
+**Destroying is the real lever.** Everything above bills for existing, not for being
+used, and the whole environment is reproducible from one `terraform apply`. For a trial
+subscription with a fixed credit, `terraform destroy` between sessions saves more than
+any SKU choice. Postgres can also be paused for up to 7 days
 (`az postgres flexible-server stop`) if you want to keep the data.
 
-**Private endpoints are still the largest staging line item after Postgres**, and they
-are intentionally left in place: they *are* the topology under test, so an environment
-without them would not verify the thing staging exists to verify. If the credit is
-tight enough that ~$29/mo matters more than validating private networking, the endpoints
-would need to become conditional — that is a deliberate change, not a default.
+**Private networking is not a tier.** Private endpoints are the largest quickstart line
+item after Postgres, and they are the same in both examples on purpose. Agents move and
+query real data over these paths, so the isolation *is* the deployment — an environment
+without it would neither be safe to put data in nor verify the topology that is. There
+is deliberately no switch to turn it off.
 
-**Basic registry costs nothing in security.** Access is identical on every SKU — a
-managed identity holding `AcrPull`, no credential issued. What Basic gives up is zone
-redundancy, network rule sets, retention policies, and included storage and throughput.
+**The registry SKU costs nothing in security.** Access is identical on Basic and
+Premium — a managed identity holding `AcrPull`, no credential issued. What Basic gives
+up is zone redundancy, network rule sets, retention policies, and included storage and
+throughput.
 
-`nat_gateway_enabled = false` in staging is a real functional limitation, not just a
-saving: Azure has retired default outbound access, so a VNet-injected agent has no route
-to the API's public ingress and cannot dial home. Turn it on for the session where
-elastic compute is being tested.
+`nat_gateway_enabled = false` is a real functional limitation rather than only a saving:
+Azure has retired default outbound access, so a VNet-injected agent has no route to the
+API's public ingress and cannot dial home. Turn it on for the session where elastic
+compute is being exercised; the module refuses the combination outright rather than
+letting agents fail to register.
 
 ## The Terraform runner needs data-plane access
 
@@ -283,10 +337,15 @@ with this explanation rather than letting the apply get halfway and 403.
 
 ## State contains secrets
 
-Generated passwords (Postgres admin, `SECRET_KEY`, the internal API secret, the
-Polaris root credential) are `random_password` resources, so they exist in state. The
-backend storage account is Entra-only (no account keys), versioned and private. Treat
-read access to it as equivalent to read access to the secrets.
+Generated secrets (`SECRET_KEY`, the inter-replica secret, the Polaris root credential,
+the setup token, and the Polaris database password) are `random_password` resources, so
+they exist in state. The backend storage account is Entra-only (no account keys),
+versioned and private. Treat read access to it as equivalent to read access to the
+secrets.
+
+The API's database credential is *not* among them: it authenticates with a managed
+identity, so there is nothing to generate. Removing Polaris
+(`polaris_enabled = false`) removes the last database password from state as well.
 
 ## Notes
 

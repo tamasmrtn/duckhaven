@@ -90,8 +90,8 @@ resource "azurerm_container_app" "api" {
       memory = var.api_memory
 
       # ── Database ──
-      # The entrypoint builds the asyncpg URL from these; DATABASE_URL is overwritten
-      # unconditionally, so setting it here would have no effect.
+      # The entrypoint assembles the asyncpg URL from these when DATABASE_URL is unset.
+      # Setting DATABASE_URL here instead takes precedence over all of them.
       env {
         name  = "POSTGRES_HOST"
         value = azurerm_postgresql_flexible_server.main.fqdn

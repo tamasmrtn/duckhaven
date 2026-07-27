@@ -1,8 +1,9 @@
 """Tests for the deploy entrypoint (api-entrypoint.sh).
 
 The entrypoint folds in the former init-secrets one-shot: it generates the app
-secret on first boot, then reads it and constructs DATABASE_URL before exec'ing
-the command. It reads SECRETS_DIR / DATA_DIR from the env, so tests can point it
+secret on first boot, then reads it and — unless the environment already supplies
+one — constructs DATABASE_URL before exec'ing the command. It reads
+SECRETS_DIR / DATA_DIR from the env, so tests can point it
 at a tempdir without /var/duckhaven needing to exist. We invoke it via `sh` and
 assert filesystem + exported-env effects.
 """
@@ -126,3 +127,37 @@ def test_respects_postgres_overrides(tmp_path: Path) -> None:
     )
     assert result.returncode == 0, result.stderr
     assert "postgresql+asyncpg://alt_user:pw@altdb:6543/alt_db" in result.stdout
+
+
+def test_preset_database_url_wins_over_postgres_vars(tmp_path: Path) -> None:
+    # A deployment that authenticates without a password (an Azure managed
+    # identity, where the driver fetches a token per connection) has no password
+    # to interpolate, so it supplies the whole URL. The POSTGRES_* variables are
+    # set here too, to prove they do not override it.
+    result = _run(
+        {
+            **_dirs(tmp_path),
+            "DATABASE_URL": "postgresql+asyncpg://id-duckhaven-api@managed.example:5432/duckhaven",
+            "POSTGRES_PASSWORD": "pw",
+            "POSTGRES_HOST": "ignored",
+        },
+        "sh",
+        "-c",
+        "echo $DATABASE_URL",
+    )
+    assert result.returncode == 0, result.stderr
+    assert "postgresql+asyncpg://id-duckhaven-api@managed.example:5432/duckhaven" in result.stdout
+    assert "ignored" not in result.stdout
+
+
+def test_empty_database_url_falls_back_to_postgres_vars(tmp_path: Path) -> None:
+    # Set-but-empty is what an unpopulated template variable looks like; it must
+    # behave as unset rather than exporting an empty URL the engine cannot parse.
+    result = _run(
+        {**_dirs(tmp_path), "DATABASE_URL": "", "POSTGRES_PASSWORD": "pw"},
+        "sh",
+        "-c",
+        "echo $DATABASE_URL",
+    )
+    assert result.returncode == 0, result.stderr
+    assert "postgresql+asyncpg://duckhaven:pw@postgres:5432/duckhaven" in result.stdout

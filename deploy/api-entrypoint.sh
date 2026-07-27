@@ -55,16 +55,26 @@ fi
 SECRET_KEY="$(cat "$SECRETS_DIR/secret_key")"
 export SECRET_KEY
 
-# Postgres password comes from the env, shared with the postgres/polaris
-# services via compose interpolation. Postgres is never published, so this
-# internal-only password is overridable but not vended; the default keeps a
-# fresh stack working with zero .env edits.
-POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-duckhaven}"
-DB_USER="${POSTGRES_USER:-duckhaven}"
-DB_HOST="${POSTGRES_HOST:-postgres}"
-DB_PORT="${POSTGRES_PORT:-5432}"
-DB_NAME="${POSTGRES_DB:-duckhaven}"
-DATABASE_URL="postgresql+asyncpg://${DB_USER}:${POSTGRES_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}"
+# A DATABASE_URL supplied by the environment wins. Assembling one here can only
+# ever express user-and-password auth, so overriding it unconditionally would make
+# the image dictate the credential model to every deployment that uses it -- a
+# passwordless connection (Azure managed identity, where the password is a
+# short-lived token the driver fetches per connection) has no password to put in a
+# URL at all.
+#
+# With it unset, the URL is built from the POSTGRES_* variables below. That is the
+# compose path: the password is shared with the postgres/polaris services via
+# compose interpolation, Postgres is never published, so this internal-only
+# password is overridable but not vended, and the default keeps a fresh stack
+# working with zero .env edits.
+if [ -z "${DATABASE_URL:-}" ]; then
+    POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-duckhaven}"
+    DB_USER="${POSTGRES_USER:-duckhaven}"
+    DB_HOST="${POSTGRES_HOST:-postgres}"
+    DB_PORT="${POSTGRES_PORT:-5432}"
+    DB_NAME="${POSTGRES_DB:-duckhaven}"
+    DATABASE_URL="postgresql+asyncpg://${DB_USER}:${POSTGRES_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}"
+fi
 export DATABASE_URL
 
 # Apply pending migrations before the app starts. Only runs inside the built

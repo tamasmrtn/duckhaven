@@ -67,10 +67,13 @@ resource "time_sleep" "kv_rbac_propagation" {
 
 # ── Secrets ───────────────────────────────────────────────────────────────────
 
-# All alphanumeric on purpose. deploy/api-entrypoint.sh builds the connection string
-# by interpolation -- postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@... --
-# so a password containing @ : / # or ? would corrupt the URL. 48 alphanumeric
-# characters is far more entropy than a symbol-laden shorter password.
+# All alphanumeric on purpose. This password reaches Polaris through a JDBC URL
+# assembled by interpolation (local.polaris_jdbc_url), so one containing @ : / # or ?
+# would corrupt it. 48 alphanumeric characters is far more entropy than a
+# symbol-laden shorter password.
+#
+# The API no longer uses it: it authenticates with its managed identity. This is the
+# Polaris credential, and the one the two bootstrap jobs use.
 resource "random_password" "postgres_admin" {
   length  = 48
   special = false

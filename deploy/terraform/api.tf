@@ -30,11 +30,9 @@ resource "azurerm_container_app" "api" {
     identity = azurerm_user_assigned_identity.api.id
   }
 
-  secret {
-    name                = "postgres-password"
-    key_vault_secret_id = azurerm_key_vault_secret.main["postgres-admin-password"].versionless_id
-    identity            = azurerm_user_assigned_identity.api.id
-  }
+  # No postgres-password secret: the API authenticates to Postgres with its managed
+  # identity, so there is no database credential to hold. Polaris and the two
+  # bootstrap jobs are the only things left that need one.
 
   secret {
     name                = "api-secret-key"
@@ -90,31 +88,30 @@ resource "azurerm_container_app" "api" {
       memory = var.api_memory
 
       # ── Database ──
-      # The entrypoint assembles the asyncpg URL from these when DATABASE_URL is unset.
-      # Setting DATABASE_URL here instead takes precedence over all of them.
+      # Passwordless. The URL carries the user and host only; asyncpg is handed a
+      # freshly minted Entra access token as the password on every connection (see
+      # api/src/api/db/entra.py), which is why nothing here is a secret and why the
+      # entrypoint must not rebuild this from POSTGRES_* -- it would have to
+      # interpolate a password that does not exist.
+      #
+      # The user is the API identity's *name*: that is what the login role created by
+      # the db-bootstrap job is called.
       env {
-        name  = "POSTGRES_HOST"
-        value = azurerm_postgresql_flexible_server.main.fqdn
+        name = "DATABASE_URL"
+        value = join("", [
+          "postgresql+asyncpg://",
+          azurerm_user_assigned_identity.api.name,
+          "@",
+          azurerm_postgresql_flexible_server.main.fqdn,
+          ":5432/",
+          azurerm_postgresql_flexible_server_database.duckhaven.name,
+          "?ssl=require",
+        ])
       }
 
       env {
-        name  = "POSTGRES_PORT"
-        value = "5432"
-      }
-
-      env {
-        name  = "POSTGRES_USER"
-        value = azurerm_postgresql_flexible_server.main.administrator_login
-      }
-
-      env {
-        name        = "POSTGRES_PASSWORD"
-        secret_name = "postgres-password"
-      }
-
-      env {
-        name  = "POSTGRES_DB"
-        value = azurerm_postgresql_flexible_server_database.duckhaven.name
+        name  = "DB_AUTH_MODE"
+        value = "entra"
       }
 
       # ── Sessions ──
@@ -320,6 +317,10 @@ resource "azurerm_container_app" "api" {
   depends_on = [
     # Migrations run on start, so the database and its schema target must exist.
     azurerm_postgresql_flexible_server_database.duckhaven,
+    # The API cannot log in until db-bootstrap has created its Entra role. Terraform
+    # can only guarantee the job exists, not that it has been run -- until it has,
+    # replicas fail their startup probe. See the deployment README.
+    azurerm_container_app_job.db_bootstrap,
     azurerm_role_assignment.api_key_vault_secrets,
     azurerm_role_assignment.api_acr_pull,
     azurerm_role_assignment.api_storage_blob_data,

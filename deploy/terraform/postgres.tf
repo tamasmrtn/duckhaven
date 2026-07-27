@@ -35,10 +35,12 @@ resource "azurerm_postgresql_flexible_server" "main" {
   }
 
   authentication {
-    # Password auth stays on because deploy/api-entrypoint.sh builds a
-    # postgresql+asyncpg:// URL and has no Entra-token path. Entra auth is enabled
-    # alongside it purely for human administrators.
-    password_auth_enabled         = true
+    # Both, by default. The API authenticates with a managed identity and needs no
+    # password at all, but Polaris cannot: its Quarkus datasource would need
+    # azure-identity-extensions on the pgjdbc classpath, which the stock
+    # apache/polaris image does not ship. So password auth stays on for Polaris --
+    # and can be switched off entirely by a deployment that does not run it.
+    password_auth_enabled         = var.postgres_password_auth_enabled
     active_directory_auth_enabled = true
     tenant_id                     = data.azurerm_client_config.current.tenant_id
   }
@@ -84,6 +86,114 @@ resource "azurerm_postgresql_flexible_server_active_directory_administrator" "op
   object_id           = var.postgres_entra_admin.object_id
   principal_name      = var.postgres_entra_admin.principal_name
   principal_type      = var.postgres_entra_admin.principal_type
+}
+
+# ── Entra login roles ─────────────────────────────────────────────────────────
+
+# An identity that exists only to create login roles for the workload identities.
+#
+# An Entra principal can authenticate to the server but cannot log in until a
+# database role exists for it, and creating one means running
+# pgaadauth_create_principal as an Entra administrator. Registering the *API's* own
+# identity as that administrator would skip this whole file, at the cost of giving
+# the internet-facing app azure_pg_admin over every database on the server. This
+# identity holds that instead, is used exactly once by the job below, and is never
+# attached to a running app.
+resource "azurerm_user_assigned_identity" "db_bootstrap" {
+  name                = "id-duckhaven-dbadmin-${var.environment}"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = var.location
+  tags                = local.tags
+}
+
+resource "azurerm_postgresql_flexible_server_active_directory_administrator" "db_bootstrap" {
+  server_name         = azurerm_postgresql_flexible_server.main.name
+  resource_group_name = azurerm_resource_group.main.name
+  tenant_id           = data.azurerm_client_config.current.tenant_id
+  object_id           = azurerm_user_assigned_identity.db_bootstrap.principal_id
+  principal_name      = azurerm_user_assigned_identity.db_bootstrap.name
+  principal_type      = "ServicePrincipal"
+}
+
+# Runs api.tools.db_bootstrap against the private endpoint. A job rather than part
+# of the apply because the server has no public endpoint: a Terraform runner outside
+# the VNet cannot reach it, while a job in this environment resolves privatelink and
+# connects -- the same reasoning, and the same shape, as polaris_bootstrap.
+#
+# Re-runnable: the tool skips a role that already exists and the grants are idempotent.
+resource "azurerm_container_app_job" "db_bootstrap" {
+  name                         = "db-bootstrap"
+  resource_group_name          = azurerm_resource_group.main.name
+  location                     = var.location
+  container_app_environment_id = azurerm_container_app_environment.main.id
+  workload_profile_name        = local.aca_workload_profile
+
+  replica_timeout_in_seconds = 300
+  replica_retry_limit        = 0
+
+  manual_trigger_config {
+    parallelism              = 1
+    replica_completion_count = 1
+  }
+
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.db_bootstrap.id]
+  }
+
+  registry {
+    server   = azurerm_container_registry.main.login_server
+    identity = azurerm_user_assigned_identity.db_bootstrap.id
+  }
+
+  template {
+    container {
+      name   = "db-bootstrap"
+      image  = "${azurerm_container_registry.main.login_server}/${local.api_image_repository}:${var.duckhaven_image_tag}"
+      cpu    = 0.5
+      memory = "1Gi"
+
+      # Bypasses the image's entrypoint, which would run alembic first -- and
+      # migrations are exactly what cannot work until this job has run.
+      command = ["python", "-m", "api.tools.db_bootstrap"]
+
+      env {
+        name  = "DB_BOOTSTRAP_HOST"
+        value = azurerm_postgresql_flexible_server.main.fqdn
+      }
+
+      # The role name for an Entra login is the identity's own name.
+      env {
+        name  = "DB_BOOTSTRAP_USER"
+        value = azurerm_user_assigned_identity.db_bootstrap.name
+      }
+
+      # Only the API. Polaris authenticates with a password because its Quarkus
+      # datasource has no Entra path, so it needs no login role here.
+      env {
+        name  = "DB_BOOTSTRAP_PRINCIPALS"
+        value = azurerm_user_assigned_identity.api.name
+      }
+
+      env {
+        name  = "DB_BOOTSTRAP_DATABASES"
+        value = azurerm_postgresql_flexible_server_database.duckhaven.name
+      }
+
+      env {
+        name  = "AZURE_CLIENT_ID"
+        value = azurerm_user_assigned_identity.db_bootstrap.client_id
+      }
+    }
+  }
+
+  tags = local.tags
+
+  depends_on = [
+    azurerm_postgresql_flexible_server_active_directory_administrator.db_bootstrap,
+    azurerm_postgresql_flexible_server_database.duckhaven,
+    azurerm_role_assignment.db_bootstrap_acr_pull,
+  ]
 }
 
 module "pe_postgres" {

@@ -40,6 +40,17 @@ resource "azurerm_role_assignment" "api_storage_blob_delegator" {
   principal_id         = azurerm_user_assigned_identity.api.principal_id
 }
 
+# ── Database bootstrap ────────────────────────────────────────────────────────
+
+# The only permission this identity has in Azure. Its privilege is inside Postgres
+# (it is the server's Entra administrator), and it needs nothing here beyond pulling
+# the image its one job runs.
+resource "azurerm_role_assignment" "db_bootstrap_acr_pull" {
+  scope                = azurerm_container_registry.main.id
+  role_definition_name = "AcrPull"
+  principal_id         = azurerm_user_assigned_identity.db_bootstrap.principal_id
+}
+
 # ── Polaris ───────────────────────────────────────────────────────────────────
 
 resource "azurerm_role_assignment" "polaris_acr_pull" {

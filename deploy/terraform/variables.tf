@@ -169,6 +169,23 @@ variable "postgres_geo_redundant_backup_enabled" {
   default     = true
 }
 
+variable "postgres_password_auth_enabled" {
+  description = <<-EOT
+    Whether the server accepts password authentication alongside Microsoft Entra.
+
+    The API never uses it: it connects with its managed identity, and holds no
+    database credential at all. Polaris does, because its Quarkus datasource would
+    need azure-identity-extensions on the pgjdbc classpath to authenticate with an
+    Entra token, and the stock apache/polaris image does not ship it.
+
+    So this stays true while Polaris is part of the deployment. Set it false to close
+    off password auth entirely -- valid only if nothing here needs a password, which
+    today means running without Polaris.
+  EOT
+  type        = bool
+  default     = true
+}
+
 variable "postgres_entra_admin" {
   description = <<-EOT
     Optional Entra principal (ideally a group) granted PostgreSQL administrator, for

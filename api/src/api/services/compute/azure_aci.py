@@ -98,8 +98,8 @@ class AzureAciBackend:
             image=req.image,
             resources=ResourceRequirements(
                 requests=ResourceRequests(
-                    cpu=req.cpu or settings.elastic_azure_cpu,
-                    memory_in_gb=req.memory_gb or settings.elastic_azure_memory_gb,
+                    cpu=req.cpu or settings.elastic_default_cpu,
+                    memory_in_gb=req.memory_gb or settings.elastic_default_memory_gb,
                 )
             ),
             environment_variables=env,
@@ -217,6 +217,17 @@ class AzureAciBackend:
             return await asyncio.to_thread(_get)
         except Exception:
             return "gone"
+
+    async def capacity(self) -> tuple[float, float]:
+        """Azure Container Instances' per-container-group ceiling in most regions.
+
+        A constant rather than a query: the limit is a published quota, not a
+        property of anything this deployment owns, and the regions that differ
+        differ downward for reasons (GPU SKUs, restricted offers) that a capacity
+        probe would not reveal either. ARM rejects an over-sized group at create,
+        so this bound is advisory and the platform enforces the real one.
+        """
+        return 4.0, 16.0
 
     async def list_managed(self) -> set[str]:
         client, rg = self._client_and_rg()

@@ -53,8 +53,8 @@ async def test_aci_provision_list_terminate_roundtrip(monkeypatch) -> None:
         settings, "elastic_azure_resource_group", os.environ["ELASTIC_AZURE_RESOURCE_GROUP"]
     )
     monkeypatch.setattr(settings, "elastic_azure_subnet_id", os.environ["ELASTIC_AZURE_SUBNET_ID"])
-    monkeypatch.setattr(settings, "elastic_azure_cpu", 1.0)
-    monkeypatch.setattr(settings, "elastic_azure_memory_gb", 1.0)
+    monkeypatch.setattr(settings, "elastic_default_cpu", 1.0)
+    monkeypatch.setattr(settings, "elastic_default_memory_gb", 1.0)
 
     from api.services.compute.azure_aci import AzureAciBackend
 

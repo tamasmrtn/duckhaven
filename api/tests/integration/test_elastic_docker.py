@@ -65,8 +65,8 @@ def docker_network(monkeypatch):
 
     monkeypatch.setattr(settings, "elastic_docker_host", os.environ["ELASTIC_DOCKER_HOST"])
     monkeypatch.setattr(settings, "elastic_docker_network", name)
-    monkeypatch.setattr(settings, "elastic_docker_cpu", 1.0)
-    monkeypatch.setattr(settings, "elastic_docker_memory_gb", 1.0)
+    monkeypatch.setattr(settings, "elastic_default_cpu", 1.0)
+    monkeypatch.setattr(settings, "elastic_default_memory_gb", 1.0)
     try:
         yield name
     finally:

@@ -50,6 +50,10 @@ _AGENT_RESULTS_DIR = "/var/duckhaven-agent/results"
 class DockerEngineBackend:
     provider = "docker"
 
+    def __init__(self) -> None:
+        # Filled on the first capacity() call; see the note there on caching.
+        self._capacity: tuple[float, float] | None = None
+
     def _client(self):
         """Build a Docker client for the configured host (lazy SDK import)."""
         import docker
@@ -69,8 +73,8 @@ class DockerEngineBackend:
         payload here is the failure mode a fake client cannot otherwise catch.
         """
         polaris_url = settings.elastic_agent_polaris_base_url or settings.polaris_base_url
-        memory_gb = req.memory_gb or settings.elastic_docker_memory_gb
-        cpu = req.cpu or settings.elastic_docker_cpu
+        memory_gb = req.memory_gb or settings.elastic_default_memory_gb
+        cpu = req.cpu or settings.elastic_default_cpu
 
         return {
             "image": req.image,
@@ -196,6 +200,42 @@ class DockerEngineBackend:
             return await asyncio.to_thread(_get)
         except Exception:
             return "gone"
+
+    async def capacity(self) -> tuple[float, float] | None:
+        """The host's usable capacity, less what the control plane needs to keep.
+
+        On a single box the API, Postgres, Polaris and MinIO run on the same machine
+        an agent is provisioned onto, so the honest ceiling is not the whole host --
+        offering it would let one query starve the stack serving it. The reserve is
+        configurable because how much the rest of the stack needs depends on what
+        else is deployed alongside.
+
+        Cached: a machine does not change size while the process runs, and this is
+        read whenever the create-agent dialog opens.
+
+        ``None`` on failure rather than raising, so an unreachable daemon degrades
+        to the conservative default instead of breaking the dialog.
+        """
+        if self._capacity is not None:
+            return self._capacity
+
+        def _info() -> tuple[float, float]:
+            info = self._client().info()
+            return float(info["NCPU"]), info["MemTotal"] / 1024**3
+
+        try:
+            ncpu, memory_gb = await asyncio.to_thread(_info)
+        except Exception:
+            logger.warning("Could not read Docker host capacity; using default limits")
+            return None
+
+        # Floored to whole units because the UI steps in whole units, and never
+        # below one so a small host still offers a usable size.
+        self._capacity = (
+            max(1.0, float(int(ncpu - settings.elastic_docker_reserve_cpu))),
+            max(1.0, float(int(memory_gb - settings.elastic_docker_reserve_memory_gb))),
+        )
+        return self._capacity
 
     async def list_managed(self) -> set[str]:
         client = self._client()

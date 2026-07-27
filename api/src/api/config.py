@@ -223,6 +223,12 @@ class Settings(BaseSettings):
     # Cap on concurrent elastic agents per pool_key; ensure_agent will not
     # provision beyond it (a cost guardrail). Phase 1 keeps this at 1.
     elastic_max_agents_per_pool: int = 1
+    # Size used when nothing names one: pool-triggered provisioning, and a restart
+    # of an agent whose row predates per-agent sizing. Provider-independent -- an
+    # elastic agent is the same container everywhere, and the platform ceiling is
+    # enforced separately by the backend (see services/compute/pricing.py).
+    elastic_default_cpu: float = 2.0
+    elastic_default_memory_gb: float = 4.0
     # Azure Container Instances backend (used when elastic_provider="azure_aci").
     # The subscription/resource-group DuckHaven provisions agent container groups
     # into, and the region. Credentials come from the ambient identity
@@ -237,11 +243,6 @@ class Settings(BaseSettings):
     # control plane's own network. The subnet must be delegated to
     # Microsoft.ContainerInstance/containerGroups.
     elastic_azure_subnet_id: str | None = None
-    # CPU cores and memory (GiB) requested per elastic agent container. The
-    # default size for pool-triggered provisioning; the admin UI can pick a named
-    # size per agent.
-    elastic_azure_cpu: float = 2.0
-    elastic_azure_memory_gb: float = 8.0
     # Azure Container Instances pay-as-you-go rates, surfaced so the UI shows the
     # hourly cost of a size before it is created (Databricks-style). Defaults are
     # approximate Linux/eastus list prices — override per region/agreement.
@@ -259,10 +260,13 @@ class Settings(BaseSettings):
     # the isolated `duckhaven_internal`, which is what keeps an agent's result server
     # reachable from the control plane and from nowhere else.
     elastic_docker_network: str = "duckhaven_internal"
-    # CPU cores and memory (GiB) requested per elastic agent container, when the
-    # request does not name a size.
-    elastic_docker_cpu: float = 2.0
-    elastic_docker_memory_gb: float = 4.0
+    # Host capacity held back from agent sizing, for the control plane and its
+    # dependencies -- on a single box the API, Postgres, Polaris and MinIO share the
+    # machine an agent is provisioned onto, so offering the whole host as an agent
+    # size would let one query starve the stack running it. Subtracted from what
+    # `docker info` reports to give the maximum the UI offers.
+    elastic_docker_reserve_cpu: float = 1.0
+    elastic_docker_reserve_memory_gb: float = 2.0
     # Pull credentials for a private registry hosting the agent image (e.g. ACR).
     # ACI cannot pull a private image without them; leave unset for a public image.
     #

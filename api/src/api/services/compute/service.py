@@ -106,8 +106,8 @@ async def ensure_agent(db: AsyncSession, pool_key: str) -> Agent | None:
         db,
         name=f"elastic-{secrets.token_hex(4)}",
         pool_key=pool_key,
-        cpu=settings.elastic_azure_cpu,
-        memory_gb=settings.elastic_azure_memory_gb,
+        cpu=settings.elastic_default_cpu,
+        memory_gb=settings.elastic_default_memory_gb,
         idle_timeout_s=None,
     )
 
@@ -224,8 +224,8 @@ async def restart_elastic_agent(db: AsyncSession, agent: Agent) -> Agent | None:
     return await _mint_and_provision(
         db,
         agent,
-        cpu=agent.requested_cpu or settings.elastic_azure_cpu,
-        memory_gb=agent.requested_memory_gb or settings.elastic_azure_memory_gb,
+        cpu=agent.requested_cpu or settings.elastic_default_cpu,
+        memory_gb=agent.requested_memory_gb or settings.elastic_default_memory_gb,
     )
 
 

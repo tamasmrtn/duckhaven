@@ -22,9 +22,31 @@ ENTRYPOINT = REPO_ROOT / "deploy" / "api-entrypoint.sh"
 
 pytestmark = pytest.mark.skipif(shutil.which("sh") is None, reason="POSIX sh not available")
 
+# Every variable the entrypoint reads. Cleared from the inherited environment by _run
+# so each test states its own inputs and nothing leaks in from the shell or CI.
+_SCRIPT_INPUTS = frozenset(
+    {
+        "DATABASE_URL",
+        "POSTGRES_PASSWORD",
+        "POSTGRES_USER",
+        "POSTGRES_HOST",
+        "POSTGRES_PORT",
+        "POSTGRES_DB",
+        "SECRET_KEY",
+        "SECRETS_DIR",
+        "DATA_DIR",
+    }
+)
+
 
 def _run(env: dict[str, str], *args: str) -> subprocess.CompletedProcess:
-    full_env = {**os.environ, **env}
+    # The ambient environment is inherited so the script has a PATH, but the variables
+    # it actually reads are cleared first and then set from `env`. CI exports a
+    # DATABASE_URL for the test database, and since the entrypoint now honours a
+    # pre-set one, leaving it in place would silently make these tests assert against
+    # the runner's environment instead of the script's own logic.
+    full_env = {k: v for k, v in os.environ.items() if k not in _SCRIPT_INPUTS}
+    full_env.update(env)
     return subprocess.run(
         ["sh", str(ENTRYPOINT), *args],
         capture_output=True,

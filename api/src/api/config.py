@@ -2,7 +2,7 @@ import json
 import os
 import socket
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -276,6 +276,19 @@ class Settings(BaseSettings):
     db_pool_size: int = 5
     db_max_overflow: int = 10
     db_pool_recycle_s: int = 1800
+    # How the database connection authenticates. "password" takes the credential
+    # from database_url, which is every self-hosted deployment. "entra" leaves the
+    # password out of the URL entirely and has the driver present a Microsoft Entra
+    # access token instead, fetched from the ambient managed identity per
+    # connection — tokens expire, so there is nothing durable to store, and
+    # database_url carries only the user (the managed identity's name) and host.
+    # Requires the server to have Entra authentication enabled and a database role
+    # created for that identity.
+    db_auth_mode: Literal["password", "entra"] = "password"
+    # Token audience for db_auth_mode="entra". This is the fixed scope Azure
+    # Database for PostgreSQL accepts; it is a setting only so a sovereign cloud
+    # (which uses a different audience) does not need a code change.
+    db_entra_scope: str = "https://ossrdbms-aad.database.windows.net/.default"
 
     # Prometheus metrics exposition at GET /api/metrics. Unauthenticated like the
     # health endpoints (Prometheus scrapers carry no session cookie); keep it on

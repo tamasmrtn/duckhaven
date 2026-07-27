@@ -1,5 +1,8 @@
 """Settings parsing edge cases."""
 
+import pytest
+from pydantic import ValidationError
+
 from api.config import Settings
 
 
@@ -110,3 +113,24 @@ def test_replica_identity_auto_yields_distinct_urls_per_host(monkeypatch):
     assert first == "http://10.42.0.4:8000"
     assert second == "http://10.42.1.183:8000"
     assert first != second
+
+
+def test_db_auth_mode_defaults_to_password():
+    """Compose, tests and every self-hosted deployment must be unaffected by the
+    Entra path existing."""
+    assert Settings().db_auth_mode == "password"
+
+
+def test_db_auth_mode_rejects_unknown_values(monkeypatch):
+    """A typo must fail at startup rather than silently falling back to password
+    auth against a server that has password auth disabled."""
+    monkeypatch.setenv("DB_AUTH_MODE", "managed-identity")
+    with pytest.raises(ValidationError):
+        Settings()
+
+
+def test_db_auth_mode_entra_is_accepted(monkeypatch):
+    monkeypatch.setenv("DB_AUTH_MODE", "entra")
+    settings = Settings()
+    assert settings.db_auth_mode == "entra"
+    assert settings.db_entra_scope == "https://ossrdbms-aad.database.windows.net/.default"

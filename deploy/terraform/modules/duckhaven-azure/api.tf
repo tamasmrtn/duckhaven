@@ -52,6 +52,12 @@ resource "azurerm_container_app" "api" {
     identity            = azurerm_user_assigned_identity.api.id
   }
 
+  secret {
+    name                = "setup-token"
+    key_vault_secret_id = azurerm_key_vault_secret.main["setup-token"].versionless_id
+    identity            = azurerm_user_assigned_identity.api.id
+  }
+
   ingress {
     external_enabled = true
     target_port      = 8000
@@ -121,6 +127,16 @@ resource "azurerm_container_app" "api" {
       env {
         name  = "COOKIE_SECURE"
         value = "true"
+      }
+
+      # Gates the one-time first-admin creation. Injected for the same reason as
+      # SECRET_KEY: /var/duckhaven is ephemeral, so the entrypoint's self-generated
+      # token would change on every replica replacement -- which is exactly what makes
+      # it unusable, since the operator has to read it and then spend it. Read this one
+      # with `terraform output -raw setup_token`.
+      env {
+        name        = "SETUP_TOKEN"
+        secret_name = "setup-token"
       }
 
       # ── Replica identity ──

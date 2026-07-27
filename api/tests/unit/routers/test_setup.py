@@ -107,3 +107,57 @@ async def test_create_first_admin_rejects_when_token_file_missing(
         json={"email": "admin@test.local", "password": "longenough"},
     )
     assert resp.status_code == 403
+
+
+async def test_configured_token_is_used_without_a_file(
+    client: AsyncClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Where the container filesystem is ephemeral, a self-generated token is lost
+    whenever a replica is replaced. A configured one is injected instead, and there
+    is then no file at all."""
+    monkeypatch.setattr(settings, "setup_token_path", tmp_path / "does-not-exist")
+    monkeypatch.setattr(settings, "setup_token", "from-key-vault")
+
+    resp = await client.post(
+        "/setup/admin",
+        headers={"X-Setup-Token": "from-key-vault"},
+        json={"email": "admin@test.local", "password": "longenough"},
+    )
+    assert resp.status_code == 200
+
+
+async def test_configured_token_wins_over_the_file(
+    client: AsyncClient, setup_token: str, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(settings, "setup_token", "from-key-vault")
+
+    stale = await client.post(
+        "/setup/admin",
+        headers={"X-Setup-Token": setup_token},
+        json={"email": "admin@test.local", "password": "longenough"},
+    )
+    assert stale.status_code == 403
+
+
+async def test_configured_token_still_refuses_a_second_admin(
+    client: AsyncClient, db_session, monkeypatch: pytest.MonkeyPatch
+):
+    """The configured token cannot be consumed by deleting a file, so the
+    user-count gate is what bounds replay -- assert it directly."""
+    monkeypatch.setattr(settings, "setup_token", "from-key-vault")
+    db_session.add(
+        User(
+            email="existing@test.local",
+            password_hash=hash_password("xxxxxxxx"),
+            name="Pre-existing",
+            role="admin",
+        )
+    )
+    await db_session.commit()
+
+    resp = await client.post(
+        "/setup/admin",
+        headers={"X-Setup-Token": "from-key-vault"},
+        json={"email": "second@test.local", "password": "longenough"},
+    )
+    assert resp.status_code == 409

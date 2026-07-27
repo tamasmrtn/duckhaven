@@ -17,6 +17,10 @@ boot, so every variable below is optional.
 |---|---|---|
 | `DUCKHAVEN_IMAGE_TAG` | `latest` | Pin a specific image tag (e.g. `v1.2.3`) instead of riding `:latest`. |
 | `SECRET_KEY` | generated | App secret. Captured to the secrets dir on first boot by the API entrypoint and reused thereafter. |
+| `SETUP_TOKEN` | generated | One-time token gating first-admin creation. The entrypoint writes one to the data directory on first boot; set this instead where that filesystem is ephemeral, so the token survives a replica being replaced. |
+| `DATABASE_URL` | built from `POSTGRES_*` | Full SQLAlchemy URL. Set it to override the `POSTGRES_*` variables entirely — required for a connection they cannot express, such as passwordless Microsoft Entra authentication, where there is no password to interpolate. |
+| `DB_AUTH_MODE` | `password` | `password` takes the credential from `DATABASE_URL`. `entra` leaves it out and has the driver present a Microsoft Entra access token instead, minted per connection from the ambient managed identity. Requires the server to have Entra authentication enabled and a login role for that identity. |
+| `DB_ENTRA_SCOPE` | `https://ossrdbms-aad.database.windows.net/.default` | Token audience for `DB_AUTH_MODE=entra`. Change only for a sovereign cloud. |
 | `POSTGRES_PASSWORD` | `duckhaven` | Internal Postgres password. Postgres publishes no port; shared with the polaris and api services via Compose interpolation. |
 | `POLARIS_IMAGE_TAG` | `latest` | Apache Polaris image tag. Pin in production. |
 | `POLARIS_REALM` | `POLARIS` | Polaris realm name. |

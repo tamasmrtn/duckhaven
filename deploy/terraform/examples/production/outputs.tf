@@ -17,3 +17,14 @@ output "warehouse_root_uri" {
   description = "Root URI to register as an adls_gen2 storage backend (hierarchical = true)."
   value       = module.duckhaven.warehouse_root_uri
 }
+
+output "setup_token" {
+  description = "One-time token gating first-admin creation. Spend it via next_steps."
+  value       = module.duckhaven.setup_token
+  sensitive   = true
+}
+
+output "next_steps" {
+  description = "The commands to run after this apply, with every name already filled in."
+  value       = module.duckhaven.next_steps
+}

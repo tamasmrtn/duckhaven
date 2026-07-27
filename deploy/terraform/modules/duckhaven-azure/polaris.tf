@@ -131,6 +131,8 @@ resource "azurerm_container_app_job" "polaris_bootstrap" {
   depends_on = [
     azurerm_role_assignment.polaris_key_vault_secrets,
     azurerm_role_assignment.polaris_acr_pull,
+    # The admin tool image has to be in the registry before the job can run it.
+    null_resource.polaris_image_mirror,
   ]
 }
 

@@ -105,6 +105,12 @@ class Settings(BaseSettings):
     # deploy/api-entrypoint.sh on first boot and deleted by the API after the
     # first admin is created.
     setup_token_path: Path = Path("/var/duckhaven/setup_token")
+    # The same token, supplied directly. Takes precedence over the file, and is
+    # what a deployment with an ephemeral container filesystem needs: a
+    # self-generated token is lost and regenerated whenever a replica is replaced,
+    # so it cannot be read once and used. Replay is bounded either way -- creating
+    # the first admin is refused outright once any user exists.
+    setup_token: str | None = None
     # Image self-hosters pull when running a new agent. Surfaced verbatim in
     # the add-agent compose snippet (admin UI).
     agent_image: str = "ghcr.io/tamasmrtn/duckhaven-agent:latest"

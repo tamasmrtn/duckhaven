@@ -123,3 +123,49 @@ output "private_dns_zone_ids" {
   description = "Private DNS zone IDs, keyed by service."
   value       = { for k, z in azurerm_private_dns_zone.main : k => z.id }
 }
+
+output "setup_token" {
+  description = <<-EOT
+    One-time token gating first-admin creation (POST /api/setup/admin). Injected into
+    the API rather than generated on its ephemeral filesystem, so it can be read here
+    once instead of scraped off a replica that may since have been replaced.
+  EOT
+  value       = random_password.setup_token.result
+  sensitive   = true
+}
+
+output "next_steps" {
+  description = <<-EOT
+    The commands to run after this apply, with every name already filled in. Printing
+    them beats a README the operator has to translate: the resource group, registry and
+    URL are only known here.
+  EOT
+  value = <<-EOT
+    # 1. Build and push the DuckHaven images (from the repo root), if you have not yet.
+    az acr login -n ${azurerm_container_registry.main.name}
+    docker build --platform linux/amd64 -f api/Dockerfile   -t ${azurerm_container_registry.main.login_server}/${local.api_image_repository}:${var.duckhaven_image_tag} .
+    docker build --platform linux/amd64 -f agent/Dockerfile -t ${azurerm_container_registry.main.login_server}/${local.agent_image_repository}:${var.duckhaven_image_tag} .
+    docker push ${azurerm_container_registry.main.login_server}/${local.api_image_repository}:${var.duckhaven_image_tag}
+    docker push ${azurerm_container_registry.main.login_server}/${local.agent_image_repository}:${var.duckhaven_image_tag}
+
+    # 2. Create the API's database login role. Must succeed before the API can start.
+    ${local.postgres_managed_here
+  ? "az containerapp job start -n db-bootstrap -g ${azurerm_resource_group.main.name}"
+  : "# Skipped: you own the server. Create a login role for ${azurerm_user_assigned_identity.api.name} yourself."}
+
+    # 3. Create the Polaris realm and root principal. Safe to re-run.
+    ${var.polaris_enabled
+  ? "az containerapp job start -n polaris-bootstrap -g ${azurerm_resource_group.main.name}"
+: "# Skipped: using an external Polaris at ${local.polaris_url}."}
+
+    # 4. Create the first admin.
+    curl -sS -X POST ${"https://${local.api_fqdn}"}/api/setup/admin \
+      -H "X-Setup-Token: $(terraform output -raw setup_token)" \
+      -H 'Content-Type: application/json' \
+      -d '{"email":"admin@example.com","password":"...","name":"Admin"}'
+
+    # 5. Register the warehouse as an adls_gen2 storage backend in the UI, with
+    #    hierarchical = true and this root URI, then run Test access:
+    #    abfss://${azurerm_storage_data_lake_gen2_filesystem.warehouse.name}@${azurerm_storage_account.warehouse.name}.dfs.core.windows.net/duckhaven/
+  EOT
+}

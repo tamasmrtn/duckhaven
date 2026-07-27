@@ -53,37 +53,44 @@ two differ only in what they pass to the module — see each one's README.
 
 ## First deployment
 
+`make` wraps the ordered sequence; `ROOT` selects the example.
+
 ```sh
 export ARM_SUBSCRIPTION_ID=<your subscription>
 
-# 1. State backend (once per subscription).
+# 1. State backend (once per subscription). Copy storage_account_name into the
+#    example's backend config.
 cd deploy/terraform/bootstrap
-terraform init
-terraform apply -var storage_account_name=<globally-unique-name>
-# Copy storage_account_name into the example's backend config.
+terraform init && terraform apply -var storage_account_name=<globally-unique-name>
+cd ..
 
-# 2. The deployment itself.
-cd ../examples/quickstart
-terraform init -backend-config=backend.hcl
-terraform apply -var location=<region> -var name_suffix=<suffix> -var duckhaven_image_tag=<tag>
+# 2. The deployment.
+make init      ROOT=examples/quickstart
+make registry  ROOT=examples/quickstart   # see below: the first apply is staged
+make images    ROOT=examples/quickstart TAG=v1.0.0
+make apply     ROOT=examples/quickstart
+make bootstrap ROOT=examples/quickstart
+make outputs   ROOT=examples/quickstart   # prints what is left to do
 ```
 
-`examples/production` takes the same shape with `-backend-config=envs/prod.backend.hcl`
-and `-var-file=envs/prod.tfvars`; switching environments there needs
-`terraform init -reconfigure`.
+`examples/production` is the same, with `BACKEND=envs/prod.backend.hcl` and
+`VARS=envs/prod.tfvars`; switching environments there needs `terraform init -reconfigure`.
+
+The plain Terraform commands are in each example's README if you would rather not use
+`make`.
 
 ## The first apply is staged
 
 A Container App whose image cannot be pulled never becomes healthy, and the images can
 only be pushed once the registry exists — so the first apply for an environment runs in
-two passes. Later applies are a single `terraform apply`.
+two passes. Later applies are a single `make apply`.
+
+`-target` is a documented troubleshooting tool rather than a workflow, and this is the
+one place it earns its keep: there is no way to express "create this resource first"
+across an apply boundary. `make registry` is that one command.
 
 ```sh
-# 1. The registry alone. -target pulls in the resource group it needs.
 terraform apply -target=module.duckhaven.azurerm_container_registry.main
-
-# 2. Push the images (below), then everything else.
-terraform apply
 ```
 
 Optionally, apply the slow resources in the first pass too so they build while the
@@ -102,57 +109,59 @@ terraform apply \
 
 Terraform references images by digest-less tag inside your own registry. A Container App
 whose image cannot be pulled never becomes healthy, and the apply either fails or leaves
-a broken revision, so populate the registry between the data-plane apply and the app
-apply. `ACR` below is the `container_registry_login_server` output.
+a broken revision, so populate the registry between the registry apply and the app
+apply.
 
 ```sh
-# DuckHaven's own images, built from the repo root.
-az acr login -n "$ACR"
-docker build --platform linux/amd64 -f api/Dockerfile   -t "$ACR/duckhaven-api:$TAG" .
-docker build --platform linux/amd64 -f agent/Dockerfile -t "$ACR/duckhaven-agent:$TAG" .
-docker push "$ACR/duckhaven-api:$TAG"
-docker push "$ACR/duckhaven-agent:$TAG"
+make images ROOT=examples/quickstart TAG=v1.0.0
+```
 
-# Polaris, mirrored so runtime does not depend on Docker Hub availability or its
-# anonymous pull limits. The tag must match polaris_image_tag, and both images must be
-# the same version -- the admin tool owns the schema the server reads.
+The two Polaris images are mirrored **by the apply itself** (`az acr import`, run
+server-side, so nothing is pulled or pushed by the runner), which is why they are no
+longer a manual prerequisite. It needs the Azure CLI on the runner; set
+`polaris_mirror_images = false` to do it yourself:
+
+```sh
 az acr import -n "$ACR" --source docker.io/apache/polaris:1.6.0            --image polaris:1.6.0
 az acr import -n "$ACR" --source docker.io/apache/polaris-admin-tool:1.6.0 --image polaris-admin-tool:1.6.0
 ```
 
-## Bootstrapping the Polaris realm
+Both must be the same version — the admin tool owns the schema the server reads.
 
-The realm and root principal are created by a manual-trigger job, not by the apply,
-because it must run once against a given database before the server starts:
+## Bootstrapping
+
+Two manual-trigger jobs, neither part of the apply, because each must run once against a
+database before the thing that uses it starts. Both are safe to re-run.
 
 ```sh
-az containerapp job start -n polaris-bootstrap -g "$(terraform output -raw resource_group_name)"
+make bootstrap ROOT=examples/quickstart
 ```
 
-It is safe to re-run. The admin tool exits 3 when the realm already exists, and the
-job's command treats that as success — the same contract as
-`deploy/polaris-bootstrap.sh`.
+- **`db-bootstrap`** creates the API's Microsoft Entra login role. **The API cannot
+  start until this has run** — an Entra identity can authenticate to the server but
+  cannot log in without a database role, so replicas fail their startup probe until it
+  exists. Terraform can guarantee the job exists, not that it has been run.
+- **`polaris-bootstrap`** creates the Polaris realm and root principal. The admin tool
+  exits 3 when the realm already exists, and the job's command treats that as success —
+  the same contract as `deploy/polaris-bootstrap.sh`.
 
 ## Creating the first admin
 
-The API writes a one-time setup token to its own filesystem on first boot, which gates
-`POST /api/setup/admin`. Read it from the running replica and spend it:
+`terraform output -raw next_steps` prints every remaining command with the resource
+group, registry and URL already filled in. The first-admin step is:
 
 ```sh
-RG="$(terraform output -raw resource_group_name)"
-API="$(terraform output -raw api_url)"
-
-TOKEN="$(az containerapp exec -n api -g "$RG" \
-  --command 'cat /var/duckhaven/setup_token' | tr -d '\r')"
-
-curl -sS -X POST "$API/api/setup/admin" \
-  -H "X-Setup-Token: $TOKEN" -H 'Content-Type: application/json' \
+curl -sS -X POST "$(terraform output -raw api_url)/api/setup/admin" \
+  -H "X-Setup-Token: $(terraform output -raw setup_token)" \
+  -H 'Content-Type: application/json' \
   -d '{"email":"admin@example.com","password":"...","name":"Admin"}'
 ```
 
-The token lives on the container filesystem, which is ephemeral here, so it is
-regenerated if the replica is replaced before the first admin exists — read it again
-rather than reusing an old value. It is deleted once an admin has been created.
+The token is generated by Terraform and injected from Key Vault, rather than written to
+the container filesystem on first boot — that filesystem is ephemeral here, so a
+self-generated token changes whenever a replica is replaced and cannot be read once and
+then spent. Creating a first admin is refused outright once any user exists, which is
+what bounds replay.
 
 Then register the warehouse as an `adls_gen2` storage backend, using
 `terraform output -raw warehouse_root_uri` as the root URI with `hierarchical: true` and

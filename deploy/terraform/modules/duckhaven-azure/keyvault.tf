@@ -97,12 +97,23 @@ resource "random_password" "polaris_client_secret" {
   special = false
 }
 
+# Gates the browser-driven first-admin creation (POST /api/setup/admin).
+#
+# Injected rather than left to the entrypoint's first-boot generation, for the same
+# reason as SECRET_KEY: /var/duckhaven is ephemeral here, so a self-generated token is
+# regenerated whenever a replica is replaced and cannot be read once and then used.
+resource "random_password" "setup_token" {
+  length  = 48
+  special = false
+}
+
 locals {
   key_vault_secrets = {
     postgres-admin-password = random_password.postgres_admin.result
     api-secret-key          = random_password.api_secret_key.result
     internal-api-secret     = random_password.internal_api_secret.result
     polaris-client-secret   = random_password.polaris_client_secret.result
+    setup-token             = random_password.setup_token.result
   }
 }
 

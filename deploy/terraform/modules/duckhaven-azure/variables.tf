@@ -386,6 +386,20 @@ variable "polaris_image_tag" {
   default     = "1.6.0"
 }
 
+variable "polaris_mirror_images" {
+  description = <<-EOT
+    Whether Terraform runs `az acr import` to copy the two Polaris images into this
+    registry, so runtime does not depend on Docker Hub availability or its anonymous
+    pull limits.
+
+    Requires the Azure CLI on the Terraform runner. Set false to mirror them yourself
+    (see the deployment README) -- the images must exist in the registry before the
+    Polaris app is created either way, or it never becomes healthy.
+  EOT
+  type        = bool
+  default     = true
+}
+
 variable "polaris_realm" {
   description = "Polaris realm bootstrapped and served. Must match the API's POLARIS_REALM."
   type        = string

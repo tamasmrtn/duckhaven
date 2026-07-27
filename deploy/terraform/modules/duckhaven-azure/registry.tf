@@ -45,6 +45,45 @@ resource "azurerm_container_registry" "main" {
   tags = local.tags
 }
 
+# ── Mirrored Polaris images ───────────────────────────────────────────────────
+
+# Copies apache/polaris and apache/polaris-admin-tool into this registry, so runtime
+# does not depend on Docker Hub availability or its anonymous pull limits.
+#
+# This was a documented manual prerequisite of the first apply -- two `az acr import`
+# commands an operator had to remember between creating the registry and creating the
+# apps, where forgetting produced an app that never became healthy. It is a provisioner
+# rather than a resource because Terraform has no notion of a registry's contents;
+# `az acr import` is server-side, so nothing is pulled or pushed by the runner.
+#
+# Requires the Azure CLI on the runner. Set polaris_mirror_images = false to do it
+# yourself.
+resource "null_resource" "polaris_image_mirror" {
+  count = var.polaris_enabled && var.polaris_mirror_images ? 1 : 0
+
+  # Re-runs when the version changes, which is the only thing that should cause a
+  # re-import. The registry name is included so a rebuilt registry is repopulated.
+  triggers = {
+    registry = azurerm_container_registry.main.name
+    tag      = var.polaris_image_tag
+  }
+
+  provisioner "local-exec" {
+    interpreter = ["/bin/sh", "-c"]
+    command     = <<-EOT
+      set -eu
+      for repo in polaris polaris-admin-tool; do
+        # --force so a re-run is idempotent rather than failing on an existing tag.
+        az acr import \
+          --name '${azurerm_container_registry.main.name}' \
+          --source "docker.io/apache/$repo:${var.polaris_image_tag}" \
+          --image "$repo:${var.polaris_image_tag}" \
+          --force
+      done
+    EOT
+  }
+}
+
 # ── Agent pull identity ───────────────────────────────────────────────────────
 
 # The identity every provisioned agent container group carries, and pulls its image

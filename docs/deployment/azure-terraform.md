@@ -190,24 +190,32 @@ does not cover fails at plan time and tells you to set `location_short` yourself
    `allow_management_plane_public_access = false`. A plan-time precondition explains
    this rather than letting the apply fail halfway.
 3. **Images in the registry.** A Container App whose image cannot be pulled never
-   becomes healthy. Build and push `duckhaven-api` and `duckhaven-agent`, and mirror
-   `apache/polaris` and `apache/polaris-admin-tool` at the tag `polaris_image_tag`
-   names — both must be the same version, because the admin tool owns the schema the
-   server reads.
+   becomes healthy, so build and push `duckhaven-api` and `duckhaven-agent` between the
+   registry apply and the app apply. The two Polaris images are mirrored by the apply
+   itself, using a server-side `az acr import`; set `polaris_mirror_images = false` to
+   do that yourself.
 4. **Provider registration.** A fresh subscription may spend several minutes
    registering resource providers on the first apply. Let it finish.
 
-Then bootstrap the catalog and the first admin:
+Then run the two bootstrap jobs. Neither is part of the apply, because each must run
+once against a database before the thing that uses it starts, and both are safe to
+re-run:
 
 ```sh
-az containerapp job start -n polaris-bootstrap -g "$(terraform output -raw resource_group_name)"
+RG="$(terraform output -raw resource_group_name)"
+az containerapp job start -n db-bootstrap      -g "$RG"
+az containerapp job start -n polaris-bootstrap -g "$RG"
 ```
 
-The job creates the Polaris realm and root principal. It is safe to re-run — an
-already-bootstrapped realm is treated as success. Finally read the one-time setup token
-from the API replica and create the first admin, then register
+`db-bootstrap` creates the API's Entra login role — **the API cannot start until it has
+run**, since an identity that can authenticate still cannot log in without a database
+role. `polaris-bootstrap` creates the Polaris realm and root principal.
+
+Finally create the first admin with `terraform output -raw setup_token`, and register
 `terraform output -raw warehouse_root_uri` as an `adls_gen2` storage backend with
-`hierarchical: true`. `deploy/terraform/README.md` has the exact commands.
+`hierarchical: true`. `terraform output -raw next_steps` prints every one of these
+commands with the names already filled in, and `deploy/terraform/Makefile` wraps the
+sequence.
 
 ## Environments and cost
 

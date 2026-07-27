@@ -83,3 +83,46 @@ def test_missing_subnet_fails_loudly(monkeypatch, req):
 
     with pytest.raises(RuntimeError, match="elastic_azure_subnet_id"):
         AzureAciBackend()._build_group(req)
+
+
+AGENT_IDENTITY_ID = (
+    "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.ManagedIdentity"
+    "/userAssignedIdentities/id-duckhaven-agent-prod"
+)
+
+
+@pytest.fixture
+def with_registry_identity(monkeypatch):
+    monkeypatch.setattr(settings, "elastic_registry_server", "example.azurecr.io")
+    monkeypatch.setattr(settings, "elastic_registry_identity_id", AGENT_IDENTITY_ID)
+
+
+def test_image_is_pulled_with_an_identity_not_a_password(with_subnet, with_registry_identity, req):
+    """A registry password would sit in plain text in the group spec, readable by
+    anyone with reader access to the agents resource group."""
+    group = AzureAciBackend()._build_group(req)
+    credential = group.image_registry_credentials[0]
+
+    assert credential.server == "example.azurecr.io"
+    assert credential.identity == AGENT_IDENTITY_ID
+    assert credential.username is None
+    assert credential.password is None
+
+
+def test_group_carries_the_pull_identity(with_subnet, with_registry_identity, req):
+    """The credential above only works if the group is actually assigned the
+    identity; ACI supports user-assigned only, never system-assigned, for this."""
+    group = AzureAciBackend()._build_group(req)
+
+    assert group.identity.type == "UserAssigned"
+    assert AGENT_IDENTITY_ID in group.identity.user_assigned_identities
+
+
+def test_public_image_needs_no_credentials(with_subnet, monkeypatch, req):
+    monkeypatch.setattr(settings, "elastic_registry_server", None)
+    monkeypatch.setattr(settings, "elastic_registry_identity_id", None)
+
+    group = AzureAciBackend()._build_group(req)
+
+    assert group.image_registry_credentials is None
+    assert group.identity is None

@@ -6,23 +6,20 @@
 # network-restricted registry is rejected at ARM pre-flight with InaccessibleImage in
 # about two seconds, even when the container group is injected into a subnet that
 # resolves the registry's private endpoint. Since elastic agents are ACI, the registry
-# must stay reachable. Access is credential-gated -- the admin user is disabled, so the
-# only ways in are managed identity (Container Apps) and the repository-scoped,
-# pull-only token below (container instances).
+# must stay reachable.
+#
+# There are no registry passwords anywhere in this deployment. The admin user stays
+# disabled and the only way in is a managed identity holding AcrPull: the app
+# identities for Container Apps, and the agent identity below for container instances.
 resource "azurerm_container_registry" "main" {
   name                = "cr${local.name_short}"
   resource_group_name = azurerm_resource_group.main.name
   location            = var.location
 
-  # Premium is required for repository-scoped tokens. On a cheaper SKU the only
-  # credential a container instance could use is the registry admin user, which grants
-  # push as well as pull across every repository -- and that credential would sit in
-  # the API's environment and in every provisioned agent's container spec. Production
-  # pays for Premium to avoid handing that out; a throwaway environment need not.
   sku = var.acr_sku
 
-  # Enabled only as the fallback credential when scoped tokens are unavailable.
-  admin_enabled = !local.acr_scoped_tokens_supported
+  # No credential is ever issued from this registry, so the admin user has no purpose.
+  admin_enabled = false
 
   public_network_access_enabled = true
 
@@ -48,48 +45,23 @@ resource "azurerm_container_registry" "main" {
   tags = local.tags
 }
 
-# ── Agent pull credential ─────────────────────────────────────────────────────
+# ── Agent pull identity ───────────────────────────────────────────────────────
 
-# Scoped to reading one repository. A leak of this credential exposes the agent image
-# and nothing else -- no push rights, no other repository, no registry management.
-resource "azurerm_container_registry_scope_map" "agent_pull" {
-  count = local.acr_scoped_tokens_supported ? 1 : 0
-
-  name                    = "agent-pull"
-  container_registry_name = azurerm_container_registry.main.name
-  resource_group_name     = azurerm_resource_group.main.name
-
-  actions = [
-    "repositories/${local.agent_image_repository}/content/read",
-    "repositories/${local.agent_image_repository}/metadata/read",
-  ]
+# The identity every provisioned agent container group carries, and pulls its image
+# as. Separate from the API's own identity so an agent's credential grants exactly one
+# thing -- reading this registry -- and nothing the control plane can do.
+#
+# ACI supports only *user-assigned* identities for image pull, which is why this is a
+# standalone resource rather than a system-assigned identity on each group.
+resource "azurerm_user_assigned_identity" "agent" {
+  name                = "id-duckhaven-agent-${var.environment}"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = var.location
+  tags                = local.tags
 }
 
-resource "azurerm_container_registry_token" "agent_pull" {
-  count = local.acr_scoped_tokens_supported ? 1 : 0
-
-  name                    = "agent-pull-token"
-  container_registry_name = azurerm_container_registry.main.name
-  resource_group_name     = azurerm_resource_group.main.name
-  scope_map_id            = azurerm_container_registry_scope_map.agent_pull[0].id
-  enabled                 = true
-}
-
-resource "azurerm_container_registry_token_password" "agent_pull" {
-  count = local.acr_scoped_tokens_supported ? 1 : 0
-
-  container_registry_token_id = azurerm_container_registry_token.agent_pull[0].id
-
-  password1 {}
-}
-
-# Reaches the API as ELASTIC_REGISTRY_PASSWORD, which it passes to ACI as the
-# container group's registry credential.
-resource "azurerm_key_vault_secret" "acr_agent_pull_password" {
-  name         = "acr-agent-pull-password"
-  value        = local.agent_pull_password
-  key_vault_id = azurerm_key_vault.main.id
-  tags         = local.tags
-
-  depends_on = [time_sleep.kv_rbac_propagation]
+resource "azurerm_role_assignment" "agent_acr_pull" {
+  scope                = azurerm_container_registry.main.id
+  role_definition_name = "AcrPull"
+  principal_id         = azurerm_user_assigned_identity.agent.principal_id
 }

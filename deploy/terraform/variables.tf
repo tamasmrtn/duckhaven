@@ -233,11 +233,11 @@ variable "acr_sku" {
     Registry SKU, and the largest single fixed cost in this deployment: Premium is
     roughly 10x Basic per month.
 
-    Premium is the production choice because repository-scoped tokens require it, and
-    that scoped, pull-only token is the credential handed to every provisioned agent's
-    container spec. On Basic or Standard there is no such token, so the deployment
-    falls back to the registry admin user -- push and pull across every repository --
-    which is acceptable only for a throwaway environment.
+    This is a cost and capacity decision, not a security one. Every pull in this
+    deployment is authenticated by a managed identity holding AcrPull, on every SKU;
+    no registry credential is ever issued. Premium buys zone redundancy, network rule
+    sets, retention policies and more included storage and throughput -- worth it for
+    production, unnecessary for a disposable environment.
   EOT
   type        = string
   default     = "Premium"

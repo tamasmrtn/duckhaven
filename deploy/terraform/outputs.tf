@@ -68,12 +68,12 @@ output "container_registry_login_server" {
   value       = azurerm_container_registry.main.login_server
 }
 
-output "agent_pull_username" {
+output "agent_identity_id" {
   description = <<-EOT
-    Registry username for container instances (ELASTIC_REGISTRY_USERNAME): the
-    repository-scoped token on Premium, otherwise the registry admin user.
+    Identity provisioned agent container groups carry and pull their image as
+    (ELASTIC_REGISTRY_IDENTITY_ID). Holds AcrPull on the registry and nothing else.
   EOT
-  value       = local.agent_pull_username
+  value       = azurerm_user_assigned_identity.agent.id
 }
 
 output "nat_gateway_public_ip" {

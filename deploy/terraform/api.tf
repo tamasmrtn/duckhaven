@@ -47,12 +47,6 @@ resource "azurerm_container_app" "api" {
   }
 
   secret {
-    name                = "acr-agent-pull-password"
-    key_vault_secret_id = azurerm_key_vault_secret.acr_agent_pull_password.versionless_id
-    identity            = azurerm_user_assigned_identity.api.id
-  }
-
-  secret {
     name                = "internal-api-secret"
     key_vault_secret_id = azurerm_key_vault_secret.main["internal-api-secret"].versionless_id
     identity            = azurerm_user_assigned_identity.api.id
@@ -254,21 +248,18 @@ resource "azurerm_container_app" "api" {
         value = "${azurerm_container_registry.main.login_server}/${local.agent_image_repository}:${var.duckhaven_image_tag}"
       }
 
-      # Container instances cannot pull with a managed identity, so they get an explicit
-      # credential: a repository-scoped token where the registry SKU allows one.
+      # How a provisioned container group pulls the agent image: the control plane
+      # attaches this identity to the group, and the group authenticates to the
+      # registry as itself. No registry password exists to be passed here or to sit in
+      # the group's spec.
       env {
         name  = "ELASTIC_REGISTRY_SERVER"
         value = azurerm_container_registry.main.login_server
       }
 
       env {
-        name  = "ELASTIC_REGISTRY_USERNAME"
-        value = local.agent_pull_username
-      }
-
-      env {
-        name        = "ELASTIC_REGISTRY_PASSWORD"
-        secret_name = "acr-agent-pull-password"
+        name  = "ELASTIC_REGISTRY_IDENTITY_ID"
+        value = azurerm_user_assigned_identity.agent.id
       }
 
       # ── Observability ──

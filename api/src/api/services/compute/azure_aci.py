@@ -122,6 +122,7 @@ class AzureAciBackend:
                 ports=[Port(port=result_port)],
             ),
             image_registry_credentials=self._registry_credentials(req.image),
+            identity=self._identity(),
             tags={**req.tags, _MANAGED_TAG: "true"},
         )
 
@@ -129,19 +130,36 @@ class AzureAciBackend:
         """Registry pull credentials for a private ACR image, if configured.
 
         ACI needs explicit credentials to pull from a private registry; public
-        images (and unset creds) return None."""
+        images (and an unset identity) return None.
+
+        The credential is a user-assigned managed identity holding AcrPull, not a
+        username and password. There is then no registry secret to store, rotate,
+        or leak, and none appears in the container group spec -- which is readable
+        by anyone with reader access to the resource group. Note that ACI supports
+        *only* user-assigned identities for image pull, not system-assigned.
+        """
         from azure.mgmt.containerinstance.models import ImageRegistryCredential
 
         server = settings.elastic_registry_server
-        if not server or not settings.elastic_registry_username:
+        identity = settings.elastic_registry_identity_id
+        if not server or not identity:
             return None
-        return [
-            ImageRegistryCredential(
-                server=server,
-                username=settings.elastic_registry_username,
-                password=settings.elastic_registry_password,
-            )
-        ]
+        return [ImageRegistryCredential(server=server, identity=identity)]
+
+    def _identity(self):
+        """The container group's own identity, which is what pulls the image."""
+        from azure.mgmt.containerinstance.models import (
+            ContainerGroupIdentity,
+            ResourceIdentityType,
+        )
+
+        identity = settings.elastic_registry_identity_id
+        if not identity:
+            return None
+        return ContainerGroupIdentity(
+            type=ResourceIdentityType.USER_ASSIGNED,
+            user_assigned_identities={identity: {}},
+        )
 
     async def provision(self, req: ProvisionRequest) -> str:
         client, rg = self._client_and_rg()

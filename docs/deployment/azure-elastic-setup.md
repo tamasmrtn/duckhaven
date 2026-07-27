@@ -110,20 +110,26 @@ ELASTIC_AZURE_CPU=2
 ELASTIC_AZURE_MEMORY_GB=8
 ```
 
-If the agent image lives in a private registry, add pull credentials — container instances cannot
-authenticate with a managed identity, so they need an explicit credential (a repository-scoped
-registry token is the least-privilege option):
+If the agent image lives in a private registry, point DuckHaven at a user-assigned managed identity
+that holds `AcrPull` on it. Each container group is created carrying that identity and pulls its
+image as itself, so there is no registry password to store or rotate — and none appears in the
+container group's specification, which anyone with reader access to the resource group can read.
 
 ```bash
 ELASTIC_REGISTRY_SERVER=<registry>.azurecr.io
-ELASTIC_REGISTRY_USERNAME=<token-name>
-ELASTIC_REGISTRY_PASSWORD=<token-password>
+ELASTIC_REGISTRY_IDENTITY_ID=/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<name>
 ```
+
+Container Instances supports **user-assigned** identities only for image pull; a system-assigned
+identity will not work. The control plane's own identity additionally needs
+`Microsoft.ManagedIdentity/userAssignedIdentities/assign/action` on that identity, or provisioning
+fails authorization before it reaches the pull.
 
 !!! warning "The registry must stay publicly reachable"
     Container Instances pulls images from its own control plane, outside your virtual network, so a
     registry restricted to a private endpoint is rejected before the container is scheduled. Keep
-    the registry's public endpoint enabled and rely on the credential above.
+    the registry's public endpoint enabled; access is gated by the identity above, not by the
+    network.
 
 Tuning knobs (all optional, sensible defaults):
 

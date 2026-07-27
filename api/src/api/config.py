@@ -244,9 +244,15 @@ class Settings(BaseSettings):
     elastic_currency: str = "USD"
     # Pull credentials for a private registry hosting the agent image (e.g. ACR).
     # ACI cannot pull a private image without them; leave unset for a public image.
+    #
+    # The credential is a user-assigned managed identity, given as a full ARM
+    # resource id: it is assigned to the container group, which then pulls as
+    # itself. The identity needs AcrPull on the registry. There is deliberately no
+    # username/password alternative -- a registry password would have to be stored,
+    # rotated, and would sit in plain text in every agent's container group spec.
+    # ACI supports only user-assigned identities for image pull, not system-assigned.
     elastic_registry_server: str | None = None
-    elastic_registry_username: str | None = None
-    elastic_registry_password: str | None = None
+    elastic_registry_identity_id: str | None = None
 
     # ── High availability (multi-replica control plane) ───────────────────────
     # Identity of this API replica and the URL peers use to reach it for

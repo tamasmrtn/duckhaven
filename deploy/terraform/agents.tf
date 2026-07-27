@@ -28,15 +28,22 @@ resource "azurerm_role_definition" "elastic_agents" {
       # granted now so the permission is not the thing that blocks that change.
       "Microsoft.Network/virtualNetworks/subnets/read",
       "Microsoft.Network/virtualNetworks/subnets/join/action",
+
+      # Attaching the agent identity to a container group. Creating a resource that
+      # *carries* an identity requires this on the identity itself, separately from any
+      # permission the identity holds -- without it provisioning fails authorization
+      # before it ever reaches the image pull, which reads as a puzzling error.
+      "Microsoft.ManagedIdentity/userAssignedIdentities/assign/action",
     ]
     not_actions = []
   }
 
-  # Both scopes the role is actually assigned at, below. The VNet covers assignment at
-  # the subnet, being its parent.
+  # Every scope the role is assigned at, below. The VNet covers assignment at the
+  # subnet, being its parent.
   assignable_scopes = [
     azurerm_resource_group.agents.id,
     azurerm_virtual_network.main.id,
+    azurerm_user_assigned_identity.agent.id,
   ]
 }
 
@@ -53,6 +60,15 @@ resource "azurerm_role_assignment" "api_elastic_agents_rg" {
 
 resource "azurerm_role_assignment" "api_elastic_agents_subnet" {
   scope              = azurerm_subnet.aci.id
+  role_definition_id = azurerm_role_definition.elastic_agents.role_definition_resource_id
+  principal_id       = azurerm_user_assigned_identity.api.principal_id
+}
+
+# Only the assign action means anything at an identity, so this grants the control
+# plane exactly one thing: the ability to hand this identity to a container group it
+# creates. It does not let the API act *as* the identity.
+resource "azurerm_role_assignment" "api_elastic_agents_identity" {
+  scope              = azurerm_user_assigned_identity.agent.id
   role_definition_id = azurerm_role_definition.elastic_agents.role_definition_resource_id
   principal_id       = azurerm_user_assigned_identity.api.principal_id
 }

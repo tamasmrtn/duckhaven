@@ -182,9 +182,8 @@ Used when `ELASTIC_PROVIDER=azure_aci`. Credentials come from the ambient identi
 | `ELASTIC_AZURE_MEMORY_GB` | `8` | Memory (GiB) per agent, same. |
 | `ELASTIC_AZURE_PRICE_VCPU_HOUR` | `0.0486` | Per-vCPU hourly rate, used only to show a size's cost in the admin UI. Override per region or agreement. |
 | `ELASTIC_AZURE_PRICE_MEMORY_GB_HOUR` | `0.0054` | Per-GiB hourly rate, same. |
-| `ELASTIC_REGISTRY_SERVER` | — | Registry host for a private agent image. Container instances cannot pull with a managed identity, so a credential is required; a repository-scoped token is the least-privilege choice. Leave unset for a public image. |
-| `ELASTIC_REGISTRY_USERNAME` | — | Registry username or token name. |
-| `ELASTIC_REGISTRY_PASSWORD` | — | Registry password or token password. |
+| `ELASTIC_REGISTRY_SERVER` | — | Registry host for a private agent image. Leave unset for a public image. |
+| `ELASTIC_REGISTRY_IDENTITY_ID` | — | Resource id of a user-assigned managed identity holding `AcrPull` on that registry. It is attached to each container group, which then pulls its image as itself, so no registry password exists. Container Instances supports user-assigned identities only for image pull, never system-assigned. |
 
 ### AI assistant
 

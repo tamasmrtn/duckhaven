@@ -120,6 +120,13 @@ async def test_docker_provision_list_terminate_roundtrip(docker_network) -> None
         assert host_config["Memory"] == 1 * 1024**3
         assert attrs["Config"]["Labels"]["duckhaven-managed"] == "true"
 
+        # The writable results directory, without which the read-only root leaves
+        # the agent unable to persist its session token — it authenticates, fails
+        # the write, and reconnects forever without ever completing registration.
+        results = [m for m in attrs["Mounts"] if m["Destination"] == "/var/duckhaven-agent/results"]
+        assert len(results) == 1, attrs["Mounts"]
+        assert results[0]["Type"] == "volume"
+
         # Attached to the agent network and nothing else, so its result server is
         # reachable from the control plane and from nowhere off the host.
         assert set(attrs["NetworkSettings"]["Networks"]) == {docker_network}

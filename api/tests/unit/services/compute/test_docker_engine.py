@@ -62,6 +62,22 @@ def test_agent_is_hardened_exactly_like_the_static_one(req):
     assert spec["pids_limit"] == 512
 
 
+def test_agent_gets_a_writable_results_volume(req):
+    """The other half of the read-only root, and the half that is easy to forget.
+
+    The agent persists its session token under the results directory immediately
+    after authenticating. Without a writable mount there it authenticates, fails
+    the write, disconnects and reconnects forever — registering successfully every
+    time and completing registration never, which surfaces as an agent stuck in
+    provisioning rather than as an obvious permissions error.
+
+    The list form matters: a dict would declare a bind mount to a host path.
+    """
+    spec = DockerEngineBackend()._container_spec(req)
+
+    assert spec["volumes"] == ["/var/duckhaven-agent/results"]
+
+
 def test_requested_size_becomes_concrete_limits(req):
     """The agent reads its own cgroup to advertise capacity, so the memory cap has
     to be a real limit rather than left unbounded."""
@@ -126,8 +142,9 @@ class _FakeContainer:
     def start(self) -> None:
         self.started = True
 
-    def remove(self, force: bool = False) -> None:
+    def remove(self, force: bool = False, v: bool = False) -> None:
         self.removed = True
+        self.removed_volumes = v
 
 
 class _FakeContainers:
@@ -196,12 +213,16 @@ async def test_provision_pulls_a_missing_image_and_retries(backend, req):
     assert len(backend.fake.containers.created) == 1
 
 
-async def test_terminate_removes_the_container(backend, req):
+async def test_terminate_removes_the_container_and_its_volume(backend, req):
+    """The anonymous results volume has to go with the container: nothing else
+    ever collects them, so an uncleaned one leaks per provisioned agent."""
     await backend.provision(req)
 
     await backend.terminate(req.instance_id)
 
-    assert backend.fake.containers.existing[req.instance_id].removed is True
+    container = backend.fake.containers.existing[req.instance_id]
+    assert container.removed is True
+    assert container.removed_volumes is True
 
 
 async def test_terminate_tolerates_an_already_gone_container(backend):

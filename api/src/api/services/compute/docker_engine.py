@@ -37,6 +37,15 @@ logger = logging.getLogger(__name__)
 
 _MANAGED_LABEL = "duckhaven-managed"
 
+# The one path the agent must be able to write to, matching `results_dir` in
+# agent/src/agent/config.py. It holds the session token the agent persists after
+# authenticating, and the result Parquet the control plane fetches.
+#
+# Not configurable here on purpose: the backend does not set RESULTS_DIR, so the
+# agent always uses its own default, and a second place to change it could only
+# ever disagree with the first.
+_AGENT_RESULTS_DIR = "/var/duckhaven-agent/results"
+
 
 class DockerEngineBackend:
     provider = "docker"
@@ -89,6 +98,18 @@ class DockerEngineBackend:
             # would be a quiet downgrade from running one by hand.
             "read_only": True,
             "tmpfs": {"/tmp": ""},
+            # An anonymous volume for the results directory. A read-only root is
+            # only workable because the agent has exactly one writable path -- the
+            # static agent gets it from the `agent_results` named volume, and
+            # without the equivalent here the agent authenticates, fails to persist
+            # its session token, and reconnects forever without ever registering.
+            #
+            # Anonymous rather than named: an elastic agent is disposable, so its
+            # results should go when it does. The list form is what makes the daemon
+            # create a volume; a dict would declare a bind mount to a host path.
+            # Either way this rides on POST /containers/create, so the socket proxy
+            # needs no access to the /volumes API.
+            "volumes": [_AGENT_RESULTS_DIR],
             "security_opt": ["no-new-privileges:true"],
             "cap_drop": ["ALL"],
             "pids_limit": 512,
@@ -128,7 +149,10 @@ class DockerEngineBackend:
             import docker.errors
 
             try:
-                client.containers.get(instance_id).remove(force=True)
+                # v=True takes the anonymous results volume with the container.
+                # Without it every provisioned agent leaves one behind, and nothing
+                # else ever collects them.
+                client.containers.get(instance_id).remove(force=True, v=True)
             except docker.errors.NotFound:
                 # Already gone is the desired end state, not an error -- the reaper
                 # may be racing a manual `docker rm`.

@@ -222,7 +222,7 @@ resource "azurerm_container_app" "api" {
 
       env {
         name  = "ELASTIC_AZURE_SUBSCRIPTION_ID"
-        value = var.subscription_id
+        value = data.azurerm_client_config.current.subscription_id
       }
 
       env {

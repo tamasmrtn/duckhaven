@@ -1,10 +1,10 @@
-subscription_id = "460eb8b9-9a3e-42f1-ab7f-d2963470725e"
-environment     = "staging"
+environment = "staging"
 
-location       = "francecentral"
-location_short = "frc"
+# See envs/prod.tfvars for how to check the region is usable before applying.
+location = "REPLACE_ME"
 
-name_suffix = "b3n8q4"
+# 4-8 lowercase alphanumeric characters, globally unique to you.
+name_suffix = "REPLACE_ME"
 
 # This environment exists to verify that the topology applies and works. It is not
 # production-shaped and is not meant to survive anything. Every value below is chosen
@@ -39,10 +39,10 @@ postgres_geo_redundant_backup_enabled = false
 storage_replication_type = "LRS"
 storage_soft_delete_days = 1
 
-# Basic instead of Premium, roughly a tenth of the cost. The trade is real: Basic has no
-# repository-scoped tokens, so provisioned agents pull with the registry admin user,
-# which can also push to every repository. Acceptable only because this registry holds
-# nothing that matters and the environment is disposable.
+# Basic instead of Premium, roughly a tenth of the cost. Nothing about access changes
+# with the SKU -- every pull is managed-identity authenticated either way. What Basic
+# gives up is zone redundancy, network rule sets, retention policies, and included
+# storage and throughput, none of which a disposable environment needs.
 acr_sku = "Basic"
 
 # One small replica instead of two. Container Apps bills per vCPU-second and

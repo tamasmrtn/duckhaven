@@ -11,12 +11,12 @@ enabled, which forces a listener restricted to this deployment's own egress addr
 The container registry is the other exception. Both are forced by Azure, not chosen; see
 [the deviations](#three-documented-deviations).
 
-> **Status:** applied and verified end to end in **staging** (France Central, 68
-> resources): the API is reachable, Polaris answers over internal ingress, and a
-> storage-backend health check vends credentials and reaches ADLS over its private
-> endpoint. Elastic compute is untested there because staging runs without a NAT
-> gateway. Prod has not been applied. The first apply for any environment is
-> [staged](#the-first-apply-is-staged).
+> **Maturity:** the topology has been applied and exercised end to end on a staging
+> subscription — API reachable, Polaris answering, a storage-backend health check
+> vending credentials and reaching ADLS over its private endpoint, and an elastic
+> agent created, queried and terminated. The passwordless database and registry paths
+> are newer and have not yet been through a full apply. The first apply for any
+> environment is [staged](#the-first-apply-is-staged).
 
 ## Prerequisites
 
@@ -180,28 +180,29 @@ staging environment undestroyable.
 
 ## Three documented deviations
 
-**Region is France Central, not Germany West Central.** PostgreSQL Flexible Server
-cannot be provisioned in Germany West Central on this subscription — the capability
-API reports `OfferRestricted` and *"Provisioning is restricted in this region"* (the
-same applies to West Europe, East US and East US 2). France Central is the nearest
-supported EU region with three availability zones, and offers `Standard_D2ds_v5` with
-zone-redundant HA. Set `location` and `location_short` to move, if Microsoft grants a
-regional exception via a *Service and subscription limits* support request.
+**Not every region can host this.** PostgreSQL Flexible Server is offer-restricted in
+some regions on some subscriptions: the capability API reports `OfferRestricted` and
+*"Provisioning is restricted in this region"*, and the apply fails several minutes in.
+Check with `az postgres flexible-server list-skus -l <region>` before setting
+`location`, and prefer a region with three availability zones so zone-redundant HA and
+ZRS storage are available. Microsoft can grant a regional exception via a *Service and
+subscription limits* support request.
+
+`location` has no default for this reason, and `location_short` — which appears in
+every resource name — is derived from it via a lookup in `locals.tf`. A region that
+lookup does not cover fails at plan time, telling you to set `location_short`.
 
 **The container registry keeps a public endpoint.** Azure Container Instances pulls
 images from its own control plane, outside the VNet. A network-restricted registry is
 rejected at ARM pre-flight with `InaccessibleImage`, even when the container group is
 injected into a subnet that resolves the registry's private endpoint. The registry
-therefore stays publicly reachable with the admin user disabled, Container Apps
-pulling via managed identity and container instances via a repository-scoped,
-pull-only token. Everything else is private: a VNet-injected container group *does*
-resolve privatelink DNS and reach private endpoints.
+therefore stays publicly reachable. Everything else is private: a VNet-injected
+container group *does* resolve privatelink DNS and reach private endpoints.
 
-The registry is **Premium**, which is what repository-scoped tokens require. On
-Standard the only credential a container instance could use is the registry admin
-user — push and pull across every repository — and that credential would live in the
-API's environment and in every provisioned agent's container spec. Premium buys the
-scoped, pull-only alternative.
+Public does not mean open. The admin user is disabled and no registry credential is
+ever issued — every pull is authenticated by a managed identity holding `AcrPull`: the
+app identities for Container Apps, and a dedicated agent identity that each container
+group carries and pulls as. `acr_sku` is therefore a cost decision, not a security one.
 
 **Enabling elastic compute exposes Polaris.** Only replicas *inside* a Container Apps
 environment can resolve an internal-ingress app. An agent runs in its own subnet,
@@ -252,10 +253,9 @@ without them would not verify the thing staging exists to verify. If the credit 
 tight enough that ~$29/mo matters more than validating private networking, the endpoints
 would need to become conditional — that is a deliberate change, not a default.
 
-**Basic registry means no scoped token.** Staging agents pull with the registry admin
-user, which can also push to every repository. Acceptable only because that registry
-holds nothing that matters and the environment is disposable; `acr_sku` controls it, and
-the deployment switches credential strategy automatically.
+**Basic registry costs nothing in security.** Access is identical on every SKU — a
+managed identity holding `AcrPull`, no credential issued. What Basic gives up is zone
+redundancy, network rule sets, retention policies, and included storage and throughput.
 
 `nat_gateway_enabled = false` in staging is a real functional limitation, not just a
 saving: Azure has retired default outbound access, so a VNet-injected agent has no route

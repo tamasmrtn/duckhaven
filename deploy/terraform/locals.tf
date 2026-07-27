@@ -1,6 +1,30 @@
 locals {
+  # Short codes for the regions this deployment has been reasoned about in. Not
+  # exhaustive on purpose -- Azure has sixty-odd regions and inventing an abbreviation
+  # for one nobody has tried here would imply it had been. An uncovered region is
+  # handled by setting location_short explicitly.
+  location_short_codes = {
+    francecentral      = "frc"
+    germanywestcentral = "gwc"
+    westeurope         = "weu"
+    northeurope        = "neu"
+    swedencentral      = "sdc"
+    uksouth            = "uks"
+    eastus             = "eus"
+    eastus2            = "eus2"
+    westus2            = "wus2"
+    centralus          = "cus"
+  }
+
+  # Empty rather than null when the region is uncovered, so the precondition in
+  # main.tf reports it instead of coalesce failing with "no non-null arguments".
+  location_short = (var.location_short != null
+    ? var.location_short
+    : lookup(local.location_short_codes, var.location, "")
+  )
+
   # Long form for resources whose names only need to be unique in the subscription.
-  name = "duckhaven-${var.environment}-${var.location_short}"
+  name = "duckhaven-${var.environment}-${local.location_short}"
 
   # Short form for globally-unique names, which are length-capped (storage accounts
   # allow 24 characters, key vaults 24). "dh" keeps headroom for the suffix.

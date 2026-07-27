@@ -1,8 +1,3 @@
-variable "subscription_id" {
-  description = "Azure subscription the deployment lives in."
-  type        = string
-}
-
 variable "environment" {
   description = "Environment name; part of every resource name and the state key."
   type        = string
@@ -15,20 +10,26 @@ variable "environment" {
 
 variable "location" {
   description = <<-EOT
-    Azure region. Defaults to francecentral: PostgreSQL Flexible Server cannot be
-    provisioned in germanywestcentral (or westeurope/eastus/eastus2) on this
-    subscription -- the capability API reports OfferRestricted. France Central is
-    the nearest supported EU region with three availability zones and offers
-    Standard_D2ds_v5 with zone-redundant HA. See docs/deployment/azure-terraform.md.
+    Azure region. No default: the right region depends on where your data may live and
+    on what your subscription is actually allowed to provision.
+
+    Check before choosing. PostgreSQL Flexible Server is offer-restricted in some
+    regions on some subscriptions -- the capability API reports OfferRestricted and the
+    apply fails several minutes in. Verify with
+    `az postgres flexible-server list-skus -l <region>`, and prefer a region with three
+    availability zones so zone-redundant HA and ZRS storage are available.
   EOT
   type        = string
-  default     = "francecentral"
 }
 
 variable "location_short" {
-  description = "Short region code used in resource names."
+  description = <<-EOT
+    Short region code used in globally-unique resource names, which are length-capped.
+    Leave null to derive it from `location` -- set it only for a region the lookup in
+    locals.tf does not cover, where the apply will tell you it is required.
+  EOT
   type        = string
-  default     = "frc"
+  default     = null
 }
 
 variable "name_suffix" {

@@ -118,3 +118,228 @@ async def test_revoke_agent_marks_unavailable(admin_client: AsyncClient, db_sess
 
     await db_session.refresh(agent)
     assert agent.status == "unavailable"
+
+
+# --- elastic compute (create sized ACI agents) ---
+
+
+@pytest.fixture
+def elastic_enabled(monkeypatch):
+    from api.config import settings
+    from api.services.compute.backends import get_backend
+
+    monkeypatch.setattr(settings, "elastic_compute_enabled", True)
+    monkeypatch.setattr(settings, "elastic_provider", "null")
+    backend = get_backend("null")
+    backend._instances.clear()
+    yield
+    backend._instances.clear()
+
+
+async def test_compute_options_returns_ranges_and_rates(admin_client: AsyncClient):
+    resp = await admin_client.get("/admin/agents/compute-options")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["cpu_min"] == 1 and body["cpu_max"] == 4
+    assert body["memory_min_gb"] == 1 and body["memory_max_gb"] == 16
+    assert body["price_vcpu_hour"] == 0.0486
+    assert body["price_memory_gb_hour"] == 0.0054
+    assert body["default_idle_minutes"] == 15  # 900s default
+
+
+async def test_create_elastic_agent_disabled_returns_409(admin_client: AsyncClient):
+    resp = await admin_client.post("/admin/agents/elastic", json={"cpu": 1, "memory_gb": 4})
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["error"] == "elastic_disabled"
+
+
+async def test_create_elastic_agent_out_of_range_returns_422(
+    admin_client: AsyncClient, elastic_enabled
+):
+    resp = await admin_client.post("/admin/agents/elastic", json={"cpu": 8, "memory_gb": 4})
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["error"] == "invalid_size"
+
+
+async def test_create_elastic_agent_provisions_with_size_cost_and_idle(
+    admin_client: AsyncClient, db_session, elastic_enabled
+):
+    resp = await admin_client.post(
+        "/admin/agents/elastic",
+        json={"cpu": 4, "memory_gb": 16, "name": "warehouse", "idle_timeout_minutes": 10},
+    )
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["provider"] == "null"
+    assert body["lifecycle"] == "provisioning"
+    assert body["requested_cpu"] == 4 and body["requested_memory_gb"] == 16
+    # 4 * 0.0486 + 16 * 0.0054 = 0.2808
+    assert body["hourly_cost"] == 0.2808
+    assert body["idle_timeout_minutes"] == 10
+
+    from sqlalchemy import select
+
+    agent = (await db_session.execute(select(Agent).where(Agent.name == "warehouse"))).scalar_one()
+    assert agent.lifecycle == "provisioning"
+    assert agent.requested_cpu == 4
+    assert agent.idle_timeout_s == 600
+
+
+async def test_restart_terminated_elastic_agent(
+    admin_client: AsyncClient, db_session, elastic_enabled
+):
+    from datetime import UTC, datetime
+
+    agent = Agent(
+        name="warehouse",
+        status="unavailable",
+        provider="null",
+        lifecycle="terminated",
+        requested_cpu=2,
+        requested_memory_gb=8,
+        idle_timeout_s=600,
+        provisioned_at=datetime.now(tz=UTC),
+        terminated_at=datetime.now(tz=UTC),
+    )
+    db_session.add(agent)
+    await db_session.commit()
+
+    resp = await admin_client.post(f"/admin/agents/{agent.id}/restart")
+    assert resp.status_code == 202
+    assert resp.json()["lifecycle"] == "provisioning"
+    await db_session.refresh(agent)
+    assert agent.lifecycle == "provisioning"
+    assert agent.terminated_at is None
+    assert agent.requested_cpu == 2  # size preserved
+
+
+async def test_restart_running_agent_rejected(
+    admin_client: AsyncClient, db_session, elastic_enabled
+):
+    from datetime import UTC, datetime
+
+    agent = Agent(
+        name="live",
+        status="healthy",
+        provider="null",
+        lifecycle="running",
+        requested_cpu=1,
+        requested_memory_gb=4,
+        provisioned_at=datetime.now(tz=UTC),
+    )
+    db_session.add(agent)
+    await db_session.commit()
+    resp = await admin_client.post(f"/admin/agents/{agent.id}/restart")
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["error"] == "not_restartable"
+
+
+async def test_terminate_running_agent(admin_client: AsyncClient, db_session, elastic_enabled):
+    from datetime import UTC, datetime
+
+    from api.services.compute.backends import get_backend
+
+    agent = Agent(
+        name="live",
+        status="healthy",
+        provider="null",
+        lifecycle="running",
+        instance_id="dh-live",
+        requested_cpu=1,
+        requested_memory_gb=4,
+        provisioned_at=datetime.now(tz=UTC),
+    )
+    db_session.add(agent)
+    await db_session.commit()
+    get_backend("null")._instances.add("dh-live")
+
+    resp = await admin_client.post(f"/admin/agents/{agent.id}/terminate")
+    assert resp.status_code == 202
+    assert resp.json()["lifecycle"] == "terminated"
+    assert "dh-live" not in get_backend("null")._instances
+    await db_session.refresh(agent)
+    assert agent.lifecycle == "terminated"
+
+
+async def test_terminate_terminated_agent_rejected(
+    admin_client: AsyncClient, db_session, elastic_enabled
+):
+    from datetime import UTC, datetime
+
+    agent = Agent(
+        name="gone",
+        status="unavailable",
+        provider="null",
+        lifecycle="terminated",
+        provisioned_at=datetime.now(tz=UTC),
+    )
+    db_session.add(agent)
+    await db_session.commit()
+    resp = await admin_client.post(f"/admin/agents/{agent.id}/terminate")
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["error"] == "not_terminable"
+
+
+async def test_delete_agent_removes_row_and_nulls_query_link(
+    admin_client: AsyncClient, db_session, elastic_enabled
+):
+    """Deleting an agent with query history keeps the query but nulls its agent."""
+    import uuid as _uuid
+    from datetime import UTC, datetime
+
+    from conftest import seed_workspace
+
+    from api.models.query import Query
+    from api.services.compute.backends import get_backend
+
+    ws, _ = await seed_workspace(db_session, user_id=_uuid.uuid4())
+    agent = Agent(
+        name="doomed",
+        status="healthy",
+        provider="null",
+        lifecycle="running",
+        instance_id="dh-doomed",
+        provisioned_at=datetime.now(tz=UTC),
+    )
+    db_session.add(agent)
+    await db_session.flush()
+    q = Query(workspace_id=ws.id, agent_id=agent.id, sql="SELECT 1", status="done")
+    db_session.add(q)
+    await db_session.commit()
+    get_backend("null")._instances.add("dh-doomed")
+
+    resp = await admin_client.delete(f"/admin/agents/{agent.id}")
+    assert resp.status_code == 204
+
+    from sqlalchemy import select
+
+    gone = await db_session.execute(select(Agent).where(Agent.id == agent.id))
+    assert gone.scalar_one_or_none() is None
+    # The running instance was destroyed, and the query survives with a null agent.
+    assert "dh-doomed" not in get_backend("null")._instances
+    await db_session.refresh(q)
+    assert q.agent_id is None
+
+
+async def test_create_elastic_agent_rejects_a_nonpositive_idle_timeout(
+    admin_client: AsyncClient, elastic_enabled
+):
+    """The value becomes seconds and is compared against the idle clock, so anything at
+    or below zero makes the reaper terminate the agent on its first tick -- seconds after
+    it was asked for. The dialog's min is presentation only."""
+    resp = await admin_client.post(
+        "/admin/agents/elastic",
+        json={"cpu": 1, "memory_gb": 2, "idle_timeout_minutes": -5},
+    )
+    assert resp.status_code == 422
+
+
+async def test_create_elastic_agent_accepts_a_sane_idle_timeout(
+    admin_client: AsyncClient, elastic_enabled
+):
+    resp = await admin_client.post(
+        "/admin/agents/elastic",
+        json={"cpu": 1, "memory_gb": 2, "idle_timeout_minutes": 30},
+    )
+    assert resp.status_code == 202
+    assert resp.json()["idle_timeout_minutes"] == 30

@@ -1,9 +1,32 @@
 import json
+import os
+import socket
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+# Sentinel for the replica identity settings below: makes a replica work out who it is
+# at startup rather than being told.
+REPLICA_AUTO = "auto"
+
+# Port the API listens on inside its container (api/Dockerfile's CMD). Peers address
+# each other directly on it, bypassing any ingress or load balancer.
+REPLICA_INTERNAL_PORT = 8000
+
+
+def _own_address() -> str:
+    """This container's own address, as a peer would reach it.
+
+    Falls back to a loopback name if resolution fails, which is correct for a
+    single-replica deployment (where peer forwarding is disabled anyway) and visibly
+    wrong for a multi-replica one.
+    """
+    try:
+        return socket.gethostbyname(socket.gethostname())
+    except OSError:
+        return "localhost"
 
 
 class OidcProvider(BaseModel):
@@ -82,6 +105,12 @@ class Settings(BaseSettings):
     # deploy/api-entrypoint.sh on first boot and deleted by the API after the
     # first admin is created.
     setup_token_path: Path = Path("/var/duckhaven/setup_token")
+    # The same token, supplied directly. Takes precedence over the file, and is
+    # what a deployment with an ephemeral container filesystem needs: a
+    # self-generated token is lost and regenerated whenever a replica is replaced,
+    # so it cannot be read once and used. Replay is bounded either way -- creating
+    # the first admin is refused outright once any user exists.
+    setup_token: str | None = None
     # Image self-hosters pull when running a new agent. Surfaced verbatim in
     # the add-agent compose snippet (admin UI).
     agent_image: str = "ghcr.io/tamasmrtn/duckhaven-agent:latest"
@@ -166,10 +195,115 @@ class Settings(BaseSettings):
     # the column). Mirrors the agent's own default.
     sql_statement_default_timeout_s: float = 600.0
 
+    # ── Elastic compute (scale-to-zero agents) ────────────────────────────────
+    # OFF by default: an operator enables it to let the control plane provision
+    # agents on demand and terminate them when idle. The reaper is a leader-elected
+    # loop like the scheduler/scanner. `elastic_provider` selects the compute
+    # backend; "null" is a no-op backend for tests, "azure_aci" provisions Azure
+    # Container Instances. An elastic agent is terminated when it has been idle
+    # (no work dispatched) for elastic_idle_timeout_s AND has no in-flight queries
+    # or open SQL sessions; it is force-terminated at elastic_max_lifetime_s once
+    # its work drains. A row stuck `provisioning` past elastic_provisioning_deadline_s
+    # (the agent never dialed home) is failed and its instance cleaned up.
+    elastic_compute_enabled: bool = False
+    elastic_provider: str = "null"
+    # The wss:// URL a provisioned agent dials home to. The interactive add-agent
+    # flow derives this from the request headers, but elastic provisioning has no
+    # request, so it must be configured. Unused by the "null" backend.
+    elastic_control_plane_url: str | None = None
+    # Apache Polaris URL a provisioned agent attaches catalogs against. A remote
+    # (e.g. ACI) agent cannot use the API's in-cluster polaris_base_url, so this is
+    # the externally reachable Polaris endpoint. Falls back to polaris_base_url.
+    # The agent authenticates with polaris_client_id / polaris_client_secret.
+    elastic_agent_polaris_base_url: str | None = None
+    elastic_idle_timeout_s: float = 900.0
+    elastic_max_lifetime_s: float = 14400.0
+    elastic_provisioning_deadline_s: float = 300.0
+    elastic_reaper_tick_s: float = 30.0
+    # Cap on concurrent elastic agents per pool_key; ensure_agent will not
+    # provision beyond it (a cost guardrail). Phase 1 keeps this at 1.
+    elastic_max_agents_per_pool: int = 1
+    # Size used when nothing names one: pool-triggered provisioning, and a restart
+    # of an agent whose row predates per-agent sizing. Provider-independent -- an
+    # elastic agent is the same container everywhere, and the platform ceiling is
+    # enforced separately by the backend (see services/compute/pricing.py).
+    elastic_default_cpu: float = 2.0
+    elastic_default_memory_gb: float = 4.0
+    # Extra environment for every provisioned agent, as a JSON object. A static
+    # agent's environment is written by whoever runs it; a provisioned one gets
+    # only what the backend sets, so an operator who tuned something on their
+    # static agent -- SANDBOX_DISABLED_FILESYSTEMS is the realistic case -- has no
+    # other way to carry it over. Applied after the backend's own variables, so it
+    # can override them.
+    elastic_agent_env: dict[str, str] = {}
+    # Azure Container Instances backend (used when elastic_provider="azure_aci").
+    # The subscription/resource-group DuckHaven provisions agent container groups
+    # into, and the region. Credentials come from the ambient identity
+    # (DefaultAzureCredential: managed identity in Azure, env vars locally).
+    elastic_azure_subscription_id: str | None = None
+    elastic_azure_resource_group: str | None = None
+    elastic_azure_location: str = "eastus"
+    # Subnet the agent container groups are injected into, as a full ARM resource id.
+    # Required by the azure_aci backend: Container Instances offers either a public IP
+    # with a DNS label or subnet injection with a private address, never both, and
+    # DuckHaven takes the latter so an agent's result server is reachable only from the
+    # control plane's own network. The subnet must be delegated to
+    # Microsoft.ContainerInstance/containerGroups.
+    elastic_azure_subnet_id: str | None = None
+    # Azure Container Instances pay-as-you-go rates, surfaced so the UI shows the
+    # hourly cost of a size before it is created (Databricks-style). Defaults are
+    # approximate Linux/eastus list prices — override per region/agreement.
+    elastic_azure_price_vcpu_hour: float = 0.0486
+    elastic_azure_price_memory_gb_hour: float = 0.0054
+    # The currency the two rates above are quoted in. Azure publishes retail prices
+    # per billing currency, so whoever copies those figures off the pricing page is
+    # copying them in one specific currency. It sits with the rates rather than
+    # being a global setting because it describes them: a provider that prices
+    # nothing has no currency, and the UI then shows no cost at all rather than
+    # putting a cloud symbol on hardware the operator already owns.
+    elastic_azure_price_currency: str = "USD"
+    # Docker Engine backend (used when elastic_provider="docker"), for a single-host
+    # deployment. The daemon is addressed over TCP rather than a mounted socket, so
+    # the API container holds no socket file; in the shipped topology that endpoint
+    # is a docker-socket-proxy allowing only container and image calls. Read
+    # docs/deployment/homelab-elastic-setup.md before enabling it -- the proxy
+    # filters paths, not request bodies.
+    elastic_docker_host: str = "tcp://docker-socket-proxy:2375"
+    # The user-defined network agents are attached to. On the bundled stack this is
+    # the isolated `duckhaven_internal`, which is what keeps an agent's result server
+    # reachable from the control plane and from nowhere else.
+    elastic_docker_network: str = "duckhaven_internal"
+    # Host capacity held back from agent sizing, for the control plane and its
+    # dependencies -- on a single box the API, Postgres, Polaris and MinIO share the
+    # machine an agent is provisioned onto, so offering the whole host as an agent
+    # size would let one query starve the stack running it. Subtracted from what
+    # `docker info` reports to give the maximum the UI offers.
+    elastic_docker_reserve_cpu: float = 1.0
+    elastic_docker_reserve_memory_gb: float = 2.0
+    # Pull credentials for a private registry hosting the agent image (e.g. ACR).
+    # ACI cannot pull a private image without them; leave unset for a public image.
+    #
+    # The credential is a user-assigned managed identity, given as a full ARM
+    # resource id: it is assigned to the container group, which then pulls as
+    # itself. The identity needs AcrPull on the registry. There is deliberately no
+    # username/password alternative -- a registry password would have to be stored,
+    # rotated, and would sit in plain text in every agent's container group spec.
+    # ACI supports only user-assigned identities for image pull, not system-assigned.
+    elastic_registry_server: str | None = None
+    elastic_registry_identity_id: str | None = None
+
     # ── High availability (multi-replica control plane) ───────────────────────
     # Identity of this API replica and the URL peers use to reach it for
     # inter-replica agent-dispatch forwarding. The defaults make a single-replica
     # deploy forward to itself, i.e. behave exactly as a single node.
+    #
+    # Set either to "auto" to have the replica derive it at startup. That is required
+    # on platforms that give every replica of an app identical configuration and no
+    # individually addressable hostname — Azure Container Apps is one. There, a static
+    # value would make every replica claim the same owner_url on an agent row, and
+    # services/agent_dispatch.send_to_agent would see its own URL recorded as the owner
+    # and give up instead of forwarding, silently failing any query that landed on a
+    # replica not holding that agent's socket.
     replica_id: str = "api"
     replica_internal_url: str = "http://localhost:8000"
     # Shared secret guarding the network-private /internal/* forwarding endpoints.
@@ -186,6 +320,19 @@ class Settings(BaseSettings):
     db_pool_size: int = 5
     db_max_overflow: int = 10
     db_pool_recycle_s: int = 1800
+    # How the database connection authenticates. "password" takes the credential
+    # from database_url, which is every self-hosted deployment. "entra" leaves the
+    # password out of the URL entirely and has the driver present a Microsoft Entra
+    # access token instead, fetched from the ambient managed identity per
+    # connection — tokens expire, so there is nothing durable to store, and
+    # database_url carries only the user (the managed identity's name) and host.
+    # Requires the server to have Entra authentication enabled and a database role
+    # created for that identity.
+    db_auth_mode: Literal["password", "entra"] = "password"
+    # Token audience for db_auth_mode="entra". This is the fixed scope Azure
+    # Database for PostgreSQL accepts; it is a setting only so a sovereign cloud
+    # (which uses a different audience) does not need a code change.
+    db_entra_scope: str = "https://ossrdbms-aad.database.windows.net/.default"
 
     # Prometheus metrics exposition at GET /api/metrics. Unauthenticated like the
     # health endpoints (Prometheus scrapers carry no session cookie); keep it on
@@ -269,6 +416,22 @@ class Settings(BaseSettings):
     # OIDC_PROVIDERS=[{"id":"entra","label":"Microsoft","server_metadata_url":"…",
     #   "client_id":"…","client_secret":"…"}]
     oidc_providers: Annotated[list[OidcProvider], NoDecode] = []
+
+    @model_validator(mode="after")
+    def _resolve_replica_identity(self) -> Settings:
+        """Fill in this replica's identity when either setting is ``auto``.
+
+        ``replica_id`` only has to be distinct and recognisable in logs, so the
+        platform's replica name is ideal and the hostname is a fine fallback.
+        ``replica_internal_url`` has to be *reachable by peers*, which means the
+        container's own address and the port it listens on — not any ingress hostname,
+        which would load-balance the forward back to an arbitrary replica.
+        """
+        if self.replica_id == REPLICA_AUTO:
+            self.replica_id = os.environ.get("CONTAINER_APP_REPLICA_NAME") or socket.gethostname()
+        if self.replica_internal_url == REPLICA_AUTO:
+            self.replica_internal_url = f"http://{_own_address()}:{REPLICA_INTERNAL_PORT}"
+        return self
 
     @field_validator("oidc_providers", mode="before")
     @classmethod

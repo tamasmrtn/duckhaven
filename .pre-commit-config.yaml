@@ -46,6 +46,28 @@ repos:
         files: ^web/src/.*\.[tj]sx?$
         pass_filenames: false
 
+      # Formatting only: `terraform validate` needs an initialised working directory
+      # (provider plugins downloaded), which is a CI concern rather than a per-commit
+      # one. Skips when Terraform is absent so contributors who never touch the Azure
+      # deployment are not forced to install it; CI enforces fmt unconditionally.
+      - id: terraform-fmt
+        name: terraform fmt
+        language: system
+        entry: bash -c 'command -v terraform >/dev/null || { echo "terraform not on PATH; skipping"; exit 0; }; cd deploy/terraform && terraform fmt -check -recursive'
+        files: ^deploy/terraform/.*\.tf$
+        pass_filenames: false
+
+      # TFLINT_CONFIG_FILE must be absolute: with --recursive, tflint chdirs into each
+      # subdirectory and looks for .tflint.hcl there, so bootstrap/ and modules/ would
+      # otherwise be linted with default config and no azurerm plugin at all.
+      # Requires a one-time `tflint --init` to fetch the azurerm ruleset.
+      - id: tflint
+        name: tflint
+        language: system
+        entry: bash -c 'command -v tflint >/dev/null || { echo "tflint not on PATH; skipping"; exit 0; }; cd deploy/terraform && TFLINT_CONFIG_FILE="$PWD/.tflint.hcl" tflint --recursive'
+        files: ^deploy/terraform/.*\.(tf|hcl)$
+        pass_filenames: false
+
       - id: commitlint
         name: commitlint
         language: node

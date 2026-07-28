@@ -4,6 +4,8 @@ import {
   CheckCircle2,
   Circle,
   AlertCircle,
+  Power,
+  RotateCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,7 +21,12 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { useAgents } from "@/queries/agents";
+import {
+  useAgents,
+  useRestartAgent,
+  useTerminateAgent,
+} from "@/queries/agents";
+import { useMe } from "@/queries/auth";
 import type { Agent, AgentStatus } from "@/types/agent";
 import type { BackendKind } from "@/types/storage-backend";
 import { agentSupportsBackend } from "@/types/agent";
@@ -45,22 +52,24 @@ function AgentRow({ agent, backend }: { agent: Agent; backend?: BackendKind }) {
         {statusIcon[agent.status]}
         <span className="font-medium text-sm">{agent.name}</span>
         <span className="ml-auto font-mono text-2xs text-text-secondary">
-          DuckDB {agent.capabilities.duckdb_version} ·{" "}
-          {agent.capabilities.memory_limit_gb} GB
+          {agent.capabilities
+            ? `DuckDB ${agent.capabilities.duckdb_version} · ${agent.capabilities.memory_limit_gb} GB`
+            : "provisioning…"}
         </span>
       </div>
       <div className="flex gap-1 pl-4.5">
-        {agent.capabilities.host && (
+        {agent.capabilities?.host && (
           <span className="text-2xs text-text-tertiary">
             {agent.capabilities.host}
           </span>
         )}
         {["s3", "adls_gen2", "object_store"].map((ext) => {
           // object_store is MinIO-backed (S3), so it also needs httpfs.
+          const extensions = agent.capabilities?.extensions ?? [];
           const supported =
             ext === "adls_gen2"
-              ? agent.capabilities.extensions.includes("azure")
-              : agent.capabilities.extensions.includes("httpfs");
+              ? extensions.includes("azure")
+              : extensions.includes("httpfs");
           return (
             <span
               key={ext}
@@ -93,6 +102,10 @@ export function AgentPicker({
 }: AgentPickerProps) {
   const [open, setOpen] = useState(false);
   const { data: agents = [] } = useAgents();
+  const { data: me } = useMe();
+  const isAdmin = me?.role === "admin";
+  const terminate = useTerminateAgent();
+  const restart = useRestartAgent();
   const selected = agents.find((a) => a.id === value);
 
   return (
@@ -109,7 +122,10 @@ export function AgentPicker({
               {statusIcon[selected.status]}
               {selected.name}
               <span className="ml-1 font-mono text-2xs text-text-secondary">
-                {selected.capabilities.memory_limit_gb} GB
+                {selected.capabilities?.memory_limit_gb ??
+                  selected.requested_memory_gb ??
+                  "—"}{" "}
+                GB
               </span>
             </span>
           ) : (
@@ -131,13 +147,51 @@ export function AgentPicker({
                   key={agent.id}
                   value={agent.id}
                   onSelect={() => {
-                    onChange(agent.id);
-                    setOpen(false);
+                    if (agent.status !== "unavailable") {
+                      onChange(agent.id);
+                      setOpen(false);
+                    }
                   }}
-                  disabled={agent.status === "unavailable"}
+                  // Static unavailable agents stay unselectable; elastic agents are
+                  // never disabled so their manage controls remain clickable.
+                  disabled={!agent.provider && agent.status === "unavailable"}
                   className="flex flex-col items-start py-2"
                 >
                   <AgentRow agent={agent} backend={workspaceBackend} />
+                  {isAdmin && agent.provider && (
+                    <div className="mt-1.5 flex gap-1.5 pl-4.5">
+                      {(agent.lifecycle === "running" ||
+                        agent.lifecycle === "provisioning") && (
+                        <button
+                          type="button"
+                          aria-label={`terminate ${agent.name}`}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            terminate.mutate(agent.id);
+                          }}
+                          className="flex items-center gap-1 rounded border border-[var(--border-subtle)] px-1.5 py-0.5 text-2xs text-text-secondary hover:text-text-primary"
+                        >
+                          <Power className="size-3" /> Terminate
+                        </button>
+                      )}
+                      {(agent.lifecycle === "terminated" ||
+                        agent.lifecycle === "failed") && (
+                        <button
+                          type="button"
+                          aria-label={`restart ${agent.name}`}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            restart.mutate(agent.id);
+                          }}
+                          className="flex items-center gap-1 rounded border border-[var(--border-subtle)] px-1.5 py-0.5 text-2xs text-text-secondary hover:text-text-primary"
+                        >
+                          <RotateCw className="size-3" /> Restart
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </CommandItem>
               ))}
             </CommandGroup>

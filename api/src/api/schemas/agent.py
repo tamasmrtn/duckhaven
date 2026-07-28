@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AgentCapabilitiesOut(BaseModel):
@@ -24,6 +24,49 @@ class AgentOut(BaseModel):
     capabilities: AgentCapabilitiesOut | None
     last_ping_at: datetime | None
     created_at: datetime
+    # Elastic-agent fields; all null for a static, operator-run agent.
+    provider: str | None = None
+    lifecycle: str | None = None
+    requested_cpu: float | None = None
+    requested_memory_gb: float | None = None
+    # Hourly cost of the provisioned size, computed from the configured rates.
+    hourly_cost: float | None = None
+    # Per-agent idle scale-in timeout, in minutes; null = the global default.
+    idle_timeout_minutes: int | None = None
+
+
+class ComputeOptionsOut(BaseModel):
+    """Ranges + rates the admin UI needs to render the create-compute dialog.
+
+    The UI shows a vCPU slider and a memory slider and computes cost as
+    ``cpu * price_vcpu_hour + memory_gb * price_memory_gb_hour``.
+    """
+
+    enabled: bool
+    provider: str
+    # None when the configured provider prices nothing (a container on your own
+    # machine); the UI then shows no cost rather than picking a symbol.
+    currency: str | None = None
+    cpu_min: float
+    cpu_max: float
+    cpu_step: float
+    memory_min_gb: float
+    memory_max_gb: float
+    memory_step_gb: float
+    price_vcpu_hour: float
+    price_memory_gb_hour: float
+    default_idle_minutes: int
+
+
+class ElasticAgentCreate(BaseModel):
+    cpu: float
+    memory_gb: float
+    # Idle scale-in timeout in minutes; omit to use the control plane's default.
+    # Bounded because the value is converted to seconds and compared against the idle
+    # clock: anything at or below zero makes the reaper terminate the agent on its first
+    # tick, seconds after it was asked for. The dialog's min/max are presentation only.
+    idle_timeout_minutes: int | None = Field(default=None, ge=1, le=1440)
+    name: str | None = None
 
 
 class MetricsSampleOut(BaseModel):

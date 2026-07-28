@@ -1,0 +1,533 @@
+variable "environment" {
+  description = <<-EOT
+    Environment name; part of every resource name and the state key. Exactly three
+    lowercase alphanumeric characters -- dev, tst, acp, stg, prd.
+
+    Fixed-length on purpose. Key Vault names cap at 24 characters and the convention
+    lands on exactly 24, so a four-character environment would not fit. See the naming
+    notes in locals.tf.
+  EOT
+  type        = string
+
+  validation {
+    condition     = can(regex("^[a-z0-9]{3}$", var.environment))
+    error_message = "environment must be exactly 3 lowercase alphanumeric characters (e.g. dev, stg, prd)."
+  }
+}
+
+variable "location" {
+  description = <<-EOT
+    Azure region. No default: the right region depends on where your data may live and
+    on what your subscription is actually allowed to provision.
+
+    Check before choosing. PostgreSQL Flexible Server is offer-restricted in some
+    regions on some subscriptions -- the capability API reports OfferRestricted and the
+    apply fails several minutes in. Verify with
+    `az postgres flexible-server list-skus -l <region>`, and prefer a region with three
+    availability zones so zone-redundant HA and ZRS storage are available.
+  EOT
+  type        = string
+}
+
+variable "location_short" {
+  description = <<-EOT
+    Three-character region code, the fourth segment of every resource name. Leave null
+    to derive it from `location` -- set it only for a region the lookup in locals.tf
+    does not cover, where the plan will tell you it is required.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.location_short == null || can(regex("^[a-z0-9]{3}$", var.location_short))
+    error_message = "location_short must be exactly 3 lowercase alphanumeric characters."
+  }
+}
+
+variable "name_suffix" {
+  description = <<-EOT
+    Final segment of every resource name, making the globally-scoped ones (storage
+    account, registry, key vault, PostgreSQL server) unique to you. Exactly three
+    lowercase alphanumeric characters, for the same length reason as `environment`.
+
+    Keep it stable for the lifetime of an environment: these names stay reserved during
+    the soft-delete window, so changing it is the documented way to recover from a
+    destroy/apply cycle that collides with a soft-deleted name.
+
+    Three characters is 46,656 combinations against a namespace shared with every Azure
+    tenant, so a collision on `st<env>duckhaven<region><suffix>` is possible -- the
+    apply fails with a name-taken error, and you pick another.
+  EOT
+  type        = string
+
+  validation {
+    condition     = can(regex("^[a-z0-9]{3}$", var.name_suffix))
+    error_message = "name_suffix must be exactly 3 lowercase alphanumeric characters."
+  }
+}
+
+variable "tags" {
+  description = "Additional tags merged into every resource."
+  type        = map(string)
+  default     = {}
+}
+
+# ── Networking ────────────────────────────────────────────────────────────────
+
+variable "vnet_address_space" {
+  description = "VNet CIDR. 10.42.4.0/22 inside it is deliberately left unallocated."
+  type        = string
+  default     = "10.42.0.0/16"
+}
+
+variable "subnet_prefix_aca" {
+  description = <<-EOT
+    Container Apps infrastructure subnet. Must be at least /27 for a
+    workload-profiles environment and is IMMUTABLE once the environment exists, so
+    it is sized /23 up front.
+  EOT
+  type        = string
+  default     = "10.42.0.0/23"
+}
+
+variable "subnet_prefix_pe" {
+  description = "Private endpoint subnet."
+  type        = string
+  default     = "10.42.2.0/24"
+}
+
+variable "subnet_prefix_aci" {
+  description = "Elastic agent subnet, delegated to Microsoft.ContainerInstance/containerGroups."
+  type        = string
+  default     = "10.42.3.0/24"
+}
+
+# ── PostgreSQL ────────────────────────────────────────────────────────────────
+
+variable "postgres_existing_server_fqdn" {
+  description = <<-EOT
+    Point at a PostgreSQL server you already run instead of creating one. Null (the
+    default) creates a Flexible Server, its databases, its private endpoint and the
+    Entra role bootstrap, and every postgres_* setting below applies.
+
+    When set, none of that is created and you own it: the two databases must exist, the
+    server must be reachable from the Container Apps subnet, and -- since the API
+    authenticates with its managed identity -- the server must have Microsoft Entra
+    authentication enabled with a login role for the API identity
+    (`id-<env>-duckhaven-api-<region>-<suffix>`, printed by the api_identity_name
+    output). See docs/deployment/azure-terraform.md.
+  EOT
+  type        = string
+  default     = null
+}
+
+variable "postgres_database_name" {
+  description = "Database holding DuckHaven's own schema, managed by Alembic."
+  type        = string
+  default     = "duckhaven"
+}
+
+variable "postgres_polaris_database_name" {
+  description = <<-EOT
+    Database holding Polaris' relational-jdbc schema. A separate database on the same
+    server: the schemas never collide and there is one thing to back up and fail over.
+  EOT
+  type        = string
+  default     = "polaris"
+}
+
+variable "postgres_sku_name" {
+  description = <<-EOT
+    Flexible Server SKU, which encodes both the compute tier and the compute size as
+    <tier>_<size>: B_Standard_B1ms is Burstable/1 vCore/2 GiB (the cheapest server
+    Azure sells), GP_Standard_D2ds_v5 is GeneralPurpose/2 vCore/8 GiB, and
+    MO_Standard_E2ds_v5 is MemoryOptimized. Azure exposes no way to set tier and size
+    independently, so one variable covers both.
+
+    GP_Standard_D2ds_v5 is verified available in France Central with ZoneRedundant HA.
+    PostgreSQL Flexible Server is offer-restricted in some regions on some
+    subscriptions -- check `az postgres flexible-server list-skus -l <region>` before
+    changing region, and note that Burstable does not support zone-redundant HA.
+  EOT
+  type        = string
+  default     = "GP_Standard_D2ds_v5"
+}
+
+variable "postgres_storage_mb" {
+  description = <<-EOT
+    Allocated storage in MB: 32768 = 32 GiB, which is the smallest Flexible Server
+    allows; 131072 = 128 GiB. Storage can only ever be grown, never shrunk, so start
+    small -- an over-provisioned server bills for the larger size permanently.
+  EOT
+  type        = number
+  default     = 131072
+}
+
+variable "postgres_storage_tier" {
+  description = <<-EOT
+    Provisioned IOPS tier for the storage. Billed independently of capacity, so a
+    larger tier costs more at the same size. Leave null to take Azure's default for
+    the chosen storage_mb (P4 at 32 GiB, P10 at 128 GiB), which is also the cheapest
+    tier valid for that size.
+  EOT
+  type        = string
+  default     = null
+}
+
+variable "postgres_zone" {
+  description = <<-EOT
+    Availability zone for the primary. Leave null to let Azure place it, which is the
+    safer choice on subscriptions with constrained zone capacity -- a trial account can
+    fail to provision into a specific zone. Changing this replaces the server.
+  EOT
+  type        = string
+  default     = "1"
+}
+
+variable "postgres_high_availability_enabled" {
+  description = <<-EOT
+    Zone-redundant HA: a hot standby in a second availability zone with automatic
+    failover. Roughly doubles the compute cost, so staging turns it off.
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "postgres_backup_retention_days" {
+  description = "Point-in-time restore window, in days."
+  type        = number
+  default     = 14
+
+  validation {
+    condition     = var.postgres_backup_retention_days >= 7 && var.postgres_backup_retention_days <= 35
+    error_message = "postgres_backup_retention_days must be between 7 and 35."
+  }
+}
+
+variable "postgres_geo_redundant_backup_enabled" {
+  description = "Replicate backups to the paired region. Cannot be changed after creation."
+  type        = bool
+  default     = true
+}
+
+variable "postgres_password_auth_enabled" {
+  description = <<-EOT
+    Whether the server accepts password authentication alongside Microsoft Entra.
+
+    The API never uses it: it connects with its managed identity, and holds no
+    database credential at all. Polaris does, because its Quarkus datasource would
+    need azure-identity-extensions on the pgjdbc classpath to authenticate with an
+    Entra token, and the stock apache/polaris image does not ship it.
+
+    So this stays true while Polaris is part of the deployment. Set it false to close
+    off password auth entirely -- valid only if nothing here needs a password, which
+    today means running without Polaris.
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "postgres_entra_admin" {
+  description = <<-EOT
+    Optional Entra principal (ideally a group) granted PostgreSQL administrator, for
+    human break-glass access without sharing the generated admin password. Leave null
+    to skip. object_id is the directory object id; principal_name is its display name.
+  EOT
+  type = object({
+    object_id      = string
+    principal_name = string
+    principal_type = optional(string, "Group")
+  })
+  default = null
+}
+
+# ── Storage ───────────────────────────────────────────────────────────────────
+
+variable "storage_replication_type" {
+  description = <<-EOT
+    Replication for the Iceberg warehouse. ZRS spreads across three availability
+    zones in the region, matching the zone-redundant posture of the rest of the
+    deployment; staging can drop to LRS.
+  EOT
+  type        = string
+  default     = "ZRS"
+
+  validation {
+    condition     = contains(["LRS", "ZRS", "GRS", "GZRS"], var.storage_replication_type)
+    error_message = "storage_replication_type must be one of LRS, ZRS, GRS, GZRS."
+  }
+}
+
+variable "storage_soft_delete_days" {
+  description = <<-EOT
+    Blob and container soft-delete window. This is the recovery path for an
+    accidental table drop, since Iceberg deletes data files outright.
+  EOT
+  type        = number
+  default     = 7
+}
+
+# ── Container registry ────────────────────────────────────────────────────────
+
+variable "acr_sku" {
+  description = <<-EOT
+    Registry SKU, and the largest single fixed cost in this deployment: Premium is
+    roughly 10x Basic per month.
+
+    This is a cost and capacity decision, not a security one. Every pull in this
+    deployment is authenticated by a managed identity holding AcrPull, on every SKU;
+    no registry credential is ever issued. Premium buys zone redundancy, network rule
+    sets, retention policies and more included storage and throughput -- worth it for
+    production, unnecessary for a disposable environment.
+  EOT
+  type        = string
+  default     = "Premium"
+
+  validation {
+    condition     = contains(["Basic", "Standard", "Premium"], var.acr_sku)
+    error_message = "acr_sku must be one of Basic, Standard, Premium."
+  }
+}
+
+# ── DuckHaven API ─────────────────────────────────────────────────────────────
+
+variable "duckhaven_image_tag" {
+  description = <<-EOT
+    Tag for the duckhaven-api and duckhaven-agent images in the registry. Both are built
+    from the same commit, so they share a tag. No default: an implicit `latest` is how a
+    deployment silently changes version, and the tag also determines which agent image
+    provisioned container groups run.
+  EOT
+  type        = string
+}
+
+variable "api_min_replicas" {
+  description = <<-EOT
+    Replica floor. Two keeps the control plane available while one is replaced.
+
+    Multi-replica operation relies on each replica deriving its own identity
+    (REPLICA_ID and REPLICA_INTERNAL_URL are set to "auto" on the app), because
+    Container Apps gives every replica identical configuration and no individually
+    addressable hostname. Without that, every replica records the same owner_url on an
+    agent row and cross-replica dispatch gives up instead of forwarding.
+  EOT
+  type        = number
+  default     = 2
+}
+
+variable "api_max_replicas" {
+  description = <<-EOT
+    Replica ceiling. Equal to the floor by default: agent WebSockets pin to a replica
+    and query work is offloaded to agents, so autoscaling would mismeasure load and
+    churn socket ownership for no gain.
+  EOT
+  type        = number
+  default     = 2
+}
+
+variable "api_cpu" {
+  description = <<-EOT
+    vCPU per replica. Container Apps requires exactly 2 GiB of memory per vCPU, so this
+    and api_memory move together. Query execution happens on agents, not here.
+  EOT
+  type        = number
+  default     = 1.0
+}
+
+variable "api_memory" {
+  description = "Memory per replica. Must equal 2 GiB per vCPU."
+  type        = string
+  default     = "2Gi"
+}
+
+# ── Elastic compute ───────────────────────────────────────────────────────────
+
+variable "elastic_compute_enabled" {
+  description = <<-EOT
+    Whether the control plane may provision agents on demand as container instances.
+    Agents are injected into the delegated agent subnet with private addresses only.
+
+    Requires nat_gateway_enabled: an agent dials the control plane at its public
+    ingress, and with Azure's default outbound access retired a subnet-injected group
+    has no route there without a NAT gateway. It would provision, fail to register, and
+    be reaped at the provisioning deadline.
+  EOT
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = !var.elastic_compute_enabled || var.nat_gateway_enabled
+    error_message = "elastic_compute_enabled requires nat_gateway_enabled: agents cannot reach the control plane without an outbound route."
+  }
+}
+
+# ── Polaris ───────────────────────────────────────────────────────────────────
+
+variable "polaris_enabled" {
+  description = <<-EOT
+    Whether to deploy Apache Polaris as part of this stack.
+
+    Set false to point DuckHaven at a catalog you already run, via
+    polaris_external_base_url. That also removes the only component here that needs a
+    database password, so postgres_password_auth_enabled can go with it.
+
+    DuckHaven always needs *a* Polaris; this only decides who operates it.
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "polaris_external_base_url" {
+  description = <<-EOT
+    Base URL of an existing Polaris, used when polaris_enabled is false. Must be
+    reachable from the Container Apps environment and, when elastic compute is on, from
+    the agent subnet -- both leave through this deployment's NAT gateway, so one
+    firewall rule for that address covers them.
+
+    The credential DuckHaven authenticates with is still generated here and kept in Key
+    Vault; the principal must exist in that Polaris under polaris_client_id.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.polaris_external_base_url == null || can(regex("^https?://", var.polaris_external_base_url))
+    error_message = "polaris_external_base_url must be an http(s) URL."
+  }
+}
+
+variable "polaris_image_tag" {
+  description = <<-EOT
+    Tag used for both apache/polaris and apache/polaris-admin-tool. The two must match:
+    the admin tool bootstraps and migrates the schema the server then reads. Pinned
+    rather than `latest` so a redeploy cannot silently move the schema version.
+  EOT
+  type        = string
+  default     = "1.6.0"
+}
+
+variable "polaris_mirror_images" {
+  description = <<-EOT
+    Whether Terraform runs `az acr import` to copy the two Polaris images into this
+    registry, so runtime does not depend on Docker Hub availability or its anonymous
+    pull limits.
+
+    Requires the Azure CLI on the Terraform runner. Set false to mirror them yourself
+    (see the deployment README) -- the images must exist in the registry before the
+    Polaris app is created either way, or it never becomes healthy.
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "polaris_realm" {
+  description = "Polaris realm bootstrapped and served. Must match the API's POLARIS_REALM."
+  type        = string
+  default     = "POLARIS"
+}
+
+variable "polaris_min_replicas" {
+  description = <<-EOT
+    Replica floor. Polaris is stateless on Postgres, so it scales horizontally; two
+    replicas keep the catalog available while one is replaced. It cannot scale to zero,
+    because agents attach catalogs against it directly.
+  EOT
+  type        = number
+  default     = 2
+}
+
+variable "polaris_max_replicas" {
+  description = "Replica ceiling."
+  type        = number
+  default     = 2
+}
+
+variable "polaris_cpu" {
+  description = <<-EOT
+    vCPU per replica. Container Apps requires memory to be exactly 2 GiB per vCPU, so
+    this and polaris_memory move together. Polaris is a JVM: below about 1 GiB of
+    memory it will not start reliably.
+  EOT
+  type        = number
+  default     = 1.0
+}
+
+variable "polaris_memory" {
+  description = "Memory per replica, as a Container Apps quantity. Must equal 2 GiB per vCPU."
+  type        = string
+  default     = "2Gi"
+}
+
+# ── Cost controls ─────────────────────────────────────────────────────────────
+
+variable "nat_gateway_enabled" {
+  description = <<-EOT
+    Whether to provision the NAT gateway that gives the agent and Container Apps
+    subnets outbound internet access. It bills hourly whether or not traffic flows,
+    plus its public IP.
+
+    Disabling it saves that standing cost but breaks elastic compute: Azure has retired
+    default outbound access, so a VNet-injected agent would have no route to the API's
+    public ingress and could never dial home. Private endpoints and intra-VNet traffic
+    still work. Leave it off while testing everything except elastic agents.
+  EOT
+  type        = bool
+  default     = true
+}
+
+# ── Observability ─────────────────────────────────────────────────────────────
+
+variable "alert_email_addresses" {
+  description = <<-EOT
+    Addresses notified by the alert rules. Empty disables the action group and every
+    alert with it, which is the right default for a throwaway environment -- an alert
+    nobody reads is worse than no alert, since it trains people to ignore the channel.
+  EOT
+  type        = list(string)
+  default     = []
+}
+
+variable "log_analytics_daily_quota_gb" {
+  description = <<-EOT
+    Hard cap on daily ingestion, in GB. Log Analytics bills per GB ingested with no
+    ceiling by default, which is the one line item here that can run away unattended.
+    Set a small cap on non-production environments; -1 means unlimited. Ingestion
+    stops for the rest of the UTC day once the cap is hit.
+  EOT
+  type        = number
+  default     = -1
+}
+
+variable "log_retention_days" {
+  description = "Log Analytics retention in days."
+  type        = number
+  default     = 30
+
+  validation {
+    condition     = var.log_retention_days >= 30 && var.log_retention_days <= 730
+    error_message = "log_retention_days must be between 30 and 730."
+  }
+}
+
+# ── Management-plane access ───────────────────────────────────────────────────
+
+variable "allow_management_plane_public_access" {
+  description = <<-EOT
+    Whether Key Vault and the storage account keep a public endpoint open for the
+    Terraform runner and CI. Application traffic always uses the private endpoints.
+    Set false when applying from a runner inside the VNet, which closes the public
+    endpoint entirely.
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "management_plane_allowed_ips" {
+  description = <<-EOT
+    Public IPs allowed through the Key Vault and storage firewalls when
+    allow_management_plane_public_access is true. Leave empty only if you accept an
+    open (but Entra-authenticated) endpoint.
+  EOT
+  type        = list(string)
+  default     = []
+}

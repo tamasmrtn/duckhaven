@@ -555,16 +555,18 @@ async def run_control_channel(
                     or load_session_token(session_token_path)
                     or settings.bootstrap_token
                 )
-                auth = Frame(
-                    type=FrameType.AUTH,
-                    payload={
-                        "token": auth_token,
-                        "name": settings.agent_name or platform.node(),
-                        # Where the control plane fetches result Parquet. The host
-                        # is the socket peer address, observed by the API on accept.
-                        "result_port": settings.results_http_port,
-                    },
-                )
+                auth_payload: dict[str, object] = {
+                    "token": auth_token,
+                    "name": settings.agent_name or platform.node(),
+                    # Where the control plane fetches result Parquet. The host is
+                    # normally the socket peer address, observed by the API on
+                    # accept; an agent whose inbound address differs from its
+                    # egress (e.g. ACI behind a public DNS label) advertises it.
+                    "result_port": settings.results_http_port,
+                }
+                if settings.result_advertise_host:
+                    auth_payload["result_host"] = settings.result_advertise_host
+                auth = Frame(type=FrameType.AUTH, payload=auth_payload)
                 await ws.send(auth.model_dump_json())
 
                 raw = await ws.recv()

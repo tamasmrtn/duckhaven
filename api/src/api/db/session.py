@@ -3,6 +3,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from api.config import settings
+from api.db.entra import attach_entra_auth
 
 
 def engine_kwargs(database_url: str) -> dict[str, Any]:
@@ -25,6 +26,8 @@ def engine_kwargs(database_url: str) -> dict[str, Any]:
 
 
 engine = create_async_engine(settings.database_url, **engine_kwargs(settings.database_url))
+if settings.db_auth_mode == "entra":
+    attach_entra_auth(engine)
 async_session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
     engine, expire_on_commit=False
 )

@@ -40,6 +40,20 @@ playwright-report/
 # Docker
 docker-compose.override.yml
 
+# Terraform: provider binaries, lock-adjacent caches and state. State holds generated
+# passwords, so it lives in the remote backend and never in the repo. The bootstrap
+# stack keeps local state by design (it creates that backend).
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
 # OS / editor
 .DS_Store
 Thumbs.db

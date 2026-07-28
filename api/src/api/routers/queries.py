@@ -1,3 +1,4 @@
+import logging
 import time
 import uuid
 from datetime import UTC, datetime
@@ -9,6 +10,7 @@ from opentelemetry import trace
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.config import settings
 from api.deps import get_current_user, get_db
 from api.metrics import record_rows_decode
 from api.models.agent import Agent
@@ -27,6 +29,7 @@ from api.services import query as query_service
 from api.services import sql_metadata as sql_metadata_service
 from api.services.agent_capabilities import agent_supports_backend, required_extension
 from api.services.agent_dispatch import is_agent_connected, send_to_agent
+from api.services.compute import service as compute_service
 from api.services.grants import GrantDenied
 from api.services.migration.service import workspace_has_active_migration
 from api.services.permissions import Permission
@@ -39,6 +42,8 @@ from api.services.workspace import (
 )
 from duckhaven_shared.concurrency import parse_set_concurrency
 from duckhaven_shared.protocol import Frame, FrameType
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -87,6 +92,16 @@ async def create_query(
             },
         )
 
+    # Elastic-pool target: no specific agent chosen. Dispatch to a compatible
+    # connected agent if one exists, else park the run queued and provision one.
+    if body.agent_id is None:
+        if not settings.elastic_compute_enabled:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail={"error": "agent_required", "detail": "agent_id is required"},
+            )
+        return await _create_elastic_query(db, workspace, user.id, body)
+
     result = await db.execute(select(Agent).where(Agent.id == body.agent_id))
     agent = result.scalar_one_or_none()
     if agent is None:
@@ -114,18 +129,7 @@ async def create_query(
                 },
             )
 
-    # When the run came from a saved query, stamp its last_run_at. Ignore a
-    # missing/foreign id so a run never fails over a deleted saved query.
-    if body.saved_query_id is not None:
-        result = await db.execute(
-            select(SavedQuery).where(
-                SavedQuery.id == body.saved_query_id,
-                SavedQuery.workspace_id == workspace.id,
-            )
-        )
-        saved = result.scalar_one_or_none()
-        if saved is not None:
-            saved.last_run_at = datetime.now(UTC)
+    await _stamp_saved_query_run(db, workspace, body.saved_query_id)
 
     query = Query(
         workspace_id=workspace.id,
@@ -147,6 +151,82 @@ async def create_query(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"error": "grant_denied", "detail": str(exc)},
         ) from exc
+    return query
+
+
+async def _stamp_saved_query_run(db: AsyncSession, workspace, saved_query_id) -> None:
+    """Record that a saved query was just run.
+
+    Shared by both create paths. The elastic path did not do this, so a saved
+    query only ever run against the pool reported "never run" in the UI while its
+    runs sat in History. A missing or foreign id is ignored, so a run never fails
+    over a saved query someone deleted.
+    """
+    if saved_query_id is None:
+        return
+    saved = (
+        await db.execute(
+            select(SavedQuery).where(
+                SavedQuery.id == saved_query_id,
+                SavedQuery.workspace_id == workspace.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if saved is not None:
+        saved.last_run_at = datetime.now(UTC)
+
+
+async def _create_elastic_query(
+    db: AsyncSession, workspace, user_id: uuid.UUID, body: QueryCreate
+) -> Query:
+    """Run against the elastic pool: dispatch now if a compatible agent is up,
+    otherwise park the run ``queued`` and provision one (bound on registration)."""
+    await _stamp_saved_query_run(db, workspace, body.saved_query_id)
+    agent = await query_service.pick_agent_for(db, workspace)
+    query = Query(
+        workspace_id=workspace.id,
+        agent_id=agent.id if agent is not None else None,
+        user_id=user_id,
+        sql=body.sql,
+        status="queued",
+        origin="elastic",
+        # Recorded because this run may be dispatched long after this request: a run
+        # parked during a cold start is replayed by compute.service.bind_queued_work,
+        # which has no access to the request that created it. Without these the replay
+        # used the workspace default catalog and the default timeout, so unqualified
+        # table names resolved somewhere the user had not chosen.
+        timeout_s=body.timeout_s,
+        active_catalog=body.catalog,
+    )
+    db.add(query)
+    await db.flush()
+
+    if agent is not None:
+        try:
+            await query_service.dispatch_query(
+                db, query, timeout_s=body.timeout_s, active_catalog=body.catalog
+            )
+        except GrantDenied as exc:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"error": "grant_denied", "detail": str(exc)},
+            ) from exc
+        except query_service.AgentUnavailable:
+            # Presence is read from Postgres with a TTL, so the agent picked above can
+            # have lost its socket already -- and a terminating agent keeps its
+            # ownership row until the container actually goes away. For a pool run that
+            # is not a failure: unbind and fall through to scale-out, exactly as if no
+            # agent had been available. Raising here would surface as a 500.
+            logger.info("Elastic pool agent %s was unavailable; provisioning", agent.id)
+            query.agent_id = None
+        else:
+            return query
+
+    # No compatible agent connected: coalesced scale-out. The run stays queued
+    # (agent_id NULL) until the provisioned agent registers and binds it.
+    pool_key = await compute_service.resolve_pool_key(db, workspace)
+    await compute_service.ensure_agent(db, pool_key)
+    await db.commit()
     return query
 
 
@@ -365,6 +445,23 @@ async def get_query_rows(
 
     agent_result = await db.execute(select(Agent).where(Agent.id == query.agent_id))
     agent = agent_result.scalar_one_or_none()
+
+    if agent is not None and agent.provider is not None:
+        from api.services.compute.service import ensure_result_host, record_activity
+
+        # An elastic agent's address is assigned after its instance is created, so it
+        # can be unknown at registration time. Resolve it on first use, when the cloud
+        # is certain to be able to answer.
+        if agent.result_host is None:
+            await ensure_result_host(db, agent)
+
+        # Reading results counts as using the agent. The idle clock otherwise only
+        # advanced on dispatch, so a user who ran a query and came back later to scroll
+        # found the agent reaped and the result Parquet gone with its container --
+        # results are held on the agent, not by the control plane.
+        await record_activity(db, agent.id)
+        await db.commit()
+
     if agent is None or agent.result_host is None or agent.result_port is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

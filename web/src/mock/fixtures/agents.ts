@@ -73,6 +73,28 @@ function makeAgents(): Agent[] {
       last_ping_at: new Date(Date.now() - 12000).toISOString(),
       created_at: "2026-03-01T00:00:00Z",
     },
+    {
+      id: "ag-5",
+      name: "warehouse-a",
+      status: "healthy",
+      capabilities: {
+        duckdb_version: "1.5.4",
+        extensions: ["iceberg", "httpfs", "azure"],
+        memory_limit_gb: 16,
+        cores: 4,
+        cpu_model: "Azure Container Instances",
+        cpu_cores_physical: 4,
+        tailscale_ip: null,
+        host: "aci",
+      },
+      last_ping_at: new Date(Date.now() - 3000).toISOString(),
+      created_at: "2026-06-01T00:00:00Z",
+      provider: "azure_aci",
+      lifecycle: "running",
+      requested_cpu: 4,
+      requested_memory_gb: 16,
+      hourly_cost: 0.2808,
+    },
   ];
 }
 

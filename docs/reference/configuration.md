@@ -17,6 +17,10 @@ boot, so every variable below is optional.
 |---|---|---|
 | `DUCKHAVEN_IMAGE_TAG` | `latest` | Pin a specific image tag (e.g. `v1.2.3`) instead of riding `:latest`. |
 | `SECRET_KEY` | generated | App secret. Captured to the secrets dir on first boot by the API entrypoint and reused thereafter. |
+| `SETUP_TOKEN` | generated | One-time token gating first-admin creation. The entrypoint writes one to the data directory on first boot; set this instead where that filesystem is ephemeral, so the token survives a replica being replaced. |
+| `DATABASE_URL` | built from `POSTGRES_*` | Full SQLAlchemy URL. Set it to override the `POSTGRES_*` variables entirely — required for a connection they cannot express, such as passwordless Microsoft Entra authentication, where there is no password to interpolate. |
+| `DB_AUTH_MODE` | `password` | `password` takes the credential from `DATABASE_URL`. `entra` leaves it out and has the driver present a Microsoft Entra access token instead, minted per connection from the ambient managed identity. Requires the server to have Entra authentication enabled and a login role for that identity. |
+| `DB_ENTRA_SCOPE` | `https://ossrdbms-aad.database.windows.net/.default` | Token audience for `DB_AUTH_MODE=entra`. Change only for a sovereign cloud. |
 | `POSTGRES_PASSWORD` | `duckhaven` | Internal Postgres password. Postgres publishes no port; shared with the polaris and api services via Compose interpolation. |
 | `POLARIS_IMAGE_TAG` | `latest` | Apache Polaris image tag. Pin in production. |
 | `POLARIS_REALM` | `POLARIS` | Polaris realm name. |
@@ -78,8 +82,8 @@ or not.
 
 | Variable | Default | Description |
 |---|---|---|
-| `REPLICA_ID` | `api` | Identifier for this API replica, recorded as the owner of agents whose WebSocket it holds. The HA compose sets one per replica (`api-1`, `api-2`). |
-| `REPLICA_INTERNAL_URL` | `http://localhost:8000` | URL peer replicas use to forward agent-dispatch frames to this replica's private `/internal` endpoints. |
+| `REPLICA_ID` | `api` | Identifier for this API replica, recorded as the owner of agents whose WebSocket it holds. The HA compose sets one per replica (`api-1`, `api-2`). Set to `auto` to use the platform's replica name, falling back to the hostname. |
+| `REPLICA_INTERNAL_URL` | `http://localhost:8000` | URL peer replicas use to forward agent-dispatch frames to this replica's private `/internal` endpoints. Set to `auto` on platforms that give every replica identical configuration (Azure Container Apps) to resolve this container's own address — a shared value there breaks forwarding silently, see [High availability](../deployment/high-availability.md#replicas-that-cannot-be-configured-individually). |
 | `INTERNAL_API_SECRET` | _(empty)_ | Shared secret guarding the `/internal` cross-replica dispatch endpoints. Must be identical on every replica. When empty, peer forwarding is disabled (single-replica mode). |
 | `AGENT_PRESENCE_TTL_S` | `90` | How recently an agent must have pinged for another replica to consider it connected; covers a replica that died without clearing its ownership. |
 | `DB_POOL_SIZE` | `5` | SQLAlchemy connection-pool size per replica. Keep `replicas × (DB_POOL_SIZE + DB_MAX_OVERFLOW)` under the Postgres `max_connections`. |
@@ -145,6 +149,65 @@ advisory lock, like the scheduler, so leave it enabled everywhere.
 | `SQL_STATEMENT_ACK_DEADLINE_S` | `15` | Fail a session statement that stays `queued` past this many seconds — its dispatch frame never reached the agent. Only applied to agents that advertise ack support; see [SQL sessions](../concepts/sql-sessions.md#statement-delivery-and-deadlines). |
 | `SQL_STATEMENT_TIMEOUT_GRACE_S` | `30` | Extra seconds beyond a statement's own `timeout_s` before the reaper fails a `running` statement whose agent reply never arrived. |
 | `SQL_STATEMENT_DEFAULT_TIMEOUT_S` | `600` | Fallback timeout budget used by the reaper for statement rows with no recorded `timeout_s` (written before that column existed). |
+
+### Elastic compute
+
+Lets the control plane provision [agents](../concepts/agents.md) on demand instead of requiring them to be run by an
+operator — see [Elastic compute](../concepts/elastic-compute.md) for the concept and
+[Elastic compute on Azure](../deployment/azure-elastic-setup.md) for the cloud setup. Off by default and purely
+additive: static agents behave the same whether or not this is enabled. The scale-in reaper is leader-elected via a
+Postgres advisory lock, like the scheduler, so leave it enabled on every replica.
+
+| Variable | Default | Description |
+|---|---|---|
+| `ELASTIC_COMPUTE_ENABLED` | `false` | Master switch. When `false`, the admin *New compute* action and elastic-pool query dispatch return 422 and no reaper runs. |
+| `ELASTIC_PROVIDER` | `null` | Compute backend: `null` is a no-op used in tests, `azure_aci` provisions Azure Container Instances. |
+| `ELASTIC_CONTROL_PLANE_URL` | — | The `wss://…/agents/connect` URL a provisioned agent dials home to. Required: unlike the interactive add-agent flow there is no HTTP request to derive it from. |
+| `ELASTIC_AGENT_POLARIS_BASE_URL` | `POLARIS_BASE_URL` | Catalog endpoint provisioned agents attach against, when it differs from the control plane's own (a remote agent usually cannot use an in-cluster address). |
+| `ELASTIC_IDLE_TIMEOUT_S` | `900` | Terminate an agent after this long with no work dispatched — and only when it has no in-flight queries or open SQL sessions. |
+| `ELASTIC_MAX_LIFETIME_S` | `14400` | Hard lifetime backstop, applied once the agent's work drains. |
+| `ELASTIC_PROVISIONING_DEADLINE_S` | `300` | Fail an agent that never dials home within this window and clean up its instance. |
+| `ELASTIC_REAPER_TICK_S` | `30` | How often the scale-in and leak-reconciliation loop runs. |
+| `ELASTIC_MAX_AGENTS_PER_POOL` | `1` | Cap on concurrent elastic agents per storage shape. A cost guardrail. |
+| `ELASTIC_DEFAULT_CPU` | `2` | vCPU per agent when nothing names a size — pool-triggered provisioning, and restarting an agent whose row predates per-agent sizing. Provider-independent; the admin UI picks explicitly per agent. |
+| `ELASTIC_DEFAULT_MEMORY_GB` | `4` | Memory (GiB) per agent, same. Becomes a real limit the agent reads from its own cgroup to advertise capacity. Fractional values are exact. |
+| `ELASTIC_AGENT_ENV` | `{}` | JSON object of extra environment for every provisioned agent. A static agent's environment is written by whoever runs it; a provisioned one gets only what the backend sets, so this is how you carry over something you tuned — `{"SANDBOX_DISABLED_FILESYSTEMS": "HTTPFileSystem"}`. Applied last, so it can override the backend's own variables. Agent tracing is forwarded automatically from `OTEL_EXPORTER_OTLP_ENDPOINT` and needs no entry here. |
+
+#### Azure Container Instances backend
+
+Used when `ELASTIC_PROVIDER=azure_aci`. Credentials come from the ambient identity
+(`DefaultAzureCredential`): a managed identity in Azure, or `AZURE_*` variables elsewhere.
+
+| Variable | Default | Description |
+|---|---|---|
+| `ELASTIC_AZURE_SUBSCRIPTION_ID` | — | Subscription agent container groups are created in. Required. |
+| `ELASTIC_AZURE_RESOURCE_GROUP` | — | Resource group they are created in. Required, and it must be dedicated: the reaper terminates every `duckhaven-managed` container group there that has no live agent row. |
+| `ELASTIC_AZURE_SUBNET_ID` | — | Resource id of a subnet delegated to `Microsoft.ContainerInstance/containerGroups`. Required. Agents are injected into it with private addresses and no public DNS name, so the subnet needs its own outbound route and the control plane must be able to route to it. |
+| `ELASTIC_AZURE_LOCATION` | `eastus` | Region the container groups are created in. |
+| `ELASTIC_AZURE_PRICE_VCPU_HOUR` | `0.0486` | Per-vCPU hourly rate, used only to show a size's cost in the admin UI. Despite the name it applies to **whichever provider is configured**; zero it on a Docker host, where the marginal hourly cost is nil. |
+| `ELASTIC_AZURE_PRICE_MEMORY_GB_HOUR` | `0.0054` | Per-GiB hourly rate, same. |
+| `ELASTIC_AZURE_PRICE_CURRENCY` | `USD` | The currency the two rates above are quoted in. Azure publishes retail prices per billing currency, so set this to whichever one you copied the figures from. It sits with the rates because it describes them — a provider that prices nothing reports no currency, and the UI then shows no cost at all. |
+| `ELASTIC_REGISTRY_SERVER` | — | Registry host for a private agent image. Leave unset for a public image. |
+| `ELASTIC_REGISTRY_IDENTITY_ID` | — | Resource id of a user-assigned managed identity holding `AcrPull` on that registry. It is attached to each container group, which then pulls its image as itself, so no registry password exists. Container Instances supports user-assigned identities only for image pull, never system-assigned. |
+
+#### Docker host
+
+Used when `ELASTIC_PROVIDER=docker`, which provisions agents as containers on the single host
+already running the stack. Enable it with `deploy/docker-compose.elastic.yml` and read
+[Elastic compute on a single Docker host](../deployment/homelab-elastic-setup.md) first — giving the
+control plane a path to the Docker daemon is the most privileged grant in the stack, and the socket
+proxy narrows it without making container creation unprivileged.
+
+| Variable | Default | Description |
+|---|---|---|
+| `ELASTIC_DOCKER_HOST` | `tcp://docker-socket-proxy:2375` | Where the daemon is reached. Point it at a `docker-socket-proxy` rather than a mounted socket, so the API container never holds the socket itself. |
+| `ELASTIC_DOCKER_NETWORK` | `duckhaven_internal` | User-defined network agents are attached to. The bundled one is `internal: true`, which is what keeps an agent's result server reachable from the control plane and from nowhere off the host. |
+| `ELASTIC_DOCKER_RESERVE_CPU` | `1` | vCPU held back from agent sizing for the rest of the stack. The API, Postgres, Polaris and MinIO share the machine every agent is provisioned onto, so the maximum the UI offers is the host's capacity **minus** this. |
+| `ELASTIC_DOCKER_RESERVE_MEMORY_GB` | `2` | Memory (GiB) held back, same reasoning. |
+
+Provisioned agents reproduce the static agent's sandbox — read-only root, `no-new-privileges`, all
+capabilities dropped, a pids cap — so an agent you are given is contained exactly as tightly as one
+you start by hand.
 
 ### AI assistant
 

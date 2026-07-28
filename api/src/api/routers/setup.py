@@ -45,13 +45,17 @@ async def create_first_admin(
             detail="Setup already complete: an admin user exists.",
         )
 
-    try:
-        expected_token = settings.setup_token_path.read_text().strip()
-    except FileNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Setup token not available. The stack may need a fresh init.",
-        ) from None
+    # A configured token wins over the file: where the container filesystem is
+    # ephemeral, a self-generated one changes on every replica replacement.
+    expected_token = settings.setup_token
+    if not expected_token:
+        try:
+            expected_token = settings.setup_token_path.read_text().strip()
+        except FileNotFoundError:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Setup token not available. The stack may need a fresh init.",
+            ) from None
 
     if not x_setup_token or not secrets.compare_digest(x_setup_token, expected_token):
         raise HTTPException(

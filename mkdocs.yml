@@ -99,6 +99,7 @@ nav:
       - Catalogs & Polaris: concepts/catalogs.md
       - Tables & Iceberg: concepts/tables.md
       - Agents: concepts/agents.md
+      - Elastic compute: concepts/elastic-compute.md
       - Storage backends: concepts/storage-backends.md
       - Query execution: concepts/query-execution.md
       - SQL sessions: concepts/sql-sessions.md
@@ -109,9 +110,12 @@ nav:
   - Deployment:
       - Docker Compose: deployment/install.md
       - Add an agent: deployment/add-agent.md
+      - Elastic compute on a single Docker host: deployment/homelab-elastic-setup.md
+      - Elastic compute on Azure: deployment/azure-elastic-setup.md
       - Configure storage: deployment/storage.md
       - Reverse proxy & TLS: deployment/reverse-proxy-tls.md
       - High availability: deployment/high-availability.md
+      - Azure with Terraform: deployment/azure-terraform.md
       - Updating: deployment/updating.md
       - Backup & restore: deployment/backup-restore.md
   - Guides:

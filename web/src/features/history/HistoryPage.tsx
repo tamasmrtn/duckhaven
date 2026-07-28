@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { Clock } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
@@ -37,6 +37,7 @@ const ORIGIN_FILTERS: { value: OriginFilter; label: string }[] = [
 
 export function HistoryPage() {
   const { ws } = useParams({ from: "/$ws/history" });
+  const { agent: agentFilter } = useSearch({ from: "/$ws/history" });
   const navigate = useNavigate();
   const { data: me } = useMe();
   const isAdmin = me?.role === "admin";
@@ -47,11 +48,17 @@ export function HistoryPage() {
   const trimmed = userFilter.trim();
   // Cross-workspace + user filtering are admin-only affordances; a non-admin
   // never sends them, so the endpoint only ever returns their workspace.
-  const all = isAdmin && allWorkspaces;
+  // Filtering by agent spans workspaces (an agent is global), so fetch all when
+  // an agent filter is active and an admin is viewing.
+  const all = isAdmin && (allWorkspaces || !!agentFilter);
+  // The agent filter goes to the server rather than being applied to the page it
+  // returns: that page is capped, so filtering it here showed nothing at all for an
+  // agent whose runs were older than the most recent hundred queries cluster-wide.
   const { data: wsQueries = [], isLoading } = useWorkspaceQueries(ws, {
     all_workspaces: all,
     user_id: all && trimmed ? trimmed : undefined,
     origin: origin === "all" ? undefined : origin,
+    agent_id: all && agentFilter ? agentFilter : undefined,
   });
   const { data: agents = [] } = useAgents();
   const { data: workspaces = [] } = useWorkspaces();
@@ -92,6 +99,18 @@ export function HistoryPage() {
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-4 shrink-0">
         <h1 className="text-md font-semibold">History</h1>
+        {all && agentFilter && (
+          <button
+            type="button"
+            onClick={() =>
+              navigate({ to: "/$ws/history", params: { ws }, search: {} })
+            }
+            className="flex items-center gap-1 rounded-full border border-[var(--border-subtle)] bg-accent/50 px-2 py-0.5 text-xs text-text-secondary hover:text-text-primary"
+            aria-label="clear agent filter"
+          >
+            Agent: {agentName.get(agentFilter) ?? shortId(agentFilter)} ✕
+          </button>
+        )}
         <div className="ml-auto flex items-center gap-3">
           <div
             className="flex rounded-md border border-[var(--border-subtle)] p-0.5 text-xs"

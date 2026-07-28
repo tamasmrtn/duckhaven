@@ -136,6 +136,7 @@ export function useWorkspaceQueries(
     user_id?: string;
     origin?: string;
     session_id?: string;
+    agent_id?: string;
   },
 ) {
   return useQuery({
@@ -147,6 +148,7 @@ export function useWorkspaceQueries(
       opts?.user_id ?? "",
       opts?.origin ?? "",
       opts?.session_id ?? "",
+      opts?.agent_id ?? "",
     ],
     queryFn: () => queriesApi.listForWorkspace(ws, opts),
     enabled: !!ws,

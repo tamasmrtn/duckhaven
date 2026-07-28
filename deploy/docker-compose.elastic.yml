@@ -1,0 +1,149 @@
+# Elastic compute on a single Docker host.
+#
+# By default agents are static: the `agent` service runs until you stop it. This
+# override lets the control plane instead *provision agents on demand* and reap
+# them when idle — the same auto-terminating model as the Azure deployment, on
+# one box. It:
+#
+#   * points the API at the `docker` compute backend, which creates each agent as
+#     a container on this host;
+#   * puts a `docker-socket-proxy` between the API and the Docker daemon, so the
+#     API never holds the socket itself and can only reach the container and image
+#     calls listed below;
+#   * removes the static `agent` service, because scaling to zero is the point.
+#     Static and elastic agents coexist happily — drop the `agent` block at the
+#     bottom of this file to keep one always running alongside.
+#
+# Provisioned agents join `duckhaven_internal` (declared `internal: true` in the
+# base file), exactly like the static agent, so an agent's result server is
+# reachable from the control plane and from nothing off the host.
+#
+# ── Read this before deploying it ────────────────────────────────────────────
+#
+# The proxy filters Docker API *paths and methods*, not request bodies. A
+# POST /containers/create carrying `Binds: ["/:/host"]` and `Privileged: true`
+# looks exactly like a legitimate agent create, and the proxy cannot tell them
+# apart. Granting POST+CONTAINERS to anything is therefore close to granting root
+# on this host, and the proxy narrows *what the API can reach*, not what a
+# compromised API could do with container creation.
+#
+# What it does buy: no /exec, no /secrets, no /configs, no /swarm, no /volumes —
+# and the socket is off the API container's filesystem, so a file-read bug in the
+# API no longer hands over the daemon.
+#
+# What it does NOT hide: with CONTAINERS, IMAGES, NETWORKS and INFO granted, the
+# control plane can enumerate every container, image and network on this host and
+# read its CPU, memory and kernel details. Those are reads it needs to do its job,
+# but they are reads of the whole host, not just of what DuckHaven created.
+#
+# The real bound on blast radius is the daemon, not the proxy: run Docker
+# rootless, or enable userns-remap, so a container created through this path
+# cannot map to host root regardless of what it asks for. See
+# docs/deployment/homelab-elastic-setup.md.
+#
+# Usage:
+#   docker compose -f deploy/docker-compose.yml \
+#                  -f deploy/docker-compose.elastic.yml up -d
+services:
+  # Mediates every Docker API call the control plane makes. Reachable only from
+  # `duckhaven_internal` — it publishes no ports, so nothing on the host's
+  # interfaces can talk to it.
+  docker-socket-proxy:
+    # Tags carry a `v` prefix from 0.4.0 onward; 0.1.x-0.3.0 did not.
+    image: ghcr.io/tecnativa/docker-socket-proxy:v0.5.0
+    restart: unless-stopped
+    networks:
+      - duckhaven_internal
+    volumes:
+      # Read-only on the mount, which is defence in depth rather than a control:
+      # the daemon's API is fully writable through this socket regardless.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    # Read-only root with two writable tmpfs mounts. /tmp is not optional: the
+    # entrypoint renders haproxy.cfg there from the environment below on every
+    # start, and without it the container crash-loops on "can't create
+    # /tmp/haproxy.cfg: Read-only file system".
+    read_only: true
+    tmpfs:
+      - /run
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      # haproxy binds its listener before dropping to an unprivileged user.
+      - NET_BIND_SERVICE
+    environment:
+      # Everything not listed here stays at the image's default of denied —
+      # including AUTH, SECRETS, CONFIGS, EXEC, SWARM, NODES, TASKS, SERVICES,
+      # PLUGINS, VOLUMES, SYSTEM, BUILD and COMMIT. Add nothing without a reason:
+      # each one widens what a compromised control plane can reach.
+      #
+      # The master write switch. Without it every allowed section is read-only.
+      POST: 1
+      # Create, inspect and remove agent containers, and list them for the leak
+      # sweep that terminates containers with no live agent row.
+      CONTAINERS: 1
+      ALLOW_START: 1
+      ALLOW_STOP: 1
+      ALLOW_RESTARTS: 1
+      # Pull the agent image the first time it is provisioned on a host that has
+      # never run a static agent.
+      IMAGES: 1
+      # Resolve `duckhaven_internal` when attaching a new agent to it.
+      NETWORKS: 1
+      # GET /info, for the host's CPU and memory. It is what bounds the sizes the
+      # create-agent dialog offers to what this machine can actually run; without
+      # it the UI falls back to a conservative default that ignores your hardware.
+      #
+      # This is a read-only disclosure of host details -- kernel, OS, total CPU and
+      # memory, container counts, storage driver. It grants no write of any kind,
+      # and it tells the control plane strictly less than CONTAINERS already does:
+      # that grant lets it enumerate every container on this host by name.
+      INFO: 1
+
+  api:
+    environment:
+      ELASTIC_COMPUTE_ENABLED: "true"
+      ELASTIC_PROVIDER: docker
+      ELASTIC_DOCKER_HOST: tcp://docker-socket-proxy:2375
+      ELASTIC_DOCKER_NETWORK: duckhaven_internal
+      # The image provisioned agents run. Pinned to the same tag as the rest of
+      # the stack so an elastic agent is never a different version to a static one.
+      AGENT_IMAGE: ghcr.io/tamasmrtn/duckhaven-agent:${DUCKHAVEN_IMAGE_TAG:-latest}
+      # Where a provisioned agent dials home. Elastic provisioning has no HTTP
+      # request to derive this from, so it must be stated.
+      ELASTIC_CONTROL_PLANE_URL: ws://api:8000/agents/connect
+      # Size used when nothing names one -- pool-triggered provisioning. The admin
+      # UI picks explicitly per agent, bounded by this host's real capacity.
+      ELASTIC_DEFAULT_CPU: ${ELASTIC_DEFAULT_CPU:-2}
+      ELASTIC_DEFAULT_MEMORY_GB: ${ELASTIC_DEFAULT_MEMORY_GB:-4}
+      # Held back from agent sizing for the rest of the stack: the API, Postgres,
+      # Polaris and MinIO share this machine with every agent provisioned onto it,
+      # so the maximum offered is the host minus this, not the whole host.
+      ELASTIC_DOCKER_RESERVE_CPU: ${ELASTIC_DOCKER_RESERVE_CPU:-1}
+      ELASTIC_DOCKER_RESERVE_MEMORY_GB: ${ELASTIC_DOCKER_RESERVE_MEMORY_GB:-2}
+      # No hourly rate is shown for this provider. Nobody prices a container on a
+      # machine you already own, so the docker backend reports no currency and the
+      # admin UI renders no cost at all -- rather than putting a cloud price symbol
+      # on your own hardware. Nothing to configure here.
+    depends_on:
+      docker-socket-proxy:
+        condition: service_started
+
+  # Scale to zero: no always-on agent. Compose has no way to remove a service an
+  # earlier file defined, so it is neutralised with a profile that is never
+  # activated. Delete this block to keep a static agent running alongside the
+  # elastic ones.
+  agent:
+    profiles:
+      - static-agent
+
+networks:
+  # Pin the network's real name. Compose otherwise prefixes it with the project
+  # name -- `deploy_duckhaven_internal` -- and an elastic agent is created through
+  # the Docker API, which knows nothing about compose projects: attaching it would
+  # fail with "network duckhaven_internal not found". Naming it explicitly is what
+  # makes ELASTIC_DOCKER_NETWORK mean the same thing to both.
+  duckhaven_internal:
+    name: duckhaven_internal

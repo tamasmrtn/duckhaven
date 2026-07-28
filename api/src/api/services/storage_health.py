@@ -145,7 +145,12 @@ def _list_adls(location: str, creds: dict) -> int:
     container, _, host = parsed.netloc.partition("@")
     prefix = parsed.path.lstrip("/")
     # Polaris keys the vended SAS by storage host, e.g. adls.sas-token.<account>.dfs…
-    sas = next((v for k, v in creds.items() if k.startswith("adls.sas-token")), None)
+    # The trailing dot matters: Iceberg vends the expiry alongside the token as
+    # adls.sas-token-expires-at-ms.<account>, and matching without it can select that
+    # epoch milliseconds value instead. The SDK then treats the digits as an account
+    # key and fails to base64-decode them, which reads as an auth error rather than a
+    # wrong-property one.
+    sas = next((v for k, v in creds.items() if k.startswith("adls.sas-token.")), None)
     if sas is None:
         raise ValueError("Polaris vended no ADLS SAS token")
     account_url = f"https://{host.replace('.dfs.', '.blob.')}"

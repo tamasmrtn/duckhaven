@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.deps import get_session_factory
 from api.models.agent import Agent
@@ -40,6 +40,34 @@ def _result_host(ws: WebSocket) -> str | None:
     return ws.client.host if ws.client else None
 
 
+async def _elastic_result_host(
+    db: AsyncSession, agent_id: uuid.UUID | None
+) -> tuple[str | None, bool]:
+    """The backend-reported address of an elastic agent's result server, and whether the
+    agent is elastic at all.
+
+    Neither mechanism above works for an agent on a private network: it cannot be told
+    its own address (that is assigned after its configuration is fixed) and its socket
+    reaches us through a NAT gateway, so the peer and the ``X-Forwarded-For`` hop are
+    both the gateway. The cloud is the only authority, so ask it.
+
+    The address may legitimately be unknown here, because it is assigned after the
+    instance is created and the agent can dial home before ARM reports it. The caller
+    uses the second element to decide what to do with that: for an elastic agent no
+    address is better than the wrong one.
+    """
+    if agent_id is None:
+        return None, False
+    agent = await db.get(Agent, agent_id)
+    if agent is None or agent.provider is None:
+        return None, False
+    # Lazy, matching the bind_queued_work import below: keeps this router free of a
+    # load-time dependency on the compute stack.
+    from api.services.compute.service import resolve_result_host
+
+    return await resolve_result_host(agent), True
+
+
 @router.websocket("/agents/connect")
 async def agent_connect(
     ws: WebSocket,
@@ -63,7 +91,10 @@ async def agent_connect(
         # the peer is the proxy. There the agent's real address is the left-most
         # X-Forwarded-For hop, mirroring how the add-agent dial URL trusts
         # X-Forwarded-* (routers/agents._agent_dial_url).
-        result_host = _result_host(ws)
+        # An agent whose result server is reached at a different address than its
+        # socket peer advertises it explicitly; otherwise the peer/X-Forwarded-For hop
+        # is used. Elastic agents fall between the two: see _resolve_result_host.
+        advertised_host = frame.payload.get("result_host")
         result_port = frame.payload.get("result_port")
         result_port_int = int(result_port) if result_port is not None else None
 
@@ -86,32 +117,107 @@ async def agent_connect(
                 await ws.close(code=1008, reason="Invalid token")
                 return
 
+            elastic_host, is_elastic = await _elastic_result_host(db, cred.agent_id)
+            if advertised_host:
+                result_host = advertised_host
+            elif is_elastic:
+                # Deliberately not falling back to the socket peer: an elastic agent
+                # reaches us through a NAT gateway, so the peer is the gateway, and
+                # storing it makes every result fetch hang until it times out. Leaving
+                # it unset fails fast instead, and compute.service.ensure_result_host
+                # fills it in when the address is first needed.
+                result_host = elastic_host
+            else:
+                result_host = _result_host(ws)
+
             if cred.kind == "agent_session":
                 # Re-authentication: rebind the existing agent row instead of
                 # minting a new one. The session token is long-lived and is not
                 # consumed.
                 agent_id = cred.agent_id
-                await db.execute(
-                    sa.update(Agent)
-                    .where(Agent.id == agent_id)
-                    .values(status="healthy", result_host=result_host, result_port=result_port_int)
-                )
+                # Reset the idle clock on reconnect so a just-reconnected elastic
+                # agent isn't reaped against a stale last_active_at (harmless for
+                # static agents, which are never reaped).
+                values: dict[str, object] = {
+                    "status": "healthy",
+                    "last_active_at": datetime.now(tz=UTC),
+                    "result_port": result_port_int,
+                }
+                # Only overwrite a known address with another one. resolve_result_host
+                # returns None on any transient cloud error, so writing it
+                # unconditionally would blank an address that was already correct and
+                # break result fetches until something resolved it again.
+                if result_host is not None:
+                    values["result_host"] = result_host
+                await db.execute(sa.update(Agent).where(Agent.id == agent_id).values(**values))
                 session_token = token
                 await db.commit()
             else:
                 # First registration: the bootstrap token is single-use.
+                boot_agent_id = cred.agent_id
                 await db.delete(cred)
-                label = frame.payload.get("name", f"agent-{secrets.token_hex(4)}")
-                agent = Agent(
-                    name=label,
-                    status="healthy",
-                    result_host=result_host,
-                    result_port=result_port_int,
-                )
-                db.add(agent)
-                await db.flush()
-                agent_id = agent.id
+                if boot_agent_id is not None:
+                    # Elastic: the token was minted for a pre-created row (see
+                    # compute.service.ensure_agent). Rebind that row instead of
+                    # minting a new one — it is the row that provisioned the
+                    # instance — and flip its lifecycle provisioning -> running.
+                    # Start the idle clock now (last_active_at): a freshly
+                    # registered agent must get a full idle window even if it never
+                    # runs work, rather than being reaped against provisioned_at
+                    # (which is already old after a slow cold start).
+                    agent_id = boot_agent_id
+                    # Only a row still expecting this instance may be revived. The
+                    # reaper fails a row that misses its provisioning deadline and
+                    # terminates the instance behind it; an unguarded update would let
+                    # a container that dials home afterwards flip that row back to
+                    # running while nothing is running, so the picker would offer an
+                    # agent that does not exist and queries sent to it would hang.
+                    revived = await db.execute(
+                        sa.update(Agent)
+                        .where(
+                            Agent.id == agent_id,
+                            Agent.lifecycle.in_(("provisioning", "running")),
+                        )
+                        .values(
+                            status="healthy",
+                            lifecycle="running",
+                            last_active_at=datetime.now(tz=UTC),
+                            result_host=result_host,
+                            result_port=result_port_int,
+                        )
+                    )
+                    if revived.rowcount == 0:
+                        # Its token is spent (deleted above), so this cannot be retried.
+                        logger.warning(
+                            "Refusing registration for agent %s: no longer awaiting one",
+                            agent_id,
+                        )
+                        await db.commit()
+                        await ws.close(code=1008)
+                        return
+                else:
+                    label = frame.payload.get("name", f"agent-{secrets.token_hex(4)}")
+                    agent = Agent(
+                        name=label,
+                        status="healthy",
+                        result_host=result_host,
+                        result_port=result_port_int,
+                    )
+                    db.add(agent)
+                    await db.flush()
+                    agent_id = agent.id
 
+                # An agent has exactly one live session credential. Restarting an
+                # elastic agent reuses its row and enrolls again with a fresh bootstrap
+                # token, so without clearing the previous one the row accumulates
+                # credentials and services/query.agent_session_token — which expects at
+                # most one — fails the next result fetch outright.
+                await db.execute(
+                    sa.delete(Credential).where(
+                        Credential.agent_id == agent_id,
+                        Credential.kind == "agent_session",
+                    )
+                )
                 session_token = secrets.token_urlsafe(32)
                 session_cred = Credential(
                     user_id=None,
@@ -140,6 +246,13 @@ async def agent_connect(
         # replica can route dispatch frames here.
         async with session_factory() as db:
             await claim_agent_owner(db, agent_id)
+            # If an elastic agent just came up, dispatch any queued work parked
+            # while it was provisioning.
+            agent_row = await db.get(Agent, agent_id)
+            if agent_row is not None and agent_row.provider is not None:
+                from api.services.compute.service import bind_queued_work
+
+                await bind_queued_work(db, agent_row)
         last_presence_refresh = datetime.now(tz=UTC)
 
         async for raw_msg in ws.iter_text():

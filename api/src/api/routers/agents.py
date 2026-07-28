@@ -5,8 +5,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.deps import get_current_user, get_db
 from api.models.agent import Agent
 from api.models.user import User
-from api.schemas.agent import AgentCapabilitiesOut, AgentOut
+from api.schemas.agent import AgentOut
 from api.services.agent_dispatch import connected_agent_ids
+from api.services.agent_view import build_agent_out
 
 router = APIRouter(prefix="/agents")
 
@@ -21,20 +22,8 @@ async def list_agents(
     connected = await connected_agent_ids(db)
     out = []
     for agent in agents:
-        caps = None
-        if agent.capabilities:
-            caps = AgentCapabilitiesOut(**agent.capabilities)
         status = agent.status
         if str(agent.id) not in connected and status == "healthy":
             status = "unavailable"
-        out.append(
-            AgentOut(
-                id=agent.id,
-                name=agent.name,
-                status=status,
-                capabilities=caps,
-                last_ping_at=agent.last_ping_at,
-                created_at=agent.created_at,
-            )
-        )
+        out.append(build_agent_out(agent, status=status))
     return out

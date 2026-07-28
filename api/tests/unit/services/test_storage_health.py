@@ -144,3 +144,42 @@ def test_list_s3_falls_back_to_config_endpoint(monkeypatch):
 def test_list_adls_requires_sas():
     with pytest.raises(ValueError, match="SAS token"):
         storage_health._list_adls("abfss://c@a.dfs.core.windows.net/p", {})
+
+
+def test_list_adls_ignores_the_sas_expiry_property(monkeypatch):
+    """Iceberg vends the expiry next to the token as adls.sas-token-expires-at-ms.<account>.
+    Selecting that epoch instead of the token hands the storage SDK a string of digits,
+    which it treats as an account key and fails to base64-decode -- a real failure seen
+    against a live ADLS account, and one that reads as an auth error rather than a
+    wrong-property one."""
+    captured: dict = {}
+
+    class _FakeContainerClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def list_blobs(self, name_starts_with=None):
+            return iter(())
+
+    monkeypatch.setattr("azure.storage.blob.ContainerClient", _FakeContainerClient, raising=False)
+
+    storage_health._list_adls(
+        "abfss://warehouse@acct.dfs.core.windows.net/duckhaven/",
+        {
+            # Deliberately first: dict order is what made this bug reachable.
+            "adls.sas-token-expires-at-ms.acct.dfs.core.windows.net": "1785065500847",
+            "adls.sas-token.acct.dfs.core.windows.net": "sv=2024-01-01&sig=abc",
+        },
+    )
+
+    assert captured["credential"] == "sv=2024-01-01&sig=abc"
+    assert captured["account_url"] == "https://acct.blob.core.windows.net"
+
+
+def test_list_adls_requires_sas_when_only_expiry_is_vended():
+    """The expiry alone is not a credential."""
+    with pytest.raises(ValueError, match="SAS token"):
+        storage_health._list_adls(
+            "abfss://c@a.dfs.core.windows.net/p",
+            {"adls.sas-token-expires-at-ms.a.dfs.core.windows.net": "1785065500847"},
+        )

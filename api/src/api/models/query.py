@@ -69,6 +69,11 @@ class Query(Base):
     # starts (a lost dispatch frame). Null for rows written before it was
     # recorded; the reaper falls back to the configured default.
     timeout_s: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # The catalog the worksheet had selected, `USE`d for unqualified table names.
+    # Recorded so a run dispatched later than its request — an elastic pool run parked
+    # during a cold start — still resolves names the way the user meant, rather than
+    # falling back to the workspace default. Null means "no preference recorded".
+    active_catalog: Mapped[str | None] = mapped_column(String(255), nullable=True)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

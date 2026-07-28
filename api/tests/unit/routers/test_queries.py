@@ -1257,3 +1257,209 @@ async def test_run_with_unknown_saved_query_id_still_runs(
 async def test_sql_metadata_no_agent_returns_503(authed_client: AsyncClient, workspace: Workspace):
     resp = await authed_client.get(f"/workspaces/{workspace.slug}/sql-metadata")
     assert resp.status_code == 503
+
+
+# --- elastic pool target (agent_id omitted) ---
+
+
+@pytest_asyncio.fixture
+def elastic_enabled(monkeypatch):
+    from api.config import settings
+    from api.services.compute.backends import get_backend
+
+    monkeypatch.setattr(settings, "elastic_compute_enabled", True)
+    monkeypatch.setattr(settings, "elastic_provider", "null")
+    monkeypatch.setattr(settings, "elastic_max_agents_per_pool", 1)
+    backend = get_backend("null")
+    backend._instances.clear()
+    yield
+    backend._instances.clear()
+
+
+async def test_elastic_pool_target_requires_flag(authed_client: AsyncClient, workspace: Workspace):
+    """With elastic disabled, omitting agent_id is a 422, not a silent pool run."""
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries", json={"sql": "SELECT 1"}
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["error"] == "agent_required"
+
+
+async def test_elastic_pool_parks_queued_and_provisions(
+    authed_client: AsyncClient, workspace: Workspace, db_session, elastic_enabled
+):
+    """No compatible agent connected → run parked queued, one elastic agent provisioned."""
+    import sqlalchemy as sa
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries", json={"sql": "SELECT 1"}
+    )
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["status"] == "queued"
+    assert body["agent_id"] is None
+    assert body["origin"] == "elastic"
+
+    provisioned = (
+        (await db_session.execute(sa.select(Agent).where(Agent.provider.is_not(None))))
+        .scalars()
+        .all()
+    )
+    assert len(provisioned) == 1
+    assert provisioned[0].lifecycle == "provisioning"
+    assert provisioned[0].pool_key == "object_store"
+
+
+async def test_elastic_pool_dispatches_to_connected_agent(
+    authed_client: AsyncClient,
+    workspace: Workspace,
+    connected_agent,
+    elastic_enabled,
+):
+    """A compatible agent is already up → dispatch to it instead of provisioning."""
+    agent, mock_ws = connected_agent
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries", json={"sql": "SELECT 1"}
+    )
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["agent_id"] == str(agent.id)
+    assert body["origin"] == "elastic"
+    assert len(mock_ws.sent) == 1
+
+
+async def test_elastic_pool_provisions_when_the_picked_agent_has_gone(
+    authed_client: AsyncClient, workspace: Workspace, db_session, elastic_enabled
+):
+    """Presence is read from Postgres with a TTL, so the agent the picker returns can
+    have lost its socket already. Dispatch then fails, and for a pool run that is not an
+    error -- it means supply has to be provisioned. Previously the ValueError escaped as
+    a 500."""
+    from datetime import UTC, datetime
+
+    import sqlalchemy as sa
+
+    # Fresh presence on the row, but no socket in the registry: exactly the state a
+    # terminating agent, or one whose replica died, leaves behind.
+    agent = Agent(
+        name="ghost",
+        status="healthy",
+        capabilities={"extensions": ["httpfs"]},
+        owner_id="api",
+        owner_url="http://127.0.0.1:8000",
+        last_ping_at=datetime.now(tz=UTC),
+    )
+    db_session.add(agent)
+    await db_session.commit()
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries", json={"sql": "SELECT 1"}
+    )
+
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["status"] == "queued"
+    assert body["agent_id"] is None
+
+    provisioned = (
+        (await db_session.execute(sa.select(Agent).where(Agent.provider.is_not(None))))
+        .scalars()
+        .all()
+    )
+    assert len(provisioned) == 1
+
+
+async def test_reading_results_advances_the_elastic_idle_clock(
+    authed_client: AsyncClient, workspace: Workspace, agent: Agent, db_session, monkeypatch
+):
+    """Results live on the agent, not in the control plane, so an agent reaped while
+    someone is still paging takes the Parquet with it. The idle clock previously only
+    advanced on dispatch, so a user who ran a query and came back later to scroll found
+    a terminated agent and a 503."""
+    import os
+    import tempfile
+    from datetime import UTC, datetime, timedelta
+
+    import duckdb
+    import httpx
+
+    from api.models.query import Query
+    from api.models.user import Credential
+    from api.services import query as query_service
+
+    def _parquet_bytes() -> bytes:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as fh:
+            path = fh.name
+        try:
+            duckdb.connect().execute(f"COPY (SELECT 1 AS a) TO '{path}' (FORMAT PARQUET)")
+            with open(path, "rb") as f:
+                return f.read()
+        finally:
+            os.unlink(path)
+
+    stale = datetime.now(tz=UTC) - timedelta(hours=2)
+    agent.result_host = "127.0.0.1"
+    agent.result_port = 8001
+    agent.provider = "null"
+    agent.lifecycle = "running"
+    agent.instance_id = "dh-agent-paging"
+    agent.provisioned_at = stale
+    agent.last_active_at = stale
+    db_session.add(agent)
+    db_session.add(
+        Credential(user_id=None, agent_id=agent.id, kind="agent_session", token="tok-paging")
+    )
+    query = Query(
+        workspace_id=workspace.id,
+        agent_id=agent.id,
+        sql="SELECT 1",
+        status="done",
+        row_count=1,
+        result_path="/var/duckhaven-agent/results/x.parquet",
+        started_at=stale,
+    )
+    db_session.add(query)
+    await db_session.commit()
+
+    async def fake_proxy(agent_arg, query_arg, *, row_offset=None, row_limit=None, token=None):
+        return httpx.Response(200, content=_parquet_bytes())
+
+    monkeypatch.setattr(query_service, "proxy_rows", fake_proxy)
+
+    resp = await authed_client.get(f"/queries/{query.id}/rows")
+    assert resp.status_code == 200
+
+    await db_session.refresh(agent)
+    # SQLite hands back naive timestamps; production normalises the same way.
+    last_active = agent.last_active_at
+    if last_active.tzinfo is None:
+        last_active = last_active.replace(tzinfo=UTC)
+    assert last_active > stale
+
+
+async def test_elastic_pool_run_stamps_saved_query_last_run_at(
+    authed_client: AsyncClient, workspace: Workspace, elastic_enabled
+):
+    """Running a saved query against the pool counts as running it.
+
+    The explicit-agent path stamps last_run_at; the elastic path never did, so a
+    saved query only ever run against the pool reported "never run" in the UI
+    while its runs sat in History.
+    """
+    created = await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries",
+        json={"name": "Pooled", "sql": "SELECT 1"},
+    )
+    sq_id = created.json()["id"]
+    assert created.json()["last_run_at"] is None
+
+    run = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "saved_query_id": sq_id},
+    )
+    assert run.status_code == 202
+    assert run.json()["origin"] == "elastic"
+
+    listed = await authed_client.get(f"/workspaces/{workspace.slug}/saved-queries")
+    stamped = next(q for q in listed.json() if q["id"] == sq_id)
+    assert stamped["last_run_at"] is not None, "a pool run left the saved query 'never run'"

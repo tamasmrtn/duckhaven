@@ -134,6 +134,33 @@ To add a third replica, copy the `api-2` service to `api-3` (its own
 `REPLICA_ID`/`REPLICA_INTERNAL_URL` and data volume) and add `api-3:8000` to the
 Caddy upstream list.
 
+### Replicas that cannot be configured individually
+
+Some platforms give every replica of an app the same configuration and no
+individually addressable hostname — Azure Container Apps is one. A static
+`REPLICA_INTERNAL_URL` is then actively wrong: every replica records the *same*
+`owner_url` on the agents it holds, each one sees its own URL as the recorded owner,
+and rather than forwarding it concludes the socket is gone. Queries that land on a
+replica not holding the agent's socket fail, and they fail silently.
+
+Set either value to `auto` there and the replica works it out at startup:
+
+```bash
+REPLICA_ID=auto             # the platform's replica name, else the hostname
+REPLICA_INTERNAL_URL=auto   # http://<this container's address>:8000
+```
+
+The resolved URL is the container's own address, which is what peers need — an
+ingress hostname would load-balance the forward back to an arbitrary replica and
+reintroduce the same bug. `INTERNAL_API_SECRET` is still required; without it peer
+forwarding stays off and an agent held elsewhere is treated as unreachable.
+
+Under `auto`, an agent's result-server address is not taken from
+`X-Forwarded-For` for elastic agents — the control plane asks the cloud instead,
+because a provisioned agent may sit behind a NAT gateway that makes the header
+report the gateway. Static agents are unaffected. See
+[Azure with Terraform](azure-terraform.md).
+
 ### HA Postgres with Patroni + HAProxy
 
 [Patroni](https://patroni.readthedocs.io/) runs Postgres with streaming

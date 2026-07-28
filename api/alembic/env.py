@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 import api.models  # noqa: F401 — registers all models with Base
 from api.config import settings
 from api.db.base import Base
+from api.db.entra import attach_entra_auth
 
 # Transaction-level advisory lock that serializes concurrent `alembic upgrade`
 # runs across API replicas (every replica migrates on boot). The first runner
@@ -55,6 +56,11 @@ async def run_async_migrations() -> None:
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
+    # Alembic builds its own engine rather than reusing api.db.session's, so the
+    # Entra token listener has to be attached here too -- otherwise migrations are
+    # the one thing that still needs a password, and they run before the app does.
+    if settings.db_auth_mode == "entra":
+        attach_entra_auth(connectable)
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
     await connectable.dispose()

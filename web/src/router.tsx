@@ -165,6 +165,10 @@ const historyRoute = createRoute({
   getParentRoute: () => wsRoute,
   path: "/history",
   component: HistoryPage,
+  // Optional agent filter (deep-linked from Admin → Agents → View audit).
+  validateSearch: (search: Record<string, unknown>): { agent?: string } => ({
+    agent: typeof search.agent === "string" ? search.agent : undefined,
+  }),
 });
 
 const queryProfileRoute = createRoute({

@@ -83,8 +83,32 @@ def test_requested_size_becomes_concrete_limits(req):
     to be a real limit rather than left unbounded."""
     spec = DockerEngineBackend()._container_spec(req)
 
-    assert spec["mem_limit"] == "8g"
+    assert spec["mem_limit"] == 8 * 1024**3
     assert spec["nano_cpus"] == 2_000_000_000
+
+
+def test_fractional_memory_is_not_truncated(req):
+    """A "{int(gb)}g" string silently rounded 1.5 GiB down to 1, so the row and the
+    UI billed a size the cgroup never had. nano_cpus was always exact, so the two
+    disagreed."""
+    req.memory_gb = 1.5
+    req.cpu = 1.5
+
+    spec = DockerEngineBackend()._container_spec(req)
+
+    assert spec["mem_limit"] == int(1.5 * 1024**3)
+    assert spec["nano_cpus"] == 1_500_000_000
+
+
+def test_sub_gigabyte_memory_does_not_become_unlimited(req):
+    """The dangerous end of the same truncation: "0g" is how Docker spells *no
+    limit*, so a sub-GiB request handed the agent the entire host."""
+    req.memory_gb = 0.5
+
+    spec = DockerEngineBackend()._container_spec(req)
+
+    assert spec["mem_limit"] == int(0.5 * 1024**3)
+    assert spec["mem_limit"] > 0
 
 
 def test_size_falls_back_to_configured_defaults(req, monkeypatch):
@@ -97,7 +121,7 @@ def test_size_falls_back_to_configured_defaults(req, monkeypatch):
 
     spec = DockerEngineBackend()._container_spec(req)
 
-    assert spec["mem_limit"] == "2g"
+    assert spec["mem_limit"] == 2 * 1024**3
     assert spec["nano_cpus"] == 1_000_000_000
 
 
@@ -112,6 +136,43 @@ def test_enrollment_contract_is_unchanged(req):
     # The control plane reaches the result server by container address, not loopback.
     assert env["RESULTS_HTTP_HOST"] == "0.0.0.0"
     assert "RESULT_ADVERTISE_HOST" not in env
+
+
+def test_tracing_is_forwarded_to_the_agent(req, monkeypatch):
+    """The static agent gets this from compose, and the elastic overlay takes the
+    static agent out -- so without forwarding it, switching to elastic silently
+    loses every agent-side span."""
+    monkeypatch.setattr(settings, "otel_exporter_otlp_endpoint", "http://otel-collector:4318")
+
+    spec = DockerEngineBackend()._container_spec(req)
+
+    assert spec["environment"]["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://otel-collector:4318"
+
+
+def test_tracing_is_omitted_when_not_configured(req, monkeypatch):
+    """An unset endpoint must not become an empty one, which the agent would try
+    to export to."""
+    monkeypatch.setattr(settings, "otel_exporter_otlp_endpoint", None)
+
+    spec = DockerEngineBackend()._container_spec(req)
+
+    assert "OTEL_EXPORTER_OTLP_ENDPOINT" not in spec["environment"]
+
+
+def test_operator_env_is_forwarded_and_wins(req, monkeypatch):
+    """A provisioned agent's environment is written entirely by the backend, so
+    this is the only way to carry over something tuned on a static agent."""
+    monkeypatch.setattr(
+        settings,
+        "elastic_agent_env",
+        {"SANDBOX_DISABLED_FILESYSTEMS": "HTTPFileSystem", "RESULTS_HTTP_HOST": "127.0.0.1"},
+    )
+
+    env = DockerEngineBackend()._container_spec(req)["environment"]
+
+    assert env["SANDBOX_DISABLED_FILESYSTEMS"] == "HTTPFileSystem"
+    # Applied last, so an operator can override the backend's own choices.
+    assert env["RESULTS_HTTP_HOST"] == "127.0.0.1"
 
 
 def test_managed_label_is_always_stamped(req):

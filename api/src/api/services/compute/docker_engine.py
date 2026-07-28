@@ -76,21 +76,35 @@ class DockerEngineBackend:
         memory_gb = req.memory_gb or settings.elastic_default_memory_gb
         cpu = req.cpu or settings.elastic_default_cpu
 
+        environment = {
+            "CONTROL_PLANE_URL": req.control_plane_url,
+            "BOOTSTRAP_TOKEN": req.bootstrap_token,
+            # The agent attaches workspace catalogs against Polaris directly.
+            "POLARIS_BASE_URL": polaris_url,
+            "POLARIS_CLIENT_ID": settings.polaris_client_id,
+            "POLARIS_CLIENT_SECRET": settings.polaris_client_secret,
+            # Bind all interfaces: the control plane reaches the result server
+            # across the network by container address, not loopback.
+            "RESULTS_HTTP_HOST": "0.0.0.0",
+        }
+        # Agent-side tracing, which the static agent gets from compose. Without it
+        # every span from a provisioned agent disappears and a dispatch trace ends
+        # at the control plane's producer span -- and because the elastic overlay
+        # takes the static agent out, switching to elastic loses agent tracing
+        # entirely unless this is forwarded.
+        if settings.otel_exporter_otlp_endpoint:
+            environment["OTEL_EXPORTER_OTLP_ENDPOINT"] = settings.otel_exporter_otlp_endpoint
+        # Anything else the operator tuned on their static agent. The agent's own
+        # defaults match the compose defaults for every other variable, so this is
+        # only needed by someone who changed one -- SANDBOX_DISABLED_FILESYSTEMS is
+        # the realistic case. Applied last so it can override the above.
+        environment.update(settings.elastic_agent_env)
+
         return {
             "image": req.image,
             "name": req.instance_id,
             "detach": True,
-            "environment": {
-                "CONTROL_PLANE_URL": req.control_plane_url,
-                "BOOTSTRAP_TOKEN": req.bootstrap_token,
-                # The agent attaches workspace catalogs against Polaris directly.
-                "POLARIS_BASE_URL": polaris_url,
-                "POLARIS_CLIENT_ID": settings.polaris_client_id,
-                "POLARIS_CLIENT_SECRET": settings.polaris_client_secret,
-                # Bind all interfaces: the control plane reaches the result server
-                # across the network by container address, not loopback.
-                "RESULTS_HTTP_HOST": "0.0.0.0",
-            },
+            "environment": environment,
             "labels": {**req.tags, _MANAGED_LABEL: "true"},
             # One user-defined network, no published ports. The result server is
             # reachable from the control plane and from nothing outside the host.
@@ -118,7 +132,13 @@ class DockerEngineBackend:
             "cap_drop": ["ALL"],
             "pids_limit": 512,
             # A concrete memory.max for the agent's cgroup-aware sizing to read.
-            "mem_limit": f"{int(memory_gb)}g",
+            #
+            # Bytes rather than a "{n}g" string: int() on the GiB value truncated
+            # 1.5 GiB to 1, and anything below 1 GiB to "0g" -- which Docker reads as
+            # *no limit at all*, handing the agent the whole host. nano_cpus below
+            # has always been exact, so the two sliders disagreed for fractional
+            # sizes. Bytes are exact for both and cannot round down to unlimited.
+            "mem_limit": int(memory_gb * 1024**3),
             "nano_cpus": int(cpu * 1_000_000_000),
             # DuckHaven decides when an agent is torn down (via terminate), not Docker;
             # on a crash it should redial rather than stay dead.

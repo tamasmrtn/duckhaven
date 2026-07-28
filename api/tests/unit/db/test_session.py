@@ -1,5 +1,6 @@
 """Connection-pool tuning for transparent Postgres failover, and Entra auth."""
 
+import threading
 from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -35,9 +36,11 @@ class _FakeCredential:
     def __init__(self, *tokens: str) -> None:
         self._tokens = list(tokens)
         self.calls: list[str] = []
+        self.thread: str | None = None
 
     def get_token(self, scope: str) -> _FakeToken:
         self.calls.append(scope)
+        self.thread = threading.current_thread().name
         return _FakeToken(self._tokens[min(len(self.calls) - 1, len(self._tokens) - 1)])
 
 
@@ -51,17 +54,38 @@ def _dispatch_connect(engine, cparams: dict) -> None:
     dialect.dispatch.do_connect(dialect, None, (), cparams)
 
 
-def test_entra_auth_supplies_token_as_password():
+async def test_entra_auth_supplies_token_as_password():
     engine = create_async_engine("postgresql+asyncpg://id-duckhaven-api@host:5432/db")
     attach_entra_auth(engine, credential=_FakeCredential("token-one"))
 
     cparams: dict = {}
     _dispatch_connect(engine, cparams)
 
-    assert cparams["password"] == "token-one"
+    # asyncpg accepts a coroutine function here and awaits it while connecting.
+    assert await cparams["password"]() == "token-one"
 
 
-def test_entra_auth_fetches_a_token_per_connection():
+async def test_token_is_fetched_off_the_event_loop():
+    """get_token is synchronous and hits the network whenever its cache misses.
+    The do_connect listener runs on the loop thread, so calling it there stalls
+    every request handler, WebSocket heartbeat and reaper tick behind it."""
+    engine = create_async_engine("postgresql+asyncpg://id-duckhaven-api@host:5432/db")
+    credential = _FakeCredential("token-one")
+    attach_entra_auth(engine, credential=credential)
+
+    cparams: dict = {}
+    _dispatch_connect(engine, cparams)
+
+    # The listener hands over a callable and fetches nothing itself.
+    assert credential.calls == []
+
+    await cparams["password"]()
+
+    assert credential.calls == ["https://ossrdbms-aad.database.windows.net/.default"]
+    assert credential.thread != threading.current_thread().name
+
+
+async def test_entra_auth_fetches_a_token_per_connection():
     """Tokens expire, so a pooled connection recycled later must not reuse the
     one captured when the engine was built."""
     engine = create_async_engine("postgresql+asyncpg://id-duckhaven-api@host:5432/db")
@@ -73,8 +97,8 @@ def test_entra_auth_fetches_a_token_per_connection():
     _dispatch_connect(engine, first)
     _dispatch_connect(engine, second)
 
-    assert first["password"] == "token-one"
-    assert second["password"] == "token-two"
+    assert await first["password"]() == "token-one"
+    assert await second["password"]() == "token-two"
     assert credential.calls == [
         "https://ossrdbms-aad.database.windows.net/.default",
         "https://ossrdbms-aad.database.windows.net/.default",

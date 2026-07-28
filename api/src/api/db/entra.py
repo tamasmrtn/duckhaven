@@ -5,6 +5,7 @@ attach the same listener; importing ``session`` from ``alembic/env.py`` would
 construct the application engine as a side effect of running a migration.
 """
 
+import asyncio
 from typing import Any
 
 from sqlalchemy import event
@@ -23,9 +24,16 @@ def attach_entra_auth(engine: AsyncEngine, credential: Any = None) -> None:
 
     It has to be per connection, not once at startup, because tokens expire — a
     pooled connection recycled after the token's lifetime would otherwise
-    reconnect with a dead credential. ``get_token`` stays cheap on that path
-    despite being a blocking call: the credential caches the token and only
-    reaches the identity endpoint when it is close to expiry.
+    reconnect with a dead credential.
+
+    The password is handed to asyncpg as a **coroutine function** rather than a
+    string, and asyncpg awaits it while establishing the connection. That matters:
+    ``get_token`` is synchronous and does a network round trip whenever its cache
+    misses — the first connection after start, and again at every refresh — and the
+    ``do_connect`` listener runs on the event-loop thread, so calling it directly
+    stalls every request handler, WebSocket heartbeat and reaper tick behind it.
+    ``asyncio.to_thread`` keeps that off the loop. Cache hits are a dict lookup and
+    cost nothing either way.
 
     ``credential`` is injectable for tests; production passes nothing and gets
     ``DefaultAzureCredential``, the same ambient-identity chain the storage and
@@ -38,6 +46,10 @@ def attach_entra_auth(engine: AsyncEngine, credential: Any = None) -> None:
 
         credential = DefaultAzureCredential()
 
+    async def _token() -> str:
+        token = await asyncio.to_thread(credential.get_token, settings.db_entra_scope)
+        return token.token
+
     @event.listens_for(engine.sync_engine, "do_connect")
     def _supply_entra_token(dialect, conn_rec, cargs, cparams):  # noqa: ANN001, ANN202
-        cparams["password"] = credential.get_token(settings.db_entra_scope).token
+        cparams["password"] = _token

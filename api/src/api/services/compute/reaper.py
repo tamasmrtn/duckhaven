@@ -33,7 +33,7 @@ from api.models.agent import Agent
 from api.models.query import Query
 from api.models.sql_session import SqlSession
 from api.services.compute.backends import get_backend
-from api.services.compute.service import terminate_agent
+from api.services.compute.service import revoke_bootstrap_credentials, terminate_agent
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +129,10 @@ async def _reap_lifecycle(db: AsyncSession, now: datetime) -> dict[str, int]:
                 agent.lifecycle = "failed"
                 agent.status = "unavailable"
                 agent.terminated_at = now
+                # It never registered, so its enrollment token is still live and
+                # nothing else collects it -- and revoking it is what stops a slow
+                # instance dialing home later and reviving this row.
+                await revoke_bootstrap_credentials(db, agent.id)
                 await db.commit()
                 reaped["provisioning_timeout"] += 1
                 logger.info("Failed stuck-provisioning elastic agent %s", agent.id)

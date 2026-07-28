@@ -166,9 +166,18 @@ async def agent_connect(
                     # runs work, rather than being reaped against provisioned_at
                     # (which is already old after a slow cold start).
                     agent_id = boot_agent_id
-                    await db.execute(
+                    # Only a row still expecting this instance may be revived. The
+                    # reaper fails a row that misses its provisioning deadline and
+                    # terminates the instance behind it; an unguarded update would let
+                    # a container that dials home afterwards flip that row back to
+                    # running while nothing is running, so the picker would offer an
+                    # agent that does not exist and queries sent to it would hang.
+                    revived = await db.execute(
                         sa.update(Agent)
-                        .where(Agent.id == agent_id)
+                        .where(
+                            Agent.id == agent_id,
+                            Agent.lifecycle.in_(("provisioning", "running")),
+                        )
                         .values(
                             status="healthy",
                             lifecycle="running",
@@ -177,6 +186,15 @@ async def agent_connect(
                             result_port=result_port_int,
                         )
                     )
+                    if revived.rowcount == 0:
+                        # Its token is spent (deleted above), so this cannot be retried.
+                        logger.warning(
+                            "Refusing registration for agent %s: no longer awaiting one",
+                            agent_id,
+                        )
+                        await db.commit()
+                        await ws.close(code=1008)
+                        return
                 else:
                     label = frame.payload.get("name", f"agent-{secrets.token_hex(4)}")
                     agent = Agent(

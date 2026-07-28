@@ -164,6 +164,8 @@ async def terminate_agent(db: AsyncSession, agent: Agent, *, reason: str) -> Non
     agent.owner_id = None
     agent.owner_url = None
     agent.terminated_at = datetime.now(tz=UTC)
+    # An agent terminated while still provisioning never consumed its token.
+    await revoke_bootstrap_credentials(db, agent.id)
     await db.commit()
     logger.info("Terminated elastic agent %s (%s)", agent.id, reason)
 
@@ -260,6 +262,25 @@ async def _create_and_provision(
     return await _mint_and_provision(db, agent, cpu=cpu, memory_gb=memory_gb)
 
 
+async def revoke_bootstrap_credentials(db: AsyncSession, agent_id: uuid.UUID) -> None:
+    """Delete any unused enrollment tokens for ``agent_id``. The caller commits.
+
+    A bootstrap token is single-use and is consumed by successful registration, so
+    one that still exists belongs to an attempt that never registered. Nothing else
+    collects them: without this, a row that failed to provision leaves a token valid
+    for BOOTSTRAP_TTL_HOURS, and every restart mints another alongside it.
+
+    Revoking is also what keeps a failed row dead. A slow instance that dials home
+    after the reaper gave up cannot register without a token, so the lifecycle guard
+    in agents_ws is the second line rather than the only one.
+    """
+    await db.execute(
+        sa.delete(Credential).where(
+            Credential.agent_id == agent_id, Credential.kind == "agent_bootstrap"
+        )
+    )
+
+
 async def _mint_and_provision(
     db: AsyncSession, agent: Agent, *, cpu: float, memory_gb: float
 ) -> Agent | None:
@@ -268,6 +289,9 @@ async def _mint_and_provision(
     row is marked ``failed`` (reconcilable), and ``None`` returned."""
     provider = settings.elastic_provider
     token = f"dh_boot_{secrets.token_urlsafe(16)}"
+    # Clear any token left by an earlier attempt on this row before minting the
+    # replacement, so a restarted agent carries exactly one live credential.
+    await revoke_bootstrap_credentials(db, agent.id)
     db.add(
         Credential(
             user_id=None,
@@ -294,6 +318,7 @@ async def _mint_and_provision(
         logger.exception("Elastic provision failed for agent %s", agent.id)
         agent.lifecycle = "failed"
         agent.terminated_at = datetime.now(tz=UTC)
+        await revoke_bootstrap_credentials(db, agent.id)
         await db.commit()
         return None
 
@@ -380,13 +405,37 @@ async def bind_queued_work(db: AsyncSession, agent: Agent) -> int:
     )
 
     bound = 0
+    # One lookup per workspace rather than per query: every query for a workspace
+    # resolves to the same pool key, and a cold start can park dozens of runs.
+    pool_keys: dict[uuid.UUID, str | None] = {}
     for query in queued:
-        workspace = await db.get(Workspace, query.workspace_id)
-        if workspace is None:
+        if query.workspace_id not in pool_keys:
+            workspace = await db.get(Workspace, query.workspace_id)
+            pool_keys[query.workspace_id] = (
+                await resolve_pool_key(db, workspace) if workspace is not None else None
+            )
+        if pool_keys[query.workspace_id] != agent.pool_key:
             continue
-        if await resolve_pool_key(db, workspace) != agent.pool_key:
+
+        # Claim the row before dispatching, and commit the claim so a concurrent
+        # caller sees it. Dispatch is irreversible -- it runs the SQL on an agent --
+        # so two callers reaching it for the same query execute a parked
+        # `INSERT INTO ... SELECT` twice and duplicate data.
+        #
+        # The guard is the WHERE clause, not the read above: `agent_id IS NULL`
+        # makes the claim atomic on any backend and across replicas, where a lock
+        # around the check would only serialize callers sharing one database
+        # session. A row someone else took reports rowcount 0 and is skipped.
+        claimed = await db.execute(
+            sa.update(Query)
+            .where(Query.id == query.id, Query.agent_id.is_(None))
+            .values(agent_id=agent.id)
+        )
+        if claimed.rowcount == 0:
             continue
-        query.agent_id = agent.id
+        await db.commit()
+        await db.refresh(query)
+
         try:
             # Replay what the requester actually asked for. These were recorded on the
             # row when the run was parked precisely because this dispatch happens
@@ -405,6 +454,9 @@ async def bind_queued_work(db: AsyncSession, agent: Agent) -> int:
             query.status = "failed"
             query.error = "dispatch failed after provisioning"
             query.finished_at = datetime.now(tz=UTC)
+            # Release the claim: this agent never ran it, so leaving itself recorded
+            # would attribute the run to it forever in History and in the agent filter.
+            query.agent_id = None
     await db.commit()
     if bound:
         logger.info("Bound %d queued queries to elastic agent %s", bound, agent.id)

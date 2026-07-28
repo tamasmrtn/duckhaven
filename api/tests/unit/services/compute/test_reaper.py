@@ -406,3 +406,57 @@ async def test_one_broken_provider_does_not_stop_the_others(
     assert result["dead_rows_failed"] == 1
     async with session_factory() as db:
         assert (await db.get(Agent, good_id)).lifecycle == "failed"
+
+
+async def test_failing_a_stuck_agent_revokes_its_bootstrap_credential(
+    session_factory, null_backend, monkeypatch
+):
+    """A failed row's enrollment token must not outlive it.
+
+    The credential is single-use and is consumed on successful registration, so
+    nothing else ever collects it. An agent that never dials home leaves a token
+    valid for BOOTSTRAP_TTL_HOURS behind, and every Restart mints another — so a
+    row that has failed a few times carries several live enrollment secrets, any
+    of which still registers an agent.
+    """
+    from sqlalchemy import func, select
+
+    from api.models.user import Credential
+
+    monkeypatch.setattr(settings, "elastic_provisioning_deadline_s", 300.0)
+    async with session_factory() as db:
+        agent = Agent(
+            name="e",
+            status="unavailable",
+            provider="null",
+            lifecycle="provisioning",
+            pool_key="object_store",
+            instance_id="dh-stuck-cred",
+            provisioned_at=_ago(1000),
+        )
+        db.add(agent)
+        await db.flush()
+        db.add(
+            Credential(
+                agent_id=agent.id,
+                kind="agent_bootstrap",
+                token="dh_boot_orphaned",
+                expires_at=datetime.now(tz=UTC) + timedelta(hours=24),
+            )
+        )
+        await db.commit()
+        aid = agent.id
+    null_backend._instances.add("dh-stuck-cred")
+
+    await reaper.run_cycle(session_factory)
+
+    async with session_factory() as db:
+        assert (await db.get(Agent, aid)).lifecycle == "failed"
+        live = (
+            await db.execute(
+                select(func.count())
+                .select_from(Credential)
+                .where(Credential.agent_id == aid, Credential.kind == "agent_bootstrap")
+            )
+        ).scalar_one()
+        assert live == 0, "a failed agent's bootstrap token is still valid for 24h"

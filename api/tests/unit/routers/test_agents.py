@@ -854,3 +854,59 @@ async def test_ws_reconnect_keeps_a_known_result_host(ws_client, db_engine, monk
 
     async with factory() as db:
         assert (await db.get(Agent, agent_id)).result_host == "10.42.3.50"
+
+
+async def test_late_dial_home_does_not_revive_a_failed_agent(ws_client, db_engine):
+    """A row the reaper already gave up on must stay dead.
+
+    The reaper fails a row that misses its provisioning deadline and terminates
+    the instance behind it. A slow container that dials home afterwards still
+    holds a valid bootstrap token, and registration updates the row
+    unconditionally — flipping it back to running/healthy while nothing is
+    running. The agent picker then offers an agent that does not exist, and a
+    query dispatched to it hangs until the leak sweep fails the row again.
+    """
+    from datetime import datetime, timedelta
+
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.models.user import Credential
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    token = "dh_boot_late_arrival"
+    async with factory() as db:
+        agent = Agent(
+            name="reaped",
+            status="unavailable",
+            provider="null",
+            lifecycle="failed",
+            pool_key="object_store",
+            instance_id="dh-already-gone",
+            provisioned_at=datetime.now(tz=UTC) - timedelta(hours=1),
+            terminated_at=datetime.now(tz=UTC),
+        )
+        db.add(agent)
+        await db.flush()
+        db.add(
+            Credential(
+                agent_id=agent.id,
+                kind="agent_bootstrap",
+                token=token,
+                expires_at=datetime.now(tz=UTC) + timedelta(hours=24),
+            )
+        )
+        await db.commit()
+        aid = agent.id
+
+    await _connect_once(ws_client, {"token": token, "result_port": 8001})
+
+    async with factory() as db:
+        row = await db.get(Agent, aid)
+        assert row.lifecycle == "failed", "a failed row was revived by a late dial-home"
+        assert row.status == "unavailable"
+        # The token is single-use either way; it must not survive the attempt.
+        left = (
+            (await db.execute(select(Credential).where(Credential.agent_id == aid))).scalars().all()
+        )
+        assert left == []

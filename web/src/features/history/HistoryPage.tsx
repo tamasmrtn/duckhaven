@@ -99,7 +99,7 @@ export function HistoryPage() {
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-4 shrink-0">
         <h1 className="text-md font-semibold">History</h1>
-        {agentFilter && (
+        {all && agentFilter && (
           <button
             type="button"
             onClick={() =>

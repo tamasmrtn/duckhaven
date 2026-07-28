@@ -279,4 +279,45 @@ describe('HistoryPage', () => {
     ).toBeInTheDocument()
     expect(seen.some((q) => q.includes('agent_id=ag-2'))).toBe(true)
   })
+
+  it('does not claim an agent filter a non-admin cannot apply', async () => {
+    // The agent_id filter is admin-only and 403s server-side, so for a member the
+    // page sends no filter at all — but the chip rendered on the URL parameter
+    // alone, asserting a scope that was never in effect. The list is still
+    // workspace-scoped, so nothing leaks; it is simply mislabelled.
+    const seen: string[] = []
+    server.use(
+      http.get('/api/me', () =>
+        HttpResponse.json({ ...CURRENT_USER, role: 'user' }),
+      ),
+      http.get('/api/workspaces/:ws/queries', ({ request }) => {
+        seen.push(new URL(request.url).search)
+        return HttpResponse.json([
+          {
+            id: 'q-member',
+            workspace_id: '137f7947-0000-4000-8000-000000000001',
+            agent_id: 'ag-1',
+            user_id: 'u-2',
+            sql: 'SELECT member_marker',
+            status: 'done',
+            row_count: 1,
+            duration_ms: 5,
+            error: null,
+            progress: null,
+            started_at: '2026-05-15T10:00:00Z',
+            finished_at: '2026-05-15T10:00:00.005Z',
+          },
+        ])
+      }),
+    )
+    renderWithProviders({
+      initialRoute: '/acme-analytics/history?agent=ag-1',
+    })
+    await screen.findByText('SELECT member_marker')
+
+    expect(seen.some((q) => q.includes('agent_id'))).toBe(false)
+    expect(
+      screen.queryByRole('button', { name: /clear agent filter/i }),
+    ).not.toBeInTheDocument()
+  })
 })

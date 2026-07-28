@@ -1435,3 +1435,31 @@ async def test_reading_results_advances_the_elastic_idle_clock(
     if last_active.tzinfo is None:
         last_active = last_active.replace(tzinfo=UTC)
     assert last_active > stale
+
+
+async def test_elastic_pool_run_stamps_saved_query_last_run_at(
+    authed_client: AsyncClient, workspace: Workspace, elastic_enabled
+):
+    """Running a saved query against the pool counts as running it.
+
+    The explicit-agent path stamps last_run_at; the elastic path never did, so a
+    saved query only ever run against the pool reported "never run" in the UI
+    while its runs sat in History.
+    """
+    created = await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries",
+        json={"name": "Pooled", "sql": "SELECT 1"},
+    )
+    sq_id = created.json()["id"]
+    assert created.json()["last_run_at"] is None
+
+    run = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "saved_query_id": sq_id},
+    )
+    assert run.status_code == 202
+    assert run.json()["origin"] == "elastic"
+
+    listed = await authed_client.get(f"/workspaces/{workspace.slug}/saved-queries")
+    stamped = next(q for q in listed.json() if q["id"] == sq_id)
+    assert stamped["last_run_at"] is not None, "a pool run left the saved query 'never run'"

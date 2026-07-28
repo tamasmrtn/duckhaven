@@ -129,18 +129,7 @@ async def create_query(
                 },
             )
 
-    # When the run came from a saved query, stamp its last_run_at. Ignore a
-    # missing/foreign id so a run never fails over a deleted saved query.
-    if body.saved_query_id is not None:
-        result = await db.execute(
-            select(SavedQuery).where(
-                SavedQuery.id == body.saved_query_id,
-                SavedQuery.workspace_id == workspace.id,
-            )
-        )
-        saved = result.scalar_one_or_none()
-        if saved is not None:
-            saved.last_run_at = datetime.now(UTC)
+    await _stamp_saved_query_run(db, workspace, body.saved_query_id)
 
     query = Query(
         workspace_id=workspace.id,
@@ -165,11 +154,34 @@ async def create_query(
     return query
 
 
+async def _stamp_saved_query_run(db: AsyncSession, workspace, saved_query_id) -> None:
+    """Record that a saved query was just run.
+
+    Shared by both create paths. The elastic path did not do this, so a saved
+    query only ever run against the pool reported "never run" in the UI while its
+    runs sat in History. A missing or foreign id is ignored, so a run never fails
+    over a saved query someone deleted.
+    """
+    if saved_query_id is None:
+        return
+    saved = (
+        await db.execute(
+            select(SavedQuery).where(
+                SavedQuery.id == saved_query_id,
+                SavedQuery.workspace_id == workspace.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if saved is not None:
+        saved.last_run_at = datetime.now(UTC)
+
+
 async def _create_elastic_query(
     db: AsyncSession, workspace, user_id: uuid.UUID, body: QueryCreate
 ) -> Query:
     """Run against the elastic pool: dispatch now if a compatible agent is up,
     otherwise park the run ``queued`` and provision one (bound on registration)."""
+    await _stamp_saved_query_run(db, workspace, body.saved_query_id)
     agent = await query_service.pick_agent_for(db, workspace)
     query = Query(
         workspace_id=workspace.id,

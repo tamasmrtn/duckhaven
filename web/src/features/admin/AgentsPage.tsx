@@ -47,7 +47,11 @@ import {
 import type { Agent, AgentStatus, BootstrapToken } from "@/types/agent";
 import { cn, plural } from "@/utils";
 
-function formatCost(cost: number, currency = "USD"): string {
+// The currency comes from the configured provider (its own pricing page quotes
+// the rates an operator copies). It is deliberately required rather than defaulted:
+// a provider that prices nothing returns null, and the caller must then render no
+// cost at all instead of putting a cloud symbol on hardware you already own.
+function formatCost(cost: number, currency: string): string {
   const symbol = currency === "USD" ? "$" : `${currency} `;
   return `${symbol}${cost.toFixed(2)}/hr`;
 }
@@ -111,6 +115,9 @@ interface AgentDrawerProps {
 }
 
 function AgentDrawer({ agent, open, onClose }: AgentDrawerProps) {
+  // Cost is only renderable once the provider names a currency; see formatCost.
+  const { data: computeOptions } = useComputeOptions();
+  const currency = computeOptions?.currency ?? null;
   const revoke = useRevokeAgent();
   const restart = useRestartAgent();
   const terminate = useTerminateAgent();
@@ -166,11 +173,11 @@ function AgentDrawer({ agent, open, onClose }: AgentDrawerProps) {
                           </span>
                         </div>
                       )}
-                    {agent.hourly_cost != null && (
+                    {agent.hourly_cost != null && currency != null && (
                       <div className="flex justify-between">
                         <span className="text-text-secondary">Cost</span>
                         <span className="font-mono font-tabular text-xs font-medium">
-                          {formatCost(agent.hourly_cost)}
+                          {formatCost(agent.hourly_cost, currency)}
                         </span>
                       </div>
                     )}
@@ -492,7 +499,7 @@ function CreateComputeModal({ open, onClose }: CreateComputeModalProps) {
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const currency = options?.currency ?? "USD";
+  const currency = options?.currency ?? null;
   // Initialize the sliders from the server ranges once options load.
   const cpuValue = cpu ?? options?.cpu_min ?? 1;
   const memoryValue = memory ?? options?.memory_min_gb ?? 1;
@@ -602,15 +609,19 @@ function CreateComputeModal({ open, onClose }: CreateComputeModalProps) {
                   <Cpu className="size-4" />
                   {cpuValue} vCPU · {memoryValue} GB
                 </span>
-                <span className="font-mono font-tabular text-sm font-medium">
-                  ≈ {formatCost(hourlyCost, currency)}
-                </span>
+                {currency != null && (
+                  <span className="font-mono font-tabular text-sm font-medium">
+                    ≈ {formatCost(hourlyCost, currency)}
+                  </span>
+                )}
               </div>
-              <p className="mt-1.5 text-2xs text-text-tertiary">
-                Approx.{" "}
-                {formatCost(hourlyCost * 24, currency).replace("/hr", "/day")}{" "}
-                if left running continuously.
-              </p>
+              {currency != null && (
+                <p className="mt-1.5 text-2xs text-text-tertiary">
+                  Approx.{" "}
+                  {formatCost(hourlyCost * 24, currency).replace("/hr", "/day")}{" "}
+                  if left running continuously.
+                </p>
+              )}
             </div>
 
             <div className="space-y-1.5">
@@ -622,7 +633,15 @@ function CreateComputeModal({ open, onClose }: CreateComputeModalProps) {
                 type="number"
                 min={1}
                 value={idleValue}
-                onChange={(e) => setIdleMinutes(Number(e.target.value))}
+                // Number("") is 0 and Number("x") is NaN; ?? catches neither, so
+                // emptying the box to retype posted 0 and the schema rejected it
+                // (ge=1) with a 422 mid-edit. null falls through to the default.
+                onChange={(e) => {
+                  const next = Number(e.target.value);
+                  setIdleMinutes(
+                    e.target.value === "" || Number.isNaN(next) ? null : next,
+                  );
+                }}
                 className="w-32"
               />
             </div>
@@ -667,6 +686,8 @@ function CreateComputeModal({ open, onClose }: CreateComputeModalProps) {
 }
 
 export function AgentsPage() {
+  const { data: computeOptions } = useComputeOptions();
+  const currency = computeOptions?.currency ?? null;
   const { data: agents = [], isLoading } = useAdminAgents();
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
   const [bootstrapOpen, setBootstrapOpen] = useState(false);
@@ -803,8 +824,8 @@ export function AgentsPage() {
                         : "—"}
                   </td>
                   <td className="px-4 py-2 font-mono text-xs font-tabular">
-                    {agent.hourly_cost != null
-                      ? formatCost(agent.hourly_cost)
+                    {agent.hourly_cost != null && currency != null
+                      ? formatCost(agent.hourly_cost, currency)
                       : "—"}
                   </td>
                   <td className="px-4 py-2 font-mono text-2xs text-text-tertiary">

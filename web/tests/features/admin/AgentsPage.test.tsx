@@ -335,4 +335,120 @@ describe('AgentsPage', () => {
       await waitFor(() => expect(deleted).toBe(true))
     })
   })
+
+  it('renders cost in the currency the provider quotes, not a hardcoded $', async () => {
+    // The rates an operator enters are copied from their provider's pricing page,
+    // which quotes them in a currency. Assuming USD puts the wrong symbol on every
+    // agent in the table while the create dialog shows the right one.
+    server.use(
+      http.get('/api/admin/agents/compute-options', () =>
+        HttpResponse.json({
+          enabled: true,
+          provider: 'azure_aci',
+          currency: 'EUR',
+          cpu_min: 1,
+          cpu_max: 4,
+          cpu_step: 1,
+          memory_min_gb: 1,
+          memory_max_gb: 16,
+          memory_step_gb: 1,
+          price_vcpu_hour: 0.05,
+          price_memory_gb_hour: 0.005,
+          default_idle_minutes: 15,
+        }),
+      ),
+      http.get('/api/admin/agents', () =>
+        HttpResponse.json([
+          {
+            id: 'ag-eur',
+            name: 'euro-agent',
+            status: 'healthy',
+            capabilities: null,
+            last_ping_at: new Date().toISOString(),
+            created_at: new Date().toISOString(),
+            provider: 'azure_aci',
+            lifecycle: 'running',
+            requested_cpu: 2,
+            requested_memory_gb: 8,
+            hourly_cost: 0.14,
+            idle_timeout_minutes: 20,
+          },
+        ]),
+      ),
+    )
+    renderWithProviders({ initialRoute: AGENTS_ROUTE })
+
+    await screen.findByText('euro-agent')
+    expect(screen.queryByText(/\$0\.14/)).not.toBeInTheDocument()
+    expect(screen.getAllByText(/EUR\s*0\.14/).length).toBeGreaterThan(0)
+  })
+
+  it('shows no cost when the provider prices nothing', async () => {
+    // A container on hardware you already own is not priced by anyone, so there is
+    // no currency and no figure to render.
+    server.use(
+      http.get('/api/admin/agents/compute-options', () =>
+        HttpResponse.json({
+          enabled: true,
+          provider: 'docker',
+          currency: null,
+          cpu_min: 1,
+          cpu_max: 7,
+          cpu_step: 1,
+          memory_min_gb: 1,
+          memory_max_gb: 28,
+          memory_step_gb: 1,
+          price_vcpu_hour: 0,
+          price_memory_gb_hour: 0,
+          default_idle_minutes: 15,
+        }),
+      ),
+      http.get('/api/admin/agents', () =>
+        HttpResponse.json([
+          {
+            id: 'ag-local',
+            name: 'local-agent',
+            status: 'healthy',
+            capabilities: null,
+            last_ping_at: new Date().toISOString(),
+            created_at: new Date().toISOString(),
+            provider: 'docker',
+            lifecycle: 'running',
+            requested_cpu: 2,
+            requested_memory_gb: 4,
+            hourly_cost: 0,
+            idle_timeout_minutes: 20,
+          },
+        ]),
+      ),
+    )
+    renderWithProviders({ initialRoute: AGENTS_ROUTE })
+
+    await screen.findByText('local-agent')
+    expect(screen.queryByText(/\/hr/)).not.toBeInTheDocument()
+  })
+
+  it('clearing the idle-timeout field falls back to the default, not zero', async () => {
+    // Number('') is 0, and ?? only catches null/undefined — so emptying the box to
+    // retype posted idle_timeout_minutes: 0, which the schema rejects (ge=1) with a
+    // 422 mid-edit.
+    let posted: Record<string, unknown> | null = null
+    server.use(
+      http.post('/api/admin/agents/elastic', async ({ request }) => {
+        posted = (await request.json()) as Record<string, unknown>
+        return HttpResponse.json({ id: 'ag-x', name: 'x' }, { status: 202 })
+      }),
+    )
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: AGENTS_ROUTE })
+
+    await user.click(await screen.findByRole('button', { name: /new compute/i }))
+    fireEvent.change(await screen.findByLabelText(/auto-terminate after idle/i), {
+      target: { value: '' },
+    })
+    await user.click(screen.getByRole('button', { name: /create compute/i }))
+
+    await waitFor(() => expect(posted).not.toBeNull())
+    expect(posted!.idle_timeout_minutes).not.toBe(0)
+  })
 })

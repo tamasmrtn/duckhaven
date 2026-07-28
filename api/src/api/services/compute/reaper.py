@@ -204,28 +204,45 @@ async def _reconcile_leaks(db: AsyncSession, provider: str) -> dict[str, int]:
     * A cloud instance backing no active row → terminate (orphan).
     * An active row whose instance is gone from the cloud → fail (dead instance).
     """
-    result = {"orphans_terminated": 0, "dead_rows_failed": 0}
+    result = {
+        "orphans_terminated": 0,
+        "dead_rows_failed": 0,
+        "terminations_retried": 0,
+        "terminations_completed": 0,
+    }
     backend = get_backend(provider)
     live = await backend.list_managed()
 
-    rows = (
-        (
-            await db.execute(
-                sa.select(Agent).where(
-                    Agent.provider == provider, Agent.lifecycle.in_(_ACTIVE_LIFECYCLE)
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    known = {a.instance_id for a in rows if a.instance_id}
+    # Every row, not just the active ones. An instance whose row says it should be
+    # gone is a *pending or failed deletion*, which is a different thing from an
+    # instance nobody owns -- and on a backend whose delete is asynchronous it is
+    # the normal state for tens of seconds after any routine scale-in. Selecting
+    # only active rows made each of those land in `live - known`, so every idle
+    # reap logged "Terminated orphan instance" and incremented the leak counter,
+    # which is the signal an operator would watch for a genuine leak.
+    rows = (await db.execute(sa.select(Agent).where(Agent.provider == provider))).scalars().all()
+    active = {a.instance_id for a in rows if a.instance_id and a.lifecycle in _ACTIVE_LIFECYCLE}
+    retired = {
+        a.instance_id for a in rows if a.instance_id and a.lifecycle not in _ACTIVE_LIFECYCLE
+    }
 
-    for instance_id in live - known:
+    for instance_id in live - active - retired:
         with contextlib.suppress(Exception):
             await backend.terminate(instance_id)
         result["orphans_terminated"] += 1
         logger.warning("Terminated orphan instance %s (provider %s)", instance_id, provider)
+
+    # A row that has been retired while its instance is still there. Re-issuing the
+    # delete is what makes terminate_agent's best-effort backend call eventually
+    # stick, and re-deleting something already deleting is harmless. Quiet, because
+    # this is the expected path rather than a fault.
+    for instance_id in live & retired:
+        with contextlib.suppress(Exception):
+            await backend.terminate(instance_id)
+        result["terminations_retried"] += 1
+        logger.debug(
+            "Re-issued delete for retired instance %s (provider %s)", instance_id, provider
+        )
 
     now = datetime.now(tz=UTC)
     # A row is committed with its instance_id *before* the backend is asked to create
@@ -241,6 +258,22 @@ async def _reconcile_leaks(db: AsyncSession, provider: str) -> dict[str, int]:
     # _reap_lifecycle fails a provisioning row once the deadline passes anyway.
     settle_cutoff = now - timedelta(seconds=settings.elastic_provisioning_deadline_s)
     for agent in rows:
+        # Finish a termination that was interrupted. terminate_agent commits
+        # "terminating", then calls the backend and closes the socket before
+        # committing "terminated"; an interruption in that window stranded the row
+        # permanently, because every reaper path filters on provisioning|running and
+        # both admin routes reject it -- terminate wants provisioning|running,
+        # restart wants terminated|failed. Once the instance is gone there is
+        # nothing left to do but record it.
+        if agent.lifecycle == "terminating" and agent.instance_id not in live:
+            agent.lifecycle = "terminated"
+            agent.status = "unavailable"
+            agent.terminated_at = now
+            result["terminations_completed"] += 1
+            logger.info("Completed interrupted termination of agent %s", agent.id)
+            continue
+        if agent.lifecycle not in _ACTIVE_LIFECYCLE:
+            continue
         if agent.instance_id and agent.instance_id not in live:
             if agent.lifecycle == "provisioning" and _aware(agent.provisioned_at) >= settle_cutoff:
                 continue
@@ -281,7 +314,12 @@ async def run_cycle(session_factory: async_sessionmaker[AsyncSession]) -> dict[s
     now = datetime.now(tz=UTC)
     async with session_factory() as db:
         reaped = await _reap_lifecycle(db, now)
-        totals = {"orphans_terminated": 0, "dead_rows_failed": 0}
+        totals = {
+            "orphans_terminated": 0,
+            "dead_rows_failed": 0,
+            "terminations_retried": 0,
+            "terminations_completed": 0,
+        }
         for provider in await _providers_to_reconcile(db):
             try:
                 result = await _reconcile_leaks(db, provider)

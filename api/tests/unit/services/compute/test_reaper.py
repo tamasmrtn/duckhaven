@@ -460,3 +460,108 @@ async def test_failing_a_stuck_agent_revokes_its_bootstrap_credential(
             )
         ).scalar_one()
         assert live == 0, "a failed agent's bootstrap token is still valid for 24h"
+
+
+class _LazyDeleteBackend:
+    """A backend whose delete is asynchronous, like Azure Container Instances.
+
+    `begin_delete` returns immediately and the group takes tens of seconds to
+    disappear, so an instance stays enumerable well after its row is terminated.
+    """
+
+    provider = "null"
+
+    def __init__(self) -> None:
+        self._instances: set[str] = set()
+        self.terminate_calls: list[str] = []
+
+    async def provision(self, req) -> str:  # pragma: no cover - unused here
+        self._instances.add(req.instance_id)
+        return req.instance_id
+
+    async def terminate(self, instance_id: str) -> None:
+        self.terminate_calls.append(instance_id)  # accepted, but not yet gone
+
+    async def address(self, instance_id: str) -> str | None:
+        return None
+
+    async def status(self, instance_id: str) -> str:
+        return "running" if instance_id in self._instances else "gone"
+
+    async def list_managed(self) -> set[str]:
+        return set(self._instances)
+
+
+@pytest.fixture
+def lazy_backend(monkeypatch):
+    from api.services.compute import backends
+
+    backend = _LazyDeleteBackend()
+    monkeypatch.setitem(backends._BACKENDS, "null", backend)
+    return backend
+
+
+async def test_normal_scale_in_is_not_reported_as_a_leak(
+    session_factory, lazy_backend, monkeypatch
+):
+    """An instance still being deleted is not an orphan.
+
+    `terminate_agent` marks the row terminated and the delete completes later, so
+    the instance is still enumerable on the same cycle. Building `known` from
+    active rows only made every routine scale-in land in `live - known`: it was
+    deleted twice and logged `Terminated orphan instance`, which is the signal an
+    operator would watch for a real leak.
+    """
+    monkeypatch.setattr(settings, "elastic_idle_timeout_s", 60.0)
+    async with session_factory() as db:
+        agent = await _add_running_agent(
+            db, instance_id="dh-scaling-in", last_active_s=600, provisioned_s=600
+        )
+        await db.commit()
+        aid = agent.id
+    lazy_backend._instances.add("dh-scaling-in")
+
+    reaped = await reaper.run_cycle(session_factory)
+
+    assert reaped["idle"] == 1
+    assert await _lifecycle(session_factory, aid) == "terminated"
+    assert reaped["orphans_terminated"] == 0, "a routine scale-in was reported as a leak"
+
+
+async def test_genuine_orphan_is_still_swept(session_factory, lazy_backend):
+    """The counterpart: an instance with no row at all is a real leak."""
+    lazy_backend._instances.add("dh-nobody-owns-me")
+
+    reaped = await reaper.run_cycle(session_factory)
+
+    assert reaped["orphans_terminated"] == 1
+    assert "dh-nobody-owns-me" in lazy_backend.terminate_calls
+
+
+async def test_stuck_terminating_row_is_finished(session_factory, lazy_backend):
+    """`terminating` must not be a dead end.
+
+    terminate_agent commits `terminating`, then calls the backend and closes the
+    socket before committing `terminated`. An interruption in that window strands
+    the row: no reaper path selects it (both filter on provisioning|running), and
+    both admin routes reject it (terminate needs provisioning|running, restart
+    needs terminated|failed). Only DELETE could clear it.
+    """
+    async with session_factory() as db:
+        agent = Agent(
+            name="e",
+            status="unavailable",
+            provider="null",
+            lifecycle="terminating",
+            pool_key="object_store",
+            instance_id="dh-interrupted",
+            provisioned_at=_ago(600),
+        )
+        db.add(agent)
+        await db.commit()
+        aid = agent.id
+    # Its instance is already gone; nothing is left to do but finish the row.
+
+    await reaper.run_cycle(session_factory)
+
+    assert await _lifecycle(session_factory, aid) == "terminated"

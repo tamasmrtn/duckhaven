@@ -63,12 +63,22 @@ def _lock_key(pool_key: str) -> int:
 
 
 def _instance_id(agent_id: uuid.UUID) -> str:
-    """Deterministic, DNS-safe instance name derived from the agent id.
+    """A DNS-safe instance name for one provisioning attempt.
 
-    Deterministic so provision is idempotent on it and the leak sweep can match a
-    cloud instance to its row without extra bookkeeping.
+    Carries the agent id so an instance is recognisable, plus a per-attempt suffix
+    so a restart never targets the name of the instance it is replacing. Deleting
+    is not instant on a cloud backend, and reusing the name meant a restart soon
+    after a terminate hit a group still in Deleting state: provisioning raised, the
+    row was marked failed, and the caller saw 502 provision_failed for a transient
+    collision.
+
+    The suffix costs nothing in reconcilability. The row is committed with its
+    instance_id *before* the backend is asked to create anything, so the leak sweep
+    still matches a live instance to its row by reading the column -- it never
+    recomputes this -- and an instance created after a crash carries the managed tag
+    and is swept as an orphan either way.
     """
-    return f"dh-agent-{agent_id.hex[:20]}"
+    return f"dh-agent-{agent_id.hex[:20]}-{secrets.token_hex(3)}"
 
 
 async def _count_active(db: AsyncSession, pool_key: str) -> int:

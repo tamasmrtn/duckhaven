@@ -487,3 +487,31 @@ async def test_failed_dispatch_releases_the_claim(session_factory, elastic_on, m
         query = (await db.execute(sa.select(Query))).scalars().one()
         assert query.status == "failed"
         assert query.agent_id is None, "a run this agent never executed is attributed to it"
+
+
+async def test_restart_does_not_reuse_the_previous_instance_name(
+    session_factory, elastic_on, null_backend
+):
+    """A restart must not collide with the instance it is replacing.
+
+    The instance name was derived from the agent id alone, so a restart targeted
+    the same name as the instance just terminated. Deletion is not instant on a
+    cloud backend, so restarting soon after a terminate hit a group still in
+    Deleting state: provisioning raised, the row was marked failed, and the route
+    returned 502 provision_failed for what is a transient name collision.
+    """
+    from api.services.compute import service
+
+    async with session_factory() as db:
+        agent = await service.provision_elastic_agent(
+            db, name="restarter", cpu=1.0, memory_gb=1.0, idle_timeout_s=None
+        )
+        first_instance = agent.instance_id
+        await service.terminate_agent(db, agent, reason="test")
+        # The backend has accepted the delete but the instance may still exist.
+        restarted = await service.restart_elastic_agent(db, agent)
+
+    assert restarted is not None
+    assert restarted.instance_id != first_instance, (
+        "restart reused the name of the instance it just terminated"
+    )

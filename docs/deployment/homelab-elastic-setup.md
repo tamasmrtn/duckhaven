@@ -96,7 +96,7 @@ using it.
 An agent you are given is contained exactly as tightly as one you start by hand. The backend
 reproduces the static agent's sandbox in every provisioned container:
 
-- read-only root filesystem, with a `tmpfs` on `/tmp`
+- read-only root filesystem, with a `tmpfs` on `/tmp` and a private volume for results
 - `no-new-privileges`
 - all Linux capabilities dropped
 - a pids cap, and a concrete memory limit for the agent's cgroup-aware sizing to read
@@ -104,6 +104,10 @@ reproduces the static agent's sandbox in every provisioned container:
 This matters because the API's [statement policy](../concepts/query-execution.md), not a hard SQL
 allowlist, governs what reaches DuckDB — so the agent is contained at the OS layer instead. Anything
 less on the elastic path would be a downgrade disguised as a feature.
+
+Agent-side tracing is forwarded automatically: whatever `OTEL_EXPORTER_OTLP_ENDPOINT` the control
+plane is configured with is passed to each agent, so spans keep flowing after the static agent is
+taken out. Anything else you tuned on a static agent goes in `ELASTIC_AGENT_ENV`.
 
 ## Sizing
 
@@ -151,6 +155,7 @@ They read `AZURE` for historical reasons but apply to whichever provider is conf
 | `ELASTIC_DOCKER_RESERVE_MEMORY_GB` | `2` | Memory held back, same |
 | `ELASTIC_DEFAULT_CPU` | `2` | vCPU per agent when nothing names a size (provider-independent) |
 | `ELASTIC_DEFAULT_MEMORY_GB` | `4` | Memory per agent, same |
+| `ELASTIC_AGENT_ENV` | `{}` | JSON object of extra environment for every provisioned agent, for anything you tuned on a static one |
 
 The lifecycle knobs — `ELASTIC_IDLE_TIMEOUT_S`, `ELASTIC_MAX_LIFETIME_S`,
 `ELASTIC_MAX_AGENTS_PER_POOL` and the rest — are provider-independent and documented in the

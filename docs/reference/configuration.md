@@ -170,7 +170,8 @@ Postgres advisory lock, like the scheduler, so leave it enabled on every replica
 | `ELASTIC_REAPER_TICK_S` | `30` | How often the scale-in and leak-reconciliation loop runs. |
 | `ELASTIC_MAX_AGENTS_PER_POOL` | `1` | Cap on concurrent elastic agents per storage shape. A cost guardrail. |
 | `ELASTIC_DEFAULT_CPU` | `2` | vCPU per agent when nothing names a size — pool-triggered provisioning, and restarting an agent whose row predates per-agent sizing. Provider-independent; the admin UI picks explicitly per agent. |
-| `ELASTIC_DEFAULT_MEMORY_GB` | `4` | Memory (GiB) per agent, same. Becomes a real limit the agent reads from its own cgroup to advertise capacity. |
+| `ELASTIC_DEFAULT_MEMORY_GB` | `4` | Memory (GiB) per agent, same. Becomes a real limit the agent reads from its own cgroup to advertise capacity. Fractional values are exact. |
+| `ELASTIC_AGENT_ENV` | `{}` | JSON object of extra environment for every provisioned agent. A static agent's environment is written by whoever runs it; a provisioned one gets only what the backend sets, so this is how you carry over something you tuned — `{"SANDBOX_DISABLED_FILESYSTEMS": "HTTPFileSystem"}`. Applied last, so it can override the backend's own variables. Agent tracing is forwarded automatically from `OTEL_EXPORTER_OTLP_ENDPOINT` and needs no entry here. |
 | `ELASTIC_CURRENCY` | `USD` | Currency label shown next to the prices below. |
 
 #### Azure Container Instances backend

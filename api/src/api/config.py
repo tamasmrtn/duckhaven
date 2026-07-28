@@ -229,6 +229,13 @@ class Settings(BaseSettings):
     # enforced separately by the backend (see services/compute/pricing.py).
     elastic_default_cpu: float = 2.0
     elastic_default_memory_gb: float = 4.0
+    # Extra environment for every provisioned agent, as a JSON object. A static
+    # agent's environment is written by whoever runs it; a provisioned one gets
+    # only what the backend sets, so an operator who tuned something on their
+    # static agent -- SANDBOX_DISABLED_FILESYSTEMS is the realistic case -- has no
+    # other way to carry it over. Applied after the backend's own variables, so it
+    # can override them.
+    elastic_agent_env: dict[str, str] = {}
     # Azure Container Instances backend (used when elastic_provider="azure_aci").
     # The subscription/resource-group DuckHaven provisions agent container groups
     # into, and the region. Credentials come from the ambient identity

@@ -172,7 +172,6 @@ Postgres advisory lock, like the scheduler, so leave it enabled on every replica
 | `ELASTIC_DEFAULT_CPU` | `2` | vCPU per agent when nothing names a size — pool-triggered provisioning, and restarting an agent whose row predates per-agent sizing. Provider-independent; the admin UI picks explicitly per agent. |
 | `ELASTIC_DEFAULT_MEMORY_GB` | `4` | Memory (GiB) per agent, same. Becomes a real limit the agent reads from its own cgroup to advertise capacity. Fractional values are exact. |
 | `ELASTIC_AGENT_ENV` | `{}` | JSON object of extra environment for every provisioned agent. A static agent's environment is written by whoever runs it; a provisioned one gets only what the backend sets, so this is how you carry over something you tuned — `{"SANDBOX_DISABLED_FILESYSTEMS": "HTTPFileSystem"}`. Applied last, so it can override the backend's own variables. Agent tracing is forwarded automatically from `OTEL_EXPORTER_OTLP_ENDPOINT` and needs no entry here. |
-| `ELASTIC_CURRENCY` | `USD` | Currency label shown next to the prices below. |
 
 #### Azure Container Instances backend
 
@@ -187,6 +186,7 @@ Used when `ELASTIC_PROVIDER=azure_aci`. Credentials come from the ambient identi
 | `ELASTIC_AZURE_LOCATION` | `eastus` | Region the container groups are created in. |
 | `ELASTIC_AZURE_PRICE_VCPU_HOUR` | `0.0486` | Per-vCPU hourly rate, used only to show a size's cost in the admin UI. Despite the name it applies to **whichever provider is configured**; zero it on a Docker host, where the marginal hourly cost is nil. |
 | `ELASTIC_AZURE_PRICE_MEMORY_GB_HOUR` | `0.0054` | Per-GiB hourly rate, same. |
+| `ELASTIC_AZURE_PRICE_CURRENCY` | `USD` | The currency the two rates above are quoted in. Azure publishes retail prices per billing currency, so set this to whichever one you copied the figures from. It sits with the rates because it describes them — a provider that prices nothing reports no currency, and the UI then shows no cost at all. |
 | `ELASTIC_REGISTRY_SERVER` | — | Registry host for a private agent image. Leave unset for a public image. |
 | `ELASTIC_REGISTRY_IDENTITY_ID` | — | Resource id of a user-assigned managed identity holding `AcrPull` on that registry. It is attached to each container group, which then pulls its image as itself, so no registry password exists. Container Instances supports user-assigned identities only for image pull, never system-assigned. |
 

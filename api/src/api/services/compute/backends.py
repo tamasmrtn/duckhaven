@@ -19,6 +19,12 @@ cloud. ``azure_aci`` lands in Phase 1 as a sibling module and is wired into
 the backend knows: for a cloud it is the provider's per-instance cap, for a single
 host it is the machine itself. Returning ``None`` means "no opinion", and the caller
 falls back to a conservative default.
+
+``pricing_currency`` is the same idea for money. Rates are copied from a provider's
+own pricing page, which quotes them in a currency, so the currency belongs to the
+provider rather than to DuckHaven. ``None`` means nothing prices this compute — the
+honest answer for a container on hardware the operator already owns — and the UI
+shows no cost at all rather than inventing a symbol for it.
 """
 
 from __future__ import annotations
@@ -82,6 +88,10 @@ class NullBackend:
 
     async def capacity(self) -> tuple[float, float] | None:
         """No platform to measure, so no opinion on how big an agent may be."""
+        return None
+
+    async def pricing_currency(self) -> str | None:
+        """Nothing bills for a no-op instance, so there is no currency."""
         return None
 
 

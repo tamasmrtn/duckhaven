@@ -85,11 +85,27 @@ async def limits() -> Limits:
     )
 
 
+async def currency() -> str | None:
+    """The currency the configured provider quotes its compute in.
+
+    ``None`` when nothing prices this compute, which is the honest answer for a
+    container on a machine the operator already owns. Callers render no cost at
+    all in that case rather than choosing a symbol on the provider's behalf.
+    """
+    try:
+        return await get_backend(settings.elastic_provider).pricing_currency()
+    except KeyError:
+        return None
+    except Exception:
+        logger.exception("Could not read the provider's pricing currency")
+        return None
+
+
 def hourly_cost(cpu: float, memory_gb: float) -> float:
     """Hourly cost of a (vCPU, GiB) shape from the configured rates.
 
-    The settings still read AZURE for historical reasons but apply to whichever
-    provider is configured; a deployment with no marginal hourly cost zeroes them.
+    Paired with ``currency`` -- a cost without one is not renderable, so a caller
+    that gets ``None`` from that should not show this either.
     """
     cost = (
         cpu * settings.elastic_azure_price_vcpu_hour

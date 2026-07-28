@@ -135,12 +135,15 @@ def test_agents_are_provisioned_onto_the_isolated_network():
     assert api["environment"]["ELASTIC_DOCKER_NETWORK"] == "duckhaven_internal"
 
 
-def test_hourly_rates_are_zeroed():
-    """They default to Azure list prices, which would otherwise be displayed as the
-    running cost of hardware the operator already owns."""
+def test_no_pricing_is_configured_for_this_provider():
+    """Nobody prices a container on a machine you already own.
+
+    The docker backend reports no currency, so the UI renders no cost at all.
+    Carrying zeroed Azure rates here would be dead config that reads as though it
+    still drove something.
+    """
     api = ELASTIC["services"]["api"]["environment"]
-    assert api["ELASTIC_AZURE_PRICE_VCPU_HOUR"].endswith(":-0}")
-    assert api["ELASTIC_AZURE_PRICE_MEMORY_GB_HOUR"].endswith(":-0}")
+    assert not [k for k in api if "PRICE" in k or "CURRENCY" in k]
 
 
 def test_static_agent_is_off_by_default_but_recoverable():

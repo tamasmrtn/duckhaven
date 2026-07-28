@@ -52,7 +52,8 @@ export interface Agent {
 export interface ComputeOptions {
   enabled: boolean;
   provider: string;
-  currency: string;
+  // null when the configured provider prices nothing — render no cost.
+  currency: string | null;
   cpu_min: number;
   cpu_max: number;
   cpu_step: number;

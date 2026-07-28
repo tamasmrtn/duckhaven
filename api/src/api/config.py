@@ -255,7 +255,13 @@ class Settings(BaseSettings):
     # approximate Linux/eastus list prices — override per region/agreement.
     elastic_azure_price_vcpu_hour: float = 0.0486
     elastic_azure_price_memory_gb_hour: float = 0.0054
-    elastic_currency: str = "USD"
+    # The currency the two rates above are quoted in. Azure publishes retail prices
+    # per billing currency, so whoever copies those figures off the pricing page is
+    # copying them in one specific currency. It sits with the rates rather than
+    # being a global setting because it describes them: a provider that prices
+    # nothing has no currency, and the UI then shows no cost at all rather than
+    # putting a cloud symbol on hardware the operator already owns.
+    elastic_azure_price_currency: str = "USD"
     # Docker Engine backend (used when elastic_provider="docker"), for a single-host
     # deployment. The daemon is addressed over TCP rather than a mounted socket, so
     # the API container holds no socket file; in the shipped topology that endpoint

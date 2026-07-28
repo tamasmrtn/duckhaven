@@ -150,7 +150,7 @@ them for your region or negotiated pricing:
 |---|---|---|
 | `ELASTIC_AZURE_PRICE_VCPU_HOUR` | `0.0486` | Per-vCPU hourly rate. |
 | `ELASTIC_AZURE_PRICE_MEMORY_GB_HOUR` | `0.0054` | Per-GiB hourly rate. |
-| `ELASTIC_CURRENCY` | `USD` | Currency label shown alongside prices. |
+| `ELASTIC_AZURE_PRICE_CURRENCY` | `USD` | The currency the two rates above are quoted in. |
 
 ## 3. Verify
 

@@ -229,6 +229,15 @@ class AzureAciBackend:
         """
         return 4.0, 16.0
 
+    async def pricing_currency(self) -> str | None:
+        """The currency the configured ACI rates are quoted in.
+
+        Azure publishes retail prices per billing currency, so an operator copying
+        `elastic_azure_price_*` off the pricing page is copying figures in one
+        specific currency and tells us which.
+        """
+        return settings.elastic_azure_price_currency or None
+
     async def list_managed(self) -> set[str]:
         client, rg = self._client_and_rg()
 

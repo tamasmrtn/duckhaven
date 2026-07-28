@@ -130,7 +130,7 @@ async def compute_options(
     return ComputeOptionsOut(
         enabled=settings.elastic_compute_enabled,
         provider=settings.elastic_provider,
-        currency=settings.elastic_currency,
+        currency=await pricing.currency(),
         cpu_min=lim.cpu_min,
         cpu_max=lim.cpu_max,
         cpu_step=lim.cpu_step,

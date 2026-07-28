@@ -123,14 +123,10 @@ services:
       # so the maximum offered is the host minus this, not the whole host.
       ELASTIC_DOCKER_RESERVE_CPU: ${ELASTIC_DOCKER_RESERVE_CPU:-1}
       ELASTIC_DOCKER_RESERVE_MEMORY_GB: ${ELASTIC_DOCKER_RESERVE_MEMORY_GB:-2}
-      # The admin UI shows an hourly rate, which it computes from these. On
-      # hardware you already own the marginal hourly cost is zero, so both are
-      # zeroed rather than left at the Azure list prices they default to — which
-      # would otherwise be displayed for a homelab. Set them to an
-      # electricity-derived figure if you want a real number. They read AZURE for
-      # historical reasons but apply to whichever provider is configured.
-      ELASTIC_AZURE_PRICE_VCPU_HOUR: ${ELASTIC_AZURE_PRICE_VCPU_HOUR:-0}
-      ELASTIC_AZURE_PRICE_MEMORY_GB_HOUR: ${ELASTIC_AZURE_PRICE_MEMORY_GB_HOUR:-0}
+      # No hourly rate is shown for this provider. Nobody prices a container on a
+      # machine you already own, so the docker backend reports no currency and the
+      # admin UI renders no cost at all -- rather than putting a cloud price symbol
+      # on your own hardware. Nothing to configure here.
     depends_on:
       docker-socket-proxy:
         condition: service_started

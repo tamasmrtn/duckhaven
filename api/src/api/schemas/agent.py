@@ -44,7 +44,9 @@ class ComputeOptionsOut(BaseModel):
 
     enabled: bool
     provider: str
-    currency: str
+    # None when the configured provider prices nothing (a container on your own
+    # machine); the UI then shows no cost rather than picking a symbol.
+    currency: str | None = None
     cpu_min: float
     cpu_max: float
     cpu_step: float

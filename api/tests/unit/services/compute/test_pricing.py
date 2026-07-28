@@ -98,3 +98,40 @@ async def test_hourly_cost_sums_both_rates(monkeypatch):
     monkeypatch.setattr(settings, "elastic_azure_price_memory_gb_hour", 0.005)
 
     assert pricing.hourly_cost(2.0, 8.0) == round(2 * 0.05 + 8 * 0.005, 4)
+
+
+class _PricedBackend(_Backend):
+    """A backend that also declares the currency its rates are quoted in."""
+
+    def __init__(self, capacity, currency):
+        super().__init__(capacity)
+        self._currency = currency
+
+    async def pricing_currency(self):
+        return self._currency
+
+
+async def test_currency_comes_from_the_provider(monkeypatch):
+    """Not a global default. The rates an operator enters are copied from a
+    provider's own pricing page, which quotes them in a currency; that currency
+    belongs to the provider, not to DuckHaven."""
+    monkeypatch.setattr(settings, "elastic_provider", "azure_aci")
+    monkeypatch.setattr(pricing, "get_backend", lambda _p: _PricedBackend(None, "EUR"))
+
+    assert await pricing.currency() == "EUR"
+
+
+async def test_a_provider_that_bills_nothing_has_no_currency(monkeypatch):
+    """A container on a machine you already own is not priced by anyone, so there
+    is no currency to render a cost in — and inventing one would put a cloud
+    price symbol on a homelab."""
+    monkeypatch.setattr(settings, "elastic_provider", "docker")
+    monkeypatch.setattr(pricing, "get_backend", lambda _p: _Backend(None))
+
+    assert await pricing.currency() is None
+
+
+async def test_unknown_provider_has_no_currency(monkeypatch):
+    monkeypatch.setattr(settings, "elastic_provider", "not-a-provider")
+
+    assert await pricing.currency() is None

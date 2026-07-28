@@ -378,3 +378,112 @@ async def test_bind_queued_work_omits_an_unrecorded_timeout(
 
     assert "timeout_s" not in captured
     assert captured["active_catalog"] is None
+
+
+async def test_concurrent_binds_dispatch_a_queued_query_once(
+    session_factory, elastic_on, monkeypatch
+):
+    """Two agents registering into the same pool must not both run the same query.
+
+    bind_queued_work selects `agent_id IS NULL` rows and only commits after the
+    whole loop, so two concurrent callers see the same parked work and both
+    dispatch it. Dispatch is the irreversible half: a parked
+    `INSERT INTO ... SELECT` executes twice and duplicates Iceberg data, while
+    only the last write to `agent_id` is recorded.
+
+    Reachable at the default cap of one agent per pool. `ensure_agent` takes a
+    per-pool advisory lock before its check-then-provision, but
+    `restart_elastic_agent` performs no cap check at all, and bind_queued_work
+    re-runs on every socket registration — so a reconnect during a restart is
+    enough.
+    """
+    import asyncio
+
+    from api.models.query import Query
+    from api.services.compute import service
+
+    dispatched: list = []
+    gate = asyncio.Event()
+
+    async def fake_dispatch(db, query, **kwargs):
+        # Hold both callers inside the loop, after they have selected the row and
+        # before either commits — the window the missing lock leaves open.
+        dispatched.append(query.id)
+        await gate.wait()
+
+    monkeypatch.setattr("api.services.query.dispatch_query", fake_dispatch)
+
+    async with session_factory() as db:
+        ws, _ = await seed_workspace(db, user_id=uuid.uuid4())
+        first = await _seed_running_elastic_agent(db)
+        second = Agent(
+            name="e2",
+            status="healthy",
+            capabilities={"extensions": ["httpfs"]},
+            provider="null",
+            lifecycle="running",
+            pool_key="object_store",
+            instance_id="dh-bind-2",
+            provisioned_at=first.provisioned_at,
+        )
+        db.add(second)
+        db.add(
+            Query(
+                workspace_id=ws.id,
+                agent_id=None,
+                sql="INSERT INTO t SELECT * FROM s",
+                status="queued",
+                origin="elastic",
+            )
+        )
+        await db.commit()
+        first_id, second_id = first.id, second.id
+
+    async with session_factory() as db_a, session_factory() as db_b:
+        agent_a = await db_a.get(Agent, first_id)
+        agent_b = await db_b.get(Agent, second_id)
+        task_a = asyncio.create_task(service.bind_queued_work(db_a, agent_a))
+        task_b = asyncio.create_task(service.bind_queued_work(db_b, agent_b))
+        # Let both reach the gate (or finish, once the claim is atomic).
+        for _ in range(20):
+            await asyncio.sleep(0)
+        gate.set()
+        await asyncio.gather(task_a, task_b)
+
+    assert len(dispatched) == 1, f"the same queued query was dispatched {len(dispatched)} times"
+
+
+async def test_failed_dispatch_releases_the_claim(session_factory, elastic_on, monkeypatch):
+    """An agent that could not run the query must not stay recorded against it.
+
+    agent_id is the audit trail and backs the History agent filter, so leaving it
+    set attributes a run to an agent that never executed it — permanently, since
+    nothing revisits a failed row.
+    """
+    from api.models.query import Query
+    from api.services.compute import service
+
+    async def failing_dispatch(db, query, **kwargs):
+        raise RuntimeError("agent went away")
+
+    monkeypatch.setattr("api.services.query.dispatch_query", failing_dispatch)
+
+    async with session_factory() as db:
+        ws, _ = await seed_workspace(db, user_id=uuid.uuid4())
+        agent = await _seed_running_elastic_agent(db)
+        db.add(
+            Query(
+                workspace_id=ws.id,
+                agent_id=None,
+                sql="SELECT 1",
+                status="queued",
+                origin="elastic",
+            )
+        )
+        await db.commit()
+        assert await service.bind_queued_work(db, agent) == 0
+
+    async with session_factory() as db:
+        query = (await db.execute(sa.select(Query))).scalars().one()
+        assert query.status == "failed"
+        assert query.agent_id is None, "a run this agent never executed is attributed to it"

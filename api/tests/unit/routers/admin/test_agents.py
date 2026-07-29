@@ -343,3 +343,93 @@ async def test_create_elastic_agent_accepts_a_sane_idle_timeout(
     )
     assert resp.status_code == 202
     assert resp.json()["idle_timeout_minutes"] == 30
+
+
+# ── Detail + monitoring ──────────────────────────────────────────────────────
+
+
+async def test_get_agent_returns_one_agent(admin_client: AsyncClient, db_session):
+    agent = Agent(name="detail-agent", status="healthy")
+    db_session.add(agent)
+    await db_session.commit()
+    await db_session.refresh(agent)
+
+    resp = await admin_client.get(f"/admin/agents/{agent.id}")
+    assert resp.status_code == 200
+    assert resp.json()["name"] == "detail-agent"
+
+
+async def test_get_agent_404s_for_an_unknown_id(admin_client: AsyncClient):
+    resp = await admin_client.get(f"/admin/agents/{uuid.uuid4()}")
+    assert resp.status_code == 404
+
+
+async def test_literal_paths_are_not_shadowed_by_the_id_route(admin_client: AsyncClient):
+    """GET /{agent_id} is declared after /metrics and /compute-options; if it ever
+    moves above them, FastAPI matches first and tries to parse "metrics" as a UUID."""
+    assert (await admin_client.get("/admin/agents/metrics")).status_code == 200
+    assert (await admin_client.get("/admin/agents/compute-options")).status_code == 200
+
+
+async def test_monitoring_returns_every_series_on_one_grid(admin_client: AsyncClient, db_session):
+    agent = Agent(name="mon-agent", status="healthy")
+    db_session.add(agent)
+    await db_session.commit()
+    await db_session.refresh(agent)
+
+    resp = await admin_client.get(f"/admin/agents/{agent.id}/monitoring?window=1h")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["window"] == "1h"
+    assert data["bucket_seconds"] == 60
+    # The shared grid is the point: charts stacked vertically must line up.
+    lengths = {
+        len(data["peak_query_count"]),
+        len(data["completed_query_count"]),
+        len(data["activity"]),
+        len(data["utilization"]),
+    }
+    assert lengths == {60}
+    assert data["summary"]["completed"] == 0
+
+
+async def test_monitoring_defaults_to_eight_hours(admin_client: AsyncClient, db_session):
+    agent = Agent(name="mon-default", status="healthy")
+    db_session.add(agent)
+    await db_session.commit()
+    await db_session.refresh(agent)
+
+    resp = await admin_client.get(f"/admin/agents/{agent.id}/monitoring")
+    assert resp.status_code == 200
+    assert resp.json()["window"] == "8h"
+
+
+async def test_monitoring_rejects_an_unknown_window(admin_client: AsyncClient, db_session):
+    agent = Agent(name="mon-bad-window", status="healthy")
+    db_session.add(agent)
+    await db_session.commit()
+    await db_session.refresh(agent)
+
+    resp = await admin_client.get(f"/admin/agents/{agent.id}/monitoring?window=7d")
+    assert resp.status_code == 422
+
+
+async def test_monitoring_404s_for_an_unknown_agent(admin_client: AsyncClient):
+    resp = await admin_client.get(f"/admin/agents/{uuid.uuid4()}/monitoring")
+    assert resp.status_code == 404
+
+
+async def test_detail_and_monitoring_require_admin(client: AsyncClient, db_session):
+    from api.services.auth import hash_password
+
+    member = User(
+        email="member@agents.local", password_hash=hash_password("pw"), name="M", role="user"
+    )
+    agent = Agent(name="guarded", status="healthy")
+    db_session.add_all([member, agent])
+    await db_session.commit()
+    await db_session.refresh(agent)
+    await client.post("/auth/login", json={"email": "member@agents.local", "password": "pw"})
+
+    assert (await client.get(f"/admin/agents/{agent.id}")).status_code == 403
+    assert (await client.get(f"/admin/agents/{agent.id}/monitoring")).status_code == 403

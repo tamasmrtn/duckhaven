@@ -84,6 +84,65 @@ class AgentMetricsOut(BaseModel):
     samples: list[MetricsSampleOut]
 
 
+class PeakQueryPointOut(BaseModel):
+    t: datetime
+    running: int
+    queued: int
+
+
+class CompletedQueryPointOut(BaseModel):
+    t: datetime
+    per_minute: float
+
+
+class ActivityPointOut(BaseModel):
+    t: datetime
+    # down | starting | query | other | ready | unknown. "unknown" means no lifecycle
+    # trail covers this bucket (an agent older than the trail), which is deliberately
+    # distinct from "down" — we do not know, rather than knowing it was off.
+    state: str
+
+
+class FailurePointOut(BaseModel):
+    t: datetime
+    reason: str
+    count: int
+
+
+class UtilizationPointOut(BaseModel):
+    t: datetime
+    # All null for a bucket the agent reported nothing in, so the chart draws a gap
+    # rather than a line through zero it never actually measured.
+    cpu_avg: float | None = None
+    cpu_max: float | None = None
+    mem_avg: float | None = None
+    mem_max: float | None = None
+
+
+class MonitoringSummaryOut(BaseModel):
+    uptime_s: int
+    # Share of connected time that had query activity; null when never connected.
+    busy_ratio: float | None = None
+    completed: int
+    failed: int
+    idle_timeout_minutes: int | None = None
+
+
+class AgentMonitoringOut(BaseModel):
+    """Every series for one agent over one window, on a shared bucket grid."""
+
+    window: str
+    bucket_seconds: int
+    start: datetime
+    end: datetime
+    peak_query_count: list[PeakQueryPointOut]
+    completed_query_count: list[CompletedQueryPointOut]
+    activity: list[ActivityPointOut]
+    failures: list[FailurePointOut]
+    utilization: list[UtilizationPointOut]
+    summary: MonitoringSummaryOut
+
+
 class BootstrapTokenOut(BaseModel):
     token: str
     expires_at: datetime

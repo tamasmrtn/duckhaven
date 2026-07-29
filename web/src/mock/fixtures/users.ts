@@ -16,6 +16,9 @@ export const CURRENT_USER: User = {
     "catalogs:admin",
     "queries:admin",
   ],
+  // Holding agents:manage already confers full access to every agent, so this
+  // flag only matters for a user with no global permission at all.
+  agent_access: false,
   created_at: "2026-01-01T00:00:00Z",
 };
 

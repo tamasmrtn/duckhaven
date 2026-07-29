@@ -1,4 +1,4 @@
-import type { Agent } from "@/types/agent";
+import type { Agent, AgentGrant, AgentGrantPrincipal } from "@/types/agent";
 
 // last_ping_at uses relative offsets so the "Ns ago" rendering stays stable
 // regardless of absolute clock. DELETE /credential mutates status, so the array
@@ -98,8 +98,48 @@ function makeAgents(): Agent[] {
   ];
 }
 
-export let AGENTS = makeAgents();
+// The mock signs in as a full admin (`agents:manage`), which resolves to the top
+// tier on every agent — so the dev app exercises the unrestricted view. Tests
+// override `access_tier` per agent to render the narrower ones.
+function withAccess(agents: Agent[]): Agent[] {
+  return agents.map((a) => ({
+    ...a,
+    access_tier: "admin",
+    access_mode: "open",
+  }));
+}
+
+export let AGENTS: Agent[] = withAccess(makeAgents());
 
 export function resetAgents(): void {
-  AGENTS = makeAgents();
+  AGENTS = withAccess(makeAgents());
+  AGENT_GRANTS = {};
 }
+
+/** Grants per agent id, mutated by the Access tab's handlers. */
+export let AGENT_GRANTS: Record<string, AgentGrant[]> = {};
+
+/** Candidate grantees the Access tab's picker offers. */
+export const AGENT_GRANT_PRINCIPALS: AgentGrantPrincipal[] = [
+  {
+    kind: "user",
+    id: "u-1",
+    name: "Ada Lovelace",
+    email: "ada@duckhaven.dev",
+    is_service_account: false,
+  },
+  {
+    kind: "user",
+    id: "u-2",
+    name: "dbt-runner",
+    email: "dbt@duckhaven.dev",
+    is_service_account: true,
+  },
+  {
+    kind: "workspace",
+    id: "ws-1",
+    name: "Acme Analytics",
+    email: null,
+    is_service_account: false,
+  },
+];

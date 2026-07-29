@@ -14,6 +14,13 @@ from api.models.agent import Agent
 from api.models.user import Credential
 from api.services.agent_dispatch import claim_agent_owner, release_agent_owner
 from api.services.agent_registry import registry
+from api.services.agent_telemetry import (
+    accumulate,
+    flush_minute,
+    purge_expired_metrics,
+    record_lifecycle_event_now,
+    take_pending,
+)
 from duckhaven_shared.protocol import Frame, FrameType
 
 logger = logging.getLogger(__name__)
@@ -246,6 +253,10 @@ async def agent_connect(
         # replica can route dispatch frames here.
         async with session_factory() as db:
             await claim_agent_owner(db, agent_id)
+            # Recorded for static agents too: "the socket was up and this agent
+            # could serve work" is the same fact for both kinds, and it is what the
+            # monitoring page's running/not-running timeline is built from.
+            await record_lifecycle_event_now(db, agent_id, "connected")
             # If an elastic agent just came up, dispatch any queued work parked
             # while it was provisioning.
             agent_row = await db.get(Agent, agent_id)
@@ -291,9 +302,17 @@ async def agent_connect(
                         await db.commit()
 
                 elif msg_frame.type == FrameType.METRICS_SAMPLE:
-                    # High-frequency live utilization: kept in an in-memory ring
-                    # buffer only, never persisted.
+                    # High-frequency live utilization: the ring buffer keeps the last
+                    # ~5 minutes at full 2s resolution for the live view.
                     registry.record_metrics(agent_id, msg_frame.payload)
+                    # The same samples, folded into a per-minute accumulator that is
+                    # written once the minute closes. That is what the monitoring
+                    # page's 1-24h windows read; the ring buffer cannot span them.
+                    closed = accumulate(agent_id, msg_frame.payload)
+                    if closed is not None:
+                        async with session_factory() as db:
+                            await flush_minute(db, agent_id, closed)
+                            await purge_expired_metrics(db)
                     # Metrics arrive every couple of seconds, so they're a
                     # reliable liveness signal: refresh the cluster-wide presence
                     # watermark (throttled) so peer replicas see this agent as
@@ -344,6 +363,12 @@ async def agent_connect(
             registry.unregister(agent_id)
             async with session_factory() as db:
                 await release_agent_owner(db, agent_id)
+                await record_lifecycle_event_now(db, agent_id, "disconnected")
+                # Write the minute still open when the socket dropped — the one an
+                # operator looks at first after an agent goes away.
+                pending = take_pending(agent_id)
+                if pending is not None:
+                    await flush_minute(db, agent_id, pending)
                 # Reconcile SQL sessions: this agent's held connections are gone, so
                 # its non-terminal sessions can't continue (Postgres decides — I9).
                 from api.services.sql_sessions.service import fail_sessions_for_agent

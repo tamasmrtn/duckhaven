@@ -338,6 +338,11 @@ class Settings(BaseSettings):
     # health endpoints (Prometheus scrapers carry no session cookie); keep it on
     # the internal network. Set false to remove the endpoint entirely.
     metrics_enabled: bool = True
+    # How long the per-agent monitoring page can look back. Agent samples are rolled
+    # up to one row per agent per minute (~1.4k rows/agent/day), so a week costs
+    # ~10k rows per agent — cheap enough to keep well past the 24h the UI offers,
+    # which leaves room to widen the window without losing the history first.
+    agent_metrics_retention_hours: float = 168.0
 
     # ── AI data assistant ─────────────────────────────────────────────────────
     # A governed, model-agnostic chat assistant that browses catalog metadata and

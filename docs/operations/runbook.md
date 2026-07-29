@@ -133,8 +133,12 @@ running query finishes, the oldest queued query starts.
 ### How capacity is split
 
 The agent's budget is `effective memory × (1 − headroom)` (cgroup limit when set,
-else host RAM; headroom defaults to 10%, `MEMORY_HEADROOM_FRACTION`). There are
-two ways to size each query's slice of that budget:
+else host RAM; headroom defaults to 10%, `MEMORY_HEADROOM_FRACTION`). Budget and
+slices are **binary** units throughout — a 4 GiB cgroup limit at the default
+headroom yields a 3.6 GiB budget, and that is the value passed to DuckDB's
+`memory_limit` as `GiB`. (DuckDB reads a bare `GB` suffix as 10⁹, so mixing the
+two silently shrinks every slice by ~7%.) There are two ways to size each query's
+slice of that budget:
 
 - **`auto` (the default)** — before running a query the agent runs `EXPLAIN` and
   estimates its peak memory from the optimizer's plan: the cardinality of
@@ -195,11 +199,13 @@ RESET duckhaven_concurrency;           -- back to the default (auto)
 
 ### Monitoring
 
-**Admin → Utilization** shows two counters at the top — **Running queries** and
-**Queued queries** (aggregated across agents) — plus each agent's active profile.
-A persistently non-zero queued count means the agent is saturated: raise the
-slot count (e.g. switch to `decaying_3`) only if per-query memory still suffices,
-or add another agent.
+**Admin → Agents →** *(pick an agent)* **→ Monitoring** shows live **Running
+queries** and **Queued queries** counters, and a **Peak query count** chart over
+the last 1–24 hours. A persistently non-zero queued band means the agent is
+saturated: raise the slot count (e.g. switch to `decaying_3`) only if per-query
+memory still suffices, or add another agent. The **Failures & rejections** chart
+on the same page separates saturation (`queue_full`, `queued_timeout`) from
+per-query problems like `out_of_memory`. See [Monitoring](monitoring.md).
 
 ---
 

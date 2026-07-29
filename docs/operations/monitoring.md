@@ -1,16 +1,79 @@
 # Monitoring
 
-DuckHaven surfaces live compute utilization from the admin console, and a full query audit trail from the
-**History** page.
+DuckHaven gives every [agent](../concepts/agents.md) its own monitoring page, and records a full query audit trail on
+the **History** page.
 
-## Agent utilization
+## Per-agent monitoring
 
-**Admin → Utilization** shows two counters at the top — **running queries** and **queued queries**, aggregated across
-[agents](../concepts/agents.md) — plus each agent's active concurrency profile. Agents also report live CPU and memory
-utilization on every heartbeat.
+Open **Admin → Agents** and click an agent to reach its detail page. The **Monitoring** tab answers the question an
+operator actually has when something felt slow or a bill looked wrong: *what was this agent doing, and when?*
 
-A persistently non-zero queued count means an agent is saturated. Either raise its slot count (if per-query memory still
-suffices) or add another agent — see [Scaling compute](scaling.md).
+At the top, a row of **live statistics** — status, running queries, queued queries, and the agent's size — reads from
+the agent's own 2-second sampler, so it reflects the present moment rather than a rolled-up average.
+
+Below that, a **time range** control (1, 3, 8, 12, or 24 hours) governs every chart *and* the query list at the bottom
+of the page together. The bucket size adapts to the range, from one minute at 1 hour to ten minutes at 24, so each
+chart carries a comparable amount of detail whichever range you pick. The charts share a single time grid, which is
+what makes them readable as a stack: a spike in one lines up with the same instant in all the others.
+
+### The charts
+
+**Peak query count** shows the highest number of concurrent queries the agent reported in each bucket, split into
+*running* and *queued*. A persistently non-zero queued band means the agent is saturated: raise its slot count if
+per-query memory still allows, or add another agent — see [Scaling compute](scaling.md). The depths come from the
+agent's own admission queue, which is the only place that number exists; a query waiting in that queue is invisible to
+the control plane's own timestamps.
+
+**Completed query count** shows throughput as queries per minute, counting failed and cancelled runs alongside
+successful ones — a query that stopped running is a query that finished occupying a slot.
+
+**Agent activity** is the running/not-running timeline, banded by what the agent was doing:
+
+- **Query activity** — queries were running or queued.
+- **Other activity** — up, with no queries, but holding [SQL sessions](../concepts/sql-sessions.md) or fetching
+  results. This is the band that explains an agent that stays alive while apparently doing nothing.
+- **Ready** — up and idle. This is the time an idle timeout reclaims.
+- **Starting** — an elastic agent provisioning, not yet accepting work.
+- **Not running** — no agent.
+- **No data** — no lifecycle history covers this period. Deliberately distinct from *Not running*: an agent that
+  predates the lifecycle trail has no record, which is not the same as being known to have been off.
+
+Above the chart, a summary reads *"Up 6h 12m · 41% busy · idle timeout 20 min"*. Those three numbers are only
+meaningful together — a low busy share against a generous idle timeout is the clearest signal that an
+[elastic agent](../concepts/elastic-compute.md) is being paid for while idle.
+
+**Failures & rejections** breaks failed and cancelled runs down by cause — `queue_full`, `queued_timeout`,
+`out_of_memory`, `no_compute`, `dispatch_failed`, `timeout` — rather than reporting one undifferentiated failure count.
+The distinction matters because the fixes differ: queue rejections mean saturation, `no_compute` means elastic
+provisioning never produced an agent, and an out-of-memory failure means the query needs a bigger agent. The chart is
+hidden when nothing failed.
+
+**Utilization** plots CPU and memory across the window. Buckets the agent reported nothing in are drawn as gaps rather
+than zeros, so an outage never looks like an idle period.
+
+Finally, the **History** list shows the runs that happened on this agent inside the selected window. Hovering a
+duration splits it into queue wait and execution time — the difference between a slow query and a busy agent.
+
+### Where the data comes from
+
+Agents sample themselves every ~2 seconds, and those samples feed a short in-memory buffer for the live statistics.
+For the historical windows they are additionally rolled up to **one row per agent per minute** and stored in Postgres,
+alongside an append-only trail of agent lifecycle transitions. Both are retained for
+`AGENT_METRICS_RETENTION_HOURS` (default one week) — comfortably longer than the 24 hours the UI offers, so widening
+the range later does not require having planned for it.
+
+This is deliberately DuckHaven's own storage rather than the [Prometheus](#prometheus-metrics) or
+[tracing](tracing.md) pipelines below. Both of those are export-only and off by default; a built-in product page that
+renders blank unless you deployed a collector would be the wrong default. The *instrumentation* is shared, though —
+every durable row is written at the same point in the code that already emits the corresponding counter or span, and
+reuses its vocabulary, so a Grafana alert and this page can never disagree about why an agent went away.
+
+The query counts and failure breakdown are computed from the query records themselves, so they are exact rather than
+sampled, and they exclude the same internal queries the History page does.
+
+!!! note "Growth"
+    The rollup and lifecycle tables are bounded by the retention setting. The `queries` table that backs the query
+    charts and the audit log is **not** currently pruned — it grows for the life of the deployment.
 
 ## Query history and audit log
 
@@ -81,6 +144,10 @@ the conventional `_total` suffix in the exposition (e.g. `duckhaven_queries_tota
 | `duckhaven_agent_running_queries` | gauge | (same) | Queries running on the agent. |
 | `duckhaven_agent_queued_queries` | gauge | (same) | Queries queued on the agent. |
 | `duckhaven_agent_active_profile_info` | gauge | (same) + `profile` | Active concurrency profile (value always `1`). |
+| `duckhaven_agents` | gauge | `provider`, `lifecycle` | Elastic agents by backend and lifecycle state. Reported by the reap leader only, so it is a cluster-wide count — do not sum it across replicas. |
+| `duckhaven_agent_provisions_total` | counter | `replica_id`, `provider`, `outcome` | Elastic provisioning attempts (`outcome`: `success`/`failure`). |
+| `duckhaven_agent_provisioning_seconds` | histogram | `replica_id`, `provider` | Time to provision an elastic agent. Successes only — a failure's duration measures how long the backend took to say no, which would distort the cold-start percentiles. |
+| `duckhaven_agents_reaped_total` | counter | `replica_id`, `reason` | Elastic agents torn down by the reaper (`reason`: `idle`/`max_lifetime`/`provisioning_timeout`/`orphan`/`dead_row`). |
 | `duckhaven_db_pool_size` | gauge | `replica_id` | Configured connection-pool size. |
 | `duckhaven_db_pool_checked_out` | gauge | `replica_id` | Connections currently checked out. |
 | `duckhaven_db_pool_overflow` | gauge | `replica_id` | Connections beyond the configured pool size. |
@@ -107,6 +174,16 @@ would hide:
   surface the Iceberg catalog's error rate and latency. Alert on a non-zero rate of
   `status="error"` (or 5xx) here to catch catalog-layer degradation before it manifests as
   mysterious query failures.
+- **Elastic supply** — `duckhaven_agent_provisions_total{outcome="failure"}` and
+  `duckhaven_agents_reaped_total{reason="provisioning_timeout"}` both mean users are waiting for
+  compute that never arrives, which surfaces to them as a query that simply never starts.
+  `duckhaven_agents_reaped_total{reason="orphan"}` or `{reason="dead_row"}` means the cloud and
+  Postgres had drifted apart — expected occasionally, but a sustained rate is worth
+  investigating because orphans bill until they are swept.
+
+The `reason` labels on `duckhaven_agents_reaped_total` are the same strings the per-agent
+monitoring page records against each lifecycle transition, so an alert and the UI always agree
+about why an agent went away.
 
 ### Blocked sandbox escapes
 

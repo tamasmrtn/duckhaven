@@ -66,6 +66,21 @@ disconnect without being torn down):
 | `terminating` → `terminated` | The reaper is tearing the agent down (idle or max-lifetime). |
 | `failed` | Provisioning never completed within the deadline, or the instance vanished. |
 
+Because that column is mutated in place — a restart reuses the same agent row — it only ever
+describes the agent *now*. Every transition is therefore also appended to a separate lifecycle
+trail, together with the reason it happened (`idle`, `max_lifetime`, `provisioning_timeout`,
+`restart`, `orphan`, `dead_row`). That trail is what the **Agent activity** chart on the agent's
+[monitoring page](../operations/monitoring.md#per-agent-monitoring) is drawn from, and it is the
+only record that survives a restart — without it, an agent that has been torn down and brought
+back has no history at all.
+
+The same trail is what lets the activity chart distinguish *not running* from *no data*: an agent
+older than the trail has no recorded history, which is a weaker claim than knowing it was off.
+
+The `reason` values are the same strings the reaper counts by in
+`duckhaven_agents_reaped_total`, so a Prometheus alert and the UI cannot tell different stories
+about why an agent went away.
+
 ## Reliability
 
 Postgres is the single state-of-record: the agent row is written **before** the cloud instance is

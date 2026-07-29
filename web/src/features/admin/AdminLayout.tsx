@@ -7,14 +7,33 @@ import {
 import { useMe } from "@/queries/auth";
 import { cn } from "@/utils";
 
+// Which global permission each admin section needs. `agents` is the exception:
+// a per-agent grant also admits its holder, because reading an agent's
+// monitoring page is a `use`-tier capability rather than a fleet-wide one.
 const tabs = [
-  { segment: "agents", label: "Agents" },
-  { segment: "storage", label: "Storage backends" },
-  { segment: "migrations", label: "Migrations" },
-  { segment: "maintenance", label: "Maintenance" },
-  { segment: "users", label: "Users" },
-  { segment: "service-accounts", label: "Service accounts" },
-  { segment: "catalog-access", label: "Catalog access" },
+  { segment: "agents", label: "Agents", permission: "agents:manage" },
+  {
+    segment: "storage",
+    label: "Storage backends",
+    permission: "storage:manage",
+  },
+  { segment: "migrations", label: "Migrations", permission: "storage:manage" },
+  {
+    segment: "maintenance",
+    label: "Maintenance",
+    permission: "maintenance:manage",
+  },
+  { segment: "users", label: "Users", permission: "users:manage" },
+  {
+    segment: "service-accounts",
+    label: "Service accounts",
+    permission: "service_accounts:manage",
+  },
+  {
+    segment: "catalog-access",
+    label: "Catalog access",
+    permission: "catalogs:admin",
+  },
 ];
 
 export function AdminLayout() {
@@ -23,14 +42,20 @@ export function AdminLayout() {
   const pathname = state.location.pathname;
   const navigate = useNavigate();
   const { data: me, isLoading } = useMe();
-  // Admin capability = holding any global permission (mirrors the left rail).
-  const isAdmin = (me?.permissions?.length ?? 0) > 0;
+  const permissions = me?.permissions ?? [];
+  // A per-agent grantee holds no global permission but is entitled to their
+  // agent's detail and monitoring pages, which live inside this shell.
+  const visibleTabs = tabs.filter(
+    ({ segment, permission }) =>
+      permissions.includes(permission) ||
+      (segment === "agents" && me?.agent_access),
+  );
 
   // Client-side gate: the admin area's screens are individually enforced by the
   // API too, but non-admins shouldn't even see the admin shell (e.g. by typing
   // the URL directly). Wait for `me` to resolve so a real admin never flashes it.
   if (isLoading) return null;
-  if (!isAdmin) {
+  if (visibleTabs.length === 0) {
     return (
       <div className="flex h-full items-center justify-center p-8 text-center">
         <div className="space-y-1">
@@ -50,7 +75,7 @@ export function AdminLayout() {
       <div className="border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-4 shrink-0">
         <h1 className="text-md font-semibold">Admin</h1>
         <nav className="mt-3 flex gap-1" aria-label="Admin sections">
-          {tabs.map(({ segment, label }) => {
+          {visibleTabs.map(({ segment, label }) => {
             const active = pathname.includes(`/admin/${segment}`);
             return (
               <button

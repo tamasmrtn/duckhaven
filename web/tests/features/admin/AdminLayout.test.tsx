@@ -35,4 +35,69 @@ describe("AdminLayout access gate", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("Admin access required")).not.toBeInTheDocument();
   });
+
+  it("shows only the sections a partial admin holds", async () => {
+    server.use(
+      http.get("/api/me", () =>
+        HttpResponse.json({
+          ...CURRENT_USER,
+          role: "user",
+          permissions: ["users:manage"],
+        }),
+      ),
+    );
+    renderWithProviders({ initialRoute: "/acme-analytics/admin/users" });
+
+    expect(
+      await screen.findByRole("button", { name: "Users" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Catalog access" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("admits a per-agent grantee to the Agents section alone", async () => {
+    // A grant is not a global permission: it entitles its holder to the agent's
+    // monitoring page, which lives inside this shell, and to nothing else.
+    server.use(
+      http.get("/api/me", () =>
+        HttpResponse.json({
+          ...CURRENT_USER,
+          role: "user",
+          permissions: [],
+          agent_access: true,
+        }),
+      ),
+    );
+    renderWithProviders({ initialRoute: "/acme-analytics/admin/agents" });
+
+    expect(
+      await screen.findByRole("button", { name: "Agents" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Admin access required")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Users" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Storage backends" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("still blocks a user with neither permissions nor an agent grant", async () => {
+    server.use(
+      http.get("/api/me", () =>
+        HttpResponse.json({
+          ...CURRENT_USER,
+          role: "user",
+          permissions: [],
+          agent_access: false,
+        }),
+      ),
+    );
+    renderWithProviders({ initialRoute: "/acme-analytics/admin/agents" });
+
+    expect(
+      await screen.findByText("Admin access required"),
+    ).toBeInTheDocument();
+  });
 });

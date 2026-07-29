@@ -270,6 +270,8 @@ describe('AgentDetailPage', () => {
             requested_memory_gb: 16,
             hourly_cost: 0.28,
             idle_timeout_minutes: 20,
+            access_tier: 'operate',
+            access_mode: 'open',
           }),
         ),
         http.post('/api/admin/agents/ag-5/restart', () => {
@@ -348,5 +350,81 @@ describe('AgentDetailPage', () => {
 
     expect(await screen.findByText(/agent not found/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /back to agents/i })).toBeInTheDocument()
+  })
+})
+
+describe('AgentDetailPage per-agent tiers', () => {
+  /** Serve ag-5 at a chosen tier, leaving every other handler intact. */
+  function agentAtTier(tier: string) {
+    return http.get('/api/admin/agents/ag-5', () =>
+      HttpResponse.json({
+        id: 'ag-5',
+        name: 'warehouse-a',
+        status: 'healthy',
+        capabilities: null,
+        last_ping_at: null,
+        created_at: '2026-06-01T00:00:00Z',
+        provider: 'azure_aci',
+        lifecycle: 'running',
+        requested_cpu: 4,
+        requested_memory_gb: 16,
+        hourly_cost: 0.28,
+        access_tier: tier,
+        access_mode: 'open',
+      }),
+    )
+  }
+
+  it('offers a use-tier holder no action beyond reading the audit', async () => {
+    server.use(agentAtTier('use'))
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: ELASTIC })
+    await user.click(await screen.findByRole('tab', { name: /overview/i }))
+
+    // Monitoring and the audit link are `use`-tier surfaces...
+    expect(
+      await screen.findByRole('button', { name: /view audit for this agent/i }),
+    ).toBeInTheDocument()
+    // ...everything that changes the agent is not.
+    expect(screen.queryByRole('button', { name: /terminate/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /force disconnect/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^delete$/i })).not.toBeInTheDocument()
+  })
+
+  it('gives an operate-tier holder the lifecycle actions but not delete', async () => {
+    server.use(agentAtTier('operate'))
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: ELASTIC })
+    await user.click(await screen.findByRole('tab', { name: /overview/i }))
+
+    expect(await screen.findByRole('button', { name: /terminate/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /force disconnect/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^delete$/i })).not.toBeInTheDocument()
+  })
+
+  it('gives an admin-tier holder delete as well', async () => {
+    server.use(agentAtTier('admin'))
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: ELASTIC })
+    await user.click(await screen.findByRole('tab', { name: /overview/i }))
+
+    expect(await screen.findByRole('button', { name: /^delete$/i })).toBeInTheDocument()
+  })
+
+  it('force-disconnects an agent', async () => {
+    let disconnected = false
+    server.use(
+      agentAtTier('operate'),
+      http.post('/api/admin/agents/ag-5/disconnect', () => {
+        disconnected = true
+        return HttpResponse.json({ id: 'ag-5', status: 'unavailable' }, { status: 202 })
+      }),
+    )
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: ELASTIC })
+    await user.click(await screen.findByRole('tab', { name: /overview/i }))
+
+    await user.click(await screen.findByRole('button', { name: /force disconnect/i }))
+    await waitFor(() => expect(disconnected).toBe(true))
   })
 })

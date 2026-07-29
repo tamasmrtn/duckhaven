@@ -44,6 +44,7 @@ from api.models.maintenance import (
     TableHealthSample,
 )
 from api.services.agent_registry import registry
+from api.services.query_failure import classify_failure, is_admission_reject
 
 # ── Persistent instruments (incremented inline) ──────────────────────────────
 
@@ -110,8 +111,26 @@ QUERY_QUEUE_REJECTED = Counter(
     ["replica_id", "reason"],
 )
 
-# Agent admission-reject error strings (see agent control/channel.py) -> reason label.
-_QUEUE_REJECT_REASONS = {"queue full": "queue_full", "queued timeout": "queued_timeout"}
+
+AGENT_PROVISIONS = Counter(
+    "duckhaven_agent_provisions",
+    "Elastic agent provisioning attempts, by backend and outcome (success/failure).",
+    ["replica_id", "provider", "outcome"],
+)
+AGENT_PROVISIONING_SECONDS = Histogram(
+    "duckhaven_agent_provisioning_seconds",
+    "Time from asking a backend for an elastic agent to the agent dialing home.",
+    ["replica_id", "provider"],
+    # Cold starts are tens of seconds, not milliseconds; the top bucket sits above
+    # elastic_provisioning_deadline_s (300s) so timeouts land somewhere finite.
+    buckets=(5, 10, 20, 30, 45, 60, 90, 120, 180, 300, 600),
+)
+AGENTS_REAPED = Counter(
+    "duckhaven_agents_reaped",
+    "Elastic agents torn down by the reaper, by reason "
+    "(idle/max_lifetime/provisioning_timeout/orphan/dead_row).",
+    ["replica_id", "reason"],
+)
 
 SQL_SESSIONS_OPENED = Counter(
     "duckhaven_sql_sessions_opened",
@@ -160,10 +179,13 @@ def record_query_queue_wait(seconds: float) -> None:
 def record_query_queue_rejection(error: str | None) -> bool:
     """Count a queue-admission rejection from a failed query's error text.
 
-    Returns True if the error matched a known admission-reject reason.
+    Returns True if the error matched a known admission-reject reason. The
+    classification is shared with the monitoring page (services.query_failure) so
+    the two cannot label the same failure differently; the narrowing to admission
+    rejects keeps this counter meaning what it always meant.
     """
-    reason = _QUEUE_REJECT_REASONS.get((error or "").strip().lower())
-    if reason is None:
+    reason = classify_failure(error)
+    if not is_admission_reject(reason):
         return False
     QUERY_QUEUE_REJECTED.labels(settings.replica_id, reason).inc()
     return True
@@ -213,6 +235,58 @@ def is_scan_leader() -> bool:
     return _scan_leader
 
 
+# ── Reaper leadership flag (set by the elastic compute reaper loop) ───────────
+# Elastic agent counts are DB-wide rather than per-replica, so exactly one replica
+# may report them. The reaper's existing leader election is the natural gate.
+
+_reap_leader = False
+
+
+def set_reap_leader(value: bool) -> None:
+    global _reap_leader
+    _reap_leader = value
+
+
+def is_reap_leader() -> bool:
+    return _reap_leader
+
+
+def record_agent_provision(provider: str, outcome: str, duration_s: float | None = None) -> None:
+    """Count one provisioning attempt, and time it when it succeeded.
+
+    Only successes are timed: a failure's duration measures how long the backend
+    took to say no, which would drag the cold-start percentiles an operator uses to
+    decide whether to pre-warm.
+    """
+    AGENT_PROVISIONS.labels(settings.replica_id, provider, outcome).inc()
+    if outcome == "success" and duration_s is not None:
+        AGENT_PROVISIONING_SECONDS.labels(settings.replica_id, provider).observe(duration_s)
+
+
+# The reaper's per-cycle counter names, mapped to the reason recorded on
+# agent_lifecycle_event so an alert and the monitoring page use one vocabulary.
+# Deliberately partial: the cycle also reports retried/completed terminations and
+# failed queries, none of which are an agent being torn down.
+_REAP_REASONS = {
+    "idle": "idle",
+    "max_lifetime": "max_lifetime",
+    "provisioning_timeout": "provisioning_timeout",
+    "orphans_terminated": "orphan",
+    "dead_rows_failed": "dead_row",
+}
+
+
+def record_agents_reaped(counts: dict[str, int]) -> None:
+    """Count the reaper's per-cycle teardown outcomes.
+
+    The reaper already computes every one of these and, until now, only logged them.
+    """
+    for key, count in counts.items():
+        reason = _REAP_REASONS.get(key)
+        if reason and count:
+            AGENTS_REAPED.labels(settings.replica_id, reason).inc(count)
+
+
 # ── HTTP middleware ───────────────────────────────────────────────────────────
 
 
@@ -249,6 +323,8 @@ class _Snapshot:
     pool: dict | None = None
     maintenance: dict | None = None
     sql_sessions_active: int = 0
+    # (provider, lifecycle) -> count; None when this replica isn't the reap leader.
+    agent_lifecycles: dict[tuple[str, str], int] | None = None
 
 
 _snapshot = _Snapshot()
@@ -268,6 +344,15 @@ class _ScrapeCollector:
         )
         active.add_metric([], snap.sql_sessions_active)
         yield active
+        if snap.agent_lifecycles is not None:
+            fam = GaugeMetricFamily(
+                "duckhaven_agents",
+                "Elastic agents by backend and lifecycle state (reap leader only).",
+                labels=["provider", "lifecycle"],
+            )
+            for (provider, lifecycle), count in sorted(snap.agent_lifecycles.items()):
+                fam.add_metric([provider, lifecycle], count)
+            yield fam
         if snap.pool is not None:
             for key, doc in (
                 ("size", "Configured connection pool size."),
@@ -404,6 +489,23 @@ async def _collect_maintenance(db: AsyncSession) -> dict:
     }
 
 
+async def _collect_agent_lifecycles(db: AsyncSession) -> dict[tuple[str, str], int]:
+    """Count elastic agents by (provider, lifecycle), DB-wide.
+
+    Static agents are excluded: they have no lifecycle to report, and counting them
+    here would conflate "an operator's box is registered" with "we are paying for a
+    container right now" — which is the question this gauge exists to answer.
+    """
+    rows = (
+        await db.execute(
+            sa.select(Agent.provider, Agent.lifecycle, sa.func.count())
+            .where(Agent.provider.is_not(None))
+            .group_by(Agent.provider, Agent.lifecycle)
+        )
+    ).all()
+    return {(provider, lifecycle or "unknown"): count for provider, lifecycle, count in rows}
+
+
 async def _collect_sql_sessions_active(db: AsyncSession) -> int:
     from api.models.sql_session import SqlSession
 
@@ -423,5 +525,6 @@ async def render(db: AsyncSession) -> tuple[bytes, str]:
             pool=_collect_pool(),
             maintenance=await _collect_maintenance(db) if is_scan_leader() else None,
             sql_sessions_active=await _collect_sql_sessions_active(db),
+            agent_lifecycles=await _collect_agent_lifecycles(db) if is_reap_leader() else None,
         )
         return generate_latest(REGISTRY), CONTENT_TYPE_LATEST

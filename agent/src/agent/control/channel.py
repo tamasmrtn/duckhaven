@@ -231,7 +231,8 @@ async def _handle_open_session(ws, payload: dict, admission: Admission) -> None:
             lock_config=settings.sandbox_lock_configuration,
         )
         # Fix the session's resource slice once; statements run within it.
-        conn.execute(f"SET memory_limit='{reservation.memory_bytes / 1024**3}GB'")
+        # GiB, not GB — see the note in executor.runner._run_one_statement.
+        conn.execute(f"SET memory_limit='{reservation.memory_bytes / 1024**3}GiB'")
         conn.execute(f"SET threads={reservation.threads}")
         return conn
 

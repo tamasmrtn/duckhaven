@@ -27,11 +27,15 @@ const RUNNING = {
   requested_cpu: 2,
   requested_memory_gb: 8,
   hourly_cost: 0.14,
+  // The server resolves the caller's tier per request and ships it on the agent;
+  // the lifecycle controls below are gated on it, not on a global role.
+  access_tier: 'operate',
+  access_mode: 'open',
 }
 const TERMINATED = { ...RUNNING, id: 'ag-term', name: 'gone-b', status: 'unavailable', capabilities: null, lifecycle: 'terminated' }
 
 describe('AgentPicker elastic controls (worksheets)', () => {
-  it('lets an admin terminate a running elastic agent from the picker', async () => {
+  it('lets an operate-tier user terminate a running elastic agent from the picker', async () => {
     let terminated = false
     server.use(
       http.get('/api/agents', () => HttpResponse.json([RUNNING])),
@@ -48,7 +52,7 @@ describe('AgentPicker elastic controls (worksheets)', () => {
     await waitFor(() => expect(terminated).toBe(true))
   })
 
-  it('lets an admin restart a terminated elastic agent from the picker', async () => {
+  it('lets an operate-tier user restart a terminated elastic agent from the picker', async () => {
     let restarted = false
     server.use(
       http.get('/api/agents', () => HttpResponse.json([TERMINATED])),
@@ -63,5 +67,30 @@ describe('AgentPicker elastic controls (worksheets)', () => {
     await user.click(await screen.findByRole('combobox'))
     await user.click(await screen.findByRole('button', { name: /restart gone-b/i }))
     await waitFor(() => expect(restarted).toBe(true))
+  })
+
+  it('hides the lifecycle controls from a use-tier user', async () => {
+    server.use(
+      http.get('/api/agents', () => HttpResponse.json([{ ...RUNNING, access_tier: 'use' }])),
+    )
+    const user = userEvent.setup()
+    renderPicker()
+
+    await user.click(await screen.findByRole('combobox'))
+    // The agent is still selectable — `use` is exactly the tier that targets it.
+    expect(await screen.findByText('warehouse-a')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /terminate warehouse-a/i })).not.toBeInTheDocument()
+  })
+
+  it('offers only the agents the server returned', async () => {
+    // A restricted agent the caller has no tier on is filtered out server-side,
+    // so there is no client rule to get wrong.
+    server.use(http.get('/api/agents', () => HttpResponse.json([RUNNING])))
+    const user = userEvent.setup()
+    renderPicker()
+
+    await user.click(await screen.findByRole('combobox'))
+    expect(await screen.findByText('warehouse-a')).toBeInTheDocument()
+    expect(screen.queryByText('gone-b')).not.toBeInTheDocument()
   })
 })

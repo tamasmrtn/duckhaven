@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { http } from "msw";
+import { server } from "@tests/mock/server";
 import { renderWithProviders } from "@tests/utils";
+import { httpError } from "@/mock/lib/errors";
 
 const ROUTE = "/acme-analytics/schedules";
 
@@ -66,7 +69,9 @@ describe("SchedulesPage", () => {
     expect(within(dialog).getByText("Edit schedule")).toBeInTheDocument();
     expect(within(dialog).getByText("Recent runs")).toBeInTheDocument();
     // The edit dialog offers a Remove action.
-    expect(within(dialog).getByRole("button", { name: "Remove" })).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("button", { name: "Remove" }),
+    ).toBeInTheDocument();
   });
 
   it("disables Create for an invalid cron expression", async () => {
@@ -80,6 +85,33 @@ describe("SchedulesPage", () => {
     await user.clear(input);
     await user.type(input, "nope");
 
-    expect(within(dialog).getByRole("button", { name: "Create" })).toBeDisabled();
+    expect(
+      within(dialog).getByRole("button", { name: "Create" }),
+    ).toBeDisabled();
+  });
+});
+
+describe("SchedulesPage agent access", () => {
+  it("explains a revoked agent instead of closing the dialog", async () => {
+    // The picker only offers agents you may use, but a grant can be revoked
+    // while the dialog is open — the API is the authority, so surface its 403.
+    server.use(
+      http.post("/api/workspaces/:ws/schedules", () =>
+        httpError(403, "agent_forbidden"),
+      ),
+    );
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await screen.findByText("Daily events");
+
+    await user.click(screen.getByRole("button", { name: "New schedule" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Create" }));
+
+    expect(
+      await screen.findByText(/no longer have access to the selected agent/i),
+    ).toBeInTheDocument();
+    // The dialog stays open so the choice can be corrected.
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 });

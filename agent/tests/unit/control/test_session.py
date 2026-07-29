@@ -57,6 +57,27 @@ async def test_open_session_holds_conn_and_reservation(tmp_path):
     assert admission.running_count == 1
 
 
+async def test_held_session_pins_duckdb_to_the_granted_bytes(tmp_path):
+    """The session's fixed slice must be the bytes admission granted, in GiB.
+
+    Same trap as the per-query path: the value is bytes/1024**3 (GiB) and DuckDB
+    reads a `GB` suffix as 10**9, so labelling it GB silently handed a held
+    session ~7% less memory than it had reserved -- and a session's limit is
+    fixed at open, so it could never recover it.
+    """
+    import agent.control.channel as ch
+
+    admission = _admission(profile="single")
+    ws = _FakeWS()
+    await ch._handle_open_session(ws, {"session_id": "s-mem"}, admission)
+
+    held = session.get("s-mem")
+    granted = held.reservation.memory_bytes
+    setting = held.conn.execute("SELECT current_setting('memory_limit')").fetchone()[0]
+
+    assert setting == f"{granted // 1024**3}.0 GiB"
+
+
 async def test_exec_statement_runs_on_held_conn_without_closing(tmp_path):
     import agent.control.channel as ch
 

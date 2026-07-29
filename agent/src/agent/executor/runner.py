@@ -634,8 +634,12 @@ def _run_one_statement(
     # cgroup memory limit. DuckDB's default thread count ignores the cgroup CPU
     # quota, so `threads` is set explicitly. (For a held session these are the
     # session's fixed reservation, re-applied harmlessly per statement.)
-    mem_gb = memory_bytes / 1024**3
-    conn.execute(f"SET memory_limit='{mem_gb}GB'")
+    # GiB, not GB: the value is bytes/1024**3, and DuckDB reads a `GB` suffix as
+    # 10**9. Labelling it GB handed DuckDB ~7% less than the admission manager
+    # granted, so the real headroom was ~17% against a configured 10% and every
+    # slot silently lost ~250 MiB of its slice.
+    mem_gib = memory_bytes / 1024**3
+    conn.execute(f"SET memory_limit='{mem_gib}GiB'")
     conn.execute(f"SET threads={threads}")
     # Sibling of the result file; retention only sweeps `*.parquet`, so we own
     # this file's lifecycle and unlink it ourselves.

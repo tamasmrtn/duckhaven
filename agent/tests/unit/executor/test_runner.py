@@ -152,12 +152,12 @@ def test_duckdb_pinned_to_granted_slice(tmp_path, mem_bytes, threads):
     row = duckdb.connect().execute(f"SELECT * FROM read_parquet('{result_path}')").fetchone()
     mem_setting, threads_setting = row
     assert int(threads_setting) == threads
-    # DuckDB normalizes the unit in its display (GB -> GiB); round-trip the
-    # expected bytes through DuckDB's own parser so the check is unit-agnostic.
-    ref = duckdb.connect()
-    ref.execute(f"SET memory_limit='{mem_bytes / 1024**3}GB'")
-    expected_mem = ref.execute("SELECT current_setting('memory_limit')").fetchone()[0]
-    assert mem_setting == expected_mem
+    # Asserted against the granted bytes directly, NOT by round-tripping the same
+    # expression the runner uses: that only proves the runner agrees with itself.
+    # It did, while handing DuckDB a `GB` suffix for a value computed in GiB --
+    # DuckDB reads GB as 10**9, so every slot was ~7% smaller than granted.
+    # The parametrized sizes are whole GiB, which DuckDB displays exactly.
+    assert mem_setting == f"{mem_bytes // 1024**3}.0 GiB"
 
 
 async def test_timeout_interrupts_running_query(tmp_path):

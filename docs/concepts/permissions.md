@@ -162,14 +162,77 @@ exactly as before. Only the unfilterable listings go away.
     [does not work for Iceberg tables](../reference/sql-support.md#columns-and-types-use-describe) regardless of access
     mode, so any tool that works against DuckHaven at all is already using `DESCRIBE` for that.
 
+## Per-agent access
+
+Scoped access answers "which *data* may this person reach". Per-agent access answers a different question: "which
+*compute* may they run it on". As the [elastic fleet](elastic-compute.md) is shared, an agent stops being an
+interchangeable worker and becomes something with its own cost, blast radius, and data proximity — one that a team may
+reasonably own, and that another team should perhaps not be able to restart.
+
+Until this existed, agents were all-or-nothing in both directions: the single `agents:manage` permission governed every
+agent in the deployment, while *using* an agent was not restricted at all — any signed-in user could target any agent
+for a query, a SQL session, or a schedule.
+
+### The three tiers
+
+Each principal's access to each agent resolves to one of three tiers, each including everything below it:
+
+| Tier | Can do |
+|---|---|
+| `use` | Target the agent for queries, SQL sessions, and scheduled jobs; see its status and its monitoring page |
+| `operate` | Everything in `use`, plus restart, terminate, force disconnect, and revoke its credential |
+| `admin` | Everything in `operate`, plus delete the agent, change its access mode, and grant or revoke access to it |
+
+Holding `agents:manage` globally still confers `admin` on **every** agent, automatically. Per-agent access is an
+overlay on the global model, never a replacement — it can add access for people who hold no global agent permission,
+and it can never take access away from someone who does.
+
+Two things stay deliberately **fleet-level**, on `agents:manage` alone: creating an agent and minting a bootstrap
+token. Both are spending decisions about the deployment, and neither has an agent yet to hold a tier on.
+
+### Open and restricted agents
+
+Each agent has an **access mode**, mirroring how a catalog attachment is `open` or `scoped`:
+
+- **`open`** (the default) — any signed-in user may use the agent. This is exactly how every agent behaved before
+  per-agent access existed, so nothing changes for a deployment that never opts in.
+- **`restricted`** — using the agent requires an explicit grant. To anyone without one the agent is *invisible*: it
+  does not appear in the engine picker or the agent list, and its pages report "not found" rather than "forbidden".
+
+Only the `use` tier is affected by the mode. `operate` and `admin` always require a grant (or `agents:manage`), on an
+open agent just as much as on a restricted one.
+
+!!! note "Open mode is a floor, not a ceiling"
+    On an open agent a grant can still *raise* someone — to `operate`, say, so they can restart it — but it can never
+    lower them below `use`. Grants are additive and there is no negative grant, the same rule scoped access follows.
+
+### Granting to a person or to a workspace
+
+A grant names either a **user** (a person or a service account) or a **workspace**. A workspace grant reaches every
+member of that workspace and follows membership automatically: add someone to the workspace and they gain the agent,
+remove them and they lose it, with no ACL edit either way. A user's effective tier is the highest of their own grant
+and the grants on every workspace they belong to.
+
+Both exist because they answer different questions. "Everyone in Analytics may run work on the shared ADLS agent" is
+unmanageable one person at a time, and stale the moment the team changes. "Dana may restart it" is a personal
+responsibility that should name Dana.
+
+A workspace grant is capped at `operate`. The `admin` tier includes granting access, and delegating that to *whoever
+happens to be in a workspace* would make the access list unauditable — the set of people who can widen it would change
+silently every time someone joined.
+
+Manage this from **Admin → Agents → (an agent) → Access**.
+
 ## What is not in scope
 
 - **No row- or column-level security.** Object-level grants reach down to the
   catalog, schema, and table (see [Scoped access](#scoped-access)),
   but not to individual rows or columns — the same boundary Unity Catalog and
   Snowflake draw between object grants and row filters / column masks.
-- **No group- or role-based grants.** A grant targets a principal (member or
-  service account) directly; there is no grantable group concept yet.
+- **No group-based *data* grants.** A catalog grant targets a principal (member or
+  service account) directly; there is no grantable group concept for data access.
+  [Per-agent access](#per-agent-access) is the one exception — it can name a
+  workspace as well as a user — and that does not extend to catalogs, schemas, or tables.
 - **No SCIM.** Provisioning is just-in-time at login, not a push from the directory.
 - **RBAC is API-enforced only.** Roles and workspace membership are enforced by DuckHaven; Polaris sees only the API
   service principal and is never granted per-user access. The catalog grant mirror is intentionally a no-op.

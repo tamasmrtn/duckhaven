@@ -24,6 +24,20 @@ On connect (and on every heartbeat) an agent advertises its capabilities — Duc
 ceiling, cores, and host. DuckHaven matches agents to a workspace's [storage backend](storage-backends.md) by required
 extension (for example, `azure` for ADLS), and incompatible agents are shown disabled before a query is sent.
 
+## Who can use an agent
+
+By default any signed-in user can run work on any agent — agents are shared infrastructure, and the workspace and
+catalog layers already decide what data a query may touch.
+
+That default is per agent, not per deployment. Set an agent to **restricted** (Admin → Agents → *an agent* → Access)
+and using it requires an explicit grant, which you give to a person or to a whole workspace. The grant also carries a
+level: `use` runs work on it, `operate` adds restarting and terminating it, `admin` adds deleting it and managing its
+access. A restricted agent is simply invisible to anyone without a grant — it never appears in the engine picker.
+
+This is what makes a shared elastic fleet workable: an expensive agent, or one sitting close to sensitive data, can be
+reserved for the team that owns it while the rest of the fleet stays open. Deployment-wide `agents:manage` holders keep
+full access to everything regardless. See [Per-agent access](permissions.md#per-agent-access).
+
 ## Live utilization and history
 
 Each heartbeat also carries live running/queued query counts and the active concurrency profile. Every agent has its

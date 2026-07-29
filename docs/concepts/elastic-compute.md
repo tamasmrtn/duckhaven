@@ -39,6 +39,11 @@ specific agent — over the API, omit `agent_id`):
 An agent is matched to demand by its **pool key** — the set of storage-backend kinds it supports — so
 one provisioned agent serves every workspace with the same storage shape.
 
+Note that the pool key describes *capability*, not tenancy: it is what an agent can attach, not who
+may use it. Access is the separate, explicit mechanism described in
+[Per-agent access](permissions.md#per-agent-access). Auto-provisioned pool agents start **open**, so
+scale-out serves whoever triggered it; restrict an agent only when you want it reserved.
+
 ### Creating compute manually
 
 Compute can also be started deliberately from **Admin → Agents → New compute**, the way you'd start a

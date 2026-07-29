@@ -23,6 +23,10 @@ export interface Query {
   error: string | null;
   progress?: Record<string, unknown> | null;
   started_at: string;
+  // When the agent admitted the run and started executing it. With started_at
+  // (submission) this splits the wall-clock into queue wait and execution. Null
+  // for a run that never started or one recorded before the column existed.
+  running_at?: string | null;
   finished_at: string | null;
 }
 

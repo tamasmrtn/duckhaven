@@ -26,6 +26,14 @@ class Agent(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    # Whether this agent's per-agent ACL (:class:`AgentGrant`) is consulted for the
+    # `use` tier. "open" (the default) means any authenticated caller may target it,
+    # exactly as before there was an ACL; "restricted" means `use` needs an explicit
+    # grant. Higher tiers always need a grant or global `agents:manage` in either
+    # mode. Mirrors ``workspace_catalogs.access_mode`` (open/scoped).
+    access_mode: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="open", default="open"
+    )
 
     # ── Elastic-agent lifecycle (all NULL for a static, operator-run agent) ──────
     # Which compute backend provisioned this agent. NULL = static (unchanged

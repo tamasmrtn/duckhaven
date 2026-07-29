@@ -1,4 +1,5 @@
 from api.models.agent import Agent, AgentLifecycleEvent, AgentMetricsMinute
+from api.models.agent_grant import AgentGrant
 from api.models.assistant import (
     AssistantConversation,
     AssistantMessage,
@@ -26,6 +27,7 @@ from api.models.workspace import Workspace, WorkspaceMember
 
 __all__ = [
     "Agent",
+    "AgentGrant",
     "AgentLifecycleEvent",
     "AgentMetricsMinute",
     "AssistantConversation",

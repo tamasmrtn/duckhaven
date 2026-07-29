@@ -391,7 +391,7 @@ async def refresh_table_stats(
     if not missing:
         return {"probed": 0}
 
-    agent = await query_service.pick_agent_for(db, workspace)
+    agent = await query_service.pick_agent_for(db, workspace, principal_id=user.id)
     if agent is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -596,7 +596,7 @@ async def sample_table(
     except PolarisNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
 
-    agent = await query_service.pick_agent_for(db, workspace)
+    agent = await query_service.pick_agent_for(db, workspace, principal_id=user.id)
     if agent is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -654,7 +654,7 @@ async def recount_table(
     except PolarisNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
 
-    agent = await query_service.pick_agent_for(db, workspace)
+    agent = await query_service.pick_agent_for(db, workspace, principal_id=user.id)
     if agent is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

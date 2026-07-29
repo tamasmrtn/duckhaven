@@ -18,6 +18,7 @@ from api.deps import get_current_user, get_db
 from api.models.query import Query, Schedule
 from api.models.user import User
 from api.schemas.query import QueryOut, ScheduleCreate, ScheduleOut, ScheduleUpdate
+from api.services.agent_access import assert_can_assign_agent
 from api.services.scheduler.cron import next_run, validate_cron
 from api.services.workspace import assert_workspace_member, get_workspace
 
@@ -87,6 +88,10 @@ async def create_schedule(
 ) -> Schedule:
     workspace = await _require_workspace(db, ws, user, min_role="writer")
     _validate_cron_or_422(body.cron)
+    # You may only point a schedule at an agent you could run on yourself. This is
+    # the fast feedback path; the same check runs again at dispatch against the
+    # schedule's creator, so revoking access later stops the runs too.
+    await assert_can_assign_agent(db, user, body.agent_id)
     now = datetime.now(tz=UTC)
     schedule = Schedule(
         workspace_id=workspace.id,
@@ -126,6 +131,8 @@ async def update_schedule(
     fields = body.model_dump(exclude_unset=True)
     if "cron" in fields:
         _validate_cron_or_422(fields["cron"])
+    if "agent_id" in fields:
+        await assert_can_assign_agent(db, user, fields["agent_id"])
     for key, value in fields.items():
         setattr(schedule, key, value)
     # Recompute the next run when the cadence changes or the schedule is (re)enabled.

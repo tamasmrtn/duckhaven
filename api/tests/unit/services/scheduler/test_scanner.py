@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from api.models.agent import Agent
+from api.models.agent_grant import AgentGrant
 from api.models.query import Query, SavedQuery, Schedule
 from api.models.user import User
 from api.services.agent_registry import registry
@@ -241,6 +242,135 @@ async def test_schedule_agent_wins_over_default(session_factory):
     async with session_factory() as db:
         q = (await db.execute(select(Query).where(Query.origin == "scheduled"))).scalar_one()
         assert q.agent_id == chosen_id
+
+
+# --- per-agent access is re-checked on every fire ----------------------------
+
+
+async def _fail_reason(session_factory) -> str | None:
+    async with session_factory() as db:
+        q = (await db.execute(select(Query).where(Query.origin == "scheduled"))).scalar_one()
+        assert q.status == "failed"
+        return q.error
+
+
+async def test_revoking_access_fails_the_run_without_disabling_the_schedule(session_factory):
+    """Access is re-evaluated at dispatch against `schedule.created_by`, not
+    snapshotted at creation — otherwise a revoked grant would keep running work
+    forever. The run fails visibly; the schedule stays enabled so re-granting
+    resumes it with no operator action."""
+    async with session_factory() as db:
+        schedule, chosen, _ws = await _seed(db, next_run_at=_PAST)
+        schedule.agent_id = chosen.id
+        # The owner held access when they chose it; the agent is locked down after.
+        chosen.access_mode = "restricted"
+        await db.commit()
+        schedule_id = schedule.id
+
+    assert (await run_cycle(session_factory, now=_NOW))["dispatched"] == 1
+    assert "no longer has access" in (await _fail_reason(session_factory))
+
+    async with session_factory() as db:
+        after = await db.get(Schedule, schedule_id)
+        assert after.enabled is True
+        assert after.next_run_at is not None  # still scheduled to try again
+
+
+async def test_regranting_access_resumes_the_schedule(session_factory):
+    async with session_factory() as db:
+        schedule, chosen, _ws = await _seed(db, next_run_at=_PAST)
+        schedule.agent_id = chosen.id
+        chosen.access_mode = "restricted"
+        await db.commit()
+
+    await run_cycle(session_factory, now=_NOW)
+    assert "no longer has access" in (await _fail_reason(session_factory))
+
+    async with session_factory() as db:
+        fresh = await db.get(Schedule, schedule.id)
+        db.add(AgentGrant(agent_id=fresh.agent_id, user_id=fresh.created_by, tier="use"))
+        fresh.next_run_at = _PAST
+        await db.commit()
+
+    await run_cycle(session_factory, now=_NOW + timedelta(minutes=1))
+    async with session_factory() as db:
+        runs = (await db.execute(select(Query).where(Query.origin == "scheduled"))).scalars().all()
+        # Two runs: the one that failed while revoked, and one that dispatched after
+        # the re-grant. (`started_at` ties at SQLite's precision, so assert on the
+        # set rather than on "the latest".)
+        assert len(runs) == 2
+        assert [r.status for r in runs].count("failed") == 1
+
+
+async def test_revoking_access_to_the_saved_query_default_also_fails(session_factory):
+    """`saved_queries.default_agent_id` is the scheduler's second resolution step, so
+    it is a live dispatch path and gets the same check."""
+    async with session_factory() as db:
+        schedule, chosen, _ws = await _seed(db, next_run_at=_PAST)
+        saved = await db.get(SavedQuery, schedule.saved_query_id)
+        saved.default_agent_id = chosen.id
+        chosen.access_mode = "restricted"
+        await db.commit()
+
+    await run_cycle(session_factory, now=_NOW)
+    assert "no longer has access" in (await _fail_reason(session_factory))
+
+
+async def test_auto_pick_skips_agents_the_owner_cannot_use(session_factory):
+    """With no explicit choice the scheduler auto-picks — filtered by the owner, or
+    omitting `agent_id` would route around a revoked grant."""
+    async with session_factory() as db:
+        _schedule, only_agent, _ws = await _seed(db, next_run_at=_PAST)
+        only_agent.access_mode = "restricted"
+        await db.commit()
+
+    await run_cycle(session_factory, now=_NOW)
+    assert (await _fail_reason(session_factory)) == "No accessible connected agent available"
+
+
+async def test_a_grant_lets_the_auto_pick_find_the_agent(session_factory):
+    async with session_factory() as db:
+        schedule, only_agent, _ws = await _seed(db, next_run_at=_PAST)
+        only_agent.access_mode = "restricted"
+        db.add(AgentGrant(agent_id=only_agent.id, user_id=schedule.created_by, tier="use"))
+        await db.commit()
+        agent_id = only_agent.id
+
+    await run_cycle(session_factory, now=_NOW)
+    async with session_factory() as db:
+        q = (await db.execute(select(Query).where(Query.origin == "scheduled"))).scalar_one()
+        assert q.agent_id == agent_id
+        assert q.status != "failed"
+
+
+async def test_a_workspace_grant_covers_the_schedule_owner(session_factory):
+    """The owner's access can come from the workspace the schedule lives in."""
+    async with session_factory() as db:
+        schedule, chosen, _ws = await _seed(db, next_run_at=_PAST)
+        schedule.agent_id = chosen.id
+        chosen.access_mode = "restricted"
+        db.add(AgentGrant(agent_id=chosen.id, workspace_id=schedule.workspace_id, tier="use"))
+        await db.commit()
+        agent_id = chosen.id
+
+    await run_cycle(session_factory, now=_NOW)
+    async with session_factory() as db:
+        q = (await db.execute(select(Query).where(Query.origin == "scheduled"))).scalar_one()
+        assert q.agent_id == agent_id
+        assert q.status != "failed"
+
+
+async def test_a_deleted_configured_agent_fails_clearly(session_factory):
+    async with session_factory() as db:
+        schedule, chosen, _ws = await _seed(db, next_run_at=_PAST)
+        schedule.agent_id = chosen.id
+        await db.commit()
+        registry.unregister(chosen.id)
+        await db.delete(chosen)
+        await db.commit()
+
+    await run_cycle(session_factory, now=_NOW)
+    assert (await _fail_reason(session_factory)) == "Configured agent no longer exists"
 
 
 async def test_skip_if_previous_run_still_running(session_factory):

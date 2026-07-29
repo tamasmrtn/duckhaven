@@ -40,6 +40,7 @@ from api.schemas.sql_session import (
 )
 from api.services import session_credentials, staging_presign
 from api.services import statement_policy as policy
+from api.services.agent_access import assert_agent_tier
 from api.services.agent_capabilities import agent_supports_backend, required_extension
 from api.services.agent_dispatch import is_agent_connected
 from api.services.grants import GrantDenied, assert_query_access
@@ -102,6 +103,9 @@ async def open_session(
         agent = await db.get(Agent, body.agent_id)
         if agent is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+        # Ahead of the connectivity probe, so a caller without access learns nothing
+        # about the agent's state.
+        await assert_agent_tier(db, user, agent, "use")
         if not await is_agent_connected(db, agent.id):
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Agent not connected"
@@ -117,7 +121,7 @@ async def open_session(
                     },
                 )
     else:
-        agent = await pick_agent_for(db, workspace)
+        agent = await pick_agent_for(db, workspace, principal_id=user.id)
         if agent is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

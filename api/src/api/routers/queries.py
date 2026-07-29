@@ -27,6 +27,7 @@ from api.schemas.query import (
 )
 from api.services import query as query_service
 from api.services import sql_metadata as sql_metadata_service
+from api.services.agent_access import assert_agent_tier, assert_can_assign_agent
 from api.services.agent_capabilities import agent_supports_backend, required_extension
 from api.services.agent_dispatch import is_agent_connected, send_to_agent
 from api.services.compute import service as compute_service
@@ -71,7 +72,7 @@ async def create_query(
             detail={"error": "sql_not_allowed", "detail": str(exc)},
         ) from exc
     if profile is not None:
-        return await _set_concurrency(db, workspace.id, user.id, body, profile)
+        return await _set_concurrency(db, workspace.id, user, body, profile)
 
     try:
         assert_allowed(body.sql)
@@ -106,6 +107,9 @@ async def create_query(
     agent = result.scalar_one_or_none()
     if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+    # Before the connectivity probe, so a caller without access learns nothing about
+    # the agent's state (and an invisible agent 404s exactly like a missing one).
+    await assert_agent_tier(db, user, agent, "use")
     if not await is_agent_connected(db, body.agent_id):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Agent not connected"
@@ -182,7 +186,9 @@ async def _create_elastic_query(
     """Run against the elastic pool: dispatch now if a compatible agent is up,
     otherwise park the run ``queued`` and provision one (bound on registration)."""
     await _stamp_saved_query_run(db, workspace, body.saved_query_id)
-    agent = await query_service.pick_agent_for(db, workspace)
+    # Scoped to agents the caller may use, or omitting `agent_id` would be a way
+    # around a denial on a specific agent.
+    agent = await query_service.pick_agent_for(db, workspace, principal_id=user_id)
     query = Query(
         workspace_id=workspace.id,
         agent_id=agent.id if agent is not None else None,
@@ -231,17 +237,22 @@ async def _create_elastic_query(
 
 
 async def _set_concurrency(
-    db: AsyncSession, workspace_id: uuid.UUID, user_id: uuid.UUID, body: QueryCreate, profile: str
+    db: AsyncSession, workspace_id: uuid.UUID, user: User, body: QueryCreate, profile: str
 ) -> Query:
     """Apply a concurrency `SET` to the selected agent and log it as a done query.
 
     Agent-global: it retunes admission for every query on that agent, not just
     this user's. The agent owns the profile (held in memory, reset on restart).
+
+    That fleet-wide blast radius is why this needs `operate` rather than `use`:
+    retuning admission changes how the agent serves everyone on it, which is a
+    lifecycle-grade act, not a dispatch.
     """
     result = await db.execute(select(Agent).where(Agent.id == body.agent_id))
     agent = result.scalar_one_or_none()
     if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+    await assert_agent_tier(db, user, agent, "operate")
     if not await is_agent_connected(db, body.agent_id):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Agent not connected"
@@ -251,7 +262,7 @@ async def _set_concurrency(
     query = Query(
         workspace_id=workspace_id,
         agent_id=body.agent_id,
-        user_id=user_id,
+        user_id=user.id,
         sql=body.sql,
         status="done",
         row_count=0,
@@ -280,7 +291,7 @@ async def get_sql_metadata(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
     await assert_workspace_member(db, workspace.id, user.id)
 
-    agent = await query_service.pick_agent_for(db, workspace)
+    agent = await query_service.pick_agent_for(db, workspace, principal_id=user.id)
     if agent is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -547,6 +558,9 @@ async def create_saved_query(
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     await assert_workspace_member(db, workspace.id, user.id, min_role="writer")
+    # A default agent is a live dispatch path (the scheduler falls back to it), so
+    # it needs the same `use` tier as choosing the agent on a schedule.
+    await assert_can_assign_agent(db, user, body.default_agent_id)
     # Overwrite by name: saving over an existing name updates that query instead
     # of creating a duplicate ("report v1", "report v2", ...).
     result = await db.execute(
@@ -596,6 +610,8 @@ async def update_saved_query(
     if sq is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Saved query not found")
     fields = body.model_dump(exclude_unset=True)
+    if "default_agent_id" in fields:
+        await assert_can_assign_agent(db, user, fields["default_agent_id"])
     for key, value in fields.items():
         setattr(sq, key, value)
     await db.commit()

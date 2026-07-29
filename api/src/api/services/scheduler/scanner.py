@@ -28,6 +28,7 @@ from api.config import settings
 from api.models.agent import Agent
 from api.models.query import Query, SavedQuery, Schedule
 from api.models.workspace import Workspace
+from api.services.agent_access import tier_at_least, tier_for_principal
 from api.services.agent_dispatch import is_agent_connected
 from api.services.query import dispatch_query, pick_agent_for
 from api.services.scheduler.cron import next_run
@@ -172,19 +173,38 @@ async def _resolve_agent(
     ``default_agent_id`` → auto-pick a compatible connected agent. An *explicit*
     choice that is offline fails fast (no silent re-pick), consistent with manual
     dispatch.
+
+    Whichever branch wins, the agent must still be usable by ``schedule.created_by``
+    — the person who chose it. Access is re-evaluated here, on every fire, rather
+    than snapshotted when the schedule was created: an ACL you cannot revoke is not
+    an ACL, and someone who leaves the team would otherwise keep running work on the
+    agent forever. This is the same shape as the catalog-grant check
+    ``_run_saved_query`` already makes against the saved query's creator.
+
+    A revoked schedule is *not* disabled and *not* silently re-routed to some other
+    agent the owner can use — either would reinterpret an operator's explicit
+    compute choice. Its runs fail with the reason below, which surfaces in History
+    and the runs feed, and re-granting resumes it with no further action.
     """
+    owner_id = schedule.created_by
     for chosen in (schedule.agent_id, saved.default_agent_id):
         if chosen is None:
             continue
-        if await is_agent_connected(db, chosen):
-            return await db.get(Agent, chosen), None
-        return None, "Configured agent is not connected"
+        agent = await db.get(Agent, chosen)
+        if agent is None:
+            return None, "Configured agent no longer exists"
+        if not tier_at_least(await tier_for_principal(db, owner_id, agent), "use"):
+            return None, "Schedule owner no longer has access to the configured agent"
+        if not await is_agent_connected(db, chosen):
+            return None, "Configured agent is not connected"
+        return agent, None
 
     if workspace is None:
         return None, "Workspace missing for schedule"
-    agent = await pick_agent_for(db, workspace)
+    # Scoped to the owner, or auto-select would route around a revoked grant.
+    agent = await pick_agent_for(db, workspace, principal_id=owner_id)
     if agent is None:
-        return None, "No connected agent available"
+        return None, "No accessible connected agent available"
     return agent, None
 
 

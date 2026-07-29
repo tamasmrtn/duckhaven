@@ -419,17 +419,175 @@ async def test_monitoring_404s_for_an_unknown_agent(admin_client: AsyncClient):
     assert resp.status_code == 404
 
 
-async def test_detail_and_monitoring_require_admin(client: AsyncClient, db_session):
+async def test_detail_and_monitoring_hidden_on_a_restricted_agent(client: AsyncClient, db_session):
+    """A restricted agent is invisible to an ungranted caller — 404, not 403.
+
+    Replaces the old "requires agents:manage" assertion. Detail and monitoring are
+    now `use`-tier surfaces, so what gates them is the agent's access mode plus the
+    caller's grants, not the global permission.
+    """
     from api.services.auth import hash_password
 
     member = User(
         email="member@agents.local", password_hash=hash_password("pw"), name="M", role="user"
     )
-    agent = Agent(name="guarded", status="healthy")
+    agent = Agent(name="guarded", status="healthy", access_mode="restricted")
     db_session.add_all([member, agent])
     await db_session.commit()
     await db_session.refresh(agent)
     await client.post("/auth/login", json={"email": "member@agents.local", "password": "pw"})
 
-    assert (await client.get(f"/admin/agents/{agent.id}")).status_code == 403
-    assert (await client.get(f"/admin/agents/{agent.id}/monitoring")).status_code == 403
+    assert (await client.get(f"/admin/agents/{agent.id}")).status_code == 404
+    assert (await client.get(f"/admin/agents/{agent.id}/monitoring")).status_code == 404
+    # ... and it is absent from the listing rather than 403-ing it.
+    listed = await client.get("/admin/agents")
+    assert listed.status_code == 200
+    assert [a for a in listed.json() if a["id"] == str(agent.id)] == []
+
+
+async def test_detail_and_monitoring_open_to_any_caller_on_an_open_agent(
+    client: AsyncClient, db_session
+):
+    """An `open` agent floors every authenticated caller at `use`, which includes
+    reading its status and monitoring page — but no lifecycle action."""
+    from api.services.auth import hash_password
+
+    member = User(
+        email="member2@agents.local", password_hash=hash_password("pw"), name="M2", role="user"
+    )
+    agent = Agent(name="shared", status="healthy")
+    db_session.add_all([member, agent])
+    await db_session.commit()
+    await db_session.refresh(agent)
+    await client.post("/auth/login", json={"email": "member2@agents.local", "password": "pw"})
+
+    detail = await client.get(f"/admin/agents/{agent.id}")
+    assert detail.status_code == 200
+    assert detail.json()["access_tier"] == "use"
+    assert (await client.get(f"/admin/agents/{agent.id}/monitoring")).status_code == 200
+    # `use` stops short of every lifecycle and administration action.
+    assert (await client.post(f"/admin/agents/{agent.id}/disconnect")).status_code == 403
+    assert (await client.delete(f"/admin/agents/{agent.id}")).status_code == 403
+    assert (await client.get(f"/admin/agents/{agent.id}/access")).status_code == 403
+
+
+# --- the tier x endpoint matrix ----------------------------------------------
+
+
+@pytest.fixture
+async def elastic_agent(db_session):
+    """A terminated elastic agent: restartable, and restricted so only grants speak."""
+    a = Agent(
+        name="elastic-1",
+        status="unavailable",
+        access_mode="restricted",
+        provider="null",
+        lifecycle="terminated",
+        instance_id="dh-agent-test",
+        requested_cpu=2.0,
+        requested_memory_gb=4.0,
+    )
+    db_session.add(a)
+    await db_session.commit()
+    await db_session.refresh(a)
+    return a
+
+
+@pytest.fixture
+async def grantee(db_session):
+    u = User(email="grantee@agents.local", password_hash=hash_password("pw"), name="G", role="user")
+    db_session.add(u)
+    await db_session.commit()
+    await db_session.refresh(u)
+    return u
+
+
+@pytest.fixture
+async def grantee_client(client: AsyncClient, grantee: User):
+    await client.post("/auth/login", json={"email": "grantee@agents.local", "password": "pw"})
+    return client
+
+
+async def _grant(db_session, agent: Agent, user: User, tier: str) -> None:
+    from api.models.agent_grant import AgentGrant
+
+    db_session.add(AgentGrant(agent_id=agent.id, user_id=user.id, tier=tier))
+    await db_session.commit()
+
+
+@pytest.mark.parametrize(
+    ("tier", "detail", "restart", "disconnect", "delete", "access"),
+    [
+        # tier      detail  restart  disconnect  delete  access
+        ("use", 200, 403, 403, 403, 403),
+        ("operate", 200, 202, 202, 403, 403),
+        ("admin", 200, 202, 202, 204, 200),
+    ],
+)
+async def test_each_tier_unlocks_exactly_its_endpoints(
+    grantee_client: AsyncClient,
+    db_session,
+    elastic_agent: Agent,
+    grantee: User,
+    elastic_enabled,
+    tier,
+    detail,
+    restart,
+    disconnect,
+    delete,
+    access,
+):
+    await _grant(db_session, elastic_agent, grantee, tier)
+    aid = elastic_agent.id
+
+    assert (await grantee_client.get(f"/admin/agents/{aid}")).status_code == detail
+    assert (await grantee_client.get(f"/admin/agents/{aid}/access")).status_code == access
+    assert (await grantee_client.post(f"/admin/agents/{aid}/disconnect")).status_code == disconnect
+    assert (await grantee_client.post(f"/admin/agents/{aid}/restart")).status_code == restart
+    # Delete last: it removes the row every later call would need.
+    assert (await grantee_client.delete(f"/admin/agents/{aid}")).status_code == delete
+
+
+async def test_fleet_level_actions_stay_on_the_global_permission(
+    grantee_client: AsyncClient, db_session, elastic_agent: Agent, grantee: User
+):
+    """Creating agents is a spend decision about the fleet, so Tier 3 on one agent
+    never confers it."""
+    await _grant(db_session, elastic_agent, grantee, "admin")
+    assert (await grantee_client.post("/admin/agents/bootstrap")).status_code == 403
+    assert (await grantee_client.get("/admin/agents/compute-options")).status_code == 403
+    assert (
+        await grantee_client.post("/admin/agents/elastic", json={"cpu": 2, "memory_gb": 4})
+    ).status_code == 403
+
+
+async def test_listing_annotates_each_row_with_the_callers_tier(
+    grantee_client: AsyncClient, db_session, elastic_agent: Agent, grantee: User
+):
+    open_agent = Agent(name="shared-open", status="healthy")
+    db_session.add(open_agent)
+    await db_session.commit()
+    await _grant(db_session, elastic_agent, grantee, "operate")
+
+    rows = {a["name"]: a for a in (await grantee_client.get("/admin/agents")).json()}
+    assert rows["elastic-1"]["access_tier"] == "operate"
+    assert rows["elastic-1"]["access_mode"] == "restricted"
+    assert rows["shared-open"]["access_tier"] == "use"
+
+
+async def test_metrics_are_filtered_to_visible_agents(
+    grantee_client: AsyncClient, elastic_agent: Agent
+):
+    """Telemetry is as sensitive as the monitoring page it feeds."""
+    resp = await grantee_client.get("/admin/agents/metrics")
+    assert resp.status_code == 200
+    assert [m for m in resp.json() if m["agent_id"] == str(elastic_agent.id)] == []
+
+
+async def test_me_reports_agent_access_for_a_grantee(
+    grantee_client: AsyncClient, db_session, elastic_agent: Agent, grantee: User
+):
+    """The SPA needs this to admit a grantee to the admin shell's Agents tab."""
+    assert (await grantee_client.get("/me")).json()["agent_access"] is False
+    await _grant(db_session, elastic_agent, grantee, "use")
+    assert (await grantee_client.get("/me")).json()["agent_access"] is True

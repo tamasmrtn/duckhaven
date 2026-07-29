@@ -2,6 +2,9 @@
 
 Shared by the admin and picker agent lists so the elastic fields (provider,
 lifecycle, size, hourly cost) are derived one way in one place.
+
+``access_tier`` is the calling principal's tier on the agent, so it is passed in
+rather than derived here: it is a property of the *request*, not of the agent.
 """
 
 from __future__ import annotations
@@ -11,7 +14,7 @@ from api.schemas.agent import AgentCapabilitiesOut, AgentOut
 from api.services.compute import pricing
 
 
-def build_agent_out(agent: Agent, *, status: str) -> AgentOut:
+def build_agent_out(agent: Agent, *, status: str, access_tier: str | None = None) -> AgentOut:
     caps = AgentCapabilitiesOut(**agent.capabilities) if agent.capabilities else None
     cost = None
     if agent.requested_cpu is not None and agent.requested_memory_gb is not None:
@@ -30,4 +33,6 @@ def build_agent_out(agent: Agent, *, status: str) -> AgentOut:
         requested_memory_gb=agent.requested_memory_gb,
         hourly_cost=cost,
         idle_timeout_minutes=idle_minutes,
+        access_tier=access_tier,
+        access_mode=agent.access_mode,
     )

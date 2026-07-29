@@ -22,6 +22,11 @@ class UserOut(BaseModel):
     # Populated for the authenticated user (`/me`) so the SPA can hide admin
     # navigation; left empty in bulk listings where it isn't needed.
     permissions: list[str] = []
+    # True when the user holds any per-agent grant, directly or through a workspace.
+    # Also `/me`-only. Separate from `permissions` because a per-agent grant is not a
+    # global permission: it admits the holder to the Agents area of the admin shell
+    # and to nothing else.
+    agent_access: bool = False
     created_at: datetime
 
 

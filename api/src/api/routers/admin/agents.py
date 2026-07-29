@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
-from api.deps import get_db, require_permission
+from api.deps import get_current_user, get_db, require_agent_tier, require_permission
 from api.models.agent import Agent
 from api.models.user import Credential, User
 from api.schemas.agent import (
@@ -20,6 +20,7 @@ from api.schemas.agent import (
     ElasticAgentCreate,
     MetricsSampleOut,
 )
+from api.services.agent_access import ResolvedAgent, visible_tiers
 from api.services.agent_dispatch import (
     connected_agent_ids,
     disconnect_agent,
@@ -38,24 +39,33 @@ BOOTSTRAP_TTL = timedelta(hours=24)
 
 @router.get("", response_model=list[AgentOut])
 async def list_agents(
-    admin: User = Depends(require_permission(Permission.AGENTS_MANAGE)),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[AgentOut]:
+    """Every agent the caller can see, annotated with their tier on each.
+
+    No longer gated on ``agents:manage``: a per-agent grantee needs this list to
+    reach the agents they hold a tier on. The filtering is the guard — an agent the
+    caller resolves no tier on is simply absent.
+    """
     result = await db.execute(select(Agent))
     agents = result.scalars().all()
+    tiers = await visible_tiers(db, user, agents)
     connected = await connected_agent_ids(db)
     out = []
     for agent in agents:
+        if agent.id not in tiers:
+            continue
         effective_status = agent.status
         if str(agent.id) in connected and effective_status == "unavailable":
             effective_status = "healthy"
-        out.append(build_agent_out(agent, status=effective_status))
+        out.append(build_agent_out(agent, status=effective_status, access_tier=tiers[agent.id]))
     return out
 
 
 @router.get("/metrics", response_model=list[AgentMetricsOut])
 async def list_metrics(
-    admin: User = Depends(require_permission(Permission.AGENTS_MANAGE)),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[AgentMetricsOut]:
     """Recent live-utilization samples per connected agent (in-memory ring buffer)."""
@@ -64,14 +74,19 @@ async def list_metrics(
         return []
     ids = [uuid.UUID(aid) for aid in buffers]
     result = await db.execute(select(Agent).where(Agent.id.in_(ids)))
-    names = {str(agent.id): agent.name for agent in result.scalars().all()}
+    agents = result.scalars().all()
+    # Telemetry is as sensitive as the monitoring page it feeds, so it obeys the
+    # same visibility rule.
+    tiers = await visible_tiers(db, user, agents)
+    names = {str(agent.id): agent.name for agent in agents if agent.id in tiers}
     return [
         AgentMetricsOut(
             agent_id=uuid.UUID(aid),
-            name=names.get(aid, aid),
+            name=names[aid],
             samples=[MetricsSampleOut(**sample) for sample in samples],
         )
         for aid, samples in buffers.items()
+        if aid in names
     ]
 
 
@@ -145,37 +160,28 @@ async def compute_options(
     )
 
 
-async def _get_agent_or_404(db: AsyncSession, agent_id: uuid.UUID) -> Agent:
-    agent = await db.get(Agent, agent_id)
-    if agent is None:
-        raise HTTPException(status_code=404, detail="Agent not found")
-    return agent
-
-
 # Must stay below the literal GET paths ("/metrics", "/compute-options"): FastAPI
 # matches in declaration order, so a path parameter at the router root declared
 # above them would swallow both and try to parse "metrics" as a UUID.
 @router.get("/{agent_id}", response_model=AgentOut)
 async def get_agent(
-    agent_id: uuid.UUID,
-    admin: User = Depends(require_permission(Permission.AGENTS_MANAGE)),
+    resolved: ResolvedAgent = Depends(require_agent_tier("use")),
     db: AsyncSession = Depends(get_db),
 ) -> AgentOut:
     """One agent, for its detail page."""
-    agent = await _get_agent_or_404(db, agent_id)
+    agent = resolved.agent
     # Same reconciliation as the list: a connected agent whose row still says
     # unavailable has simply not had its status written back yet.
     effective_status = agent.status
     if str(agent.id) in await connected_agent_ids(db) and effective_status == "unavailable":
         effective_status = "healthy"
-    return build_agent_out(agent, status=effective_status)
+    return build_agent_out(agent, status=effective_status, access_tier=resolved.tier)
 
 
 @router.get("/{agent_id}/monitoring", response_model=AgentMonitoringOut)
 async def agent_monitoring(
-    agent_id: uuid.UUID,
     window: str = DEFAULT_WINDOW,
-    admin: User = Depends(require_permission(Permission.AGENTS_MANAGE)),
+    resolved: ResolvedAgent = Depends(require_agent_tier("use")),
     db: AsyncSession = Depends(get_db),
 ) -> AgentMonitoringOut:
     """Every chart on the agent's Monitoring tab, for one time window.
@@ -189,8 +195,7 @@ async def agent_monitoring(
             status_code=422,
             detail=f"Unknown window {window!r}; expected one of {', '.join(WINDOWS)}",
         )
-    agent = await _get_agent_or_404(db, agent_id)
-    return AgentMonitoringOut(**await build_monitoring(db, agent, window))
+    return AgentMonitoringOut(**await build_monitoring(db, resolved.agent, window))
 
 
 @router.post("/elastic", response_model=AgentOut, status_code=status.HTTP_202_ACCEPTED)
@@ -200,7 +205,12 @@ async def create_elastic_agent(
     db: AsyncSession = Depends(get_db),
 ) -> AgentOut:
     """Provision an elastic agent at a chosen vCPU/memory size (the "new compute"
-    action), optionally with a per-agent idle-terminate timeout."""
+    action), optionally with a per-agent idle-terminate timeout.
+
+    Stays on the global ``agents:manage`` rather than a per-agent tier: creating an
+    agent is a spend decision about the fleet, and there is no agent yet to hold a
+    tier on. New agents start ``access_mode="open"``.
+    """
     if not settings.elastic_compute_enabled:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -228,19 +238,17 @@ async def create_elastic_agent(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail={"error": "provision_failed", "detail": "Failed to provision the agent."},
         )
-    return build_agent_out(agent, status=agent.status)
+    # The caller holds agents:manage, so their tier on anything is `admin`.
+    return build_agent_out(agent, status=agent.status, access_tier="admin")
 
 
 @router.post("/{agent_id}/restart", response_model=AgentOut, status_code=status.HTTP_202_ACCEPTED)
 async def restart_elastic_agent(
-    agent_id: uuid.UUID,
-    admin: User = Depends(require_permission(Permission.AGENTS_MANAGE)),
+    resolved: ResolvedAgent = Depends(require_agent_tier("operate")),
     db: AsyncSession = Depends(get_db),
 ) -> AgentOut:
     """Re-provision a terminated/failed elastic agent, reusing its row + settings."""
-    agent = (await db.execute(select(Agent).where(Agent.id == agent_id))).scalar_one_or_none()
-    if agent is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    agent = resolved.agent
     if agent.provider is None or agent.lifecycle not in ("terminated", "failed"):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -255,19 +263,16 @@ async def restart_elastic_agent(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail={"error": "provision_failed", "detail": "Failed to restart the agent."},
         )
-    return build_agent_out(restarted, status=restarted.status)
+    return build_agent_out(restarted, status=restarted.status, access_tier=resolved.tier)
 
 
 @router.post("/{agent_id}/terminate", response_model=AgentOut, status_code=status.HTTP_202_ACCEPTED)
 async def terminate_elastic_agent(
-    agent_id: uuid.UUID,
-    admin: User = Depends(require_permission(Permission.AGENTS_MANAGE)),
+    resolved: ResolvedAgent = Depends(require_agent_tier("operate")),
     db: AsyncSession = Depends(get_db),
 ) -> AgentOut:
     """Scale a running/provisioning elastic agent in now (destroy its instance)."""
-    agent = (await db.execute(select(Agent).where(Agent.id == agent_id))).scalar_one_or_none()
-    if agent is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    agent = resolved.agent
     if agent.provider is None or agent.lifecycle not in ("provisioning", "running"):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -277,32 +282,46 @@ async def terminate_elastic_agent(
             },
         )
     await compute_service.terminate_agent(db, agent, reason="manual")
-    return build_agent_out(agent, status=agent.status)
+    return build_agent_out(agent, status=agent.status, access_tier=resolved.tier)
+
+
+@router.post(
+    "/{agent_id}/disconnect", response_model=AgentOut, status_code=status.HTTP_202_ACCEPTED
+)
+async def force_disconnect_agent(
+    resolved: ResolvedAgent = Depends(require_agent_tier("operate")),
+    db: AsyncSession = Depends(get_db),
+) -> AgentOut:
+    """Drop the agent's WebSocket, forcing it to reconnect.
+
+    The lifecycle action that works on *every* agent: restart and terminate are
+    elastic-only, so without this a static, operator-run agent had no `operate`
+    action at all. The agent dials back in on its own, so this is a nudge for a
+    wedged socket, not a teardown -- nothing is destroyed and no credential is
+    revoked.
+    """
+    agent = resolved.agent
+    await disconnect_agent(db, agent.id)
+    await db.execute(sa.update(Agent).where(Agent.id == agent.id).values(status="unavailable"))
+    await db.commit()
+    return build_agent_out(agent, status="unavailable", access_tier=resolved.tier)
 
 
 @router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_agent(
-    agent_id: uuid.UUID,
-    admin: User = Depends(require_permission(Permission.AGENTS_MANAGE)),
+    resolved: ResolvedAgent = Depends(require_agent_tier("admin")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Permanently remove an agent (terminating a live instance first). Irreversible."""
-    agent = (await db.execute(select(Agent).where(Agent.id == agent_id))).scalar_one_or_none()
-    if agent is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-    await compute_service.delete_agent(db, agent)
+    await compute_service.delete_agent(db, resolved.agent)
 
 
 @router.delete("/{agent_id}/credential", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_agent(
-    agent_id: uuid.UUID,
-    admin: User = Depends(require_permission(Permission.AGENTS_MANAGE)),
+    resolved: ResolvedAgent = Depends(require_agent_tier("operate")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    result = await db.execute(select(Agent).where(Agent.id == agent_id))
-    agent = result.scalar_one_or_none()
-    if agent is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    agent_id = resolved.agent.id
     await db.execute(
         sa.delete(Credential).where(
             Credential.agent_id == agent_id,

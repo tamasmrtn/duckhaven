@@ -36,6 +36,7 @@ from api.routers import (
 from api.routers import (
     metrics as metrics_router,
 )
+from api.routers.admin import agent_access as admin_agent_access
 from api.routers.admin import agents as admin_agents
 from api.routers.admin import maintenance as admin_maintenance
 from api.routers.admin import service_accounts as admin_service_accounts
@@ -202,6 +203,7 @@ api_app.include_router(agents.router, tags=["agents"])
 api_app.include_router(assistant.router, tags=["assistant"])
 api_app.include_router(maintenance.router, tags=["maintenance"])
 api_app.include_router(admin_agents.router, prefix="/admin", tags=["admin"])
+api_app.include_router(admin_agent_access.router, prefix="/admin", tags=["admin"])
 api_app.include_router(admin_storage.router, prefix="/admin", tags=["admin"])
 api_app.include_router(admin_users.router, prefix="/admin", tags=["admin"])
 api_app.include_router(admin_service_accounts.router, prefix="/admin", tags=["admin"])

@@ -8,6 +8,7 @@ from httpx import AsyncClient
 
 from api.config import settings
 from api.models.agent import Agent
+from api.models.agent_grant import AgentGrant
 from api.models.query import Query
 from api.models.sql_session import SqlSession
 from api.models.user import User
@@ -745,3 +746,48 @@ async def test_non_member_cannot_read_the_statement_timeline(
 
     resp = await client.get(f"/sql/sessions/{session.id}/statements")
     assert resp.status_code == 403
+
+
+# --- per-agent access on session open ----------------------------------------
+
+
+async def test_open_session_on_a_restricted_agent_is_hidden(
+    authed_client: AsyncClient, workspace, agent: Agent, db_session, enabled
+):
+    """Checked ahead of the connectivity probe, so an ungranted caller cannot even
+    tell whether the agent is up."""
+    agent.access_mode = "restricted"
+    db_session.add(agent)
+    await db_session.commit()
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/sql/sessions", json={"agent_id": str(agent.id)}
+    )
+    assert resp.status_code == 404
+
+
+async def test_open_session_auto_pick_skips_unusable_agents(
+    authed_client: AsyncClient, workspace, connected_agent: Agent, db_session, enabled
+):
+    """No `agent_id` must not become a way around a denial on the only agent."""
+    connected_agent.access_mode = "restricted"
+    db_session.add(connected_agent)
+    await db_session.commit()
+
+    resp = await authed_client.post(f"/workspaces/{workspace.slug}/sql/sessions", json={})
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "No connected agent available"
+
+
+async def test_open_session_auto_pick_finds_a_granted_agent(
+    authed_client: AsyncClient, workspace, connected_agent: Agent, db_session, user: User, enabled
+):
+    connected_agent.access_mode = "restricted"
+    db_session.add(connected_agent)
+    db_session.add(AgentGrant(agent_id=connected_agent.id, user_id=user.id, tier="use"))
+    await db_session.commit()
+
+    resp = await authed_client.post(f"/workspaces/{workspace.slug}/sql/sessions", json={})
+    # Reaches dispatch (the agent's ack never arrives in this test, so it times out
+    # rather than 503-ing on selection).
+    assert resp.status_code != 503

@@ -26,6 +26,7 @@ from api.models.query import Query
 from api.models.table_metadata import TableMetadata
 from api.models.user import Credential
 from api.models.workspace import Workspace
+from api.services import agent_access
 from api.services import grants as grant_service
 from api.services.agent_capabilities import agent_supports_backend
 from api.services.agent_dispatch import (
@@ -367,19 +368,30 @@ def decode_parquet_page(
         os.unlink(path)
 
 
-async def pick_agent_for(db: AsyncSession, workspace: Workspace) -> Agent | None:
+async def pick_agent_for(
+    db: AsyncSession, workspace: Workspace, *, principal_id: uuid.UUID | None = None
+) -> Agent | None:
     """A connected agent whose capabilities support *every* backend kind across
-    the workspace's catalogs (all are attached on each query)."""
+    the workspace's catalogs (all are attached on each query).
+
+    When ``principal_id`` is given, only agents that principal may ``use`` are
+    considered. Pass it wherever the selection is made on someone's behalf:
+    without it a caller denied agent A could simply omit ``agent_id`` and be routed
+    to A anyway. ``None`` means a system actor with no principal to check against
+    (the maintenance scanner), which is deliberately unfiltered.
+    """
     connected = await connected_agent_ids(db)
     if not connected:
         return None
     catalogs = await resolve_workspace_catalogs(db, workspace.id)
     kinds = {c.storage_backend.kind for c in catalogs} or {"object_store"}
-    agents = (
+    agents = list(
         (await db.execute(sa.select(Agent).where(Agent.id.in_([uuid.UUID(c) for c in connected]))))
         .scalars()
         .all()
     )
+    if principal_id is not None:
+        agents = await agent_access.usable_agents(db, principal_id, agents)
     for agent in agents:
         if all(agent_supports_backend(agent.capabilities, kind) for kind in kinds):
             return agent

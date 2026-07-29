@@ -610,7 +610,7 @@ async def test_sample_returns_rows(auth_client: AsyncClient, backend: StorageBac
 
     fake_agent = types.SimpleNamespace(id=uuidlib.uuid4())
 
-    async def fake_pick(db, workspace):
+    async def fake_pick(db, workspace, *, principal_id=None):
         return fake_agent
 
     async def fake_run(db, **kwargs):
@@ -680,7 +680,7 @@ def _patch_probe(monkeypatch) -> list[tuple[str, str]]:
     upsert the count the websocket handler would have written, returning 'done'."""
     calls: list[tuple[str, str]] = []
 
-    async def fake_pick_agent_for(db, workspace):
+    async def fake_pick_agent_for(db, workspace, *, principal_id=None):
         return SimpleNamespace(id=uuid4())
 
     async def fake_run_sync_query(db, *, workspace, user_id, stats_for, **kwargs):
@@ -763,7 +763,7 @@ async def test_refresh_stats_503_when_no_agent_connected(
     slug = await _make_workspace(auth_client, backend, "alpha")
     _seed_worksheet_table(fake_polaris, slug, "main", "ws_a")
 
-    async def no_agent(db, workspace):
+    async def no_agent(db, workspace, *, principal_id=None):
         return None
 
     monkeypatch.setattr(query_module, "pick_agent_for", no_agent)
@@ -819,7 +819,7 @@ async def test_recount_503_when_no_agent_connected(
     slug = await _make_workspace(auth_client, backend, "alpha")
     _seed_worksheet_table(fake_polaris, slug, "main", "events")
 
-    async def no_agent(db, workspace):
+    async def no_agent(db, workspace, *, principal_id=None):
         return None
 
     monkeypatch.setattr(query_module, "pick_agent_for", no_agent)

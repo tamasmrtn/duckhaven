@@ -5,6 +5,7 @@ from conftest import seed_workspace
 from httpx import AsyncClient
 
 from api.models.agent import Agent
+from api.models.agent_grant import AgentGrant
 from api.models.user import User
 from api.models.workspace import Workspace, WorkspaceMember
 from api.services.agent_registry import registry
@@ -92,7 +93,7 @@ async def test_create_query_rejects_disallowed_sql(
 
 
 async def test_set_concurrency_command_intercepted(
-    authed_client: AsyncClient, workspace: Workspace, connected_agent
+    authed_client: AsyncClient, workspace: Workspace, connected_agent, db_session, user: User
 ):
     """`SET duckhaven_concurrency` is a control command: it is not rejected by the
     SQL guard, sends a SET_CONCURRENCY frame to the agent, and records a done
@@ -102,6 +103,9 @@ async def test_set_concurrency_command_intercepted(
     from duckhaven_shared.protocol import FrameType
 
     agent, mock_ws = connected_agent
+    # Retuning admission affects every query on the agent, so it needs `operate`.
+    db_session.add(AgentGrant(agent_id=agent.id, user_id=user.id, tier="operate"))
+    await db_session.commit()
     resp = await authed_client.post(
         f"/workspaces/{workspace.slug}/queries",
         json={"sql": "SET duckhaven_concurrency = 'single'", "agent_id": str(agent.id)},
@@ -1463,3 +1467,95 @@ async def test_elastic_pool_run_stamps_saved_query_last_run_at(
     listed = await authed_client.get(f"/workspaces/{workspace.slug}/saved-queries")
     stamped = next(q for q in listed.json() if q["id"] == sq_id)
     assert stamped["last_run_at"] is not None, "a pool run left the saved query 'never run'"
+
+
+# --- per-agent access on dispatch --------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def restricted_agent(db_session, agent: Agent):
+    agent.access_mode = "restricted"
+    db_session.add(agent)
+    await db_session.commit()
+    await db_session.refresh(agent)
+    return agent
+
+
+async def test_dispatch_to_a_restricted_agent_is_hidden(
+    authed_client: AsyncClient, workspace: Workspace, restricted_agent: Agent
+):
+    """404 rather than 403, and *before* the connectivity probe, so an ungranted
+    caller learns nothing about the agent — not even that it exists."""
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(restricted_agent.id)},
+    )
+    assert resp.status_code == 404
+
+
+async def test_dispatch_to_a_granted_restricted_agent_succeeds(
+    authed_client: AsyncClient,
+    workspace: Workspace,
+    connected_agent,
+    user: User,
+    db_session,
+):
+    agent, _ws = connected_agent
+    agent.access_mode = "restricted"
+    db_session.add(agent)
+    db_session.add(AgentGrant(agent_id=agent.id, user_id=user.id, tier="use"))
+    await db_session.commit()
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(agent.id)},
+    )
+    assert resp.status_code == 202
+
+
+async def test_an_open_agent_stays_dispatchable_without_any_grant(
+    authed_client: AsyncClient, workspace: Workspace, connected_agent
+):
+    """The behaviour-preserving default: `open` is what every agent is unless an
+    operator restricts it, and it dispatches exactly as it did before the ACL."""
+    agent, _ws = connected_agent
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(agent.id)},
+    )
+    assert resp.status_code == 202
+
+
+async def test_set_concurrency_needs_operate_not_use(
+    authed_client: AsyncClient, workspace: Workspace, connected_agent
+):
+    """`use` dispatches queries but must not retune admission for everyone on the
+    agent. The agent is open, so the caller has `use` and no more."""
+    agent, _ws = connected_agent
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SET duckhaven_concurrency = 'single'", "agent_id": str(agent.id)},
+    )
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["error"] == "agent_forbidden"
+
+
+async def test_elastic_auto_pick_skips_agents_the_caller_cannot_use(
+    authed_client: AsyncClient, workspace: Workspace, connected_agent, db_session, monkeypatch
+):
+    """Omitting `agent_id` must not be a way around a denial on a specific agent."""
+    from api.config import settings
+
+    monkeypatch.setattr(settings, "elastic_compute_enabled", True)
+    agent, _ws = connected_agent
+    agent.access_mode = "restricted"
+    db_session.add(agent)
+    await db_session.commit()
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries", json={"sql": "SELECT 1"}
+    )
+    assert resp.status_code == 202
+    # Parked unbound rather than dispatched to the agent the caller cannot use.
+    assert resp.json()["agent_id"] is None
+    assert resp.json()["status"] == "queued"

@@ -5,6 +5,8 @@ import pytest_asyncio
 from conftest import seed_workspace
 from httpx import AsyncClient
 
+from api.models.agent import Agent
+from api.models.agent_grant import AgentGrant
 from api.models.query import Query, SavedQuery
 from api.models.user import User
 from api.models.workspace import Workspace
@@ -199,3 +201,100 @@ async def test_non_member_forbidden(client: AsyncClient, db_session, workspace: 
     await client.post("/auth/login", json={"email": "out@sched.local", "password": "pw"})
     resp = await client.get(f"/workspaces/{workspace.slug}/schedules")
     assert resp.status_code in (403, 404)
+
+
+# --- per-agent access on the schedule's agent choice --------------------------
+
+
+@pytest_asyncio.fixture
+async def restricted_agent(db_session):
+    a = Agent(name="locked", status="healthy", access_mode="restricted")
+    db_session.add(a)
+    await db_session.commit()
+    await db_session.refresh(a)
+    return a
+
+
+async def test_create_schedule_rejects_an_agent_the_caller_cannot_use(
+    authed_client: AsyncClient,
+    workspace: Workspace,
+    saved_query: SavedQuery,
+    restricted_agent: Agent,
+):
+    """A restricted agent is invisible to an ungranted caller, so naming it reads as
+    naming an agent that does not exist."""
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/schedules",
+        json={
+            "saved_query_id": str(saved_query.id),
+            "cron": "0 2 * * *",
+            "agent_id": str(restricted_agent.id),
+        },
+    )
+    assert resp.status_code == 404
+
+
+async def test_create_schedule_accepts_an_agent_the_caller_was_granted(
+    authed_client: AsyncClient,
+    workspace: Workspace,
+    saved_query: SavedQuery,
+    restricted_agent: Agent,
+    user: User,
+    db_session,
+):
+    db_session.add(AgentGrant(agent_id=restricted_agent.id, user_id=user.id, tier="use"))
+    await db_session.commit()
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/schedules",
+        json={
+            "saved_query_id": str(saved_query.id),
+            "cron": "0 2 * * *",
+            "agent_id": str(restricted_agent.id),
+        },
+    )
+    assert resp.status_code == 201
+    assert resp.json()["agent_id"] == str(restricted_agent.id)
+
+
+async def test_patch_schedule_rejects_an_agent_the_caller_cannot_use(
+    authed_client: AsyncClient,
+    workspace: Workspace,
+    saved_query: SavedQuery,
+    restricted_agent: Agent,
+):
+    created = await authed_client.post(
+        f"/workspaces/{workspace.slug}/schedules",
+        json={"saved_query_id": str(saved_query.id), "cron": "0 2 * * *"},
+    )
+    resp = await authed_client.patch(
+        f"/workspaces/{workspace.slug}/schedules/{created.json()['id']}",
+        json={"agent_id": str(restricted_agent.id)},
+    )
+    assert resp.status_code == 404
+
+
+async def test_schedule_with_no_agent_is_still_allowed(
+    authed_client: AsyncClient, workspace: Workspace, saved_query: SavedQuery
+):
+    """Auto-select stays open at create time; the pick is filtered at dispatch."""
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/schedules",
+        json={"saved_query_id": str(saved_query.id), "cron": "0 2 * * *", "agent_id": None},
+    )
+    assert resp.status_code == 201
+
+
+async def test_saved_query_default_agent_is_checked_too(
+    authed_client: AsyncClient, workspace: Workspace, restricted_agent: Agent
+):
+    """`default_agent_id` is the scheduler's fallback, so it is a dispatch path and
+    gets the same `use` check as a schedule's explicit agent."""
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries",
+        json={
+            "name": "with-default",
+            "sql": "SELECT 1",
+            "default_agent_id": str(restricted_agent.id),
+        },
+    )
+    assert resp.status_code == 404

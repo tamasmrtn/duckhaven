@@ -26,12 +26,16 @@ import {
   useRestartAgent,
   useTerminateAgent,
 } from "@/queries/agents";
-import { useMe } from "@/queries/auth";
 import type { Agent, AgentStatus } from "@/types/agent";
 import type { BackendKind } from "@/types/storage-backend";
-import { agentSupportsBackend } from "@/types/agent";
+import { agentSupportsBackend, agentTierAtLeast } from "@/types/agent";
 import { cn } from "@/utils";
 
+/**
+ * No `minTier` prop: both call sites (the worksheet and the schedule dialog)
+ * need exactly `use`, and the server already filters `/agents` to what the
+ * caller may target — so the list is correct for both without configuration.
+ */
 interface AgentPickerProps {
   value: string | null;
   onChange: (agentId: string) => void;
@@ -102,8 +106,6 @@ export function AgentPicker({
 }: AgentPickerProps) {
   const [open, setOpen] = useState(false);
   const { data: agents = [] } = useAgents();
-  const { data: me } = useMe();
-  const isAdmin = me?.role === "admin";
   const terminate = useTerminateAgent();
   const restart = useRestartAgent();
   const selected = agents.find((a) => a.id === value);
@@ -158,7 +160,9 @@ export function AgentPicker({
                   className="flex flex-col items-start py-2"
                 >
                   <AgentRow agent={agent} backend={workspaceBackend} />
-                  {isAdmin && agent.provider && (
+                  {/* Per-agent, not per-user: someone can hold `operate` on the
+                      team's warehouse and only `use` on everything else. */}
+                  {agentTierAtLeast(agent, "operate") && agent.provider && (
                     <div className="mt-1.5 flex gap-1.5 pl-4.5">
                       {(agent.lifecycle === "running" ||
                         agent.lifecycle === "provisioning") && (

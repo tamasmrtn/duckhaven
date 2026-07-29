@@ -20,6 +20,7 @@ import {
   useComputeOptions,
   useCreateElasticAgent,
 } from "@/queries/agents";
+import { useMe } from "@/queries/auth";
 import type { BootstrapToken } from "@/types/agent";
 import { cn, plural } from "@/utils";
 import { agentDotClass, formatCost, relativeTime } from "./agentFormat";
@@ -374,6 +375,10 @@ export function AgentsPage() {
   const [computeOpen, setComputeOpen] = useState(false);
   const navigate = useNavigate();
   const { ws } = useParams({ from: "/$ws/admin/agents" });
+  // Adding compute is a fleet-level spend decision, so it stays on the global
+  // permission — a per-agent grant, however high, never confers it.
+  const { data: me } = useMe();
+  const canManageFleet = (me?.permissions ?? []).includes("agents:manage");
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -381,23 +386,25 @@ export function AgentsPage() {
         <p className="text-xs text-text-secondary font-tabular">
           {plural(agents.length, "agent")}
         </p>
-        <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            className="h-8 text-xs"
-            onClick={() => setComputeOpen(true)}
-          >
-            New compute
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-8 text-xs"
-            onClick={() => setBootstrapOpen(true)}
-          >
-            Generate bootstrap
-          </Button>
-        </div>
+        {canManageFleet && (
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() => setComputeOpen(true)}
+            >
+              New compute
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 text-xs"
+              onClick={() => setBootstrapOpen(true)}
+            >
+              Generate bootstrap
+            </Button>
+          </div>
+        )}
       </div>
 
       <div className="flex-1 overflow-auto">
@@ -413,16 +420,24 @@ export function AgentsPage() {
         ) : agents.length === 0 ? (
           <EmptyState
             icon={Server}
-            title="No agents connected"
-            description="Generate a bootstrap token to connect an agent host."
+            title={
+              canManageFleet ? "No agents connected" : "No agents available"
+            }
+            description={
+              canManageFleet
+                ? "Generate a bootstrap token to connect an agent host."
+                : "You have not been granted access to any agent yet."
+            }
             action={
-              <Button
-                size="sm"
-                className="h-8 text-xs"
-                onClick={() => setBootstrapOpen(true)}
-              >
-                Generate bootstrap
-              </Button>
+              canManageFleet ? (
+                <Button
+                  size="sm"
+                  className="h-8 text-xs"
+                  onClick={() => setBootstrapOpen(true)}
+                >
+                  Generate bootstrap
+                </Button>
+              ) : undefined
             }
           />
         ) : (

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useParams } from "@tanstack/react-router";
 import { CalendarClock, Plus } from "lucide-react";
+import { ApiError } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -334,6 +335,7 @@ function ScheduleDialog({
 
   // Re-seed the form whenever the dialog (re)opens for a different target.
   const [seedKey, setSeedKey] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const key = schedule ? `edit:${schedule.id}` : open ? "create" : null;
   if (key && key !== seedKey) {
     setSeedKey(key);
@@ -358,11 +360,25 @@ function ScheduleDialog({
 
   async function handleSave() {
     if (!valid) return;
+    setSaveError(null);
     const data = { cron: cron.trim(), enabled, agent_id: agentId };
-    if (schedule) {
-      await update.mutateAsync({ id: schedule.id, data });
-    } else {
-      await create.mutateAsync({ saved_query_id: savedQueryId, ...data });
+    try {
+      if (schedule) {
+        await update.mutateAsync({ id: schedule.id, data });
+      } else {
+        await create.mutateAsync({ saved_query_id: savedQueryId, ...data });
+      }
+    } catch (e) {
+      // Chiefly the per-agent access check: the picker only offers agents you
+      // may use, but a grant can be revoked while this dialog is open.
+      setSaveError(
+        e instanceof ApiError && (e.status === 403 || e.status === 404)
+          ? "You no longer have access to the selected agent. Pick another one."
+          : e instanceof Error
+            ? e.message
+            : "Could not save the schedule.",
+      );
+      return;
     }
     onClose();
   }
@@ -490,6 +506,12 @@ function ScheduleDialog({
             </div>
           )}
         </div>
+
+        {saveError && (
+          <p role="alert" className="text-xs text-destructive">
+            {saveError}
+          </p>
+        )}
 
         <DialogFooter className="sm:justify-between">
           {schedule ? (

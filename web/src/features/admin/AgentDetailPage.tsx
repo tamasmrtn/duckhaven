@@ -8,6 +8,7 @@ import {
   Power,
   RotateCw,
   Trash2,
+  Unplug,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,12 +26,15 @@ import {
   useAdminAgent,
   useComputeOptions,
   useDeleteAgent,
+  useDisconnectAgent,
   useRestartAgent,
   useRevokeAgent,
   useTerminateAgent,
 } from "@/queries/agents";
 import { useAgentMonitoring } from "@/queries/agents";
 import type { Agent, AgentStatus } from "@/types/agent";
+import { agentTierAtLeast } from "@/types/agent";
+import { AgentAccessTab } from "./AgentAccessTab";
 import { formatCost } from "./agentFormat";
 import { MonitoringTab } from "./monitoring/MonitoringTab";
 
@@ -57,17 +61,26 @@ function OverviewTab({ agent }: { agent: Agent }) {
   const revoke = useRevokeAgent();
   const restart = useRestartAgent();
   const terminate = useTerminateAgent();
+  const disconnect = useDisconnectAgent();
   const deleteAgent = useDeleteAgent();
   const [confirmDelete, setConfirmDelete] = useState(false);
+
+  // Lifecycle actions need `operate`, destroying the agent needs `admin`. The
+  // API enforces both; hiding them keeps the page honest about what this user
+  // can actually do rather than offering a button that 403s.
+  const canOperate = agentTierAtLeast(agent, "operate");
+  const canAdminister = agentTierAtLeast(agent, "admin");
 
   // "Recent errors" used to be a hardcoded 0. It is now the real count over the
   // shortest window, which is the one an operator checking on a live problem means.
   const { data: recent } = useAgentMonitoring(agent.id, "1h");
 
   const restartable =
+    canOperate &&
     !!agent.provider &&
     (agent.lifecycle === "terminated" || agent.lifecycle === "failed");
   const terminable =
+    canOperate &&
     !!agent.provider &&
     (agent.lifecycle === "running" || agent.lifecycle === "provisioning");
 
@@ -193,7 +206,19 @@ function OverviewTab({ agent }: { agent: Agent }) {
             {terminate.isPending ? "Terminating…" : "Terminate"}
           </Button>
         )}
-        {!agent.provider && (
+        {canOperate && agent.status !== "unavailable" && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 text-xs"
+            onClick={() => disconnect.mutate(agent.id)}
+            disabled={disconnect.isPending}
+          >
+            <Unplug className="size-3.5" />
+            {disconnect.isPending ? "Disconnecting…" : "Force disconnect"}
+          </Button>
+        )}
+        {canOperate && !agent.provider && (
           <Button
             variant="outline"
             size="sm"
@@ -218,15 +243,17 @@ function OverviewTab({ agent }: { agent: Agent }) {
         >
           View audit for this agent
         </Button>
-        <Button
-          variant="destructive"
-          size="sm"
-          className="gap-1.5 text-xs"
-          onClick={() => setConfirmDelete(true)}
-        >
-          <Trash2 className="size-3.5" />
-          Delete
-        </Button>
+        {canAdminister && (
+          <Button
+            variant="destructive"
+            size="sm"
+            className="gap-1.5 text-xs"
+            onClick={() => setConfirmDelete(true)}
+          >
+            <Trash2 className="size-3.5" />
+            Delete
+          </Button>
+        )}
       </div>
 
       <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
@@ -343,6 +370,13 @@ export function AgentDetailPage() {
           <TabsTrigger value="overview" className="text-xs">
             Overview
           </TabsTrigger>
+          {/* Only Tier 3 may read or change the ACL, so the tab is not offered
+              to anyone else rather than rendering a panel that 403s. */}
+          {agentTierAtLeast(agent, "admin") && (
+            <TabsTrigger value="access" className="text-xs">
+              Access
+            </TabsTrigger>
+          )}
         </TabsList>
         <TabsContent
           value="monitoring"
@@ -356,6 +390,14 @@ export function AgentDetailPage() {
         >
           <OverviewTab agent={agent} />
         </TabsContent>
+        {agentTierAtLeast(agent, "admin") && (
+          <TabsContent
+            value="access"
+            className="mt-0 min-h-0 flex-1 overflow-auto p-4"
+          >
+            <AgentAccessTab agent={agent} />
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );

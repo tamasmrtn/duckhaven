@@ -43,8 +43,8 @@ A server old enough to lack this endpoint returns **404**; treat that as the old
 | `workspaces` | Create and list workspaces and members |
 | `catalog` | Catalogs (create/attach/detach/drop), [storage migrations](#catalog-storage-migrations), schemas, tables, table detail, sample rows, snapshot history |
 | `queries` | Submit queries, page result rows, profiles, saved queries, history |
-| `agents` | List agents and capabilities |
-| `admin` | Agents (bootstrap/revoke), storage backends, users, service accounts & PATs, maintenance |
+| `agents` | List the agents you may use, with their capabilities |
+| `admin` | Agents (detail, monitoring, lifecycle, bootstrap/revoke, [access](#per-agent-access)), storage backends, users, service accounts & PATs, maintenance |
 
 ## Authentication
 
@@ -100,3 +100,34 @@ creator or an admin with the catalogs permission. See
 
 While a migration is active the catalog is read-only: write queries against a workspace with the migrating catalog
 attached are rejected with **409** (`{"error": "catalog_read_only"}`); reads are unaffected.
+
+## Per-agent access
+
+Every agent endpoint below `/api/admin/agents/{agent_id}` is authorized by the caller's **tier** on that specific
+agent — `use` < `operate` < `admin` — rather than by the global `agents:manage` permission alone. Holding
+`agents:manage` confers `admin` on every agent. See
+[Per-agent access](../concepts/permissions.md#per-agent-access) for the model.
+
+| Tier required | Endpoints |
+|---|---|
+| `use` | `GET /api/admin/agents/{id}`, `GET /api/admin/agents/{id}/monitoring` |
+| `operate` | `POST …/{id}/restart`, `POST …/{id}/terminate`, `POST …/{id}/disconnect`, `DELETE …/{id}/credential` |
+| `admin` | `DELETE /api/admin/agents/{id}`, and the access endpoints below |
+
+`POST /api/admin/agents/elastic`, `POST /api/admin/agents/bootstrap` and `GET /api/admin/agents/compute-options`
+remain on the global `agents:manage` permission: they are fleet-level, not about one agent.
+
+An agent the caller has no tier on is **invisible** — omitted from `GET /api/agents`, `GET /api/admin/agents` and
+`GET /api/admin/agents/metrics`, and **404** from its own routes. An insufficient-but-nonzero tier returns **403**
+with `{"error": "agent_forbidden"}`. The same `use` check applies wherever an agent is named for work: submitting a
+query or opening a SQL session with an explicit `agent_id`, and setting `agent_id` on a schedule or
+`default_agent_id` on a saved query.
+
+Every agent object carries `access_tier` (the requesting caller's tier) and `access_mode` (`open` | `restricted`).
+
+| Method & path | Purpose |
+|---|---|
+| `GET /api/admin/agents/{id}/access` | The agent's access mode, its grants, and the candidate principals to grant to. |
+| `PATCH /api/admin/agents/{id}/access-mode` | Body: `{"access_mode": "open" \| "restricted"}`. Returns the full access payload. |
+| `PUT /api/admin/agents/{id}/grants` | Upsert a grant. Body: `{"user_id"` **or** `"workspace_id", "tier"}`. **201** on insert, **200** on update. **422** if neither or both principals are given, or if a workspace is granted `admin`. |
+| `DELETE /api/admin/agents/{id}/grants/{grant_id}` | Revoke a grant. **204**. |

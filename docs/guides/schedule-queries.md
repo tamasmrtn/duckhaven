@@ -21,9 +21,9 @@ schedules) and **Runs** (every scheduled run). On the **Schedules** tab click
 - **Enabled** — a schedule only runs while it is enabled. Disable it to pause runs
   without losing the schedule.
 - **Agent** — the [agent](../concepts/agents.md) that executes each run. It is
-  pre-filled from the saved query's default agent, but you can choose any agent. If
-  the chosen agent is offline when a run is due, that run is recorded as **failed**
-  (it does not silently fall back to another agent).
+  pre-filled from the saved query's default agent, and the list offers only agents
+  you are allowed to run on. If the chosen agent is offline when a run is due, that
+  run is recorded as **failed** (it does not silently fall back to another agent).
 
 Each schedule row shows its cron, agent, status, and next/last run. Click a row to
 edit it (or **Remove** it).
@@ -51,6 +51,27 @@ few behaviors worth knowing:
   replay the missed runs; it simply runs at the next scheduled time.
 - **No retries.** A failed run waits for its next scheduled tick. There is no
   separate retry or backoff.
+
+### If your agent access is revoked
+
+A schedule has no one sitting behind it at run time, so it runs as **the person who
+created it**. Access to the chosen [agent](../concepts/agents.md#who-can-use-an-agent)
+is re-checked on **every** fire, against that person — not captured when the schedule
+was saved.
+
+So if the creator later loses access to that agent, its runs start failing with
+`Schedule owner no longer has access to the configured agent`, visible in the **Runs**
+tab and in History. Two things deliberately do *not* happen:
+
+- The schedule is **not disabled**. Restore the grant and the next run succeeds on its
+  own, with nothing to re-enable.
+- The run is **not re-routed** to some other agent the creator can still use. Choosing
+  an agent is an explicit decision about where work runs, and silently moving it
+  somewhere else would be a surprising reinterpretation of that choice.
+
+If the schedule should outlive its creator's access, either grant the creator access
+again, or have someone who does hold access recreate the schedule — the new schedule
+runs as them.
 
 ## Notes
 

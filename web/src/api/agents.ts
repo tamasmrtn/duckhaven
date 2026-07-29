@@ -1,15 +1,25 @@
 import { get, post, del } from "./client";
 import type {
   Agent,
+  AgentMonitoring,
   BootstrapToken,
   ComputeOptions,
   CreateElasticAgentBody,
+  MonitoringWindow,
 } from "@/types/agent";
 
 export const agentsApi = {
   list: () => get<Agent[]>("/agents"),
 
   adminList: () => get<Agent[]>("/admin/agents"),
+
+  adminGet: (id: string) => get<Agent>(`/admin/agents/${id}`),
+
+  // One request per window change: the series share a bucket grid, so fetching
+  // them separately would let a slow response leave two charts describing
+  // different stretches of time.
+  monitoring: (id: string, window: MonitoringWindow) =>
+    get<AgentMonitoring>(`/admin/agents/${id}/monitoring?window=${window}`),
 
   bootstrap: () => post<BootstrapToken>("/admin/agents/bootstrap"),
 

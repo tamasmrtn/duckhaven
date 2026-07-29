@@ -28,6 +28,10 @@ export const queriesApi = {
       origin?: string;
       session_id?: string;
       agent_id?: string;
+      // ISO timestamps bounding started_at. Admin-only server-side, like
+      // user_id/agent_id.
+      since?: string;
+      until?: string;
     },
   ) => {
     const qs = new URLSearchParams();
@@ -36,6 +40,8 @@ export const queriesApi = {
     if (params?.origin) qs.set("origin", params.origin);
     if (params?.session_id) qs.set("session_id", params.session_id);
     if (params?.agent_id) qs.set("agent_id", params.agent_id);
+    if (params?.since) qs.set("since", params.since);
+    if (params?.until) qs.set("until", params.until);
     const suffix = qs.toString();
     return get<Query[]>(
       `/workspaces/${ws}/queries${suffix ? `?${suffix}` : ""}`,

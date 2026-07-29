@@ -16,13 +16,8 @@ import { useWorkspaceQueries } from "@/queries/queries";
 import { useAgents } from "@/queries/agents";
 import { useMe } from "@/queries/auth";
 import { useWorkspaces } from "@/queries/workspaces";
+import { DurationCell, SqlCell } from "@/components/app/queryTableCells";
 import { cn, shortId } from "@/utils";
-
-function formatDuration(ms: number | null) {
-  if (ms == null) return "—";
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
-}
 
 // Interactive runs are stored with a null origin, so "interactive" is the
 // server's spelling for that case rather than a real column value.
@@ -229,18 +224,7 @@ export function HistoryPage() {
                         shortId(q.workspace_id)}
                     </TableCell>
                   )}
-                  {!all && (
-                    <TableCell className="px-4 py-2 max-w-xs">
-                      <pre className="truncate font-mono text-xs text-text-primary">
-                        {q.sql}
-                      </pre>
-                      {q.error && (
-                        <p className="mt-0.5 text-2xs text-[var(--status-failed)] truncate">
-                          {q.error}
-                        </p>
-                      )}
-                    </TableCell>
-                  )}
+                  {!all && <SqlCell query={q} />}
                   <TableCell className="px-4 py-2 font-mono text-xs text-text-secondary">
                     {agentName.get(q.agent_id) ?? shortId(q.agent_id)}
                   </TableCell>
@@ -270,24 +254,11 @@ export function HistoryPage() {
                       )}
                     </TableCell>
                   )}
-                  {all && (
-                    <TableCell className="px-4 py-2 max-w-xs">
-                      <pre className="truncate font-mono text-xs text-text-primary">
-                        {q.sql}
-                      </pre>
-                      {q.error && (
-                        <p className="mt-0.5 text-2xs text-[var(--status-failed)] truncate">
-                          {q.error}
-                        </p>
-                      )}
-                    </TableCell>
-                  )}
+                  {all && <SqlCell query={q} />}
                   <TableCell className="px-4 py-2 font-mono text-xs text-text-secondary font-tabular">
                     {q.row_count != null ? q.row_count.toLocaleString() : "—"}
                   </TableCell>
-                  <TableCell className="px-4 py-2 font-mono text-xs text-text-secondary font-tabular">
-                    {formatDuration(q.duration_ms)}
-                  </TableCell>
+                  <DurationCell query={q} />
                   <TableCell className="px-4 py-2 font-mono text-2xs text-text-tertiary">
                     {new Date(q.started_at).toLocaleString()}
                   </TableCell>

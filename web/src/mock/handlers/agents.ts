@@ -1,14 +1,26 @@
 import { http, HttpResponse } from "msw";
 import { AGENTS } from "../fixtures/agents";
+import { makeEmptyMonitoring, makeMonitoring } from "../fixtures/monitoring";
 import { nextBootstrapToken } from "../lib/seed";
 import { httpError } from "../lib/errors";
-import type { Agent } from "@/types/agent";
+import type { Agent, MonitoringWindow } from "@/types/agent";
+import { MONITORING_WINDOWS } from "@/types/agent";
 
 // Mirrors the backend's ACI ranges + rate defaults.
 const PRICE_VCPU = 0.0486;
 const PRICE_MEM = 0.0054;
 
 let elasticSeq = 0;
+
+// Sibling routes under /api/admin/agents/ that are literal path segments, not
+// agent ids. Returning undefined for these lets MSW fall through to their own
+// handlers.
+const LITERAL_AGENT_PATHS = [
+  "metrics",
+  "compute-options",
+  "bootstrap",
+  "elastic",
+];
 
 export const agentHandlers = [
   http.get("/api/agents", () => {
@@ -79,6 +91,32 @@ export const agentHandlers = [
     };
     AGENTS.push(agent);
     return HttpResponse.json(agent, { status: 202 });
+  }),
+
+  http.get("/api/admin/agents/:id", ({ params }) => {
+    // `:id` would otherwise swallow the sibling literal routes. Declaration
+    // order is not enough here: /api/admin/agents/metrics is served from
+    // handlers/metrics.ts, so the guard has to live in the pattern that would
+    // shadow it rather than in the order the two files happen to be composed in.
+    if (LITERAL_AGENT_PATHS.includes(String(params.id))) return;
+    const agent = AGENTS.find((a) => a.id === params.id);
+    if (!agent) return httpError(404, "Agent not found");
+    return HttpResponse.json(agent);
+  }),
+
+  http.get("/api/admin/agents/:id/monitoring", ({ params, request }) => {
+    const agent = AGENTS.find((a) => a.id === params.id);
+    if (!agent) return httpError(404, "Agent not found");
+    const raw = new URL(request.url).searchParams.get("window") ?? "8h";
+    if (!MONITORING_WINDOWS.includes(raw as MonitoringWindow)) {
+      return httpError(422, `Unknown window '${raw}'`);
+    }
+    const window = raw as MonitoringWindow;
+    // An agent that never connected has nothing to show — the case the empty
+    // state and the null-vs-zero rendering exist for.
+    return HttpResponse.json(
+      agent.capabilities ? makeMonitoring(window) : makeEmptyMonitoring(window),
+    );
   }),
 
   http.post("/api/admin/agents/:id/restart", ({ params }) => {

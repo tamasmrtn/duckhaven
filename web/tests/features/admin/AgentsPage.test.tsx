@@ -40,33 +40,19 @@ describe('AgentsPage', () => {
     expect(await screen.findByText(/no agents connected/i)).toBeInTheDocument()
   })
 
-  it('opens the agent drawer when a row is clicked', async () => {
+  it('navigates to the agent detail page when a row is clicked', async () => {
     const user = userEvent.setup()
     renderWithProviders({ initialRoute: AGENTS_ROUTE })
     await screen.findByText('agent-b')
 
     await user.click(screen.getByText('agent-b'))
 
-    // Sheet becomes visible with the agent name in the header
-    await waitFor(() => {
-      expect(screen.getAllByText('agent-b').length).toBeGreaterThan(1)
-    })
-  })
-
-  it('agent drawer has an accessible description', async () => {
-    const user = userEvent.setup()
-    renderWithProviders({ initialRoute: AGENTS_ROUTE })
-    await screen.findByText('agent-b')
-
-    await user.click(screen.getByText('agent-b'))
-
-    // SheetContent must wire aria-describedby to a description, otherwise Radix
-    // logs a missing-description a11y warning when the drawer opens.
-    const dialog = await screen.findByRole('dialog')
-    expect(dialog).toHaveAttribute('aria-describedby')
+    // The detail route replaces the old drawer, so the view is linkable and the
+    // charts get the full width.
     expect(
-      screen.getByText('Agent status, capabilities, and credential management.'),
+      await screen.findByRole('button', { name: /back to agents/i }),
     ).toBeInTheDocument()
+    expect(await screen.findByRole('tab', { name: /monitoring/i })).toBeInTheDocument()
   })
 
   it('opens the bootstrap modal when the button is clicked', async () => {
@@ -248,92 +234,6 @@ describe('AgentsPage', () => {
       expect(await screen.findByText('analytics-warehouse')).toBeInTheDocument()
     })
 
-    it('shows a Restart button for a terminated agent and re-provisions it', async () => {
-      let restarted = false
-      server.use(
-        http.get('/api/admin/agents', () =>
-          HttpResponse.json([
-            {
-              id: 'ag-term',
-              name: 'gone-agent',
-              status: 'unavailable',
-              capabilities: null,
-              last_ping_at: null,
-              created_at: new Date().toISOString(),
-              provider: 'azure_aci',
-              lifecycle: 'terminated',
-              requested_cpu: 2,
-              requested_memory_gb: 8,
-              hourly_cost: 0.14,
-              idle_timeout_minutes: 10,
-            },
-          ]),
-        ),
-        http.post('/api/admin/agents/ag-term/restart', () => {
-          restarted = true
-          return HttpResponse.json({ id: 'ag-term', lifecycle: 'provisioning' }, { status: 202 })
-        }),
-      )
-      const user = userEvent.setup()
-      renderWithProviders({ initialRoute: AGENTS_ROUTE })
-
-      await user.click(await screen.findByText('gone-agent'))
-      await user.click(await screen.findByRole('button', { name: /restart agent/i }))
-      await waitFor(() => expect(restarted).toBe(true))
-    })
-
-    it('navigates to the agent-filtered audit history', async () => {
-      const user = userEvent.setup()
-      renderWithProviders({ initialRoute: AGENTS_ROUTE })
-
-      await user.click(await screen.findByText('warehouse-a'))
-      await user.click(
-        await screen.findByRole('button', { name: /view audit for this agent/i }),
-      )
-      // Lands on the workspace history page filtered by this agent.
-      expect(await screen.findByRole('heading', { name: /history/i })).toBeInTheDocument()
-      expect(await screen.findByLabelText(/clear agent filter/i)).toBeInTheDocument()
-    })
-
-    it('terminates a running elastic agent from the drawer', async () => {
-      let terminated = false
-      server.use(
-        http.post('/api/admin/agents/ag-5/terminate', () => {
-          terminated = true
-          return HttpResponse.json({ id: 'ag-5', lifecycle: 'terminated' }, { status: 202 })
-        }),
-      )
-      const user = userEvent.setup()
-      renderWithProviders({ initialRoute: AGENTS_ROUTE })
-
-      // warehouse-a (ag-5) is a running elastic agent.
-      await user.click(await screen.findByText('warehouse-a'))
-      await user.click(await screen.findByRole('button', { name: /^terminate$/i }))
-      await waitFor(() => expect(terminated).toBe(true))
-    })
-
-    it('permanently deletes an agent after confirming the warning', async () => {
-      let deleted = false
-      server.use(
-        http.delete('/api/admin/agents/ag-5', () => {
-          deleted = true
-          return new HttpResponse(null, { status: 204 })
-        }),
-      )
-      const user = userEvent.setup()
-      renderWithProviders({ initialRoute: AGENTS_ROUTE })
-
-      await user.click(await screen.findByText('warehouse-a'))
-      await user.click(await screen.findByRole('button', { name: /^delete$/i }))
-
-      // A confirmation dialog warns about consequences before deleting.
-      expect(await screen.findByRole('heading', { name: /delete agent/i })).toBeInTheDocument()
-      expect(screen.getByText(/cannot be undone/i)).toBeInTheDocument()
-      expect(deleted).toBe(false) // not deleted until confirmed
-
-      await user.click(screen.getByRole('button', { name: /delete permanently/i }))
-      await waitFor(() => expect(deleted).toBe(true))
-    })
   })
 
   it('renders cost in the currency the provider quotes, not a hardcoded $', async () => {

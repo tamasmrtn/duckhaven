@@ -120,4 +120,72 @@ describe('agents contract', () => {
     server.use(http.get('/api/agents', () => new Response('x', { status: 401 })))
     await expect(agentsApi.list()).rejects.toBeInstanceOf(ApiError)
   })
+
+  it('GET /admin/agents/{id} is AgentOut-shaped', async () => {
+    const agent = await agentsApi.adminGet('ag-5')
+    expect(agent).toMatchObject({ id: 'ag-5', name: 'warehouse-a' })
+    expect(agent).toHaveProperty('lifecycle')
+    expect(agent).toHaveProperty('hourly_cost')
+  })
+
+  it('the id route does not shadow its literal siblings', async () => {
+    // /metrics is served from a different handler file, so declaration order
+    // alone would not keep ":id" from swallowing it.
+    await expect(agentsApi.adminGet('ag-5')).resolves.toBeTruthy()
+    const metrics = await fetch('/api/admin/agents/metrics').then((r) => r.json())
+    expect(Array.isArray(metrics)).toBe(true)
+    const options = await agentsApi.computeOptions()
+    expect(options).toHaveProperty('cpu_min')
+  })
+
+  it('monitoring mirrors AgentMonitoringOut, on one shared bucket grid', async () => {
+    const data = await agentsApi.monitoring('ag-5', '8h')
+    expect(Object.keys(data).sort()).toEqual([
+      'activity',
+      'bucket_seconds',
+      'completed_query_count',
+      'end',
+      'failures',
+      'peak_query_count',
+      'start',
+      'summary',
+      'utilization',
+      'window',
+    ])
+    expect(data.bucket_seconds).toBe(300)
+    // Every series is projected onto the same grid — the property that lets the
+    // charts be stacked and read against each other.
+    const n = data.peak_query_count.length
+    expect(data.completed_query_count).toHaveLength(n)
+    expect(data.activity).toHaveLength(n)
+    expect(data.utilization).toHaveLength(n)
+    expect(Object.keys(data.summary).sort()).toEqual([
+      'busy_ratio',
+      'completed',
+      'failed',
+      'idle_timeout_minutes',
+      'uptime_s',
+    ])
+  })
+
+  it('each window carries the bucket size the backend documents', async () => {
+    for (const [window, bucket] of [
+      ['1h', 60],
+      ['3h', 120],
+      ['8h', 300],
+      ['12h', 300],
+      ['24h', 600],
+    ] as const) {
+      const data = await agentsApi.monitoring('ag-5', window)
+      expect(data.bucket_seconds).toBe(bucket)
+      expect(data.peak_query_count.length).toBeGreaterThanOrEqual(60)
+      expect(data.peak_query_count.length).toBeLessThanOrEqual(144)
+    }
+  })
+
+  it('rejects an unknown window with a 422, like the API', async () => {
+    await expect(
+      agentsApi.monitoring('ag-5', '7d' as '8h'),
+    ).rejects.toMatchObject({ name: 'ApiError', status: 422 })
+  })
 })

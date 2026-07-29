@@ -18,23 +18,29 @@ import contextlib
 import hashlib
 import logging
 import secrets
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 
 import sqlalchemy as sa
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
+from api.metrics import record_agent_provision
 from api.models.agent import Agent
 from api.models.query import Query, SavedQuery
 from api.models.table_metadata import TableMetadata
 from api.models.user import Credential
 from api.models.workspace import Workspace
 from api.services.agent_dispatch import disconnect_agent
+from api.services.agent_telemetry import record_lifecycle_event
 from api.services.compute.backends import ProvisionRequest, get_backend
 from api.services.workspace import resolve_workspace_catalogs
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer("duckhaven.api")
 
 # Elastic lifecycle states that count as "supply already exists / on its way" so
 # ensure_agent doesn't provision a duplicate.
@@ -153,6 +159,7 @@ async def terminate_agent(db: AsyncSession, agent: Agent, *, reason: str) -> Non
     backend call is best-effort — if it raises, the row is still marked so the leak
     sweep retries against the still-present instance next cycle."""
     agent.lifecycle = "terminating"
+    record_lifecycle_event(db, agent.id, "terminating", reason=reason)
     await db.commit()
     if agent.instance_id:
         with contextlib.suppress(Exception):
@@ -176,6 +183,7 @@ async def terminate_agent(db: AsyncSession, agent: Agent, *, reason: str) -> Non
     agent.terminated_at = datetime.now(tz=UTC)
     # An agent terminated while still provisioning never consumed its token.
     await revoke_bootstrap_credentials(db, agent.id)
+    record_lifecycle_event(db, agent.id, "terminated", reason=reason)
     await db.commit()
     logger.info("Terminated elastic agent %s (%s)", agent.id, reason)
 
@@ -232,6 +240,7 @@ async def restart_elastic_agent(db: AsyncSession, agent: Agent) -> Agent | None:
     agent.terminated_at = None
     agent.last_active_at = None
     agent.instance_id = _instance_id(agent.id)
+    record_lifecycle_event(db, agent.id, "provisioning", reason="restart")
     await db.commit()
     return await _mint_and_provision(
         db,
@@ -268,6 +277,7 @@ async def _create_and_provision(
     db.add(agent)
     await db.flush()  # assign agent.id
     agent.instance_id = _instance_id(agent.id)
+    record_lifecycle_event(db, agent.id, "provisioning")
     await db.commit()
     return await _mint_and_provision(db, agent, cpu=cpu, memory_gb=memory_gb)
 
@@ -322,16 +332,30 @@ async def _mint_and_provision(
         memory_gb=memory_gb,
         tags={"duckhaven-managed": "true", "duckhaven-agent-id": str(agent.id)},
     )
-    try:
-        await get_backend(provider).provision(req)
-    except Exception:
-        logger.exception("Elastic provision failed for agent %s", agent.id)
-        agent.lifecycle = "failed"
-        agent.terminated_at = datetime.now(tz=UTC)
-        await revoke_bootstrap_credentials(db, agent.id)
-        await db.commit()
-        return None
+    # A cold start is the largest unexplained gap a user can see: the query's own
+    # dispatch span cannot begin until an agent exists. Making provisioning a span
+    # of its own turns that gap into a labelled child in the same trace.
+    started = time.monotonic()
+    with tracer.start_as_current_span("provision_agent") as span:
+        span.set_attribute("duckhaven.agent_id", str(agent.id))
+        span.set_attribute("duckhaven.compute_provider", provider)
+        span.set_attribute("duckhaven.requested_cpu", cpu)
+        span.set_attribute("duckhaven.requested_memory_gb", memory_gb)
+        try:
+            await get_backend(provider).provision(req)
+        except Exception as exc:
+            span.record_exception(exc)
+            span.set_status(Status(StatusCode.ERROR, "provision failed"))
+            record_agent_provision(provider, "failure")
+            logger.exception("Elastic provision failed for agent %s", agent.id)
+            agent.lifecycle = "failed"
+            agent.terminated_at = datetime.now(tz=UTC)
+            await revoke_bootstrap_credentials(db, agent.id)
+            record_lifecycle_event(db, agent.id, "failed", reason="provision_failed")
+            await db.commit()
+            return None
 
+    record_agent_provision(provider, "success", time.monotonic() - started)
     logger.info(
         "Provisioned elastic agent %s (instance %s, size %svCPU/%sGiB)",
         agent.id,

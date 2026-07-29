@@ -29,9 +29,11 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import settings
+from api.metrics import record_agents_reaped, set_reap_leader
 from api.models.agent import Agent
 from api.models.query import Query
 from api.models.sql_session import SqlSession
+from api.services.agent_telemetry import record_lifecycle_event
 from api.services.compute.backends import get_backend
 from api.services.compute.service import revoke_bootstrap_credentials, terminate_agent
 
@@ -133,6 +135,7 @@ async def _reap_lifecycle(db: AsyncSession, now: datetime) -> dict[str, int]:
                 # nothing else collects it -- and revoking it is what stops a slow
                 # instance dialing home later and reviving this row.
                 await revoke_bootstrap_credentials(db, agent.id)
+                record_lifecycle_event(db, agent.id, "failed", reason="provisioning_timeout")
                 await db.commit()
                 reaped["provisioning_timeout"] += 1
                 logger.info("Failed stuck-provisioning elastic agent %s", agent.id)
@@ -269,6 +272,7 @@ async def _reconcile_leaks(db: AsyncSession, provider: str) -> dict[str, int]:
             agent.lifecycle = "terminated"
             agent.status = "unavailable"
             agent.terminated_at = now
+            record_lifecycle_event(db, agent.id, "terminated", reason="interrupted")
             result["terminations_completed"] += 1
             logger.info("Completed interrupted termination of agent %s", agent.id)
             continue
@@ -280,6 +284,7 @@ async def _reconcile_leaks(db: AsyncSession, provider: str) -> dict[str, int]:
             agent.lifecycle = "failed"
             agent.status = "unavailable"
             agent.terminated_at = now
+            record_lifecycle_event(db, agent.id, "failed", reason="dead_row")
             result["dead_rows_failed"] += 1
             logger.warning("Failed agent %s: backing instance %s gone", agent.id, agent.instance_id)
     await db.commit()
@@ -338,9 +343,15 @@ async def run_cycle(session_factory: async_sessionmaker[AsyncSession]) -> dict[s
 
 async def run_tick(session_factory: async_sessionmaker[AsyncSession]) -> dict[str, int] | None:
     async with reaper_leadership(session_factory) as is_leader:
+        # Elastic agent counts are DB-wide; gate their gauge on the same election so
+        # exactly one replica reports them (see api.metrics for the same rule
+        # applied to the maintenance scanner).
+        set_reap_leader(is_leader)
         if not is_leader:
             return None
-        return await run_cycle(session_factory)
+        result = await run_cycle(session_factory)
+        record_agents_reaped(result)
+        return result
 
 
 async def reaper_loop(session_factory: async_sessionmaker[AsyncSession]) -> None:

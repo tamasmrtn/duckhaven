@@ -3,7 +3,7 @@ import datetime as dt
 import os
 import tempfile
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -164,33 +164,43 @@ async def handle_agent_frame(db: AsyncSession, frame: Frame) -> None:
         # First queued -> running transition: record how long the query waited in
         # the agent's admission queue before it started executing.
         query = await db.get(Query, query_id)
-        if query is not None and query.status == "queued" and query.origin is None:
+        first_transition = query is not None and query.status == "queued"
+        if first_transition and query.origin is None:
             started = query.started_at
             if started.tzinfo is None:
                 started = started.replace(tzinfo=UTC)
             record_query_queue_wait((datetime.now(tz=UTC) - started).total_seconds())
-        await db.execute(
-            sa.update(Query)
-            .where(Query.id == query_id)
-            .values(status="running", progress=progress or None)
-        )
+        values: dict = {"status": "running", "progress": progress or None}
+        # Persisted for every origin, unlike the histogram above (interactive only):
+        # a scheduled or session run's queue wait is just as worth showing.
+        if first_transition:
+            values["running_at"] = datetime.now(tz=UTC)
+        await db.execute(sa.update(Query).where(Query.id == query_id).values(**values))
         await db.commit()
         return
     if frame.type == FrameType.QUERY_DONE:
         status_val = frame.payload.get("status", "done")
+        finished = datetime.now(tz=UTC)
+        # A query fast enough to finish without ever emitting QUERY_PROGRESS has no
+        # running_at yet. Back it out of the agent's own execution time so the
+        # queued/running split stays honest instead of reporting the whole
+        # wall-clock as queue wait. COALESCE leaves an already-stamped value alone.
+        duration_ms = frame.payload.get("duration_ms")
+        ran_at = finished - timedelta(milliseconds=duration_ms) if duration_ms else finished
         await db.execute(
             sa.update(Query)
             .where(Query.id == query_id)
             .values(
                 status=status_val,
                 row_count=frame.payload.get("row_count"),
-                duration_ms=frame.payload.get("duration_ms"),
+                duration_ms=duration_ms,
                 result_bytes=frame.payload.get("result_bytes"),
                 error=frame.payload.get("error"),
                 result_path=frame.payload.get("result_path"),
                 result_schema=frame.payload.get("result_schema"),
                 profile=frame.payload.get("profile"),
-                finished_at=datetime.now(tz=UTC),
+                running_at=sa.func.coalesce(Query.running_at, ran_at),
+                finished_at=finished,
             )
         )
         await db.commit()

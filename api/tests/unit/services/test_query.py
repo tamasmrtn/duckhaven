@@ -60,6 +60,120 @@ async def _make_workspace(db_session):
     return await seed_workspace(db_session, user_id=user.id, slug="svc-ws", name="Svc WS")
 
 
+async def _queued_query(db_session, ws, **kw):
+    query = Query(workspace_id=ws.id, sql="SELECT 1", status="queued", **kw)
+    db_session.add(query)
+    await db_session.commit()
+    await db_session.refresh(query)
+    return query
+
+
+async def test_progress_stamps_running_at(db_session):
+    ws, _ = await _make_workspace(db_session)
+    query = await _queued_query(db_session, ws)
+
+    await query_service.handle_agent_frame(
+        db_session,
+        Frame(type=FrameType.QUERY_PROGRESS, payload={"query_id": str(query.id)}),
+    )
+
+    await db_session.refresh(query)
+    assert query.status == "running"
+    assert query.running_at is not None
+
+
+async def test_progress_stamps_running_at_for_every_origin(db_session):
+    """The queue-wait histogram is interactive-only; the column is not.
+
+    A scheduled or session run's queue wait is just as worth showing in the
+    history table's duration breakdown.
+    """
+    ws, _ = await _make_workspace(db_session)
+    query = await _queued_query(db_session, ws, origin="scheduled")
+
+    await query_service.handle_agent_frame(
+        db_session,
+        Frame(type=FrameType.QUERY_PROGRESS, payload={"query_id": str(query.id)}),
+    )
+
+    await db_session.refresh(query)
+    assert query.running_at is not None
+
+
+async def test_a_second_progress_frame_does_not_move_running_at(db_session):
+    ws, _ = await _make_workspace(db_session)
+    query = await _queued_query(db_session, ws)
+    progress = Frame(type=FrameType.QUERY_PROGRESS, payload={"query_id": str(query.id)})
+
+    await query_service.handle_agent_frame(db_session, progress)
+    await db_session.refresh(query)
+    first = query.running_at
+
+    await query_service.handle_agent_frame(db_session, progress)
+    await db_session.refresh(query)
+    assert query.running_at == first
+
+
+async def test_done_backs_running_at_out_of_duration_when_progress_never_arrived(db_session):
+    """A fast query reaches QUERY_DONE without ever emitting QUERY_PROGRESS.
+
+    Leaving running_at null there would report the whole wall-clock as queue wait.
+    """
+    ws, _ = await _make_workspace(db_session)
+    query = await _queued_query(db_session, ws)
+
+    await query_service.handle_agent_frame(
+        db_session,
+        Frame(
+            type=FrameType.QUERY_DONE,
+            payload={"query_id": str(query.id), "status": "done", "duration_ms": 2000},
+        ),
+    )
+
+    await db_session.refresh(query)
+    assert query.running_at is not None
+    elapsed = (query.finished_at - query.running_at).total_seconds()
+    assert elapsed == pytest.approx(2.0, abs=0.1)
+
+
+async def test_done_falls_back_to_finished_at_without_a_duration(db_session):
+    ws, _ = await _make_workspace(db_session)
+    query = await _queued_query(db_session, ws)
+
+    await query_service.handle_agent_frame(
+        db_session,
+        Frame(
+            type=FrameType.QUERY_DONE,
+            payload={"query_id": str(query.id), "status": "failed", "error": "boom"},
+        ),
+    )
+
+    await db_session.refresh(query)
+    assert query.running_at == query.finished_at
+
+
+async def test_done_preserves_a_running_at_already_stamped(db_session):
+    ws, _ = await _make_workspace(db_session)
+    query = await _queued_query(db_session, ws)
+    await query_service.handle_agent_frame(
+        db_session,
+        Frame(type=FrameType.QUERY_PROGRESS, payload={"query_id": str(query.id)}),
+    )
+    await db_session.refresh(query)
+    stamped = query.running_at
+
+    await query_service.handle_agent_frame(
+        db_session,
+        Frame(
+            type=FrameType.QUERY_DONE,
+            payload={"query_id": str(query.id), "status": "done", "duration_ms": 5},
+        ),
+    )
+
+    await db_session.refresh(query)
+    assert query.running_at == stamped
+
+
 async def test_query_done_upserts_table_stats(db_session):
     ws, catalog = await _make_workspace(db_session)
     query = Query(workspace_id=ws.id, sql="SELECT 1", status="running", origin="sample")

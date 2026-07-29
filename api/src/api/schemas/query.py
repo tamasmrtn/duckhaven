@@ -72,6 +72,11 @@ class QueryOut(BaseModel):
         default=None, validation_alias=AliasChoices("column_schema", "result_schema")
     )
     started_at: datetime
+    # When the agent admitted the run and began executing it. With started_at
+    # (submission) this splits the run's wall-clock into queue wait and execution,
+    # which is what the history table shows on hover. Null for a run that never
+    # started, and for rows written before it was recorded.
+    running_at: datetime | None = None
     finished_at: datetime | None
 
 

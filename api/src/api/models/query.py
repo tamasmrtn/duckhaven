@@ -77,6 +77,12 @@ class Query(Base):
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    # When the agent admitted this run and began executing it. `started_at` is when
+    # the row was written (submission), so `running_at - started_at` is the time the
+    # run spent waiting in the agent's admission queue and `finished_at - running_at`
+    # is the time it spent executing — the split the history table shows on hover.
+    # Null for a run that never started, and for rows written before it was recorded.
+    running_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     workspace: Mapped[Workspace] = relationship(back_populates="queries")

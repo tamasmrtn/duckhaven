@@ -3,6 +3,9 @@ import {
   formatRelativeTick,
   formatAbsoluteTimestamp,
   relativeMinuteTicks,
+  formatClockTick,
+  windowTicks,
+  formatDuration,
 } from '@/features/admin/metricsTime'
 
 const at = (iso: string) => Date.parse(iso)
@@ -62,5 +65,38 @@ describe('formatAbsoluteTimestamp', () => {
     expect(out).toMatch(/\d{1,2}:\d{2}:\d{2}/)
     // A short TZ name (e.g. UTC, GMT+2, PDT) is appended.
     expect(out).toMatch(/[A-Z]{2,}|GMT/)
+  })
+})
+
+describe('windowed axes', () => {
+  it('labels ticks as clock time, not "time ago"', () => {
+    // Over a 24h window "-19h" cannot be matched against a deploy or an
+    // incident; a wall-clock time can.
+    expect(formatClockTick(Date.parse('2026-07-28T14:20:00Z'))).toMatch(/\d{2}:\d{2}/)
+  })
+
+  it('places ticks on round times so labels never read 14:07', () => {
+    const start = Date.parse('2026-07-28T06:07:33Z')
+    const end = start + 8 * 3600_000
+    const ticks = windowTicks(start, end)
+    for (const t of ticks) {
+      expect(t % 3600_000).toBe(0)
+    }
+  })
+
+  it('keeps every window between 6 and 12 labels', () => {
+    for (const hours of [1, 3, 8, 12, 24]) {
+      const start = Date.parse('2026-07-28T06:00:00Z')
+      const ticks = windowTicks(start, start + hours * 3600_000)
+      expect(ticks.length).toBeGreaterThanOrEqual(6)
+      expect(ticks.length).toBeLessThanOrEqual(13)
+    }
+  })
+
+  it('formats durations compactly', () => {
+    expect(formatDuration(30)).toBe('30s')
+    expect(formatDuration(2700)).toBe('45m')
+    expect(formatDuration(22320)).toBe('6h 12m')
+    expect(formatDuration(7200)).toBe('2h')
   })
 })

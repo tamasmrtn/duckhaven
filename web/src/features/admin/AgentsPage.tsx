@@ -1,27 +1,8 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import {
-  CheckCircle2,
-  Circle,
-  AlertCircle,
-  Copy,
-  Cpu,
-  Loader2,
-  Power,
-  RefreshCw,
-  RotateCw,
-  Server,
-  Trash2,
-} from "lucide-react";
+import { Copy, Cpu, Loader2, RefreshCw, Server } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/app/EmptyState";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetDescription,
-} from "@/components/ui/sheet";
 import {
   Dialog,
   DialogContent,
@@ -31,7 +12,6 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -39,22 +19,10 @@ import {
   useBootstrapAgent,
   useComputeOptions,
   useCreateElasticAgent,
-  useDeleteAgent,
-  useRestartAgent,
-  useTerminateAgent,
-  useRevokeAgent,
 } from "@/queries/agents";
-import type { Agent, AgentStatus, BootstrapToken } from "@/types/agent";
+import type { BootstrapToken } from "@/types/agent";
 import { cn, plural } from "@/utils";
-
-// The currency comes from the configured provider (its own pricing page quotes
-// the rates an operator copies). It is deliberately required rather than defaulted:
-// a provider that prices nothing returns null, and the caller must then render no
-// cost at all instead of putting a cloud symbol on hardware you already own.
-function formatCost(cost: number, currency: string): string {
-  const symbol = currency === "USD" ? "$" : `${currency} `;
-  return `${symbol}${cost.toFixed(2)}/hr`;
-}
+import { agentDotClass, formatCost, relativeTime } from "./agentFormat";
 
 function buildComposeSnippet(token: BootstrapToken, name?: string): string {
   return [
@@ -76,293 +44,6 @@ function buildComposeSnippet(token: BootstrapToken, name?: string): string {
     "  agent_results:",
     "",
   ].join("\n");
-}
-
-const statusIcon: Record<AgentStatus, React.ReactNode> = {
-  healthy: <CheckCircle2 className="size-4 text-[var(--status-success)]" />,
-  degraded: <AlertCircle className="size-4 text-[var(--status-running)]" />,
-  unavailable: <Circle className="size-4 text-[var(--status-failed)]" />,
-};
-
-const statusDot: Record<AgentStatus, string> = {
-  healthy: "bg-[var(--status-success)]",
-  degraded: "bg-[var(--status-running)]",
-  unavailable: "bg-[var(--status-failed)]",
-};
-
-// A provisioning/terminating elastic agent isn't "down" — it's in transition, so
-// it shows amber rather than the red of a genuinely unavailable agent.
-function agentDotClass(agent: Agent): string {
-  if (agent.lifecycle === "provisioning" || agent.lifecycle === "terminating") {
-    return "bg-[var(--status-running)]";
-  }
-  return statusDot[agent.status];
-}
-
-function relativeTime(iso: string | null) {
-  if (!iso) return "—";
-  const diff = (Date.now() - new Date(iso).getTime()) / 1000;
-  if (diff < 5) return "just now";
-  if (diff < 60) return `${Math.floor(diff)}s ago`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  return `${Math.floor(diff / 3600)}h ago`;
-}
-
-interface AgentDrawerProps {
-  agent: Agent | null;
-  open: boolean;
-  onClose: () => void;
-}
-
-function AgentDrawer({ agent, open, onClose }: AgentDrawerProps) {
-  // Cost is only renderable once the provider names a currency; see formatCost.
-  const { data: computeOptions } = useComputeOptions();
-  const currency = computeOptions?.currency ?? null;
-  const revoke = useRevokeAgent();
-  const restart = useRestartAgent();
-  const terminate = useTerminateAgent();
-  const deleteAgent = useDeleteAgent();
-  const navigate = useNavigate();
-  const { ws } = useParams({ from: "/$ws/admin/agents" });
-  const [confirmDelete, setConfirmDelete] = useState(false);
-
-  if (!agent) return null;
-
-  const restartable =
-    !!agent.provider &&
-    (agent.lifecycle === "terminated" || agent.lifecycle === "failed");
-  const terminable =
-    !!agent.provider &&
-    (agent.lifecycle === "running" || agent.lifecycle === "provisioning");
-
-  return (
-    <>
-      <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
-        <SheetContent className="w-[480px] overflow-auto">
-          <SheetHeader>
-            <SheetTitle className="flex items-center gap-2">
-              {statusIcon[agent.status]}
-              {agent.name}
-            </SheetTitle>
-            <SheetDescription>
-              Agent status, capabilities, and credential management.
-            </SheetDescription>
-          </SheetHeader>
-
-          <div className="mt-6 space-y-4">
-            {agent.provider && (
-              <>
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary mb-2">
-                    Elastic compute
-                  </p>
-                  <div className="space-y-1 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-text-secondary">Lifecycle</span>
-                      <span className="font-mono text-xs">
-                        {agent.lifecycle ?? "—"}
-                      </span>
-                    </div>
-                    {agent.requested_cpu != null &&
-                      agent.requested_memory_gb != null && (
-                        <div className="flex justify-between">
-                          <span className="text-text-secondary">Size</span>
-                          <span className="font-mono font-tabular text-xs">
-                            {agent.requested_cpu} vCPU ·{" "}
-                            {agent.requested_memory_gb} GB
-                          </span>
-                        </div>
-                      )}
-                    {agent.hourly_cost != null && currency != null && (
-                      <div className="flex justify-between">
-                        <span className="text-text-secondary">Cost</span>
-                        <span className="font-mono font-tabular text-xs font-medium">
-                          {formatCost(agent.hourly_cost, currency)}
-                        </span>
-                      </div>
-                    )}
-                    <div className="flex justify-between">
-                      <span className="text-text-secondary">Idle timeout</span>
-                      <span className="font-mono font-tabular text-xs">
-                        {agent.idle_timeout_minutes != null
-                          ? `${agent.idle_timeout_minutes} min`
-                          : "default"}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-                <Separator />
-              </>
-            )}
-
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary mb-2">
-                Capabilities
-              </p>
-              {agent.capabilities ? (
-                <div className="space-y-1 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-text-secondary">DuckDB</span>
-                    <span className="font-mono">
-                      {agent.capabilities.duckdb_version}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-text-secondary">Memory cap</span>
-                    <span className="font-mono font-tabular">
-                      {agent.capabilities.memory_limit_gb} GB
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-text-secondary">Cores</span>
-                    <span className="font-mono font-tabular">
-                      {agent.capabilities.cores}
-                    </span>
-                  </div>
-                  {agent.capabilities.tailscale_ip && (
-                    <div className="flex justify-between">
-                      <span className="text-text-secondary">Tailscale IP</span>
-                      <span className="font-mono text-xs">
-                        {agent.capabilities.tailscale_ip}
-                      </span>
-                    </div>
-                  )}
-                  <div className="flex justify-between">
-                    <span className="text-text-secondary">Extensions</span>
-                    <span className="font-mono text-xs text-right max-w-[240px] truncate">
-                      {agent.capabilities.extensions.join(", ")}
-                    </span>
-                  </div>
-                </div>
-              ) : (
-                <p className="text-sm text-text-tertiary">
-                  Not yet reported — the agent has not registered.
-                </p>
-              )}
-            </div>
-
-            <Separator />
-
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary mb-2">
-                Recent errors
-              </p>
-              <p className="text-sm text-text-tertiary">0</p>
-            </div>
-
-            <Separator />
-
-            <div className="flex flex-wrap gap-2">
-              {restartable && (
-                <Button
-                  size="sm"
-                  className="gap-1.5 text-xs"
-                  onClick={() => restart.mutate(agent.id)}
-                  disabled={restart.isPending}
-                >
-                  <RotateCw className="size-3.5" />
-                  {restart.isPending ? "Restarting…" : "Restart agent"}
-                </Button>
-              )}
-              {terminable && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1.5 text-xs"
-                  onClick={() => terminate.mutate(agent.id)}
-                  disabled={terminate.isPending}
-                >
-                  <Power className="size-3.5" />
-                  {terminate.isPending ? "Terminating…" : "Terminate"}
-                </Button>
-              )}
-              {!agent.provider && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1.5 text-xs"
-                  onClick={() => revoke.mutate(agent.id)}
-                  disabled={revoke.isPending}
-                >
-                  Revoke credential
-                </Button>
-              )}
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5 text-xs"
-                onClick={() => {
-                  onClose();
-                  navigate({
-                    to: "/$ws/history",
-                    params: { ws },
-                    search: { agent: agent.id },
-                  });
-                }}
-              >
-                View audit for this agent
-              </Button>
-              <Button
-                variant="destructive"
-                size="sm"
-                className="gap-1.5 text-xs"
-                onClick={() => setConfirmDelete(true)}
-              >
-                <Trash2 className="size-3.5" />
-                Delete
-              </Button>
-            </div>
-          </div>
-        </SheetContent>
-      </Sheet>
-
-      <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Delete agent “{agent.name}”?</DialogTitle>
-            <DialogDescription>
-              This permanently removes the agent and cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <ul className="list-disc space-y-1 py-2 pl-5 text-sm text-text-secondary">
-            {agent.provider &&
-              (agent.lifecycle === "running" ||
-                agent.lifecycle === "provisioning") && (
-                <li>
-                  Its running cloud instance is terminated immediately (billing
-                  stops).
-                </li>
-              )}
-            <li>
-              It cannot be restarted afterwards — you would create a new agent.
-            </li>
-            <li>
-              Past queries stay in history but lose their link to this agent.
-            </li>
-          </ul>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmDelete(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              disabled={deleteAgent.isPending}
-              onClick={() =>
-                deleteAgent.mutate(agent.id, {
-                  onSuccess: () => {
-                    setConfirmDelete(false);
-                    onClose();
-                  },
-                })
-              }
-            >
-              {deleteAgent.isPending ? "Deleting…" : "Delete permanently"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
-  );
 }
 
 interface BootstrapModalProps {
@@ -689,9 +370,10 @@ export function AgentsPage() {
   const { data: computeOptions } = useComputeOptions();
   const currency = computeOptions?.currency ?? null;
   const { data: agents = [], isLoading } = useAdminAgents();
-  const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
   const [bootstrapOpen, setBootstrapOpen] = useState(false);
   const [computeOpen, setComputeOpen] = useState(false);
+  const navigate = useNavigate();
+  const { ws } = useParams({ from: "/$ws/admin/agents" });
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -770,7 +452,12 @@ export function AgentsPage() {
               {agents.map((agent, i) => (
                 <tr
                   key={agent.id}
-                  onClick={() => setSelectedAgent(agent)}
+                  onClick={() =>
+                    navigate({
+                      to: "/$ws/admin/agents/$agentId",
+                      params: { ws, agentId: agent.id },
+                    })
+                  }
                   className={cn(
                     "cursor-pointer border-b border-[var(--border-subtle)] hover:bg-accent/50",
                     i % 2 === 0 ? "" : "bg-[var(--bg-surface)]/40",
@@ -838,11 +525,6 @@ export function AgentsPage() {
         )}
       </div>
 
-      <AgentDrawer
-        agent={selectedAgent}
-        open={!!selectedAgent}
-        onClose={() => setSelectedAgent(null)}
-      />
       <BootstrapModal
         open={bootstrapOpen}
         onClose={() => setBootstrapOpen(false)}

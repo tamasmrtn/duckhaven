@@ -49,6 +49,74 @@ export interface Agent {
   idle_timeout_minutes?: number | null;
 }
 
+/** The look-back windows the monitoring page offers, shortest first. */
+export const MONITORING_WINDOWS = ["1h", "3h", "8h", "12h", "24h"] as const;
+export type MonitoringWindow = (typeof MONITORING_WINDOWS)[number];
+
+/**
+ * What the agent was doing during one bucket.
+ *
+ * `unknown` is not `down`: it means no lifecycle trail covers that bucket (an
+ * agent older than the trail), where claiming downtime would invent an outage.
+ */
+export type ActivityState =
+  "down" | "starting" | "query" | "other" | "ready" | "unknown";
+
+export interface PeakQueryPoint {
+  t: string;
+  running: number;
+  queued: number;
+}
+
+export interface CompletedQueryPoint {
+  t: string;
+  per_minute: number;
+}
+
+export interface ActivityPoint {
+  t: string;
+  state: ActivityState;
+}
+
+export interface FailurePoint {
+  t: string;
+  reason: string;
+  count: number;
+}
+
+export interface UtilizationPoint {
+  t: string;
+  // All null for a bucket the agent reported nothing in, so the chart draws a
+  // gap rather than a line through a zero it never measured.
+  cpu_avg: number | null;
+  cpu_max: number | null;
+  mem_avg: number | null;
+  mem_max: number | null;
+}
+
+export interface MonitoringSummary {
+  uptime_s: number;
+  // Share of connected time with query activity; null when never connected.
+  busy_ratio: number | null;
+  completed: number;
+  failed: number;
+  idle_timeout_minutes: number | null;
+}
+
+/** Every series for one agent over one window, on a shared bucket grid. */
+export interface AgentMonitoring {
+  window: MonitoringWindow;
+  bucket_seconds: number;
+  start: string;
+  end: string;
+  peak_query_count: PeakQueryPoint[];
+  completed_query_count: CompletedQueryPoint[];
+  activity: ActivityPoint[];
+  failures: FailurePoint[];
+  utilization: UtilizationPoint[];
+  summary: MonitoringSummary;
+}
+
 export interface ComputeOptions {
   enabled: boolean;
   provider: string;

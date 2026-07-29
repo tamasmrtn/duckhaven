@@ -24,7 +24,7 @@ import { HistoryPage } from "@/features/history/HistoryPage";
 import { QueryProfilePage } from "@/features/query-profile/QueryProfilePage";
 import { AdminLayout } from "@/features/admin/AdminLayout";
 import { AgentsPage } from "@/features/admin/AgentsPage";
-import { MetricsPage } from "@/features/admin/MetricsPage";
+import { AgentDetailPage } from "@/features/admin/AgentDetailPage";
 import { StorageBackendsPage } from "@/features/admin/StorageBackendsPage";
 import { CatalogMigrationsPage } from "@/features/admin/CatalogMigrationsPage";
 import { UsersPage } from "@/features/admin/UsersPage";
@@ -203,10 +203,10 @@ const agentsRoute = createRoute({
   component: AgentsPage,
 });
 
-const metricsRoute = createRoute({
+const agentDetailRoute = createRoute({
   getParentRoute: () => adminRoute,
-  path: "/metrics",
-  component: MetricsPage,
+  path: "/agents/$agentId",
+  component: AgentDetailPage,
 });
 
 const storageRoute = createRoute({
@@ -266,7 +266,7 @@ export const routeTree = rootRoute.addChildren([
     adminRoute.addChildren([
       adminIndexRoute,
       agentsRoute,
-      metricsRoute,
+      agentDetailRoute,
       storageRoute,
       migrationsRoute,
       usersRoute,

@@ -13,6 +13,7 @@ from api.models.agent import Agent
 from api.models.user import Credential, User
 from api.schemas.agent import (
     AgentMetricsOut,
+    AgentMonitoringOut,
     AgentOut,
     BootstrapTokenOut,
     ComputeOptionsOut,
@@ -24,6 +25,7 @@ from api.services.agent_dispatch import (
     disconnect_agent,
     gather_agent_metrics,
 )
+from api.services.agent_monitoring import DEFAULT_WINDOW, WINDOWS, build_monitoring
 from api.services.agent_view import build_agent_out
 from api.services.compute import pricing
 from api.services.compute import service as compute_service
@@ -141,6 +143,54 @@ async def compute_options(
         price_memory_gb_hour=settings.elastic_azure_price_memory_gb_hour,
         default_idle_minutes=round(settings.elastic_idle_timeout_s / 60),
     )
+
+
+async def _get_agent_or_404(db: AsyncSession, agent_id: uuid.UUID) -> Agent:
+    agent = await db.get(Agent, agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return agent
+
+
+# Must stay below the literal GET paths ("/metrics", "/compute-options"): FastAPI
+# matches in declaration order, so a path parameter at the router root declared
+# above them would swallow both and try to parse "metrics" as a UUID.
+@router.get("/{agent_id}", response_model=AgentOut)
+async def get_agent(
+    agent_id: uuid.UUID,
+    admin: User = Depends(require_permission(Permission.AGENTS_MANAGE)),
+    db: AsyncSession = Depends(get_db),
+) -> AgentOut:
+    """One agent, for its detail page."""
+    agent = await _get_agent_or_404(db, agent_id)
+    # Same reconciliation as the list: a connected agent whose row still says
+    # unavailable has simply not had its status written back yet.
+    effective_status = agent.status
+    if str(agent.id) in await connected_agent_ids(db) and effective_status == "unavailable":
+        effective_status = "healthy"
+    return build_agent_out(agent, status=effective_status)
+
+
+@router.get("/{agent_id}/monitoring", response_model=AgentMonitoringOut)
+async def agent_monitoring(
+    agent_id: uuid.UUID,
+    window: str = DEFAULT_WINDOW,
+    admin: User = Depends(require_permission(Permission.AGENTS_MANAGE)),
+    db: AsyncSession = Depends(get_db),
+) -> AgentMonitoringOut:
+    """Every chart on the agent's Monitoring tab, for one time window.
+
+    One response rather than one per chart: the series share a bucket grid, so
+    splitting them would let a slow request leave two charts describing different
+    stretches of time.
+    """
+    if window not in WINDOWS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown window {window!r}; expected one of {', '.join(WINDOWS)}",
+        )
+    agent = await _get_agent_or_404(db, agent_id)
+    return AgentMonitoringOut(**await build_monitoring(db, agent, window))
 
 
 @router.post("/elastic", response_model=AgentOut, status_code=status.HTTP_202_ACCEPTED)

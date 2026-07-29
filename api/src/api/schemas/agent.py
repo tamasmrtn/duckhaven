@@ -1,7 +1,12 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+# The per-agent access ladder; see api.services.agent_access.
+AgentTier = Literal["use", "operate", "admin"]
+AgentAccessMode = Literal["open", "restricted"]
 
 
 class AgentCapabilitiesOut(BaseModel):
@@ -33,6 +38,15 @@ class AgentOut(BaseModel):
     hourly_cost: float | None = None
     # Per-agent idle scale-in timeout, in minutes; null = the global default.
     idle_timeout_minutes: int | None = None
+    # The *requesting caller's* tier on this agent (use | operate | admin), resolved
+    # per request. The server telling the client what it may do beats the client
+    # re-deriving it: there is no tier algebra in the UI to drift out of sync. Never
+    # null in practice — an agent the caller has no tier on is not returned at all —
+    # but optional so a view built outside a request context stays valid.
+    access_tier: str | None = None
+    # Whether this agent's ACL gates the `use` tier ("restricted") or every
+    # authenticated caller may target it ("open").
+    access_mode: str = "open"
 
 
 class ComputeOptionsOut(BaseModel):
@@ -151,3 +165,67 @@ class BootstrapTokenOut(BaseModel):
     control_plane_url: str
     # Image the agent compose snippet pins to.
     agent_image: str
+
+
+# --- Per-agent access control -------------------------------------------------
+
+
+class AgentAccessModeUpdate(BaseModel):
+    access_mode: AgentAccessMode
+
+
+class AgentGrantUpsert(BaseModel):
+    """Grant a tier on an agent to exactly one principal — a user or a workspace."""
+
+    user_id: uuid.UUID | None = None
+    workspace_id: uuid.UUID | None = None
+    tier: AgentTier
+
+    @model_validator(mode="after")
+    def _exactly_one_principal(self) -> AgentGrantUpsert:
+        # Mirrors the ck_agent_grants_one_principal CHECK, so a bad body is a 422
+        # rather than an IntegrityError surfacing as a 500.
+        if (self.user_id is None) == (self.workspace_id is None):
+            raise ValueError("exactly one of user_id or workspace_id is required")
+        # `admin` includes granting, and delegating that to "whoever is currently a
+        # member of workspace W" would make the ACL unauditable.
+        if self.workspace_id is not None and self.tier == "admin":
+            raise ValueError("a workspace grant cannot exceed the 'operate' tier")
+        return self
+
+
+class AgentGrantOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    # Exactly one of these pairs is populated, matching the grant's principal.
+    user_id: uuid.UUID | None = None
+    user_name: str | None = None
+    workspace_id: uuid.UUID | None = None
+    workspace_name: str | None = None
+    tier: str
+    created_at: datetime
+
+
+class AgentGrantPrincipalOut(BaseModel):
+    """A candidate grantee: a user (human or service account) or a workspace."""
+
+    kind: Literal["user", "workspace"]
+    id: uuid.UUID
+    name: str
+    # Users only: their address, to disambiguate people with the same display name.
+    email: str | None = None
+    is_service_account: bool = False
+
+
+class AgentAccessOut(BaseModel):
+    """Everything the agent's Access tab renders, in one response.
+
+    ``principals`` ships the candidate list alongside the grants so the grant picker
+    needs no second call (the ``catalog_grants`` payload does the same).
+    """
+
+    agent_id: uuid.UUID
+    access_mode: str
+    grants: list[AgentGrantOut]
+    principals: list[AgentGrantPrincipalOut]

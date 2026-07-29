@@ -1,3 +1,4 @@
+import uuid
 from collections.abc import AsyncGenerator, Callable, Coroutine
 from typing import Any
 
@@ -5,7 +6,9 @@ from fastapi import Cookie, Depends, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.db.session import async_session_factory
+from api.models.agent import Agent
 from api.models.user import User
+from api.services.agent_access import ResolvedAgent, assert_agent_tier
 from api.services.auth import get_pat_user, get_session_user
 from api.services.permissions import Permission
 from api.services.polaris import PolarisClient
@@ -67,6 +70,38 @@ def require_permission(
         return user
 
     return _require
+
+
+def require_agent_tier(
+    min_tier: str,
+) -> Callable[..., Coroutine[Any, Any, ResolvedAgent]]:
+    """Build a dependency resolving the route's ``agent_id`` and requiring ``min_tier``.
+
+    The per-agent counterpart to ``require_permission``: the global permission says
+    whether a caller may manage agents at all, this says which agent. Global
+    ``agents:manage`` always satisfies it (see ``services.agent_access``).
+
+    404 when the caller cannot see the agent, 403 when they can but lack the tier.
+    Returns the agent *and* the caller's actual tier, so a handler can echo it back
+    in ``AgentOut`` without re-resolving.
+
+    Declared as a dependency rather than a call inside each handler so the guard is
+    visible in the route signature — and so it cannot be forgotten when a new
+    ``/{agent_id}/...`` route is added.
+    """
+
+    async def _dep(
+        agent_id: uuid.UUID,
+        user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db),
+    ) -> ResolvedAgent:
+        agent = await db.get(Agent, agent_id)
+        if agent is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+        tier = await assert_agent_tier(db, user, agent, min_tier)
+        return ResolvedAgent(agent=agent, tier=tier)
+
+    return _dep
 
 
 async def get_polaris_client(request: Request) -> PolarisClient:

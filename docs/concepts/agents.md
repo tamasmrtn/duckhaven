@@ -24,10 +24,12 @@ On connect (and on every heartbeat) an agent advertises its capabilities — Duc
 ceiling, cores, and host. DuckHaven matches agents to a workspace's [storage backend](storage-backends.md) by required
 extension (for example, `azure` for ADLS), and incompatible agents are shown disabled before a query is sent.
 
-## Live utilization
+## Live utilization and history
 
-Each heartbeat also carries live running/queued query counts and the active concurrency profile, surfaced in
-[Monitoring](../operations/monitoring.md).
+Each heartbeat also carries live running/queued query counts and the active concurrency profile. Every agent has its
+own **Monitoring** page (Admin → Agents → *an agent*) showing those counters live, plus 1–24 hours of query
+throughput, saturation, failures, utilization, and an up/down timeline. See
+[Monitoring](../operations/monitoring.md#per-agent-monitoring).
 
 ## Related
 

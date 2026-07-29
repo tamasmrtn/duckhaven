@@ -242,6 +242,7 @@ Grafana dashboard, and [Distributed tracing](../operations/tracing.md) for the t
 | Variable | Default | Description |
 |---|---|---|
 | `METRICS_ENABLED` | `true` | Expose `GET /api/metrics` in Prometheus text format. Unauthenticated like the health endpoints (keep it on the internal network); set `false` to remove the endpoint entirely. |
+| `AGENT_METRICS_RETENTION_HOURS` | `168` | How far back the [per-agent monitoring page](../operations/monitoring.md#per-agent-monitoring) can look. Agent samples are rolled up to one row per agent per minute (~1.4k rows/agent/day), so a week costs roughly 10k rows per agent. Comfortably longer than the 24 hours the UI offers, which leaves room to widen the range without having lost the history first. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | — | OTLP (http/protobuf) endpoint to export traces to; the compose files default it to the bundled collector, `http://otel-collector:4318`. Unset/empty disables tracing entirely. |
 | `OTEL_SERVICE_NAME` | `duckhaven-api` | Service name reported on spans. Replicas are distinguished by `REPLICA_ID` as `service.instance.id`. |
 

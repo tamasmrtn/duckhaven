@@ -31,6 +31,37 @@ export interface AgentMetrics {
 export type AgentLifecycle =
   "provisioning" | "running" | "terminating" | "terminated" | "failed";
 
+/**
+ * What the current user may do with an agent: `use` targets it for queries,
+ * sessions and schedules and reads its monitoring; `operate` adds restart,
+ * terminate and disconnect; `admin` adds delete and managing its access.
+ */
+export type AgentTier = "use" | "operate" | "admin";
+
+/**
+ * `open` — any authenticated user may target the agent (the default, and how
+ * every agent behaved before per-agent access existed).
+ * `restricted` — using it requires an explicit grant.
+ */
+export type AgentAccessMode = "open" | "restricted";
+
+const TIER_ORDER: Record<AgentTier, number> = {
+  use: 0,
+  operate: 1,
+  admin: 2,
+};
+
+/**
+ * Whether the caller's tier on `agent` reaches `need`.
+ *
+ * The tier itself is resolved by the server and shipped on every agent, so this
+ * is only an ordering comparison — the UI never re-derives who has access.
+ */
+export function agentTierAtLeast(agent: Agent, need: AgentTier): boolean {
+  if (!agent.access_tier) return false;
+  return TIER_ORDER[agent.access_tier] >= TIER_ORDER[need];
+}
+
 export interface Agent {
   id: string;
   name: string;
@@ -47,6 +78,44 @@ export interface Agent {
   requested_memory_gb?: number | null;
   hourly_cost?: number | null;
   idle_timeout_minutes?: number | null;
+  // The requesting user's tier on this agent, resolved per request. An agent the
+  // caller has no tier on is never returned, so in practice this is always set.
+  access_tier?: AgentTier | null;
+  access_mode?: AgentAccessMode;
+}
+
+/** One principal's tier on one agent. Exactly one of the id pairs is set. */
+export interface AgentGrant {
+  id: string;
+  user_id: string | null;
+  user_name: string | null;
+  workspace_id: string | null;
+  workspace_name: string | null;
+  tier: AgentTier;
+  created_at: string;
+}
+
+/** A candidate grantee offered by the Access tab's picker. */
+export interface AgentGrantPrincipal {
+  kind: "user" | "workspace";
+  id: string;
+  name: string;
+  email: string | null;
+  is_service_account: boolean;
+}
+
+/** Everything the Access tab renders, in one response. */
+export interface AgentAccess {
+  agent_id: string;
+  access_mode: AgentAccessMode;
+  grants: AgentGrant[];
+  principals: AgentGrantPrincipal[];
+}
+
+export interface AgentGrantUpsert {
+  user_id?: string;
+  workspace_id?: string;
+  tier: AgentTier;
 }
 
 /** The look-back windows the monitoring page offers, shortest first. */

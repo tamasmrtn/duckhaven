@@ -1,6 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { agentsApi } from "@/api/agents";
-import type { MonitoringWindow } from "@/types/agent";
+import type {
+  AgentAccessMode,
+  AgentGrantUpsert,
+  MonitoringWindow,
+} from "@/types/agent";
 
 export function useAgents() {
   return useQuery({
@@ -104,4 +108,62 @@ export function useRevokeAgent() {
       qc.invalidateQueries({ queryKey: ["admin", "agents"] });
     },
   });
+}
+
+export function useDisconnectAgent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => agentsApi.disconnect(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin", "agents"] });
+      qc.invalidateQueries({ queryKey: ["agents"] });
+    },
+  });
+}
+
+// --- per-agent access control ------------------------------------------------
+
+export function useAgentAccess(id: string, enabled = true) {
+  return useQuery({
+    queryKey: ["admin", "agents", id, "access"],
+    queryFn: () => agentsApi.access(id),
+    enabled,
+  });
+}
+
+/**
+ * Every access mutation invalidates the agent lists too: changing the mode or a
+ * grant changes who sees the agent and what `access_tier` each of them gets.
+ */
+function useAccessMutation<TArgs>(
+  id: string,
+  mutationFn: (args: TArgs) => Promise<unknown>,
+) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin", "agents", id, "access"] });
+      qc.invalidateQueries({ queryKey: ["admin", "agents"] });
+      qc.invalidateQueries({ queryKey: ["agents"] });
+    },
+  });
+}
+
+export function useSetAgentAccessMode(id: string) {
+  return useAccessMutation<AgentAccessMode>(id, (mode) =>
+    agentsApi.setAccessMode(id, mode),
+  );
+}
+
+export function useUpsertAgentGrant(id: string) {
+  return useAccessMutation<AgentGrantUpsert>(id, (body) =>
+    agentsApi.upsertGrant(id, body),
+  );
+}
+
+export function useDeleteAgentGrant(id: string) {
+  return useAccessMutation<string>(id, (grantId) =>
+    agentsApi.deleteGrant(id, grantId),
+  );
 }

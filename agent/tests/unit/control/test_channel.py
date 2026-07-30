@@ -9,6 +9,7 @@ from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags, set_s
 from agent.control import session
 from agent.executor.admission import Admission
 from duckhaven_shared.protocol import Frame, FrameType
+from duckhaven_shared.schemas import AgentCapabilities
 from duckhaven_shared.telemetry import inject_trace_context
 
 
@@ -133,6 +134,24 @@ async def test_pushes_metrics_samples(tmp_path, monkeypatch):
     """After auth the agent streams METRICS_SAMPLE frames on its own cadence."""
     import agent.control.channel as ch_module
 
+    # Stub capability introspection: it runs synchronously in the startup path,
+    # *before* the metrics task is created, so its cost sits inside this test's
+    # deadline below. The real one opens DuckDB and LOADs httpfs/azure/iceberg —
+    # and since `autoinstall_known_extensions` is on by default, a machine with a
+    # cold extension cache downloads all three over the network first. This is the
+    # first test in the file to reach the real `_get_capabilities` (the two tests
+    # that cover it directly fake duckdb, and every later channel test finds the
+    # cache warm), so it alone paid that cost and timed out on CI while passing
+    # locally. What capabilities report is asserted at
+    # `test_get_capabilities_loads_and_advertises_query_extensions`; this test is
+    # about the metrics cadence.
+    monkeypatch.setattr(
+        ch_module,
+        "_get_capabilities",
+        lambda: AgentCapabilities(
+            duckdb_version="1.5.4", extensions=["httpfs"], memory_limit_gb=1.0, cores=2
+        ),
+    )
     monkeypatch.setattr(ch_module.settings, "metrics_sample_interval_s", 0.05)
     got = asyncio.Event()
     received: list[Frame] = []

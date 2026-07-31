@@ -5,6 +5,7 @@ import type { SessionCloseReason, SqlSessionStatus } from "@/types/sql-session";
 // moves through a different lifecycle. Same `--status-*` palette so the two read
 // as one system.
 const colors: Record<SqlSessionStatus, string> = {
+  pending: "bg-[var(--status-queued)] text-white",
   opening: "bg-[var(--status-queued)] text-white",
   open: "bg-[var(--status-running)] text-white",
   closing: "bg-[var(--status-queued)] text-white",
@@ -14,6 +15,7 @@ const colors: Record<SqlSessionStatus, string> = {
 };
 
 const dots: Record<SqlSessionStatus, string> = {
+  pending: "bg-white/80 animate-pulse",
   opening: "bg-white/80 animate-pulse",
   open: "bg-white/80 animate-pulse",
   closing: "bg-white/80 animate-pulse",
@@ -29,6 +31,8 @@ const CLOSE_REASONS: Record<SessionCloseReason, string> = {
   idle: "reaped — idle",
   max_lifetime: "reaped — max lifetime",
   open_timeout: "open timed out",
+  compute_timeout: "compute did not start in time",
+  provisioning_timeout: "no compute became available",
   agent_disconnect: "agent disconnected",
   agent_lease: "reaped by agent",
   failed: "failed to open",

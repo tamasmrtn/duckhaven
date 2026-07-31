@@ -591,3 +591,66 @@ async def test_me_reports_agent_access_for_a_grantee(
     assert (await grantee_client.get("/me")).json()["agent_access"] is False
     await _grant(db_session, elastic_agent, grantee, "use")
     assert (await grantee_client.get("/me")).json()["agent_access"] is True
+
+
+async def test_create_elastic_agent_defaults_to_open(
+    admin_client: AsyncClient, db_session, elastic_enabled
+):
+    resp = await admin_client.post(
+        "/admin/agents/elastic", json={"cpu": 2, "memory_gb": 4, "name": "shared-1"}
+    )
+    assert resp.status_code == 202
+    assert resp.json()["access_mode"] == "open"
+
+
+async def test_create_elastic_agent_can_start_restricted(
+    admin_client: AsyncClient, db_session, elastic_enabled
+):
+    """Chosen at creation so a reserved agent is never briefly usable by everyone:
+    it registers and starts taking work before anyone could open the Access tab."""
+    from sqlalchemy import select
+
+    resp = await admin_client.post(
+        "/admin/agents/elastic",
+        json={"cpu": 2, "memory_gb": 4, "name": "reserved-1", "access_mode": "restricted"},
+    )
+    assert resp.status_code == 202
+    assert resp.json()["access_mode"] == "restricted"
+    # Persisted on the row, not just echoed back.
+    agent = (await db_session.execute(select(Agent).where(Agent.name == "reserved-1"))).scalar_one()
+    assert agent.access_mode == "restricted"
+
+
+async def test_create_elastic_agent_rejects_unknown_access_mode(
+    admin_client: AsyncClient, elastic_enabled
+):
+    resp = await admin_client.post(
+        "/admin/agents/elastic",
+        json={"cpu": 2, "memory_gb": 4, "access_mode": "public"},
+    )
+    assert resp.status_code == 422
+
+
+async def test_a_restricted_new_agent_is_hidden_from_others(
+    admin_client: AsyncClient, grantee: User, elastic_enabled
+):
+    """The point of setting it at creation: nobody else can see it, from the moment
+    the row exists."""
+    from httpx import ASGITransport
+
+    from api.main import api_app
+
+    resp = await admin_client.post(
+        "/admin/agents/elastic",
+        json={"cpu": 2, "memory_gb": 4, "name": "reserved-2", "access_mode": "restricted"},
+    )
+    assert resp.status_code == 202
+    agent_id = resp.json()["id"]
+
+    # A second cookie jar: logging the grantee in on `admin_client` would replace
+    # the admin's session, and the creation above needs to happen as the admin.
+    async with AsyncClient(transport=ASGITransport(app=api_app), base_url="http://test") as other:
+        await other.post("/auth/login", json={"email": "grantee@agents.local", "password": "pw"})
+        listed = await other.get("/agents")
+        assert [a for a in listed.json() if a["id"] == agent_id] == []
+        assert (await other.get(f"/admin/agents/{agent_id}")).status_code == 404

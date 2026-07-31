@@ -84,6 +84,7 @@ export const agentHandlers = [
       memory_gb: number;
       idle_timeout_minutes?: number;
       name?: string;
+      access_mode?: AgentAccessMode;
     };
     if (
       body.cpu < 1 ||
@@ -109,6 +110,10 @@ export const agentHandlers = [
         Math.round((body.cpu * PRICE_VCPU + body.memory_gb * PRICE_MEM) * 1e4) /
         1e4,
       idle_timeout_minutes: body.idle_timeout_minutes ?? null,
+      // The creator holds agents:manage, which resolves to the top tier on every
+      // agent — including one they just created restricted.
+      access_tier: "admin",
+      access_mode: body.access_mode ?? "open",
     };
     AGENTS.push(agent);
     return HttpResponse.json(agent, { status: 202 });

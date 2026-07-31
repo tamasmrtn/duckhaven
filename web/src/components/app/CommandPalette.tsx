@@ -116,7 +116,7 @@ export function CommandPalette({
                   </CommandItem>
                   <CommandItem
                     value="admin"
-                    onSelect={() => go("/$ws/admin/agents", { ws: currentWs })}
+                    onSelect={() => go("/$ws/compute", { ws: currentWs })}
                     className="gap-2"
                   >
                     <Settings className="size-4 text-text-secondary" />

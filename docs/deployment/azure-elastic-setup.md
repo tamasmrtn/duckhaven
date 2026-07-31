@@ -154,12 +154,12 @@ them for your region or negotiated pricing:
 
 ## 3. Verify
 
-1. Open **Admin → Agents → New compute**, pick a size (its hourly cost is shown), and create it — a
+1. Open **Compute → New compute**, pick a size (its hourly cost is shown), and create it — a
    container group should appear in the resource group and register within ~tens of seconds. Or, run
    a query against the **elastic pool** (target the pool rather than a specific agent). With no
    agent connected, the run is accepted as `queued`.
 2. Within ~tens of seconds a new container group appears in the `duckhaven-agents` resource group,
-   the agent registers (**Admin → Agents** shows it `healthy`), and the queued run executes.
+   the agent registers (**Compute** shows it `healthy`), and the queued run executes.
 3. Leave it idle past `ELASTIC_IDLE_TIMEOUT_S`; the reaper terminates the container group and marks
    the agent `terminated`. No orphaned group should remain in the resource group.
 

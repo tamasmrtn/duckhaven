@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { server } from "@tests/mock/server";
 import { renderWithProviders } from "@tests/utils";
@@ -56,45 +56,29 @@ describe("AdminLayout access gate", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("admits a per-agent grantee to the Agents section alone", async () => {
-    // A grant is not a global permission: it entitles its holder to the agent's
-    // monitoring page, which lives inside this shell, and to nothing else.
-    server.use(
-      http.get("/api/me", () =>
-        HttpResponse.json({
-          ...CURRENT_USER,
-          role: "user",
-          permissions: [],
-          agent_access: true,
-        }),
-      ),
-    );
-    renderWithProviders({ initialRoute: "/acme-analytics/admin/agents" });
+  it("no longer offers Compute — it moved out to the main nav", async () => {
+    // A per-agent grantee holds no global permission, so gating their agent's
+    // monitoring page behind this shell would have locked them out of it.
+    renderWithProviders({ initialRoute: ADMIN_ROUTE });
+    await screen.findByRole("button", { name: "Catalog access" });
 
+    // Scoped to the admin tab bar: the left rail legitimately still has a
+    // Compute button, which is the whole point of the move.
+    const tabs = within(screen.getByRole("navigation", { name: "Admin sections" }));
+    expect(tabs.queryByRole("button", { name: "Agents" })).not.toBeInTheDocument();
+    expect(tabs.queryByRole("button", { name: "Compute" })).not.toBeInTheDocument();
     expect(
-      await screen.findByRole("button", { name: "Agents" }),
+      screen.getByRole("button", { name: "Compute" }),
     ).toBeInTheDocument();
-    expect(screen.queryByText("Admin access required")).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Users" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Storage backends" }),
-    ).not.toBeInTheDocument();
   });
 
-  it("still blocks a user with neither permissions nor an agent grant", async () => {
+  it("still blocks a user holding no global permission", async () => {
     server.use(
       http.get("/api/me", () =>
-        HttpResponse.json({
-          ...CURRENT_USER,
-          role: "user",
-          permissions: [],
-          agent_access: false,
-        }),
+        HttpResponse.json({ ...CURRENT_USER, role: "user", permissions: [] }),
       ),
     );
-    renderWithProviders({ initialRoute: "/acme-analytics/admin/agents" });
+    renderWithProviders({ initialRoute: ADMIN_ROUTE });
 
     expect(
       await screen.findByText("Admin access required"),

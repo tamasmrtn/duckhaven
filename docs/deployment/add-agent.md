@@ -13,7 +13,7 @@ needs no inbound connectivity to them).
 ## Generate a snippet from the admin UI
 
 1. Sign in as an admin on the control plane.
-2. **Admin → Agents → Generate bootstrap**.
+2. **Compute → Generate bootstrap**.
 3. Copy the rendered `docker-compose.yml` snippet. Example shape:
 
 ```yaml
@@ -45,11 +45,11 @@ docker compose up -d
 
 The agent dials home, exchanges the bootstrap token for a long-lived session
 credential, and registers itself. Within ~10 s it should appear as `healthy`
-in **Admin → Agents** on the control plane.
+in **Compute** on the control plane.
 
 ## Revoke
 
-If a host is decommissioned: **Admin → Agents → click the agent → Revoke
+If a host is decommissioned: **Compute → click the agent → Revoke
 credential**. The agent immediately drops to `unavailable`; the container can
 then be stopped.
 

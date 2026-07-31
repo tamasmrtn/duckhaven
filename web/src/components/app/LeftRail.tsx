@@ -5,6 +5,7 @@ import {
   BookMarked,
   CalendarClock,
   Clock,
+  Microchip,
   Plug,
   Settings,
   HeartPulse,
@@ -59,6 +60,15 @@ const navItems: NavItem[] = [
     label: "Sessions",
     matchSegment: "sessions",
   },
+  // Not admin-gated: a per-agent grant entitles its holder to that agent's
+  // status and monitoring page without any global permission, and the page
+  // itself shows only the agents the server says they can see.
+  {
+    segment: "compute",
+    icon: Microchip,
+    label: "Compute",
+    matchSegment: "compute",
+  },
   {
     segment: "history",
     icon: Clock,
@@ -72,7 +82,7 @@ const navItems: NavItem[] = [
     matchSegment: "health",
   },
   {
-    segment: "admin/agents",
+    segment: "admin",
     icon: Settings,
     label: "Admin",
     matchSegment: "admin",

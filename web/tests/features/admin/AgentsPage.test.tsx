@@ -6,7 +6,7 @@ import { server } from '@tests/mock/server'
 import { renderWithProviders } from '@tests/utils'
 import { AGENTS } from '@/mock/fixtures/agents'
 
-const AGENTS_ROUTE = '/acme-analytics/admin/agents'
+const AGENTS_ROUTE = '/acme-analytics/compute'
 
 describe('AgentsPage', () => {
   it('renders the full agent list', async () => {

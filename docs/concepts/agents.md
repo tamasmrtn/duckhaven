@@ -29,7 +29,7 @@ extension (for example, `azure` for ADLS), and incompatible agents are shown dis
 By default any signed-in user can run work on any agent — agents are shared infrastructure, and the workspace and
 catalog layers already decide what data a query may touch.
 
-That default is per agent, not per deployment. Set an agent to **restricted** (Admin → Agents → *an agent* → Access)
+That default is per agent, not per deployment. Set an agent to **restricted** (Compute → *an agent* → Access)
 and using it requires an explicit grant, which you give to a person or to a whole workspace. The grant also carries a
 level: `use` runs work on it, `operate` adds restarting and terminating it, `admin` adds deleting it and managing its
 access. A restricted agent is simply invisible to anyone without a grant — it never appears in the engine picker.
@@ -45,9 +45,14 @@ full access to everything regardless. See [Per-agent access](permissions.md#per-
 ## Live utilization and history
 
 Each heartbeat also carries live running/queued query counts and the active concurrency profile. Every agent has its
-own **Monitoring** page (Admin → Agents → *an agent*) showing those counters live, plus 1–24 hours of query
+own **Monitoring** page (Compute → *an agent*) showing those counters live, plus 1–24 hours of query
 throughput, saturation, failures, utilization, and an up/down timeline. See
 [Monitoring](../operations/monitoring.md#per-agent-monitoring).
+
+**Compute** sits in the main navigation rather than under Admin, because watching an agent is not an administrative
+act: anyone granted `use` on an agent is entitled to its status and monitoring page, and needs no global permission to
+see them. The list shows only the agents you can see, and the fleet-level actions inside it — **New compute** and
+**Generate bootstrap** — remain gated on `agents:manage`.
 
 ## Related
 

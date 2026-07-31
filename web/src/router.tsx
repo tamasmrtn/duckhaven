@@ -183,6 +183,22 @@ const healthRoute = createRoute({
   component: LakehouseHealthPage,
 });
 
+// Compute sits alongside the other workspace sections, not under /admin: a user
+// with a per-agent grant is entitled to their agent's status and monitoring page
+// without holding any global admin permission. The fleet-level actions inside
+// (new compute, bootstrap tokens) are gated on `agents:manage` within the page.
+const computeRoute = createRoute({
+  getParentRoute: () => wsRoute,
+  path: "/compute",
+  component: AgentsPage,
+});
+
+const computeDetailRoute = createRoute({
+  getParentRoute: () => wsRoute,
+  path: "/compute/$agentId",
+  component: AgentDetailPage,
+});
+
 const adminRoute = createRoute({
   getParentRoute: () => wsRoute,
   path: "/admin",
@@ -193,20 +209,28 @@ const adminIndexRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/",
   beforeLoad: ({ params }) => {
-    throw redirect({ to: "/$ws/admin/agents", params: { ws: params.ws } });
+    throw redirect({ to: "/$ws/admin/storage", params: { ws: params.ws } });
   },
 });
 
-const agentsRoute = createRoute({
+// Anyone who bookmarked the old location keeps working.
+const legacyAgentsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/agents",
-  component: AgentsPage,
+  beforeLoad: ({ params }) => {
+    throw redirect({ to: "/$ws/compute", params: { ws: params.ws } });
+  },
 });
 
-const agentDetailRoute = createRoute({
+const legacyAgentDetailRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/agents/$agentId",
-  component: AgentDetailPage,
+  beforeLoad: ({ params }) => {
+    throw redirect({
+      to: "/$ws/compute/$agentId",
+      params: { ws: params.ws, agentId: params.agentId },
+    });
+  },
 });
 
 const storageRoute = createRoute({
@@ -263,10 +287,12 @@ export const routeTree = rootRoute.addChildren([
     historyRoute,
     queryProfileRoute,
     healthRoute,
+    computeRoute,
+    computeDetailRoute,
     adminRoute.addChildren([
       adminIndexRoute,
-      agentsRoute,
-      agentDetailRoute,
+      legacyAgentsRoute,
+      legacyAgentDetailRoute,
       storageRoute,
       migrationsRoute,
       usersRoute,

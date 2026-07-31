@@ -77,7 +77,7 @@ shared, because an agent has its own cost, its own blast radius, and may sit clo
 sensitive data.
 
 By default every agent is **`open`**: anyone signed in can run work on it. Switch an
-agent to **`restricted`** (Admin → Agents → *an agent* → **Access**) and using it
+agent to **`restricted`** (Compute → *an agent* → **Access**) and using it
 requires a grant, which you give to a person **or to a whole workspace**.
 
 | Tier | Grants |
@@ -151,7 +151,7 @@ is only a reader, and `finance` is invisible to her entirely.
 | Let someone manage agents, storage, or users | Layer 1 (global role) | Admin → Users |
 | Give someone access to a workspace's data | Layer 2 (workspace role) | Admin → Users → Manage workspaces, or a workspace owner adds them |
 | Restrict access to specific schemas or tables | Layer 3 (data grants) | Catalog view → right-click → Permissions (the catalog must be in **scoped** mode) |
-| Reserve an agent for one team, or let someone restart it | Layer 4 (agent access) | Admin → Agents → *an agent* → Access |
+| Reserve an agent for one team, or let someone restart it | Layer 4 (agent access) | Compute → *an agent* → Access |
 
 ## Related
 

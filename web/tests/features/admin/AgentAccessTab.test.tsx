@@ -6,7 +6,7 @@ import { server } from "@tests/mock/server";
 import { renderWithProviders } from "@tests/utils";
 
 // ag-5 (warehouse-a) is a running elastic agent the mock user administers.
-const ELASTIC = "/acme-analytics/admin/agents/ag-5";
+const ELASTIC = "/acme-analytics/compute/ag-5";
 
 /** Serve one agent at a chosen tier, leaving every other handler intact. */
 function agentAtTier(tier: string | null, mode = "open") {

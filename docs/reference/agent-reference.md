@@ -123,7 +123,7 @@ services:
 
 To remove an agent:
 
-1. In the admin UI, go to **Admin → Agents**.
+1. In the admin UI, go to **Compute**.
 2. Click the agent row to open the drawer.
 3. Click **Revoke Credential**.
 

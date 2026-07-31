@@ -40,7 +40,7 @@ initiates connections.
 
 For **each** agent host:
 
-1. In the admin UI (**Admin → Agents → Generate bootstrap**) or via
+1. In the admin UI (**Compute → Generate bootstrap**) or via
    `SESSION_COOKIE=<cookie> scripts/gen-token.sh`, mint a bootstrap token
    (single-use, 24 h).
 2. On the agent host, build/pull the agent image and set its `.env`:
@@ -69,7 +69,7 @@ Repeat so at least two agents are registered (e.g. one S3-capable, one local).
 1. Open the worksheet; the engine picker lists both agents with their backend
    compatibility tags (✓ / ✗).
 2. Run several queries, switching the selected agent per worksheet. Confirm:
-   - Each query is dispatched to the chosen agent (Admin → Agents shows query
+   - Each query is dispatched to the chosen agent (Compute shows query
      counts per agent; **History** records agent/user/duration/rows).
    - Picking an agent that lacks the workspace backend's extension fails fast
      with an inline "missing `<ext>` extension" error (server-side check,
@@ -199,7 +199,7 @@ RESET duckhaven_concurrency;           -- back to the default (auto)
 
 ### Monitoring
 
-**Admin → Agents →** *(pick an agent)* **→ Monitoring** shows live **Running
+**Compute →** *(pick an agent)* **→ Monitoring** shows live **Running
 queries** and **Queued queries** counters, and a **Peak query count** chart over
 the last 1–24 hours. A persistently non-zero queued band means the agent is
 saturated: raise the slot count (e.g. switch to `decaying_3`) only if per-query

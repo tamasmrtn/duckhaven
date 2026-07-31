@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
@@ -92,5 +92,67 @@ describe('AgentPicker elastic controls (worksheets)', () => {
     await user.click(await screen.findByRole('combobox'))
     expect(await screen.findByText('warehouse-a')).toBeInTheDocument()
     expect(screen.queryByText('gone-b')).not.toBeInTheDocument()
+  })
+})
+
+describe('AgentPicker terminated elastic agents', () => {
+  function renderFor(allowTerminatedElastic: boolean) {
+    const { wrapper: Wrapper } = createWrapper()
+    return render(
+      <Wrapper>
+        <AgentPicker
+          value={null}
+          onChange={onChange}
+          allowTerminatedElastic={allowTerminatedElastic}
+        />
+      </Wrapper>,
+    )
+  }
+  let onChange = vi.fn()
+  beforeEach(() => {
+    onChange = vi.fn()
+    server.use(http.get('/api/agents', () => HttpResponse.json([TERMINATED])))
+  })
+
+  it('lets a schedule pick a stopped elastic agent, and says why', async () => {
+    const user = userEvent.setup()
+    renderFor(true)
+
+    await user.click(await screen.findByRole('combobox'))
+    expect(await screen.findByText(/will be started for each run/i)).toBeInTheDocument()
+    await user.click(screen.getByText('gone-b'))
+
+    // The scheduler restarts it at run time, so choosing it is the point.
+    expect(onChange).toHaveBeenCalledWith('ag-term')
+  })
+
+  it('does not let a worksheet pick one — that dispatch happens now', async () => {
+    const user = userEvent.setup()
+    renderFor(false)
+
+    await user.click(await screen.findByRole('combobox'))
+    await user.click(await screen.findByText('gone-b'))
+
+    expect(onChange).not.toHaveBeenCalled()
+    expect(screen.queryByText(/will be started for each run/i)).not.toBeInTheDocument()
+  })
+
+  it('never lets an offline static agent be picked, in either context', async () => {
+    const STATIC_DOWN = {
+      ...TERMINATED,
+      id: 'ag-static',
+      name: 'static-c',
+      provider: null,
+      lifecycle: null,
+    }
+    server.use(http.get('/api/agents', () => HttpResponse.json([STATIC_DOWN])))
+    const user = userEvent.setup()
+    renderFor(true)
+
+    await user.click(await screen.findByRole('combobox'))
+    await user.click(await screen.findByText('static-c'))
+
+    // Nothing can start an operator-run host, so the run would only fail.
+    expect(onChange).not.toHaveBeenCalled()
   })
 })

@@ -18,6 +18,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -30,6 +31,7 @@ from api.models.query import Query, SavedQuery, Schedule
 from api.models.workspace import Workspace
 from api.services.agent_access import tier_at_least, tier_for_principal
 from api.services.agent_dispatch import is_agent_connected
+from api.services.compute import service as compute_service
 from api.services.query import dispatch_query, pick_agent_for
 from api.services.scheduler.cron import next_run
 
@@ -117,6 +119,20 @@ async def _dispatch_schedule(db: AsyncSession, schedule: Schedule, now: datetime
     return True
 
 
+@dataclass(frozen=True)
+class _Resolution:
+    """What `_resolve_agent` decided for one run.
+
+    Exactly one of the three is meaningful: an ``agent`` to dispatch to now,
+    ``starting`` when an elastic agent is being provisioned and the run should park,
+    or an ``error`` to record the run as failed with.
+    """
+
+    agent: Agent | None = None
+    error: str | None = None
+    starting: bool = False
+
+
 async def _run_saved_query(db: AsyncSession, schedule: Schedule, now: datetime) -> Query | None:
     """Run the schedule's saved query verbatim, recorded as origin="scheduled".
 
@@ -129,7 +145,8 @@ async def _run_saved_query(db: AsyncSession, schedule: Schedule, now: datetime) 
         return None
     workspace = await db.get(Workspace, schedule.workspace_id)
 
-    agent, error = await _resolve_agent(db, schedule, saved, workspace)
+    resolved = await _resolve_agent(db, schedule, saved, workspace)
+    agent = resolved.agent
 
     query = Query(
         workspace_id=schedule.workspace_id,
@@ -143,9 +160,15 @@ async def _run_saved_query(db: AsyncSession, schedule: Schedule, now: datetime) 
     db.add(query)
     await db.flush()
 
-    if agent is None:
+    if resolved.starting:
+        # The agent is being provisioned. Leave the run parked `queued` with no
+        # agent; `bind_scheduled_work` dispatches it when the agent dials home,
+        # and the reaper fails it if that never happens. Same shape as an elastic
+        # pool run parked during a cold start.
+        logger.info("Schedule %s parked pending agent start: query=%s", schedule.id, query.id)
+    elif agent is None:
         query.status = "failed"
-        query.error = error
+        query.error = resolved.error
         query.finished_at = now
     else:
         try:
@@ -166,13 +189,26 @@ async def _run_saved_query(db: AsyncSession, schedule: Schedule, now: datetime) 
 
 async def _resolve_agent(
     db: AsyncSession, schedule: Schedule, saved: SavedQuery, workspace: Workspace | None
-) -> tuple[Agent | None, str | None]:
+) -> _Resolution:
     """Resolve the agent for a scheduled run.
 
     Order: the schedule's explicit ``agent_id`` → the saved query's
-    ``default_agent_id`` → auto-pick a compatible connected agent. An *explicit*
-    choice that is offline fails fast (no silent re-pick), consistent with manual
-    dispatch.
+    ``default_agent_id`` → auto-pick a compatible connected agent.
+
+    An explicit choice that is offline is *not* silently re-picked. What happens
+    instead depends on what kind of agent it is:
+
+    - A **static** agent that is offline fails the run. Nothing here can start it —
+      it is an operator-run host, and the control plane only ever accepts its
+      inbound socket.
+    - An **elastic** agent that is ``terminated`` or ``failed`` is re-provisioned,
+      and the run parks ``queued`` until it dials home. Failing instead would make
+      an idle-terminated agent permanently unusable for unattended work: the reaper
+      tears it down between runs precisely because nothing is using it, so every
+      subsequent run would fail on the consequence of the previous one succeeding.
+    - An elastic agent that is merely disconnected while still ``running`` is not
+      restartable and fails like a static one; ``restart_elastic_agent`` only acts
+      on a torn-down instance.
 
     Whichever branch wins, the agent must still be usable by ``schedule.created_by``
     — the person who chose it. Access is re-evaluated here, on every fire, rather
@@ -192,20 +228,26 @@ async def _resolve_agent(
             continue
         agent = await db.get(Agent, chosen)
         if agent is None:
-            return None, "Configured agent no longer exists"
+            return _Resolution(error="Configured agent no longer exists")
         if not tier_at_least(await tier_for_principal(db, owner_id, agent), "use"):
-            return None, "Schedule owner no longer has access to the configured agent"
-        if not await is_agent_connected(db, chosen):
-            return None, "Configured agent is not connected"
-        return agent, None
+            return _Resolution(error="Schedule owner no longer has access to the configured agent")
+        if await is_agent_connected(db, chosen):
+            return _Resolution(agent=agent)
+        if agent.provider is not None and agent.lifecycle in ("terminated", "failed"):
+            started = await compute_service.restart_elastic_agent(db, agent)
+            if started is None:
+                return _Resolution(error="Could not start the configured agent")
+            logger.info("Schedule %s starting terminated agent %s", schedule.id, agent.id)
+            return _Resolution(starting=True)
+        return _Resolution(error="Configured agent is not connected")
 
     if workspace is None:
-        return None, "Workspace missing for schedule"
+        return _Resolution(error="Workspace missing for schedule")
     # Scoped to the owner, or auto-select would route around a revoked grant.
     agent = await pick_agent_for(db, workspace, principal_id=owner_id)
     if agent is None:
-        return None, "No accessible connected agent available"
-    return agent, None
+        return _Resolution(error="No accessible connected agent available")
+    return _Resolution(agent=agent)
 
 
 @contextlib.asynccontextmanager

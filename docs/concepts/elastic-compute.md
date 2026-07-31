@@ -57,6 +57,34 @@ to. That belongs at creation rather than only on the Access tab: an agent create
 begins accepting work immediately, so narrowing it afterwards leaves a window where anyone could have
 run on it. See [Per-agent access](permissions.md#per-agent-access).
 
+### Starting for an interactive run
+
+Naming a specific elastic agent that has been idle-terminated starts it too, rather than failing.
+The run is parked `queued` with no agent — exactly what the worksheet already shows for a pool run
+during a cold start — and dispatches to that agent when it dials home. This is the same reasoning as
+the scheduled case below: the reaper tore the agent down *because* nothing was using it, so refusing
+the next run would make an idle-terminated agent permanently unusable.
+
+Starting an agent this way needs only the `use` tier on it, the tier that lets you target it at all.
+Sending work is dispatch, not a lifecycle operation: you choose neither the agent's size nor when it
+stops, and the idle reaper takes it back down on its own clock. Restarting an agent deliberately,
+with no work to justify it, still needs `operate`. See
+[Per-agent access](permissions.md#per-agent-access).
+
+### Starting for a SQL session
+
+A [SQL session](sql-sessions.md) — how dbt, dlt and BI tools connect — starts compute the same way,
+with one difference that follows from its contract: a session open is *synchronous*. It has to hand
+back a session the caller can immediately run statements on, so it cannot simply park and answer.
+
+Instead the session is written **`pending`** (no agent yet), compute is started, and the open call
+waits. What happens when the wait runs out is the client's choice, and is described in full under
+[Cold start](sql-sessions.md#cold-start). The important part here: giving up abandons the *session*,
+never the compute that is starting — so an immediate retry lands on the agent already coming up
+rather than paying for a second cold start.
+
+Naming a terminated elastic agent works for sessions too, on the same `use` tier as above.
+
 ### Starting for a scheduled run
 
 A [schedule](../guides/schedule-queries.md) bound to a specific elastic agent

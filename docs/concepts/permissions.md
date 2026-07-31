@@ -186,8 +186,13 @@ Each principal's access to each agent resolves to one of three tiers, each inclu
 | Tier | Can do |
 |---|---|
 | `use` | Target the agent for queries, SQL sessions, and scheduled jobs; see its status and its monitoring page |
-| `operate` | Everything in `use`, plus restart, terminate, force disconnect, and revoke its credential |
+| `operate` | Everything in `use`, plus restart, terminate, force disconnect, and revoke its credential — acting on the agent *out of band*, with no work to justify it |
 | `admin` | Everything in `operate`, plus delete the agent, change its access mode, and grant or revoke access to it |
+
+One consequence of that split is worth stating explicitly: sending work to an [elastic](elastic-compute.md) agent the
+idle reaper has terminated **starts it**, and that needs only `use`. It is dispatch, not a lifecycle operation — the
+caller picks neither the agent's size nor when it stops, and `use` can already provision a brand-new agent by targeting
+the pool. Restarting an agent deliberately, from the Compute page or the API, still needs `operate`.
 
 Holding `agents:manage` globally still confers `admin` on **every** agent, automatically. Per-agent access is an
 overlay on the global model, never a replacement — it can add access for people who hold no global agent permission,

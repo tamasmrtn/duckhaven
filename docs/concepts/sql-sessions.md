@@ -19,13 +19,64 @@ inbound agent port is ever opened.
 
 1. **Open** — `POST /api/workspaces/{ws}/sql/sessions`. The API picks the agent (an explicit `agent_id`, or an
    auto-picked compatible one), tells it to open and attach a DuckDB connection to the workspace's catalogs, and returns
-   a `session_id` once the agent acknowledges. The session **pins** that agent: every later statement routes to it.
+   a `session_id` once the agent acknowledges. The session **pins** that agent: every later statement routes to it. When
+   no agent is up and [elastic compute](elastic-compute.md) is enabled, the open starts one first — see
+   [Cold start](#cold-start).
 2. **Run statements** — `POST /api/sql/sessions/{id}/statements`. Each statement is checked against the
    [statement policy](#statement-policy) and the caller's [permissions](permissions.md), then dispatched to the held
    connection. A statement is recorded as an ordinary query row — `queued`, then `running` once the agent acknowledges
    receipt, then a terminal `done`/`failed` — so you poll and fetch it through the same `GET /api/queries/{id}` and
    `/rows` endpoints as any query, and it appears in the audit history tagged to its session.
 3. **Close** — `DELETE /api/sql/sessions/{id}`. The agent drops the connection and frees the compute slot it held.
+
+## Cold start
+
+With [elastic compute](elastic-compute.md) enabled, the pool can legitimately be scaled to zero when
+a client connects — that is the point of it. Opening a session then has to start an agent and wait,
+which sits awkwardly with a synchronous open, so the open call lets the caller choose how that wait
+ends.
+
+The session is written **`pending`** — no agent holds it yet — compute is started, and the call
+blocks. `SQL_SESSION_WAIT_TIMEOUT_S` (default 45 seconds) is the budget, and it is deliberately one
+number for every backend: nothing a client sees depends on whether the deployment provisions Docker
+containers or Azure container groups.
+
+Two request fields shape it:
+
+| Field | Meaning |
+| --- | --- |
+| `wait_timeout_s` | How long to block. Omit for the server default; `0` never blocks. Capped by `SQL_SESSION_MAX_WAIT_TIMEOUT_S` (default 120s). |
+| `on_wait_timeout` | `cancel` (default) or `continue` — what happens when the budget runs out. |
+
+And the answers:
+
+| Outcome | Status | Body |
+| --- | --- | --- |
+| Opened within the budget | `201` | The open session, exactly as before |
+| Budget expired, `on_wait_timeout=cancel` | `503` + `Retry-After` | `{"error": "compute_starting"}` |
+| Budget expired, `on_wait_timeout=continue` | `202` | The session, still `pending` or `opening` |
+| Compute could not be started at all | `503` + `Retry-After` | `{"error": "compute_unavailable"}` |
+
+`cancel` is the default because it is safe for a client that only knows how to open a session: it
+gets a plain "not yet, try again" it can retry, and never a session id it would immediately fail to
+run statements on. **It abandons the session row, not the compute** — the agent keeps starting, so a
+retry a few seconds later lands on warm compute rather than triggering a second cold start.
+
+`continue` is for a client that can poll: it gets the `pending` session back with `202` and follows
+`GET /api/sql/sessions/{id}` until the status reads `open`. A `202` on this endpoint is itself the
+signal that the server supports the contract; nothing needs to negotiate a version.
+
+!!! note "Client support"
+    The DuckHaven clients (`duckhaven-sql-connector`, `dbt-duckhaven`, `dlt-duckhaven`) do not yet
+    retry the `503` or poll the `202` themselves. Until they do, a cold start slower than the wait
+    budget surfaces as a connection error the caller has to retry. Deployments where compute starts
+    in seconds (the Docker backend) are already covered by the default budget.
+
+A session that stays `pending` because compute never arrives at all is failed by the elastic reaper
+at `ELASTIC_PROVISIONING_DEADLINE_S` (default 5 minutes), with close reason `provisioning_timeout`.
+
+Naming an idle-terminated elastic agent explicitly starts *that* agent and parks the session for it,
+rather than failing — see [Starting for a SQL session](elastic-compute.md#starting-for-a-sql-session).
 
 ## Statement delivery and deadlines
 
@@ -64,7 +115,9 @@ To keep a crashed client from pinning an agent forever, a background reaper clos
 `SQL_SESSION_IDLE_TIMEOUT_S` (default 15 minutes) or have run longer than `SQL_SESSION_MAX_LIFETIME_S` (default 4
 hours). A session that never finishes opening — the agent's acknowledgement is lost, so its row is stuck `opening` — is
 reaped once it is older than `SQL_SESSION_OPENING_DEADLINE_S` (default 2 minutes, and must exceed the open timeout), so
-a slot the agent did manage to reserve is never stranded. If the agent's connection drops, DuckHaven fails that agent's
+a slot the agent did manage to reserve is never stranded. That deadline runs from when an agent was actually told to
+open the session, not from when the client asked, so a session that first waited out a [cold start](#cold-start) still
+gets its full budget. If the agent's connection drops, DuckHaven fails that agent's
 sessions immediately — the held connection is gone and Postgres is the source of truth — and the next statement on the
 session returns `409`; the client simply opens a new one. Sessions survive an API restart or failover as long as their
 pinned agent stays connected, because every statement is routed by the agent's recorded owner, not by in-memory state.
@@ -209,6 +262,8 @@ covers two quite different situations. The row therefore also carries a typed **
 | `idle` | Reaped: no statement for `SQL_SESSION_IDLE_TIMEOUT_S`. Usually a client that crashed or forgot to close |
 | `max_lifetime` | Reaped: alive longer than `SQL_SESSION_MAX_LIFETIME_S`, however busy it was |
 | `open_timeout` | The agent never confirmed the open, so the session never became usable |
+| `compute_timeout` | The open gave up while compute was still starting — see [Cold start](#cold-start) |
+| `provisioning_timeout` | The session waited for compute that never arrived at all |
 | `agent_disconnect` | The agent holding the connection dropped; everything in flight on it died with it |
 | `agent_lease` | The agent self-reaped an orphan it was still holding — the backstop for a lost close |
 | `failed` | The agent reported it could not open the connection at all |

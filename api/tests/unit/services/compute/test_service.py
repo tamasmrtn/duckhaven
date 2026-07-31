@@ -515,3 +515,335 @@ async def test_restart_does_not_reuse_the_previous_instance_name(
     assert restarted.instance_id != first_instance, (
         "restart reused the name of the instance it just terminated"
     )
+
+
+# ── Pending SQL sessions ──────────────────────────────────────────────────────
+
+
+async def _seed_pending_session(db, ws, *, requested_agent_id=None):
+    from api.models.sql_session import SqlSession
+
+    session = SqlSession(
+        workspace_id=ws.id,
+        agent_id=None,
+        requested_agent_id=requested_agent_id,
+        status="pending",
+        active_catalog="test_ws",
+    )
+    db.add(session)
+    await db.flush()
+    return session
+
+
+async def test_bind_pending_sessions_opens_a_pool_session(session_factory, elastic_on, monkeypatch):
+    """An agent registering for the pool opens a session parked waiting for it."""
+    from api.models.sql_session import SqlSession
+    from api.services.compute import service
+
+    captured: dict = {}
+
+    async def fake_dispatch(db, session, catalogs):
+        captured["session_id"] = session.id
+        captured["agent_id"] = session.agent_id
+        captured["catalogs"] = [c.slug for c in catalogs]
+        return True
+
+    monkeypatch.setattr("api.services.sql_sessions.service.dispatch_open_session", fake_dispatch)
+
+    async with session_factory() as db:
+        ws, _ = await seed_workspace(db, user_id=uuid.uuid4())
+        agent = await _seed_running_elastic_agent(db)
+        session = await _seed_pending_session(db, ws)
+        await db.commit()
+        session_id, agent_id = session.id, agent.id
+
+        assert await service.bind_pending_sessions(db, agent) == 1
+
+    assert captured["session_id"] == session_id
+    assert captured["agent_id"] == agent_id
+    # The open frame carries the workspace's catalogs, not an empty list.
+    assert captured["catalogs"] == ["test_ws"]
+
+    async with session_factory() as db:
+        row = await db.get(SqlSession, session_id)
+        assert row.status == "opening"
+        assert row.agent_id == agent_id
+        # Anchors the reaper's opening deadline; without it the session is born
+        # already past that deadline after a slow cold start.
+        assert row.opening_at is not None
+
+
+async def test_bind_pending_sessions_skips_a_pool_key_mismatch(
+    session_factory, elastic_on, monkeypatch
+):
+    """A session for object_store work is not opened by an agent for another shape."""
+    from api.models.sql_session import SqlSession
+    from api.services.compute import service
+
+    async def fake_dispatch(db, session, catalogs):
+        raise AssertionError("dispatched to an agent for a different pool")
+
+    monkeypatch.setattr("api.services.sql_sessions.service.dispatch_open_session", fake_dispatch)
+
+    async with session_factory() as db:
+        ws, _ = await seed_workspace(db, user_id=uuid.uuid4(), backend_kind="object_store")
+        agent = await _seed_running_elastic_agent(db, pool_key="local_fs")
+        session = await _seed_pending_session(db, ws)
+        await db.commit()
+        session_id = session.id
+
+        assert await service.bind_pending_sessions(db, agent) == 0
+
+    async with session_factory() as db:
+        assert (await db.get(SqlSession, session_id)).status == "pending"
+
+
+async def test_bind_pending_sessions_opens_a_targeted_session(
+    session_factory, elastic_on, monkeypatch
+):
+    """A session naming an agent is opened by it even with no pool key at all.
+
+    An admin-created elastic agent is deliberately pool-less, so the pool binder's
+    `pool_key is None` early return would skip it — but someone can still name it
+    explicitly and have it restarted for them.
+    """
+    from api.models.sql_session import SqlSession
+    from api.services.compute import service
+
+    async def fake_dispatch(db, session, catalogs):
+        return True
+
+    monkeypatch.setattr("api.services.sql_sessions.service.dispatch_open_session", fake_dispatch)
+
+    async with session_factory() as db:
+        ws, _ = await seed_workspace(db, user_id=uuid.uuid4())
+        agent = await _seed_running_elastic_agent(db, pool_key=None)
+        session = await _seed_pending_session(db, ws, requested_agent_id=agent.id)
+        await db.commit()
+        session_id = session.id
+
+        assert await service.bind_pending_sessions(db, agent) == 1
+
+    async with session_factory() as db:
+        assert (await db.get(SqlSession, session_id)).status == "opening"
+
+
+async def test_bind_pending_sessions_fails_an_incompatible_targeted_session(
+    session_factory, elastic_on, monkeypatch
+):
+    """Capabilities are checked at bind, where the restarted agent has reported them."""
+    from api.models.agent import Agent
+    from api.models.sql_session import SqlSession
+    from api.services.compute import service
+
+    async def fake_dispatch(db, session, catalogs):
+        raise AssertionError("opened a session on an agent that cannot serve it")
+
+    monkeypatch.setattr("api.services.sql_sessions.service.dispatch_open_session", fake_dispatch)
+
+    async with session_factory() as db:
+        ws, _ = await seed_workspace(db, user_id=uuid.uuid4(), backend_kind="object_store")
+        agent = Agent(
+            name="no-httpfs",
+            status="healthy",
+            capabilities={"extensions": []},
+            provider="null",
+            lifecycle="running",
+            instance_id="dh-bind-incompat",
+        )
+        db.add(agent)
+        await db.flush()
+        session = await _seed_pending_session(db, ws, requested_agent_id=agent.id)
+        await db.commit()
+        session_id = session.id
+
+        assert await service.bind_pending_sessions(db, agent) == 0
+
+    async with session_factory() as db:
+        row = await db.get(SqlSession, session_id)
+        assert row.status == "failed"
+        assert row.error == "agent_incompatible"
+
+
+async def test_concurrent_binds_open_a_pending_session_once(
+    session_factory, elastic_on, monkeypatch
+):
+    """Two agents registering into the same pool must not both open one session.
+
+    The same race bind_queued_work guards: the claim is the UPDATE's WHERE clause,
+    not the SELECT above it, so a reconnect during a restart cannot double-open.
+    """
+    import asyncio
+
+    from api.models.agent import Agent
+    from api.services.compute import service
+
+    opened: list = []
+    gate = asyncio.Event()
+
+    async def fake_dispatch(db, session, catalogs):
+        opened.append(session.id)
+        await gate.wait()
+        return True
+
+    monkeypatch.setattr("api.services.sql_sessions.service.dispatch_open_session", fake_dispatch)
+
+    async with session_factory() as db:
+        ws, _ = await seed_workspace(db, user_id=uuid.uuid4())
+        first = await _seed_running_elastic_agent(db)
+        second = Agent(
+            name="e2",
+            status="healthy",
+            capabilities={"extensions": ["httpfs"]},
+            provider="null",
+            lifecycle="running",
+            pool_key="object_store",
+            instance_id="dh-bind-sess-2",
+            provisioned_at=first.provisioned_at,
+        )
+        db.add(second)
+        await _seed_pending_session(db, ws)
+        await db.commit()
+        first_id, second_id = first.id, second.id
+
+    async with session_factory() as db_a, session_factory() as db_b:
+        agent_a = await db_a.get(Agent, first_id)
+        agent_b = await db_b.get(Agent, second_id)
+        task_a = asyncio.create_task(service.bind_pending_sessions(db_a, agent_a))
+        task_b = asyncio.create_task(service.bind_pending_sessions(db_b, agent_b))
+        for _ in range(20):
+            await asyncio.sleep(0)
+        gate.set()
+        await asyncio.gather(task_a, task_b)
+
+    assert len(opened) == 1, f"the same pending session was opened {len(opened)} times"
+
+
+async def test_failed_open_dispatch_releases_the_session_claim(
+    session_factory, elastic_on, monkeypatch
+):
+    """An agent that could not open the session must not stay recorded against it."""
+    from api.models.sql_session import SqlSession
+    from api.services.compute import service
+
+    async def failing_dispatch(db, session, catalogs):
+        return False
+
+    monkeypatch.setattr("api.services.sql_sessions.service.dispatch_open_session", failing_dispatch)
+
+    async with session_factory() as db:
+        ws, _ = await seed_workspace(db, user_id=uuid.uuid4())
+        agent = await _seed_running_elastic_agent(db)
+        session = await _seed_pending_session(db, ws)
+        await db.commit()
+        session_id = session.id
+
+        assert await service.bind_pending_sessions(db, agent) == 0
+
+    async with session_factory() as db:
+        row = await db.get(SqlSession, session_id)
+        assert row.status == "failed"
+        assert row.agent_id is None, "a session this agent never held is attributed to it"
+
+
+# ── Targeted interactive runs ─────────────────────────────────────────────────
+
+
+async def test_bind_targeted_work_dispatches_a_parked_run(session_factory, elastic_on, monkeypatch):
+    """A run submitted against a terminated agent runs once that agent restarts."""
+    from api.models.query import Query
+    from api.services.compute import service
+
+    captured: dict = {}
+
+    async def fake_dispatch(db, query, **kwargs):
+        captured.update(kwargs)
+        captured["query_id"] = query.id
+
+    monkeypatch.setattr("api.services.query.dispatch_query", fake_dispatch)
+
+    async with session_factory() as db:
+        ws, _ = await seed_workspace(db, user_id=uuid.uuid4())
+        # Pool-less on purpose: a targeted run does not depend on a pool key.
+        agent = await _seed_running_elastic_agent(db, pool_key=None)
+        db.add(
+            Query(
+                workspace_id=ws.id,
+                agent_id=None,
+                requested_agent_id=agent.id,
+                sql="SELECT 1",
+                status="queued",
+                timeout_s=42.0,
+                active_catalog="test_ws",
+            )
+        )
+        await db.commit()
+
+        assert await service.bind_targeted_work(db, agent) == 1
+
+    # Replays what the requester actually asked for.
+    assert captured["timeout_s"] == 42.0
+    assert captured["active_catalog"] == "test_ws"
+
+    async with session_factory() as db:
+        query = (await db.execute(sa.select(Query))).scalars().one()
+        assert query.agent_id == agent.id
+
+
+async def test_bind_targeted_work_ignores_runs_for_another_agent(
+    session_factory, elastic_on, monkeypatch
+):
+    from api.models.query import Query
+    from api.services.compute import service
+
+    async def fake_dispatch(db, query, **kwargs):
+        raise AssertionError("dispatched a run targeted at a different agent")
+
+    monkeypatch.setattr("api.services.query.dispatch_query", fake_dispatch)
+
+    async with session_factory() as db:
+        ws, _ = await seed_workspace(db, user_id=uuid.uuid4())
+        agent = await _seed_running_elastic_agent(db)
+        db.add(
+            Query(
+                workspace_id=ws.id,
+                agent_id=None,
+                requested_agent_id=uuid.uuid4(),
+                sql="SELECT 1",
+                status="queued",
+            )
+        )
+        await db.commit()
+        assert await service.bind_targeted_work(db, agent) == 0
+
+
+async def test_failed_targeted_dispatch_releases_the_claim(
+    session_factory, elastic_on, monkeypatch
+):
+    from api.models.query import Query
+    from api.services.compute import service
+
+    async def failing_dispatch(db, query, **kwargs):
+        raise RuntimeError("agent went away")
+
+    monkeypatch.setattr("api.services.query.dispatch_query", failing_dispatch)
+
+    async with session_factory() as db:
+        ws, _ = await seed_workspace(db, user_id=uuid.uuid4())
+        agent = await _seed_running_elastic_agent(db)
+        db.add(
+            Query(
+                workspace_id=ws.id,
+                agent_id=None,
+                requested_agent_id=agent.id,
+                sql="SELECT 1",
+                status="queued",
+            )
+        )
+        await db.commit()
+        assert await service.bind_targeted_work(db, agent) == 0
+
+    async with session_factory() as db:
+        query = (await db.execute(sa.select(Query))).scalars().one()
+        assert query.status == "failed"
+        assert query.agent_id is None

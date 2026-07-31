@@ -262,11 +262,19 @@ async def agent_connect(
             agent_row = await db.get(Agent, agent_id)
             if agent_row is not None and agent_row.provider is not None:
                 from api.services.compute.service import (
+                    bind_pending_sessions,
                     bind_queued_work,
                     bind_scheduled_work,
+                    bind_targeted_work,
                 )
 
+                # Sessions first: a parked session has a client blocked on an open
+                # HTTP request, while a parked run's client is already polling.
+                await bind_pending_sessions(db, agent_row)
                 await bind_queued_work(db, agent_row)
+                # Interactive runs submitted against this agent while it was
+                # terminated, which restarted it.
+                await bind_targeted_work(db, agent_row)
                 # Scheduled runs parked while this agent was restarted for them.
                 # Separate from the pool binder: those match a pool key, these
                 # match the agent a schedule explicitly names.

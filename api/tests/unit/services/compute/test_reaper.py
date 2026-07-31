@@ -565,3 +565,97 @@ async def test_stuck_terminating_row_is_finished(session_factory, lazy_backend):
     await reaper.run_cycle(session_factory)
 
     assert await _lifecycle(session_factory, aid) == "terminated"
+
+
+async def test_stranded_pending_session_is_failed(session_factory, elastic_on, monkeypatch):
+    """A session parked waiting on compute that never arrives must not sit pending
+    forever: nothing else touches it (the client's open call gave up long ago
+    within its own budget) and it shows in the audit UI as a live session."""
+    monkeypatch.setattr(settings, "elastic_provisioning_deadline_s", 300.0)
+
+    async with session_factory() as db:
+        ws, _ = await seed_workspace(db, user_id=uuid.uuid4())
+        old = SqlSession(
+            workspace_id=ws.id,
+            agent_id=None,
+            status="pending",
+            created_at=_ago(3600),
+        )
+        fresh = SqlSession(
+            workspace_id=ws.id,
+            agent_id=None,
+            status="pending",
+            created_at=datetime.now(tz=UTC),
+        )
+        db.add_all([old, fresh])
+        await db.commit()
+        old_id, fresh_id = old.id, fresh.id
+
+    result = await reaper.run_cycle(session_factory)
+    assert result["stranded_sessions_failed"] == 1
+
+    async with session_factory() as db:
+        failed = await db.get(SqlSession, old_id)
+        assert failed.status == "failed"
+        assert failed.close_reason == "provisioning_timeout"
+        assert failed.closed_at is not None
+        # Still inside its budget: compute may yet arrive.
+        assert (await db.get(SqlSession, fresh_id)).status == "pending"
+
+
+async def test_idle_agent_with_a_pending_session_is_kept(
+    session_factory, null_backend, monkeypatch
+):
+    """An agent someone is blocked on must not be torn down before it opens the
+    session. The pending row carries no agent_id yet, so only requested_agent_id
+    ties the two together."""
+    monkeypatch.setattr(settings, "elastic_idle_timeout_s", 60.0)
+    async with session_factory() as db:
+        ws, _ = await seed_workspace(db, user_id=uuid.uuid4())
+        agent = await _add_running_agent(
+            db, instance_id="dh-pending-hold", last_active_s=600, provisioned_s=600
+        )
+        db.add(
+            SqlSession(
+                workspace_id=ws.id,
+                agent_id=None,
+                requested_agent_id=agent.id,
+                status="pending",
+            )
+        )
+        await db.commit()
+        aid = agent.id
+    null_backend._instances.add("dh-pending-hold")
+
+    reaped = await reaper.run_cycle(session_factory)
+
+    assert reaped["idle"] == 0
+    assert await _lifecycle(session_factory, aid) == "running"
+
+
+async def test_stranded_sweep_covers_a_targeted_interactive_run(
+    session_factory, elastic_on, monkeypatch
+):
+    """A run parked for a named agent keeps origin null -- that is how it was
+    submitted -- so the origin filter alone would leave it queued forever."""
+    monkeypatch.setattr(settings, "elastic_provisioning_deadline_s", 300.0)
+
+    async with session_factory() as db:
+        ws, _ = await seed_workspace(db, user_id=uuid.uuid4())
+        query = Query(
+            workspace_id=ws.id,
+            agent_id=None,
+            requested_agent_id=uuid.uuid4(),
+            sql="SELECT 1",
+            status="queued",
+            started_at=_ago(3600),
+        )
+        db.add(query)
+        await db.commit()
+        query_id = query.id
+
+    result = await reaper.run_cycle(session_factory)
+    assert result["stranded_queries_failed"] == 1
+
+    async with session_factory() as db:
+        assert (await db.get(Query, query_id)).status == "failed"

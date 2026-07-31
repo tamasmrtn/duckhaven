@@ -29,7 +29,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import settings
-from api.metrics import record_agents_reaped, set_reap_leader
+from api.metrics import record_agents_reaped, record_sql_session_closed, set_reap_leader
 from api.models.agent import Agent
 from api.models.query import Query
 from api.models.sql_session import SqlSession
@@ -45,7 +45,7 @@ _REAPER_LOCK_KEY = 0x64687363 + 0x100
 
 _ACTIVE_LIFECYCLE = ("provisioning", "running")
 _QUERY_IN_FLIGHT = ("queued", "running")
-_SESSION_OPEN = ("opening", "open", "closing")
+_SESSION_OPEN = ("pending", "opening", "open", "closing")
 
 
 def _aware(value: datetime) -> datetime:
@@ -97,7 +97,16 @@ async def _has_in_flight_work(db: AsyncSession, agent_id) -> bool:
         await db.execute(
             sa.select(sa.func.count())
             .select_from(SqlSession)
-            .where(SqlSession.agent_id == agent_id, SqlSession.status.in_(_SESSION_OPEN))
+            .where(
+                # `requested_agent_id` too: a session parked waiting for this agent to
+                # finish starting has no `agent_id` yet, and tearing the agent down
+                # under it would strand the client that is blocked on the open.
+                sa.or_(
+                    SqlSession.agent_id == agent_id,
+                    SqlSession.requested_agent_id == agent_id,
+                ),
+                SqlSession.status.in_(_SESSION_OPEN),
+            )
         )
     ).scalar_one()
     return bool(s)
@@ -186,7 +195,13 @@ async def _fail_stranded_queued(db: AsyncSession, now: datetime) -> int:
                     # restarts it and parks the run the same way, so it is stranded
                     # by all the same causes. Only parked runs match -- a dispatched
                     # scheduled run carries its agent_id.
-                    Query.origin.in_(("elastic", "scheduled")),
+                    sa.or_(
+                        Query.origin.in_(("elastic", "scheduled")),
+                        # An interactive run submitted against a terminated agent
+                        # parks the same way but keeps `origin` null, because that
+                        # is how it was actually submitted.
+                        Query.requested_agent_id.is_not(None),
+                    ),
                     Query.status == "queued",
                     Query.started_at < cutoff,
                 )
@@ -200,6 +215,46 @@ async def _fail_stranded_queued(db: AsyncSession, now: datetime) -> int:
         query.error = "No compute became available for this run."
         query.finished_at = now
         logger.warning("Failed stranded query %s (%s): no agent registered", query.id, query.origin)
+    if stranded:
+        await db.commit()
+    return len(stranded)
+
+
+async def _fail_stranded_pending(db: AsyncSession, now: datetime) -> int:
+    """Fail SQL sessions that no agent is ever going to open.
+
+    The session analogue of ``_fail_stranded_queued``, and here for the same reason:
+    a session parked ``pending`` is waiting on *compute*, so it is stranded by
+    exactly the causes that strand a parked run, and the right budget is the
+    provisioning deadline — once it passes, the agent that would have opened this
+    session has itself been failed.
+
+    The client is long gone by then (the open call answered 503 or 202 within its
+    own budget), so this is a bookkeeping sweep: without it the row sits ``pending``
+    forever and shows up as a live session in the audit UI. No statements need
+    failing alongside it — a session only accepts statements once it is ``open``.
+    """
+    cutoff = now - timedelta(seconds=settings.elastic_provisioning_deadline_s)
+    stranded = (
+        (
+            await db.execute(
+                sa.select(SqlSession).where(
+                    SqlSession.agent_id.is_(None),
+                    SqlSession.status == "pending",
+                    SqlSession.created_at < cutoff,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for session in stranded:
+        session.status = "failed"
+        session.error = "No compute became available for this session."
+        session.close_reason = "provisioning_timeout"
+        session.closed_at = now
+        record_sql_session_closed("provisioning_timeout")
+        logger.warning("Failed stranded session %s: no agent registered", session.id)
     if stranded:
         await db.commit()
     return len(stranded)
@@ -342,6 +397,7 @@ async def run_cycle(session_factory: async_sessionmaker[AsyncSession]) -> dict[s
                 totals[key] += value
         reaped.update(totals)
         reaped["stranded_queries_failed"] = await _fail_stranded_queued(db, now)
+        reaped["stranded_sessions_failed"] = await _fail_stranded_pending(db, now)
     return reaped
 
 

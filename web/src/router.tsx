@@ -213,26 +213,6 @@ const adminIndexRoute = createRoute({
   },
 });
 
-// Anyone who bookmarked the old location keeps working.
-const legacyAgentsRoute = createRoute({
-  getParentRoute: () => adminRoute,
-  path: "/agents",
-  beforeLoad: ({ params }) => {
-    throw redirect({ to: "/$ws/compute", params: { ws: params.ws } });
-  },
-});
-
-const legacyAgentDetailRoute = createRoute({
-  getParentRoute: () => adminRoute,
-  path: "/agents/$agentId",
-  beforeLoad: ({ params }) => {
-    throw redirect({
-      to: "/$ws/compute/$agentId",
-      params: { ws: params.ws, agentId: params.agentId },
-    });
-  },
-});
-
 const storageRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/storage",
@@ -291,8 +271,6 @@ export const routeTree = rootRoute.addChildren([
     computeDetailRoute,
     adminRoute.addChildren([
       adminIndexRoute,
-      legacyAgentsRoute,
-      legacyAgentDetailRoute,
       storageRoute,
       migrationsRoute,
       usersRoute,

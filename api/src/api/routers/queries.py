@@ -111,6 +111,12 @@ async def create_query(
     # the agent's state (and an invisible agent 404s exactly like a missing one).
     await assert_agent_tier(db, user, agent, "use")
     if not await is_agent_connected(db, body.agent_id):
+        if (
+            settings.elastic_compute_enabled
+            and agent.provider is not None
+            and agent.lifecycle in ("terminated", "failed")
+        ):
+            return await _create_starting_query(db, workspace, user.id, body, agent)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Agent not connected"
         )
@@ -178,6 +184,59 @@ async def _stamp_saved_query_run(db: AsyncSession, workspace, saved_query_id) ->
     ).scalar_one_or_none()
     if saved is not None:
         saved.last_run_at = datetime.now(UTC)
+
+
+async def _create_starting_query(
+    db: AsyncSession, workspace, user_id: uuid.UUID, body: QueryCreate, agent: Agent
+) -> Query:
+    """Park a run for a named elastic agent and start that agent.
+
+    The mirror of ``_create_elastic_query`` for an explicit target. The run cannot
+    be re-routed to whichever pool agent happens to be up — the caller chose this
+    one — so it parks ``queued`` with ``agent_id`` NULL and ``requested_agent_id``
+    set, and ``compute.service.bind_targeted_work`` dispatches it when the agent
+    dials home. Failing instead would make an idle-terminated agent permanently
+    unusable, because the reaper tears it down precisely *because* nothing is using
+    it — the reasoning the scheduler already applies to an unattended run.
+
+    ``origin`` stays null: this is an interactive run, and History must not report
+    it as anything else. Compatibility is checked when the agent registers, not
+    here: a row that failed while provisioning advertises no capabilities at all.
+    """
+    await _stamp_saved_query_run(db, workspace, body.saved_query_id)
+    query = Query(
+        workspace_id=workspace.id,
+        agent_id=None,
+        requested_agent_id=agent.id,
+        user_id=user_id,
+        sql=body.sql,
+        status="queued",
+        # Recorded for the same reason as a parked pool run: the dispatch happens
+        # outside this request and would otherwise fall back to the workspace
+        # default catalog and timeout.
+        timeout_s=body.timeout_s,
+        active_catalog=body.catalog,
+    )
+    db.add(query)
+    # Commit before provisioning: on Docker the agent can register within a second,
+    # and the binder can only claim a row it can see.
+    await db.commit()
+
+    if await compute_service.restart_elastic_agent(db, agent) is None:
+        query.status = "failed"
+        query.error = "Could not start the configured agent."
+        query.finished_at = datetime.now(UTC)
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": "compute_unavailable",
+                "detail": "Could not start the configured agent.",
+            },
+            headers={"Retry-After": "5"},
+        )
+    logger.info("Query %s starting terminated agent %s", query.id, agent.id)
+    return query
 
 
 async def _create_elastic_query(

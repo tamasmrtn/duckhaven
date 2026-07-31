@@ -1559,3 +1559,96 @@ async def test_elastic_auto_pick_skips_agents_the_caller_cannot_use(
     # Parked unbound rather than dispatched to the agent the caller cannot use.
     assert resp.json()["agent_id"] is None
     assert resp.json()["status"] == "queued"
+
+
+# --- targeted terminated agent (agent_id names an idle-terminated elastic agent) ---
+
+
+@pytest_asyncio.fixture
+async def terminated_elastic_agent(db_session):
+    from datetime import UTC, datetime, timedelta
+
+    from api.models.agent import Agent
+
+    a = Agent(
+        name="cold-target",
+        status="unavailable",
+        capabilities={"extensions": ["httpfs"]},
+        provider="null",
+        lifecycle="terminated",
+        pool_key="object_store",
+        instance_id="dh-agent-target",
+        provisioned_at=datetime.now(tz=UTC) - timedelta(seconds=3600),
+        terminated_at=datetime.now(tz=UTC) - timedelta(seconds=60),
+    )
+    db_session.add(a)
+    await db_session.commit()
+    await db_session.refresh(a)
+    return a
+
+
+async def test_targeted_terminated_agent_parks_queued_and_restarts(
+    authed_client: AsyncClient, workspace, db_session, terminated_elastic_agent, elastic_enabled
+):
+    """G3: a run naming an idle-terminated elastic agent starts it and waits, the
+    way every other data platform treats a suspended warehouse — rather than 503ing
+    and leaving that agent permanently unusable for interactive work."""
+    import sqlalchemy as sa
+
+    from api.models.query import Query
+
+    old_instance = terminated_elastic_agent.instance_id
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(terminated_elastic_agent.id)},
+    )
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["status"] == "queued"
+    # The client polls this exactly as it polls any other queued run.
+    assert body["agent_id"] is None
+
+    query = (await db_session.execute(sa.select(Query))).scalars().one()
+    assert query.requested_agent_id == terminated_elastic_agent.id
+    # Interactive: History must not report it as a pool or scheduled run.
+    assert query.origin is None
+
+    await db_session.refresh(terminated_elastic_agent)
+    assert terminated_elastic_agent.lifecycle == "provisioning"
+    assert terminated_elastic_agent.instance_id != old_instance
+
+
+async def test_targeted_terminated_agent_records_catalog_and_timeout(
+    authed_client: AsyncClient, workspace, db_session, terminated_elastic_agent, elastic_enabled
+):
+    """The dispatch happens outside this request, so what the caller chose has to
+    be on the row or the replay silently falls back to the workspace defaults."""
+    import sqlalchemy as sa
+
+    from api.models.query import Query
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={
+            "sql": "SELECT 1",
+            "agent_id": str(terminated_elastic_agent.id),
+            "timeout_s": 42.0,
+            "catalog": "test_ws",
+        },
+    )
+    assert resp.status_code == 202
+
+    query = (await db_session.execute(sa.select(Query))).scalars().one()
+    assert query.timeout_s == 42.0
+    assert query.active_catalog == "test_ws"
+
+
+async def test_targeted_offline_static_agent_still_503s(
+    authed_client: AsyncClient, workspace, agent, elastic_enabled
+):
+    """A static agent has nothing to start; the restart branch must stay narrow."""
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(agent.id)},
+    )
+    assert resp.status_code == 503

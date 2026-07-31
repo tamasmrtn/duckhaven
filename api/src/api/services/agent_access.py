@@ -14,9 +14,13 @@ global admin's access is unchanged and cannot be revoked per-agent.
 The tier ladder is ``use < operate < admin``:
 
 - ``use`` — target the agent for queries, SQL sessions and scheduled jobs; read its
-  status and monitoring page. No lifecycle operations.
+  status and monitoring page. No lifecycle operations. Sending work to an elastic
+  agent the reaper has terminated *starts* it, which is dispatch rather than a
+  lifecycle operation: the caller picks neither its size nor when it stops, and
+  ``use`` can already provision a brand-new agent by targeting the pool.
 - ``operate`` — everything in ``use``, plus restart, terminate, force disconnect and
-  revoking its bootstrap credential.
+  revoking its bootstrap credential — i.e. acting on the agent out of band, with no
+  work to justify it.
 - ``admin`` — everything in ``operate``, plus deleting the agent, changing its
   access mode, and granting or revoking tiers on it.
 

@@ -39,6 +39,7 @@ export const catalogHandlers = [
     const body = (await request.json()) as {
       name: string;
       storage_backend_id?: string;
+      access_mode?: "open" | "scoped";
     };
     // A catalog's name is also its slug — identifier-safe.
     if (!/^[a-z][a-z0-9_]*$/.test(body.name)) {
@@ -62,6 +63,7 @@ export const catalogHandlers = [
       is_default: first,
       attached_workspaces: 1,
       workspace_ids: [ws.id],
+      access_mode: body.access_mode ?? "open",
     };
     CATALOGS.push(created);
     return HttpResponse.json(out(created), { status: 201 });

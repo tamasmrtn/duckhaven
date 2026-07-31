@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { catalogsApi } from "@/api/catalogs";
+import type { AccessMode } from "@/types/grant";
 
 export function useCatalogs(ws: string) {
   return useQuery({
@@ -19,8 +20,11 @@ export function useAllCatalogs() {
 export function useCreateCatalog(ws: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { name: string; storage_backend_id?: string }) =>
-      catalogsApi.create(ws, body),
+    mutationFn: (body: {
+      name: string;
+      storage_backend_id?: string;
+      access_mode?: AccessMode;
+    }) => catalogsApi.create(ws, body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["workspace", ws, "catalogs"] });
       qc.invalidateQueries({ queryKey: ["catalogs"] });

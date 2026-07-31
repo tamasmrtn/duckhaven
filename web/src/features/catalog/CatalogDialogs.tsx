@@ -27,6 +27,7 @@ import {
   useCreateStorageBackend,
   useStorageBackends,
 } from "@/queries/storage-backends";
+import type { AccessMode } from "@/types/grant";
 import { cn } from "@/utils";
 
 // External, operator-owned stores. Bundled object storage (MinIO) is offered as
@@ -67,6 +68,7 @@ export function CreateCatalogDialog({
   const [kind, setKind] = useState<ExternalKind>("s3");
   const [backendName, setBackendName] = useState("");
   const [rootUri, setRootUri] = useState("");
+  const [accessMode, setAccessMode] = useState<AccessMode>("open");
 
   const create = useCreateCatalog(ws);
   const pending = create.isPending || createBackend.isPending;
@@ -78,6 +80,7 @@ export function CreateCatalogDialog({
     setKind("s3");
     setBackendName("");
     setRootUri("");
+    setAccessMode("open");
   }
 
   async function handleCreate() {
@@ -101,7 +104,11 @@ export function CreateCatalogDialog({
       } else if (backendChoice !== BUNDLED) {
         storage_backend_id = backendChoice;
       }
-      await create.mutateAsync({ name: name.trim(), storage_backend_id });
+      await create.mutateAsync({
+        name: name.trim(),
+        storage_backend_id,
+        access_mode: accessMode,
+      });
       reset();
       onOpenChange(false);
     } catch (err) {
@@ -202,6 +209,27 @@ export function CreateCatalogDialog({
                 </div>
               </div>
             )}
+          </div>
+
+          {/* Set here rather than only on the permissions panel: a catalog
+              created open is readable by every workspace member from the moment
+              it exists, so narrowing it afterwards leaves a window. */}
+          <div className="space-y-1.5">
+            <Label htmlFor="catalog-access">Who can see its data</Label>
+            <select
+              id="catalog-access"
+              value={accessMode}
+              onChange={(e) => setAccessMode(e.target.value as AccessMode)}
+              className="h-9 w-full rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 text-sm"
+            >
+              <option value="open">Everyone in this workspace</option>
+              <option value="scoped">Only what I grant (scoped)</option>
+            </select>
+            <p className="text-2xs text-text-tertiary">
+              {accessMode === "scoped"
+                ? "Members see only the schemas and tables they are granted. You get full access to this catalog so you can grant the rest."
+                : "Every workspace member gets their workspace role over everything in this catalog."}
+            </p>
           </div>
 
           {error && <p className="text-xs text-red-500">{error}</p>}

@@ -17,6 +17,7 @@ from sqlalchemy.orm import selectinload
 
 from api.deps import get_current_user, get_db, get_polaris_client
 from api.models.catalog import Catalog, WorkspaceCatalog
+from api.models.catalog_grant import CatalogGrant
 from api.models.storage_backend import StorageBackend
 from api.models.user import User
 from api.schemas.catalog_mgmt import CatalogAttachRequest, CatalogCreate, CatalogOut
@@ -176,11 +177,36 @@ async def create_workspace_catalog(
         db, polaris, name=body.name, backend=backend, created_by=user.id
     )
     link = await catalog_service.attach_catalog(
-        db, workspace=workspace, catalog=catalog, attached_by=user.id
+        db,
+        workspace=workspace,
+        catalog=catalog,
+        attached_by=user.id,
+        access_mode=body.access_mode,
     )
+    if body.access_mode == "scoped":
+        # Seed the creator a catalog-level writer grant. Unlike per-agent access,
+        # a scoped catalog has no bypass at all -- `grants.access_tier` returns
+        # None without a covering grant no matter the workspace role, and the role
+        # only caps. Creating one scoped would otherwise produce a catalog that
+        # nobody, including the owner who just made it, can see or use.
+        db.add(
+            CatalogGrant(
+                user_id=user.id,
+                catalog_id=catalog.id,
+                schema_name=None,
+                table_name=None,
+                tier="writer",
+                created_by=user.id,
+            )
+        )
     await db.commit()
     await db.refresh(catalog, attribute_names=["storage_backend"])
-    return _catalog_out(catalog, is_default=link.is_default, attached_workspaces=1)
+    return _catalog_out(
+        catalog,
+        is_default=link.is_default,
+        attached_workspaces=1,
+        access_mode=link.access_mode,
+    )
 
 
 @router.post("/workspaces/{ws}/catalogs/attach", response_model=CatalogOut)

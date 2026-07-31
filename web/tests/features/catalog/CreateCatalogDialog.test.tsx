@@ -95,3 +95,63 @@ describe('CreateCatalogDialog', () => {
     })
   })
 })
+
+describe('CreateCatalogDialog access mode', () => {
+  it('defaults to open', async () => {
+    const user = userEvent.setup()
+    let body: Record<string, unknown> | undefined
+    server.use(
+      http.post('/api/workspaces/:ws/catalogs', async ({ request }) => {
+        body = (await request.json()) as Record<string, unknown>
+        return HttpResponse.json({ id: 'cat-new' }, { status: 201 })
+      }),
+    )
+    renderDialog()
+
+    await user.type(await screen.findByLabelText('Name'), 'plain')
+    await user.click(screen.getByRole('button', { name: /^create$/i }))
+
+    await vi.waitFor(() => expect(body).toBeDefined())
+    expect(body).toMatchObject({ access_mode: 'open' })
+  })
+
+  it('creates a scoped catalog so it is never briefly readable by everyone', async () => {
+    const user = userEvent.setup()
+    let body: Record<string, unknown> | undefined
+    server.use(
+      http.post('/api/workspaces/:ws/catalogs', async ({ request }) => {
+        body = (await request.json()) as Record<string, unknown>
+        return HttpResponse.json({ id: 'cat-new' }, { status: 201 })
+      }),
+    )
+    renderDialog()
+
+    await user.type(await screen.findByLabelText('Name'), 'sensitive')
+    await user.selectOptions(
+      await screen.findByLabelText(/who can see its data/i),
+      'scoped',
+    )
+    await user.click(screen.getByRole('button', { name: /^create$/i }))
+
+    await vi.waitFor(() => expect(body).toBeDefined())
+    expect(body).toMatchObject({ name: 'sensitive', access_mode: 'scoped' })
+  })
+
+  it('says the creator keeps access, since a scoped catalog has no bypass', async () => {
+    const user = userEvent.setup()
+    renderDialog()
+
+    expect(
+      await screen.findByText(/every workspace member gets their workspace role/i),
+    ).toBeInTheDocument()
+
+    await user.selectOptions(
+      await screen.findByLabelText(/who can see its data/i),
+      'scoped',
+    )
+
+    expect(
+      await screen.findByText(/you get full access to this catalog/i),
+    ).toBeInTheDocument()
+  })
+})

@@ -87,9 +87,14 @@ async def attach_catalog(
     catalog: Catalog,
     attached_by: uuid.UUID,
     make_default: bool = False,
+    access_mode: str = "open",
 ) -> WorkspaceCatalog:
     """Bind ``catalog`` to ``workspace``. The first catalog attached to a
-    workspace becomes its default; ``make_default`` re-points the default."""
+    workspace becomes its default; ``make_default`` re-points the default.
+
+    ``access_mode`` defaults to ``open``, so attaching an existing catalog is
+    unchanged; only catalog creation passes anything else.
+    """
     dupe = await db.execute(
         select(WorkspaceCatalog).where(
             WorkspaceCatalog.workspace_id == workspace.id,
@@ -116,6 +121,7 @@ async def attach_catalog(
         catalog_id=catalog.id,
         is_default=is_default,
         attached_by=attached_by,
+        access_mode=access_mode,
     )
     db.add(link)
     await db.flush()

@@ -7,6 +7,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from api.schemas.grant import AccessMode
+
 
 class CatalogCreate(BaseModel):
     # A catalog has a single identifier-safe name (it is also the slug used in
@@ -16,6 +18,11 @@ class CatalogCreate(BaseModel):
     # Storage backend for the new catalog. When omitted a bundled object-store
     # backend is auto-provisioned.
     storage_backend_id: uuid.UUID | None = None
+    # Access mode of the attachment this call creates. Settable here so a catalog
+    # meant to be scoped never exists in an open state: it would otherwise be
+    # readable by every workspace member between creation and the operator
+    # switching it on the permissions panel. Defaults to `open`.
+    access_mode: AccessMode = "open"
 
 
 class CatalogAttachRequest(BaseModel):

@@ -22,6 +22,7 @@ import os
 import socket
 import subprocess
 import time
+import uuid as uuid_mod
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -111,6 +112,51 @@ def _agent_env(api_port: int, results_dir: Path, result_port: int) -> dict[str, 
     return env
 
 
+def _migrate(env: Mapping[str, str]) -> None:
+    subprocess.run(
+        ["uv", "run", "--package", "duckhaven-api", "alembic", "-c", "api/alembic.ini",
+         "upgrade", "head"],
+        cwd=REPO_ROOT,
+        env=dict(env),
+        check=True,
+        capture_output=True,
+    )  # fmt: skip
+
+
+def _start_api(env: Mapping[str, str], port: int, log: Path) -> subprocess.Popen:
+    """Boot the outer app (REST under /api + the agent WS) and wait for healthz."""
+    with log.open("w") as fh:
+        proc = subprocess.Popen(
+            ["uv", "run", "--package", "duckhaven-api", "uvicorn", "api.main:app",
+             "--host", "127.0.0.1", "--port", str(port)],
+            cwd=REPO_ROOT,
+            env=dict(env),
+            stdout=fh,
+            stderr=subprocess.STDOUT,
+        )  # fmt: skip
+    _wait_until(
+        lambda: httpx.get(f"http://127.0.0.1:{port}/api/healthz", timeout=2.0).status_code == 200,
+        _STARTUP_TIMEOUT_S,
+        "api",
+        proc,
+        log,
+    )
+    return proc
+
+
+def _create_first_admin(base_url: str) -> None:
+    """Consume the setup token. 409 = an admin already exists (a reused database
+    from a prior local run) — fine, the same credentials log in below."""
+    with httpx.Client(base_url=base_url, timeout=10.0) as c:
+        r = c.post(
+            "/api/setup/admin",
+            json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD, "name": "XC Admin"},
+            headers={"X-Setup-Token": SETUP_TOKEN},
+        )
+        if r.status_code not in (200, 409):
+            r.raise_for_status()
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _require_env() -> None:
     missing = [
@@ -161,23 +207,7 @@ def stack(_require_env, tmp_path_factory) -> Iterator[Stack]:
     _preinstall_agent_extensions()
 
     # 1. Apply migrations to the target database.
-    subprocess.run(
-        [
-            "uv",
-            "run",
-            "--package",
-            "duckhaven-api",
-            "alembic",
-            "-c",
-            "api/alembic.ini",
-            "upgrade",
-            "head",
-        ],
-        cwd=REPO_ROOT,
-        env=api_env,
-        check=True,
-        capture_output=True,
-    )
+    _migrate(api_env)
 
     api_port = _free_port()
     api_log = tmp / "api.log"
@@ -186,45 +216,10 @@ def stack(_require_env, tmp_path_factory) -> Iterator[Stack]:
     base_url = f"http://127.0.0.1:{api_port}"
     try:
         # 2. Start the API (outer app: REST under /api + agent WS at /agents/connect).
-        with api_log.open("w") as fh:
-            api = subprocess.Popen(
-                [
-                    "uv",
-                    "run",
-                    "--package",
-                    "duckhaven-api",
-                    "uvicorn",
-                    "api.main:app",
-                    "--host",
-                    "127.0.0.1",
-                    "--port",
-                    str(api_port),
-                ],
-                cwd=REPO_ROOT,
-                env=api_env,
-                stdout=fh,
-                stderr=subprocess.STDOUT,
-            )
-        procs.append(api)
-        _wait_until(
-            lambda: httpx.get(f"{base_url}/api/healthz", timeout=2.0).status_code == 200,
-            _STARTUP_TIMEOUT_S,
-            "api",
-            api,
-            api_log,
-        )
+        procs.append(_start_api(api_env, api_port, api_log))
 
-        # 3. Create the first admin (consumes the setup token). 409 = an admin
-        #    already exists (a reused database from a prior local run) — fine,
-        #    we log in with the same credentials below. CI gets a fresh DB (200).
-        with httpx.Client(base_url=base_url, timeout=10.0) as c:
-            r = c.post(
-                "/api/setup/admin",
-                json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD, "name": "XC Admin"},
-                headers={"X-Setup-Token": SETUP_TOKEN},
-            )
-            if r.status_code not in (200, 409):
-                r.raise_for_status()
+        # 3. Create the first admin. CI gets a fresh DB (200).
+        _create_first_admin(base_url)
 
         # 4. Start the agent and wait until the API reports it healthy.
         results_dir = tmp / "agent-results"
@@ -333,6 +328,185 @@ def spawn_agent(
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             proc.kill()
+
+
+# ── Elastic compute: a second stack with no agent of its own ──────────────────
+#
+# Elastic scale-out can only be observed where compute is *absent*, so these
+# cannot share the stack above: its session-scoped agent is connected and
+# compatible, so `pick_agent_for` would always find it and nothing would ever
+# provision. The elastic stack therefore gets its own database and its own API,
+# and starts with no agent at all.
+#
+# The provider is `null`: it records the instance id and creates nothing, which
+# leaves the test playing the part the cloud plays in production — it reads the
+# bootstrap token the control plane minted for the pre-created row and starts a
+# real agent process with it. Everything on the control-plane side of that seam
+# is the real thing: the row, the token, the revive-on-registration path, the
+# work binders, and the WebSocket the agent dials home on.
+
+
+@dataclass
+class ElasticStack:
+    base_url: str
+    db_url: str
+
+
+def _elastic_db_url(db_url: str) -> str:
+    """A sibling database URL for the elastic stack (…/testdb → …/testdb_elastic)."""
+    base, _, name = db_url.rpartition("/")
+    return f"{base}/{name.split('?', 1)[0]}_elastic"
+
+
+async def _recreate_database(db_url: str) -> None:
+    """Drop and create the elastic stack's database, so every run starts clean."""
+    import asyncpg
+
+    dsn = db_url.replace("+asyncpg", "")
+    admin_dsn, _, name = dsn.rpartition("/")
+    conn = await asyncpg.connect(f"{admin_dsn}/postgres")
+    try:
+        await conn.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+        await conn.execute(f'CREATE DATABASE "{name}"')
+    finally:
+        await conn.close()
+
+
+async def bootstrap_token_for(db_url: str, agent_id: str) -> str:
+    """The bootstrap token the control plane minted for a pre-created elastic row.
+
+    In production the backend passes this into the instance it creates; with the
+    `null` backend there is no instance, so the test reads it and starts the agent
+    itself. Stored raw (only PATs are hashed), which is what makes this possible.
+    """
+    import asyncpg
+
+    conn = await asyncpg.connect(db_url.replace("+asyncpg", ""))
+    try:
+        token = await conn.fetchval(
+            "SELECT token FROM credentials WHERE agent_id = $1 AND kind = 'agent_bootstrap'",
+            uuid_mod.UUID(agent_id),
+        )
+    finally:
+        await conn.close()
+    assert token, f"no bootstrap token minted for agent {agent_id}"
+    return token
+
+
+def _elastic_api_env(db_url: str, setup_token_file: Path, api_port: int) -> dict[str, str]:
+    env = _api_env(db_url, setup_token_file)
+    env.update(
+        {
+            "ELASTIC_COMPUTE_ENABLED": "true",
+            "ELASTIC_PROVIDER": "null",
+            "ELASTIC_CONTROL_PLANE_URL": f"ws://127.0.0.1:{api_port}/agents/connect",
+            "ELASTIC_MAX_AGENTS_PER_POOL": "1",
+        }
+    )
+    # Not this stack's mechanism: a seeded static bootstrap token would let an
+    # agent register outside the elastic rows these tests are about.
+    env.pop("AGENT_BOOTSTRAP_TOKEN", None)
+    return env
+
+
+@pytest.fixture(scope="session")
+def elastic_stack(_require_env, tmp_path_factory) -> Iterator[ElasticStack]:
+    """A live API with elastic compute enabled, its own database, and no agent."""
+    import asyncio
+
+    tmp = tmp_path_factory.mktemp("xc-elastic")
+    db_url = _elastic_db_url(os.environ["DATABASE_URL"])
+    setup_token_file = tmp / "setup_token"
+    setup_token_file.write_text(SETUP_TOKEN)
+
+    asyncio.run(_recreate_database(db_url))
+
+    api_port = _free_port()
+    api_env = _elastic_api_env(db_url, setup_token_file, api_port)
+    _migrate(api_env)
+
+    base_url = f"http://127.0.0.1:{api_port}"
+    api = _start_api(api_env, api_port, tmp / "api.log")
+    try:
+        _create_first_admin(base_url)
+        yield ElasticStack(base_url=base_url, db_url=db_url)
+    finally:
+        api.terminate()
+        try:
+            api.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            api.kill()
+
+
+@pytest_asyncio.fixture
+async def elastic_client(elastic_stack: ElasticStack):
+    async with httpx.AsyncClient(base_url=elastic_stack.base_url, timeout=30.0) as c:
+        r = await c.post("/api/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
+        r.raise_for_status()
+        yield c
+
+
+@pytest_asyncio.fixture
+async def elastic_workspace(elastic_client) -> str:
+    slug = f"xce-{uuid_mod.uuid4().hex[:8]}"
+    r = await elastic_client.post("/api/workspaces", json={"slug": slug, "name": "XC Elastic"})
+    r.raise_for_status()
+    c = await elastic_client.post(
+        f"/api/workspaces/{slug}/catalogs", json={"name": f"c_{slug.replace('-', '_')}"}
+    )
+    c.raise_for_status()
+    return slug
+
+
+@pytest_asyncio.fixture
+async def start_provisioned_agent(elastic_stack: ElasticStack, elastic_client, tmp_path_factory):
+    """Start the agent process the control plane just "provisioned".
+
+    Stands in for the cloud backend: takes the id of a row in `provisioning` and
+    runs a real agent with that row's bootstrap token, so it registers into that
+    row rather than minting a new one.
+
+    On teardown every agent it started is killed *and* its row terminated, so the
+    next test starts from zero compute — the per-pool cap is 1, and a leftover
+    running agent would silently satisfy the next test's scale-out.
+    """
+    api_port = int(elastic_stack.base_url.rsplit(":", 1)[1])
+    started: list[subprocess.Popen] = []
+
+    async def _start(agent_id: str) -> subprocess.Popen:
+        token = await bootstrap_token_for(elastic_stack.db_url, agent_id)
+        d = tmp_path_factory.mktemp("xc-elastic-agent")
+        results_dir = d / "results"
+        results_dir.mkdir()
+        env = _agent_env(api_port, results_dir, _free_port())
+        env["BOOTSTRAP_TOKEN"] = token
+        # The null backend reports no address, and the API deliberately refuses to
+        # fall back to the socket peer for an elastic agent, so advertise it —
+        # otherwise result fetches have nowhere to go.
+        env["RESULT_ADVERTISE_HOST"] = "127.0.0.1"
+        with (d / "agent.log").open("w") as fh:
+            proc = subprocess.Popen(
+                ["uv", "run", "--package", "duckhaven-agent", "python", "-m", "agent.main"],
+                cwd=REPO_ROOT,
+                env=env,
+                stdout=fh,
+                stderr=subprocess.STDOUT,
+            )
+        started.append(proc)
+        return proc
+
+    yield _start
+
+    for proc in started:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+    agents = (await elastic_client.get("/api/admin/agents")).json()
+    for agent in agents:
+        if agent.get("lifecycle") in ("provisioning", "running"):
+            await elastic_client.post(f"/api/admin/agents/{agent['id']}/terminate")
 
 
 @pytest_asyncio.fixture

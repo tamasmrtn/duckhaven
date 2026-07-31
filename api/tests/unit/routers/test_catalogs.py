@@ -124,3 +124,86 @@ async def test_detach_default_promotes_another(auth_client, owner, db_session, f
     listing = {c["slug"]: c for c in (await auth_client.get("/workspaces/dev/catalogs")).json()}
     assert set(listing) == {"second"}
     assert listing["second"]["is_default"] is True
+
+
+# --- access mode at creation --------------------------------------------------
+
+
+async def test_create_catalog_defaults_to_open(
+    auth_client, owner, db_session, fake_polaris: FakePolaris
+):
+    await seed_workspace(db_session, user_id=owner.id, slug="dm", name="DM")
+
+    resp = await auth_client.post("/workspaces/dm/catalogs", json={"name": "plain"})
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["access_mode"] == "open"
+
+
+async def test_create_catalog_scoped_sets_the_attachment_mode(
+    auth_client, owner, db_session, fake_polaris: FakePolaris
+):
+    """Chosen at creation so a catalog meant to be scoped is never readable by
+    every workspace member in the window before someone switches it."""
+    await seed_workspace(db_session, user_id=owner.id, slug="sc", name="SC")
+
+    resp = await auth_client.post(
+        "/workspaces/sc/catalogs", json={"name": "sensitive", "access_mode": "scoped"}
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["access_mode"] == "scoped"
+
+
+async def test_creating_scoped_seeds_the_creator_a_catalog_grant(
+    auth_client, owner, db_session, fake_polaris: FakePolaris
+):
+    """A scoped catalog has no bypass: `grants.access_tier` returns None without a
+    covering grant whatever the workspace role. Without this seed the creator
+    would make a catalog nobody -- including themselves -- could see."""
+    from sqlalchemy import select
+
+    from api.models.catalog import Catalog
+    from api.models.catalog_grant import CatalogGrant
+
+    await seed_workspace(db_session, user_id=owner.id, slug="seed", name="Seed")
+    resp = await auth_client.post(
+        "/workspaces/seed/catalogs", json={"name": "locked", "access_mode": "scoped"}
+    )
+    assert resp.status_code == 201, resp.text
+
+    catalog = (
+        await db_session.execute(select(Catalog).where(Catalog.slug == "locked"))
+    ).scalar_one()
+    grant = (
+        await db_session.execute(select(CatalogGrant).where(CatalogGrant.catalog_id == catalog.id))
+    ).scalar_one()
+    assert grant.user_id == owner.id
+    assert grant.tier == "writer"
+    # Catalog-level: covers every schema and table, including future ones.
+    assert grant.schema_name is None
+    assert grant.table_name is None
+
+
+async def test_creating_open_seeds_no_grant(
+    auth_client, owner, db_session, fake_polaris: FakePolaris
+):
+    """Grants are only consulted in scoped mode, so an open catalog must not
+    accumulate rows nobody reads."""
+    from sqlalchemy import func, select
+
+    from api.models.catalog_grant import CatalogGrant
+
+    await seed_workspace(db_session, user_id=owner.id, slug="og", name="OG")
+    await auth_client.post("/workspaces/og/catalogs", json={"name": "shared"})
+
+    count = await db_session.scalar(select(func.count()).select_from(CatalogGrant))
+    assert count == 0
+
+
+async def test_create_catalog_rejects_unknown_access_mode(
+    auth_client, owner, db_session, fake_polaris: FakePolaris
+):
+    await seed_workspace(db_session, user_id=owner.id, slug="bad", name="Bad")
+    resp = await auth_client.post(
+        "/workspaces/bad/catalogs", json={"name": "nope", "access_mode": "restricted"}
+    )
+    assert resp.status_code == 422

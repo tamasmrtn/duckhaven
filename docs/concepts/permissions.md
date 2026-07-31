@@ -74,9 +74,15 @@ Each catalog attachment has an **access mode**:
 - **`scoped`** — the workspace role is no longer enough on its own; a member sees
   only what a **grant** gives them on that catalog.
 
-Switch a catalog between the two modes from its **Permissions** dialog in the
-catalog view (right-click the catalog), or from **Admin → Catalog access**, which
-lists every attached catalog with its mode.
+Pick the mode when you create the catalog — the **New catalog** dialog asks who can see its data —
+or switch an existing one from its **Permissions** dialog in the catalog view (right-click the
+catalog), or from **Admin → Catalog access**, which lists every attached catalog with its mode.
+
+Creating it scoped matters when the data is sensitive from the start: a catalog created `open` is
+readable by every workspace member at their workspace role from the moment it exists, so switching
+it afterwards leaves a window. A catalog created scoped grants its creator `writer` on the whole
+catalog, because scoped access has **no** bypass — the workspace role only caps a grant, it never
+supplies one, so without that seed the catalog would be invisible even to the person who made it.
 
 A grant is set at one of three levels of the hierarchy, and a grant at a coarser
 level covers everything beneath it — including tables created *after* the grant:

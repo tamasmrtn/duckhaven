@@ -1,5 +1,7 @@
+// `pending` means no agent holds it yet: compute is starting and the session is
+// waiting to be bound to it.
 export type SqlSessionStatus =
-  "opening" | "open" | "closing" | "closed" | "expired" | "failed";
+  "pending" | "opening" | "open" | "closing" | "closed" | "expired" | "failed";
 
 // Why a session ended. Null while it is still live, and on sessions that ended
 // before the server recorded a reason.
@@ -8,6 +10,8 @@ export type SessionCloseReason =
   | "idle"
   | "max_lifetime"
   | "open_timeout"
+  | "compute_timeout"
+  | "provisioning_timeout"
   | "agent_disconnect"
   | "agent_lease"
   | "failed";
@@ -38,7 +42,10 @@ export interface SqlSession {
 }
 
 // A session still holding its agent's admission slot — the operator view.
+// `pending` is included: it holds no slot yet, but it is a session someone is
+// waiting on, and a pile-up of them is how a slow cold start looks.
 export const LIVE_SESSION_STATUSES: SqlSessionStatus[] = [
+  "pending",
   "opening",
   "open",
   "closing",

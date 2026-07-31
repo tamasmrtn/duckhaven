@@ -584,15 +584,6 @@ async def test_metrics_are_filtered_to_visible_agents(
     assert [m for m in resp.json() if m["agent_id"] == str(elastic_agent.id)] == []
 
 
-async def test_me_reports_agent_access_for_a_grantee(
-    grantee_client: AsyncClient, db_session, elastic_agent: Agent, grantee: User
-):
-    """The SPA needs this to admit a grantee to the admin shell's Agents tab."""
-    assert (await grantee_client.get("/me")).json()["agent_access"] is False
-    await _grant(db_session, elastic_agent, grantee, "use")
-    assert (await grantee_client.get("/me")).json()["agent_access"] is True
-
-
 async def test_create_elastic_agent_defaults_to_open(
     admin_client: AsyncClient, db_session, elastic_enabled
 ):

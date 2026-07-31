@@ -410,7 +410,7 @@ export function AgentsPage() {
   const [bootstrapOpen, setBootstrapOpen] = useState(false);
   const [computeOpen, setComputeOpen] = useState(false);
   const navigate = useNavigate();
-  const { ws } = useParams({ from: "/$ws/admin/agents" });
+  const { ws } = useParams({ from: "/$ws/compute" });
   // Adding compute is a fleet-level spend decision, so it stays on the global
   // permission — a per-agent grant, however high, never confers it.
   const { data: me } = useMe();
@@ -505,7 +505,7 @@ export function AgentsPage() {
                   key={agent.id}
                   onClick={() =>
                     navigate({
-                      to: "/$ws/admin/agents/$agentId",
+                      to: "/$ws/compute/$agentId",
                       params: { ws, agentId: agent.id },
                     })
                   }

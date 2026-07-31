@@ -46,8 +46,8 @@ scale-out serves whoever triggered it; restrict an agent only when you want it r
 
 ### Creating compute manually
 
-Compute can also be started deliberately from **Admin → Agents → New compute**, the way you'd start a
-Databricks cluster. You pick a **named size** (vCPU + memory) and see its **hourly cost** before
+Compute can also be started deliberately from the **Compute** section of the nav, via **New compute**,
+the way you'd start a Databricks cluster. You pick a **named size** (vCPU + memory) and see its **hourly cost** before
 creating it; the agent is provisioned at that size, appears in the list with its cost, and the same
 idle reaper auto-terminates it when it goes quiet. The available sizes and their prices come from the
 control plane (`GET /admin/agents/compute-options`), so cost is shown from one source of truth.

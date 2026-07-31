@@ -67,7 +67,7 @@ Agents authenticate separately, with one-time bootstrap tokens rather than user 
 ### Who can use an agent
 
 Any signed-in user can run work on any agent by default. To reserve one — or to let someone restart an agent without
-making them a deployment-wide admin — open **Admin → Agents → *an agent* → Access**, set the agent to **restricted**,
+making them a deployment-wide admin — open **Compute → *an agent* → Access**, set the agent to **restricted**,
 and grant `use`, `operate`, or `admin` to a user or to a whole workspace. A workspace grant follows membership, so
 adding someone to the workspace gives them the agent with no further step. See
 [Per-agent access](../concepts/permissions.md#per-agent-access).

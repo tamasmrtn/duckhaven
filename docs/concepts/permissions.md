@@ -221,7 +221,7 @@ A workspace grant is capped at `operate`. The `admin` tier includes granting acc
 happens to be in a workspace* would make the access list unauditable — the set of people who can widen it would change
 silently every time someone joined.
 
-Manage this from **Admin → Agents → (an agent) → Access**.
+Manage this from **Compute → (an agent) → Access**.
 
 ## What is not in scope
 

@@ -5,7 +5,6 @@ from api.config import settings
 from api.deps import get_current_user, get_db
 from api.models.user import User
 from api.schemas.auth import AuthMethods, LoginRequest, OidcProviderInfo, UserOut
-from api.services.agent_access import load_caller_grants
 from api.services.auth import (
     authenticate_password,
     create_session,
@@ -21,10 +20,6 @@ me_router = APIRouter()
 async def _user_out_with_permissions(db: AsyncSession, user: User) -> UserOut:
     out = UserOut.model_validate(user)
     out.permissions = sorted(await user_permissions(db, user))
-    # Lets the SPA admit a per-agent grantee to the admin shell's Agents tab. Without
-    # it the shell's "holds any global permission" gate would lock a grantee out of
-    # the monitoring page their `use` tier entitles them to.
-    out.agent_access = bool(await load_caller_grants(db, user.id))
     return out
 
 

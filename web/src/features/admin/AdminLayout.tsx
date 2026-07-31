@@ -7,11 +7,10 @@ import {
 import { useMe } from "@/queries/auth";
 import { cn } from "@/utils";
 
-// Which global permission each admin section needs. `agents` is the exception:
-// a per-agent grant also admits its holder, because reading an agent's
-// monitoring page is a `use`-tier capability rather than a fleet-wide one.
+// Which global permission each admin section needs. Compute is deliberately
+// absent: it moved out to the main nav, because a per-agent grantee is entitled
+// to their agent's monitoring page without holding any global permission.
 const tabs = [
-  { segment: "agents", label: "Agents", permission: "agents:manage" },
   {
     segment: "storage",
     label: "Storage backends",
@@ -43,12 +42,8 @@ export function AdminLayout() {
   const navigate = useNavigate();
   const { data: me, isLoading } = useMe();
   const permissions = me?.permissions ?? [];
-  // A per-agent grantee holds no global permission but is entitled to their
-  // agent's detail and monitoring pages, which live inside this shell.
-  const visibleTabs = tabs.filter(
-    ({ segment, permission }) =>
-      permissions.includes(permission) ||
-      (segment === "agents" && me?.agent_access),
+  const visibleTabs = tabs.filter(({ permission }) =>
+    permissions.includes(permission),
   );
 
   // Client-side gate: the admin area's screens are individually enforced by the

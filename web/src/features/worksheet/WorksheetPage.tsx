@@ -849,7 +849,7 @@ export function WorksheetPage() {
               <AlertCircle className="size-3.5 text-[var(--status-running)] shrink-0" />
               <span>No agents connected — connect one to run queries.</span>
               <Link
-                to="/$ws/admin/agents"
+                to="/$ws/compute"
                 params={{ ws }}
                 className="font-medium text-[var(--brand-slate-blue)] hover:underline"
               >

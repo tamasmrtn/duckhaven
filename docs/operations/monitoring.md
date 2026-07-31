@@ -5,7 +5,7 @@ the **History** page.
 
 ## Per-agent monitoring
 
-Open **Admin → Agents** and click an agent to reach its detail page. The **Monitoring** tab answers the question an
+Open **Compute** and click an agent to reach its detail page. The **Monitoring** tab answers the question an
 operator actually has when something felt slow or a bill looked wrong: *what was this agent doing, and when?*
 
 At the top, a row of **live statistics** — status, running queries, queued queries, and the agent's size — reads from

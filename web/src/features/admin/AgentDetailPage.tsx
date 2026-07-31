@@ -57,7 +57,7 @@ function OverviewTab({ agent }: { agent: Agent }) {
   const { data: computeOptions } = useComputeOptions();
   const currency = computeOptions?.currency ?? null;
   const navigate = useNavigate();
-  const { ws } = useParams({ from: "/$ws/admin/agents/$agentId" });
+  const { ws } = useParams({ from: "/$ws/compute/$agentId" });
   const revoke = useRevokeAgent();
   const restart = useRestartAgent();
   const terminate = useTerminateAgent();
@@ -292,7 +292,7 @@ function OverviewTab({ agent }: { agent: Agent }) {
                 deleteAgent.mutate(agent.id, {
                   onSuccess: () => {
                     setConfirmDelete(false);
-                    navigate({ to: "/$ws/admin/agents", params: { ws } });
+                    navigate({ to: "/$ws/compute", params: { ws } });
                   },
                 })
               }
@@ -307,7 +307,7 @@ function OverviewTab({ agent }: { agent: Agent }) {
 }
 
 export function AgentDetailPage() {
-  const { ws, agentId } = useParams({ from: "/$ws/admin/agents/$agentId" });
+  const { ws, agentId } = useParams({ from: "/$ws/compute/$agentId" });
   const navigate = useNavigate();
   const { data: agent, isLoading, isError } = useAdminAgent(agentId);
 
@@ -330,7 +330,7 @@ export function AgentDetailPage() {
         <Button
           variant="outline"
           size="sm"
-          onClick={() => navigate({ to: "/$ws/admin/agents", params: { ws } })}
+          onClick={() => navigate({ to: "/$ws/compute", params: { ws } })}
         >
           Back to agents
         </Button>
@@ -346,7 +346,7 @@ export function AgentDetailPage() {
           size="icon"
           className="size-7"
           aria-label="back to agents"
-          onClick={() => navigate({ to: "/$ws/admin/agents", params: { ws } })}
+          onClick={() => navigate({ to: "/$ws/compute", params: { ws } })}
         >
           <ArrowLeft className="size-4" />
         </Button>

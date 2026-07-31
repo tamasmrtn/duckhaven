@@ -38,4 +38,23 @@ describe('LeftRail icons', () => {
     const { container } = renderRail()
     expect(container.querySelector('svg.lucide-database')).toBeNull()
   })
+
+  it('uses a microchip for Compute', () => {
+    const { getByLabelText } = renderRail()
+
+    expect(
+      getByLabelText('Compute').querySelector('svg.lucide-microchip'),
+    ).toBeTruthy()
+  })
+
+  it('shows Compute to a user holding no global permission', () => {
+    // The whole point of moving it out of /admin: a per-agent grantee must be
+    // able to reach their agent's monitoring page. The page itself lists only
+    // the agents the server says they can see.
+    const { getByLabelText, queryByLabelText } = renderRail()
+
+    expect(getByLabelText('Compute')).toBeTruthy()
+    // `me` never resolves in this isolated render, so no permissions are held.
+    expect(queryByLabelText('Admin')).toBeNull()
+  })
 })

@@ -7,8 +7,8 @@ import { renderWithProviders } from '@tests/utils'
 import { makeEmptyMonitoring, makeMonitoring } from '@/mock/fixtures/monitoring'
 
 // ag-5 (warehouse-a) is a running elastic agent; ag-1 (agent-a) is static.
-const ELASTIC = '/acme-analytics/admin/agents/ag-5'
-const STATIC = '/acme-analytics/admin/agents/ag-1'
+const ELASTIC = '/acme-analytics/compute/ag-5'
+const STATIC = '/acme-analytics/compute/ag-1'
 
 describe('AgentDetailPage', () => {
   it('opens on Monitoring — the tab the page exists for', async () => {

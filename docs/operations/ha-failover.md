@@ -44,7 +44,7 @@ recovers without a restart.
 **Goal:** killing the API replica that holds an agent's socket lets the agent
 reconnect to another replica, and queries keep working.
 
-1. Confirm both replicas are up and the agent is connected (**Admin → Agents**
+1. Confirm both replicas are up and the agent is connected (**Compute**
    shows it healthy).
 2. Identify which replica owns the agent socket by reading the `owner_url` column:
 

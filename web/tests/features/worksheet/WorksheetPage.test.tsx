@@ -176,7 +176,7 @@ describe('WorksheetPage run', () => {
 
     expect(await screen.findByText(/no agents connected/i)).toBeInTheDocument()
     const link = screen.getByRole('link', { name: /add an agent/i })
-    expect(link).toHaveAttribute('href', '/acme-analytics/admin/agents')
+    expect(link).toHaveAttribute('href', '/acme-analytics/compute')
   })
 
   it('surfaces a rejected dispatch as a readable error', async () => {

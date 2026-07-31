@@ -847,3 +847,48 @@ async def test_failed_targeted_dispatch_releases_the_claim(
         query = (await db.execute(sa.select(Query))).scalars().one()
         assert query.status == "failed"
         assert query.agent_id is None
+
+
+async def test_bind_pending_sessions_binds_when_capabilities_are_not_reported_yet(
+    session_factory, elastic_on, monkeypatch
+):
+    """A restarting agent has not necessarily told us what it can do yet.
+
+    `AGENT_STATUS` is a frame the agent sends *after* the handshake, and this binder
+    runs inside that handshake, so `capabilities` is legitimately NULL for an agent
+    that was terminated before it ever reported. Treating that as incompatible
+    stranded the session: `agent_supports_backend(None, ...)` is False.
+    """
+    from api.models.agent import Agent
+    from api.models.sql_session import SqlSession
+    from api.services.compute import service
+
+    opened: list = []
+
+    async def fake_dispatch(db, session, catalogs):
+        opened.append(session.id)
+        return True
+
+    monkeypatch.setattr("api.services.sql_sessions.service.dispatch_open_session", fake_dispatch)
+
+    async with session_factory() as db:
+        ws, _ = await seed_workspace(db, user_id=uuid.uuid4())
+        agent = Agent(
+            name="not-yet-reported",
+            status="healthy",
+            capabilities=None,
+            provider="null",
+            lifecycle="running",
+            instance_id="dh-bind-nocaps",
+        )
+        db.add(agent)
+        await db.flush()
+        session = await _seed_pending_session(db, ws, requested_agent_id=agent.id)
+        await db.commit()
+        session_id = session.id
+
+        assert await service.bind_pending_sessions(db, agent) == 1
+
+    assert opened == [session_id]
+    async with session_factory() as db:
+        assert (await db.get(SqlSession, session_id)).status == "opening"

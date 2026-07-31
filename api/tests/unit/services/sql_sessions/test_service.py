@@ -162,3 +162,91 @@ async def test_session_closed_resolves_in_flight_statements(db_session):
     await db_session.refresh(q)
     assert q.status == "failed"
     assert q.error == "session closed"
+
+
+async def test_await_session_open_waits_through_pending(db_engine):
+    """The wait covers both states an open can sit in: `pending` (compute starting,
+    no agent bound) and `opening` (bound, awaiting the ack). Returning at the first
+    sight of a non-`opening` row would make every cold open fail immediately."""
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.services.sql_sessions.service import await_session_open
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    async with factory() as db:
+        u = User(email="w@sessions.local", password_hash=hash_password("pw"), name="W", role="user")
+        db.add(u)
+        await db.flush()
+        ws, _ = await seed_workspace(db, user_id=u.id)
+        agent = Agent(name="wait-agent", status="healthy", capabilities={})
+        db.add(agent)
+        await db.flush()
+        s = SqlSession(workspace_id=ws.id, agent_id=None, status="pending")
+        db.add(s)
+        await db.commit()
+        session_id = s.id
+
+    async def advance():
+        # Both transitions land in a *different* DB session, exactly as the binder
+        # and the websocket handler do in production.
+        await asyncio.sleep(0.05)
+        async with factory() as other:
+            row = await other.get(SqlSession, session_id)
+            row.status = "opening"
+            row.agent_id = agent.id
+            await other.commit()
+        await asyncio.sleep(0.05)
+        async with factory() as other:
+            row = await other.get(SqlSession, session_id)
+            row.status = "open"
+            await other.commit()
+
+    async with factory() as db:
+        session = await db.get(SqlSession, session_id)
+        mover = asyncio.create_task(advance())
+        await await_session_open(db, session, timeout_s=5.0)
+        await mover
+
+    assert session.status == "open"
+
+
+async def test_await_session_open_releases_the_connection_between_polls(db_engine):
+    """The poll must not hold its pooled connection idle-in-transaction for the
+    whole wait. With a 45s cold-start budget and one session per dbt thread, that
+    exhausts the pool and stalls every other request on the replica."""
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.services.sql_sessions.service import await_session_open
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    async with factory() as db:
+        u = User(email="t@sessions.local", password_hash=hash_password("pw"), name="T", role="user")
+        db.add(u)
+        await db.flush()
+        ws, _ = await seed_workspace(db, user_id=u.id)
+        s = SqlSession(workspace_id=ws.id, agent_id=None, status="pending")
+        db.add(s)
+        await db.commit()
+        session_id = s.id
+
+    in_transaction: list[bool] = []
+
+    async with factory() as db:
+        session = await db.get(SqlSession, session_id)
+
+        async def sample():
+            # Sample well after the first poll has run, so a transaction opened by
+            # `refresh` and never ended would still be open here.
+            for _ in range(5):
+                await asyncio.sleep(0.15)
+                in_transaction.append(db.in_transaction())
+
+        sampler = asyncio.create_task(sample())
+        await await_session_open(db, session, timeout_s=1.0)
+        await sampler
+
+    assert not any(in_transaction), "the poll held a transaction open between polls"

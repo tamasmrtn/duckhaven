@@ -152,9 +152,18 @@ async def run_cycle(session_factory: async_sessionmaker[AsyncSession]) -> dict[s
                                 ),
                             ),
                             # Stuck opening: the agent never acked but may hold a slot.
+                            # Measured from `opening_at` -- when an agent was bound and
+                            # told to open -- so a session that first waited out a cold
+                            # start gets the full budget rather than arriving already
+                            # past it. Falls back to `created_at` for rows written
+                            # before that column existed, where the two are equal
+                            # anyway. `pending` sessions are not selected at all: they
+                            # have no agent to be stuck on, and the compute reaper's
+                            # provisioning deadline bounds them.
                             sa.and_(
                                 SqlSession.status == "opening",
-                                SqlSession.created_at < opening_cutoff,
+                                sa.func.coalesce(SqlSession.opening_at, SqlSession.created_at)
+                                < opening_cutoff,
                             ),
                         )
                     )

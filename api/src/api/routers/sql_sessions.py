@@ -43,6 +43,7 @@ from api.services import statement_policy as policy
 from api.services.agent_access import assert_agent_tier
 from api.services.agent_capabilities import agent_supports_backend, required_extension
 from api.services.agent_dispatch import is_agent_connected
+from api.services.compute import service as compute_service
 from api.services.grants import GrantDenied, assert_query_access
 from api.services.migration.service import workspace_has_active_migration
 from api.services.permissions import Permission
@@ -77,14 +78,62 @@ async def _load_session(db: AsyncSession, session_id: uuid.UUID, user: User) -> 
     return session
 
 
+def _is_restartable_elastic(agent: Agent) -> bool:
+    """Whether sending work to this agent should start it rather than fail.
+
+    Only an elastic agent the reaper (or a failed provision) already took down:
+    a static agent has nothing to start, and one still ``running`` that merely
+    lost its socket is a connectivity problem, not a cold pool.
+    """
+    return (
+        settings.elastic_compute_enabled
+        and agent.provider is not None
+        and agent.lifecycle in ("terminated", "failed")
+    )
+
+
+async def _start_compute(
+    db: AsyncSession, session: SqlSession, workspace, restarting: Agent | None
+) -> bool:
+    """Bring up compute for a session parked ``pending``. False if it cannot start.
+
+    Called after the session row is committed, so whichever agent comes up can find
+    and claim it. ``ensure_agent`` returning None is *not* a failure: it means the
+    per-pool cap is already held by a row that is provisioning, and that agent will
+    bind this session when it registers.
+    """
+    if restarting is not None:
+        if await compute_service.restart_elastic_agent(db, restarting) is None:
+            session.status = "failed"
+            session.error = "compute_unavailable"
+            session.close_reason = "failed"
+            session.closed_at = datetime.now(tz=UTC)
+            await db.commit()
+            return False
+        return True
+    pool_key = await compute_service.resolve_pool_key(db, workspace)
+    await compute_service.ensure_agent(db, pool_key)
+    await db.commit()
+    return True
+
+
 @router.post("/workspaces/{ws}/sql/sessions", status_code=201, response_model=SqlSessionOut)
 async def open_session(
     ws: str,
     body: SqlSessionCreate,
     request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> SqlSession:
+    """Open a session, starting compute first when none is up.
+
+    Synchronous by contract — it returns a session a client can immediately run
+    statements on — so when compute has to start it holds the request rather than
+    parking silently. `wait_timeout_s`/`on_wait_timeout` choose how long and what
+    happens at the end: 503 + Retry-After (the default, for a client that cannot
+    poll) or 202 with a pending session (for one that can).
+    """
     _require_enabled()
     workspace = await get_workspace(db, ws)
     if workspace is None:
@@ -99,6 +148,10 @@ async def open_session(
         )
 
     # Compute selection: explicit agent, else auto-pick a connected compatible one.
+    # `agent` is one to dispatch to now; `requested_agent_id` is one that has to be
+    # started first, in which case the session parks until it dials home.
+    requested_agent_id: uuid.UUID | None = None
+    restarting: Agent | None = None
     if body.agent_id is not None:
         agent = await db.get(Agent, body.agent_id)
         if agent is None:
@@ -106,23 +159,33 @@ async def open_session(
         # Ahead of the connectivity probe, so a caller without access learns nothing
         # about the agent's state.
         await assert_agent_tier(db, user, agent, "use")
-        if not await is_agent_connected(db, agent.id):
+        if await is_agent_connected(db, agent.id):
+            for catalog in catalogs:
+                if not agent_supports_backend(agent.capabilities, catalog.storage_backend.kind):
+                    ext = required_extension(catalog.storage_backend.kind)
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                        detail={
+                            "error": "agent_incompatible",
+                            "detail": f"Agent '{agent.name}' is missing the '{ext}' extension.",
+                        },
+                    )
+        elif _is_restartable_elastic(agent):
+            # Start it and park, rather than failing: the reaper took this agent down
+            # *because* nothing was using it, so refusing here would make an
+            # idle-terminated agent permanently unusable (the reasoning the scheduler
+            # already applies to an unattended run). Capabilities are deliberately not
+            # checked -- a row that failed while provisioning carries none, so the
+            # check would reject a perfectly restartable agent. The binder checks them
+            # once the agent is up and has reported them.
+            requested_agent_id, restarting, agent = agent.id, agent, None
+        else:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Agent not connected"
             )
-        for catalog in catalogs:
-            if not agent_supports_backend(agent.capabilities, catalog.storage_backend.kind):
-                ext = required_extension(catalog.storage_backend.kind)
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                    detail={
-                        "error": "agent_incompatible",
-                        "detail": f"Agent '{agent.name}' is missing the '{ext}' extension.",
-                    },
-                )
     else:
         agent = await pick_agent_for(db, workspace, principal_id=user.id)
-        if agent is None:
+        if agent is None and not settings.elastic_compute_enabled:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="No connected agent available",
@@ -141,11 +204,17 @@ async def open_session(
     # value.
     client_name, client_version = parse_user_agent(request.headers.get("user-agent"))
 
+    now = datetime.now(tz=UTC)
     session = SqlSession(
         workspace_id=workspace.id,
-        agent_id=agent.id,
+        agent_id=agent.id if agent is not None else None,
+        requested_agent_id=requested_agent_id,
         user_id=user.id,
-        status="opening",
+        # No agent to open it yet: park until compute registers and the binder
+        # claims it. Catalogs and the staging prefix are properties of the
+        # workspace, so a pending session is fully described without one.
+        status="opening" if agent is not None else "pending",
+        opening_at=now if agent is not None else None,
         active_catalog=active.slug,
         client_name=client_name,
         client_version=client_version,
@@ -154,10 +223,22 @@ async def open_session(
     await db.flush()
     session.staging_uri = session_credentials.staging_uri_for(active, session.id)
     # Commit so the agent's SESSION_OPENED ack (applied in a separate DB session)
-    # can find and update this row.
+    # can find and update this row. For a pending session the same commit is what
+    # lets the registration binder see it -- on Docker the agent can dial home
+    # within a second of the provision call below.
     await db.commit()
 
-    if not await session_service.dispatch_open_session(db, session, catalogs):
+    if agent is None:
+        if not await _start_compute(db, session, workspace, restarting):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "error": "compute_unavailable",
+                    "detail": "Could not start compute for this session.",
+                },
+                headers={"Retry-After": "5"},
+            )
+    elif not await session_service.dispatch_open_session(db, session, catalogs):
         session.status = "failed"
         session.error = "agent not connected"
         await db.commit()
@@ -165,9 +246,56 @@ async def open_session(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Agent not connected"
         )
 
-    await session_service.await_session_open(db, session, settings.sql_session_open_timeout_s)
+    if body.wait_timeout_s is not None:
+        wait_s = body.wait_timeout_s
+    elif agent is not None:
+        # Warm path: an agent was already connected and has been told to open, so
+        # the only thing left to wait for is its ack — the budget that has always
+        # governed it. A deployment with warm compute sees no change at all.
+        wait_s = settings.sql_session_open_timeout_s
+    else:
+        wait_s = settings.sql_session_wait_timeout_s
+    if wait_s > 0:
+        await session_service.await_session_open(db, session, wait_s)
     if session.status == "open":
         return session
+    if body.on_wait_timeout == "continue" and session.status in ("pending", "opening"):
+        # Hand the session back for the client to poll. Not a failure: compute is
+        # still coming, and GET /sql/sessions/{id} follows it to `open`.
+        response.status_code = status.HTTP_202_ACCEPTED
+        return session
+    if session.status == "pending":
+        # Abandon the row with the same compare-and-set the open-timeout branch uses:
+        # the binder may have claimed it between our last poll and here. The compute
+        # that is starting is deliberately left alone -- an immediate client retry
+        # should land on it, not pay for another cold start.
+        result = await db.execute(
+            sa.update(SqlSession)
+            .where(SqlSession.id == session.id, SqlSession.status == "pending")
+            .values(
+                status="failed",
+                error="compute_timeout",
+                close_reason="compute_timeout",
+                closed_at=datetime.now(tz=UTC),
+            )
+            .execution_options(synchronize_session=False)
+        )
+        await db.commit()
+        if result.rowcount == 1:
+            record_sql_session_closed("compute_timeout")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "error": "compute_starting",
+                    "detail": "Compute is starting; retry shortly.",
+                },
+                headers={"Retry-After": "5"},
+            )
+        # The binder won the race: the row is opening or open now. Reload and fall
+        # through to the same handling a warm open gets.
+        await db.refresh(session)
+        if session.status == "open":
+            return session
     if session.status == "opening":
         # Time out the row with a compare-and-set so we never clobber a session the
         # agent opened between our last poll and here (it would flip opening→open in

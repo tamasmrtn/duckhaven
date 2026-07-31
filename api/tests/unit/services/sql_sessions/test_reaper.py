@@ -365,3 +365,72 @@ async def test_expiring_a_session_resolves_its_in_flight_statements(session_fact
     async with session_factory() as db:
         assert (await db.get(SqlSession, sid)).status == "expired"
     assert await _status(session_factory, qid) == ("failed", "session expired")
+
+
+async def test_opening_deadline_is_measured_from_opening_at(session_factory, _spy_agent_dispatch):
+    """A session that waited out a cold start gets its full opening budget.
+
+    The deadline used to be measured from `created_at`, which is when the *client*
+    asked -- so a session that sat pending for most of a slow provision arrived at
+    `opening` already past it and was reaped on the very next tick, before the
+    agent had any chance to ack.
+    """
+    async with session_factory() as db:
+        u = User(email="c@reaper.local", password_hash=hash_password("pw"), name="C", role="user")
+        db.add(u)
+        await db.flush()
+        ws, _ = await seed_workspace(db, user_id=u.id)
+        agent = Agent(name="ac", status="healthy", capabilities={})
+        db.add(agent)
+        await db.flush()
+        now = datetime.now(tz=UTC)
+        cold = SqlSession(
+            workspace_id=ws.id,
+            agent_id=agent.id,
+            status="opening",
+            created_at=now - timedelta(minutes=10),
+            opening_at=now,
+            last_active_at=now,
+        )
+        db.add(cold)
+        await db.commit()
+        await db.refresh(cold)
+        cold_id = cold.id
+
+    reaped = await run_cycle(session_factory)
+    assert reaped["open_timeout"] == 0
+
+    async with session_factory() as db:
+        assert (await db.get(SqlSession, cold_id)).status == "opening"
+
+
+async def test_pending_sessions_are_left_to_the_compute_reaper(
+    session_factory, _spy_agent_dispatch
+):
+    """A pending session has no agent to be stuck on. Bounding it here would use
+    the wrong budget entirely -- the compute reaper's provisioning deadline is what
+    says compute is never coming."""
+    async with session_factory() as db:
+        u = User(email="p@reaper.local", password_hash=hash_password("pw"), name="P", role="user")
+        db.add(u)
+        await db.flush()
+        ws, _ = await seed_workspace(db, user_id=u.id)
+        now = datetime.now(tz=UTC)
+        pending = SqlSession(
+            workspace_id=ws.id,
+            agent_id=None,
+            status="pending",
+            created_at=now - timedelta(minutes=10),
+            last_active_at=now - timedelta(minutes=10),
+        )
+        db.add(pending)
+        await db.commit()
+        await db.refresh(pending)
+        pending_id = pending.id
+
+    reaped = await run_cycle(session_factory)
+    assert reaped["open_timeout"] == 0
+    assert reaped["idle"] == 0
+
+    async with session_factory() as db:
+        assert (await db.get(SqlSession, pending_id)).status == "pending"

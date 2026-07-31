@@ -1,7 +1,12 @@
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from api.config import settings
 
 
 class SqlSessionCreate(BaseModel):
@@ -10,6 +15,28 @@ class SqlSessionCreate(BaseModel):
     agent_id: uuid.UUID | None = None
     # Optional default catalog to USE for unqualified names.
     catalog: str | None = None
+    # How long the open call may block while compute starts. None takes the server
+    # default (sql_session_wait_timeout_s); 0 never blocks and answers immediately
+    # with a pending session. Capped by sql_session_max_wait_timeout_s.
+    wait_timeout_s: float | None = Field(default=None, ge=0)
+    # What to do when the wait expires with the session still waiting on compute.
+    # "cancel" (the default) abandons the session row and answers 503 + Retry-After,
+    # which is what a client that cannot poll wants; "continue" hands back the
+    # pending session with 202 so the client can poll GET /sql/sessions/{id}.
+    # Note "cancel" abandons the *row*, never the compute that is starting -- an
+    # immediate retry lands on the agent still coming up.
+    on_wait_timeout: Literal["cancel", "continue"] = "cancel"
+
+    @model_validator(mode="after")
+    def _validate_wait(self) -> SqlSessionCreate:
+        if self.wait_timeout_s is not None:
+            if self.wait_timeout_s > settings.sql_session_max_wait_timeout_s:
+                raise ValueError(
+                    f"wait_timeout_s must be at most {settings.sql_session_max_wait_timeout_s}"
+                )
+            if self.wait_timeout_s == 0 and self.on_wait_timeout == "cancel":
+                raise ValueError('wait_timeout_s=0 requires on_wait_timeout="continue"')
+        return self
 
 
 class SqlSessionOut(BaseModel):
@@ -25,8 +52,8 @@ class SqlSessionOut(BaseModel):
     staging_uri: str | None
     error: str | None
     # Why the session ended: client / idle / max_lifetime / open_timeout /
-    # agent_disconnect / agent_lease / failed. Null while it lives, and on sessions
-    # that ended before the field existed.
+    # compute_timeout / provisioning_timeout / agent_disconnect / agent_lease /
+    # failed. Null while it lives, and on sessions that ended before the field existed.
     close_reason: str | None = None
     # The tool that opened it, from the request's User-Agent.
     client_name: str | None = None

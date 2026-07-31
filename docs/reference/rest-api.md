@@ -133,3 +133,28 @@ Every agent object carries `access_tier` (the requesting caller's tier) and `acc
 | `PATCH /api/admin/agents/{id}/access-mode` | Body: `{"access_mode": "open" \| "restricted"}`. Returns the full access payload. |
 | `PUT /api/admin/agents/{id}/grants` | Upsert a grant. Body: `{"user_id"` **or** `"workspace_id", "tier"}`. **201** on insert, **200** on update. **422** if neither or both principals are given, or if a workspace is granted `admin`. |
 | `DELETE /api/admin/agents/{id}/grants/{grant_id}` | Revoke a grant. **204**. |
+
+## Waiting for compute
+
+When [elastic compute](../concepts/elastic-compute.md) is enabled, a request can arrive with the pool
+scaled to zero. Submitting a **query** is unaffected: it is already asynchronous, so the run is
+recorded `queued` with a null `agent_id` and dispatches once compute registers — you poll
+`GET /api/queries/{id}` exactly as you would for a busy agent. That now also covers a query naming an
+idle-terminated elastic agent, which used to be **503**.
+
+Opening a **SQL session** is synchronous, so it cannot simply park. `POST /api/workspaces/{ws}/sql/sessions`
+accepts two optional fields for it:
+
+| Field | Default | Meaning |
+|---|---|---|
+| `wait_timeout_s` | server default (`SQL_SESSION_WAIT_TIMEOUT_S`, 45s) | How long to block while compute starts. `0` never blocks. Above `SQL_SESSION_MAX_WAIT_TIMEOUT_S` is **422**. |
+| `on_wait_timeout` | `cancel` | `cancel` → **503** with `Retry-After` and `{"error": "compute_starting"}`; `continue` → **202** with the session still `pending`. `0` with `cancel` is **422**. |
+
+A **202** means the session exists but is not usable yet: poll `GET /api/sql/sessions/{id}` until its
+status reads `open` (a statement sent before then is **409** `session_not_open`). A **503** here means
+the compute is still coming up, not that it failed — retry, and the retry lands on the agent that is
+already starting.
+
+`API_VERSION` is deliberately **unchanged**: both fields are optional, an older server ignores them,
+and a client that never sends them sees exactly the previous 201/503 behaviour. A **202** on this
+route is itself the signal that a server supports the contract, so nothing needs to negotiate.

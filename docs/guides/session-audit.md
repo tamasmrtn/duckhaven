@@ -28,6 +28,10 @@ itself. Sessions opened by a connector older than `duckhaven-sql-connector` 0.3.
 instead of the workload — those clients led their `User-Agent` with their own token, so historical audit rows are
 attributed to the connector rather than the dbt or dlt run that opened them.
 
+A session showing **pending** has no agent yet: [compute is starting](../concepts/sql-sessions.md#cold-start) and it
+will bind to that agent when it registers. One or two during a cold start is normal. A pile of them means compute is
+slow to arrive or is not arriving at all — check the Compute page for an agent stuck `provisioning`.
+
 ### Force-closing a session
 
 If you hold the `queries:admin` permission, a **Force close** button appears on each live row. It tells the agent to

@@ -115,7 +115,9 @@ agent — `use` < `operate` < `admin` — rather than by the global `agents:mana
 | `admin` | `DELETE /api/admin/agents/{id}`, and the access endpoints below |
 
 `POST /api/admin/agents/elastic`, `POST /api/admin/agents/bootstrap` and `GET /api/admin/agents/compute-options`
-remain on the global `agents:manage` permission: they are fleet-level, not about one agent.
+remain on the global `agents:manage` permission: they are fleet-level, not about one agent. `POST .../elastic` accepts
+an optional `access_mode` (`open` | `restricted`, default `open`) so a reserved agent is created locked down rather
+than narrowed afterwards — it is applied to the row before the compute backend is asked for anything.
 
 An agent the caller has no tier on is **invisible** — omitted from `GET /api/agents`, `GET /api/admin/agents` and
 `GET /api/admin/agents/metrics`, and **404** from its own routes. An insufficient-but-nonzero tier returns **403**

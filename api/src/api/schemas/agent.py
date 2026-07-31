@@ -81,6 +81,12 @@ class ElasticAgentCreate(BaseModel):
     # tick, seconds after it was asked for. The dialog's min/max are presentation only.
     idle_timeout_minutes: int | None = Field(default=None, ge=1, le=1440)
     name: str | None = None
+    # Who may use the agent once it registers. Settable here so an agent meant to be
+    # reserved is never briefly usable by everyone: it would otherwise be created
+    # `open` and only narrowed afterwards from the Access tab, and an agent can
+    # register and start taking work in that window. Defaults to `open`, which is
+    # how every agent behaved before per-agent access existed.
+    access_mode: AgentAccessMode = "open"
 
 
 class MetricsSampleOut(BaseModel):

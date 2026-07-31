@@ -207,6 +207,10 @@ export interface CreateElasticAgentBody {
   memory_gb: number;
   idle_timeout_minutes?: number;
   name?: string;
+  // Chosen at creation so an agent meant to be reserved is never briefly usable by
+  // everyone — it would otherwise register and start taking work before anyone
+  // reached the Access tab. Omitted means `open`.
+  access_mode?: AgentAccessMode;
 }
 
 export interface BootstrapToken {

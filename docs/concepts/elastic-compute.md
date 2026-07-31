@@ -52,6 +52,11 @@ creating it; the agent is provisioned at that size, appears in the list with its
 idle reaper auto-terminates it when it goes quiet. The available sizes and their prices come from the
 control plane (`GET /admin/agents/compute-options`), so cost is shown from one source of truth.
 
+The same dialog chooses **who can use it** — anyone signed in, or only the people you grant access
+to. That belongs at creation rather than only on the Access tab: an agent created open registers and
+begins accepting work immediately, so narrowing it afterwards leaves a window where anyone could have
+run on it. See [Per-agent access](permissions.md#per-agent-access).
+
 ### Scaling in
 
 A background reaper (leader-elected, like the scheduler and session reapers) terminates an elastic

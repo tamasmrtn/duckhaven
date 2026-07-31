@@ -135,6 +135,7 @@ async def provision_elastic_agent(
     cpu: float,
     memory_gb: float,
     idle_timeout_s: float | None = None,
+    access_mode: str = "open",
 ) -> Agent | None:
     """Provision one elastic agent at an explicit size (admin-initiated).
 
@@ -144,11 +145,21 @@ async def provision_elastic_agent(
     idle reaper (using ``idle_timeout_s``, or the global default when None)
     auto-terminates it. Returns the agent, or ``None`` if elastic compute is
     disabled or provisioning failed.
+
+    ``access_mode`` is applied to the row before the backend is asked for anything,
+    so an agent created ``restricted`` is never briefly usable by everyone: it
+    cannot register and pick up work in a window where the ACL says otherwise.
     """
     if not settings.elastic_compute_enabled:
         return None
     return await _create_and_provision(
-        db, name=name, pool_key=None, cpu=cpu, memory_gb=memory_gb, idle_timeout_s=idle_timeout_s
+        db,
+        name=name,
+        pool_key=None,
+        cpu=cpu,
+        memory_gb=memory_gb,
+        idle_timeout_s=idle_timeout_s,
+        access_mode=access_mode,
     )
 
 
@@ -258,10 +269,15 @@ async def _create_and_provision(
     cpu: float,
     memory_gb: float,
     idle_timeout_s: float | None,
+    access_mode: str = "open",
 ) -> Agent | None:
     """Write the agent row, then mint + provision it. The row (with a deterministic
     ``instance_id`` and the requested size) is committed *before* the backend call,
-    so a crash mid-provision always leaves a reconcilable record — never a leak."""
+    so a crash mid-provision always leaves a reconcilable record — never a leak.
+
+    ``access_mode`` defaults to ``open`` so pool scale-out (``ensure_agent``) keeps
+    serving whoever triggered it; only the admin-initiated path passes anything else.
+    """
     now = datetime.now(tz=UTC)
     agent = Agent(
         name=name,
@@ -273,6 +289,7 @@ async def _create_and_provision(
         requested_memory_gb=memory_gb,
         idle_timeout_s=idle_timeout_s,
         provisioned_at=now,
+        access_mode=access_mode,
     )
     db.add(agent)
     await db.flush()  # assign agent.id

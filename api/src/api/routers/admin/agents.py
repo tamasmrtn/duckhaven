@@ -205,11 +205,11 @@ async def create_elastic_agent(
     db: AsyncSession = Depends(get_db),
 ) -> AgentOut:
     """Provision an elastic agent at a chosen vCPU/memory size (the "new compute"
-    action), optionally with a per-agent idle-terminate timeout.
+    action), optionally with a per-agent idle-terminate timeout and access mode.
 
     Stays on the global ``agents:manage`` rather than a per-agent tier: creating an
     agent is a spend decision about the fleet, and there is no agent yet to hold a
-    tier on. New agents start ``access_mode="open"``.
+    tier on. ``access_mode`` defaults to ``open``.
     """
     if not settings.elastic_compute_enabled:
         raise HTTPException(
@@ -231,7 +231,12 @@ async def create_elastic_agent(
     idle_s = body.idle_timeout_minutes * 60 if body.idle_timeout_minutes else None
     name = body.name or f"elastic-{secrets.token_hex(3)}"
     agent = await compute_service.provision_elastic_agent(
-        db, name=name, cpu=body.cpu, memory_gb=body.memory_gb, idle_timeout_s=idle_s
+        db,
+        name=name,
+        cpu=body.cpu,
+        memory_gb=body.memory_gb,
+        idle_timeout_s=idle_s,
+        access_mode=body.access_mode,
     )
     if agent is None:
         raise HTTPException(

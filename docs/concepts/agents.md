@@ -34,6 +34,10 @@ and using it requires an explicit grant, which you give to a person or to a whol
 level: `use` runs work on it, `operate` adds restarting and terminating it, `admin` adds deleting it and managing its
 access. A restricted agent is simply invisible to anyone without a grant — it never appears in the engine picker.
 
+When you provision [elastic compute](elastic-compute.md), the **New compute** dialog asks who can use it before it is
+created. Choose *Only people I grant access* for an agent meant to be reserved: an agent created open registers and
+starts accepting work straight away, so restricting it afterwards leaves a window in which anyone could have used it.
+
 This is what makes a shared elastic fleet workable: an expensive agent, or one sitting close to sensitive data, can be
 reserved for the team that owns it while the rest of the fleet stays open. Deployment-wide `agents:manage` holders keep
 full access to everything regardless. See [Per-agent access](permissions.md#per-agent-access).

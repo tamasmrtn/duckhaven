@@ -229,11 +229,49 @@ describe('AgentsPage', () => {
           memory_gb: 8,
           idle_timeout_minutes: 20,
           name: 'analytics-warehouse',
+          // Sent on every create; `open` is the default and matches how every
+          // agent behaved before per-agent access existed.
+          access_mode: 'open',
         }),
       )
       expect(await screen.findByText('analytics-warehouse')).toBeInTheDocument()
     })
 
+    it('creates an agent restricted so it is never briefly usable by everyone', async () => {
+      let posted: Record<string, unknown> | null = null
+      server.use(
+        http.post('/api/admin/agents/elastic', async ({ request }) => {
+          posted = (await request.json()) as Record<string, unknown>
+          return HttpResponse.json({ id: 'ag-new' }, { status: 202 })
+        }),
+      )
+      const user = userEvent.setup()
+      renderWithProviders({ initialRoute: AGENTS_ROUTE })
+
+      await user.click(await screen.findByRole('button', { name: /new compute/i }))
+      await user.click(await screen.findByRole('combobox', { name: /who can use it/i }))
+      await user.click(await screen.findByRole('option', { name: /only people i grant/i }))
+      await user.click(screen.getByRole('button', { name: /create compute/i }))
+
+      await waitFor(() =>
+        expect(posted).toMatchObject({ access_mode: 'restricted' }),
+      )
+    })
+
+    it('explains what each access mode means before you commit', async () => {
+      const user = userEvent.setup()
+      renderWithProviders({ initialRoute: AGENTS_ROUTE })
+
+      await user.click(await screen.findByRole('button', { name: /new compute/i }))
+      expect(await screen.findByText(/any signed-in user can run work/i)).toBeInTheDocument()
+
+      await user.click(await screen.findByRole('combobox', { name: /who can use it/i }))
+      await user.click(await screen.findByRole('option', { name: /only people i grant/i }))
+
+      expect(
+        await screen.findByText(/nobody else sees this agent until you grant access/i),
+      ).toBeInTheDocument()
+    })
   })
 
   it('renders cost in the currency the provider quotes, not a hardcoded $', async () => {

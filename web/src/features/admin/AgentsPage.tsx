@@ -15,13 +15,20 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   useAdminAgents,
   useBootstrapAgent,
   useComputeOptions,
   useCreateElasticAgent,
 } from "@/queries/agents";
 import { useMe } from "@/queries/auth";
-import type { BootstrapToken } from "@/types/agent";
+import type { AgentAccessMode, BootstrapToken } from "@/types/agent";
 import { cn, plural } from "@/utils";
 import { agentDotClass, formatCost, relativeTime } from "./agentFormat";
 
@@ -179,6 +186,7 @@ function CreateComputeModal({ open, onClose }: CreateComputeModalProps) {
   const [memory, setMemory] = useState<number | null>(null);
   const [idleMinutes, setIdleMinutes] = useState<number | null>(null);
   const [name, setName] = useState("");
+  const [accessMode, setAccessMode] = useState<AgentAccessMode>("open");
   const [error, setError] = useState<string | null>(null);
 
   const currency = options?.currency ?? null;
@@ -196,6 +204,7 @@ function CreateComputeModal({ open, onClose }: CreateComputeModalProps) {
     setMemory(null);
     setIdleMinutes(null);
     setName("");
+    setAccessMode("open");
     setError(null);
     onClose();
   }
@@ -208,6 +217,7 @@ function CreateComputeModal({ open, onClose }: CreateComputeModalProps) {
         memory_gb: memoryValue,
         idle_timeout_minutes: idleValue,
         name: name.trim() || undefined,
+        access_mode: accessMode,
       });
       handleClose();
     } catch (err) {
@@ -336,6 +346,32 @@ function CreateComputeModal({ open, onClose }: CreateComputeModalProps) {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
               />
+            </div>
+
+            {/* Set here rather than only on the Access tab: an agent created open
+                registers and starts taking work immediately, so narrowing it
+                afterwards leaves a window where anyone could use it. */}
+            <div className="space-y-1.5">
+              <Label htmlFor="compute-access">Who can use it</Label>
+              <Select
+                value={accessMode}
+                onValueChange={(v) => setAccessMode(v as AgentAccessMode)}
+              >
+                <SelectTrigger id="compute-access" aria-label="Who can use it">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="open">Anyone signed in</SelectItem>
+                  <SelectItem value="restricted">
+                    Only people I grant access
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-2xs text-text-tertiary">
+                {accessMode === "restricted"
+                  ? "Nobody else sees this agent until you grant access from its Access tab. You keep full access as an agent admin."
+                  : "Any signed-in user can run work on this agent. You can restrict it later from its Access tab."}
+              </p>
             </div>
 
             {error && (

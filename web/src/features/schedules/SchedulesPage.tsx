@@ -472,10 +472,16 @@ function ScheduleDialog({
 
           <div className="space-y-1.5">
             <Label className="text-sm">Agent</Label>
-            <AgentPicker value={agentId} onChange={setAgentId} />
+            <AgentPicker
+              value={agentId}
+              onChange={setAgentId}
+              allowTerminatedElastic
+            />
             <p className="text-2xs text-text-tertiary">
-              The chosen agent runs each execution. If it is offline at run
-              time, the run is recorded as failed.
+              The chosen agent runs each execution. Elastic compute that has
+              stopped is started again for the run, which is billed from then
+              until its idle timeout. A regular agent that is offline records
+              the run as failed — nothing can start it.
             </p>
           </div>
 

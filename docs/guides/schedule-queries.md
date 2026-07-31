@@ -22,8 +22,8 @@ schedules) and **Runs** (every scheduled run). On the **Schedules** tab click
   without losing the schedule.
 - **Agent** — the [agent](../concepts/agents.md) that executes each run. It is
   pre-filled from the saved query's default agent, and the list offers only agents
-  you are allowed to run on. If the chosen agent is offline when a run is due, that
-  run is recorded as **failed** (it does not silently fall back to another agent).
+  you are allowed to run on. A run never silently falls back to a different agent.
+  What happens when the chosen one is down depends on which kind it is — see below.
 
 Each schedule row shows its cron, agent, status, and next/last run. Click a row to
 edit it (or **Remove** it).
@@ -51,6 +51,26 @@ few behaviors worth knowing:
   replay the missed runs; it simply runs at the next scheduled time.
 - **No retries.** A failed run waits for its next scheduled tick. There is no
   separate retry or backoff.
+
+### If the chosen agent is down
+
+[Elastic compute](../concepts/elastic-compute.md) terminates itself once it goes
+idle — which, for a schedule that runs nightly, is *most of the time*. So a
+stopped elastic agent is **started again** for the run: the control plane
+re-provisions it, the run waits `queued` until it dials home, and it executes
+then. You can pick a stopped elastic agent when creating the schedule for exactly
+this reason. Billing starts when it comes up and stops at its idle timeout, as
+usual.
+
+If the agent never comes up within the provisioning deadline, the run is recorded
+as **failed** rather than waiting forever — otherwise the no-overlap rule would
+block every later run behind it.
+
+A **regular** (operator-run) agent that is offline still records the run as
+failed. Nothing in the control plane can start one: it is a host someone else
+runs, and it only ever dials in. The same applies to an elastic agent that is
+merely disconnected while still running — there is no torn-down instance to
+re-provision.
 
 ### If your agent access is revoked
 

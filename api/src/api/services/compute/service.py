@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.config import settings
 from api.metrics import record_agent_provision
 from api.models.agent import Agent
-from api.models.query import Query, SavedQuery
+from api.models.query import Query, SavedQuery, Schedule
 from api.models.table_metadata import TableMetadata
 from api.models.user import Credential
 from api.models.workspace import Workspace
@@ -511,6 +511,81 @@ async def bind_queued_work(db: AsyncSession, agent: Agent) -> int:
     await db.commit()
     if bound:
         logger.info("Bound %d queued queries to elastic agent %s", bound, agent.id)
+    return bound
+
+
+async def bind_scheduled_work(db: AsyncSession, agent: Agent) -> int:
+    """Dispatch scheduled runs parked waiting for *this* agent to start.
+
+    The pool binder above matches on ``pool_key``; this one matches on the agent a
+    schedule explicitly names. When the scheduler finds that agent terminated it
+    restarts it and parks the run ``queued`` with ``agent_id=NULL``, because a
+    scheduled run must go to the agent it was configured for, not to whichever
+    pool agent happens to be up.
+
+    ``agent_id IS NULL`` is what distinguishes a parked run from one already
+    dispatched to this agent and merely awaiting its ack — both sit at
+    ``status="queued"``, so matching on status alone would re-dispatch live work.
+    """
+    # Lazy import breaks the query <-> compute import cycle at module load.
+    from api.services.query import dispatch_query
+
+    parked = (
+        (
+            await db.execute(
+                sa.select(Query).where(
+                    Query.agent_id.is_(None),
+                    Query.origin == "scheduled",
+                    Query.status == "queued",
+                    Query.schedule_id.isnot(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    bound = 0
+    for query in parked:
+        schedule = await db.get(Schedule, query.schedule_id)
+        if schedule is None:
+            continue
+        target = schedule.agent_id
+        if target is None and schedule.saved_query_id is not None:
+            saved = await db.get(SavedQuery, schedule.saved_query_id)
+            target = saved.default_agent_id if saved is not None else None
+        if target != agent.id:
+            continue
+
+        # Same atomic claim as the pool binder: the WHERE clause is the guard, so
+        # two replicas racing this agent's registration cannot dispatch twice.
+        claimed = await db.execute(
+            sa.update(Query)
+            .where(Query.id == query.id, Query.agent_id.is_(None))
+            .values(agent_id=agent.id)
+        )
+        if claimed.rowcount == 0:
+            continue
+        await db.commit()
+        await db.refresh(query)
+
+        saved = (
+            await db.get(SavedQuery, schedule.saved_query_id) if schedule.saved_query_id else None
+        )
+        try:
+            # Grants are evaluated against the saved query's creator, matching the
+            # scheduler's own dispatch path.
+            await dispatch_query(db, query, principal_id=saved.created_by if saved else None)
+            bound += 1
+        except Exception:
+            logger.exception("Failed to bind scheduled query %s to agent %s", query.id, agent.id)
+            query.status = "failed"
+            query.error = "dispatch failed after the agent started"
+            query.finished_at = datetime.now(tz=UTC)
+            query.agent_id = None
+    await db.commit()
+    if bound:
+        logger.info("Bound %d scheduled runs to restarted agent %s", bound, agent.id)
     return bound
 
 

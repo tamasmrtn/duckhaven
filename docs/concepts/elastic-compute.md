@@ -57,6 +57,16 @@ to. That belongs at creation rather than only on the Access tab: an agent create
 begins accepting work immediately, so narrowing it afterwards leaves a window where anyone could have
 run on it. See [Per-agent access](permissions.md#per-agent-access).
 
+### Starting for a scheduled run
+
+A [schedule](../guides/schedule-queries.md) bound to a specific elastic agent
+restarts it when it finds it terminated, then parks the run `queued` until it dials
+home — the same park-and-bind path a pool run takes during a cold start, but keyed
+on the agent the schedule names rather than on a pool key. Without it an idle
+timeout would make an elastic agent permanently unusable for unattended work: the
+reaper tears it down *because* nothing is using it between runs, so every run would
+fail on the consequence of the previous one succeeding.
+
 ### Scaling in
 
 A background reaper (leader-elected, like the scheduler and session reapers) terminates an elastic

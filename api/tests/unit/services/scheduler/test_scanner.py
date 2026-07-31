@@ -447,3 +447,216 @@ async def test_run_tick_standby_skips_cycle(session_factory, monkeypatch):
     result = await run_tick(session_factory)
     assert result == {"status": "standby"}
     assert called is False
+
+
+# --- restarting a terminated elastic agent -----------------------------------
+
+
+@pytest.fixture
+def elastic_enabled(monkeypatch):
+    from api.config import settings
+    from api.services.compute.backends import get_backend
+
+    monkeypatch.setattr(settings, "elastic_compute_enabled", True)
+    monkeypatch.setattr(settings, "elastic_provider", "null")
+    backend = get_backend("null")
+    backend._instances.clear()
+    yield
+    backend._instances.clear()
+
+
+async def _seed_with_agent(db, *, provider, lifecycle, connected):
+    """Seed a schedule pointing at an agent of a given kind and state."""
+    suffix = uuid.uuid4().hex[:8]
+    user = User(
+        email=f"r-{suffix}@test.local", password_hash=hash_password("pw"), name="R", role="user"
+    )
+    db.add(user)
+    await db.flush()
+    ws, _cat = await seed_workspace(db, user_id=user.id, slug=f"rs-{suffix}", name="RS")
+    agent = Agent(
+        name=f"a-{suffix}",
+        status="unavailable",
+        capabilities={"extensions": ["httpfs", "iceberg"]},
+        provider=provider,
+        lifecycle=lifecycle,
+        requested_cpu=2,
+        requested_memory_gb=4,
+    )
+    db.add(agent)
+    await db.flush()
+    if connected:
+        registry.register(agent.id, FakeWS())  # type: ignore[arg-type]
+    saved = SavedQuery(workspace_id=ws.id, name="n", sql="SELECT 42", created_by=user.id)
+    db.add(saved)
+    await db.flush()
+    schedule = Schedule(
+        workspace_id=ws.id,
+        job_type="saved_query",
+        saved_query_id=saved.id,
+        agent_id=agent.id,
+        cron="0 2 * * *",
+        enabled=True,
+        next_run_at=_PAST,
+        created_by=user.id,
+    )
+    db.add(schedule)
+    await db.commit()
+    return schedule, agent
+
+
+async def _only_run(session_factory):
+    async with session_factory() as db:
+        return (await db.execute(select(Query).where(Query.origin == "scheduled"))).scalar_one()
+
+
+async def test_terminated_elastic_agent_is_restarted_and_the_run_parks(
+    session_factory, elastic_enabled
+):
+    """The reaper tears an idle elastic agent down between runs, so failing here
+    would make it permanently unusable for unattended work."""
+    async with session_factory() as db:
+        _schedule, agent = await _seed_with_agent(
+            db, provider="null", lifecycle="terminated", connected=False
+        )
+        agent_id = agent.id
+
+    await run_cycle(session_factory, now=_NOW)
+
+    run = await _only_run(session_factory)
+    # Parked, not failed: no agent bound yet, and no error recorded.
+    assert run.status == "queued"
+    assert run.agent_id is None
+    assert run.error is None
+
+    async with session_factory() as db:
+        after = await db.get(Agent, agent_id)
+        assert after.lifecycle == "provisioning"
+        assert after.terminated_at is None
+
+
+async def test_offline_static_agent_still_fails(session_factory, elastic_enabled):
+    """Nothing can start an operator-run host, so the run fails as it always did."""
+    async with session_factory() as db:
+        await _seed_with_agent(db, provider=None, lifecycle=None, connected=False)
+
+    await run_cycle(session_factory, now=_NOW)
+
+    run = await _only_run(session_factory)
+    assert run.status == "failed"
+    assert run.error == "Configured agent is not connected"
+
+
+async def test_disconnected_but_running_elastic_agent_fails(session_factory, elastic_enabled):
+    """`restart_elastic_agent` only acts on a torn-down instance, so a merely
+    disconnected agent is not silently re-provisioned underneath itself."""
+    async with session_factory() as db:
+        await _seed_with_agent(db, provider="null", lifecycle="running", connected=False)
+
+    await run_cycle(session_factory, now=_NOW)
+
+    run = await _only_run(session_factory)
+    assert run.status == "failed"
+    assert run.error == "Configured agent is not connected"
+
+
+async def test_restart_is_skipped_when_elastic_compute_is_disabled(session_factory):
+    """No elastic_enabled fixture: restart returns None and the run fails cleanly
+    rather than parking forever."""
+    async with session_factory() as db:
+        await _seed_with_agent(db, provider="null", lifecycle="terminated", connected=False)
+
+    await run_cycle(session_factory, now=_NOW)
+
+    run = await _only_run(session_factory)
+    assert run.status == "failed"
+    assert run.error == "Could not start the configured agent"
+
+
+async def test_parked_run_dispatches_when_the_agent_registers(session_factory, elastic_enabled):
+    """bind_scheduled_work is the other half: the restart parks the run, and the
+    agent dialing home is what actually dispatches it."""
+    from api.services.compute.service import bind_scheduled_work
+
+    async with session_factory() as db:
+        _schedule, agent = await _seed_with_agent(
+            db, provider="null", lifecycle="terminated", connected=False
+        )
+        agent_id = agent.id
+
+    await run_cycle(session_factory, now=_NOW)
+    assert (await _only_run(session_factory)).agent_id is None
+
+    # The agent comes up.
+    async with session_factory() as db:
+        fresh = await db.get(Agent, agent_id)
+        registry.register(fresh.id, FakeWS())  # type: ignore[arg-type]
+        bound = await bind_scheduled_work(db, fresh)
+
+    assert bound == 1
+    run = await _only_run(session_factory)
+    assert run.agent_id == agent_id
+    assert run.status != "failed"
+
+
+async def test_binding_ignores_runs_for_a_different_agent(session_factory, elastic_enabled):
+    """The binder matches the agent a schedule names, not merely 'some parked run'."""
+    from api.services.compute.service import bind_scheduled_work
+
+    async with session_factory() as db:
+        await _seed_with_agent(db, provider="null", lifecycle="terminated", connected=False)
+        other = Agent(name="unrelated", status="healthy", provider="null", lifecycle="running")
+        db.add(other)
+        await db.commit()
+        other_id = other.id
+
+    await run_cycle(session_factory, now=_NOW)
+
+    async with session_factory() as db:
+        bound = await bind_scheduled_work(db, await db.get(Agent, other_id))
+    assert bound == 0
+    assert (await _only_run(session_factory)).agent_id is None
+
+
+async def test_a_parked_run_is_failed_if_the_agent_never_arrives(session_factory, elastic_enabled):
+    """Otherwise the schedule's skip-if-running guard would block every later run
+    behind a queued row that is never coming."""
+    from api.config import settings
+    from api.services.compute.reaper import _fail_stranded_queued
+
+    async with session_factory() as db:
+        await _seed_with_agent(db, provider="null", lifecycle="terminated", connected=False)
+
+    await run_cycle(session_factory, now=_NOW)
+    assert (await _only_run(session_factory)).status == "queued"
+
+    # `started_at` is a DB default (real clock), not the fake `_NOW` the cycle ran
+    # with, so the cutoff has to be measured from real time.
+    later = datetime.now(tz=UTC) + timedelta(seconds=settings.elastic_provisioning_deadline_s + 60)
+    async with session_factory() as db:
+        failed = await _fail_stranded_queued(db, later)
+
+    assert failed == 1
+    run = await _only_run(session_factory)
+    assert run.status == "failed"
+    assert "No compute became available" in run.error
+
+
+async def test_a_dispatched_scheduled_run_is_never_re_dispatched(session_factory, elastic_enabled):
+    """Both a parked run and a dispatched-but-unacked one sit at `queued`; only
+    the parked one has a NULL agent_id, which is what the binder keys on."""
+    from api.services.compute.service import bind_scheduled_work
+
+    async with session_factory() as db:
+        _schedule, agent = await _seed_with_agent(
+            db, provider="null", lifecycle="running", connected=True
+        )
+        agent_id = agent.id
+
+    await run_cycle(session_factory, now=_NOW)
+    run = await _only_run(session_factory)
+    assert run.status == "queued" and run.agent_id == agent_id  # dispatched, awaiting ack
+
+    async with session_factory() as db:
+        bound = await bind_scheduled_work(db, await db.get(Agent, agent_id))
+    assert bound == 0

@@ -182,7 +182,11 @@ async def _fail_stranded_queued(db: AsyncSession, now: datetime) -> int:
             await db.execute(
                 sa.select(Query).where(
                     Query.agent_id.is_(None),
-                    Query.origin == "elastic",
+                    # `scheduled` too: a schedule whose elastic agent was terminated
+                    # restarts it and parks the run the same way, so it is stranded
+                    # by all the same causes. Only parked runs match -- a dispatched
+                    # scheduled run carries its agent_id.
+                    Query.origin.in_(("elastic", "scheduled")),
                     Query.status == "queued",
                     Query.started_at < cutoff,
                 )
@@ -195,7 +199,7 @@ async def _fail_stranded_queued(db: AsyncSession, now: datetime) -> int:
         query.status = "failed"
         query.error = "No compute became available for this run."
         query.finished_at = now
-        logger.warning("Failed stranded elastic query %s: no agent registered", query.id)
+        logger.warning("Failed stranded query %s (%s): no agent registered", query.id, query.origin)
     if stranded:
         await db.commit()
     return len(stranded)

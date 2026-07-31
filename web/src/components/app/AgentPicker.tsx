@@ -31,15 +31,22 @@ import type { BackendKind } from "@/types/storage-backend";
 import { agentSupportsBackend, agentTierAtLeast } from "@/types/agent";
 import { cn } from "@/utils";
 
-/**
- * No `minTier` prop: both call sites (the worksheet and the schedule dialog)
- * need exactly `use`, and the server already filters `/agents` to what the
- * caller may target — so the list is correct for both without configuration.
- */
 interface AgentPickerProps {
   value: string | null;
   onChange: (agentId: string) => void;
   workspaceBackend?: BackendKind;
+  /**
+   * Allow picking an elastic agent that is currently down.
+   *
+   * The two call sites diverge here. A worksheet dispatches *now*, so a
+   * terminated agent would only 503. A schedule dispatches *later*: the
+   * scheduler restarts a terminated elastic agent at run time and parks the run
+   * until it dials home, so choosing one is the point rather than a mistake.
+   *
+   * Static agents stay unselectable when offline either way — nothing can start
+   * them, so the run would just fail.
+   */
+  allowTerminatedElastic?: boolean;
 }
 
 const statusIcon: Record<AgentStatus, React.ReactNode> = {
@@ -103,10 +110,18 @@ export function AgentPicker({
   value,
   onChange,
   workspaceBackend,
+  allowTerminatedElastic = false,
 }: AgentPickerProps) {
   const [open, setOpen] = useState(false);
   const { data: agents = [] } = useAgents();
   const terminate = useTerminateAgent();
+
+  function selectable(agent: Agent): boolean {
+    if (agent.status !== "unavailable") return true;
+    // Down: only an elastic agent the scheduler can restart later qualifies.
+    return allowTerminatedElastic && !!agent.provider;
+  }
+
   const restart = useRestartAgent();
   const selected = agents.find((a) => a.id === value);
 
@@ -149,7 +164,7 @@ export function AgentPicker({
                   key={agent.id}
                   value={agent.id}
                   onSelect={() => {
-                    if (agent.status !== "unavailable") {
+                    if (selectable(agent)) {
                       onChange(agent.id);
                       setOpen(false);
                     }
@@ -160,6 +175,13 @@ export function AgentPicker({
                   className="flex flex-col items-start py-2"
                 >
                   <AgentRow agent={agent} backend={workspaceBackend} />
+                  {allowTerminatedElastic &&
+                    agent.provider &&
+                    agent.status === "unavailable" && (
+                      <span className="pl-4.5 text-2xs text-text-tertiary">
+                        Stopped — will be started for each run
+                      </span>
+                    )}
                   {/* Per-agent, not per-user: someone can hold `operate` on the
                       team's warehouse and only `use` on everything else. */}
                   {agentTierAtLeast(agent, "operate") && agent.provider && (

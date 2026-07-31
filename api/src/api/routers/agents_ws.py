@@ -261,9 +261,16 @@ async def agent_connect(
             # while it was provisioning.
             agent_row = await db.get(Agent, agent_id)
             if agent_row is not None and agent_row.provider is not None:
-                from api.services.compute.service import bind_queued_work
+                from api.services.compute.service import (
+                    bind_queued_work,
+                    bind_scheduled_work,
+                )
 
                 await bind_queued_work(db, agent_row)
+                # Scheduled runs parked while this agent was restarted for them.
+                # Separate from the pool binder: those match a pool key, these
+                # match the agent a schedule explicitly names.
+                await bind_scheduled_work(db, agent_row)
         last_presence_refresh = datetime.now(tz=UTC)
 
         async for raw_msg in ws.iter_text():

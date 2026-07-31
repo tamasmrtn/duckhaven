@@ -31,6 +31,7 @@ from api.config import settings
 from api.metrics import record_agent_provision
 from api.models.agent import Agent
 from api.models.query import Query, SavedQuery, Schedule
+from api.models.sql_session import SqlSession
 from api.models.table_metadata import TableMetadata
 from api.models.user import Credential
 from api.models.workspace import Workspace
@@ -511,6 +512,164 @@ async def bind_queued_work(db: AsyncSession, agent: Agent) -> int:
     await db.commit()
     if bound:
         logger.info("Bound %d queued queries to elastic agent %s", bound, agent.id)
+    return bound
+
+
+async def bind_pending_sessions(db: AsyncSession, agent: Agent) -> int:
+    """Open SQL sessions parked waiting for this agent to come up.
+
+    A session open cannot park the way a query can — the caller is blocked on it —
+    so a session that finds no compute is written ``pending`` with ``agent_id
+    NULL`` while compute starts, and this binds it when the agent dials home.
+
+    Two kinds are matched in one pass, by the same two rules the query binders
+    already use: a **pool** session (``requested_agent_id IS NULL``) matches when
+    the workspace's pool key equals this agent's, and a **targeted** session
+    matches when it named this agent. Returns the count opened; per-session
+    failure isolation, as in ``bind_queued_work``.
+    """
+    # Lazy imports break the compute <-> sql_sessions import cycle at module load.
+    from api.services.agent_capabilities import agent_supports_backend
+    from api.services.sql_sessions.service import dispatch_open_session
+
+    pending = (
+        (
+            await db.execute(
+                sa.select(SqlSession).where(
+                    SqlSession.agent_id.is_(None),
+                    SqlSession.status == "pending",
+                    sa.or_(
+                        SqlSession.requested_agent_id == agent.id,
+                        SqlSession.requested_agent_id.is_(None),
+                    ),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    bound = 0
+    pool_keys: dict[uuid.UUID, str | None] = {}
+    for session in pending:
+        # The workspace's catalogs are needed either way: to match a pool session,
+        # and to build the open frame's catalog descriptors. `resolve_workspace_catalogs`
+        # eager-loads `storage_backend`, which `_catalog_descriptors` reads.
+        catalogs = await resolve_workspace_catalogs(db, session.workspace_id)
+        if session.requested_agent_id is None:
+            if session.workspace_id not in pool_keys:
+                workspace = await db.get(Workspace, session.workspace_id)
+                pool_keys[session.workspace_id] = (
+                    await resolve_pool_key(db, workspace) if workspace is not None else None
+                )
+            if pool_keys[session.workspace_id] != agent.pool_key:
+                continue
+        elif not all(
+            agent_supports_backend(agent.capabilities, c.storage_backend.kind) for c in catalogs
+        ):
+            # First point at which a restarted agent's capabilities are known: it has
+            # just sent AGENT_STATUS. The open call could not check them, because a
+            # row that failed while provisioning carries none at all and would have
+            # been rejected as incompatible when it is merely cold.
+            session.status = "failed"
+            session.error = "agent_incompatible"
+            session.close_reason = "failed"
+            session.closed_at = datetime.now(tz=UTC)
+            continue
+
+        # Same atomic claim as the query binders: the WHERE clause is the guard, so
+        # two replicas racing this agent's registration cannot open it twice. The
+        # claim is committed before dispatch because the agent's SESSION_OPENED ack
+        # is applied by the websocket loop in its own DB session, which cannot see
+        # a row that has only been flushed.
+        claimed = await db.execute(
+            sa.update(SqlSession)
+            .where(
+                SqlSession.id == session.id,
+                SqlSession.agent_id.is_(None),
+                SqlSession.status == "pending",
+            )
+            .values(agent_id=agent.id, status="opening", opening_at=datetime.now(tz=UTC))
+        )
+        if claimed.rowcount == 0:
+            continue
+        await db.commit()
+        await db.refresh(session)
+
+        try:
+            if not await dispatch_open_session(db, session, catalogs):
+                raise RuntimeError("agent not connected")
+            bound += 1
+        except Exception:
+            logger.exception("Failed to open pending session %s on agent %s", session.id, agent.id)
+            session.status = "failed"
+            session.error = "open dispatch failed after the agent started"
+            session.close_reason = "failed"
+            session.closed_at = datetime.now(tz=UTC)
+            # Release the claim, as bind_queued_work does: this agent never held it.
+            session.agent_id = None
+    await db.commit()
+    if bound:
+        logger.info("Opened %d pending sessions on elastic agent %s", bound, agent.id)
+    return bound
+
+
+async def bind_targeted_work(db: AsyncSession, agent: Agent) -> int:
+    """Dispatch interactive runs parked waiting for *this* agent to restart.
+
+    The counterpart of ``bind_scheduled_work`` for a run someone submitted by hand
+    against an idle-terminated agent: it named that agent, so it cannot be routed
+    to whichever pool agent happens to be up, and it waits for this one instead.
+    """
+    # Lazy import breaks the query <-> compute import cycle at module load.
+    from api.services.query import dispatch_query
+
+    parked = (
+        (
+            await db.execute(
+                sa.select(Query).where(
+                    Query.agent_id.is_(None),
+                    Query.status == "queued",
+                    Query.requested_agent_id == agent.id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    bound = 0
+    for query in parked:
+        claimed = await db.execute(
+            sa.update(Query)
+            .where(Query.id == query.id, Query.agent_id.is_(None))
+            .values(agent_id=agent.id)
+        )
+        if claimed.rowcount == 0:
+            continue
+        await db.commit()
+        await db.refresh(query)
+
+        try:
+            # Replay what the requester asked for, recorded on the row when the run
+            # was parked precisely because this dispatch happens outside that request.
+            await dispatch_query(
+                db,
+                query,
+                principal_id=query.user_id,
+                active_catalog=query.active_catalog,
+                **({} if query.timeout_s is None else {"timeout_s": query.timeout_s}),
+            )
+            bound += 1
+        except Exception:
+            logger.exception("Failed to bind targeted query %s to agent %s", query.id, agent.id)
+            query.status = "failed"
+            query.error = "dispatch failed after the agent started"
+            query.finished_at = datetime.now(tz=UTC)
+            query.agent_id = None
+    await db.commit()
+    if bound:
+        logger.info("Bound %d targeted runs to restarted agent %s", bound, agent.id)
     return bound
 
 

@@ -170,6 +170,18 @@ class Settings(BaseSettings):
     sql_session_max_lifetime_s: float = 14400.0
     sql_session_reaper_tick_s: float = 30.0
     sql_session_open_timeout_s: float = 30.0
+    # Total budget the open endpoint holds a request for when compute has to start
+    # first, cold start included; sql_session_open_timeout_s still bounds the warm
+    # path once an agent is bound. Deliberately ONE number for every backend: no
+    # client-visible behaviour may depend on whether a deployment provisions Docker
+    # containers (seconds) or ACI groups (30-60s). There is nothing provider-specific
+    # to wait on in any case -- provision() returns as soon as the create call is
+    # issued and readiness is the agent dialing home -- so this is a
+    # client-experience number, not a backend one. 45s sits under the connector's
+    # 60s socket timeout with margin, since that client sends one un-retried POST.
+    sql_session_wait_timeout_s: float = 45.0
+    # Ceiling on what a client may ask for via `wait_timeout_s`.
+    sql_session_max_wait_timeout_s: float = 120.0
     # A row stuck in `opening` past this deadline (agent never acked SESSION_OPENED)
     # is reaped as `open_timeout`, freeing any slot the agent did acquire. Must
     # exceed sql_session_open_timeout_s so a merely-slow open isn't reaped mid-flight.

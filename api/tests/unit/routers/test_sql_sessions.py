@@ -791,3 +791,284 @@ async def test_open_session_auto_pick_finds_a_granted_agent(
     # Reaches dispatch (the agent's ack never arrives in this test, so it times out
     # rather than 503-ing on selection).
     assert resp.status_code != 503
+
+
+# ── Cold start: starting compute for a session ────────────────────────────────
+
+
+@pytest_asyncio.fixture
+def elastic_enabled(monkeypatch):
+    from api.services.compute.backends import get_backend
+
+    monkeypatch.setattr(settings, "elastic_compute_enabled", True)
+    monkeypatch.setattr(settings, "elastic_provider", "null")
+    monkeypatch.setattr(settings, "elastic_max_agents_per_pool", 1)
+    backend = get_backend("null")
+    backend._instances.clear()
+    yield
+    backend._instances.clear()
+
+
+@pytest_asyncio.fixture
+async def terminated_agent(db_session):
+    a = Agent(
+        name="cold-agent",
+        status="unavailable",
+        capabilities={"extensions": ["httpfs"]},
+        provider="null",
+        lifecycle="terminated",
+        pool_key="object_store",
+        instance_id="dh-agent-cold",
+        provisioned_at=datetime.now(tz=UTC) - timedelta(seconds=3600),
+        terminated_at=datetime.now(tz=UTC) - timedelta(seconds=60),
+    )
+    db_session.add(a)
+    await db_session.commit()
+    await db_session.refresh(a)
+    return a
+
+
+async def _agent_rows(db):
+    import sqlalchemy as sa
+
+    return (await db.execute(sa.select(Agent))).scalars().all()
+
+
+async def test_open_with_no_agent_parks_pending_and_provisions(
+    authed_client, db_session, workspace, enabled, elastic_enabled
+):
+    """G1: a cold pool starts compute instead of answering 503."""
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/sql/sessions",
+        json={"wait_timeout_s": 0, "on_wait_timeout": "continue"},
+    )
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["status"] == "pending"
+    assert body["agent_id"] is None
+    # Catalog and staging prefix are workspace properties, so a pending session is
+    # fully described before any agent exists.
+    assert body["active_catalog"] == "test_ws"
+    assert body["staging_uri"]
+
+    rows = [a for a in await _agent_rows(db_session) if a.provider is not None]
+    assert len(rows) == 1
+    assert rows[0].lifecycle == "provisioning"
+    assert rows[0].pool_key == "object_store"
+
+
+async def test_open_with_a_terminated_agent_restarts_it_and_parks(
+    authed_client, db_session, workspace, terminated_agent, enabled, elastic_enabled
+):
+    """G2: naming an idle-terminated elastic agent starts it rather than 503ing.
+
+    The reaper took this agent down *because* nothing was using it, so refusing
+    here would make it permanently unusable for interactive work.
+    """
+    import sqlalchemy as sa
+
+    old_instance = terminated_agent.instance_id
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/sql/sessions",
+        json={
+            "agent_id": str(terminated_agent.id),
+            "wait_timeout_s": 0,
+            "on_wait_timeout": "continue",
+        },
+    )
+    assert resp.status_code == 202
+    assert resp.json()["status"] == "pending"
+
+    session = (await db_session.execute(sa.select(SqlSession))).scalars().one()
+    assert session.agent_id is None
+    assert session.requested_agent_id == terminated_agent.id
+
+    await db_session.refresh(terminated_agent)
+    assert terminated_agent.lifecycle == "provisioning"
+    assert terminated_agent.instance_id != old_instance
+
+
+async def test_open_with_a_terminated_agent_needs_only_use_tier(
+    authed_client, db_session, workspace, terminated_agent, enabled, elastic_enabled
+):
+    """Implicitly starting an agent by sending it work is dispatch, not a lifecycle
+    operation — the tier the scheduler already restarts at. A restricted agent the
+    caller has no grant on still 404s, exactly as a connected one would."""
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/sql/sessions",
+        json={
+            "agent_id": str(terminated_agent.id),
+            "wait_timeout_s": 0,
+            "on_wait_timeout": "continue",
+        },
+    )
+    assert resp.status_code == 202
+
+    terminated_agent.access_mode = "restricted"
+    terminated_agent.lifecycle = "terminated"
+    await db_session.commit()
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/sql/sessions",
+        json={
+            "agent_id": str(terminated_agent.id),
+            "wait_timeout_s": 0,
+            "on_wait_timeout": "continue",
+        },
+    )
+    assert resp.status_code == 404
+
+
+async def test_open_with_an_offline_static_agent_still_503s(
+    authed_client, workspace, agent, enabled, elastic_enabled
+):
+    """A static agent has nothing to start; the restart branch must stay narrow."""
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/sql/sessions", json={"agent_id": str(agent.id)}
+    )
+    assert resp.status_code == 503
+
+
+async def test_open_with_a_disconnected_running_elastic_agent_still_503s(
+    authed_client, db_session, workspace, terminated_agent, enabled, elastic_enabled
+):
+    """`running` but socketless is a connectivity problem, not a cold pool — the
+    same rule the scheduler applies."""
+    terminated_agent.lifecycle = "running"
+    await db_session.commit()
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/sql/sessions", json={"agent_id": str(terminated_agent.id)}
+    )
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "Agent not connected"
+
+
+async def test_open_gives_up_with_503_and_retry_after_by_default(
+    authed_client, db_session, workspace, enabled, elastic_enabled, monkeypatch
+):
+    """The default answer for a client that cannot poll. Crucially it abandons the
+    session row, never the compute — an immediate retry should land on the agent
+    that is still coming up rather than pay for a second cold start."""
+    import sqlalchemy as sa
+
+    monkeypatch.setattr(settings, "sql_session_wait_timeout_s", 0.3)
+
+    resp = await authed_client.post(f"/workspaces/{workspace.slug}/sql/sessions", json={})
+    assert resp.status_code == 503
+    assert resp.json()["detail"]["error"] == "compute_starting"
+    assert resp.headers["retry-after"] == "5"
+
+    session = (await db_session.execute(sa.select(SqlSession))).scalars().one()
+    assert session.status == "failed"
+    assert session.close_reason == "compute_timeout"
+
+    provisioned = [a for a in await _agent_rows(db_session) if a.provider is not None]
+    assert [a.lifecycle for a in provisioned] == ["provisioning"]
+
+
+async def test_continue_returns_202_then_the_session_opens(
+    authed_client, db_session, workspace, enabled, elastic_enabled, monkeypatch
+):
+    """The park-and-poll contract end to end: 202 with a pending session, the
+    binder opens it when compute registers, and GET follows it to `open`."""
+    from api.services.compute import service as compute_service
+
+    monkeypatch.setattr(settings, "sql_session_wait_timeout_s", 0.2)
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/sql/sessions", json={"on_wait_timeout": "continue"}
+    )
+    assert resp.status_code == 202
+    session_id = resp.json()["id"]
+
+    # The provisioned agent dials home: registration binds and opens the session.
+    async def fake_dispatch(db, session, catalogs):
+        session.status = "open"
+        await db.commit()
+        return True
+
+    monkeypatch.setattr(session_service, "dispatch_open_session", fake_dispatch)
+    agent_row = [a for a in await _agent_rows(db_session) if a.provider is not None][0]
+    agent_row.lifecycle = "running"
+    agent_row.capabilities = {"extensions": ["httpfs"]}
+    await db_session.commit()
+    assert await compute_service.bind_pending_sessions(db_session, agent_row) == 1
+
+    resp = await authed_client.get(f"/sql/sessions/{session_id}")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "open"
+
+
+async def test_wait_timeout_zero_with_cancel_is_rejected(
+    authed_client, workspace, enabled, elastic_enabled
+):
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/sql/sessions",
+        json={"wait_timeout_s": 0, "on_wait_timeout": "cancel"},
+    )
+    assert resp.status_code == 422
+
+
+async def test_wait_timeout_above_the_cap_is_rejected(
+    authed_client, workspace, enabled, elastic_enabled, monkeypatch
+):
+    monkeypatch.setattr(settings, "sql_session_max_wait_timeout_s", 120.0)
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/sql/sessions", json={"wait_timeout_s": 121}
+    )
+    assert resp.status_code == 422
+
+
+async def test_warm_open_is_unchanged(
+    authed_client, workspace, connected_agent, enabled, elastic_enabled, monkeypatch
+):
+    """The backwards-compatibility pin: a client that sends none of the new fields
+    against warm compute sees exactly the old 201, on the old budget."""
+    seen: dict = {}
+
+    async def fake_dispatch(db, session, catalogs):
+        session.status = "open"
+        await db.commit()
+        return True
+
+    async def fake_await(db, session, timeout_s, *args, **kwargs):
+        seen["timeout_s"] = timeout_s
+        return session
+
+    monkeypatch.setattr(session_service, "dispatch_open_session", fake_dispatch)
+    monkeypatch.setattr(session_service, "await_session_open", fake_await)
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/sql/sessions", json={"agent_id": str(connected_agent.id)}
+    )
+    assert resp.status_code == 201
+    assert resp.json()["status"] == "open"
+    assert seen["timeout_s"] == settings.sql_session_open_timeout_s
+
+
+async def test_statement_on_a_pending_session_is_409(
+    authed_client, db_session, workspace, user, enabled, elastic_enabled
+):
+    session = SqlSession(
+        workspace_id=workspace.id,
+        agent_id=None,
+        user_id=user.id,
+        status="pending",
+        active_catalog="test_ws",
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements", json={"sql": "SELECT 1"}
+    )
+    assert resp.status_code == 409
+    assert "pending" in resp.json()["detail"]["detail"]
+
+
+async def test_no_agent_with_elastic_disabled_still_503s(authed_client, workspace, enabled):
+    """Unchanged for a deployment that does not run elastic compute at all."""
+    resp = await authed_client.post(f"/workspaces/{workspace.slug}/sql/sessions", json={})
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "No connected agent available"

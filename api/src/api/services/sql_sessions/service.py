@@ -31,6 +31,9 @@ from duckhaven_shared.telemetry import inject_trace_context
 _tracer = trace.get_tracer("duckhaven.api")
 
 _TERMINAL = ("closed", "expired", "failed")
+# States the open call is still waiting on: `pending` (compute starting, no agent
+# bound yet) and `opening` (bound, awaiting the agent's ack).
+_WAITING = ("pending", "opening")
 
 
 def _catalog_descriptors(catalogs: list[Catalog]) -> list[dict[str, object]]:
@@ -204,7 +207,12 @@ async def fail_sessions_for_agent(db: AsyncSession, agent_id: uuid.UUID) -> None
     be dropped on its reconnect), so the sessions cannot continue. The next
     statement on such a session returns 409; the client reopens. Their in-flight
     statements are resolved too — they were running on the connections that just
-    died."""
+    died.
+
+    Deliberately matches on ``agent_id`` only, so a ``pending`` session (no agent
+    yet) survives: it is waiting on *compute*, not on this socket, and another
+    agent coming up for the pool can still open it. The provisioning deadline
+    bounds it instead (``compute.reaper._fail_stranded_pending``)."""
     now = datetime.now(tz=UTC)
     result = await db.execute(
         sa.update(SqlSession)
@@ -228,17 +236,34 @@ async def fail_sessions_for_agent(db: AsyncSession, agent_id: uuid.UUID) -> None
 
 
 async def await_session_open(
-    db: AsyncSession, session: SqlSession, timeout_s: float, poll_interval_s: float = 0.1
+    db: AsyncSession,
+    session: SqlSession,
+    timeout_s: float,
+    poll_interval_s: float = 0.1,
+    poll_max_s: float = 1.0,
 ) -> SqlSession:
-    """Block until the agent's SESSION_OPENED ack flips the row out of ``opening``.
+    """Block until the session stops waiting: on an agent to start (``pending``) or
+    on that agent's SESSION_OPENED ack (``opening``).
 
-    The ack is applied by the WebSocket handler in a separate session, so we poll
-    this session's view (mirrors ``run_sync_query``). On timeout the row is left
-    ``opening`` and the caller surfaces it as still-opening / failed."""
+    Both transitions are applied by another DB session — the registration binder
+    and the WebSocket handler respectively — so we poll this session's view
+    (mirrors ``run_sync_query``). On timeout the row is left where it was and the
+    caller decides what to do with it.
+
+    The transaction is rolled back before each sleep so the pooled connection is
+    returned between polls. Holding it would pin one of ``db_pool_size +
+    db_max_overflow`` connections idle-in-transaction for the whole wait, and a
+    cold start is exactly when many clients wait at once (a `dbt run` opens one
+    session per thread). The interval backs off for the same reason: a long wait
+    should not cost hundreds of round trips.
+    """
     deadline = asyncio.get_event_loop().time() + timeout_s
+    interval = poll_interval_s
     while asyncio.get_event_loop().time() < deadline:
-        await asyncio.sleep(poll_interval_s)
+        await db.rollback()
+        await asyncio.sleep(interval)
+        interval = min(poll_max_s, interval * 1.5)
         await db.refresh(session)
-        if session.status != "opening":
+        if session.status not in _WAITING:
             break
     return session

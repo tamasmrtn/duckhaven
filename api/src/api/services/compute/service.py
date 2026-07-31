@@ -564,13 +564,17 @@ async def bind_pending_sessions(db: AsyncSession, agent: Agent) -> int:
                 )
             if pool_keys[session.workspace_id] != agent.pool_key:
                 continue
-        elif not all(
+        elif agent.capabilities is not None and not all(
             agent_supports_backend(agent.capabilities, c.storage_backend.kind) for c in catalogs
         ):
-            # First point at which a restarted agent's capabilities are known: it has
-            # just sent AGENT_STATUS. The open call could not check them, because a
-            # row that failed while provisioning carries none at all and would have
-            # been rejected as incompatible when it is merely cold.
+            # Only reject an agent we *know* cannot serve the workspace. The open call
+            # could not check at all -- a row that failed while provisioning carries no
+            # capabilities and would have been rejected when it is merely cold -- and
+            # NULL still means "has not said yet" here: AGENT_STATUS is a frame the
+            # agent sends after the handshake this binder runs inside, so an agent
+            # terminated before it ever reported arrives with none. Treating that as
+            # incompatible stranded the session on a restart. If it genuinely cannot
+            # serve the catalogs, its own open fails and reports why.
             session.status = "failed"
             session.error = "agent_incompatible"
             session.close_reason = "failed"

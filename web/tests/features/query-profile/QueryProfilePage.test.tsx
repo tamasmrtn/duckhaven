@@ -42,6 +42,24 @@ describe("QueryProfilePage", () => {
     expect(screen.getByText("Diagnostics")).toBeInTheDocument();
   });
 
+  it("zooms the operator graph in and out, and resets to 100%", async () => {
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await screen.findByText("Latency");
+
+    expect(screen.getByRole("button", { name: /reset zoom/i })).toHaveTextContent("100%");
+
+    await user.click(screen.getByRole("button", { name: /zoom in/i }));
+    expect(screen.getByRole("button", { name: /reset zoom/i })).toHaveTextContent("110%");
+
+    await user.click(screen.getByRole("button", { name: /zoom out/i }));
+    await user.click(screen.getByRole("button", { name: /zoom out/i }));
+    expect(screen.getByRole("button", { name: /reset zoom/i })).toHaveTextContent("90%");
+
+    await user.click(screen.getByRole("button", { name: /reset zoom/i }));
+    expect(screen.getByRole("button", { name: /reset zoom/i })).toHaveTextContent("100%");
+  });
+
   it("selects a node on click and shows its detail", async () => {
     const user = userEvent.setup();
     renderWithProviders({ initialRoute: ROUTE });

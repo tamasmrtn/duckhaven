@@ -381,16 +381,17 @@ async def list_workspace_queries(
 ) -> list[Query]:
     """Query log, newest first. Doubles as the admin audit trail.
 
-    A member sees their workspace (gated on membership). An admin can pass
-    ``all_workspaces`` to see every workspace, and the ``user_id``/``agent_id``/
-    ``since``/``until`` filters; those affordances are admin-only and rejected
-    with 403 for non-admins. Internal queries (e.g. table-sample previews) are
-    excluded.
+    A member sees their workspace (gated on membership) and may narrow it with
+    ``agent_id``. An admin can additionally pass ``all_workspaces`` to see every
+    workspace, and the ``user_id``/``since``/``until`` filters; those affordances
+    are admin-only and rejected with 403 for non-admins. Internal queries (e.g.
+    table-sample previews) are excluded.
 
     ``origin`` and ``session_id`` narrow to a kind of run (``"session"``,
     ``"scheduled"``) or to one session's statements. They reveal nothing a member
-    could not already see in this list, so they are open to any member — unlike
-    the cross-principal filters above.
+    could not already see in this list, so they are open to any member — like
+    ``agent_id`` and unlike the ``user_id``/``since``/``until``/``all_workspaces``
+    cross-principal filters above.
     """
     is_admin = await has_permission(db, user, Permission.QUERIES_ADMIN)
 
@@ -424,13 +425,17 @@ async def list_workspace_queries(
     if session_id is not None:
         stmt = stmt.where(Query.session_id == session_id)
 
-    if any(f is not None for f in (user_id, agent_id, since, until)):
+    if agent_id is not None:
+        # Open to any workspace member. By this point the statement is already
+        # scoped to their own workspace (all_workspaces is admin-only and 403s
+        # above), so this reveals nothing a member could not already see.
+        stmt = stmt.where(Query.agent_id == agent_id)
+
+    if any(f is not None for f in (user_id, since, until)):
         if not is_admin:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
         if user_id:
             stmt = stmt.where(Query.user_id == user_id)
-        if agent_id:
-            stmt = stmt.where(Query.agent_id == agent_id)
         if since:
             stmt = stmt.where(Query.started_at >= since)
         if until:

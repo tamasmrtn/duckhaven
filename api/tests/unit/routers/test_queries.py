@@ -501,6 +501,89 @@ async def test_admin_can_list_all_workspaces_and_filter_by_user(
     assert [r["sql"] for r in resp.json()] == ["SELECT 'in_ws'"]
 
 
+async def test_list_queries_agent_filter_allowed_for_non_admin_scoped_to_own_workspace(
+    authed_client: AsyncClient, workspace: Workspace, agent: Agent, db_session, user: User
+):
+    """Unlike user_id/since/until, agent_id is open to any member — it reveals
+    nothing they could not already see in their own workspace's history."""
+    from api.models.query import Query
+
+    other_ws, _ = await seed_workspace(
+        db_session, user_id=user.id, slug="other-ws", name="Other", role=None
+    )
+    db_session.add_all(
+        [
+            Query(workspace_id=workspace.id, agent_id=agent.id, sql="SELECT 'mine'", status="done"),
+            Query(
+                workspace_id=other_ws.id, agent_id=agent.id, sql="SELECT 'foreign'", status="done"
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    resp = await authed_client.get(f"/workspaces/{workspace.slug}/queries?agent_id={agent.id}")
+    assert resp.status_code == 200
+    assert [r["sql"] for r in resp.json()] == ["SELECT 'mine'"]
+
+
+async def test_list_queries_agent_filter_with_all_workspaces_forbidden_for_non_admin(
+    authed_client: AsyncClient, workspace: Workspace, agent: Agent
+):
+    """agent_id alone does not unlock the cross-workspace view — all_workspaces
+    still requires admin even when combined with an otherwise-open filter."""
+    resp = await authed_client.get(
+        f"/workspaces/{workspace.slug}/queries?agent_id={agent.id}&all_workspaces=true"
+    )
+    assert resp.status_code == 403
+
+
+async def test_admin_can_filter_by_agent_across_workspaces(
+    client: AsyncClient, workspace: Workspace, agent: Agent, db_session, user: User
+):
+    """An admin combining all_workspaces with agent_id still narrows correctly
+    (regression for splitting agent_id out of the admin-only gate)."""
+    from api.models.query import Query
+
+    admin = User(
+        email="agent-admin@queries.local",
+        password_hash=hash_password("pw"),
+        name="Admin",
+        role="admin",
+    )
+    db_session.add(admin)
+    other_agent = Agent(
+        name="other-agent", status="healthy", capabilities={"extensions": ["httpfs"]}
+    )
+    db_session.add(other_agent)
+    await db_session.flush()
+
+    other_ws, _ = await seed_workspace(
+        db_session, user_id=user.id, slug="other-ws", name="Other", role=None
+    )
+    db_session.add_all(
+        [
+            Query(
+                workspace_id=workspace.id, agent_id=agent.id, sql="SELECT 'target'", status="done"
+            ),
+            Query(
+                workspace_id=other_ws.id,
+                agent_id=other_agent.id,
+                sql="SELECT 'other_agent'",
+                status="done",
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    await client.post("/auth/login", json={"email": "agent-admin@queries.local", "password": "pw"})
+
+    resp = await client.get(
+        f"/workspaces/{workspace.slug}/queries?all_workspaces=true&agent_id={agent.id}"
+    )
+    assert resp.status_code == 200
+    assert [r["sql"] for r in resp.json()] == ["SELECT 'target'"]
+
+
 # --- query status ---
 
 

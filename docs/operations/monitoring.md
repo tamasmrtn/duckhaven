@@ -79,14 +79,16 @@ sampled, and they exclude the same internal queries the History page does.
 
 Every query a member runs is recorded on the **History** page (newest first), excluding internal queries such as
 table-sample previews. Each member sees the history for the workspace they are in, with a row click opening the
-query's profile.
+query's profile. A refresh button re-fetches the list on demand, and a filter by **agent** is open to any member —
+narrowing to one agent reveals nothing about the workspace's own queries that the member could not already see.
 
 Administrators get an extra **This workspace / All workspaces** toggle on the same page. Switching to **All
-workspaces** turns History into the global audit log: every query across every workspace, with a Workspace column and
-a filter by user. This is admin-only — a member can never read another workspace's queries. Each record captures the
-**user** who ran it (the human or [service account](../guides/service-accounts.md) — shown in the **User** column), the
-SQL, status, row count, duration, result size, and any error. There is no separate audit table; the audit log is the
-query record itself.
+workspaces** turns History into the global audit log: every query across every workspace, with a Workspace column.
+Administrators also get a filter by **user**, which — unlike the agent filter — works within the current workspace
+view as well as the cross-workspace one, since it reveals who ran a query and stays admin-only either way. Each
+record captures the **user** who ran it (the human or [service account](../guides/service-accounts.md) — shown in the
+**User** column), the SQL, status, row count, duration, result size, and any error. There is no separate audit table;
+the audit log is the query record itself.
 
 ## Prometheus metrics
 

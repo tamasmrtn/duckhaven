@@ -7,8 +7,9 @@ and ships it to the control plane. There are two ways to view it.
 
 - **Worksheet → Profile tab** — an inline summary and a collapsible operator tree for the query you just ran, with a
   link to the full profile.
-- **Dedicated profile page** — reached by clicking any row in query history. It shows an interactive operator **graph**
-  (result on top, scans at the bottom; data flows up); click a node for its detail.
+- **Dedicated profile page** — reached by clicking any row in query history. It shows the full query SQL in a
+  capped-height panel below the header (with an expand button for statements that don't fit), and an interactive
+  operator **graph** (result on top, scans at the bottom; data flows up); click a node for its detail.
 
 ## What it shows
 

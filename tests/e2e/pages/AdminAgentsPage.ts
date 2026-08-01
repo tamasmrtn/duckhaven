@@ -6,7 +6,7 @@ export class AdminAgentsPage {
   constructor(private readonly page: Page) {}
 
   async goto(ws = WS_SLUG): Promise<void> {
-    await this.page.goto(`${BASE_URL}/${ws}/admin/agents`);
+    await this.page.goto(`${BASE_URL}/${ws}/compute`);
   }
 
   get firstRow(): Locator {

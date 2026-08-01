@@ -336,7 +336,9 @@ describe('AgentDetailPage', () => {
       )
 
       expect(await screen.findByRole('heading', { name: /history/i })).toBeInTheDocument()
-      expect(await screen.findByLabelText(/clear agent filter/i)).toBeInTheDocument()
+      expect(
+        await screen.findByRole('combobox', { name: /filter by agent/i }),
+      ).toHaveTextContent('warehouse-a')
     })
   })
 

@@ -10,6 +10,20 @@ import { server } from "@tests/mock/server";
 const ROUTE = "/acme-analytics/queries/q-1";
 
 describe("QueryProfilePage", () => {
+  it("shows the query SQL panel and expands it to a full view", async () => {
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+
+    const sqlSnippet = /SELECT date_trunc\('day', event_time\)/;
+    expect(await screen.findByText(sqlSnippet)).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /expand sql/i }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(/ORDER BY 1/);
+  });
+
   it("renders the stats header, operator graph, and side panels", async () => {
     renderWithProviders({ initialRoute: ROUTE });
 

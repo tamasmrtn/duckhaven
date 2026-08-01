@@ -16,7 +16,7 @@ test("an unknown workspace route shows a not-found state", async ({ page }) => {
 });
 
 test("the main routes are reachable and do not bounce to login", async ({ page }) => {
-  for (const path of ["worksheets", "catalog", "saved-queries", "history", "admin/agents"]) {
+  for (const path of ["worksheets", "catalog", "saved-queries", "history", "compute"]) {
     await page.goto(`${BASE_URL}/${WS_SLUG}/${path}`);
     await expect(page).not.toHaveURL(/\/login/);
     await expect(page.locator("body")).not.toContainText("Page not found");

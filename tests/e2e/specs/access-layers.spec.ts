@@ -159,11 +159,11 @@ test.afterAll(async () => {
 
 test("layer 1 — a non-admin cannot reach the admin area", async () => {
   // Client-side gate: the admin shell never renders for a plain user.
-  await memberPage.goto(`${BASE_URL}/${WS}/admin/agents`);
+  await memberPage.goto(`${BASE_URL}/${WS}/admin/storage`);
   await expect(memberPage.getByText("Admin access required")).toBeVisible();
-  await expect(memberPage.getByRole("button", { name: "Agents" })).toHaveCount(
-    0,
-  );
+  await expect(
+    memberPage.getByRole("button", { name: "Storage backends" }),
+  ).toHaveCount(0);
   // ...and the Admin nav entry is absent for them.
   await expect(
     memberPage.getByRole("button", { name: "Admin", exact: true }),

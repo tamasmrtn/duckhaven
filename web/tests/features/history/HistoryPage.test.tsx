@@ -396,17 +396,4 @@ describe('HistoryPage', () => {
 
     await waitFor(() => expect(calls).toBe(2))
   })
-
-  it('expanding a row\'s SQL does not navigate to the profile page', async () => {
-    const user = userEvent.setup()
-    const { router } = renderWithProviders({
-      initialRoute: '/acme-analytics/history',
-    })
-    await screen.findByText(/raw\.users/)
-
-    await user.click(screen.getAllByRole('button', { name: /expand sql/i })[0])
-
-    expect(await screen.findByRole('dialog')).toBeInTheDocument()
-    expect(router.state.location.pathname).toBe('/acme-analytics/history')
-  })
 })

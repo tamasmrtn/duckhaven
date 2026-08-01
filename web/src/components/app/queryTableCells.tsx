@@ -1,5 +1,4 @@
 import { TableCell } from "@/components/ui/table";
-import { SqlPreview } from "@/components/app/SqlPreview";
 import type { Query } from "@/types/query";
 
 /**
@@ -59,7 +58,9 @@ export function durationBreakdown(query: Query): string {
 export function SqlCell({ query }: { query: Query }) {
   return (
     <TableCell className="px-4 py-2 max-w-xs">
-      <SqlPreview sql={query.sql} maxHeightClassName="max-h-10" />
+      <pre className="truncate font-mono text-xs text-text-primary">
+        {query.sql}
+      </pre>
       {query.error && (
         <p className="mt-0.5 text-2xs text-[var(--status-failed)] truncate">
           {query.error}

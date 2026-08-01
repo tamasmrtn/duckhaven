@@ -46,7 +46,7 @@ export function ProfileGraph({
   return (
     <div className="h-full w-full overflow-auto p-6">
       <div
-        className="relative"
+        className="relative mx-auto"
         style={{ width: layout.width, height: layout.height }}
       >
         <svg

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
-import { screen, waitFor } from "@tests/utils";
+import { screen, fireEvent, waitFor } from "@tests/utils";
 import { renderWithProviders } from "@tests/utils";
 import { server } from "@tests/mock/server";
 
@@ -58,6 +58,39 @@ describe("QueryProfilePage", () => {
 
     await user.click(screen.getByRole("button", { name: /reset zoom/i }));
     expect(screen.getByRole("button", { name: /reset zoom/i })).toHaveTextContent("100%");
+  });
+
+  it("pans the graph by dragging with the left mouse button", async () => {
+    renderWithProviders({ initialRoute: ROUTE });
+    const scroller = await screen.findByTestId("profile-graph-scroll");
+    scroller.scrollLeft = 0;
+    scroller.scrollTop = 0;
+
+    fireEvent.mouseDown(scroller, { button: 0, clientX: 200, clientY: 200 });
+    fireEvent.mouseMove(window, { clientX: 150, clientY: 170 });
+
+    // Dragging left/up moves the viewport right/down, like grabbing a canvas.
+    expect(scroller.scrollLeft).toBe(50);
+    expect(scroller.scrollTop).toBe(30);
+
+    fireEvent.mouseUp(window);
+    fireEvent.mouseMove(window, { clientX: 0, clientY: 0 });
+
+    // Movement after release no longer pans.
+    expect(scroller.scrollLeft).toBe(50);
+    expect(scroller.scrollTop).toBe(30);
+  });
+
+  it("does not start panning when the press begins on a node", async () => {
+    renderWithProviders({ initialRoute: ROUTE });
+    const scroller = await screen.findByTestId("profile-graph-scroll");
+    const node = screen.getByRole("button", { name: /SEQ_SCAN/, pressed: false });
+    scroller.scrollLeft = 10;
+
+    fireEvent.mouseDown(node, { button: 0, clientX: 200, clientY: 200 });
+    fireEvent.mouseMove(window, { clientX: 100, clientY: 100 });
+
+    expect(scroller.scrollLeft).toBe(10);
   });
 
   it("selects a node on click and shows its detail", async () => {

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Minus, Plus } from "lucide-react";
 import type { QueryProfileSummary } from "@/types/query";
 import { cn } from "@/utils";
@@ -49,10 +49,49 @@ export function ProfileGraph({
 }) {
   const byId = new Map(layout.nodes.map((n) => [n.id, n]));
   const [zoom, setZoom] = useState(1);
+  const [isPanning, setIsPanning] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Click-drag to pan, like Snowflake/Databricks' plan viewers. A press that
+  // starts on a node button is left alone so selecting a node still works;
+  // everything else grabs the scroll container and drags it under the cursor.
+  function handleMouseDown(e: React.MouseEvent<HTMLDivElement>) {
+    if (e.button !== 0) return;
+    if ((e.target as HTMLElement).closest("button")) return;
+    const el = containerRef.current;
+    if (!el) return;
+    e.preventDefault();
+
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const startScrollLeft = el.scrollLeft;
+    const startScrollTop = el.scrollTop;
+    setIsPanning(true);
+
+    function onMove(ev: MouseEvent) {
+      el!.scrollLeft = startScrollLeft - (ev.clientX - startX);
+      el!.scrollTop = startScrollTop - (ev.clientY - startY);
+    }
+    function onUp() {
+      setIsPanning(false);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
 
   return (
     <div className="relative h-full w-full">
-      <div className="h-full w-full overflow-auto p-6">
+      <div
+        ref={containerRef}
+        data-testid="profile-graph-scroll"
+        onMouseDown={handleMouseDown}
+        className={cn(
+          "h-full w-full overflow-auto p-6",
+          isPanning ? "cursor-grabbing select-none" : "cursor-grab",
+        )}
+      >
         <div
           className="relative mx-auto"
           style={{ width: layout.width * zoom, height: layout.height * zoom }}
@@ -125,7 +164,7 @@ export function ProfileGraph({
                   onClick={() => onSelect(gn.id)}
                   aria-pressed={selected}
                   className={cn(
-                    "absolute flex flex-col gap-1 rounded-md border bg-[var(--bg-surface)] px-2.5 py-1.5 text-left shadow-e1 transition-colors",
+                    "absolute flex cursor-pointer flex-col gap-1 rounded-md border bg-[var(--bg-surface)] px-2.5 py-1.5 text-left shadow-e1 transition-colors",
                     selected
                       ? "border-[var(--brand-yellow)] ring-2 ring-[var(--brand-yellow)]"
                       : "border-[var(--border-subtle)] hover:border-[var(--border-strong)]",

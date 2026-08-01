@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { http, HttpResponse } from 'msw'
-import { screen, fireEvent } from '@testing-library/react'
+import { screen, fireEvent, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { renderWithProviders } from '@tests/utils'
 import { server } from '@tests/mock/server'
 import { CURRENT_USER } from '@/mock/fixtures/users'
@@ -280,11 +281,9 @@ describe('HistoryPage', () => {
     expect(seen.some((q) => q.includes('agent_id=ag-2'))).toBe(true)
   })
 
-  it('does not claim an agent filter a non-admin cannot apply', async () => {
-    // The agent_id filter is admin-only and 403s server-side, so for a member the
-    // page sends no filter at all — but the chip rendered on the URL parameter
-    // alone, asserting a scope that was never in effect. The list is still
-    // workspace-scoped, so nothing leaks; it is simply mislabelled.
+  it('lets a non-admin filter their own workspace history by agent', async () => {
+    // agent_id is open to any member (unlike user_id), scoped to their own
+    // workspace: a member sends the filter but never all_workspaces.
     const seen: string[] = []
     server.use(
       http.get('/api/me', () =>
@@ -315,9 +314,99 @@ describe('HistoryPage', () => {
     })
     await screen.findByText('SELECT member_marker')
 
-    expect(seen.some((q) => q.includes('agent_id'))).toBe(false)
+    expect(seen.some((q) => q.includes('agent_id=ag-1'))).toBe(true)
+    expect(seen.some((q) => q.includes('all_workspaces=true'))).toBe(false)
+  })
+
+  it('opens the agent picker and sets the URL search param on select', async () => {
+    const user = userEvent.setup()
+    const { router } = renderWithProviders({
+      initialRoute: '/acme-analytics/history',
+    })
+    await screen.findByText(/raw\.users/)
+
+    await user.click(await screen.findByRole('combobox', { name: /filter by agent/i }))
+    await user.click(await screen.findByRole('option', { name: 'agent-b' }))
+
+    expect(router.state.location.search).toEqual({ agent: 'ag-2' })
+
+    await user.click(screen.getByRole('combobox', { name: /filter by agent/i }))
+    await user.click(await screen.findByRole('option', { name: 'All agents' }))
+
+    expect(router.state.location.search).toEqual({})
+  })
+
+  it('shows the user filter to an admin regardless of the workspace scope toggle', async () => {
+    renderWithProviders({ initialRoute: '/acme-analytics/history' })
+    await screen.findByText(/raw\.users/)
+
+    // Admin, "This workspace" scope (the default) — no need to switch to
+    // "All workspaces" first, unlike the old free-text input's gating.
     expect(
-      screen.queryByRole('button', { name: /clear agent filter/i }),
+      await screen.findByRole('combobox', { name: /filter by user/i }),
+    ).toBeInTheDocument()
+  })
+
+  it('hides the user filter picker from non-admins', async () => {
+    server.use(
+      http.get('/api/me', () =>
+        HttpResponse.json({ ...CURRENT_USER, role: 'user' }),
+      ),
+    )
+    renderWithProviders({ initialRoute: '/acme-analytics/history' })
+    await screen.findByText(/raw\.users/)
+
+    expect(
+      screen.queryByRole('combobox', { name: /filter by user/i }),
     ).not.toBeInTheDocument()
+  })
+
+  it('filters by user via the picker', async () => {
+    const seen: string[] = []
+    server.use(
+      http.get('/api/workspaces/:ws/queries', ({ request }) => {
+        seen.push(new URL(request.url).search)
+        return HttpResponse.json([])
+      }),
+    )
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: '/acme-analytics/history' })
+
+    await user.click(await screen.findByRole('combobox', { name: /filter by user/i }))
+    await user.click(await screen.findByText('Jess'))
+
+    await waitFor(() =>
+      expect(seen.some((q) => q.includes('user_id=u-2'))).toBe(true),
+    )
+  })
+
+  it('refetches the list when the refresh button is clicked', async () => {
+    let calls = 0
+    server.use(
+      http.get('/api/workspaces/:ws/queries', () => {
+        calls += 1
+        return HttpResponse.json([])
+      }),
+    )
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: '/acme-analytics/history' })
+    await waitFor(() => expect(calls).toBe(1))
+
+    await user.click(screen.getByRole('button', { name: /refresh history/i }))
+
+    await waitFor(() => expect(calls).toBe(2))
+  })
+
+  it('expanding a row\'s SQL does not navigate to the profile page', async () => {
+    const user = userEvent.setup()
+    const { router } = renderWithProviders({
+      initialRoute: '/acme-analytics/history',
+    })
+    await screen.findByText(/raw\.users/)
+
+    await user.click(screen.getAllByRole('button', { name: /expand sql/i })[0])
+
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    expect(router.state.location.pathname).toBe('/acme-analytics/history')
   })
 })

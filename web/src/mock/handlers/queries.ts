@@ -170,11 +170,13 @@ export const queryHandlers = [
   }),
 
   // Query log, newest first. Doubles as the admin audit trail: an admin may
-  // pass `all_workspaces` (cross-workspace) and a `user_id` filter.
+  // pass `all_workspaces` (cross-workspace) and a `user_id` filter. `agent_id`
+  // is open to any member, scoped to their own workspace.
   http.get("/api/workspaces/:ws/queries", ({ params, request }) => {
     const url = new URL(request.url);
     const allWorkspaces = url.searchParams.get("all_workspaces") === "true";
     const userId = url.searchParams.get("user_id");
+    const agentId = url.searchParams.get("agent_id");
     const origin = url.searchParams.get("origin");
     const sessionId = url.searchParams.get("session_id");
 
@@ -186,6 +188,7 @@ export const queryHandlers = [
     }
     const rows = pool
       .filter((q) => !userId || q.user_id === userId)
+      .filter((q) => !agentId || q.agent_id === agentId)
       // Interactive runs carry a null origin; mirror the server's alias for it.
       .filter((q) =>
         !origin

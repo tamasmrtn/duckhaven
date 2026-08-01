@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { Clock } from "lucide-react";
+import { Clock, RefreshCw } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -12,6 +11,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { StatusPill } from "@/components/app/StatusPill";
+import { AgentFilterCombobox } from "@/components/app/AgentFilterCombobox";
+import { UserFilterCombobox } from "@/components/app/UserFilterCombobox";
 import { useWorkspaceQueries } from "@/queries/queries";
 import { useAgents } from "@/queries/agents";
 import { useMe } from "@/queries/auth";
@@ -38,9 +39,8 @@ export function HistoryPage() {
   const isAdmin = me?.role === "admin";
 
   const [allWorkspaces, setAllWorkspaces] = useState(false);
-  const [userFilter, setUserFilter] = useState("");
+  const [userFilter, setUserFilter] = useState<string | null>(null);
   const [origin, setOrigin] = useState<OriginFilter>("all");
-  const trimmed = userFilter.trim();
   // Cross-workspace + user filtering are admin-only affordances; a non-admin
   // never sends them, so the endpoint only ever returns their workspace.
   // Filtering by agent spans workspaces (an agent is global), so fetch all when
@@ -49,11 +49,17 @@ export function HistoryPage() {
   // The agent filter goes to the server rather than being applied to the page it
   // returns: that page is capped, so filtering it here showed nothing at all for an
   // agent whose runs were older than the most recent hundred queries cluster-wide.
-  const { data: wsQueries = [], isLoading } = useWorkspaceQueries(ws, {
+  // Unlike user_id, agent_id is open to any member — it is not gated on `all`.
+  const {
+    data: wsQueries = [],
+    isLoading,
+    isFetching,
+    refetch,
+  } = useWorkspaceQueries(ws, {
     all_workspaces: all,
-    user_id: all && trimmed ? trimmed : undefined,
+    user_id: isAdmin && userFilter ? userFilter : undefined,
     origin: origin === "all" ? undefined : origin,
-    agent_id: all && agentFilter ? agentFilter : undefined,
+    agent_id: agentFilter ? agentFilter : undefined,
   });
   const { data: agents = [] } = useAgents();
   const { data: workspaces = [] } = useWorkspaces();
@@ -94,19 +100,17 @@ export function HistoryPage() {
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-4 shrink-0">
         <h1 className="text-md font-semibold">History</h1>
-        {all && agentFilter && (
-          <button
-            type="button"
-            onClick={() =>
-              navigate({ to: "/$ws/history", params: { ws }, search: {} })
-            }
-            className="flex items-center gap-1 rounded-full border border-[var(--border-subtle)] bg-accent/50 px-2 py-0.5 text-xs text-text-secondary hover:text-text-primary"
-            aria-label="clear agent filter"
-          >
-            Agent: {agentName.get(agentFilter) ?? shortId(agentFilter)} ✕
-          </button>
-        )}
         <div className="ml-auto flex items-center gap-3">
+          <AgentFilterCombobox
+            value={agentFilter ?? null}
+            onChange={(id) =>
+              navigate({
+                to: "/$ws/history",
+                params: { ws },
+                search: id ? { agent: id } : {},
+              })
+            }
+          />
           <div
             className="flex rounded-md border border-[var(--border-subtle)] p-0.5 text-xs"
             role="group"
@@ -129,18 +133,22 @@ export function HistoryPage() {
               </button>
             ))}
           </div>
+          <button
+            type="button"
+            onClick={() => void refetch()}
+            disabled={isFetching}
+            title="Refresh"
+            aria-label="Refresh history"
+            className="rounded p-1.5 text-text-secondary hover:bg-accent hover:text-text-primary"
+          >
+            <RefreshCw
+              className={cn("size-3.5", isFetching && "animate-spin")}
+            />
+          </button>
         </div>
         {isAdmin && (
           <div className="flex items-center gap-3">
-            {all && (
-              <Input
-                aria-label="filter by user id"
-                placeholder="filter by user id"
-                value={userFilter}
-                onChange={(e) => setUserFilter(e.target.value)}
-                className="h-7 w-64 text-xs"
-              />
-            )}
+            <UserFilterCombobox value={userFilter} onChange={setUserFilter} />
             <div className="flex rounded-md border border-[var(--border-subtle)] p-0.5 text-xs">
               <button
                 type="button"

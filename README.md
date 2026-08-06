@@ -1,23 +1,19 @@
 # DuckHaven
 
-> A self-hosted, governed DuckDB + Iceberg analytics platform for small teams.
+> A self-hosted lakehouse for DuckDB — governed SQL worksheets, an Apache
+> Iceberg catalog, and elastic compute, on your own infrastructure.
 
-![Worksheet UI](docs/images/worksheet-light.png)
+![Worksheet UI](docs/images/worksheet-dark.png)
 
-Your team loves DuckDB, but sharing `.duckdb` files across Slack is chaos. You
-want the worksheet experience of Databricks or Snowflake without the enterprise
-gravity, and MotherDuck-style collaboration without the cloud lock-in.
+Sharing `.duckdb` files over Slack doesn't scale, and there's no self-hosted
+way to get governed, collaborative SQL over DuckDB without taking on an
+enterprise-sized platform.
 
-DuckHaven is a self-hosted analytics platform that lets a team write, schedule,
-maintain, and govern SQL over DuckDB. It started as collaborative browser
-worksheets and grew to cover the lifecycle around them: a governed Apache Iceberg
-catalog (via Apache Polaris), recurring scheduled queries, an advisory lakehouse
-maintenance scanner, single sign-on, and bring-your-own object storage — plus
-fine-grained catalog/schema/table access grants, machine identities for
-automation, and a governed AI data assistant. It is deliberately right-sized —
-lightweight enough for a homelab, serious enough for a team — not an
-enterprise lakehouse for petabyte fleets. No cloud warehouse lock-in, no
-Kubernetes, no opaque billing, no platform team required.
+DuckHaven gives a team collaborative browser worksheets, a governed Apache
+Iceberg catalog via Apache Polaris, compute that scales to zero between runs,
+scheduled queries, SSO, fine-grained access grants, machine identities, and a
+governed AI data assistant — all in one Docker Compose deploy. No Kubernetes,
+no opaque billing, no platform team required.
 
 **Documentation:** <https://tamasmrtn.github.io/duckhaven/>
 
@@ -46,9 +42,9 @@ your constraints:
 
 **Use DuckHaven instead when** you run a homelab or a small team and want
 collaborative, governed SQL over DuckDB on your own infrastructure — browser
-worksheets, a shared Iceberg catalog, scheduled queries, per-workspace
-permissions, single sign-on, and a full audit trail — with data sovereignty,
-network privacy, and no SaaS lock-in.
+worksheets, a shared Iceberg catalog, compute that scales to zero between runs,
+scheduled queries, per-workspace permissions, single sign-on, and a full audit
+trail — with data sovereignty, network privacy, and no SaaS lock-in.
 
 ## Features
 
@@ -119,6 +115,18 @@ network privacy, and no SaaS lock-in.
 - **Agent management** — A registry of connected agents with capability
   advertisement (DuckDB version, extensions, cores, memory), backend-compatibility
   checks, one-time bootstrap tokens, and live CPU / memory / queue utilization.
+- **Elastic compute (opt-in)** — Provision DuckDB agents on demand — Docker on
+  the host, or Azure Container Instances — and let them scale to zero when
+  idle. Start one deliberately from the Compute page (pick a size, see the
+  hourly cost before you commit) or let a query against an empty pool
+  cold-start one automatically; concurrent requests coalesce onto a single
+  provisioned agent. Off by default; static agents keep working unchanged
+  either way.
+- **SQL sessions (opt-in)** — A persistent, connection-scoped DuckDB session
+  (temp relations, `USE`, multi-statement transactions) for external tools that
+  expect a warehouse-style connection — dbt, dlt, BI tools — brokered entirely
+  through the API so the agent stays outbound-only. Backed by a broader
+  statement policy than one-shot queries; requires the hardened agent image.
 - **Prometheus metrics** — An optional `/metrics` endpoint exposes query, agent,
   and Polaris credential-vending instrumentation.
 - **Highly available (opt-in)** — The default deploy is single-node; an opt-in
@@ -146,23 +154,18 @@ network privacy, and no SaaS lock-in.
 
 ## Screenshots
 
-### SQL Worksheet
-
-The primary surface. Write SQL, pick your agent, run queries, and browse results.
-
-![Worksheet Dark Mode](docs/images/worksheet-dark.png)
-
 ### Catalog Browser
 
 Inspect table schemas and preview sample rows without writing a query.
 
 ![Catalog Detail](docs/images/catalog-detail.png)
 
-### Agent Management
+### Compute
 
-Register agents, view capabilities, and generate bootstrap tokens from the admin panel.
+Spin up elastic, scale-to-zero DuckDB compute on demand — pick a size, see the
+hourly cost, and it tears itself down when idle — or register a static agent.
 
-![Admin Agents](docs/images/admin-agents.png)
+![Compute](docs/images/compute-agents.png)
 
 ## Architecture
 
@@ -251,42 +254,32 @@ For local development (running the API and Vite dev server against a
 compose-managed Postgres) see [docs/developer/development.md](docs/developer/development.md). For
 cutting a new release see [docs/developer/releasing.md](docs/developer/releasing.md).
 
-## Roadmap
+## What's next
 
-- **Shipped** — SQL worksheets, catalog browser, query dispatch to agents,
-  Polaris/Iceberg catalog integration with native table metadata, multi-catalog
-  workspaces (decoupled, many-to-many), workspace permissions plus OIDC SSO and
-  LDAP / AD with JIT provisioning and group→role mapping, saved queries,
-  scheduled/recurring queries with run history, the autonomous lakehouse
-  maintenance advisor, audit log, storage backend registry, S3 / ADLS Gen 2
-  storage backends (write paths validated behind opt-in integration tests),
-  agent bootstrap tokens, name-only workspace creation, result size reporting,
-  result retention sweep, multi-agent dispatch, live agent CPU/memory
-  utilization, an optional Prometheus `/metrics` endpoint, published agent and
-  API images (GHCR), server-side backend compatibility checks, Iceberg snapshot
-  history browsing with "query at this snapshot" time travel, EXPLAIN-based
-  per-query memory sizing (the `auto` concurrency profile), post-execution query
-  profiles with inefficiency highlights, an opt-in
-  [highly-available control plane](docs/deployment/high-availability.md)
-  (HA Postgres + multiple API replicas behind a load balancer), and
-  [catalog storage-backend migration](docs/guides/migrate-catalog-storage.md)
-  (move a catalog to a different backend after creation, preserving all data and
-  Iceberg snapshot history), [fine-grained catalog/schema/table access
-  grants](docs/guides/access-levels.md) with an opt-in scoped access mode and a
-  discovery-only `metadata` tier, [DuckHaven-native service accounts and
-  Personal Access Tokens](docs/guides/service-accounts.md) for machine auth,
-  and a [governed AI data assistant](docs/concepts/assistant.md) (model-agnostic,
-  Pydantic AI) that browses the catalog, authors and runs SQL, and proposes
-  worksheet edits as an audited service-account principal.
-- **In progress** — Finishing the Polaris `storageConfigInfo` credential wiring
-  (role ARN / tenant) so external S3 / ADLS Gen 2 backends are production-ready
-  outside the opt-in integration tests.
-- **Future** — Notebook UI, heterogeneous engines (Spark, Trino, Polars),
-  Polaris RBAC permission mirroring, Grafana dashboards, off-box result
-  durability / DR automation, and for the AI assistant: an MCP server, chart
-  generation, RAG over table contents, and multi-agent workflows.
+The full shipped feature set is above. Here's what's actively being worked on:
 
-See [docs/concepts/architecture.md](docs/concepts/architecture.md) §13 for the gap tracker.
+- **Data lineage** — column- and table-level lineage across worksheets, saved
+  queries, and scheduled jobs, including importing a dbt `manifest.json` so
+  lineage that already exists in your dbt project shows up in the catalog
+  instead of being re-derived from scratch.
+- **A semantic layer for the AI assistant** — curated metric and dimension
+  definitions the assistant grounds its SQL in, instead of inferring intent
+  from raw table/column names alone.
+- **Performance** — closing the gaps in query planning, per-query memory
+  sizing, and result delivery that show up under real, larger-than-toy
+  workloads.
+- **Notebook UI** — a notebook-style surface alongside worksheets, for
+  exploratory and narrative analysis rather than one query at a time.
+- **Improved lakehouse health** — deeper maintenance-advisor checks and more
+  actionable remediation, beyond today's compaction and snapshot-expiry
+  advisories.
+
+Also hardening in flight: finishing the Polaris `storageConfigInfo` credential
+wiring (role ARN / tenant) so external S3 / ADLS Gen 2 backends are
+production-ready outside the opt-in integration tests.
+
+See [docs/concepts/architecture.md](docs/concepts/architecture.md) §13 for the
+full technical-debt and gap tracker.
 
 ## Contributing
 

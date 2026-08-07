@@ -62,12 +62,29 @@ def load_ddl_by_shape(engine: str) -> dict[str, str]:
     return {p.stem: p.read_text() for p in sorted((_DDL_DIR / engine).glob("*.sql"))}
 
 
+def self_loaded_schema(sf_cfg: dict | None) -> str | None:
+    """Per-scale-factor schema for a self-loaded engine (DuckHaven,
+    Databricks): `sf10`, `sf100`, `sf300`, ... so each scale factor's
+    tables don't collide with another's under the same unqualified query
+    text. SF1 is the one exception — its tables already live in each
+    catalog's default schema from before this convention existed
+    (DuckHaven's `analytics`, Databricks' `tpch_bench`), and moving them
+    now isn't worth the risk to already-recorded results; returning None
+    for it leaves that catalog default in place.
+    """
+    factor = (sf_cfg or {}).get("factor")
+    if factor is None or factor == 1:
+        return None
+    return f"sf{factor}"
+
+
 def build_client(engine: str, settings: Settings, *, sf_cfg: dict | None = None) -> EngineClient:
     if engine == "duckhaven":
         return DuckHavenClient(
             host=settings.duckhaven_base_url,
             workspace=settings.duckhaven_workspace,
             pat=settings.duckhaven_pat,
+            schema=self_loaded_schema(sf_cfg),
             agent_id=settings.duckhaven_agent_id or None,
         )
     if engine == "snowflake":
@@ -97,7 +114,7 @@ def build_client(engine: str, settings: Settings, *, sf_cfg: dict | None = None)
             client_id=settings.databricks_client_id,
             client_secret=settings.databricks_client_secret,
             catalog=cfg.get("catalog"),
-            schema=cfg.get("schema"),
+            schema=self_loaded_schema(sf_cfg) or cfg.get("schema"),
         )
     raise ValueError(f"unknown engine {engine!r}, expected one of {ENGINES}")
 

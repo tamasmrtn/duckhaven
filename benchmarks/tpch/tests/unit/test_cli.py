@@ -104,7 +104,54 @@ def test_status_summarizes_work_items_by_status(tmp_path):
     assert "pending" in result.stdout
 
 
+# ── self_loaded_schema ───────────────────────────────────────────────────
+
+
+def test_self_loaded_schema_is_none_for_sf1():
+    assert cli.self_loaded_schema({"factor": 1}) is None
+
+
+def test_self_loaded_schema_is_none_for_missing_sf_cfg():
+    assert cli.self_loaded_schema(None) is None
+
+
+def test_self_loaded_schema_is_sf_prefixed_for_larger_scale_factors():
+    assert cli.self_loaded_schema({"factor": 10}) == "sf10"
+    assert cli.self_loaded_schema({"factor": 100}) == "sf100"
+    assert cli.self_loaded_schema({"factor": 300}) == "sf300"
+
+
 # ── build_client ─────────────────────────────────────────────────────────
+
+
+def test_build_client_leaves_duckhaven_schema_unset_at_sf1():
+    from tpch_bench.clients.duckhaven import DuckHavenClient
+
+    settings = get_settings()
+    client = cli.build_client("duckhaven", settings, sf_cfg={"factor": 1})
+
+    assert isinstance(client, DuckHavenClient)
+    assert client._schema is None
+
+
+def test_build_client_points_duckhaven_at_a_per_sf_schema_beyond_sf1():
+    from tpch_bench.clients.duckhaven import DuckHavenClient
+
+    settings = get_settings()
+    client = cli.build_client("duckhaven", settings, sf_cfg={"factor": 10})
+
+    assert isinstance(client, DuckHavenClient)
+    assert client._schema == "sf10"
+
+
+def test_build_client_points_databricks_at_a_per_sf_schema_beyond_sf1():
+    from tpch_bench.clients.databricks import DatabricksClient
+
+    settings = get_settings()
+    client = cli.build_client("databricks", settings, sf_cfg={"factor": 100})
+
+    assert isinstance(client, DatabricksClient)
+    assert client._schema == "sf100"
 
 
 def test_build_client_points_snowflake_at_the_sample_schema_when_configured():

@@ -51,6 +51,7 @@ class DuckHavenClient(EngineClient):
         workspace: str,
         pat: str,
         catalog: str | None = None,
+        schema: str | None = None,
         agent_id: str | None = None,
         compute_wait_s: float = 300.0,
         application: str = "tpch-bench",
@@ -59,6 +60,7 @@ class DuckHavenClient(EngineClient):
         self._workspace = workspace
         self._pat = pat
         self._catalog = catalog
+        self._schema = schema
         self._agent_id = agent_id
         self._compute_wait_s = compute_wait_s
         self._application = application
@@ -75,6 +77,7 @@ class DuckHavenClient(EngineClient):
             token=self._pat,
             agent=self._agent_id,
             catalog=self._catalog,
+            schema=self._schema,
             compute_wait=self._compute_wait_s,
             application=self._application,
         )

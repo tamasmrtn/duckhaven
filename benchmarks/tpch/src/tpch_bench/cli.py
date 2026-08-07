@@ -68,6 +68,7 @@ def build_client(engine: str, settings: Settings, *, sf_cfg: dict | None = None)
             host=settings.duckhaven_base_url,
             workspace=settings.duckhaven_workspace,
             pat=settings.duckhaven_pat,
+            agent_id=settings.duckhaven_agent_id or None,
         )
     if engine == "snowflake":
         cfg = engines_config()["snowflake"]

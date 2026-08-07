@@ -6,6 +6,8 @@ from typer.testing import CliRunner
 from tpch_bench import cli
 from tpch_bench.clients.base import EngineClient, QueryResult
 from tpch_bench.ledger.store import Ledger
+from tpch_bench.ledger.wal import WalWriter
+from tpch_bench.orchestrator.runner import RunContext
 from tpch_bench.settings import get_settings
 
 runner = CliRunner()
@@ -48,6 +50,28 @@ def _run_args(tmp_path, **overrides):
     for key, value in args.items():
         out += [f"--{key}", value]
     return out
+
+
+def _dispatch_write_or_dml(tmp_path, *, scenario):
+    # write/dml aren't reachable through `run`'s CLI validation any more —
+    # no scale factor's config/scale_factors.yaml scope includes them (the
+    # 2026-08-07 read-only revision, METHODOLOGY.md §9) — but the
+    # underlying _dispatch() code they exercise is still real and kept on
+    # purpose (METHODOLOGY.md §4.1), so these tests call it directly.
+    # Caller must monkeypatch cli.build_client before calling this.
+    with Ledger(tmp_path / "r.duckdb") as ledger, WalWriter(tmp_path / "wal.jsonl") as wal:
+        ctx = RunContext(
+            ledger=ledger,
+            wal=wal,
+            engine="duckhaven",
+            scale_factor=1,
+            run_id="test-run",
+            methodology_hash="test-hash",
+            query_timeout_s=30.0,
+        )
+        cli._dispatch(
+            ctx, engine="duckhaven", scenario=scenario, settings=get_settings(), sf_cfg={}
+        )
 
 
 # ── status ────────────────────────────────────────────────────────────────
@@ -103,6 +127,30 @@ def test_build_client_falls_back_to_the_configured_database_without_a_sample_sch
     assert isinstance(client, SnowflakeClient)
     assert client._database == "TPCH_BENCH"
     assert client._schema == "PUBLIC"
+
+
+def test_build_client_pins_duckhaven_to_a_configured_agent_id(monkeypatch):
+    from tpch_bench.clients.duckhaven import DuckHavenClient
+
+    monkeypatch.setenv("DUCKHAVEN_AGENT_ID", "agent-123")
+    settings = get_settings()
+
+    client = cli.build_client("duckhaven", settings)
+
+    assert isinstance(client, DuckHavenClient)
+    assert client._agent_id == "agent-123"
+
+
+def test_build_client_leaves_duckhaven_agent_unpinned_by_default(monkeypatch):
+    from tpch_bench.clients.duckhaven import DuckHavenClient
+
+    monkeypatch.setenv("DUCKHAVEN_AGENT_ID", "")
+    settings = get_settings()
+
+    client = cli.build_client("duckhaven", settings)
+
+    assert isinstance(client, DuckHavenClient)
+    assert client._agent_id is None
 
 
 # ── run: validation ──────────────────────────────────────────────────────
@@ -181,18 +229,17 @@ def test_run_concurrent_gives_each_worker_its_own_client(tmp_path, monkeypatch):
         assert client.close_calls == 1
 
 
-def test_run_write_issues_the_duckhaven_pre_statement_for_duckhaven_only(tmp_path, monkeypatch):
+def test_dispatch_write_issues_the_duckhaven_pre_statement(tmp_path, monkeypatch):
     fake = FakeEngineClient()
     monkeypatch.setattr(cli, "build_client", lambda engine, settings, **kwargs: fake)
 
-    result = runner.invoke(cli.app, ["run", *_run_args(tmp_path, scenario="write")])
+    _dispatch_write_or_dml(tmp_path, scenario="write")
 
-    assert result.exit_code == 0, result.output
     pre_statements = [sql for sql in fake.executed if "duckhaven_concurrency" in sql]
     assert len(pre_statements) == 2 * 3  # narrow+wide shapes, write's 3 reps
 
 
-def test_run_write_and_dml_never_pass_sf_cfg_to_build_client(tmp_path, monkeypatch):
+def test_dispatch_write_and_dml_never_pass_sf_cfg_to_build_client(tmp_path, monkeypatch):
     # Regression: write/dml were passing sf_cfg through, so at a scale
     # factor with a Snowflake sample schema configured (build_client's
     # snowflake branch), a write landed against the read-only shared
@@ -207,19 +254,19 @@ def test_run_write_and_dml_never_pass_sf_cfg_to_build_client(tmp_path, monkeypat
 
     monkeypatch.setattr(cli, "build_client", fake_build)
 
-    runner.invoke(cli.app, ["run", *_run_args(tmp_path, scenario="write")])
-    runner.invoke(cli.app, ["run", *_run_args(tmp_path, scenario="dml")])
+    _dispatch_write_or_dml(tmp_path, scenario="write")
+    _dispatch_write_or_dml(tmp_path, scenario="dml")
 
+    assert len(calls) > 0
     assert all("sf_cfg" not in kwargs for kwargs in calls)
 
 
-def test_run_dml_runs_delete_then_insert_per_shape_per_cycle(tmp_path, monkeypatch):
+def test_dispatch_dml_runs_delete_then_insert_per_shape_per_cycle(tmp_path, monkeypatch):
     fake = FakeEngineClient()
     monkeypatch.setattr(cli, "build_client", lambda engine, settings, **kwargs: fake)
 
-    result = runner.invoke(cli.app, ["run", *_run_args(tmp_path, scenario="dml")])
+    _dispatch_write_or_dml(tmp_path, scenario="dml")
 
-    assert result.exit_code == 0, result.output
     deletes = [sql for sql in fake.executed if sql.startswith("DELETE")]
     inserts = [sql for sql in fake.executed if sql.startswith("INSERT")]
     assert len(deletes) == 2 * 3  # narrow+wide shapes, dml's 3 cycles

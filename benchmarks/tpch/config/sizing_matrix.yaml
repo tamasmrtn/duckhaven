@@ -17,6 +17,30 @@
 # pre-registration record before any timed run, not re-derived after.
 
 tiers:
+  # Phase 0's actual free/trial-tier dry run (SF1, local/trial accounts —
+  # not the "small" tier below, which is what Phase 1's paid Azure run
+  # targets). Sizing here isn't chosen for a $/hr match: it's the smallest
+  # size each account/setup actually permits, since none of the three can
+  # be resized freely on a free tier:
+  #   - Snowflake: SNOWFLAKE_LEARNING_WH is a fixed X-Small on this trial
+  #     account — confirmed no MODIFY grant to resize it (2026-08-07).
+  #   - Databricks: the trial workspace's Serverless Starter Warehouse,
+  #     set to 2X-Small (its floor) to sit as close to Snowflake's fixed
+  #     X-Small as either platform's tier names get.
+  #   - DuckHaven: an elastic agent pinned via DUCKHAVEN_AGENT_ID at
+  #     (2 vCPU, 4 GB) — the platform's own stated default size
+  #     (ELASTIC_DEFAULT_CPU/MEMORY_GB), and already exercised clean
+  #     against every SF1 read scenario in Phase 0.
+  # "Comparable" here means "each platform's practical floor," not a
+  # verified equal-$/hr match — Databricks Serverless reports no cost at
+  # this size, and this Snowflake trial's credit consumption isn't
+  # per-warehouse-size transparent the way a paid account's would be.
+  phase0_trial:
+    snowflake_warehouse_size: X-Small
+    databricks_warehouse_size: 2X-Small
+    duckhaven_target: { cpu: 2.0, memory_gb: 4.0 }
+    used_for_sf: [sf1]
+
   small:
     snowflake_warehouse_size: MEDIUM
     databricks_warehouse_size: Small

@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     duckhaven_base_url: str = ""
     duckhaven_workspace: str = "tpch-bench"
     duckhaven_pat: str = ""
+    # A specific, pre-sized elastic agent's id, so every scenario runs
+    # against consistent compute instead of whatever a pool-triggered
+    # default-sized agent happens to be — the counterpart to Databricks'
+    # fixed warehouse id and Snowflake's fixed warehouse name.
+    duckhaven_agent_id: str = ""
 
     # Snowflake
     snowflake_account: str = ""

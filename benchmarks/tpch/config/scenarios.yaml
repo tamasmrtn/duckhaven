@@ -49,7 +49,11 @@ scenarios:
     # remediation. Disclosed explicitly in METHODOLOGY.md, not worked around.
     duckhaven_no_compaction_caveat: true
 
-# Which scenarios run at each scale factor. SF1000 is deliberately scoped
-# down per the approved plan — see scale_factors.yaml for the authoritative
-# per-SF list; this is the full set every smaller SF draws from.
-all_scenarios: [sequential, cold_start, concurrent, write, dml]
+# The scenarios actually in scope for the comparison, per the 2026-08-07
+# read-only revision (METHODOLOGY.md §9) — see scale_factors.yaml for the
+# authoritative per-SF list (SF1000 is scoped down further still). write
+# and dml stay defined above and implemented in orchestrator/, but are not
+# drawn from here: they weren't comparable across all three engines in
+# Phase 0's SF1 dry run (a Snowflake trial-account privilege limit, a
+# DuckHaven agent-sizing gap), not something this revision hides.
+all_scenarios: [sequential, cold_start, concurrent]

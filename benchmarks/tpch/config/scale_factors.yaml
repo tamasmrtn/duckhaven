@@ -2,12 +2,21 @@
 # matrix runs and destroys within one Azure apply session — Iceberg data
 # does not survive `terraform destroy` (plan §2 gotcha 6), so a scale
 # factor's work is never split across sessions.
+#
+# 2026-08-07 methodology revision: scope narrowed to read scenarios only
+# (sequential/cold_start/concurrent) — see METHODOLOGY.md §9. write and
+# dml stay implemented (orchestrator/scenario_write.py,
+# scenario_dml.py, config/scenarios.yaml) but are not part of the active
+# comparison: Phase 0's SF1 dry run showed they aren't comparable across
+# all three engines today (a Snowflake trial-account privilege limit, a
+# DuckHaven agent-sizing gap), and read-only is what this setup can run
+# fairly right now.
 
 scale_factors:
   sf1:
     factor: 1
     approx_size: "~1 GB"
-    scenarios: [sequential, cold_start, concurrent, write, dml]
+    scenarios: [sequential, cold_start, concurrent]
     # Generous headroom relative to data size; real ceilings come from
     # config/sizing_matrix.yaml + live compute-options pricing at run time.
     query_timeout_s: 600
@@ -17,7 +26,7 @@ scale_factors:
   sf10:
     factor: 10
     approx_size: "~10 GB"
-    scenarios: [sequential, cold_start, concurrent, write, dml]
+    scenarios: [sequential, cold_start, concurrent]
     query_timeout_s: 600
     snowflake_sample_schema: TPCH_SF10
     phase: 2
@@ -25,7 +34,7 @@ scale_factors:
   sf100:
     factor: 100
     approx_size: "~100 GB"
-    scenarios: [sequential, cold_start, concurrent, write, dml]
+    scenarios: [sequential, cold_start, concurrent]
     query_timeout_s: 1800
     snowflake_sample_schema: TPCH_SF100
     phase: 2
@@ -33,32 +42,20 @@ scale_factors:
   sf300:
     factor: 300
     approx_size: "~300 GB"
-    scenarios: [sequential, cold_start, concurrent, write, dml]
+    scenarios: [sequential, cold_start, concurrent]
     query_timeout_s: 3600
-    # No pre-loaded Snowflake sample at this scale — COPY INTO'd from the
-    # same generated corpus as Databricks/DuckHaven. Disclosed asymmetry
-    # (out-of-the-box sample vs self-loaded) in METHODOLOGY.md, not
-    # silently normalized away.
+    # No pre-loaded Snowflake sample at this scale, and read-only scope
+    # means there is no write path left to self-load one either — SF300's
+    # Snowflake leg needs a real decision (a bigger trial/paid account with
+    # load privileges, or dropping SF300 for Snowflake) before Phase 2,
+    # not a silent skip.
     snowflake_sample_schema: null
     phase: 2
 
   sf1000:
     factor: 1000
     approx_size: "~1 TB"
-    # Scoped per the approved plan: reads only, no concurrent/write/dml
-    # matrix at this scale. The one write attempt is handled separately
-    # (single generously-configured DuckHaven-only run, not part of the
-    # standard `write` scenario loop) — see orchestrator/runner.py and
-    # the go/no-go checkpoint in plan §6 Phase 3.
     scenarios: [sequential, cold_start]
     query_timeout_s: 14400 # 4h; matches the raised MAX_TIMEOUT_S from PR #203
     snowflake_sample_schema: TPCH_SF1000
     phase: 3
-    single_write_attempt:
-      engine: duckhaven
-      concurrency_profile: single
-      description: >
-        One generously-sized, generously-timed CTAS load attempt,
-        specifically to characterize where and how it breaks down. Report
-        the honest outcome (completes slowly / times out / OOMs) — not a
-        pass/fail spin.

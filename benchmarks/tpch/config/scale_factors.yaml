@@ -1,7 +1,7 @@
-# Scale factors and per-SF scope (plan §4/§6). Each SF's full scenario
-# matrix runs and destroys within one Azure apply session — Iceberg data
-# does not survive `terraform destroy` (plan §2 gotcha 6), so a scale
-# factor's work is never split across sessions.
+# Scale factors and per-SF scope (plan §4/§6). DuckHaven runs locally
+# (Docker) for the entire benchmark (METHODOLOGY.md §9's second revision)
+# — there is no Azure apply/destroy session or storage lifecycle to work
+# within anymore.
 #
 # 2026-08-07 methodology revision: scope narrowed to read scenarios only
 # (sequential/cold_start/concurrent) — see METHODOLOGY.md §9. write and
@@ -51,11 +51,3 @@ scale_factors:
     # not a silent skip.
     snowflake_sample_schema: null
     phase: 2
-
-  sf1000:
-    factor: 1000
-    approx_size: "~1 TB"
-    scenarios: [sequential, cold_start]
-    query_timeout_s: 14400 # 4h; matches the raised MAX_TIMEOUT_S from PR #203
-    snowflake_sample_schema: TPCH_SF1000
-    phase: 3

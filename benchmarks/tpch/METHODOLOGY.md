@@ -1,13 +1,13 @@
 # TPC-H benchmark methodology: DuckHaven vs Snowflake vs Databricks
 
-> **Status: drafted, not yet frozen.** This document becomes binding the
-> moment its sha256 hash is registered in `db/results.duckdb`'s
-> `methodology_registrations` table (`Ledger.register_methodology`), which
-> happens as part of Phase 0's dry run — not before, so nothing here is
-> locked in until it has actually been exercised against all three engines
-> at SF1 on free/local tiers. Once frozen, query text, scenario
-> definitions, and rep counts do not change; only dated, additive errata
-> (§9) are allowed.
+> **Status: frozen.** Registered in `db/results.duckdb`'s
+> `methodology_registrations` table (hash
+> `2d32ea0e9d6b3f8e5c7ec67cf03f3c3198162748f16f5fae936e85a4f206aa20`) on the
+> first real Phase 0 run, 2026-08-07. Query text, scenario definitions, and
+> rep counts do not change from here; only dated, additive errata (§9) are
+> allowed. Phase 0's dry run itself is still in progress at freeze time —
+> completed against DuckHaven at SF1 (all five scenarios); Snowflake and
+> Databricks are pending trial-account credentials.
 
 ## 1. Purpose and scope
 
@@ -89,8 +89,14 @@ DuckHaven-specific handling, both disclosed rather than engineered around:
 
 - Before every `write`/`dml` statement, the session issues
   `SET duckhaven_concurrency = 'single'` first (not itself a measured work
-  item), so the write gets the whole agent's memory budget instead of the
-  fixed ⅓ ("M") bucket a write statement otherwise falls back to.
+  item), so the write does not share the agent's admission budget with
+  other concurrent queries. It does **not** raise the memory such a write
+  gets: any CTAS/INSERT/DELETE is unestimable (EXPLAIN-based sizing only
+  covers a bare `SELECT`) and is always pinned to a fixed ⅓ ("M") of the
+  agent's *total* budget regardless of this setting — see §9's 2026-08-07
+  erratum, caught by a real OOM during Phase 0. A write that needs more
+  than that either needs a larger agent or a raised
+  `ESTIMATE_FALLBACK_BUCKET`; this harness does not provision either yet.
 - DuckHaven's Iceberg maintenance is **read-only/advisory only** — it
   cannot expire snapshots or rewrite files via the DuckDB iceberg
   extension. The `dml` scenario's repeated DELETE+INSERT will accumulate
@@ -259,7 +265,28 @@ description that doesn't match what the code actually does) gets a dated,
 additive erratum appended below, never a silent rewrite of the section
 above it.
 
-No errata yet — this document has not been frozen.
+### Errata
+
+**2026-08-07 — §4's `duckhaven_concurrency` claim was wrong.** Surfaced by
+a real OOM during Phase 0's DuckHaven dry run (the `write` scenario's
+`wide` shape, on the default-sized local elastic agent) and verified
+against the agent source
+(`agent/src/agent/control/channel.py::_build_request`,
+`agent/src/agent/executor/admission.py`,
+`shared/src/duckhaven_shared/concurrency.py`): `SET duckhaven_concurrency
+= 'single'` does **not** give an unestimable write (any CTAS/INSERT/
+DELETE — EXPLAIN-based sizing only covers a bare `SELECT`) the whole agent
+memory budget. It changes how many queries share the admission budget
+concurrently; the fallback bucket such a write is pinned to
+(`estimate_fallback_bucket`, default `"M"` = ⅓ of the agent's *total*
+budget) is fixed regardless of that setting. §4's original text and this
+harness's `scenario_write.py` docstring both overstated what the
+pre-statement does — both have been corrected. The actual levers for a
+write that needs more memory are provisioning a larger agent for that run,
+or raising `ESTIMATE_FALLBACK_BUCKET` on the agent; this harness does not
+wire up either yet, so a `write`/`dml` OOM on the `wide` shape at larger
+scale factors should be expected, not treated as a harness bug, until that
+is built.
 
 ## 10. Budget and guardrails
 

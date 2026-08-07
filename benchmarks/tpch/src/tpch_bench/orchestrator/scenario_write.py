@@ -12,10 +12,25 @@ the previous rep's output and couple reps together.
 
 DuckHaven-specific: `duckhaven_pre_statement` (config/scenarios.yaml,
 `"SET duckhaven_concurrency = 'single'"`) is issued once per work item
-before the CTAS, so the write gets the whole agent memory budget rather
-than the fixed ⅓ ("M") bucket every write statement otherwise falls back
-to (plan §2 gotcha 2). It is not itself a work item — it has no
-independent timing worth recording, only the CTAS that follows it does.
+before the CTAS. It is not itself a work item — it has no independent
+timing worth recording, only the CTAS that follows it does.
+
+**Correction, verified against the real agent source during Phase 0
+(`agent/src/agent/control/channel.py::_build_request`,
+`agent/src/agent/executor/admission.py`,
+`shared/src/duckhaven_shared/concurrency.py`) — see
+METHODOLOGY.md §9 for the frozen-doc erratum**: `SET duckhaven_concurrency`
+changes how many queries share the agent's admission budget concurrently
+(`single` = one at a time), not the fallback bucket size an *unestimable*
+statement (any CTAS/INSERT/DELETE — `estimate_memory_bytes` only handles a
+bare SELECT) is pinned to. That fraction (`estimate_fallback_bucket`,
+default `"M"` = ⅓) is a fixed fraction of the agent's *total* budget
+regardless of concurrency profile, so this pre-statement does not, by
+itself, give a write more memory — plan §2 gotcha 2 and this scenario's
+prior docstring both overstated what it does. The real levers are
+provisioning a larger agent for a write-heavy run, or raising
+`ESTIMATE_FALLBACK_BUCKET` on the agent itself; neither is wired up by
+this harness yet.
 """
 
 from __future__ import annotations

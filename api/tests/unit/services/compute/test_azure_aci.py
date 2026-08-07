@@ -76,6 +76,27 @@ def test_bootstrap_token_is_not_readable_back(with_subnet, req):
     assert token.secure_value == "dh_boot_secret"
 
 
+def test_max_timeout_s_is_forwarded_when_requested(with_subnet, req):
+    """A per-agent timeout ceiling has to reach the container as MAX_TIMEOUT_S, or
+    a long analytical query on this agent is cut off at the image's 600s default
+    no matter what the caller asked for."""
+    req.max_timeout_s = 14400.0
+
+    group = AzureAciBackend()._build_group(req)
+    env = {e.name: e.value for e in group.containers[0].environment_variables}
+
+    assert env["MAX_TIMEOUT_S"] == "14400.0"
+
+
+def test_max_timeout_s_is_omitted_when_not_requested(with_subnet, req):
+    """Unset must stay unset: the agent falls back to its own default rather than
+    the backend inventing a value."""
+    group = AzureAciBackend()._build_group(req)
+    names = {e.name for e in group.containers[0].environment_variables}
+
+    assert "MAX_TIMEOUT_S" not in names
+
+
 def test_missing_subnet_fails_loudly(monkeypatch, req):
     """Rather than silently falling back to a public address, which would defeat the
     isolation and expose every agent."""

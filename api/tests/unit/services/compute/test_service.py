@@ -517,6 +517,61 @@ async def test_restart_does_not_reuse_the_previous_instance_name(
     )
 
 
+async def test_provision_persists_and_forwards_max_timeout_s(
+    session_factory, elastic_on, null_backend, monkeypatch
+):
+    """A requested query-timeout ceiling has to reach the backend's provision call
+    (so the instance actually gets MAX_TIMEOUT_S) and persist on the row (so a
+    restart can reuse it) -- not just be accepted and dropped."""
+    from api.services.compute import service
+
+    captured = []
+    original_provision = null_backend.provision
+
+    async def spy(req):
+        captured.append(req)
+        return await original_provision(req)
+
+    monkeypatch.setattr(null_backend, "provision", spy)
+
+    async with session_factory() as db:
+        agent = await service.provision_elastic_agent(
+            db, name="long-job", cpu=1.0, memory_gb=1.0, idle_timeout_s=None, max_timeout_s=14400.0
+        )
+
+    assert agent.requested_max_timeout_s == 14400.0
+    assert captured[-1].max_timeout_s == 14400.0
+
+
+async def test_restart_reuses_the_requested_max_timeout_s(
+    session_factory, elastic_on, null_backend, monkeypatch
+):
+    """The size (cpu/memory) already survives a restart; the timeout ceiling has to
+    follow the same contract, or a restarted agent quietly reverts to the 600s
+    default for whatever job it was sized for in the first place."""
+    from api.services.compute import service
+
+    captured = []
+    original_provision = null_backend.provision
+
+    async def spy(req):
+        captured.append(req)
+        return await original_provision(req)
+
+    monkeypatch.setattr(null_backend, "provision", spy)
+
+    async with session_factory() as db:
+        agent = await service.provision_elastic_agent(
+            db, name="long-job", cpu=1.0, memory_gb=1.0, idle_timeout_s=None, max_timeout_s=14400.0
+        )
+        await service.terminate_agent(db, agent, reason="test")
+        restarted = await service.restart_elastic_agent(db, agent)
+
+    assert restarted is not None
+    assert restarted.requested_max_timeout_s == 14400.0
+    assert captured[-1].max_timeout_s == 14400.0
+
+
 # ── Pending SQL sessions ──────────────────────────────────────────────────────
 
 

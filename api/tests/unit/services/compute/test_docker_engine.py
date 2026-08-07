@@ -138,6 +138,36 @@ def test_enrollment_contract_is_unchanged(req):
     assert "RESULT_ADVERTISE_HOST" not in env
 
 
+def test_max_timeout_s_is_forwarded_when_requested(req):
+    """A per-agent timeout ceiling has to reach the container as MAX_TIMEOUT_S, or
+    a long analytical query on this agent is cut off at the image's 600s default
+    no matter what the caller asked for."""
+    req.max_timeout_s = 14400.0
+
+    spec = DockerEngineBackend()._container_spec(req)
+
+    assert spec["environment"]["MAX_TIMEOUT_S"] == "14400.0"
+
+
+def test_max_timeout_s_is_omitted_when_not_requested(req):
+    """Unset must stay unset: the agent falls back to its own default rather than
+    the backend inventing a value."""
+    spec = DockerEngineBackend()._container_spec(req)
+
+    assert "MAX_TIMEOUT_S" not in spec["environment"]
+
+
+def test_operator_env_overrides_a_requested_max_timeout_s(req, monkeypatch):
+    """The blanket operator override is a safety ceiling, so it has to win over a
+    per-request value, the same as it wins over every other backend default."""
+    req.max_timeout_s = 14400.0
+    monkeypatch.setattr(settings, "elastic_agent_env", {"MAX_TIMEOUT_S": "600"})
+
+    spec = DockerEngineBackend()._container_spec(req)
+
+    assert spec["environment"]["MAX_TIMEOUT_S"] == "600"
+
+
 def test_tracing_is_forwarded_to_the_agent(req, monkeypatch):
     """The static agent gets this from compose, and the elastic overlay takes the
     static agent out -- so without forwarding it, switching to elastic silently

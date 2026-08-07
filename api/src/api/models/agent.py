@@ -62,6 +62,11 @@ class Agent(Base):
     # back to the global ``elastic_idle_timeout_s``. Set at create time so each
     # elastic agent can auto-terminate on its own schedule (like a cluster).
     idle_timeout_s: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Per-agent query timeout ceiling (seconds), passed to the instance as
+    # MAX_TIMEOUT_S so a long-running analytical query on this agent isn't cut off
+    # at the code default (600s). NULL falls back to the agent image's own default.
+    # Persisted so a restart re-provisions with the same ceiling, like requested_cpu.
+    requested_max_timeout_s: Mapped[float | None] = mapped_column(Float, nullable=True)
     provisioned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     terminated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

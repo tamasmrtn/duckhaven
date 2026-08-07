@@ -38,6 +38,8 @@ class AgentOut(BaseModel):
     hourly_cost: float | None = None
     # Per-agent idle scale-in timeout, in minutes; null = the global default.
     idle_timeout_minutes: int | None = None
+    # Per-agent query timeout ceiling, in seconds; null = the agent image's default.
+    requested_max_timeout_s: float | None = None
     # The *requesting caller's* tier on this agent (use | operate | admin), resolved
     # per request. The server telling the client what it may do beats the client
     # re-deriving it: there is no tier algebra in the UI to drift out of sync. Never
@@ -80,6 +82,10 @@ class ElasticAgentCreate(BaseModel):
     # clock: anything at or below zero makes the reaper terminate the agent on its first
     # tick, seconds after it was asked for. The dialog's min/max are presentation only.
     idle_timeout_minutes: int | None = Field(default=None, ge=1, le=1440)
+    # Query timeout ceiling in seconds, passed to the instance as MAX_TIMEOUT_S;
+    # omit to use the agent image's own default (600s). Bounded at 24h — long
+    # enough for a genuine large analytical job, not an unbounded runaway query.
+    max_timeout_s: float | None = Field(default=None, gt=0, le=86400)
     name: str | None = None
     # Who may use the agent once it registers. Settable here so an agent meant to be
     # reserved is never briefly usable by everyone: it would otherwise be created

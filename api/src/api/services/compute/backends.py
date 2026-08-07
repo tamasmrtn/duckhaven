@@ -49,6 +49,9 @@ class ProvisionRequest:
     # The container size. None falls back to the backend's configured default.
     cpu: float | None = None
     memory_gb: float | None = None
+    # Query timeout ceiling (seconds), passed to the instance as MAX_TIMEOUT_S.
+    # None falls back to the agent image's own default.
+    max_timeout_s: float | None = None
     # Free-form tags the backend stamps on the instance so the leak sweep can tell
     # DuckHaven-managed instances apart from anything else in the subscription.
     tags: dict[str, str] = field(default_factory=dict)

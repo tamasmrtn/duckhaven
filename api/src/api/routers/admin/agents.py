@@ -236,6 +236,7 @@ async def create_elastic_agent(
         cpu=body.cpu,
         memory_gb=body.memory_gb,
         idle_timeout_s=idle_s,
+        max_timeout_s=body.max_timeout_s,
         access_mode=body.access_mode,
     )
     if agent is None:

@@ -92,6 +92,8 @@ class AzureAciBackend:
             # ARM instead — see ``address`` below.
             EnvironmentVariable(name="RESULTS_HTTP_HOST", value="0.0.0.0"),
         ]
+        if req.max_timeout_s is not None:
+            env.append(EnvironmentVariable(name="MAX_TIMEOUT_S", value=str(req.max_timeout_s)))
 
         container = Container(
             name="agent",

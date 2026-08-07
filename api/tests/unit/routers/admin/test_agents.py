@@ -185,6 +185,57 @@ async def test_create_elastic_agent_provisions_with_size_cost_and_idle(
     assert agent.idle_timeout_s == 600
 
 
+async def test_create_elastic_agent_accepts_a_max_timeout_s(
+    admin_client: AsyncClient, db_session, elastic_enabled
+):
+    """A long analytical job needs a raised ceiling above the agent image's 600s
+    default; the request must reach the row so a restart can reuse it."""
+    resp = await admin_client.post(
+        "/admin/agents/elastic",
+        json={"cpu": 4, "memory_gb": 16, "name": "long-job", "max_timeout_s": 14400},
+    )
+    assert resp.status_code == 202
+    assert resp.json()["requested_max_timeout_s"] == 14400
+
+    from sqlalchemy import select
+
+    agent = (await db_session.execute(select(Agent).where(Agent.name == "long-job"))).scalar_one()
+    assert agent.requested_max_timeout_s == 14400
+
+
+async def test_create_elastic_agent_omits_max_timeout_s_by_default(
+    admin_client: AsyncClient, elastic_enabled
+):
+    resp = await admin_client.post(
+        "/admin/agents/elastic",
+        json={"cpu": 1, "memory_gb": 2, "name": "default-timeout"},
+    )
+    assert resp.status_code == 202
+    assert resp.json()["requested_max_timeout_s"] is None
+
+
+async def test_create_elastic_agent_rejects_a_nonpositive_max_timeout_s(
+    admin_client: AsyncClient, elastic_enabled
+):
+    resp = await admin_client.post(
+        "/admin/agents/elastic",
+        json={"cpu": 1, "memory_gb": 2, "max_timeout_s": 0},
+    )
+    assert resp.status_code == 422
+
+
+async def test_create_elastic_agent_rejects_an_excessive_max_timeout_s(
+    admin_client: AsyncClient, elastic_enabled
+):
+    """Bounded so a fat-fingered value can't ask for an effectively unbounded
+    runaway query rather than a genuine large analytical job."""
+    resp = await admin_client.post(
+        "/admin/agents/elastic",
+        json={"cpu": 1, "memory_gb": 2, "max_timeout_s": 100000},
+    )
+    assert resp.status_code == 422
+
+
 async def test_restart_terminated_elastic_agent(
     admin_client: AsyncClient, db_session, elastic_enabled
 ):
@@ -211,6 +262,33 @@ async def test_restart_terminated_elastic_agent(
     assert agent.lifecycle == "provisioning"
     assert agent.terminated_at is None
     assert agent.requested_cpu == 2  # size preserved
+
+
+async def test_restart_preserves_the_requested_max_timeout_s(
+    admin_client: AsyncClient, db_session, elastic_enabled
+):
+    from datetime import UTC, datetime
+
+    agent = Agent(
+        name="long-job",
+        status="unavailable",
+        provider="null",
+        lifecycle="terminated",
+        requested_cpu=2,
+        requested_memory_gb=8,
+        requested_max_timeout_s=14400,
+        idle_timeout_s=600,
+        provisioned_at=datetime.now(tz=UTC),
+        terminated_at=datetime.now(tz=UTC),
+    )
+    db_session.add(agent)
+    await db_session.commit()
+
+    resp = await admin_client.post(f"/admin/agents/{agent.id}/restart")
+    assert resp.status_code == 202
+    assert resp.json()["requested_max_timeout_s"] == 14400
+    await db_session.refresh(agent)
+    assert agent.requested_max_timeout_s == 14400
 
 
 async def test_restart_running_agent_rejected(

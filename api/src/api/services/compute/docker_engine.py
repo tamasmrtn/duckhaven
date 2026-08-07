@@ -87,6 +87,8 @@ class DockerEngineBackend:
             # across the network by container address, not loopback.
             "RESULTS_HTTP_HOST": "0.0.0.0",
         }
+        if req.max_timeout_s is not None:
+            environment["MAX_TIMEOUT_S"] = str(req.max_timeout_s)
         # Agent-side tracing, which the static agent gets from compose. Without it
         # every span from a provisioned agent disappears and a dispatch trace ends
         # at the control plane's producer span -- and because the elastic overlay

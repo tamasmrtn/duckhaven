@@ -33,6 +33,7 @@ def build_agent_out(agent: Agent, *, status: str, access_tier: str | None = None
         requested_memory_gb=agent.requested_memory_gb,
         hourly_cost=cost,
         idle_timeout_minutes=idle_minutes,
+        requested_max_timeout_s=agent.requested_max_timeout_s,
         access_tier=access_tier,
         access_mode=agent.access_mode,
     )

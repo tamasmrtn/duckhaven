@@ -136,6 +136,7 @@ async def provision_elastic_agent(
     cpu: float,
     memory_gb: float,
     idle_timeout_s: float | None = None,
+    max_timeout_s: float | None = None,
     access_mode: str = "open",
 ) -> Agent | None:
     """Provision one elastic agent at an explicit size (admin-initiated).
@@ -160,6 +161,7 @@ async def provision_elastic_agent(
         cpu=cpu,
         memory_gb=memory_gb,
         idle_timeout_s=idle_timeout_s,
+        max_timeout_s=max_timeout_s,
         access_mode=access_mode,
     )
 
@@ -259,6 +261,7 @@ async def restart_elastic_agent(db: AsyncSession, agent: Agent) -> Agent | None:
         agent,
         cpu=agent.requested_cpu or settings.elastic_default_cpu,
         memory_gb=agent.requested_memory_gb or settings.elastic_default_memory_gb,
+        max_timeout_s=agent.requested_max_timeout_s,
     )
 
 
@@ -270,6 +273,7 @@ async def _create_and_provision(
     cpu: float,
     memory_gb: float,
     idle_timeout_s: float | None,
+    max_timeout_s: float | None = None,
     access_mode: str = "open",
 ) -> Agent | None:
     """Write the agent row, then mint + provision it. The row (with a deterministic
@@ -289,6 +293,7 @@ async def _create_and_provision(
         requested_cpu=cpu,
         requested_memory_gb=memory_gb,
         idle_timeout_s=idle_timeout_s,
+        requested_max_timeout_s=max_timeout_s,
         provisioned_at=now,
         access_mode=access_mode,
     )
@@ -297,7 +302,9 @@ async def _create_and_provision(
     agent.instance_id = _instance_id(agent.id)
     record_lifecycle_event(db, agent.id, "provisioning")
     await db.commit()
-    return await _mint_and_provision(db, agent, cpu=cpu, memory_gb=memory_gb)
+    return await _mint_and_provision(
+        db, agent, cpu=cpu, memory_gb=memory_gb, max_timeout_s=max_timeout_s
+    )
 
 
 async def revoke_bootstrap_credentials(db: AsyncSession, agent_id: uuid.UUID) -> None:
@@ -320,7 +327,12 @@ async def revoke_bootstrap_credentials(db: AsyncSession, agent_id: uuid.UUID) ->
 
 
 async def _mint_and_provision(
-    db: AsyncSession, agent: Agent, *, cpu: float, memory_gb: float
+    db: AsyncSession,
+    agent: Agent,
+    *,
+    cpu: float,
+    memory_gb: float,
+    max_timeout_s: float | None = None,
 ) -> Agent | None:
     """Mint a fresh bootstrap credential for ``agent`` and ask the backend to create
     its instance. Shared by first-time create and restart. On backend failure the
@@ -348,6 +360,7 @@ async def _mint_and_provision(
         bootstrap_token=token,
         cpu=cpu,
         memory_gb=memory_gb,
+        max_timeout_s=max_timeout_s,
         tags={"duckhaven-managed": "true", "duckhaven-agent-id": str(agent.id)},
     )
     # A cold start is the largest unexplained gap a user can see: the query's own

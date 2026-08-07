@@ -76,9 +76,12 @@ class DatabricksLoader:
         cursor = conn.cursor()
         cursor.execute(f"CREATE VOLUME IF NOT EXISTS {self._catalog}.{self._schema}.{self._volume}")
 
-    def upload(self, local_path: Path) -> str:
-        """PUT `local_path` into the volume; returns its `/Volumes/...` path."""
-        volume_path = self._volume_path(local_path.name)
+    def upload(self, local_path: Path, *, volume_path: str | None = None) -> str:
+        """PUT `local_path` into the volume; returns its `/Volumes/...` path.
+        `volume_path` overrides the default `<volume>/<filename>` target —
+        `load_table_parts` uses it to land each part under a `<table>/`
+        subfolder instead of directly in the volume root."""
+        volume_path = volume_path or self._volume_path(local_path.name)
         with httpx.Client(timeout=_UPLOAD_TIMEOUT_S) as client:
             with local_path.open("rb") as body:
                 response = client.put(
@@ -118,3 +121,26 @@ class DatabricksLoader:
             local_path = corpus_dir / f"{table}.parquet"
             results.append(self.load_table(conn, table=table, local_path=local_path))
         return results
+
+    def load_table_parts(
+        self, conn: Connection, *, table: str, local_paths: list[Path]
+    ) -> LoadResult:
+        """Like `load_table`, but for a table generated with `parts` (SF100's
+        `lineitem` is ~27 GB as one file — the Files API PUT endpoint rejects
+        a single request above ~5 GiB, confirmed via a live 400 on `orders`
+        at 7.47 GB). Uploads each part into its own `<table>/` subfolder of
+        the volume and reads it back with a glob instead of one exact name."""
+        start = time.monotonic()
+        folder = self._volume_path(table)
+        for local_path in local_paths:
+            self.upload(local_path, volume_path=f"{folder}/{local_path.name}")
+        cursor = conn.cursor()
+        cursor.execute(
+            f"CREATE TABLE {table} AS SELECT * FROM "
+            f"read_files('{folder}/*.parquet', format => 'parquet')"
+        )
+        cursor.execute(f"SELECT count(*) AS n FROM {table}")
+        row_count = cursor.fetchall()[0][0]
+        return LoadResult(
+            table=table, row_count=row_count, load_duration_ms=(time.monotonic() - start) * 1000
+        )

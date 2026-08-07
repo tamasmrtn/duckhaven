@@ -84,6 +84,35 @@ def test_load_table_uploads_then_creates_the_table_from_read_files(
 
 @patch("tpch_bench.load.databricks.fetch_oauth_token", return_value="tok")
 @patch("tpch_bench.load.databricks.httpx.Client")
+def test_load_table_parts_uploads_each_part_and_reads_back_with_a_glob(
+    mock_client_cls, mock_token, tmp_path
+):
+    local_paths = []
+    for i in range(3):
+        p = tmp_path / f"orders.{i}.parquet"
+        p.write_bytes(b"x")
+        local_paths.append(p)
+    mock_client = mock_client_cls.return_value.__enter__.return_value
+    mock_client.put.return_value = httpx.Response(204, request=httpx.Request("PUT", "https://x"))
+
+    conn = MagicMock()
+    cursor = conn.cursor.return_value
+    cursor.fetchall.return_value = [(9,)]
+
+    result = _loader().load_table_parts(conn, table="orders", local_paths=local_paths)
+
+    assert mock_client.put.call_count == 3
+    put_urls = [c.args[0] for c in mock_client.put.call_args_list]
+    assert all("/Volumes/test/tpch_bench/corpus/orders/orders." in u for u in put_urls)
+    create_sql = cursor.execute.call_args_list[0].args[0]
+    assert "CREATE TABLE orders AS SELECT * FROM read_files(" in create_sql
+    assert "/Volumes/test/tpch_bench/corpus/orders/*.parquet" in create_sql
+    assert result.table == "orders"
+    assert result.row_count == 9
+
+
+@patch("tpch_bench.load.databricks.fetch_oauth_token", return_value="tok")
+@patch("tpch_bench.load.databricks.httpx.Client")
 def test_load_corpus_ensures_the_volume_once_and_loads_every_table(
     mock_client_cls, mock_token, tmp_path
 ):

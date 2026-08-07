@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 
-from tpch_bench.load.duckhaven import load_corpus, load_table
+from tpch_bench.load.duckhaven import load_corpus, load_table, load_table_parts
 
 
 def _staged(name: str, put_url: str, get_url: str):
@@ -60,6 +60,38 @@ def test_load_table_raises_on_a_failed_upload(mock_put, tmp_path):
         pass
 
     conn.cursor.return_value.execute.assert_not_called()
+
+
+@patch("tpch_bench.load.duckhaven.httpx.put")
+def test_load_table_parts_stages_every_part_and_creates_from_a_url_list(mock_put, tmp_path):
+    mock_put.return_value = httpx.Response(200, request=httpx.Request("PUT", "https://x"))
+    local_paths = []
+    for i in range(3):
+        p = tmp_path / f"orders.{i}.parquet"
+        p.write_bytes(b"x")
+        local_paths.append(p)
+
+    conn = MagicMock()
+    conn.stage_files.side_effect = lambda names: _staged(
+        names[0], f"https://stage/put/{names[0]}", f"https://stage/get/{names[0]}"
+    )
+    conn.cursor.return_value.fetchone.return_value = (9,)
+
+    result = load_table_parts(conn, table="orders", local_paths=local_paths)
+
+    assert conn.stage_files.call_count == 3
+    executed = [c.args[0] for c in conn.cursor.return_value.execute.call_args_list]
+    assert executed[0] == (
+        "CREATE TABLE orders AS SELECT * FROM read_parquet('https://stage/get/orders.0.parquet')"
+    )
+    assert executed[1] == (
+        "INSERT INTO orders SELECT * FROM read_parquet('https://stage/get/orders.1.parquet')"
+    )
+    assert executed[2] == (
+        "INSERT INTO orders SELECT * FROM read_parquet('https://stage/get/orders.2.parquet')"
+    )
+    assert result.table == "orders"
+    assert result.row_count == 9
 
 
 @patch("tpch_bench.load.duckhaven.httpx.put")

@@ -70,3 +70,34 @@ def load_corpus(
         local_path = corpus_dir / f"{table}.parquet"
         results.append(load_table(conn, table=table, local_path=local_path))
     return results
+
+
+def load_table_parts(conn: Connection, *, table: str, local_paths: list[Path]) -> LoadResult:
+    """Like `load_table`, but for a table generated with `parts` — needed
+    when Databricks' Files API forces a table's corpus onto multiple files
+    (its PUT endpoint rejects a single request above ~5 GiB); DuckHaven has
+    no such size limit itself, but loading from the same multi-part files
+    keeps both engines reading identical corpus data rather than a
+    single-file version for one and a chunked one for the other.
+
+    Stages and reads one part at a time (CREATE TABLE from the first,
+    INSERT INTO for the rest) rather than staging every part up front and
+    reading them all in one `read_parquet([...])` — confirmed live on
+    SF100's ~27 GB `lineitem` as a single file: `stage_files`' presigned
+    GET URL has a fixed ~900s expiry, and the CTAS on a 2 vCPU/4 GB agent
+    took longer than that, so the URL went stale mid-read (`HTTP 403`)
+    before the statement finished. Staging each part immediately before
+    the statement that reads it keeps each URL's lifetime bounded to that
+    one part's execution time instead of the whole table's."""
+    start = time.monotonic()
+    cursor = conn.cursor()
+    first_url = _stage_and_upload(conn, local_paths[0])
+    cursor.execute(f"CREATE TABLE {table} AS SELECT * FROM read_parquet('{first_url}')")
+    for local_path in local_paths[1:]:
+        url = _stage_and_upload(conn, local_path)
+        cursor.execute(f"INSERT INTO {table} SELECT * FROM read_parquet('{url}')")
+    cursor.execute(f"SELECT count(*) FROM {table}")
+    row_count = cursor.fetchone()[0]
+    return LoadResult(
+        table=table, row_count=row_count, load_duration_ms=(time.monotonic() - start) * 1000
+    )

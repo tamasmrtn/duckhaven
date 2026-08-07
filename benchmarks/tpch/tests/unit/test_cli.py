@@ -218,8 +218,10 @@ def test_run_rejects_an_unknown_scale_factor(tmp_path):
 
 
 def test_run_rejects_a_scenario_not_enabled_for_the_scale_factor(tmp_path):
-    # config/scale_factors.yaml: sf1000 enables only sequential + cold_start.
-    args = _run_args(tmp_path, **{"scale-factor": "sf1000", "scenario": "concurrent"})
+    # config/scale_factors.yaml: every scale factor enables only the read
+    # scenarios (sequential/cold_start/concurrent) — write/dml stay
+    # implemented (METHODOLOGY.md §9) but aren't enabled anywhere.
+    args = _run_args(tmp_path, **{"scale-factor": "sf1", "scenario": "write"})
 
     result = runner.invoke(cli.app, ["run", *args])
 

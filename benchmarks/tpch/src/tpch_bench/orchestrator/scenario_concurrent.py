@@ -1,5 +1,15 @@
 """Concurrent scenario (plan §4, config/scenarios.yaml): all 22 queries
-fired in parallel.
+fired in parallel, repeated `reps` times.
+
+Each rep is its own round, run to completion before the next starts —
+`reps=3` means three 22-way bursts, never one 66-way burst. Collapsing
+every rep into a single `ThreadPoolExecutor` submission was a real bug
+this scenario had until a SF10 run against DuckHaven's fixed-size local
+agent (METHODOLOGY.md §7) crashed under it: `pending_query_work_items`
+returns every not-yet-done item across every rep, and submitting all of
+them at once silently multiplied the intended concurrency by `reps` —
+22-way turned into 66-way, well past what "all 22 queries fired at once"
+was ever meant to describe.
 
 Every real client this harness wraps (`duckhaven-sql-connector`,
 `snowflake-connector-python`, `databricks-sql-connector`) is a blocking,
@@ -46,9 +56,6 @@ def run(
     max_workers: int | None = None,
 ) -> None:
     items = register_query_work_items(ctx, scenario=SCENARIO, query_ids=list(queries), reps=reps)
-    pending = pending_query_work_items(ctx, items)
-    if not pending:
-        return
     ctx = replace(ctx, ledger_lock=threading.Lock())
 
     def _run_one(item_id: str, query_id: str) -> None:
@@ -59,10 +66,15 @@ def run(
         finally:
             client.close()
 
-    with ThreadPoolExecutor(max_workers=max_workers or len(pending)) as pool:
-        futures = [
-            pool.submit(_run_one, item_id, query_id)
-            for item_id, (query_id, _rep) in pending.items()
-        ]
-        for future in as_completed(futures):
-            future.result()  # re-raise a worker's exception on the caller's thread
+    for rep in range(reps):
+        rep_items = {iid: qr for iid, qr in items.items() if qr[1] == rep}
+        pending = pending_query_work_items(ctx, rep_items)
+        if not pending:
+            continue
+        with ThreadPoolExecutor(max_workers=max_workers or len(pending)) as pool:
+            futures = [
+                pool.submit(_run_one, item_id, query_id)
+                for item_id, (query_id, _rep) in pending.items()
+            ]
+            for future in as_completed(futures):
+                future.result()  # re-raise a worker's exception on the caller's thread

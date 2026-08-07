@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 
 import pytest
 
@@ -205,6 +206,34 @@ def test_concurrent_gives_each_worker_its_own_client(ctx):
         assert client.close_calls == 1
     all_executed = sorted(sql for client in created for sql in client.executed)
     assert all_executed == sorted(QUERIES.values())
+
+
+def test_concurrent_never_exceeds_one_reps_worth_of_in_flight_queries(ctx):
+    # Regression: reps used to be flattened into one ThreadPoolExecutor
+    # submission, so reps=3 silently fired len(QUERIES)*3 queries at once
+    # instead of three rounds of len(QUERIES) — a real crash against a
+    # small DuckHaven agent at SF10 traced back to exactly this. Each rep
+    # must run to completion before the next one starts.
+    peak = {"n": 0, "max": 0}
+    counter_lock = threading.Lock()
+
+    class TrackingClient(FakeEngineClient):
+        def run_statement(self, sql: str, *, timeout_s: float) -> QueryResult:
+            with counter_lock:
+                peak["n"] += 1
+                peak["max"] = max(peak["max"], peak["n"])
+            time.sleep(0.02)  # widen the window for real overlap to show up
+            result = super().run_statement(sql, timeout_s=timeout_s)
+            with counter_lock:
+                peak["n"] -= 1
+            return result
+
+    def factory() -> TrackingClient:
+        return TrackingClient()
+
+    scenario_concurrent.run(ctx, factory, QUERIES, reps=3)
+
+    assert peak["max"] <= len(QUERIES)
 
 
 def test_concurrent_marks_every_work_item_done_without_corrupting_the_ledger(ctx):

@@ -373,6 +373,25 @@ write at SF1 first failed by landing against the read-only shared
 sample-schema config, on any engine or scale factor — they need a
 writable target by definition.
 
+**2026-08-07 — `concurrent` was firing `reps × 22` queries in one burst,
+not `reps` rounds of 22.** Caught by a real crash: DuckHaven's `concurrent`
+scenario at SF10 (`orchestrator/scenario_concurrent.py`) failed 8 of the
+first round's queries with DuckDB temp-storage I/O errors, then the run
+itself crashed on a session `open_timeout` rather than recording that
+failure and continuing. `pending_query_work_items` returns every
+not-yet-done item across *every* rep, and the old code submitted all of
+them to one `ThreadPoolExecutor` at once — with `reps=3`, "all 22 queries
+fired in parallel" (§4) silently became 66 fired in parallel, on a fixed
+2 vCPU/4 GB agent (§7) that was never sized for that. Fixed to run each
+rep as its own round, submitted and awaited before the next starts —
+verified with a new regression test asserting peak in-flight queries
+never exceeds one rep's worth (`test_orchestrator.py`). Every `concurrent`
+result recorded before this fix, at every scale factor and every engine,
+ran under the inflated concurrency rather than the one this document
+describes, and has been re-run under the fix rather than kept alongside
+it — the same "re-run, don't keep both" treatment as the sizing fix in
+the first revision above.
+
 ## 10. Budget and guardrails
 
 No cloud infrastructure spend: DuckHaven is local Docker compute on

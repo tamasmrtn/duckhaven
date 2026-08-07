@@ -392,6 +392,46 @@ describes, and has been re-run under the fix rather than kept alongside
 it — the same "re-run, don't keep both" treatment as the sizing fix in
 the first revision above.
 
+**2026-08-07 — A second `concurrent` harness bug, and the real finding it
+was hiding: DuckHaven's local agent cannot open 22 simultaneous new
+sessions under `phase0_trial` sizing.** After the fix above, DuckHaven
+SF1 `concurrent` crashed again with the same session `open_timeout`, this
+time with zero `query_results` recorded at all — a single worker's
+`client.connect()` failure was propagating uncaught out of the
+`ThreadPoolExecutor`, aborting the whole round rather than recording one
+`failed` item (`runner.record_connection_failure`, `scenario_concurrent.py`).
+Fixed and covered by a regression test.
+
+Re-running under the fix surfaced the real issue the crash had been
+masking: **all 66 of SF1's `concurrent` work items failed** — 64
+`session failed: open_timeout`, 2 `[503] admission queue is full` — a
+100% failure rate, reproduced identically across 4 separate bursts.
+Confirmed via the agent's own control-channel log (`docker logs
+dh-agent-...`): all 22 `open_session` frames per round arrive within
+~200ms of each other, then the agent produces no further trace of any of
+them — no successful open, no attach, nothing — until the API's session
+reaper closes the batch roughly 2.5 minutes later. `_handle_open_session`
+(`agent/src/agent/control/channel.py`) requests one `~256 MB`
+reservation per session from `Admission.acquire()` under the default
+`auto` profile (`session_reservation_bytes`, `agent/src/agent/config.py`)
+— against this agent's ~3.6 GB effective budget that should admit
+roughly 14 of the 22 immediately, so admission queuing alone does not
+explain a 0% success rate; the deeper cause (Python's default
+`run_in_executor` thread pool sizing against 2 vCPUs, DuckDB attach cost
+under that contention, or something else in `open_and_attach`) was not
+root-caused further, since that is a DuckHaven product investigation,
+not benchmark harness work.
+
+This is treated as a genuine, disclosed finding about DuckHaven's local,
+single-agent deployment under `phase0_trial` sizing (§7) — not a harness
+bug to route around — consistent with how this document already
+discloses the Snowflake write-privilege wall and the Iceberg
+maintenance gap above rather than working around them. `concurrent`
+stays defined as "all 22 queries fired at once" (§4) unchanged; DuckHaven
+is expected to show this same failure pattern at SF10/SF100/SF300 under
+the same fixed local sizing, and that is itself the honest result being
+measured, not a defect in the measurement.
+
 ## 10. Budget and guardrails
 
 No cloud infrastructure spend: DuckHaven is local Docker compute on

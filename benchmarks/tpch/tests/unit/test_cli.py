@@ -80,6 +80,31 @@ def test_status_summarizes_work_items_by_status(tmp_path):
     assert "pending" in result.stdout
 
 
+# ── build_client ─────────────────────────────────────────────────────────
+
+
+def test_build_client_points_snowflake_at_the_sample_schema_when_configured():
+    from tpch_bench.clients.snowflake import SnowflakeClient
+
+    settings = get_settings()
+    client = cli.build_client("snowflake", settings, sf_cfg={"snowflake_sample_schema": "TPCH_SF1"})
+
+    assert isinstance(client, SnowflakeClient)
+    assert client._database == "SNOWFLAKE_SAMPLE_DATA"
+    assert client._schema == "TPCH_SF1"
+
+
+def test_build_client_falls_back_to_the_configured_database_without_a_sample_schema():
+    from tpch_bench.clients.snowflake import SnowflakeClient
+
+    settings = get_settings()
+    client = cli.build_client("snowflake", settings, sf_cfg={"snowflake_sample_schema": None})
+
+    assert isinstance(client, SnowflakeClient)
+    assert client._database == "TPCH_BENCH"
+    assert client._schema == "PUBLIC"
+
+
 # ── run: validation ──────────────────────────────────────────────────────
 
 
@@ -112,7 +137,7 @@ def test_run_rejects_a_scenario_not_enabled_for_the_scale_factor(tmp_path):
 
 def test_run_sequential_connects_once_and_runs_every_query_times_reps(tmp_path, monkeypatch):
     fake = FakeEngineClient()
-    monkeypatch.setattr(cli, "build_client", lambda engine, settings: fake)
+    monkeypatch.setattr(cli, "build_client", lambda engine, settings, **kwargs: fake)
 
     result = runner.invoke(cli.app, ["run", *_run_args(tmp_path)])
 
@@ -124,7 +149,7 @@ def test_run_sequential_connects_once_and_runs_every_query_times_reps(tmp_path, 
 
 def test_run_cold_start_reconnects_once_per_query(tmp_path, monkeypatch):
     fake = FakeEngineClient()
-    monkeypatch.setattr(cli, "build_client", lambda engine, settings: fake)
+    monkeypatch.setattr(cli, "build_client", lambda engine, settings, **kwargs: fake)
 
     result = runner.invoke(cli.app, ["run", *_run_args(tmp_path, scenario="cold_start")])
 
@@ -140,7 +165,7 @@ def test_run_cold_start_reconnects_once_per_query(tmp_path, monkeypatch):
 def test_run_concurrent_gives_each_worker_its_own_client(tmp_path, monkeypatch):
     created: list[FakeEngineClient] = []
 
-    def fake_build(engine, settings):
+    def fake_build(engine, settings, **kwargs):
         client = FakeEngineClient()
         created.append(client)
         return client
@@ -158,7 +183,7 @@ def test_run_concurrent_gives_each_worker_its_own_client(tmp_path, monkeypatch):
 
 def test_run_write_issues_the_duckhaven_pre_statement_for_duckhaven_only(tmp_path, monkeypatch):
     fake = FakeEngineClient()
-    monkeypatch.setattr(cli, "build_client", lambda engine, settings: fake)
+    monkeypatch.setattr(cli, "build_client", lambda engine, settings, **kwargs: fake)
 
     result = runner.invoke(cli.app, ["run", *_run_args(tmp_path, scenario="write")])
 
@@ -167,9 +192,30 @@ def test_run_write_issues_the_duckhaven_pre_statement_for_duckhaven_only(tmp_pat
     assert len(pre_statements) == 2 * 3  # narrow+wide shapes, write's 3 reps
 
 
+def test_run_write_and_dml_never_pass_sf_cfg_to_build_client(tmp_path, monkeypatch):
+    # Regression: write/dml were passing sf_cfg through, so at a scale
+    # factor with a Snowflake sample schema configured (build_client's
+    # snowflake branch), a write landed against the read-only shared
+    # SNOWFLAKE_SAMPLE_DATA database instead of a writable one and failed
+    # with a real permission error. A write/dml target must never depend on
+    # sf_cfg's sample-schema setting, regardless of engine.
+    calls = []
+
+    def fake_build(engine, settings, **kwargs):
+        calls.append(kwargs)
+        return FakeEngineClient()
+
+    monkeypatch.setattr(cli, "build_client", fake_build)
+
+    runner.invoke(cli.app, ["run", *_run_args(tmp_path, scenario="write")])
+    runner.invoke(cli.app, ["run", *_run_args(tmp_path, scenario="dml")])
+
+    assert all("sf_cfg" not in kwargs for kwargs in calls)
+
+
 def test_run_dml_runs_delete_then_insert_per_shape_per_cycle(tmp_path, monkeypatch):
     fake = FakeEngineClient()
-    monkeypatch.setattr(cli, "build_client", lambda engine, settings: fake)
+    monkeypatch.setattr(cli, "build_client", lambda engine, settings, **kwargs: fake)
 
     result = runner.invoke(cli.app, ["run", *_run_args(tmp_path, scenario="dml")])
 
@@ -182,7 +228,7 @@ def test_run_dml_runs_delete_then_insert_per_shape_per_cycle(tmp_path, monkeypat
 
 def test_run_freezes_the_methodology_on_first_use(tmp_path, monkeypatch):
     fake = FakeEngineClient()
-    monkeypatch.setattr(cli, "build_client", lambda engine, settings: fake)
+    monkeypatch.setattr(cli, "build_client", lambda engine, settings, **kwargs: fake)
     db = tmp_path / "r.duckdb"
 
     runner.invoke(cli.app, ["run", *_run_args(tmp_path, db=str(db))])
@@ -194,7 +240,7 @@ def test_run_freezes_the_methodology_on_first_use(tmp_path, monkeypatch):
 def test_run_is_resumable_across_two_invocations(tmp_path, monkeypatch):
     created: list[FakeEngineClient] = []
 
-    def fake_build(engine, settings):
+    def fake_build(engine, settings, **kwargs):
         client = FakeEngineClient()
         created.append(client)
         return client

@@ -62,7 +62,7 @@ def load_ddl_by_shape(engine: str) -> dict[str, str]:
     return {p.stem: p.read_text() for p in sorted((_DDL_DIR / engine).glob("*.sql"))}
 
 
-def build_client(engine: str, settings: Settings) -> EngineClient:
+def build_client(engine: str, settings: Settings, *, sf_cfg: dict | None = None) -> EngineClient:
     if engine == "duckhaven":
         return DuckHavenClient(
             host=settings.duckhaven_base_url,
@@ -71,12 +71,20 @@ def build_client(engine: str, settings: Settings) -> EngineClient:
         )
     if engine == "snowflake":
         cfg = engines_config()["snowflake"]
+        sample_schema = (sf_cfg or {}).get("snowflake_sample_schema")
+        # SF1/10/100/1000 read from Snowflake's own free, pre-loaded
+        # SNOWFLAKE_SAMPLE_DATA.TPCH_SFxxx (METHODOLOGY.md §6) — zero load
+        # cost, and what a real evaluation reaches for first. SF300 has no
+        # such sample, so it falls back to the self-loaded database.
+        database = "SNOWFLAKE_SAMPLE_DATA" if sample_schema else cfg["database"]
+        schema = sample_schema or "PUBLIC"
         return SnowflakeClient(
             account=settings.snowflake_account,
             user=settings.snowflake_user,
             password=settings.snowflake_password,
             warehouse=settings.snowflake_warehouse,
-            database=cfg["database"],
+            database=database,
+            schema=schema,
             role=settings.snowflake_role or None,
             application=cfg.get("application", "tpch-bench"),
         )
@@ -206,16 +214,18 @@ def run(
             run_id=resolved_run_id,
             query_timeout_s=float(sf_cfg["query_timeout_s"]),
         )
-        _dispatch(ctx, engine=engine, scenario=scenario, settings=settings)
+        _dispatch(ctx, engine=engine, scenario=scenario, settings=settings, sf_cfg=sf_cfg)
 
     typer.echo(f"Done: {engine} {scale_factor} {scenario} (run_id={resolved_run_id})")
 
 
-def _dispatch(ctx: RunContext, *, engine: str, scenario: str, settings: Settings) -> None:
+def _dispatch(
+    ctx: RunContext, *, engine: str, scenario: str, settings: Settings, sf_cfg: dict
+) -> None:
     scenario_cfg = scenarios_config()["scenarios"][scenario]
 
     if scenario in _SEQUENTIAL_LIKE:
-        client = build_client(engine, settings)
+        client = build_client(engine, settings, sf_cfg=sf_cfg)
         try:
             queries = load_dialect_queries(engine)
             _SEQUENTIAL_LIKE[scenario].run(ctx, client, queries, reps=scenario_cfg["reps"])
@@ -227,12 +237,15 @@ def _dispatch(ctx: RunContext, *, engine: str, scenario: str, settings: Settings
         queries = load_dialect_queries(engine)
 
         def factory() -> EngineClient:
-            return build_client(engine, settings)
+            return build_client(engine, settings, sf_cfg=sf_cfg)
 
         scenario_concurrent.run(ctx, factory, queries, reps=scenario_cfg["reps"])
         return
 
     if scenario == "write":
+        # Never the sample-schema database (sf_cfg omitted): a write needs a
+        # target it can actually create tables in, and Snowflake's shared
+        # SNOWFLAKE_SAMPLE_DATA is read-only regardless of scale factor.
         client = build_client(engine, settings)
         try:
             pre_statement = (
@@ -250,6 +263,8 @@ def _dispatch(ctx: RunContext, *, engine: str, scenario: str, settings: Settings
         return
 
     if scenario == "dml":
+        # Same reasoning as write: dml operates on the write scenario's own
+        # tables, never the read-only sample schema.
         client = build_client(engine, settings)
         try:
             scenario_dml.run(ctx, client, load_ddl_by_shape(engine), cycles=scenario_cfg["cycles"])

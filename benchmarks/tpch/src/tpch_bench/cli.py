@@ -138,11 +138,16 @@ def status(db: Path = typer.Option(_DEFAULT_DB_PATH, help="Path to results.duckd
 
 @app.command("setup-service-account")
 def setup_service_account_command(
-    admin_pat: str = typer.Option(
+    admin_email: str = typer.Option(
         ...,
-        envvar="DUCKHAVEN_ADMIN_PAT",
-        help="A human workspace-owner's own PAT, used once to bootstrap the "
-        "benchmark's service account. Never stored.",
+        envvar="DUCKHAVEN_ADMIN_EMAIL",
+        help="A local (password-auth) workspace-owner admin, used once to log "
+        "in and bootstrap the benchmark's service account. DuckHaven has no "
+        "PAT-issuance feature for human users, so this is the only credential "
+        "an admin actually has to offer here.",
+    ),
+    admin_password: str = typer.Option(
+        ..., envvar="DUCKHAVEN_ADMIN_PASSWORD", help="Never stored."
     ),
     name: str = typer.Option("tpch-bench"),
     workspace_role: str = typer.Option("writer"),
@@ -153,7 +158,8 @@ def setup_service_account_command(
     result = bootstrap_service_account(
         base_url=settings.duckhaven_base_url,
         workspace=settings.duckhaven_workspace,
-        admin_pat=admin_pat,
+        admin_email=admin_email,
+        admin_password=admin_password,
         name=name,
         workspace_role=workspace_role,
     )

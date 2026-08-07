@@ -224,11 +224,12 @@ def test_setup_service_account_prints_the_pat(monkeypatch):
 
     captured = {}
 
-    def fake_bootstrap(*, base_url, workspace, admin_pat, name, workspace_role):
+    def fake_bootstrap(*, base_url, workspace, admin_email, admin_password, name, workspace_role):
         captured.update(
             base_url=base_url,
             workspace=workspace,
-            admin_pat=admin_pat,
+            admin_email=admin_email,
+            admin_password=admin_password,
             name=name,
             workspace_role=workspace_role,
         )
@@ -240,20 +241,30 @@ def test_setup_service_account_prints_the_pat(monkeypatch):
     monkeypatch.setenv("DUCKHAVEN_BASE_URL", "https://dh.example.com")
     monkeypatch.setenv("DUCKHAVEN_WORKSPACE", "tpch-bench")
 
-    result = runner.invoke(cli.app, ["setup-service-account", "--admin-pat", "dh_pat_admin"])
+    result = runner.invoke(
+        cli.app,
+        [
+            "setup-service-account",
+            "--admin-email",
+            "admin@admin.com",
+            "--admin-password",
+            "TestPassword123",
+        ],
+    )
 
     assert result.exit_code == 0, result.output
     assert "dh_pat_xyz" in result.output
     assert captured == {
         "base_url": "https://dh.example.com",
         "workspace": "tpch-bench",
-        "admin_pat": "dh_pat_admin",
+        "admin_email": "admin@admin.com",
+        "admin_password": "TestPassword123",
         "name": "tpch-bench",
         "workspace_role": "writer",
     }
 
 
-def test_setup_service_account_requires_an_admin_pat():
+def test_setup_service_account_requires_admin_credentials():
     result = runner.invoke(cli.app, ["setup-service-account"])
 
     assert result.exit_code != 0

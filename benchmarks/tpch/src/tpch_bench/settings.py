@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     snowflake_user: str = ""
     snowflake_password: str = ""
     snowflake_role: str = ""
+    # The warehouse object name for whichever sizing tier is being run —
+    # provisioning per-tier warehouses (config/sizing_matrix.yaml) isn't
+    # built yet, so this is supplied directly rather than derived.
+    snowflake_warehouse: str = ""
 
     # Databricks
     databricks_host: str = ""

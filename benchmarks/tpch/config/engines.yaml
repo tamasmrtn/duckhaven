@@ -16,9 +16,13 @@ snowflake:
   user_env: SNOWFLAKE_USER
   password_env: SNOWFLAKE_PASSWORD
   role_env: SNOWFLAKE_ROLE
+  warehouse_env: SNOWFLAKE_WAREHOUSE
   database: TPCH_BENCH
-  # Set per-statement as QUERY_TAG for attribution in ACCOUNT_USAGE.
-  query_tag: tpch-bench
+  # Sent as `application` at connect time (clients/snowflake.py), not a
+  # per-statement QUERY_TAG — that would mean an extra ALTER SESSION
+  # round-trip before every timed query, which the DuckHaven/Databricks
+  # clients don't pay either.
+  application: tpch-bench
 
 databricks:
   host_env: DATABRICKS_HOST

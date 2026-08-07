@@ -1,0 +1,46 @@
+# Cost-equivalent compute tiers per scale factor (plan §4). The point is a
+# fair $/hr comparison, not a fair spec comparison — cloud warehouses
+# abstract the underlying hardware, so tier names are matched by *rate*,
+# not by vCPU count.
+#
+# Snowflake <-> Databricks tier mapping follows the precedent in
+# https://github.com/get-select/snowflake-databricks-benchmark (referenced
+# for methodology only, not forked — no LICENSE file on that repo):
+#   Snowflake Medium ~ Databricks Small
+#   Snowflake Large  ~ Databricks Medium
+#   Snowflake XL     ~ Databricks Large
+#
+# DuckHaven's (cpu, memory_gb) is chosen at run time to match the resulting
+# $/hr via GET /admin/agents/compute-options' live pricing — the values
+# below are starting targets, not fixed; the *actual* $/hr each engine ran
+# at gets captured into cost_facts and frozen into METHODOLOGY.md's
+# pre-registration record before any timed run, not re-derived after.
+
+tiers:
+  small:
+    snowflake_warehouse_size: MEDIUM
+    databricks_warehouse_size: Small
+    duckhaven_target: { cpu: 2.0, memory_gb: 8.0 }
+    used_for_sf: [sf1, sf10]
+
+  medium:
+    snowflake_warehouse_size: LARGE
+    databricks_warehouse_size: Medium
+    duckhaven_target: { cpu: 4.0, memory_gb: 16.0 }
+    used_for_sf: [sf100]
+
+  large:
+    snowflake_warehouse_size: XLARGE
+    databricks_warehouse_size: Large
+    duckhaven_target: { cpu: 8.0, memory_gb: 32.0 }
+    used_for_sf: [sf300]
+
+  # SF1000 reads use the same "large" tier as SF300 for a like-for-like
+  # comparison; the single DuckHaven write attempt (scale_factors.yaml)
+  # is explicitly *not* cost-matched — it gets the largest single agent
+  # size the remaining budget affords, per the plan's go/no-go checkpoint.
+  sf1000_reads:
+    snowflake_warehouse_size: XLARGE
+    databricks_warehouse_size: Large
+    duckhaven_target: { cpu: 8.0, memory_gb: 32.0 }
+    used_for_sf: [sf1000]

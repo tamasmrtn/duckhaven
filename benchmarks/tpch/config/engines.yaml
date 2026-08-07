@@ -1,0 +1,31 @@
+# Connection templates. Values are env var *names* to read from `.env` at
+# runtime (see .env.example) — never literal secrets. settings.py resolves
+# these; nothing here is itself sensitive.
+
+duckhaven:
+  base_url_env: DUCKHAVEN_BASE_URL
+  workspace_env: DUCKHAVEN_WORKSPACE
+  pat_env: DUCKHAVEN_PAT
+  # Sent as the first product/version token in User-Agent on every request,
+  # so the server records it as the session's client_name/client_version —
+  # free attribution in DuckHaven's own audit trail.
+  client_name: tpch-bench
+
+snowflake:
+  account_env: SNOWFLAKE_ACCOUNT
+  user_env: SNOWFLAKE_USER
+  password_env: SNOWFLAKE_PASSWORD
+  role_env: SNOWFLAKE_ROLE
+  database: TPCH_BENCH
+  # Set per-statement as QUERY_TAG for attribution in ACCOUNT_USAGE.
+  query_tag: tpch-bench
+
+databricks:
+  host_env: DATABRICKS_HOST
+  client_id_env: DATABRICKS_CLIENT_ID
+  client_secret_env: DATABRICKS_CLIENT_SECRET
+  # Serverless SQL Warehouse only — see METHODOLOGY.md and plan §9 risk 2:
+  # billed entirely through Databricks' own DBU metering, no separate AWS
+  # bill on top of the trial credit.
+  warehouse_id_env: DATABRICKS_WAREHOUSE_ID
+  catalog: tpch_bench

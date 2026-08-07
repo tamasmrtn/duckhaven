@@ -262,3 +262,40 @@ def test_concurrent_propagates_a_worker_exception(ctx):
 
     with pytest.raises(RuntimeError, match="connection lost"):
         scenario_concurrent.run(ctx, factory, {"q01": "SELECT 1"}, reps=1)
+
+
+def test_concurrent_records_a_connect_failure_without_crashing_the_round(ctx):
+    # Regression: N independent connection attempts firing at once (this
+    # scenario's whole point) means some failing is a real, expected
+    # outcome — a session-open timeout under load, say — not a reason to
+    # crash every other query in the same round. Before
+    # record_connection_failure existed, a raised connect() propagated out
+    # of the worker thread, and ThreadPoolExecutor's future.result() then
+    # re-raised it on the caller's thread, aborting the whole round and
+    # leaving every other item stuck `pending`.
+    assignment_lock = threading.Lock()
+    remaining = {"n": 1}  # exactly one client, whichever grabs it first, fails to connect
+
+    def factory() -> FakeEngineClient:
+        client = FakeEngineClient()
+        with assignment_lock:
+            should_fail = remaining["n"] > 0
+            if should_fail:
+                remaining["n"] -= 1
+        if should_fail:
+
+            def boom() -> None:
+                raise RuntimeError("session open_timeout")
+
+            client.connect = boom  # type: ignore[method-assign]
+        return client
+
+    scenario_concurrent.run(ctx, factory, QUERIES, reps=1)
+
+    statuses = {
+        query_id: ctx.ledger.status(
+            query_work_item_id(ctx, scenario="concurrent", query_id=query_id, rep=0)
+        )
+        for query_id in QUERIES
+    }
+    assert sorted(statuses.values()) == ["done", "done", "failed"]

@@ -143,6 +143,25 @@ def run_query_work_item(
     return result
 
 
+def record_connection_failure(ctx: RunContext, item_id: str, error: str) -> QueryResult:
+    """Record a work item as failed because its `EngineClient` never
+    connected — a different failure mode than a statement error (there was
+    no statement to run), but the same "this item failed, everything else
+    keeps going" contract as `run_query_work_item`. For scenarios where
+    several independent connection attempts happen at once (`concurrent`),
+    where one failing must not crash the others — a connect() failure
+    there previously propagated out of the worker thread uncaught, which
+    `ThreadPoolExecutor`/`future.result()` then re-raised and crashed the
+    entire round, leaving every other item `pending` rather than one item
+    correctly recorded `failed`.
+    """
+    _mark(ctx, item_id, "mark_running")
+    result = QueryResult(error=error)
+    _record_result(ctx, item_id, result)
+    _mark(ctx, item_id, "mark_failed")
+    return result
+
+
 def _lock(ctx: RunContext):
     return ctx.ledger_lock if ctx.ledger_lock is not None else nullcontext()
 

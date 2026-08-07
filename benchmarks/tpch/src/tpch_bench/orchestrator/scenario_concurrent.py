@@ -40,6 +40,7 @@ from tpch_bench.clients.base import EngineClient
 from tpch_bench.orchestrator.runner import (
     RunContext,
     pending_query_work_items,
+    record_connection_failure,
     register_query_work_items,
     run_query_work_item,
 )
@@ -62,6 +63,15 @@ def run(
         client = client_factory()
         try:
             client.connect()
+        except Exception as exc:  # noqa: BLE001 - one of many independent,
+            # concurrent connection attempts; a real one (a session-open
+            # timeout when this many fire at once, an agent hiccup) must be
+            # recorded against this one item, not crash every other item
+            # this round via ThreadPoolExecutor re-raising it.
+            record_connection_failure(ctx, item_id, str(exc))
+            client.close()
+            return
+        try:
             run_query_work_item(ctx, client, item_id=item_id, sql=queries[query_id])
         finally:
             client.close()

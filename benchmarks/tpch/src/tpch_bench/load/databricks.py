@@ -26,7 +26,10 @@ from tpch_bench.datagen.tpchgen_runner import TABLES
 if TYPE_CHECKING:
     from databricks.sql.client import Connection
 
-_UPLOAD_TIMEOUT_S = 300.0
+# SF1/SF10's largest table fit well inside 300s; SF100's lineitem alone is
+# ~27 GB and SF300's is ~3x that, so this needs real headroom, not just
+# what the smallest scale factors happened to need.
+_UPLOAD_TIMEOUT_S = 1800.0
 
 
 @dataclass(frozen=True)

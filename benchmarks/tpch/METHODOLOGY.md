@@ -1,22 +1,18 @@
 # TPC-H benchmark methodology: DuckHaven vs Snowflake vs Databricks
 
-> **Status: frozen, revised once.** First registered in
+> **Status: frozen, revised twice.** First registered in
 > `db/results.duckdb`'s `methodology_registrations` table on the first
-> real Phase 0 run, 2026-08-07 (hash
-> `2d32ea0e9d6b3f8e5c7ec67cf03f3c3198162748f16f5fae936e85a4f206aa20`).
-> **Phase 0's SF1 dry run is complete against all three engines** as of
-> 2026-08-07 (780 work items; 753 done, 18 failed, 9 correctly left
-> pending by the DELETE-then-INSERT guard — see §9's errata for what the
-> failures were and why they're real engine/account limits, not harness
-> bugs). Reviewing those results, the same day, the scope was narrowed to
-> read scenarios only and compute resized for a fairer trial-account
-> comparison — see §9's revisions for what changed and why; this document
-> was re-frozen after (the hash quoted above is necessarily the *previous*
-> version's — a hash can't quote itself; `methodology_registrations` is
-> the authoritative, timestamped record of both). The read-only SF1 dry
-> run under comparable compute is complete and clean: 726/726 work items
-> done, 0 errors, across all three engines. SF10 and beyond, on real
-> Azure/paid infrastructure, are Phase 1+.
+> real Phase 0 run, 2026-08-07. Revision 1 (same day) narrowed scope to
+> read scenarios and resized compute for a fair trial-account comparison —
+> see §9. **Revision 2 (same day) drops Azure entirely**: DuckHaven runs
+> locally for the whole benchmark, not just Phase 0, and the comparison is
+> now SF1 (done) / SF10 / SF100 / SF300 — SF1000 is out of scope, since it
+> was only ever feasible on paid Azure infrastructure this project no
+> longer uses. `methodology_registrations` is the authoritative,
+> timestamped record of every version's hash; this document doesn't quote
+> its own (a hash can't quote itself). The SF1 read comparison under
+> comparable trial-tier compute is complete and clean: 726/726 work items
+> done, 0 errors, across all three engines.
 
 ## 1. Purpose and scope
 
@@ -30,9 +26,10 @@ had no part in designing or verifying.
 This benchmark replaces those citations with first-party numbers: the
 standard TPC-H workload, run through all three engines' own real client
 paths, on infrastructure this project provisioned, measured, and can
-reproduce. It is not a marketing exercise — SF1000 is included
-specifically to show where DuckHaven/DuckDB stops being competitive, not
-to omit it.
+reproduce. It is not a marketing exercise: the same fixed, small compute
+size runs at every scale factor (§7), specifically so growing data volume
+shows where each engine — DuckHaven included — stops being comfortable,
+not just where DuckDB does.
 
 Both Snowflake's and Databricks' current Terms of Service permit
 publishing benchmark results (both have dropped the traditional "DeWitt
@@ -45,9 +42,9 @@ that detail.
 
 | Engine | Client | Compute | Notes |
 |---|---|---|---|
-| DuckHaven | `duckhaven-sql-connector` (PyPI), via the SQL Sessions API | Azure Container Instances elastic agent (`deploy/terraform/examples/quickstart`) | The engine actually under test; everything else is a comparator. |
-| Snowflake | `snowflake-connector-python` (official SDK) | A dedicated virtual warehouse per sizing tier (§5), `AUTO_SUSPEND = 60`, `AUTO_RESUME = TRUE` | Trial account, $400/30-day credit, separate from the Azure budget. |
-| Databricks | `databricks-sql-connector` (official SDK) | A Serverless SQL Warehouse only (§8.2) | Confirmed AWS-hosted trial workspace (via `GET /api/2.0/clusters/list-node-types`, all-AWS node-type naming) — the corpus is replicated to S3 (§6) so it reads same-cloud. |
+| DuckHaven | `duckhaven-sql-connector` (PyPI), via the SQL Sessions API | A local Docker elastic agent (`deploy/docker-compose.elastic.yml`), pinned to one fixed-size agent via `DUCKHAVEN_AGENT_ID` (§7) | The engine actually under test; everything else is a comparator. Runs entirely on the machine running this benchmark — no cloud deployment. |
+| Snowflake | `snowflake-connector-python` (official SDK) | `SNOWFLAKE_LEARNING_WH`, a fixed X-Small this trial account cannot resize (§7) | Trial ("Snowflake Learning") account, no separate warehouse-creation privilege — see §9's errata. |
+| Databricks | `databricks-sql-connector` (official SDK) | A Serverless SQL Warehouse, set to 2X-Small (§7) | Confirmed AWS-hosted trial workspace (via `GET /api/2.0/clusters/list-node-types`, all-AWS node-type naming). Loads from the same local corpus DuckHaven does (§6) — no cross-cloud replication needed since both load straight from local disk. |
 
 All three are driven through **persistent, session-scoped connections**,
 not one-shot/stateless query APIs and not raw engine internals (no direct
@@ -124,110 +121,92 @@ not something that affects the read-only comparison today.
 
 ## 5. Scale factors
 
-| SF | Approx. size | Scenarios run | Query timeout | Phase |
+| SF | Approx. size | Scenarios run | Query timeout | Engines |
 |---|---|---|---|---|
-| SF1 | ~1 GB | All five | 600s | 0 (free/local dry run), then 1 (real Azure) |
-| SF10 | ~10 GB | All five | 600s | 2 |
-| SF100 | ~100 GB | All five | 1800s | 2 |
-| SF300 | ~300 GB | All five | 3600s | 2 |
-| SF1000 | ~1 TB | `sequential` + `cold_start` only, plus one scoped write attempt (below) | 14400s (4h) | 3 |
+| SF1 | ~1 GB | `sequential`/`cold_start`/`concurrent` | 600s | All three — complete, see status above |
+| SF10 | ~10 GB | `sequential`/`cold_start`/`concurrent` | 600s | All three |
+| SF100 | ~100 GB | `sequential`/`cold_start`/`concurrent` | 1800s | All three |
+| SF300 | ~300 GB | `sequential`/`cold_start`/`concurrent` | 3600s | DuckHaven + Databricks only — see §6 |
 
-**SF1000 is deliberately scoped down**, not run through the full matrix:
-sequential and cold-start reads on all three engines, plus **one**
-generously-configured write attempt on **DuckHaven alone** (largest
-affordable single agent, `single` concurrency profile, the 4-hour
-timeout) — specifically to characterize *where and how it breaks down*,
-not to give it a pass/fail spin. The honest outcome (completes slowly /
-times out / OOMs) gets reported as-is. This scope, and the €30 total Azure
-budget ceiling behind it, is a deliberate project decision, not an
-attempt to avoid an unflattering result — the whole point of including
-SF1000 at all is to show where DuckDB-based compute stops being
-competitive.
+**SF1000 is out of scope**, not scoped down: it was only ever feasible on
+paid Azure infrastructure large enough to hold a ~1 TB Iceberg copy of the
+corpus, and revision 2 (§9) retired that plan entirely — this project runs
+DuckHaven locally now, on the same machine as everything else, with no
+cloud deployment to size up for it.
 
-A scale factor's entire scenario matrix runs and is torn down (`terraform
-destroy`) within a single Azure apply session — Iceberg data does not
-survive a destroy/recreate cycle, so a scale factor's work is never split
-across sessions.
+Every scale factor runs on the same fixed compute (§7) as SF1 — nothing
+scales up with data size, because none of the three trial
+accounts/setups here *can* be resized. That is a deliberate reading of a
+real constraint, not a limitation this project is hiding: it means SF100
+and SF300 show how each engine's smallest practical tier handles 100x and
+300x the data, which is a fair question on its own even though it isn't
+the "$/hr-matched bigger warehouse" comparison earlier drafts of this
+document described.
 
 ## 6. Data generation and placement
 
 `tpchgen-cli` (PyPI, a compiled Rust TPC-H generator) generates each scale
-factor's Parquet corpus once (`src/tpch_bench/datagen/tpchgen_runner.py`),
-chosen over the reference `dbgen` for the throughput SF100–SF1000 needs.
+factor's Parquet corpus locally (`src/tpch_bench/datagen/tpchgen_runner.py`),
+chosen over the reference `dbgen` for the throughput SF100/SF300 need.
 
-The corpus is published to a **standalone Azure Storage Account**, created
-outside the `deploy/terraform` module specifically so it survives every
-apply/destroy cycle of the DuckHaven environment (which deletes its own
-warehouse storage account on destroy). A `manifest.json` per scale factor
-records every file's sha256 and byte size at generation time
-(`src/tpch_bench/datagen/corpus.py`); every download and every replication
-is verified against it before being used, so a truncated or corrupted
-transfer is caught rather than silently loaded.
+**DuckHaven and Databricks load from this same local corpus** —
+byte-identical source data is the fairness requirement §8's impartiality
+rules exist to protect. Since revision 2 (§9) retired the Azure
+deployment, both engines now load directly from local disk rather than
+through any cloud replication step:
 
-**DuckHaven and Databricks load from this same generated corpus** —
-byte-identical source data, verified by checksum, is the fairness
-requirement §7's impartiality rules exist to protect. Since the confirmed
-AWS-hosted Databricks trial workspace can't read an Azure Blob location
-without cross-cloud federation nobody has set up, the corpus is also
-replicated to S3 (same manifest, same checksum verification on the way
-out of Azure and the way into S3) so Databricks reads a same-cloud copy.
+- DuckHaven: `src/tpch_bench/load/duckhaven.py` uploads each file to the
+  session's presigned staging URL (`Connection.stage_files`) and issues
+  `CREATE TABLE ... AS SELECT * FROM read_parquet(get_url)` — the same
+  path `dlt-duckhaven` uses, landing in the local Docker deployment's
+  bundled MinIO object storage.
+- Databricks: `src/tpch_bench/load/databricks.py` uploads each file to a
+  Unity Catalog Volume via the Files API and issues `CREATE TABLE ... AS
+  SELECT * FROM read_files(...)` — Databricks has no session-scoped
+  staging equivalent, so a Volume is the closest analogue.
+
+`src/tpch_bench/datagen/corpus.py`'s Azure Blob/S3 manifest-and-replicate
+functions, built for the now-retired Azure plan, are unused by this flow.
+Kept in the codebase rather than deleted (the same "implemented, not
+drawn from" treatment as `write`/`dml` in §4.1), in case cross-machine
+corpus sharing becomes useful again.
 
 **Snowflake is the deliberate exception**: it reads its own free,
-pre-loaded `SNOWFLAKE_SAMPLE_DATA.TPCH_SFxxx` schemas for SF1/SF10/SF100/
-SF1000 — zero load cost, and the same data a real Snowflake evaluation
-would reach for first. **SF300 has no pre-loaded Snowflake sample**, so it
-is `COPY INTO`'d from the same generated corpus as the other two engines.
-This is a **disclosed, intentional asymmetry** (out-of-the-box sample vs.
-self-loaded) — not normalized away, because normalizing it away would mean
-either loading Snowflake's smaller scale factors unnecessarily (real,
-avoidable cost) or fabricating an "unloaded" cost for what most real
-Snowflake users never pay.
+pre-loaded `SNOWFLAKE_SAMPLE_DATA.TPCH_SFxxx` schemas for SF1/SF10/SF100 —
+zero load cost, and the same data a real Snowflake evaluation would reach
+for first. **SF300 has no pre-loaded Snowflake sample, and this project's
+read-only scope (§4.1) leaves no way to self-load one** — Snowflake is
+excluded from the SF300 comparison entirely rather than worked around.
+This is a **disclosed, intentional gap**, not normalized away: normalizing
+it away would mean either loading Snowflake's smaller scale factors
+unnecessarily (real, avoidable cost against a bounded trial credit) or
+fabricating an "unloaded" cost for what most real Snowflake users never
+pay.
 
-## 7. Sizing and cost-equivalence
+## 7. Sizing
 
-The goal is a fair **$/hr** comparison, not a fair spec comparison — cloud
-warehouses abstract the underlying hardware, so tiers below are matched by
-*rate*, not by vCPU count. Snowflake↔Databricks tier-size correspondence
-follows the precedent set by
-[get-select/snowflake-databricks-benchmark](https://github.com/get-select/snowflake-databricks-benchmark)
-(referenced for methodology only — that repo has no LICENSE file, so
-nothing from it is forked or reused as code):
+**One fixed compute size, used at every scale factor (SF1 through
+SF300) — not a $/hr-matched tier that scales up with data, because none
+of the three trial accounts/setups here can be resized:**
 
-| Tier | Snowflake | Databricks | DuckHaven target | Used for |
-|---|---|---|---|---|
-| phase0_trial | X-Small | 2X-Small | 2 vCPU / 4 GB | SF1 (Phase 0 dry run, trial/free tiers — see below) |
-| small | Medium | Small | 2 vCPU / 8 GB | SF1, SF10 (Phase 1+, paid tiers) |
-| medium | Large | Medium | 4 vCPU / 16 GB | SF100 |
-| large | X-Large | Large | 8 vCPU / 32 GB | SF300 |
-| sf1000_reads | X-Large | Large | 8 vCPU / 32 GB | SF1000 (reads only) |
+| Engine | Size | Why this and not something bigger |
+|---|---|---|
+| Snowflake | `SNOWFLAKE_LEARNING_WH`, fixed X-Small | This "Snowflake Learning" trial account has no `MODIFY` grant on the warehouse — confirmed via a live `003001` insufficient-privileges error (§9 errata). It cannot be resized, full stop. |
+| Databricks | Serverless Starter Warehouse, set to 2X-Small | Its own floor — the closest either platform's tier names get to Snowflake's fixed X-Small. |
+| DuckHaven | A `DUCKHAVEN_AGENT_ID`-pinned elastic agent, 2 vCPU / 4 GB | The platform's own stated default size (`ELASTIC_DEFAULT_CPU`/`ELASTIC_DEFAULT_MEMORY_GB`), chosen to sit in the same class as the other two rather than because it's a hard floor — DuckHaven's Docker backend *could* run a bigger agent, but sizing it up while the other two stay pinned to their floor would stop being a comparison of comparable compute. |
 
-`phase0_trial` is not a $/hr-matched tier like the others — it's the
-smallest size each trial account/setup actually permits, confirmed live
-during Phase 0's SF1 dry run: the Snowflake trial's `SNOWFLAKE_LEARNING_WH`
-is a fixed X-Small with no `MODIFY` grant available to resize it; the
-Databricks trial's Serverless Starter Warehouse was set to 2X-Small, its
-own floor, to sit as close to that fixed X-Small as either platform's tier
-names get; DuckHaven runs a `DUCKHAVEN_AGENT_ID`-pinned elastic agent at
-(2 vCPU, 4 GB), the platform's own stated default size. "Comparable" here
-means each platform's practical floor under these specific trial accounts,
-not a verified equal-$/hr match — see `config/sizing_matrix.yaml` for the
-full reasoning. `AUTO_SUSPEND`/`AUTO_RESUME` (below) could not be set on
-the fixed Snowflake warehouse either, for the same privilege reason.
+"Comparable" here means each platform's practical floor under these
+specific trial accounts and this specific choice for DuckHaven — not a
+verified equal-$/hr match the way a paid-tier comparison would use
+(`GET /admin/agents/compute-options`'s live pricing exists and still gets
+used for cost accounting, just not for choosing a bigger size at SF100/
+SF300). See `config/sizing_matrix.yaml` for the full reasoning and the
+single `phase0_trial` tier definition (the name is a holdover from when
+it was Phase-0-only; it now applies to every scale factor in scope).
 
-DuckHaven's `(cpu, memory_gb)` for every other tier is chosen at run time
-to match the resulting $/hr via `GET /admin/agents/compute-options`'s live
-pricing — the table above is the starting target, not a fixed spec. The
-*actual* $/hr each engine ran at is captured into `cost_facts` and frozen
-alongside this document before any timed run at that scale factor, not
-re-derived afterward.
-
-Snowflake and Databricks warehouses for each tier are provisioned with
-**`AUTO_SUSPEND = 60s`, `AUTO_RESUME = TRUE`** (or the Databricks
-Serverless equivalent) — an aggressive, conservative default chosen ahead
-of any live account work specifically to bound real-money exposure between
-scenario runs, consistent with this project's other cost guardrails (§10).
-This is a project default, not a claim about what either vendor
-recommends for production use.
+Snowflake and Databricks warehouses auto-suspend on their own defaults;
+`AUTO_SUSPEND`/`AUTO_RESUME` could not be explicitly set on the fixed
+Snowflake warehouse for the same privilege reason as its size.
 
 ## 8. Impartiality rules
 
@@ -326,6 +305,28 @@ result from before this revision was produced under mismatched sizing
 warehouse) and has been superseded by a re-run under `phase0_trial`
 sizing, not kept alongside it.
 
+**2026-08-07 — Azure retired; scope now SF1/SF10/SF100/SF300, no
+SF1000.** Directed the same day as the first revision. DuckHaven runs
+locally (Docker) for the entire benchmark now, not only Phase 0 — the
+planned Azure deployment, the €30 budget it was scoped against, and the
+"Phase 0 dry run / Phase 1+ paid run" split in earlier drafts of this
+document are all retired along with it. SF1000 is dropped rather than
+scoped down further (§5): it was only ever feasible on paid Azure
+infrastructure sized for a ~1 TB corpus, which no longer exists in this
+project's plan. `phase0_trial` sizing (§7) now applies at every scale
+factor rather than only SF1, since none of the three trial
+accounts/setups can be resized regardless of data volume. `write`/`dml`
+stay out of scope, unaffected by this revision. Also fixed while making
+this change, not itself a scope decision: the local DuckHaven agent's
+`hourly_cost` was reporting Azure list-price rates
+(`ELASTIC_AZURE_PRICE_VCPU_HOUR`/`_MEMORY_GB_HOUR`, unset, defaulting to
+non-zero) despite running on already-owned hardware with `currency`
+correctly reporting null — the two settings aren't linked the way that
+might suggest. Zeroed per `docs/deployment/homelab-elastic-setup.md`'s
+own guidance; every `cost_facts` row recorded before this fix used the
+wrong (Azure-priced) figure for DuckHaven specifically and should be
+treated as unreliable for cost comparison, though not for timing.
+
 ### Errata
 
 **2026-08-07 — §4's `duckhaven_concurrency` claim was wrong.** Surfaced by
@@ -374,23 +375,31 @@ writable target by definition.
 
 ## 10. Budget and guardrails
 
-| Item | Rough cost | Notes |
-|---|---|---|
-| Azure infra baseline while running | ~€4–4.5/day | Postgres + private endpoints + NAT gateway + Container Apps — the non-negotiable floor once elastic compute is exercised. |
-| DuckHaven agent compute | ~€0.25/hr (small) to ~€1/hr (large, the SF1000 write attempt) | Live from `GET /admin/agents/compute-options`. |
-| Corpus storage | Low single-digit €, total | Cool tier, deleted per scale factor once every load is verified. |
-| **Azure total ceiling** | **€30** | Hard stop. |
-| Snowflake | $400 trial credit, 30 days | Separate pool, not counted against the €30. |
-| Databricks | $400 DBU trial credit, 14 days | Serverless-only, so it stays inside Databricks' own DBU metering with no separate AWS bill on top. |
+No cloud infrastructure spend: DuckHaven is local Docker compute on
+already-owned hardware (§7, §9's second revision), with no per-hour rate
+of its own. The only real resource at risk is each trial's bounded
+credit pool:
 
-- `terraform destroy` runs immediately after each scale factor's work
-  completes — never left running "just in case."
-- An Azure Cost Management budget alert is a tripwire independent of
-  manual discipline.
-- SF1000 has an explicit go/no-go checkpoint against actual (not
-  estimated) spend from `cost_facts` before it starts.
-- Snowflake/Databricks warehouses auto-suspend (§7); nothing here is
-  billed on an always-on basis by default.
+| Item | Pool | Notes |
+|---|---|---|
+| Snowflake | $400 trial credit, 30 days | Fixed X-Small warehouse (§7) bounds the *rate* of consumption; SF100/SF300 still mean much longer-running queries than SF1 did, so total consumption isn't flat across scale factors even at fixed size. |
+| Databricks | $400 DBU trial credit, 14 days | Same shape: Serverless 2X-Small is fixed, but SF100/SF300 query duration is not. |
+
+Local disk is a second real constraint SF300 runs into directly: the
+generated corpus (~300 GB) and DuckHaven's own local MinIO copy would
+together exceed a typical workstation's free space if both are kept
+simultaneously. The SF300 corpus task deletes each table's local Parquet
+file as soon as both DuckHaven and Databricks have loaded it, rather than
+holding the whole corpus until the end.
+
+Guardrails that still apply:
+
+- Snowflake/Databricks warehouses auto-suspend on their platform defaults
+  (§7); nothing here is billed on an always-on basis.
+- Before SF100 and SF300 specifically, check remaining trial credit and
+  days-remaining on both accounts — an explicit go/no-go, not an assumed
+  green light, the same discipline the retired Azure plan applied to its
+  own SF1000 checkpoint.
 
 ## 11. Reproducibility
 

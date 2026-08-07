@@ -1,70 +1,31 @@
-# Cost-equivalent compute tiers per scale factor (plan §4). The point is a
-# fair $/hr comparison, not a fair spec comparison — cloud warehouses
-# abstract the underlying hardware, so tier names are matched by *rate*,
-# not by vCPU count.
+# Compute sizing (METHODOLOGY.md §7). One fixed tier, used at every scale
+# factor in scope (SF1/SF10/SF100/SF300) — not a $/hr-matched tier that
+# scales up with data the way an earlier, since-retired plan to deploy
+# DuckHaven to paid Azure infrastructure would have used. None of the
+# three trial accounts/setups here can be resized, so there is nothing to
+# scale: sizing is each platform's practical floor under this specific
+# trial, not a spec or a rate match:
+#   - Snowflake: SNOWFLAKE_LEARNING_WH is a fixed X-Small on this trial
+#     account — confirmed no MODIFY grant to resize it (2026-08-07).
+#   - Databricks: the trial workspace's Serverless Starter Warehouse, set
+#     to 2X-Small (its floor) to sit as close to Snowflake's fixed
+#     X-Small as either platform's tier names get.
+#   - DuckHaven: an elastic agent pinned via DUCKHAVEN_AGENT_ID at
+#     (2 vCPU, 4 GB) — the platform's own stated default size
+#     (ELASTIC_DEFAULT_CPU/MEMORY_GB). DuckHaven's Docker backend could
+#     run a bigger agent, but sizing it up while the other two stay
+#     pinned to their floor would stop being a comparison of comparable
+#     compute — see METHODOLOGY.md §7 for the full reasoning.
 #
-# Snowflake <-> Databricks tier mapping follows the precedent in
-# https://github.com/get-select/snowflake-databricks-benchmark (referenced
-# for methodology only, not forked — no LICENSE file on that repo):
-#   Snowflake Medium ~ Databricks Small
-#   Snowflake Large  ~ Databricks Medium
-#   Snowflake XL     ~ Databricks Large
-#
-# DuckHaven's (cpu, memory_gb) is chosen at run time to match the resulting
-# $/hr via GET /admin/agents/compute-options' live pricing — the values
-# below are starting targets, not fixed; the *actual* $/hr each engine ran
-# at gets captured into cost_facts and frozen into METHODOLOGY.md's
-# pre-registration record before any timed run, not re-derived after.
+# The name is a holdover from when this tier was Phase-0-only; it now
+# applies to every scale factor in scope, including SF100 and SF300 —
+# which is deliberate: it's what shows how each engine's smallest
+# practical tier handles 100x-300x the SF1 data, not a gap to fill in
+# later with a bigger tier.
 
 tiers:
-  # Phase 0's actual free/trial-tier dry run (SF1, local/trial accounts —
-  # not the "small" tier below, which is what Phase 1's paid Azure run
-  # targets). Sizing here isn't chosen for a $/hr match: it's the smallest
-  # size each account/setup actually permits, since none of the three can
-  # be resized freely on a free tier:
-  #   - Snowflake: SNOWFLAKE_LEARNING_WH is a fixed X-Small on this trial
-  #     account — confirmed no MODIFY grant to resize it (2026-08-07).
-  #   - Databricks: the trial workspace's Serverless Starter Warehouse,
-  #     set to 2X-Small (its floor) to sit as close to Snowflake's fixed
-  #     X-Small as either platform's tier names get.
-  #   - DuckHaven: an elastic agent pinned via DUCKHAVEN_AGENT_ID at
-  #     (2 vCPU, 4 GB) — the platform's own stated default size
-  #     (ELASTIC_DEFAULT_CPU/MEMORY_GB), and already exercised clean
-  #     against every SF1 read scenario in Phase 0.
-  # "Comparable" here means "each platform's practical floor," not a
-  # verified equal-$/hr match — Databricks Serverless reports no cost at
-  # this size, and this Snowflake trial's credit consumption isn't
-  # per-warehouse-size transparent the way a paid account's would be.
   phase0_trial:
     snowflake_warehouse_size: X-Small
     databricks_warehouse_size: 2X-Small
     duckhaven_target: { cpu: 2.0, memory_gb: 4.0 }
-    used_for_sf: [sf1]
-
-  small:
-    snowflake_warehouse_size: MEDIUM
-    databricks_warehouse_size: Small
-    duckhaven_target: { cpu: 2.0, memory_gb: 8.0 }
-    used_for_sf: [sf1, sf10]
-
-  medium:
-    snowflake_warehouse_size: LARGE
-    databricks_warehouse_size: Medium
-    duckhaven_target: { cpu: 4.0, memory_gb: 16.0 }
-    used_for_sf: [sf100]
-
-  large:
-    snowflake_warehouse_size: XLARGE
-    databricks_warehouse_size: Large
-    duckhaven_target: { cpu: 8.0, memory_gb: 32.0 }
-    used_for_sf: [sf300]
-
-  # SF1000 reads use the same "large" tier as SF300 for a like-for-like
-  # comparison; the single DuckHaven write attempt (scale_factors.yaml)
-  # is explicitly *not* cost-matched — it gets the largest single agent
-  # size the remaining budget affords, per the plan's go/no-go checkpoint.
-  sf1000_reads:
-    snowflake_warehouse_size: XLARGE
-    databricks_warehouse_size: Large
-    duckhaven_target: { cpu: 8.0, memory_gb: 32.0 }
-    used_for_sf: [sf1000]
+    used_for_sf: [sf1, sf10, sf100, sf300]

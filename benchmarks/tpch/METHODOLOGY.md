@@ -1,15 +1,22 @@
 # TPC-H benchmark methodology: DuckHaven vs Snowflake vs Databricks
 
-> **Status: frozen.** Registered in `db/results.duckdb`'s
-> `methodology_registrations` table (hash
-> `2d32ea0e9d6b3f8e5c7ec67cf03f3c3198162748f16f5fae936e85a4f206aa20`) on the
-> first real Phase 0 run, 2026-08-07. Query text, scenario definitions, and
-> rep counts do not change from here; only dated, additive errata (§9) are
-> allowed. **Phase 0's SF1 dry run is complete against all three engines**
-> as of 2026-08-07 (780 work items; 753 done, 18 failed, 9 correctly left
+> **Status: frozen, revised once.** First registered in
+> `db/results.duckdb`'s `methodology_registrations` table on the first
+> real Phase 0 run, 2026-08-07 (hash
+> `2d32ea0e9d6b3f8e5c7ec67cf03f3c3198162748f16f5fae936e85a4f206aa20`).
+> **Phase 0's SF1 dry run is complete against all three engines** as of
+> 2026-08-07 (780 work items; 753 done, 18 failed, 9 correctly left
 > pending by the DELETE-then-INSERT guard — see §9's errata for what the
 > failures were and why they're real engine/account limits, not harness
-> bugs). SF10 and beyond, on real Azure/paid infrastructure, are Phase 1+.
+> bugs). Reviewing those results, the same day, the scope was narrowed to
+> read scenarios only and compute resized for a fairer trial-account
+> comparison — see §9's revisions for what changed and why; this document
+> was re-frozen after (the hash quoted above is necessarily the *previous*
+> version's — a hash can't quote itself; `methodology_registrations` is
+> the authoritative, timestamped record of both). The read-only SF1 dry
+> run under comparable compute is complete and clean: 726/726 work items
+> done, 0 errors, across all three engines. SF10 and beyond, on real
+> Azure/paid infrastructure, are Phase 1+.
 
 ## 1. Purpose and scope
 
@@ -73,38 +80,47 @@ actually runs.
 
 ## 4. Scenarios
 
-Five scenarios (`config/scenarios.yaml`), reps and statistic pre-declared
-so results can't be cherry-picked after the fact:
+**In scope as of the 2026-08-07 revision (§9): read scenarios only.**
+Three scenarios (`config/scenarios.yaml`), reps and statistic
+pre-declared so results can't be cherry-picked after the fact:
 
 | Scenario | What it measures | Reps |
 |---|---|---|
 | `sequential` | All 22 queries, one at a time, on a warm connection. | 5 |
 | `cold_start` | Same 22 queries, connection closed and reopened before each one — isolates the "resume from zero" cost each platform charges (an elastic DuckHaven agent scaled to zero, a suspended Snowflake warehouse, a stopped Databricks Serverless Warehouse). | 3 |
 | `concurrent` | All 22 queries fired at once, one connection per worker thread (no client SDK here is safe to share a connection across threads). | 3 |
-| `write` | A CTAS-equivalent materialization in two table shapes: **narrow** (`ddl/<engine>/narrow.sql`, a single table's own columns) and **wide** (`ddl/<engine>/wide.sql`, the fact table denormalized against every dimension it joins to). Each rep targets its own table (`tpch_write_<shape>_r<rep>`), since a CTAS only succeeds once per table name. | 3 per shape |
-| `dml` | 3 cycles of DELETE + INSERT on ~1% of rows against the `write` scenario's rep-0 table, simulating an incremental refresh. Each cycle targets a disjoint ~1% slice (`l_orderkey % 100 = <cycle>`) so cycles don't just churn the same rows; the INSERT re-derives its rows fresh from the base tables (not from the write-target table), so cycles never run out of source rows. | 3 cycles |
 
 **Statistic: median** across reps, pre-declared — no post-hoc selection of
 "best run."
 
-DuckHaven-specific handling, both disclosed rather than engineered around:
+DuckHaven-specific handling for these three: no `SET duckhaven_concurrency`
+override is issued at all, so the agent runs under its own default
+`auto` admission profile (`shared/src/duckhaven_shared/concurrency.py`'s
+`DEFAULT_PROFILE`) — the "pure defaults, no manual tuning" impartiality
+rule in §8 applies to compute configuration too, and `auto` *is* that
+default, not a special mode chosen for this benchmark.
 
-- Before every `write`/`dml` statement, the session issues
-  `SET duckhaven_concurrency = 'single'` first (not itself a measured work
-  item), so the write does not share the agent's admission budget with
-  other concurrent queries. It does **not** raise the memory such a write
-  gets: any CTAS/INSERT/DELETE is unestimable (EXPLAIN-based sizing only
-  covers a bare `SELECT`) and is always pinned to a fixed ⅓ ("M") of the
-  agent's *total* budget regardless of this setting — see §9's 2026-08-07
-  erratum, caught by a real OOM during Phase 0. A write that needs more
-  than that either needs a larger agent or a raised
-  `ESTIMATE_FALLBACK_BUCKET`; this harness does not provision either yet.
-- DuckHaven's Iceberg maintenance is **read-only/advisory only** — it
-  cannot expire snapshots or rewrite files via the DuckDB iceberg
-  extension. The `dml` scenario's repeated DELETE+INSERT will accumulate
-  small files/snapshots with **no in-app remediation**. This is a real,
-  current product limitation, reported honestly (completes slowly / costs
-  more over time), not compacted away before measuring.
+### 4.1 Implemented but out of scope: `write` and `dml`
+
+The harness still implements two write scenarios
+(`orchestrator/scenario_write.py`, `scenario_dml.py`, `ddl/`) — a
+CTAS-equivalent materialization in **narrow** and **wide** table shapes,
+and a DELETE+INSERT incremental-refresh cycle against them. They are not
+part of the active comparison: Phase 0's SF1 dry run showed they aren't
+fairly comparable across all three engines today, for engine- and
+account-specific reasons with nothing to do with query correctness (§9's
+errata has the detail). Before every `write`/`dml` statement, the session
+issues `SET duckhaven_concurrency = 'single'` (not itself a measured work
+item) — that pre-statement's actual effect is also corrected in §9. Kept
+in the codebase rather than deleted, in case a future account/setup makes
+them comparable again; not drawn from by `config/scenarios.yaml`'s
+`all_scenarios` or any scale factor's active scope.
+
+DuckHaven's Iceberg maintenance is **read-only/advisory only** — it
+cannot expire snapshots or rewrite files via the DuckDB iceberg extension,
+so `dml`'s repeated DELETE+INSERT accumulates small files/snapshots with
+**no in-app remediation**. Noted here for whenever `dml` re-enters scope,
+not something that affects the read-only comparison today.
 
 ## 5. Scale factors
 
@@ -179,17 +195,31 @@ nothing from it is forked or reused as code):
 
 | Tier | Snowflake | Databricks | DuckHaven target | Used for |
 |---|---|---|---|---|
-| small | Medium | Small | 2 vCPU / 8 GB | SF1, SF10 |
+| phase0_trial | X-Small | 2X-Small | 2 vCPU / 4 GB | SF1 (Phase 0 dry run, trial/free tiers — see below) |
+| small | Medium | Small | 2 vCPU / 8 GB | SF1, SF10 (Phase 1+, paid tiers) |
 | medium | Large | Medium | 4 vCPU / 16 GB | SF100 |
 | large | X-Large | Large | 8 vCPU / 32 GB | SF300 |
-| sf1000_reads | X-Large | Large | 8 vCPU / 32 GB | SF1000 (reads only; the single write attempt is explicitly *not* cost-matched — see §5) |
+| sf1000_reads | X-Large | Large | 8 vCPU / 32 GB | SF1000 (reads only) |
 
-DuckHaven's `(cpu, memory_gb)` is chosen at run time to match the
-resulting $/hr via `GET /admin/agents/compute-options`'s live pricing —
-the table above is the starting target, not a fixed spec. The *actual*
-$/hr each engine ran at is captured into `cost_facts` and frozen alongside
-this document before any timed run at that scale factor, not re-derived
-afterward.
+`phase0_trial` is not a $/hr-matched tier like the others — it's the
+smallest size each trial account/setup actually permits, confirmed live
+during Phase 0's SF1 dry run: the Snowflake trial's `SNOWFLAKE_LEARNING_WH`
+is a fixed X-Small with no `MODIFY` grant available to resize it; the
+Databricks trial's Serverless Starter Warehouse was set to 2X-Small, its
+own floor, to sit as close to that fixed X-Small as either platform's tier
+names get; DuckHaven runs a `DUCKHAVEN_AGENT_ID`-pinned elastic agent at
+(2 vCPU, 4 GB), the platform's own stated default size. "Comparable" here
+means each platform's practical floor under these specific trial accounts,
+not a verified equal-$/hr match — see `config/sizing_matrix.yaml` for the
+full reasoning. `AUTO_SUSPEND`/`AUTO_RESUME` (below) could not be set on
+the fixed Snowflake warehouse either, for the same privilege reason.
+
+DuckHaven's `(cpu, memory_gb)` for every other tier is chosen at run time
+to match the resulting $/hr via `GET /admin/agents/compute-options`'s live
+pricing — the table above is the starting target, not a fixed spec. The
+*actual* $/hr each engine ran at is captured into `cost_facts` and frozen
+alongside this document before any timed run at that scale factor, not
+re-derived afterward.
 
 Snowflake and Databricks warehouses for each tier are provisioned with
 **`AUTO_SUSPEND = 60s`, `AUTO_RESUME = TRUE`** (or the Databricks
@@ -266,6 +296,35 @@ counts.** A genuine bug found later (a mislabeled column, a scenario
 description that doesn't match what the code actually does) gets a dated,
 additive erratum appended below, never a silent rewrite of the section
 above it.
+
+**Revisions are different from errata, and narrower.** An erratum
+corrects a factual mistake in the frozen text — what it already claimed
+was wrong. A revision changes what's being measured (scope, sizing) and
+is legitimate only while still inside Phase 0, before any real-money
+comparison run: that's what a dry run is *for*, distinct from adjusting
+methodology after seeing results on the actual paid comparison, which
+this project treats as the line real cherry-picking crosses. Each
+revision below is dated, records what changed and why, and re-freezes
+(a new hash, registered alongside the original — see
+`methodology_registrations`, never replacing it).
+
+### Revisions
+
+**2026-08-07 — Scope narrowed to read scenarios; compute sized to match
+across trial accounts.** Directed after reviewing Phase 0's SF1 dry run
+results (§9 errata below): `write`/`dml` are no longer part of the active
+comparison (§4.1) — kept implemented, not deleted, in case a future
+account/setup makes them comparable. DuckHaven's read scenarios now run
+under the agent's default `auto` concurrency profile (no override
+issued), rather than the `single` override that only ever applied to the
+now-out-of-scope writes. All three engines' compute was resized to each
+platform's practical floor under these specific trial accounts —
+`phase0_trial` in §7 — so the SF1 read comparison is apples-to-apples
+rather than whatever each account happened to default to. Every SF1 read
+result from before this revision was produced under mismatched sizing
+(DuckHaven's pool-triggered default agent, Databricks' original Small
+warehouse) and has been superseded by a re-run under `phase0_trial`
+sizing, not kept alongside it.
 
 ### Errata
 

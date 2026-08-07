@@ -5,9 +5,11 @@
 > `2d32ea0e9d6b3f8e5c7ec67cf03f3c3198162748f16f5fae936e85a4f206aa20`) on the
 > first real Phase 0 run, 2026-08-07. Query text, scenario definitions, and
 > rep counts do not change from here; only dated, additive errata (§9) are
-> allowed. Phase 0's dry run itself is still in progress at freeze time —
-> completed against DuckHaven at SF1 (all five scenarios); Snowflake and
-> Databricks are pending trial-account credentials.
+> allowed. **Phase 0's SF1 dry run is complete against all three engines**
+> as of 2026-08-07 (780 work items; 753 done, 18 failed, 9 correctly left
+> pending by the DELETE-then-INSERT guard — see §9's errata for what the
+> failures were and why they're real engine/account limits, not harness
+> bugs). SF10 and beyond, on real Azure/paid infrastructure, are Phase 1+.
 
 ## 1. Purpose and scope
 
@@ -287,6 +289,29 @@ or raising `ESTIMATE_FALLBACK_BUCKET` on the agent; this harness does not
 wire up either yet, so a `write`/`dml` OOM on the `wide` shape at larger
 scale factors should be expected, not treated as a harness bug, until that
 is built.
+
+**2026-08-07 — Snowflake's `write`/`dml` scenarios did not run at SF1: a
+real account limitation, not a harness bug.** The Snowflake trial account
+used for Phase 0 is a "Snowflake Learning" account; its only role
+(`SNOWFLAKE_LEARNING_ROLE`) has no `CREATE DATABASE` or `CREATE WAREHOUSE`
+grant on the account, confirmed via a live `003001` insufficient-privileges
+error attempting each. All 12 `write`/`dml` work items for Snowflake at
+SF1 are recorded `failed` (6) or correctly left `pending` by the
+DELETE-then-INSERT guard (6, since their paired deletes failed first —
+see the `dml` scenario's own docstring). Read scenarios are unaffected:
+`sequential`/`cold_start`/`concurrent` all completed 100% clean against
+`SNOWFLAKE_SAMPLE_DATA.TPCH_SF1`. A production-tier Snowflake account with
+its own database-creation grant would not hit this; disclosed here
+because this specific trial account did, and the honest result is more
+useful than silently skipping those scenarios.
+
+A related, real harness bug this surfaced and fixed: `build_client`
+(`cli.py`) was passing the same scale-factor config to `write`/`dml` as to
+the read scenarios, so *before* hitting the account's privilege limit, a
+write at SF1 first failed by landing against the read-only shared
+`SNOWFLAKE_SAMPLE_DATA` database. Fixed so `write`/`dml` never receive the
+sample-schema config, on any engine or scale factor — they need a
+writable target by definition.
 
 ## 10. Budget and guardrails
 

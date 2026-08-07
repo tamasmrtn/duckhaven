@@ -432,6 +432,24 @@ is expected to show this same failure pattern at SF10/SF100/SF300 under
 the same fixed local sizing, and that is itself the honest result being
 measured, not a defect in the measurement.
 
+**2026-08-07 — The pinned agent's `max_timeout_s` was left at the 600s
+framework default, well under what `scale_factors.yaml` already declared
+for SF100 (`query_timeout_s: 1800`) and SF300 (`3600`).** Surfaced loading
+SF100 into DuckHaven: the `CREATE TABLE ... AS SELECT * FROM
+read_parquet(...)` for a ~27 GB `lineitem` file hit `statement exceeded
+timeout` at 600s server-side, regardless of the client's own requested
+timeout — the agent clamps every statement to its own `max_timeout_s`
+(`agent/src/agent/control/channel.py::_handle_exec_statement`), which the
+pinned agent had never been given a value for since provisioning
+(`requested_max_timeout_s: null`, plan §0's `MAX_TIMEOUT_S` fix makes this
+configurable but doesn't set a non-default value on its own). Fixed by
+re-provisioning the pinned agent with `max_timeout_s=3600` (same 2 vCPU/4
+GB `phase0_trial` sizing, §7 — this changes the timeout ceiling only, not
+what's being cost-compared). SF1 and SF10 both declared
+`query_timeout_s: 600`, identical to the old default, so no already-
+recorded result at either scale factor was affected by the clamp; nothing
+needed re-running.
+
 ## 10. Budget and guardrails
 
 No cloud infrastructure spend: DuckHaven is local Docker compute on

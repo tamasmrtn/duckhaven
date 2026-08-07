@@ -17,11 +17,13 @@ def _load_module():
     return module
 
 
-def test_no_overrides_declared_yet():
+def test_every_declared_override_carries_a_confirmed_reason():
     # See render_dialects.py's module docstring: overrides are added only
-    # once a real incompatibility is observed in Phase 0, never up front.
+    # once a real incompatibility is observed in Phase 0, never up front —
+    # so every entry here should read as evidence, not speculation.
     module = _load_module()
-    assert module.OVERRIDES == ()
+    for override in module.OVERRIDES:
+        assert override.find and override.replace and override.reason
 
 
 def test_render_copies_every_canonical_query_to_every_engine(tmp_path, monkeypatch):
@@ -100,10 +102,24 @@ def test_render_raises_on_a_stale_override(tmp_path, monkeypatch):
         module.render()
 
 
-def test_diffs_md_reports_no_overrides_when_none_declared():
+def test_diffs_md_reports_no_overrides_when_none_declared(monkeypatch):
     module = _load_module()
+    monkeypatch.setattr(module, "OVERRIDES", ())
+
     md = module.diffs_md({"duckhaven": [], "snowflake": [], "databricks": []})
+
     assert "No overrides are declared" in md
+
+
+def test_diffs_md_reports_the_real_declared_override():
+    # OVERRIDES currently holds the Q22 SUBSTRING fix confirmed against a
+    # live Snowflake account during Phase 0 — diffs_md() reads OVERRIDES
+    # directly, not its `changed` argument, so this is checking the actual
+    # committed table, not a fixture.
+    module = _load_module()
+    md = module.diffs_md({"duckhaven": [], "snowflake": ["22"], "databricks": []})
+    assert "snowflake" in md
+    assert "Q22" in md
 
 
 def test_the_committed_canonical_corpus_has_all_22_queries():
@@ -116,8 +132,10 @@ def test_the_committed_canonical_corpus_has_all_22_queries():
 
 def test_the_committed_dialect_output_matches_the_canonical_corpus():
     # Guards against a stale, committed dialect/ tree drifting from a
-    # regenerated tpch_canonical/ — regenerate via render_dialects.py if
-    # this fails, don't hand-edit the dialect files.
+    # regenerated tpch_canonical/ (or a hand-edited dialect file) — the
+    # actual OVERRIDES table, applied fresh, must reproduce what's checked
+    # in exactly. Regenerate via render_dialects.py if this fails, don't
+    # hand-edit the dialect files.
     module = _load_module()
     changed = module.render()
-    assert changed == {"duckhaven": [], "snowflake": [], "databricks": []}
+    assert changed == {"duckhaven": [], "snowflake": ["22"], "databricks": []}

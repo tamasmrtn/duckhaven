@@ -44,7 +44,22 @@ class Override:
     reason: str
 
 
-OVERRIDES: tuple[Override, ...] = ()
+OVERRIDES: tuple[Override, ...] = (
+    # Confirmed by a real syntax error during Phase 0's Snowflake dry run
+    # (SF1, sequential scenario): Snowflake does not accept the SQL-standard
+    # `SUBSTRING(x FROM start FOR length)` form DuckDB's tpch extension
+    # renders Q22 with. All three occurrences in Q22 are this exact
+    # substring; Snowflake's function-call form is equivalent for it (no
+    # negative/omitted-length edge cases in this query to worry about).
+    Override(
+        engine="snowflake",
+        query_nr="22",
+        find="substring(c_phone FROM 1 FOR 2)",
+        replace="SUBSTR(c_phone, 1, 2)",
+        reason="Snowflake rejects SQL-standard SUBSTRING(x FROM .. FOR ..); "
+        "confirmed via a live 001003 syntax error, Phase 0 SF1 dry run.",
+    ),
+)
 
 
 def render() -> dict[str, list[str]]:

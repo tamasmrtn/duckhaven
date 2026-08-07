@@ -32,4 +32,8 @@ databricks:
   # billed entirely through Databricks' own DBU metering, no separate AWS
   # bill on top of the trial credit.
   warehouse_id_env: DATABRICKS_WAREHOUSE_ID
-  catalog: tpch_bench
+  # "test" is the trial workspace's existing Unity Catalog catalog (the
+  # service principal has CREATE SCHEMA on it, confirmed live); tpch_bench
+  # is a schema within it, not a catalog of its own.
+  catalog: test
+  schema: tpch_bench

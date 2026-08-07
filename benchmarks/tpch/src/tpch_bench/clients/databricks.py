@@ -50,7 +50,7 @@ from tpch_bench.clients.base import EngineClient, QueryResult
 _TOKEN_ENDPOINT = "/oidc/v1/token"
 
 
-def _fetch_oauth_token(*, server_hostname: str, client_id: str, client_secret: str) -> str:
+def fetch_oauth_token(*, server_hostname: str, client_id: str, client_secret: str) -> str:
     response = httpx.post(
         f"https://{server_hostname}{_TOKEN_ENDPOINT}",
         auth=(client_id, client_secret),
@@ -87,7 +87,7 @@ class DatabricksClient(EngineClient):
     def connect(self) -> None:
         if self._conn is not None:
             return
-        token = _fetch_oauth_token(
+        token = fetch_oauth_token(
             server_hostname=self._server_hostname,
             client_id=self._client_id,
             client_secret=self._client_secret,

@@ -96,6 +96,7 @@ def build_client(engine: str, settings: Settings, *, sf_cfg: dict | None = None)
             client_id=settings.databricks_client_id,
             client_secret=settings.databricks_client_secret,
             catalog=cfg.get("catalog"),
+            schema=cfg.get("schema"),
         )
     raise ValueError(f"unknown engine {engine!r}, expected one of {ENGINES}")
 

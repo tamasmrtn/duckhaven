@@ -1,4 +1,6 @@
 import asyncio
+import contextlib
+import threading
 import uuid
 
 import pytest
@@ -16,10 +18,17 @@ from duckhaven_shared.telemetry import inject_trace_context
 @pytest.fixture(autouse=True)
 def _clear_sessions():
     # The session registry is process-global; keep tests isolated (mirrors the
-    # fixture in tests/unit/control/test_session.py).
+    # fixture in tests/unit/control/test_session.py). The in-flight-open registry
+    # in channel is process-global for the same reason and needs the same care.
+    import agent.control.channel as ch_module
+
     session._sessions.clear()
+    ch_module._opening.clear()
+    ch_module._abandoned.clear()
     yield
     session._sessions.clear()
+    ch_module._opening.clear()
+    ch_module._abandoned.clear()
 
 
 def _admission(profile: str = "single", **kwargs) -> Admission:
@@ -1229,3 +1238,209 @@ async def test_consume_ignores_unknown_frame_type(tmp_path):
     )
     await ch_module._consume(ws, tmp_path, admission)
     assert admission.active_profile == "single"
+
+
+# ── CLOSE_SESSION against an in-flight open ───────────────────────────────────
+#
+# A session only enters `session._sessions` once its open has finished, so every
+# test above that opens a session by awaiting `_handle_open_session` to
+# completion skips the window these cover. That window is not an edge case: the
+# control plane reaps a session stuck in `opening` at its own deadline and sends
+# CLOSE_SESSION for it, which under load lands while the open is still queued or
+# still on the executor. Leaking there costs the agent budget permanently — it
+# only comes back on restart.
+
+
+class _ScriptedWS(_FakeWS):
+    """Yields OPEN, waits for the test to say when, then yields CLOSE."""
+
+    def __init__(self, session_id: str, release: asyncio.Event) -> None:
+        super().__init__()
+        self._session_id = session_id
+        self._release = release
+
+    async def __aiter__(self):
+        yield Frame(
+            type=FrameType.OPEN_SESSION, payload={"session_id": self._session_id}
+        ).model_dump_json()
+        await self._release.wait()
+        yield Frame(
+            type=FrameType.CLOSE_SESSION, payload={"session_id": self._session_id}
+        ).model_dump_json()
+
+
+async def test_close_frees_the_slot_of_an_open_still_queued(tmp_path):
+    """The reaper's CLOSE_SESSION must free a session still waiting for capacity.
+
+    `session.remove` returns False for a session that never registered, and the
+    old handler discarded that — so the queued `acquire()` waiter stayed in the
+    queue holding its claim forever."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="single")
+    await ch_module._handle_open_session(_FakeWS(), {"session_id": "held"}, admission)
+    assert admission.running_count == 1  # the only slot is taken
+
+    release = asyncio.Event()
+    ws = _ScriptedWS("queued", release)
+    consume = asyncio.create_task(ch_module._consume(ws, tmp_path, admission))
+    await asyncio.sleep(0.05)
+    assert admission.queued_count == 1, "the second open should be waiting for capacity"
+
+    release.set()
+    await consume
+    await asyncio.sleep(0.05)  # let the detached close task run
+
+    assert admission.queued_count == 0, "the close must drop the queued waiter"
+    assert session.get("queued") is None
+    assert admission.running_count == 1  # still just the held session
+
+    await session.remove("held", admission)
+    assert admission.running_count == 0
+
+
+async def test_close_frees_the_slot_of_an_open_still_on_the_executor(tmp_path, monkeypatch):
+    """A close landing mid-`open_and_attach` must still free the reservation.
+
+    Cancelling the task cannot stop the worker thread, so the open finishes and
+    is responsible for closing the connection it built and handing the slot back
+    without registering."""
+    import agent.control.channel as ch_module
+
+    in_open = threading.Event()
+    finish_open = threading.Event()
+    closed: list[object] = []
+
+    class _FakeConn:
+        def execute(self, sql):  # SET memory_limit / SET threads
+            return self
+
+        def close(self):
+            closed.append(self)
+
+    def _blocking_open(**kwargs):
+        in_open.set()
+        finish_open.wait(timeout=5)
+        return _FakeConn()
+
+    monkeypatch.setattr(ch_module, "open_and_attach", _blocking_open)
+
+    admission = _admission(profile="single")
+    release = asyncio.Event()
+    ws = _ScriptedWS("s1", release)
+    consume = asyncio.create_task(ch_module._consume(ws, tmp_path, admission))
+
+    await asyncio.to_thread(in_open.wait, 5)
+    assert admission.running_count == 1, "the open holds its reservation while it runs"
+
+    release.set()
+    await consume
+    await asyncio.sleep(0.05)  # let the detached close task run
+    finish_open.set()
+    for _ in range(50):  # the open resumes on the executor and cleans up
+        await asyncio.sleep(0.02)
+        if admission.running_count == 0:
+            break
+
+    assert admission.running_count == 0, "the abandoned open must release its reservation"
+    assert closed, "the connection it built must be closed, not leaked"
+    assert session.get("s1") is None, "an abandoned open must not register"
+    assert FrameType.SESSION_OPENED not in _frame_types(ws), (
+        "the control plane already failed this session; do not report it open"
+    )
+
+
+async def test_cancelling_an_open_does_not_leak_its_reservation():
+    """CancelledError is a BaseException, so the handler's `except Exception`
+    never caught it and a cancelled open leaked its slot."""
+    import agent.control.channel as ch_module
+
+    in_open = threading.Event()
+    finish_open = threading.Event()
+
+    def _blocking_open(**kwargs):
+        in_open.set()
+        finish_open.wait(timeout=5)
+        raise AssertionError("unreachable in this test")
+
+    admission = _admission(profile="single")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(ch_module, "open_and_attach", _blocking_open)
+        task = asyncio.create_task(
+            ch_module._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
+        )
+        await asyncio.to_thread(in_open.wait, 5)
+        assert admission.running_count == 1
+
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        finish_open.set()
+
+    assert admission.running_count == 0
+
+
+async def test_a_queued_open_fails_fast_instead_of_hanging(monkeypatch):
+    """A queued open must not outwait the control plane's opening deadline.
+
+    Queries queue indefinitely by design; an open cannot, because the API fails
+    the row at its own deadline and the client is left hanging until then."""
+    import agent.control.channel as ch_module
+
+    monkeypatch.setattr(ch_module.settings, "session_queued_timeout_s", 0.05)
+    admission = _admission(profile="single")
+    await ch_module._handle_open_session(_FakeWS(), {"session_id": "held"}, admission)
+
+    ws = _FakeWS()
+    await ch_module._handle_open_session(ws, {"session_id": "queued"}, admission)
+
+    sent = [Frame.model_validate_json(m) for m in ws.sent]
+    assert [f.type for f in sent] == [FrameType.SESSION_OPENED]
+    assert sent[0].payload["status"] == "failed"
+    assert admission.queued_count == 0
+    assert admission.running_count == 1
+
+
+async def test_repeated_reaped_bursts_do_not_erode_capacity(tmp_path):
+    """The whole bug, in one assertion: capacity must survive repeated bursts.
+
+    Before the fix each burst permanently consumed the budget of every session
+    the control plane reaped mid-open, so the same agent admitted fewer and fewer
+    sessions until a single open failed on a completely idle agent."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    per_session = ch_module._session_reservation_request(admission).memory_bytes
+    capacity = admission.budget_bytes // per_session
+    assert capacity >= 2, "test needs a budget that fits at least two sessions"
+
+    def _burst(round_no: int) -> list[str]:
+        return [f"r{round_no}-s{i}" for i in range(capacity + 2)]  # 2 more than fit
+
+    for round_no in range(3):
+        ids = _burst(round_no)
+        ws = _IterWS(
+            [
+                Frame(type=FrameType.OPEN_SESSION, payload={"session_id": sid}).model_dump_json()
+                for sid in ids
+            ]
+        )
+        await ch_module._consume(ws, tmp_path, admission)
+        await asyncio.sleep(0.2)
+        opened = [sid for sid in ids if session.get(sid) is not None]
+        assert len(opened) == capacity, (
+            f"round {round_no}: admitted {len(opened)} of {capacity} — "
+            "capacity eroded across bursts"
+        )
+
+        # The control plane reaps everything, opened and still-queued alike.
+        close_ws = _IterWS(
+            [
+                Frame(type=FrameType.CLOSE_SESSION, payload={"session_id": sid}).model_dump_json()
+                for sid in ids
+            ]
+        )
+        await ch_module._consume(close_ws, tmp_path, admission)
+        await asyncio.sleep(0.2)
+        assert admission.running_count == 0, f"round {round_no}: slots leaked after close"
+        assert admission.queued_count == 0, f"round {round_no}: waiters leaked after close"

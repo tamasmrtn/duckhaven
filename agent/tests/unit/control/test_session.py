@@ -87,7 +87,7 @@ async def test_exec_statement_runs_on_held_conn_without_closing(tmp_path):
 
     ws2 = _FakeWS()
     await ch._handle_exec_statement(
-        ws2, {"session_id": "s1", "query_id": "stmt1", "sql": "SELECT 42 AS n"}, tmp_path
+        ws2, {"session_id": "s1", "query_id": "stmt1", "sql": "SELECT 42 AS n"}, tmp_path, admission
     )
     done = _last(ws2)
     assert done.type == FrameType.QUERY_DONE
@@ -99,7 +99,7 @@ async def test_exec_statement_runs_on_held_conn_without_closing(tmp_path):
     # same session state, proving EXEC did not close the connection.
     ws3 = _FakeWS()
     await ch._handle_exec_statement(
-        ws3, {"session_id": "s1", "query_id": "stmt2", "sql": "SELECT 1 AS n"}, tmp_path
+        ws3, {"session_id": "s1", "query_id": "stmt2", "sql": "SELECT 1 AS n"}, tmp_path, admission
     )
     assert _last(ws3).payload["status"] == "done"
 
@@ -109,7 +109,7 @@ async def test_exec_statement_unknown_session_fails(tmp_path):
 
     ws = _FakeWS()
     await ch._handle_exec_statement(
-        ws, {"session_id": "missing", "query_id": "x", "sql": "SELECT 1"}, tmp_path
+        ws, {"session_id": "missing", "query_id": "x", "sql": "SELECT 1"}, tmp_path, _admission()
     )
     done = _last(ws)
     assert done.type == FrameType.QUERY_DONE
@@ -251,6 +251,7 @@ async def test_remove_interrupts_a_genuinely_running_statement(tmp_path):
             stmt_ws,
             {"session_id": "s1", "query_id": "slow1", "sql": sql, "timeout_s": 300},
             tmp_path,
+            admission,
         )
     )
     await asyncio.sleep(0.2)
@@ -329,7 +330,7 @@ async def test_sweep_keeps_active_session(tmp_path):
     await ch._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
     # A recent statement touched the session, so it is not idle.
     await ch._handle_exec_statement(
-        _FakeWS(), {"session_id": "s1", "query_id": "q1", "sql": "SELECT 1"}, tmp_path
+        _FakeWS(), {"session_id": "s1", "query_id": "q1", "sql": "SELECT 1"}, tmp_path, admission
     )
 
     assert await session.sweep_expired(admission, idle_s=60.0, max_life_s=0) == []
@@ -409,7 +410,7 @@ async def test_exec_statement_acks_before_running(tmp_path):
 
     ws = _FakeWS()
     await ch._handle_exec_statement(
-        ws, {"session_id": "s1", "query_id": "stmt1", "sql": "SELECT 1 AS n"}, tmp_path
+        ws, {"session_id": "s1", "query_id": "stmt1", "sql": "SELECT 1 AS n"}, tmp_path, admission
     )
     types = [f.type for f in _frames(ws)]
     assert types == [FrameType.STATEMENT_ACK, FrameType.QUERY_DONE]
@@ -431,7 +432,10 @@ async def test_exec_statement_acks_before_taking_the_session_lock(tmp_path):
     try:
         task = asyncio.create_task(
             ch._handle_exec_statement(
-                ws, {"session_id": "s1", "query_id": "stmt1", "sql": "SELECT 1"}, tmp_path
+                ws,
+                {"session_id": "s1", "query_id": "stmt1", "sql": "SELECT 1"},
+                tmp_path,
+                admission,
             )
         )
         # Let the handler run up to the lock, where it must now block.
@@ -450,7 +454,7 @@ async def test_exec_statement_acks_even_when_session_missing(tmp_path):
 
     ws = _FakeWS()
     await ch._handle_exec_statement(
-        ws, {"session_id": "missing", "query_id": "x", "sql": "SELECT 1"}, tmp_path
+        ws, {"session_id": "missing", "query_id": "x", "sql": "SELECT 1"}, tmp_path, _admission()
     )
     frames = _frames(ws)
     assert [f.type for f in frames] == [FrameType.STATEMENT_ACK, FrameType.QUERY_DONE]

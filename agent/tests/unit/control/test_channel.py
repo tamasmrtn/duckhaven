@@ -9,7 +9,7 @@ from opentelemetry import trace
 from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags, set_span_in_context
 
 from agent.control import session
-from agent.executor.admission import Admission
+from agent.executor.admission import Admission, ReservationRequest
 from duckhaven_shared.protocol import Frame, FrameType
 from duckhaven_shared.schemas import AgentCapabilities
 from duckhaven_shared.telemetry import inject_trace_context
@@ -1444,3 +1444,221 @@ async def test_repeated_reaped_bursts_do_not_erode_capacity(tmp_path):
         await asyncio.sleep(0.2)
         assert admission.running_count == 0, f"round {round_no}: slots leaked after close"
         assert admission.queued_count == 0, f"round {round_no}: waiters leaked after close"
+
+
+# ── session statements are sized to their own workload ────────────────────────
+#
+# A held session reserves only an idle baseline; each statement grows to its own
+# EXPLAIN estimate and shrinks back. Before this, every session statement ran
+# under one flat reservation fixed at open, so the `auto` profile's estimator —
+# the whole point of `auto` — never applied to any session traffic at all.
+
+
+def _session_state(admission, memory_bytes, threads=1):
+    """A registered session holding a real reservation, with a stub connection."""
+    import agent.control.channel as ch_module
+
+    reservation = admission._try_admit(  # noqa: SLF001 - set up the held grant directly
+        ReservationRequest(memory_bytes=memory_bytes, threads=threads)
+    )
+    assert reservation is not None
+    state = session.SessionState(
+        session_id="s1",
+        conn=object(),
+        reservation=reservation,
+        memory_bytes=reservation.memory_bytes,
+        threads=reservation.threads,
+        opened_at=0.0,
+        last_active_at=0.0,
+    )
+    session.register(state)
+    return ch_module, state
+
+
+async def test_statement_grows_the_reservation_to_its_estimate(monkeypatch):
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    ch, state = _session_state(admission, 64 * 1024**2)
+    baseline = state.memory_bytes
+
+    # A heavy estimate: more than the baseline, less than the whole budget.
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: 700 * 1024**2)
+    await ch._resize_for_statement(state, "SELECT 1", admission)
+
+    assert state.memory_bytes > baseline, "a heavy statement must get more than the idle baseline"
+    assert state.reservation.memory_bytes == state.memory_bytes
+    assert admission.committed_fraction <= 1.0
+
+    ch._shrink_to_baseline(state, admission)
+    assert state.memory_bytes == baseline, "must return to baseline when the statement is done"
+    assert state.reservation.memory_bytes == baseline
+
+
+async def test_statement_keeps_its_size_when_the_estimate_is_unavailable(monkeypatch):
+    """None covers every DDL/DML statement, not just an EXPLAIN failure. The
+    one-shot path falls back to bucket M (a third of the agent); doing that here
+    would hand a third of the agent to every CREATE TABLE."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    ch, state = _session_state(admission, 64 * 1024**2)
+    baseline = state.memory_bytes
+
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: None)
+    await ch._resize_for_statement(state, "CREATE TABLE t (i INT)", admission)
+
+    assert state.memory_bytes == baseline
+
+
+async def test_statement_runs_at_a_partial_size_when_the_budget_is_tight(monkeypatch):
+    """Growth is best-effort: a statement that cannot get its full estimate still
+    runs, at whatever the agent could spare."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    ch, state = _session_state(admission, 64 * 1024**2)
+    baseline = state.memory_bytes
+    # Something else takes almost everything left.
+    free = admission.budget_bytes - int(admission.committed_fraction * admission.budget_bytes)
+    hog = admission._try_admit(ReservationRequest(memory_bytes=free - 32 * 1024**2, threads=1))  # noqa: SLF001
+    assert hog is not None
+
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: admission.budget_bytes)
+    await ch._resize_for_statement(state, "SELECT 1", admission)
+
+    assert baseline < state.memory_bytes < admission.budget_bytes, "grew, but only partially"
+    assert admission.committed_fraction <= 1.0
+
+
+async def test_estimate_failure_does_not_fail_the_statement(monkeypatch):
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    ch, state = _session_state(admission, 64 * 1024**2)
+    baseline = state.memory_bytes
+
+    def _boom(*a, **k):
+        raise RuntimeError("EXPLAIN exploded")
+
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", _boom)
+    await ch._resize_for_statement(state, "SELECT 1", admission)
+
+    assert state.memory_bytes == baseline
+
+
+async def test_static_profile_sessions_are_left_alone(monkeypatch):
+    """Static ladders hand out whole slots, which do not decompose into a
+    baseline plus growth. A session under one keeps the slot it was admitted
+    with."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="single")
+    reservation = await admission.acquire()
+    state = session.SessionState(
+        session_id="s1",
+        conn=object(),
+        reservation=reservation,
+        memory_bytes=reservation.memory_bytes,
+        threads=reservation.threads,
+        opened_at=0.0,
+        last_active_at=0.0,
+    )
+    session.register(state)
+    before = state.memory_bytes
+
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: 1)
+    await ch_module._resize_for_statement(state, "SELECT 1", admission)
+    ch_module._shrink_to_baseline(state, admission)
+
+    assert state.memory_bytes == before
+
+
+async def test_concurrent_sessions_never_oversubscribe_while_growing(monkeypatch):
+    """Fairness under the shape this change actually introduces: several sessions
+    holding baselines, each trying to grow past what is left."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    states = []
+    for i in range(6):
+        reservation = admission._try_admit(  # noqa: SLF001
+            ReservationRequest(memory_bytes=64 * 1024**2, threads=1)
+        )
+        assert reservation is not None
+        states.append(
+            session.SessionState(
+                session_id=f"s{i}",
+                conn=object(),
+                reservation=reservation,
+                memory_bytes=reservation.memory_bytes,
+                threads=reservation.threads,
+                opened_at=0.0,
+                last_active_at=0.0,
+            )
+        )
+
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: admission.budget_bytes)
+    await asyncio.gather(
+        *(ch_module._resize_for_statement(st, "SELECT 1", admission) for st in states)
+    )
+    assert admission.committed_fraction <= 1.0, "concurrent growth oversubscribed the budget"
+
+    for st in states:
+        ch_module._shrink_to_baseline(st, admission)
+    assert admission.committed_fraction <= 6 * (64 * 1024**2) / admission.budget_bytes
+
+
+async def test_exec_statement_sizes_the_session_to_the_statement(tmp_path, monkeypatch):
+    """End to end through the real handler, on a real connection: the wiring from
+    EXEC_STATEMENT to the estimator is the thing that was missing, so testing
+    `_resize_for_statement` alone would not catch it being unhooked again."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    await ch_module._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
+    state = session.get("s1")
+    baseline = state.memory_bytes
+
+    seen: list[int] = []
+    real_run = ch_module.run_statement
+
+    async def _spy(sql, path, timeout_s, **kwargs):
+        seen.append(kwargs["memory_bytes"])
+        return await real_run(sql, path, timeout_s, **kwargs)
+
+    monkeypatch.setattr(ch_module, "run_statement", _spy)
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: 700 * 1024**2)
+
+    await ch_module._handle_exec_statement(
+        _FakeWS(),
+        {"session_id": "s1", "query_id": "q1", "sql": "SELECT 1 AS n"},
+        tmp_path,
+        admission,
+    )
+
+    assert seen and seen[0] > baseline, "the statement must run at its estimated size"
+    assert state.memory_bytes == baseline, "and the session must be back at baseline after"
+    assert admission.committed_fraction <= 1.0
+    await session.remove("s1", admission)
+
+
+async def test_exec_statement_returns_to_baseline_when_the_statement_fails(tmp_path, monkeypatch):
+    """The shrink is in a finally for a reason: a failing heavy query must not
+    leave the session pinning a large reservation for the rest of its life."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    await ch_module._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
+    state = session.get("s1")
+    baseline = state.memory_bytes
+
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: 700 * 1024**2)
+    ws = _FakeWS()
+    await ch_module._handle_exec_statement(
+        ws, {"session_id": "s1", "query_id": "q1", "sql": "SELECT * FROM nope"}, tmp_path, admission
+    )
+
+    assert Frame.model_validate_json(ws.sent[-1]).payload["status"] == "failed"
+    assert state.memory_bytes == baseline
+    await session.remove("s1", admission)

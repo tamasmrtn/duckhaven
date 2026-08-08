@@ -3,6 +3,8 @@ import logging
 import platform
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 
 import websockets
@@ -24,7 +26,12 @@ from agent.executor.admission import (
 from agent.executor.estimator import bucket_for, estimate_memory_bytes
 from agent.executor.runner import open_and_attach
 from agent.executor.supervisor import run_query, run_statement
-from agent.metrics.system import MetricsSampler, cpu_capability, effective_memory_bytes
+from agent.metrics.system import (
+    MetricsSampler,
+    cpu_capability,
+    effective_cores,
+    effective_memory_bytes,
+)
 from duckhaven_shared.concurrency import BUCKET_FRACTIONS
 from duckhaven_shared.protocol import Frame, FrameType
 from duckhaven_shared.schemas import AgentCapabilities
@@ -41,16 +48,63 @@ _in_flight: dict[str, asyncio.Task] = {}
 # query/statement tasks, this covers the rest.
 _background_tasks: set[asyncio.Task] = set()
 
+
+@dataclass
+class _OpeningSession:
+    """An open that has not registered yet, so ``session.remove`` cannot see it.
+
+    ``acquiring`` distinguishes the two halves of an open, which have to be
+    stopped differently: while waiting on ``Admission.acquire`` the task holds
+    nothing and can simply be cancelled, but once ``_open()`` is on the executor
+    a cancel cannot stop that thread and would strand the connection it builds.
+    """
+
+    task: asyncio.Task
+    acquiring: bool = True
+
+
+# Opens between their OPEN_SESSION frame and session.register(). Without this a
+# CLOSE_SESSION arriving in that window — exactly what the control plane's
+# opening deadline produces under load — finds nothing in `session._sessions`,
+# frees neither the reservation nor the connection, and silently costs the agent
+# that much budget for the rest of its life.
+_opening: dict[str, _OpeningSession] = {}
+
+# Opens flagged to clean up after themselves because a CLOSE_SESSION arrived
+# while they were already running on the executor.
+_abandoned: set[str] = set()
+
+_open_executor: ThreadPoolExecutor | None = None
+
+
+def _session_open_executor() -> ThreadPoolExecutor:
+    """The pool session opens run on, sized to the cgroup's real CPU budget.
+
+    Opens would otherwise land on the interpreter's default pool, shared with
+    query execution and with the ``conn.close()`` in session teardown — so a
+    burst of opens can queue ahead of the very closes that would free capacity
+    for them. ``effective_cores`` reads the cgroup quota; ``os.cpu_count`` (what
+    the default pool is sized from) reports the host's cores instead.
+    """
+    global _open_executor
+    if _open_executor is None:
+        _open_executor = ThreadPoolExecutor(
+            max_workers=max(2, effective_cores()), thread_name_prefix="dh-open"
+        )
+    return _open_executor
+
+
 # Control-plane protocol features this agent implements, advertised so the API can
 # gate on them without a version number (see duckhaven_shared.schemas).
 _PROTOCOL_FEATURES = ["statement_ack"]
 
 
-def _spawn(coro) -> None:
+def _spawn(coro) -> asyncio.Task:
     """Run a handler as a detached task, holding a strong ref until it finishes."""
     task = asyncio.create_task(coro)
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
+    return task
 
 
 def _frame_ref(payload: dict) -> str:
@@ -210,53 +264,101 @@ async def _handle_open_session(ws, payload: dict, admission: Admission) -> None:
     }
 
     request = _session_reservation_request(admission)
+    inflight = _opening.get(session_id)
     try:
-        reservation = await admission.acquire(request if admission.is_auto else None)
-    except (QueueFull, QueuedTimeout) as exc:
-        await _send_session_opened(ws, session_id, "failed", str(exc))
-        return
-    except asyncio.CancelledError:
-        raise
+        try:
+            reservation = await admission.acquire(
+                request if admission.is_auto else None,
+                queued_timeout_s=settings.session_queued_timeout_s,
+            )
+        except (QueueFull, QueuedTimeout) as exc:
+            await _send_session_opened(ws, session_id, "failed", str(exc))
+            return
+        except asyncio.CancelledError:
+            # Abandoned while queued. acquire() has already dropped our waiter
+            # and we hold nothing, so there is nothing to release, and
+            # _handle_close_session has acked the close.
+            raise
+        finally:
+            # Nothing awaits between here and the _abandoned check below, so a
+            # close handler can never read `acquiring` as stale and cancel us
+            # once _open() is on the executor, where a cancel cannot help.
+            if inflight is not None:
+                inflight.acquiring = False
 
+        if session_id in _abandoned:
+            # Closed while queued, but we won the slot before the cancel landed.
+            # Hand it straight back rather than opening a connection nobody holds.
+            admission.release(reservation)
+            return
+
+        loop = asyncio.get_running_loop()
+        trace_headers = inject_trace_context()
+
+        def _open() -> object:
+            conn = open_and_attach(
+                catalogs=catalogs,
+                active_catalog=active_catalog,
+                polaris=polaris,
+                trace_headers=trace_headers,
+                disabled_filesystems=settings.sandbox_disabled_filesystems,
+                lock_config=settings.sandbox_lock_configuration,
+            )
+            # Fix the session's resource slice once; statements run within it.
+            # GiB, not GB — see the note in executor.runner._run_one_statement.
+            conn.execute(f"SET memory_limit='{reservation.memory_bytes / 1024**3}GiB'")
+            conn.execute(f"SET threads={reservation.threads}")
+            return conn
+
+        try:
+            conn = await loop.run_in_executor(_session_open_executor(), _open)
+        except asyncio.CancelledError:
+            # CancelledError is a BaseException, so the `except Exception` below
+            # does not catch it and the reservation would leak on any cancel.
+            admission.release(reservation)
+            raise
+        except Exception as exc:  # noqa: BLE001 - report and release on any open failure
+            admission.release(reservation)
+            trace.get_current_span().set_status(Status(StatusCode.ERROR, "session open failed"))
+            await _send_session_opened(ws, session_id, "failed", str(exc))
+            return
+
+        if session_id in _abandoned:
+            # The close landed while _open() was on the executor. That thread could
+            # not be stopped, so the connection exists and is ours to dispose of:
+            # close it and hand the slot back, staying unregistered and silent so
+            # the control plane's view (session already failed) stands.
+            await _discard_open(conn, session_id, reservation, admission)
+            return
+
+        opened_at = time.monotonic()
+        session.register(
+            session.SessionState(
+                session_id=session_id,
+                conn=conn,
+                reservation=reservation,
+                memory_bytes=reservation.memory_bytes,
+                threads=reservation.threads,
+                opened_at=opened_at,
+                last_active_at=opened_at,
+            )
+        )
+        await _send_session_opened(ws, session_id, "open")
+    finally:
+        _opening.pop(session_id, None)
+        _abandoned.discard(session_id)
+
+
+async def _discard_open(conn, session_id: str, reservation, admission: Admission) -> None:
+    """Throw away a connection whose session was closed before the open finished."""
     loop = asyncio.get_running_loop()
-    trace_headers = inject_trace_context()
-
-    def _open() -> object:
-        conn = open_and_attach(
-            catalogs=catalogs,
-            active_catalog=active_catalog,
-            polaris=polaris,
-            trace_headers=trace_headers,
-            disabled_filesystems=settings.sandbox_disabled_filesystems,
-            lock_config=settings.sandbox_lock_configuration,
-        )
-        # Fix the session's resource slice once; statements run within it.
-        # GiB, not GB — see the note in executor.runner._run_one_statement.
-        conn.execute(f"SET memory_limit='{reservation.memory_bytes / 1024**3}GiB'")
-        conn.execute(f"SET threads={reservation.threads}")
-        return conn
-
     try:
-        conn = await loop.run_in_executor(None, _open)
-    except Exception as exc:  # noqa: BLE001 - report and release on any open failure
+        # Off the event-loop thread, for the same reason session._teardown is.
+        await loop.run_in_executor(_session_open_executor(), conn.close)
+    except Exception as exc:  # noqa: BLE001 - close is best-effort
+        logger.warning("Closing abandoned session %s connection failed: %s", session_id, exc)
+    finally:
         admission.release(reservation)
-        trace.get_current_span().set_status(Status(StatusCode.ERROR, "session open failed"))
-        await _send_session_opened(ws, session_id, "failed", str(exc))
-        return
-
-    opened_at = time.monotonic()
-    session.register(
-        session.SessionState(
-            session_id=session_id,
-            conn=conn,
-            reservation=reservation,
-            memory_bytes=reservation.memory_bytes,
-            threads=reservation.threads,
-            opened_at=opened_at,
-            last_active_at=opened_at,
-        )
-    )
-    await _send_session_opened(ws, session_id, "open")
 
 
 async def _handle_exec_statement(ws, payload: dict, results_dir: Path) -> None:
@@ -318,10 +420,32 @@ async def _handle_exec_statement(ws, payload: dict, results_dir: Path) -> None:
         _in_flight.pop(statement_id, None)
 
 
+def _abandon_open(session_id: str) -> None:
+    """Stop an open that has not registered yet, so it frees what it holds.
+
+    Cancel is only safe while the task is waiting on ``Admission.acquire``:
+    ``acquire`` drops its own waiter and nothing has been built yet. Once
+    ``_open()`` is on the executor a cancel cannot stop that thread, so the open
+    is flagged instead and disposes of its own connection when it returns.
+    """
+    inflight = _opening.get(session_id)
+    if inflight is None:
+        return
+    _abandoned.add(session_id)
+    if inflight.acquiring:
+        inflight.task.cancel()
+
+
 async def _handle_close_session(ws, payload: dict, admission: Admission) -> None:
-    """Close a held session: drop the connection, free the admission slot, ack."""
+    """Close a held session: drop the connection, free the admission slot, ack.
+
+    A session only enters `session._sessions` once its open has finished, so a
+    close arriving before that has to reach the in-flight open instead — see
+    `_opening`.
+    """
     session_id = payload["session_id"]
-    await session.remove(session_id, admission)
+    if not await session.remove(session_id, admission):
+        _abandon_open(session_id)
     await ws.send(
         Frame(
             type=FrameType.SESSION_CLOSED,
@@ -651,7 +775,13 @@ async def _consume(ws, results_dir: Path, admission: Admission) -> None:
                 task.cancel()
 
         elif msg.type == FrameType.OPEN_SESSION:
-            _spawn(_traced_open_session(ws, msg, admission))
+            # Recorded here, not inside the handler: frames are read in order but
+            # the handler is a task, so a CLOSE_SESSION read straight after could
+            # otherwise be handled before the open task has registered itself.
+            session_id = msg.payload.get("session_id")
+            task = _spawn(_traced_open_session(ws, msg, admission))
+            if session_id:
+                _opening[session_id] = _OpeningSession(task=task)
 
         elif msg.type == FrameType.EXEC_STATEMENT:
             statement_id = msg.payload.get("query_id", str(uuid.uuid4()))

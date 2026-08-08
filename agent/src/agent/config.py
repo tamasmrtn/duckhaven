@@ -55,6 +55,13 @@ class Settings(BaseSettings):
     # starve interactive queries). Fixes the session connection's `memory_limit`
     # at open (DuckDB has no live resize), clamped to the agent's budget.
     session_reservation_bytes: int = 256 * 1024 * 1024
+    # How long a session open may sit in the admission queue before it is failed.
+    # Unlike a query (``queued_timeout_s = 0``, wait indefinitely), an open races
+    # the control plane's own ``SQL_SESSION_OPENING_DEADLINE_S``: waiting past it
+    # cannot succeed, it only replaces a prompt error with a two-minute hang. Kept
+    # under that deadline so the agent is the one that reports the failure; <= 0
+    # restores the old wait-forever behaviour.
+    session_queued_timeout_s: float = 30.0
     # Agent-owned session lease (the backstop under the API reaper). The agent
     # self-expires a held session idle past ``session_idle_timeout_s`` or older than
     # ``session_max_lifetime_s``, freeing its connection + admission slot even if a

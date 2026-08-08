@@ -186,13 +186,23 @@ class Admission:
                 return Reservation(slot, slot.memory_bytes, slot.threads)
         return None
 
-    async def acquire(self, request: ReservationRequest | None = None) -> Reservation:
+    async def acquire(
+        self,
+        request: ReservationRequest | None = None,
+        *,
+        queued_timeout_s: float | None = None,
+    ) -> Reservation:
         """Admit immediately if capacity allows, else queue FIFO until it does.
 
         ``request`` sizes an ``auto`` reservation; ``None`` uses the static slot
         ladder. Raises ``QueueFull`` when the queue is at capacity, ``QueuedTimeout``
-        when the wait exceeds ``queued_timeout_s``. Cancellation while queued
+        when the wait exceeds the queued timeout. Cancellation while queued
         removes the waiter cleanly.
+
+        ``queued_timeout_s`` overrides the agent-wide ``queued_timeout_s`` for this
+        caller only. Session opens use it because the control plane fails them at a
+        deadline of its own, so waiting past that only turns a fast, actionable
+        error into a long hang; queries keep the agent-wide setting.
         """
         reservation = self._try_admit(request)
         if reservation is not None:
@@ -201,11 +211,12 @@ class Admission:
         if len(self._waiters) >= self._max_queue_depth:
             raise QueueFull("admission queue is full")
 
+        timeout_s = self._queued_timeout_s if queued_timeout_s is None else queued_timeout_s
         waiter: asyncio.Future = asyncio.get_running_loop().create_future()
         self._waiters.append((waiter, request))
         try:
-            if self._queued_timeout_s > 0:
-                await asyncio.wait_for(waiter, self._queued_timeout_s)
+            if timeout_s > 0:
+                await asyncio.wait_for(waiter, timeout_s)
             else:
                 await waiter
             return waiter.result()
@@ -218,7 +229,7 @@ class Admission:
             elif waiter.done() and not waiter.cancelled():
                 self.release(waiter.result())
             if isinstance(exc, TimeoutError):
-                raise QueuedTimeout("query exceeded queued timeout") from exc
+                raise QueuedTimeout("exceeded queued timeout") from exc
             raise
 
     def release(self, reservation: Reservation) -> None:

@@ -111,13 +111,22 @@ that agent's admission budget just like a running query — long-lived sessions 
 interactive queries. Because a session's `memory_limit` is fixed when it opens, size it for steady session work rather
 than a single huge query.
 
+That budget is also what bounds how many sessions one agent can hold at once: roughly its memory budget divided by
+`SESSION_RESERVATION_BYTES` (about 14 on a 4 GB agent at the 256 MB default). Opens beyond that **queue** for capacity
+rather than failing outright, and an open that has waited `SESSION_QUEUED_TIMEOUT_S` gives up with a clear error instead
+of hanging until the control plane's own deadline. If your clients routinely open more sessions at once than an agent
+can hold, that is a sizing question — a larger agent, a smaller per-session reservation, or more agents in the pool —
+not something a longer timeout fixes.
+
 To keep a crashed client from pinning an agent forever, a background reaper closes sessions that have been **idle** past
 `SQL_SESSION_IDLE_TIMEOUT_S` (default 15 minutes) or have run longer than `SQL_SESSION_MAX_LIFETIME_S` (default 4
 hours). A session that never finishes opening — the agent's acknowledgement is lost, so its row is stuck `opening` — is
 reaped once it is older than `SQL_SESSION_OPENING_DEADLINE_S` (default 2 minutes, and must exceed the open timeout), so
 a slot the agent did manage to reserve is never stranded. That deadline runs from when an agent was actually told to
 open the session, not from when the client asked, so a session that first waited out a [cold start](#cold-start) still
-gets its full budget. If the agent's connection drops, DuckHaven fails that agent's
+gets its full budget. Reaping a session this way also reaches an open the agent had **started but not finished** —
+one still queued for capacity, or still building its connection — so the reservation it was holding comes back rather
+than being lost until the agent restarts. If the agent's connection drops, DuckHaven fails that agent's
 sessions immediately — the held connection is gone and Postgres is the source of truth — and the next statement on the
 session returns `409`; the client simply opens a new one. Sessions survive an API restart or failover as long as their
 pinned agent stays connected, because every statement is routed by the agent's recorded owner, not by in-memory state.

@@ -146,6 +146,7 @@ advisory lock, like the scheduler, so leave it enabled everywhere.
 | `SQL_SESSION_OPEN_TIMEOUT_S` | `30` | How long the open endpoint waits for the agent to acknowledge the new session before returning a timeout. |
 | `SQL_SESSION_WAIT_TIMEOUT_S` | `45` | How long the open endpoint blocks when compute has to start first, cold start included. Deliberately one number for every compute backend — nothing a client sees may depend on whether the deployment provisions Docker containers or Azure container groups — so tune it for your clients' patience, not for a provider. See [Cold start](../concepts/sql-sessions.md#cold-start). |
 | `SQL_SESSION_MAX_WAIT_TIMEOUT_S` | `120` | Ceiling on what a client may request via `wait_timeout_s` on the open call. |
+| `SQL_SESSION_OPENING_DEADLINE_S` | `120` | Fail a session still stuck `opening` after this many seconds — the agent never acknowledged it — and tell that agent to drop whatever it reserved. Must exceed `SQL_SESSION_OPEN_TIMEOUT_S`. Measured from when an agent was told to open the session, so a cold start doesn't eat the budget. |
 | `SQL_SESSION_STAGING_PREFIX_SEGMENT` | `_staging` | Object-storage path segment for a session's scoped staging area (`<catalog root>/<segment>/<session_id>/`); the statement policy confines `COPY`/`read_*` to this prefix. |
 | `SQL_SESSION_STAGING_URL_TTL_S` | `900` | Lifetime (seconds) of the presigned `PUT`/`GET` staging URLs handed out by `POST /sql/sessions/{id}/staging-files`. Long enough to upload a load's files and run the `read_parquet` that consumes them. |
 | `SQL_STATEMENT_ACK_DEADLINE_S` | `15` | Fail a session statement that stays `queued` past this many seconds — its dispatch frame never reached the agent. Only applied to agents that advertise ack support; see [SQL sessions](../concepts/sql-sessions.md#statement-delivery-and-deadlines). |
@@ -288,6 +289,7 @@ Best-effort knobs that only apply under the `auto` profile. See
 | `MEMORY_HEADROOM_FRACTION` | `0.10` | Fraction of the effective memory budget held back as headroom. |
 | `MAX_QUEUE_DEPTH` | `100` | Maximum queued queries; beyond this a query fails with `queue full`. |
 | `QUEUED_TIMEOUT_S` | `0` (off) | Fails a query that waits longer than this with `queued timeout`. |
+| `SESSION_QUEUED_TIMEOUT_S` | `30` | Same, for a [session](../concepts/sql-sessions.md) open rather than a query. Separate because the control plane fails a session at `SQL_SESSION_OPENING_DEADLINE_S` anyway: waiting past that can only turn a prompt error into a long hang. Keep it below that deadline; `0` restores the wait-forever behaviour. |
 
 ### Operator ceilings
 

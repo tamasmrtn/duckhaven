@@ -169,8 +169,8 @@ function Diagnostics({
     const reserved = summary.reserved_memory_bytes;
     const detail =
       reserved != null
-        ? `${formatBytes(summary.spill_bytes)} spilled over a ${formatBytes(reserved)} reservation — give it more memory (e.g. SET duckhaven_concurrency='single').`
-        : `${formatBytes(summary.spill_bytes)} spilled — consider a larger reservation.`;
+        ? `${formatBytes(summary.spill_bytes)} spilled over a ${formatBytes(reserved)} reservation — the agent could not spare more memory when this ran. A larger agent, or less running at once, would avoid it.`
+        : `${formatBytes(summary.spill_bytes)} spilled — the agent could not spare enough memory for this query.`;
     issues.push({ id: null, label: BADGE_LABELS.spill, detail });
   }
   for (const gn of layout.nodes) {

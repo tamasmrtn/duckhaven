@@ -10,6 +10,7 @@ from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags, set_s
 
 from agent.control import session
 from agent.executor.admission import Admission, ReservationRequest
+from duckhaven_shared.concurrency import BUCKET_FRACTIONS
 from duckhaven_shared.protocol import Frame, FrameType
 from duckhaven_shared.schemas import AgentCapabilities
 from duckhaven_shared.telemetry import inject_trace_context
@@ -1495,19 +1496,28 @@ async def test_statement_grows_the_reservation_to_its_estimate(monkeypatch):
     assert state.reservation.memory_bytes == baseline
 
 
-async def test_statement_keeps_its_size_when_the_estimate_is_unavailable(monkeypatch):
-    """None covers every DDL/DML statement, not just an EXPLAIN failure. The
-    one-shot path falls back to bucket M (a third of the agent); doing that here
-    would hand a third of the agent to every CREATE TABLE."""
+async def test_an_unestimable_statement_gets_the_fallback_bucket(monkeypatch):
+    """None covers every DDL/DML statement, not just an EXPLAIN failure, and those
+    are not cheap: an Iceberg `CREATE TABLE … AS SELECT` needs a ~76 MiB Parquet
+    row-group buffer in one allocation however few rows it writes, so leaving it at
+    the idle baseline OOMs it outright (caught by the cross-component suite, not by
+    this file, because it only reproduces against a real attached catalog)."""
     import agent.control.channel as ch_module
 
     admission = _admission(profile="auto")
     ch, state = _session_state(admission, 64 * 1024**2)
     baseline = state.memory_bytes
+    expected = int(
+        BUCKET_FRACTIONS[ch_module.settings.estimate_fallback_bucket] * admission.budget_bytes
+    )
 
     monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: None)
     await ch._resize_for_statement(state, "CREATE TABLE t (i INT)", admission)
 
+    assert state.memory_bytes > baseline
+    assert state.memory_bytes == expected
+
+    ch._shrink_to_baseline(state, admission)
     assert state.memory_bytes == baseline
 
 

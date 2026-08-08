@@ -245,17 +245,21 @@ def _statement_reservation_request(
 ) -> ReservationRequest | None:
     """Size one session statement from its estimate, or None to keep the current size.
 
-    Deliberately not ``_build_request``: that falls back to ``estimate_fallback_bucket``
-    (M, a third of the agent) whenever the estimate is None, which is right for a
-    one-shot query but wrong here. For a session, None also covers every DDL/DML
-    statement — ``estimate_memory_bytes`` only estimates single SELECTs — so
-    falling back to M would hand a third of the agent to every ``CREATE TABLE``.
-    Keeping the current size is both cheaper and closer to the truth.
+    An unestimable statement falls back to ``estimate_fallback_bucket``, exactly as
+    the one-shot path does — ``estimate_memory_bytes`` only estimates single
+    SELECTs, so None covers every DDL/DML statement, and those are not cheap.
+    An Iceberg ``CREATE TABLE … AS SELECT`` needs a ~76 MiB Parquet row-group
+    buffer in one allocation no matter how few rows it writes, so leaving it at the
+    idle baseline OOMs it outright. Being more conservative here than the one-shot
+    path buys nothing: the fallback is held for the statement and handed straight
+    back, the same trade the one-shot path already makes.
     """
-    if estimate is None:
-        return None
     budget = admission.budget_bytes
-    mem, frac, _ = bucket_for(estimate, budget, BUCKET_FRACTIONS)
+    if estimate is None:
+        frac = BUCKET_FRACTIONS[settings.estimate_fallback_bucket]
+        mem = int(frac * budget)
+    else:
+        mem, frac, _ = bucket_for(estimate, budget, BUCKET_FRACTIONS)
     ceiling = max(1, int(settings.session_max_bucket_fraction * budget))
     if mem > ceiling:
         mem, frac = ceiling, ceiling / budget

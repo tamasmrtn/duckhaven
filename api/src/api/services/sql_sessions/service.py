@@ -11,6 +11,7 @@ ephemeral socket state.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import uuid
 from datetime import UTC, datetime
 
@@ -173,6 +174,17 @@ async def handle_session_frame(db: AsyncSession, frame: Frame) -> None:
             session.opened_at = now
             session.last_active_at = now
             record_sql_session_opened()
+        elif frame.payload.get("status") == "open":
+            # A successful open for a row we already gave up on (reaped at the
+            # opening deadline, or failed with the agent). The agent is holding a
+            # connection and an admission slot for a session nobody will ever use,
+            # so tell it to drop them — without this it keeps both until it restarts.
+            agent_id, session_id = session.agent_id, session.id
+            await db.commit()
+            if agent_id is not None:
+                with contextlib.suppress(Exception):
+                    await dispatch_close_session(db, agent_id, session_id)
+            return
         elif session.status not in _TERMINAL:
             session.status = "failed"
             session.error = frame.payload.get("error")

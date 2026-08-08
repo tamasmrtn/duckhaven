@@ -228,13 +228,42 @@ async def _traced_dispatch(ws, msg: Frame, results_dir: Path, admission: Admissi
 
 
 def _session_reservation_request(admission: Admission) -> ReservationRequest:
-    """Size a held session's reservation: the configured session memory clamped to
-    the agent's budget, with threads proportional to that fraction."""
+    """A held session's idle baseline: enough for the attached connection itself.
+
+    Under ``auto`` each statement grows from here to its own estimate and shrinks
+    back afterwards (see ``_statement_reservation_request``), so this is a floor
+    rather than the memory the session's queries get."""
     budget = admission.budget_bytes
-    mem = max(1, min(settings.session_reservation_bytes, budget))
+    mem = max(1, min(settings.session_baseline_bytes, budget))
     frac = mem / budget
     threads = max(1, round(admission.cores * frac))
     return ReservationRequest(memory_bytes=mem, threads=threads)
+
+
+def _statement_reservation_request(
+    estimate: int | None, admission: Admission, current_bytes: int
+) -> ReservationRequest | None:
+    """Size one session statement from its estimate, or None to keep the current size.
+
+    Deliberately not ``_build_request``: that falls back to ``estimate_fallback_bucket``
+    (M, a third of the agent) whenever the estimate is None, which is right for a
+    one-shot query but wrong here. For a session, None also covers every DDL/DML
+    statement — ``estimate_memory_bytes`` only estimates single SELECTs — so
+    falling back to M would hand a third of the agent to every ``CREATE TABLE``.
+    Keeping the current size is both cheaper and closer to the truth.
+    """
+    if estimate is None:
+        return None
+    budget = admission.budget_bytes
+    mem, frac, _ = bucket_for(estimate, budget, BUCKET_FRACTIONS)
+    ceiling = max(1, int(settings.session_max_bucket_fraction * budget))
+    if mem > ceiling:
+        mem, frac = ceiling, ceiling / budget
+    if mem <= current_bytes:
+        # Never shrink mid-session on an estimate; the baseline shrink after the
+        # statement is what returns the memory, and it does so unconditionally.
+        return None
+    return ReservationRequest(memory_bytes=mem, threads=max(1, round(admission.cores * frac)))
 
 
 async def _send_session_opened(ws, session_id: str, status: str, error: str | None = None) -> None:
@@ -361,7 +390,59 @@ async def _discard_open(conn, session_id: str, reservation, admission: Admission
         admission.release(reservation)
 
 
-async def _handle_exec_statement(ws, payload: dict, results_dir: Path) -> None:
+async def _resize_for_statement(state, sql: str, admission: Admission) -> None:
+    """Grow a session's reservation to fit the statement it is about to run.
+
+    The session holds only its idle baseline between statements, so this is where
+    a query actually gets sized — the same EXPLAIN estimate and T-shirt bucket the
+    one-shot dispatch path uses, just against the connection the session already
+    has attached (no open/attach round trip needed).
+
+    Growth is best-effort by design: ``try_amend`` hands back whatever the budget
+    can spare rather than blocking, because the session is already holding memory
+    while asking for more and a blocking wait could deadlock two growing sessions
+    against each other. A partial grant still beats the baseline, and a statement
+    that cannot grow at all simply runs as it would have before.
+    """
+    if not admission.is_auto:
+        return
+    loop = asyncio.get_running_loop()
+    try:
+        estimate = await loop.run_in_executor(
+            None,
+            lambda: estimate_memory_bytes(
+                state.conn, sql, safety=settings.estimate_safety_multiplier
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 - estimation must never fail a statement
+        logger.warning("Statement estimate failed for session %s: %s", state.session_id, exc)
+        return
+
+    request = _statement_reservation_request(estimate, admission, state.memory_bytes)
+    if request is None:
+        return
+    admission.try_amend(state.reservation, request)
+    state.memory_bytes = state.reservation.memory_bytes
+    state.threads = state.reservation.threads
+
+
+def _shrink_to_baseline(state, admission: Admission) -> None:
+    """Return a session to its idle baseline once its statement is done.
+
+    Unconditional, and on every exit path: without it one heavy query would pin a
+    large reservation for the rest of the session's life, which is exactly the
+    starvation `auto` exists to prevent.
+    """
+    if not admission.is_auto:
+        return
+    admission.try_amend(state.reservation, _session_reservation_request(admission))
+    state.memory_bytes = state.reservation.memory_bytes
+    state.threads = state.reservation.threads
+
+
+async def _handle_exec_statement(
+    ws, payload: dict, results_dir: Path, admission: Admission
+) -> None:
     """Run one statement on a held session connection and reply with QUERY_DONE.
 
     Statements reuse the query id / QUERY_DONE plumbing so their results page
@@ -387,15 +468,22 @@ async def _handle_exec_statement(ws, payload: dict, results_dir: Path) -> None:
     result_path = results_dir / f"{statement_id}.parquet"
     try:
         async with state.lock:
-            stats = await run_statement(
-                sql,
-                result_path,
-                timeout_s,
-                conn=state.conn,
-                memory_bytes=state.memory_bytes,
-                threads=state.threads,
-                enable_profiling=settings.profiling_enabled,
-            )
+            # Inside the lock: the size applies to this statement only, and the
+            # session runs one statement at a time.
+            await _resize_for_statement(state, sql, admission)
+            try:
+                stats = await run_statement(
+                    sql,
+                    result_path,
+                    timeout_s,
+                    conn=state.conn,
+                    memory_bytes=state.memory_bytes,
+                    threads=state.threads,
+                    enable_profiling=settings.profiling_enabled,
+                    watermarks=state.watermarks,
+                )
+            finally:
+                _shrink_to_baseline(state, admission)
         done_payload: dict[str, object] = {
             "query_id": statement_id,
             "status": "done",
@@ -464,7 +552,7 @@ async def _traced_open_session(ws, msg: Frame, admission: Admission) -> None:
         await _handle_open_session(ws, msg.payload, admission)
 
 
-async def _traced_exec_statement(ws, msg: Frame, results_dir: Path) -> None:
+async def _traced_exec_statement(ws, msg: Frame, results_dir: Path, admission: Admission) -> None:
     with _tracer.start_as_current_span(
         "handle_exec_statement",
         context=extract_trace_context(msg.trace_context),
@@ -474,7 +562,7 @@ async def _traced_exec_statement(ws, msg: Frame, results_dir: Path) -> None:
             "duckhaven.statement_id": msg.payload.get("query_id", ""),
         },
     ):
-        await _handle_exec_statement(ws, msg.payload, results_dir)
+        await _handle_exec_statement(ws, msg.payload, results_dir, admission)
 
 
 async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admission) -> None:
@@ -667,6 +755,12 @@ async def run_control_channel(
         headroom=settings.memory_headroom_fraction,
         max_queue_depth=settings.max_queue_depth,
         queued_timeout_s=settings.queued_timeout_s,
+        # Documented as operator-tunable but never passed until now, so setting
+        # either env var did nothing. They happened to match Admission's own
+        # defaults, which is why it went unnoticed — but the floor now bounds
+        # every session's idle baseline, so it has to be honoured.
+        floor_bytes=settings.estimate_floor_bytes,
+        ceiling_fraction=settings.estimate_ceiling_fraction,
     )
 
     while True:
@@ -785,7 +879,7 @@ async def _consume(ws, results_dir: Path, admission: Admission) -> None:
 
         elif msg.type == FrameType.EXEC_STATEMENT:
             statement_id = msg.payload.get("query_id", str(uuid.uuid4()))
-            task = asyncio.create_task(_traced_exec_statement(ws, msg, results_dir))
+            task = asyncio.create_task(_traced_exec_statement(ws, msg, results_dir, admission))
             _in_flight[statement_id] = task
 
         elif msg.type == FrameType.CLOSE_SESSION:

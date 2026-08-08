@@ -55,7 +55,13 @@ def test_run_statement_returns_rich_metadata_from_supplementary_calls():
         )
     )
     respx.get(f"{BASE}/queries/q-1/profile").mock(
-        return_value=httpx.Response(200, json={"peak_memory_bytes": 4096, "spill_bytes": 0})
+        return_value=httpx.Response(
+            200,
+            json={
+                "summary": {"peak_memory_bytes": 4096, "spill_bytes": 0},
+                "tree": {},
+            },
+        )
     )
 
     client = DuckHavenClient(host=HOST, workspace="ws", pat="tok")

@@ -112,6 +112,12 @@ class DuckHavenClient(EngineClient):
         query_id = cursor._query_id
         detail, profile = self._fetch_metadata(query_id)
         row_count = cursor.rowcount if cursor.rowcount >= 0 else None
+        # GET /queries/{id}/profile returns {"summary": {...}, "tree": {...}}
+        # (agent/src/agent/executor/plan.py: parse_profile / QuerySummary) —
+        # peak_memory_bytes/spill_bytes live under "summary", not at the top
+        # level. Reading them off the top-level dict silently returned None
+        # for every query this harness ever ran until this fix.
+        summary = (profile or {}).get("summary") or {}
 
         return QueryResult(
             engine_query_id=query_id,
@@ -124,8 +130,8 @@ class DuckHavenClient(EngineClient):
             ),
             client_wall_ms=client_wall_ms,
             row_count=row_count,
-            peak_memory_bytes=(profile or {}).get("peak_memory_bytes"),
-            spill_bytes=(profile or {}).get("spill_bytes"),
+            peak_memory_bytes=summary.get("peak_memory_bytes"),
+            spill_bytes=summary.get("spill_bytes"),
             compute_ref=self._conn.agent_id,
             raw_response_json=detail,
         )

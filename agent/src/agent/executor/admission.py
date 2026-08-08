@@ -232,6 +232,41 @@ class Admission:
                 raise QueuedTimeout("exceeded queued timeout") from exc
             raise
 
+    def try_amend(self, reservation: Reservation, request: ReservationRequest) -> bool:
+        """Resize a live ``auto`` reservation in place. Returns whether it was
+        granted in full.
+
+        This is how a held session sizes itself to the statement it is about to
+        run: grow to the estimate, then shrink back when the statement is done.
+        Growth **never blocks** — the caller is already holding memory while
+        asking for more, so waiting for the rest could deadlock two growing
+        sessions against each other with nothing to break the tie. When the
+        budget cannot cover the whole request the caller gets whatever is free
+        and a ``False``, and decides for itself whether to run at that size.
+
+        Both the reservation and ``_committed`` move together, which is what
+        keeps ``release``'s ``_committed -= reservation.memory_bytes`` correct.
+        Never assign to ``reservation.memory_bytes`` directly — the byte counter
+        would drift and the budget invariant would silently break.
+        """
+        if reservation.slot is not None:
+            # Static ladders hand out fixed slots; there is no partial slot to
+            # give back or take. The session keeps the slot it was admitted with.
+            return False
+
+        previous = reservation.memory_bytes
+        target = self._clamp(request.memory_bytes)
+        free = self._budget - self._committed
+        granted = min(target, previous + free)
+
+        self._committed += granted - previous
+        reservation.memory_bytes = granted
+        reservation.threads = max(1, request.threads)
+        if granted < previous:
+            # A shrink frees budget the queue may already be waiting on.
+            self._promote()
+        return granted >= target
+
     def release(self, reservation: Reservation) -> None:
         """Return a reservation and promote the oldest waiter that now fits."""
         if reservation.slot is not None:

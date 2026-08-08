@@ -45,6 +45,11 @@ class SessionState:
     # Serializes statements on the shared connection: a session runs one
     # statement at a time (dbt/dlt use a connection serially).
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # DuckDB's peak memory/temp-dir metrics are high-water marks for the whole
+    # connection, so on a held session they carry over between statements. This
+    # is what each statement's reported peak/spill is measured against; see
+    # executor.runner._apply_watermarks.
+    watermarks: dict[str, int] = field(default_factory=dict)
 
     def touch(self) -> None:
         self.last_active_at = time.monotonic()

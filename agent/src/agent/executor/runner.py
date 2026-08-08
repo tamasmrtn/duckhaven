@@ -61,6 +61,9 @@ _PROFILE_METRICS = (
     "CUMULATIVE_ROWS_SCANNED",
     "SYSTEM_PEAK_BUFFER_MEMORY",
     "SYSTEM_PEAK_TEMP_DIR_SIZE",
+    # Per statement, unlike the two SYSTEM_PEAK_* marks above — the only DuckDB
+    # memory metric that is. See _apply_watermarks.
+    "TOTAL_MEMORY_ALLOCATED",
     "BLOCKED_THREAD_TIME",
     "TOTAL_BYTES_READ",
     "TOTAL_BYTES_WRITTEN",
@@ -608,6 +611,29 @@ def _result_schema(rel: duckdb.DuckDBPyRelation) -> list[dict[str, str]] | None:
         return None
 
 
+def _apply_watermarks(summary: dict[str, Any], watermarks: dict[str, int]) -> None:
+    """Turn connection-lifetime high-water marks into per-statement numbers.
+
+    DuckDB's ``system_peak_buffer_memory`` and ``system_peak_temp_dir_size`` are
+    high-water marks for the whole connection, not for one statement. Verified on
+    1.5.5: after a heavy group-by reports 475 MB, a plain ``SELECT 1`` on the same
+    connection reports 475 MB too, and so does the next one. A held session reuses
+    one connection for its whole life, so every statement after the first was
+    reporting the session's running maximum rather than its own usage — wrong
+    numbers in the profile UI and in anything else reading them.
+
+    There is no pragma that resets these counters, so subtract what earlier
+    statements on this connection already accounted for. A fresh connection (the
+    one-shot query path) starts at zero, so the delta equals the raw value and
+    that path is unchanged.
+    """
+    for key in ("peak_memory_bytes", "spill_bytes"):
+        raw = int(summary.get(key) or 0)
+        previous = watermarks.get(key, 0)
+        summary[key] = max(0, raw - previous)
+        watermarks[key] = max(previous, raw)
+
+
 def _run_one_statement(
     conn: duckdb.DuckDBPyConnection,
     sql: str,
@@ -616,6 +642,7 @@ def _run_one_statement(
     memory_bytes: int,
     threads: int,
     enable_profiling: bool,
+    watermarks: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """Set the connection's resource slice and run one statement.
 
@@ -692,6 +719,8 @@ def _run_one_statement(
                 profile["summary"]["rows_returned"] = row_count
                 profile["summary"]["reserved_memory_bytes"] = memory_bytes
                 profile["summary"]["reserved_threads"] = threads
+                if watermarks is not None:
+                    _apply_watermarks(profile["summary"], watermarks)
             # Size of the materialized result so the UI can show how large it is.
             if result_path.exists():
                 result_bytes = result_path.stat().st_size
@@ -860,6 +889,7 @@ def run_statement_sync(
     memory_bytes: int,
     threads: int,
     enable_profiling: bool = True,
+    watermarks: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """Run one statement on a held SQL-session connection.
 
@@ -869,8 +899,15 @@ def run_statement_sync(
     materialize-single-SELECT-to-Parquet path so the control plane pages statement
     results through the identical fetch pipeline as ordinary queries.
 
-    `memory_bytes`/`threads` are the session's fixed reservation, re-applied per
-    statement (harmless) so the profile records what the statement ran under.
+    `memory_bytes`/`threads` are what admission granted this statement — under
+    `auto` the session grows to its estimate for the statement and shrinks back
+    afterwards, so unlike a one-shot query these change from statement to
+    statement.
+
+    `watermarks` is the session's running record of DuckDB's connection-lifetime
+    peak counters, which is what makes the reported peak/spill belong to this
+    statement rather than to the heaviest one that ran before it. It is mutated
+    in place; see `_apply_watermarks`.
     """
     return _run_one_statement(
         conn,
@@ -879,4 +916,5 @@ def run_statement_sync(
         memory_bytes=memory_bytes,
         threads=threads,
         enable_profiling=enable_profiling,
+        watermarks=watermarks,
     )

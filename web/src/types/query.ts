@@ -39,6 +39,11 @@ export interface QueryProfileSummary {
   spill_bytes: number;
   bytes_read: number;
   bytes_written: number;
+  // Memory this statement itself allocated. peak/spill above come from DuckDB
+  // counters that are high-water marks for the whole connection, so on a held
+  // session they read as "how much this statement raised the bar" and are 0 for
+  // one that stayed under an earlier peak. Optional: older profiles omit it.
+  memory_allocated_bytes?: number;
   // The admission reservation the query ran under. Optional: profiles captured
   // before this was recorded omit them.
   reserved_memory_bytes?: number;

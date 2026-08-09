@@ -85,6 +85,14 @@ class Settings(BaseSettings):
     estimate_safety_multiplier: float = 1.5
     estimate_floor_bytes: int = 64 * 1024 * 1024
     estimate_ceiling_fraction: float = 1.0
+    # Ceiling on the pre-run `EXPLAIN`, enforced with `conn.interrupt()`, on BOTH
+    # estimate paths (one-shot dispatch and session statements). Not a nicety:
+    # DuckDB's planner can spin inside EXPLAIN itself on a heavy join order —
+    # observed on TPC-H Q08 against SF10, pinning a core with the statement never
+    # starting. The statement's own timeout does not cover this, because execution
+    # has not begun. An interrupted EXPLAIN is simply unestimable, so the query
+    # falls back to `estimate_fallback_bucket`. Q08's EXPLAIN normally takes ~90 ms
+    # at SF10, so 2s is a wide margin, not a tight budget.
     explain_timeout_s: float = 2.0
     estimate_fallback_bucket: str = "M"
 

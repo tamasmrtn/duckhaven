@@ -167,6 +167,50 @@ async def _send_failed(ws, query_id: str, error: str) -> None:
     await ws.send(done.model_dump_json())
 
 
+async def _estimate_under_timeout(work, get_conn, *, what: str) -> int | None:
+    """Run an EXPLAIN-based estimate on an executor, bounded by ``explain_timeout_s``.
+
+    DuckDB's planner can occasionally spin inside ``EXPLAIN`` itself — observed
+    twice on TPC-H Q08 (an eight-table join) against SF10, pinning a core with
+    the statement never starting, no I/O and a perfectly healthy event loop.
+    Nothing unwinds that except ``conn.interrupt()``, so every estimate path arms
+    one. The estimator treats an interrupted EXPLAIN as unestimable, so the caller
+    simply falls back to its default bucket.
+
+    ``get_conn`` is a callable rather than a connection because the one-shot path
+    opens its connection *inside* the work function, so there is nothing to
+    interrupt until that has happened.
+    """
+    loop = asyncio.get_running_loop()
+    running = True
+
+    def _interrupt() -> None:
+        if not running:
+            return
+        conn = get_conn()
+        if conn is None:
+            return
+        logger.warning(
+            "EXPLAIN estimate for %s exceeded %.1fs; interrupting and falling back",
+            what,
+            settings.explain_timeout_s,
+        )
+        try:
+            conn.interrupt()
+        except Exception:  # noqa: BLE001 - interrupt is best-effort
+            pass
+
+    handle = loop.call_later(settings.explain_timeout_s, _interrupt)
+    try:
+        return await loop.run_in_executor(None, work)
+    except Exception as exc:  # noqa: BLE001 - estimation must never drop a statement
+        logger.warning("Estimate failed for %s: %s", what, exc)
+        return None
+    finally:
+        running = False
+        handle.cancel()
+
+
 async def _prepare_and_estimate(sql: str, **attach_kwargs) -> tuple[object | None, int | None]:
     """Open+attach a connection and estimate peak memory (best-effort, `auto`).
 
@@ -174,7 +218,6 @@ async def _prepare_and_estimate(sql: str, **attach_kwargs) -> tuple[object | Non
     `conn.interrupt()`. Returns `(conn|None, estimate|None)`; the estimator
     swallows an interrupted EXPLAIN as `None`. Never raises into dispatch.
     """
-    loop = asyncio.get_running_loop()
     conn_box: dict[str, object] = {}
     # Captured here (event-loop thread, inside handle_dispatch's span) and
     # passed in: run_in_executor does not propagate contextvars to the worker
@@ -187,22 +230,9 @@ async def _prepare_and_estimate(sql: str, **attach_kwargs) -> tuple[object | Non
         conn_box["conn"] = conn
         return estimate_memory_bytes(conn, sql, safety=settings.estimate_safety_multiplier)
 
-    def _interrupt() -> None:
-        conn = conn_box.get("conn")
-        if conn is not None:
-            try:
-                conn.interrupt()
-            except Exception:  # noqa: BLE001 - interrupt is best-effort
-                pass
-
-    handle = loop.call_later(settings.explain_timeout_s, _interrupt)
-    try:
-        estimate = await loop.run_in_executor(None, _work)
-    except Exception as exc:  # noqa: BLE001 - estimation must never drop a query
-        logger.warning("Estimate prepare failed: %s", exc)
-        estimate = None
-    finally:
-        handle.cancel()
+    estimate = await _estimate_under_timeout(
+        _work, lambda: conn_box.get("conn"), what="one-shot query"
+    )
     return conn_box.get("conn"), estimate
 
 
@@ -485,17 +515,17 @@ async def _resize_for_statement(
     if sql in state.estimates:
         estimate = state.estimates[sql]
     else:
-        loop = asyncio.get_running_loop()
-        try:
-            estimate = await loop.run_in_executor(
-                None,
-                lambda: estimate_memory_bytes(
-                    state.conn, sql, safety=settings.estimate_safety_multiplier
-                ),
-            )
-        except Exception as exc:  # noqa: BLE001 - estimation must never fail a statement
-            logger.warning("Statement estimate failed for session %s: %s", state.session_id, exc)
-            return
+        # Bounded by the same EXPLAIN timeout the one-shot path uses. Without it a
+        # planner that spins takes the session with it: the statement never starts,
+        # a core burns, and nothing times out because the statement's own timeout
+        # only covers execution.
+        estimate = await _estimate_under_timeout(
+            lambda: estimate_memory_bytes(
+                state.conn, sql, safety=settings.estimate_safety_multiplier
+            ),
+            lambda: state.conn,
+            what=f"session {state.session_id}",
+        )
         state.remember_estimate(sql, estimate)
 
     request = _statement_reservation_request(

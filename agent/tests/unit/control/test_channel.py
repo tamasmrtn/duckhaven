@@ -1546,12 +1546,19 @@ async def test_statement_runs_at_a_partial_size_when_the_budget_is_tight(monkeyp
     assert admission.committed_fraction <= 1.0
 
 
-async def test_estimate_failure_does_not_fail_the_statement(monkeypatch):
+async def test_estimate_failure_falls_back_rather_than_failing_the_statement(monkeypatch):
+    """An estimate that blows up leaves the statement unestimable, which is the
+    fallback bucket's whole purpose — the same treatment the one-shot path gives
+    it. Leaving the session on its idle baseline instead would run the statement
+    in 64 MiB, which is how an Iceberg `CREATE TABLE … AS SELECT` OOMs outright."""
     import agent.control.channel as ch_module
 
     admission = _admission(profile="auto")
     ch, state = _session_state(admission, 64 * 1024**2)
     baseline = state.memory_bytes
+    fallback = int(
+        BUCKET_FRACTIONS[ch_module.settings.estimate_fallback_bucket] * admission.budget_bytes
+    )
 
     def _boom(*a, **k):
         raise RuntimeError("EXPLAIN exploded")
@@ -1559,7 +1566,41 @@ async def test_estimate_failure_does_not_fail_the_statement(monkeypatch):
     monkeypatch.setattr(ch_module, "estimate_memory_bytes", _boom)
     await ch._resize_for_statement(state, "SELECT 1", admission)
 
-    assert state.reservation.memory_bytes == baseline
+    assert state.reservation.memory_bytes == fallback > baseline
+
+
+async def test_a_hanging_explain_is_interrupted_and_falls_back(monkeypatch):
+    """DuckDB's planner can spin inside EXPLAIN itself — seen twice on TPC-H Q08
+    against SF10. The session estimate path had no timeout at all, so the statement
+    never started, a core burned, and nothing unwound it: the statement's own
+    timeout only covers execution, which had not begun."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    ch, state = _session_state(admission, 64 * 1024**2)
+    baseline = state.memory_bytes
+    monkeypatch.setattr(ch_module.settings, "explain_timeout_s", 0.05)
+
+    interrupted = threading.Event()
+
+    class _SpinningConn:
+        """Blocks in EXPLAIN until somebody interrupts it, like the real thing."""
+
+        def interrupt(self):
+            interrupted.set()
+
+    state.conn = _SpinningConn()
+
+    def _hang(conn, sql, **kwargs):
+        if not interrupted.wait(timeout=10):
+            raise AssertionError("EXPLAIN was never interrupted")
+        raise RuntimeError("INTERRUPT: query interrupted")  # what DuckDB raises
+
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", _hang)
+    await asyncio.wait_for(ch._resize_for_statement(state, "SELECT 1", admission, 30.0), timeout=10)
+
+    assert interrupted.is_set(), "the hung EXPLAIN was never interrupted"
+    assert state.reservation.memory_bytes > baseline, "did not fall back to a usable size"
 
 
 async def test_static_profile_sessions_are_left_alone(monkeypatch):

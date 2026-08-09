@@ -76,6 +76,19 @@ class ReservationRequest:
 
 
 @dataclass
+class _GrowthWaiter:
+    """A statement parked until enough budget is free for it to grow into.
+
+    ``needed`` is the extra bytes it must see free to be worth waking — the queue
+    is head-of-line, so a waiter that cannot be satisfied blocks the ones behind
+    it rather than letting a smaller request jump ahead.
+    """
+
+    future: asyncio.Future
+    needed: int
+
+
+@dataclass
 class Reservation:
     """A grant returned by ``acquire`` and handed back to ``release``.
 
@@ -149,11 +162,12 @@ class Admission:
         # whose DuckDB connection has not been shrunk yet. Drained by
         # ``apply_pending_resizes``; see there for why this is not done inline.
         self._pending_resizes: list[Reservation] = []
-        # Set whenever ``_committed`` falls, so a statement waiting for room to
-        # grow wakes the moment there is some instead of polling for it.
-        self._budget_freed = asyncio.Event()
-        # Statements currently waiting on that event (reported in METRICS_SAMPLE).
-        self._growth_waiting = 0
+        # Statements parked waiting for room to grow, oldest first. A deque of
+        # futures rather than a broadcast Event: waking every waiter on every
+        # free had them re-race and split the same bytes into fractions too small
+        # for any of them to use, so they parked again still holding what they
+        # took. See ``_promote_growth``.
+        self._growth_queue: deque[_GrowthWaiter] = deque()
         self.set_profile(profile)
 
     # -- profile -----------------------------------------------------------
@@ -353,7 +367,7 @@ class Admission:
             return 0
         reservation.elastic_bytes -= give
         self._committed -= give
-        self._budget_freed.set()
+        self._promote_growth()
         if reservation.elastic_bytes == 0:
             self._elastic = [held for held in self._elastic if held is not reservation]
         if apply and not any(queued is reservation for queued in self._pending_resizes):
@@ -495,39 +509,97 @@ class Admission:
         reservation.memory_bytes = granted
         reservation.threads = max(1, request.threads)
         if granted < previous:
-            # A shrink frees budget the queue may already be waiting on.
-            self._budget_freed.set()
+            # A shrink frees budget the queues may already be waiting on.
             self._promote()
+            self._promote_growth()
         return granted >= target
 
     # -- waiting for room to grow -------------------------------------------
 
     @property
     def growth_waiting(self) -> int:
-        """Statements currently waiting for budget to grow into."""
-        return self._growth_waiting
+        """Statements currently parked waiting for budget to grow into."""
+        return len(self._growth_queue)
 
-    def arm_budget_wait(self) -> None:
-        """Arm the budget signal *before* attempting a sizing.
+    async def await_growth(self, needed: int, timeout: float) -> bool:
+        """Park until ``needed`` bytes are free, or ``timeout`` elapses.
 
-        Ordering matters: arming first means anything freed while the sizing runs
-        still counts, so a waiter can never miss the wakeup it was about to sleep
-        for and stall until its deadline.
+        Returns whether budget actually came free. The caller is expected to have
+        given its own grant back down to a baseline *before* calling — a waiter
+        that sleeps holding a partial grant is holding exactly the budget it, and
+        everyone behind it, is waiting for. Ten of them once held 100.000% of a
+        4 GiB agent's budget between them while all ten waited for more, and only
+        the timeout broke it.
+
+        Cancellation propagates rather than being swallowed, matching ``acquire``:
+        a CANCEL_QUERY or a session teardown arriving mid-wait has to actually stop
+        the statement, not be absorbed here and let it run anyway.
         """
-        self._budget_freed.clear()
-
-    async def wait_for_budget(self, timeout: float) -> bool:
-        """Sleep until budget is freed or ``timeout`` elapses. True if signalled."""
         if timeout <= 0:
             return False
-        self._growth_waiting += 1
+        waiter = _GrowthWaiter(asyncio.get_running_loop().create_future(), max(0, needed))
+        self._growth_queue.append(waiter)
         try:
-            await asyncio.wait_for(self._budget_freed.wait(), timeout)
+            # The result carries *why* we woke: True from ``_promote_growth`` (the
+            # budget is there), False from ``release_growth_head`` (it never will
+            # be — run with what you have). Returning a bare True here would make
+            # the two indistinguishable, and the caller would park straight back.
+            return await asyncio.wait_for(waiter.future, timeout)
         except TimeoutError:
             return False
         finally:
-            self._growth_waiting -= 1
-        return True
+            entry = next((e for e in self._growth_queue if e is waiter), None)
+            if entry is not None:
+                self._growth_queue.remove(entry)
+
+    def release_growth_head(self) -> bool:
+        """Let the oldest parked statement give up waiting and run as it is.
+
+        The escape hatch for a queue that can no longer be served: when nothing is
+        executing, no budget will ever be released, and every parked statement
+        would otherwise sleep until its own deadline. The guard in
+        ``channel._resize_for_statement`` catches that *before* a statement parks;
+        this catches the case where the system went quiet *after* it parked, which
+        is what actually happened — ten statements sat for 255 seconds on an agent
+        that had stopped doing anything at all.
+
+        One at a time, deliberately: the released statement runs, finishes and
+        releases, and the ordinary ``_promote_growth`` path then serves the next
+        one properly. Waking the whole queue instead would put every starved
+        statement on the agent at the same instant, which is the herd that killed
+        it last time. Returns whether a waiter was released.
+        """
+        while self._growth_queue:
+            head = self._growth_queue.popleft()
+            if head.future.done():
+                continue
+            # False == "budget did not come free; proceed with what you have".
+            head.future.set_result(False)
+            return True
+        return False
+
+    def _promote_growth(self) -> None:
+        """Wake **one** parked statement, if the head of the queue now fits.
+
+        One at a time and strictly in order, for the same reason ``_promote``
+        admits one at a time: waking everybody hands each of them a slice of the
+        free budget, and a slice is usually below the floor they parked for. The
+        head waiter instead sees the whole of what is free, uses it, runs, and
+        releases — which is what makes progress structural rather than lucky.
+
+        Head-of-line: a head waiter that still does not fit blocks the queue
+        rather than letting a smaller request behind it jump ahead.
+        """
+        while self._growth_queue:
+            head = self._growth_queue[0]
+            if head.future.done():
+                self._growth_queue.popleft()
+                continue
+            if head.needed > self._free():
+                return
+            self._growth_queue.popleft()
+            head.future.set_result(True)
+            return
 
     def release(self, reservation: Reservation) -> None:
         """Return a reservation — both tiers — and promote the oldest waiter that
@@ -539,11 +611,14 @@ class Admission:
         if reservation.slot is not None:
             reservation.slot.occupied = False
         self._committed -= reservation.total_bytes
-        self._budget_freed.set()
         reservation.elastic_bytes = 0
         self._elastic = [held for held in self._elastic if held is not reservation]
         self._running -= 1
+        # New admissions first, so the FIFO `_promote` documents stays the one
+        # that orders arrivals; a growth waiter is already holding a session, and
+        # admissions are baseline-sized, so this cannot meaningfully starve it.
         self._promote()
+        self._promote_growth()
 
     def _promote(self) -> None:
         """Admit queued waiters (oldest first) while the head-of-line fits.

@@ -48,12 +48,15 @@ its operators alone has nowhere to keep that cache, so every scan goes back to t
 data it has already read. Lending it the agent's idle memory removes that cost, and costs other tenants nothing:
 elastic memory is **revocable**, so the moment another query needs those bytes the agent takes them back (the lender
 simply loses some cache) rather than making the newcomer queue. A query never waits on memory that is only being used
-to cache with.
+to cache with. Elastic memory belongs to `auto` alone — a static ladder's slot is a fixed contract, which is the reason
+to choose one, so it neither grows nor shrinks. On a static profile a query gets exactly its slot's share, and a small
+slot on a small agent may be too tight to cache with.
 
-**Threads** are separate from both. Every statement is given the agent's full core count. The container's CPU quota is
-the real limit on how much CPU an agent can use, and the operating system shares it out between concurrent queries, so
-handing each query fewer threads than the agent has cores only makes that query slower without leaving anything extra
-for anyone else.
+**Threads** are separate from both, and work the same way under **every** profile: each statement is given the agent's
+full core count. Neither the `auto` estimator's buckets nor a static ladder's weights touch it — they divide memory. The
+container's CPU quota is the real limit on how much CPU an agent can use, and the operating system shares it out
+between concurrent queries, so handing one query fewer threads than the agent has cores only makes that query slower
+without leaving anything extra for anyone else.
 
 !!! note "Sessions keep their cache between statements"
     A [SQL session](sql-sessions.md) hands its *required* memory back after each statement but keeps its elastic

@@ -9,9 +9,10 @@ rather than getting OOM-killed.
 Capacity is a *weighted slot ladder* (see ``duckhaven_shared.concurrency``): the
 budget is split across slots in proportion to descending weights, and a new query
 takes the largest free slot. ``decaying_3`` ([3,2,1]) gives the first running
-query the most memory/threads, the second less, the third least. DuckDB fixes
+query the most memory, the second less, the third least. DuckDB fixes
 ``memory_limit`` at session start and cannot resize a running query, so slots are
-assigned statically at admission.
+assigned statically at admission. The weights divide memory only — every slot
+gets the agent's full core count (see ``set_profile``).
 
 The profile is agent-global and switchable at runtime via ``set_profile`` (driven
 by the worksheet ``SET duckhaven_concurrency`` command). The hard invariant —
@@ -152,6 +153,16 @@ class Admission:
 
         Running queries keep their existing reservations; the ``_committed`` guard
         prevents the rebuilt ladder from oversubscribing during the transition.
+
+        A ladder's weights divide **memory** only. They used to divide the core
+        count too, which on a small agent collapsed every multi-slot profile to
+        one thread per query (``decaying_3`` on 2 cores: 1/1/1) — the same
+        coupling ``threads_for_statement`` exists to undo for ``auto``, and for
+        the same reason it buys nothing: the cgroup quota caps total CPU whatever
+        the slots say, so a narrower slot only made its own query slower. A ladder
+        also bounds concurrency by its slot count, so full cores per slot
+        oversubscribes threads by a known, small factor rather than an open-ended
+        one.
         """
         weights = CONCURRENCY_PROFILES.get(profile)
         if weights is None:
@@ -165,7 +176,7 @@ class Admission:
             [
                 _Slot(
                     memory_bytes=max(1, round(self._budget * w / total)),
-                    threads=max(1, round(self._cores * w / total)),
+                    threads=self.threads_for_statement(),
                 )
                 for w in weights
             ]
@@ -188,13 +199,17 @@ class Admission:
     def threads_for_statement(self) -> int:
         """DuckDB thread count for one statement: the agent's whole CPU budget.
 
-        Threads used to be derived from the reservation's share of the *memory*
-        budget, which on a 2-core agent floored every bucket below XL to a single
-        thread — 21 of the 22 TPC-H queries ran single-threaded. Nothing in the
-        byte invariant depends on this number: the cgroup CPU quota is the real
-        cap, and two concurrent statements at the full core count each were
-        measured to finish in the same wall time as one running alone. So
-        under-provisioning here is a pure loss and over-provisioning is free.
+        One rule for every profile — the ``auto`` estimator's buckets and the
+        static ladders' weights both size *memory* and neither touches this.
+
+        Threads used to be derived from the reservation's share of the memory
+        budget, which on a 2-core agent floored every ``auto`` bucket below XL and
+        every multi-slot ladder to a single thread — 21 of the 22 TPC-H queries
+        ran single-threaded. Nothing in the byte invariant depends on this number:
+        the cgroup CPU quota is the real cap, and two concurrent statements at the
+        full core count each were measured to finish in the same wall time as one
+        running alone. So under-provisioning here is a pure loss and
+        over-provisioning is free.
         """
         return self._cores
 

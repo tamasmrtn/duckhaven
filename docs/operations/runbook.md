@@ -150,7 +150,7 @@ slice of that budget:
   best-effort under a short timeout and never delays or drops a query.
 - **Static slot ladders** — the budget is divided into a fixed **weighted slot
   ladder**; a new query takes the largest free slot, so the first running query
-  gets the most memory/threads and later ones get less.
+  gets the most memory and later ones get less.
 
 | Profile        | Weights   | Slots | Share of budget                  |
 | -------------- | --------- | ----- | -------------------------------- |
@@ -159,6 +159,11 @@ slice of that budget:
 | `equal_2`      | `[1,1]`   | 2     | 50% / 50%                        |
 | `decaying_2`   | `[2,1]`   | 2     | 67% / 33%                        |
 | `decaying_3`   | `[3,2,1]` | 3     | 50% / 33% / 17%                  |
+
+The weights divide **memory only**. Every query gets the agent's full core count
+under every profile, `auto` included: the container's CPU quota already caps the
+agent as a whole, so narrowing one query's thread count slows that query down
+without leaving anything spare for the others.
 
 Default is `auto` (`MAX_CONCURRENCY_PROFILE`); the static ladders remain
 selectable as fallbacks. The queue holds up to `MAX_QUEUE_DEPTH` (default 100)

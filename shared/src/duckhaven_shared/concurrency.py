@@ -6,6 +6,11 @@ list of integer slot weights, largest first: the agent's memory budget is split
 across the slots in proportion to the weights, and a new query takes the largest
 free slot (the rest queue). ``decaying_3`` => the first running query gets the
 most, the second a little less, the third least.
+
+The weights govern **memory only**. CPU is not divided: every query gets the
+agent's full core count under every profile, because the container's CPU quota
+already caps the agent as a whole and narrowing a query's thread count only slows
+that query down (see ``agent.executor.admission.threads_for_statement``).
 """
 
 from __future__ import annotations

@@ -10,9 +10,11 @@ from agent.executor.admission import (
     QueueFull,
     ReservationRequest,
 )
+from duckhaven_shared.concurrency import CONCURRENCY_PROFILES
 
 # A 12-unit budget with no headroom makes the weighted slot maths exact:
-# decaying_3 [3,2,1] -> slots of 6, 4, 2 (sum 12); cores 6 -> threads 3, 2, 1.
+# decaying_3 [3,2,1] -> slots of 6, 4, 2 (sum 12). The weights divide memory only;
+# every slot gets all CORES threads.
 BUDGET = 12
 CORES = 6
 
@@ -34,7 +36,6 @@ async def test_admits_up_to_budget_then_queues():
     r3 = await adm.acquire()
     # Slots are descending and sum to the budget; first query gets the most.
     assert (r1.memory_bytes, r2.memory_bytes, r3.memory_bytes) == (6, 4, 2)
-    assert (r1.threads, r2.threads, r3.threads) == (3, 2, 1)
     assert adm.running_count == 3
 
     # The 4th query cannot be admitted (budget exhausted) -> it waits.
@@ -324,6 +325,56 @@ async def test_threads_are_the_whole_core_budget_regardless_of_memory():
 
     assert adm.threads_for_statement() == CORES
     assert tiny.threads == big.threads == CORES
+
+
+@pytest.mark.parametrize("profile", [p for p in CONCURRENCY_PROFILES if p != "auto"])
+async def test_ladder_weights_divide_memory_but_never_cpu(profile):
+    """The same coupling, in the other half of the system: a ladder's weights used
+    to scale the core count too, so on a 2-core agent every multi-slot profile gave
+    each query one thread. One rule for every profile — weights are memory."""
+    adm = _admission(profile=profile)
+    reservations = []
+    while (res := adm._try_admit()) is not None:  # noqa: SLF001 - fill the ladder
+        reservations.append(res)
+
+    assert reservations, f"{profile} admitted nothing"
+    assert all(r.threads == CORES for r in reservations)
+    # Memory is still divided: only `single` hands one query the whole budget.
+    assert sum(r.memory_bytes for r in reservations) <= BUDGET
+    if len(reservations) > 1:
+        assert min(r.memory_bytes for r in reservations) < BUDGET
+
+
+async def test_a_static_slot_takes_no_elastic_memory():
+    """A ladder slot is a fixed contract — that is what the profile is chosen for —
+    so it does not grow, the same reason `try_amend` refuses one. The cache tier
+    belongs to `auto` alone."""
+    adm = _admission(profile="decaying_3")
+    res = await adm.acquire()
+
+    assert adm.grant_elastic(res, BUDGET) == 0
+    assert res.elastic_bytes == 0
+    assert res.total_bytes == res.memory_bytes
+
+
+async def test_switching_to_a_bigger_ladder_reclaims_idle_cache():
+    """Profile switches go through the same admission decision as everything else,
+    so a `single` slot that needs the whole budget can take back cache an idle
+    `auto` session is holding instead of waiting for it to close."""
+    adm = _auto()
+    held = await adm.acquire(_req(2))
+    resized, is_idle, on_resize = _holder()
+    held.is_idle, held.on_resize = is_idle, on_resize
+    adm.grant_elastic(held, BUDGET)
+    assert adm.committed_fraction == 1.0
+
+    adm.set_profile("single")  # the new ladder wants a BUDGET-sized slot
+    admitted = adm._try_admit()  # noqa: SLF001 - the decision a waiter would make
+
+    assert admitted is None, "the required 2 bytes are not reclaimable, so it cannot fit"
+    assert held.elastic_bytes == 0, "but the idle cache was handed back"
+    assert resized == [held.total_bytes]
+    assert adm.committed_fraction == 2 / BUDGET
 
 
 # ── elastic (revocable cache) memory ──────────────────────────────────────────

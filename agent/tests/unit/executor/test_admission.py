@@ -233,3 +233,110 @@ async def test_auto_head_of_line_blocks_smaller_behind():
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
+
+
+# ── try_amend: resizing a live reservation ────────────────────────────────────
+#
+# A held SQL session reserves only a small idle baseline and grows to fit each
+# statement it runs, then shrinks back. That needs the reservation to move while
+# it is held, which `acquire`/`release` alone cannot express.
+
+
+async def test_amend_grows_within_budget():
+    adm = _auto()
+    res = await adm.acquire(_req(2))
+
+    assert adm.try_amend(res, _req(8, threads=4)) is True
+    assert res.memory_bytes == 8
+    assert res.threads == 4
+    assert adm.committed_fraction == 8 / BUDGET
+
+
+async def test_amend_grants_what_is_free_when_the_target_does_not_fit():
+    """A partial grant beats refusing: the statement runs at the biggest size the
+    agent can actually spare, which is never worse than the baseline it had."""
+    adm = _auto()
+    other = await adm.acquire(_req(7))  # 5 left
+    res = await adm.acquire(_req(2))  # 3 left
+
+    assert adm.try_amend(res, _req(10)) is False, "cannot be granted in full"
+    assert res.memory_bytes == 5, "grew by exactly the free budget"
+    assert adm.committed_fraction == 1.0
+    adm.release(other)
+
+
+async def test_amend_never_oversubscribes_the_budget():
+    adm = _auto()
+    a = await adm.acquire(_req(6))
+    b = await adm.acquire(_req(6))
+    for _ in range(5):
+        adm.try_amend(a, _req(BUDGET))
+        adm.try_amend(b, _req(BUDGET))
+        assert adm.committed_fraction <= 1.0
+
+
+async def test_amend_shrink_promotes_a_queued_waiter():
+    """Shrinking back to the baseline must hand the freed budget to the queue,
+    or a session that grew would starve everything waiting behind it."""
+    adm = _auto()
+    res = await adm.acquire(_req(10))
+    waiting = asyncio.create_task(adm.acquire(_req(8)))
+    await asyncio.sleep(0)
+    assert adm.queued_count == 1
+
+    adm.try_amend(res, _req(2))  # shrink back to baseline
+    await asyncio.sleep(0)
+
+    assert waiting.done(), "the shrink freed enough for the queued waiter"
+    assert adm.queued_count == 0
+    adm.release(await waiting)
+
+
+async def test_amend_refuses_a_static_slot_reservation():
+    """Static ladders hand out whole slots; there is no partial slot to trade."""
+    adm = _admission(profile="single")
+    res = await adm.acquire()
+    before = res.memory_bytes
+
+    assert adm.try_amend(res, _req(1)) is False
+    assert res.memory_bytes == before
+
+
+async def test_amend_clamps_to_the_ceiling():
+    adm = _admission(profile="auto", floor_bytes=1, ceiling_fraction=0.5)
+    res = await adm.acquire(_req(1))
+
+    assert adm.try_amend(res, _req(BUDGET)) is True
+    assert res.memory_bytes == BUDGET // 2
+
+
+async def test_committed_never_exceeds_budget_under_random_churn():
+    """The invariant `auto` exists for, exercised the way sessions actually move:
+    acquire a baseline, grow for a statement, shrink back, release. If any of
+    those paths forgets to keep `_committed` in step with the reservation, the
+    agent silently oversubscribes its cgroup and DuckDB gets OOM-killed."""
+    import random
+
+    rng = random.Random(1234)
+    adm = _auto()
+    live = []
+
+    for _ in range(400):
+        action = rng.choice(("acquire", "grow", "shrink", "release"))
+        if action == "acquire" and len(live) < 6:
+            free = int((1 - adm.committed_fraction) * BUDGET)
+            if free >= 1:
+                live.append(await adm.acquire(_req(rng.randint(1, free))))
+        elif action == "grow" and live:
+            adm.try_amend(rng.choice(live), _req(rng.randint(1, BUDGET)))
+        elif action == "shrink" and live:
+            adm.try_amend(rng.choice(live), _req(1))
+        elif action == "release" and live:
+            adm.release(live.pop(rng.randrange(len(live))))
+
+        assert 0.0 <= adm.committed_fraction <= 1.0, "budget oversubscribed"
+        assert adm.running_count == len(live)
+
+    for res in live:
+        adm.release(res)
+    assert adm.committed_fraction == 0.0

@@ -1,0 +1,53 @@
+# Scale factors and per-SF scope (plan §4/§6). DuckHaven runs locally
+# (Docker) for the entire benchmark (METHODOLOGY.md §9's second revision)
+# — there is no Azure apply/destroy session or storage lifecycle to work
+# within anymore.
+#
+# 2026-08-07 methodology revision: scope narrowed to read scenarios only
+# (sequential/cold_start/concurrent) — see METHODOLOGY.md §9. write and
+# dml stay implemented (orchestrator/scenario_write.py,
+# scenario_dml.py, config/scenarios.yaml) but are not part of the active
+# comparison: Phase 0's SF1 dry run showed they aren't comparable across
+# all three engines today (a Snowflake trial-account privilege limit, a
+# DuckHaven agent-sizing gap), and read-only is what this setup can run
+# fairly right now.
+
+scale_factors:
+  sf1:
+    factor: 1
+    approx_size: "~1 GB"
+    scenarios: [sequential, cold_start, concurrent]
+    # Generous headroom relative to data size; real ceilings come from
+    # config/sizing_matrix.yaml + live compute-options pricing at run time.
+    query_timeout_s: 600
+    snowflake_sample_schema: TPCH_SF1 # pre-loaded, zero load cost
+    phase: 0 # dry-run on free/local tiers before any Azure spend
+
+  sf10:
+    factor: 10
+    approx_size: "~10 GB"
+    scenarios: [sequential, cold_start, concurrent]
+    query_timeout_s: 600
+    snowflake_sample_schema: TPCH_SF10
+    phase: 2
+
+  sf100:
+    factor: 100
+    approx_size: "~100 GB"
+    scenarios: [sequential, cold_start, concurrent]
+    query_timeout_s: 1800
+    snowflake_sample_schema: TPCH_SF100
+    phase: 2
+
+  sf300:
+    factor: 300
+    approx_size: "~300 GB"
+    scenarios: [sequential, cold_start, concurrent]
+    query_timeout_s: 3600
+    # No pre-loaded Snowflake sample at this scale, and read-only scope
+    # means there is no write path left to self-load one either — SF300's
+    # Snowflake leg needs a real decision (a bigger trial/paid account with
+    # load privileges, or dropping SF300 for Snowflake) before Phase 2,
+    # not a silent skip.
+    snowflake_sample_schema: null
+    phase: 2

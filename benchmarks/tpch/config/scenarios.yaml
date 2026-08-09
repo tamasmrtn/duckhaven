@@ -1,0 +1,59 @@
+# The five TPC-H scenarios (plan §4). Frozen alongside METHODOLOGY.md before
+# any real-money run — reps and statistic are pre-declared so results can't
+# be cherry-picked after the fact.
+
+statistic: median
+default_reps: 5
+
+scenarios:
+  sequential:
+    description: All 22 standard TPC-H queries, run one at a time, warm.
+    reps: 5
+    cold_start_before_each: false
+    concurrent: false
+
+  cold_start:
+    description: >
+      Same 22 queries, compute cold-started before each one — isolates the
+      "resume from zero" cost each platform charges.
+    reps: 3
+    cold_start_before_each: true
+    concurrent: false
+
+  concurrent:
+    description: All 22 queries fired in parallel.
+    reps: 3
+    cold_start_before_each: false
+    concurrent: true
+
+  write:
+    description: >
+      CTAS-equivalent materialization across table-shape variants (see
+      ddl/*/{narrow,wide}.sql) — narrow (few columns) and wide/denormalized.
+    reps: 3
+    shapes: [narrow, wide]
+    # DuckHaven-specific: issued as a session statement before the write so
+    # it gets the whole agent memory budget rather than the fixed ⅓ ("M")
+    # fallback bucket every write statement otherwise gets (plan §2 gotcha 2).
+    duckhaven_pre_statement: "SET duckhaven_concurrency = 'single'"
+
+  dml:
+    description: >
+      DELETE + INSERT on ~1% of rows, simulating an incremental refresh.
+    reps: 3
+    delete_insert_fraction: 0.01
+    cycles: 3
+    # DuckHaven's Iceberg maintenance is read-only/advisory only (cannot
+    # expire snapshots or rewrite files via the DuckDB iceberg extension) —
+    # this scenario will accumulate small files/snapshots with no in-app
+    # remediation. Disclosed explicitly in METHODOLOGY.md, not worked around.
+    duckhaven_no_compaction_caveat: true
+
+# The scenarios actually in scope for the comparison, per the 2026-08-07
+# read-only revision (METHODOLOGY.md §9) — see scale_factors.yaml for the
+# authoritative per-SF list (SF1000 is scoped down further still). write
+# and dml stay defined above and implemented in orchestrator/, but are not
+# drawn from here: they weren't comparable across all three engines in
+# Phase 0's SF1 dry run (a Snowflake trial-account privilege limit, a
+# DuckHaven agent-sizing gap), not something this revision hides.
+all_scenarios: [sequential, cold_start, concurrent]

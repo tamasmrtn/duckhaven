@@ -1,0 +1,57 @@
+[project]
+name = "tpch-bench"
+version = "0.1.0"
+description = "First-party TPC-H benchmark: DuckHaven vs Snowflake vs Databricks"
+requires-python = ">=3.14"
+dependencies = [
+    "httpx>=0.28",
+    "duckdb>=1.5",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "typer>=0.15",
+    "tenacity>=9.0",
+    "pyyaml>=6.0",
+    "duckhaven-sql-connector>=0.4.0",
+    "snowflake-connector-python>=3.12",
+    "databricks-sql-connector>=3.5",
+    "azure-storage-blob>=12.19",
+    "azure-identity>=1.16",
+    "boto3>=1.34",
+    "tpchgen-cli>=3.0.0",
+]
+
+# Deliberately standalone: not a member of the root uv workspace
+# (`[tool.uv.workspace] members` at the repo root), so these third-party
+# vendor SDKs never enter api/agent/shared's dependency resolution or CI.
+# `uv run --project benchmarks/tpch <cmd>` (or `cd` into this directory)
+# to use it.
+
+[dependency-groups]
+dev = [
+    "ruff>=0.16.0",
+    "pytest>=9.1.1",
+    "respx>=0.23.1",
+]
+
+[project.scripts]
+tpch-bench = "tpch_bench.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tpch_bench"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["tpch_bench"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]

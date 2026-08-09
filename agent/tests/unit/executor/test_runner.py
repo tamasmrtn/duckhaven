@@ -546,3 +546,63 @@ def test_stats_for_reports_table_row_count(tmp_path):
     assert stats["row_count"] == 3
     assert stats["table_row_count"] == 3
     assert stats["table_size_bytes"] is None
+
+
+# ── per-statement peak/spill on a held connection ─────────────────────────────
+
+
+def test_second_statement_on_a_held_connection_reports_its_own_peak(tmp_path):
+    """DuckDB's peak-memory metric is a high-water mark for the whole connection,
+    not the statement. A held SQL session reuses one connection for its whole
+    life, so before this every statement after the first reported the heaviest
+    earlier statement's peak as its own — wrong numbers in the profile UI for any
+    query that was not the first one run on a session."""
+    import duckdb
+
+    from agent.executor.runner import run_statement_sync
+
+    conn = duckdb.connect()
+    watermarks: dict[str, int] = {}
+
+    heavy = run_statement_sync(
+        "SELECT i % 3000000 g, count(*) c FROM range(5000000) t(i) GROUP BY 1 ORDER BY c DESC",
+        tmp_path / "heavy.parquet",
+        conn=conn,
+        memory_bytes=_MEM,
+        threads=_THREADS,
+        watermarks=watermarks,
+    )
+    heavy_peak = heavy["profile"]["summary"]["peak_memory_bytes"]
+    assert heavy_peak > 0, "the heavy statement should report a real peak"
+
+    light = run_statement_sync(
+        "SELECT 1 AS n",
+        tmp_path / "light.parquet",
+        conn=conn,
+        memory_bytes=_MEM,
+        threads=_THREADS,
+        watermarks=watermarks,
+    )
+    light_summary = light["profile"]["summary"]
+
+    assert light_summary["peak_memory_bytes"] < heavy_peak, (
+        "SELECT 1 must not inherit the previous statement's peak"
+    )
+    # total_memory_allocated is DuckDB's only genuinely per-statement memory
+    # metric, and is what the UI can show when the delta is 0.
+    assert (
+        light_summary["memory_allocated_bytes"]
+        < heavy["profile"]["summary"]["memory_allocated_bytes"]
+    )
+
+
+def test_one_shot_queries_still_report_the_raw_peak(tmp_path):
+    """The watermark subtraction must not change the per-query path: a fresh
+    connection starts at zero, so the delta is the raw value."""
+    result_path = tmp_path / "out.parquet"
+    stats = _run(
+        "SELECT i % 100000 g, count(*) FROM range(500000) t(i) GROUP BY 1",
+        result_path,
+        enable_profiling=True,
+    )
+    assert stats["profile"]["summary"]["peak_memory_bytes"] > 0

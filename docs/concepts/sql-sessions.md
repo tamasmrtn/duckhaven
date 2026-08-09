@@ -108,8 +108,29 @@ client's own poll deadline.
 
 A session holds a real connection **and** a memory reservation on its agent for its whole life, so it counts against
 that agent's admission budget just like a running query — long-lived sessions can't oversubscribe memory or starve
-interactive queries. Because a session's `memory_limit` is fixed when it opens, size it for steady session work rather
-than a single huge query.
+interactive queries.
+
+Under the default `auto` profile that reservation is not one fixed size. A session holds a small **idle baseline**
+(`SESSION_BASELINE_BYTES`, 64 MB by default) between statements, and each statement it runs is sized to its own
+workload: the agent estimates the statement from its `EXPLAIN` plan, grows the session's reservation to fit, runs it,
+and shrinks straight back to the baseline. A heavy query gets the memory it needs without a one-off heavy query pinning
+that memory for the rest of the session's life.
+
+Growth is bounded by what the agent can actually spare at that moment. If the budget is tight the statement gets
+whatever is free and runs at that size — slower, possibly spilling to disk, but never blocked and never at the expense
+of another session's memory. `SESSION_MAX_BUCKET_FRACTION` caps how much of the agent one statement may take.
+
+Because the idle baseline is small, sessions-per-agent is bounded by the baseline rather than by peak query size:
+roughly the memory budget divided by `SESSION_BASELINE_BYTES` (about 56 on a 4 GB agent at the default). Opens beyond
+that **queue** for capacity rather than failing outright, and an open that has waited `SESSION_QUEUED_TIMEOUT_S` gives
+up with a clear error instead of hanging until the control plane's own deadline. If your clients routinely open more
+sessions at once than an agent can hold, that is a sizing question — a larger agent or more agents in the pool — not
+something a longer timeout fixes.
+
+!!! note "Static profiles size sessions differently"
+    Under a static ladder (`single`, `equal_2`, …) a session takes a whole ladder slot for its lifetime and does not
+    grow or shrink, because slots don't subdivide. `single` in particular gives one session the entire agent, which
+    also means no other query can run until it closes.
 
 To keep a crashed client from pinning an agent forever, a background reaper closes sessions that have been **idle** past
 `SQL_SESSION_IDLE_TIMEOUT_S` (default 15 minutes) or have run longer than `SQL_SESSION_MAX_LIFETIME_S` (default 4
@@ -117,7 +138,9 @@ hours). A session that never finishes opening — the agent's acknowledgement is
 reaped once it is older than `SQL_SESSION_OPENING_DEADLINE_S` (default 2 minutes, and must exceed the open timeout), so
 a slot the agent did manage to reserve is never stranded. That deadline runs from when an agent was actually told to
 open the session, not from when the client asked, so a session that first waited out a [cold start](#cold-start) still
-gets its full budget. If the agent's connection drops, DuckHaven fails that agent's
+gets its full budget. Reaping a session this way also reaches an open the agent had **started but not finished** —
+one still queued for capacity, or still building its connection — so the reservation it was holding comes back rather
+than being lost until the agent restarts. If the agent's connection drops, DuckHaven fails that agent's
 sessions immediately — the held connection is gone and Postgres is the source of truth — and the next statement on the
 session returns `409`; the client simply opens a new one. Sessions survive an API restart or failover as long as their
 pinned agent stays connected, because every statement is routed by the agent's recorded owner, not by in-memory state.

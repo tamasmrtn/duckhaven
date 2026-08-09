@@ -62,6 +62,14 @@ class QuerySummary:
     ``reserved_memory_bytes``/``reserved_threads`` are not part of DuckDB's
     profile — they are the admission reservation the runner ran under, injected
     so the UI can compare actual peak/spill against what the query was given.
+
+    ``peak_memory_bytes``/``spill_bytes`` come from DuckDB metrics that are
+    high-water marks for the whole connection, so on a held session the runner
+    subtracts what earlier statements already set (see ``_apply_watermarks``).
+    Both are therefore "how much this statement raised the bar", and read 0 for a
+    statement that stayed under an earlier peak — which is why
+    ``memory_allocated_bytes`` is carried alongside them: it is DuckDB's only
+    genuinely per-statement memory metric.
     """
 
     latency_ms: float
@@ -72,6 +80,7 @@ class QuerySummary:
     spill_bytes: int
     bytes_read: int
     bytes_written: int
+    memory_allocated_bytes: int = 0
     reserved_memory_bytes: int = 0
     reserved_threads: int = 0
 
@@ -85,6 +94,7 @@ class QuerySummary:
             "spill_bytes": self.spill_bytes,
             "bytes_read": self.bytes_read,
             "bytes_written": self.bytes_written,
+            "memory_allocated_bytes": self.memory_allocated_bytes,
             "reserved_memory_bytes": self.reserved_memory_bytes,
             "reserved_threads": self.reserved_threads,
         }
@@ -160,6 +170,7 @@ def parse_profile(profile: dict[str, Any]) -> tuple[QuerySummary, NormalizedNode
         result_bytes=int(_num("result_set_size")),
         peak_memory_bytes=int(_num("system_peak_buffer_memory")),
         spill_bytes=int(_num("system_peak_temp_dir_size")),
+        memory_allocated_bytes=int(_num("total_memory_allocated")),
         bytes_read=int(_num("total_bytes_read")),
         bytes_written=int(_num("total_bytes_written")),
     )

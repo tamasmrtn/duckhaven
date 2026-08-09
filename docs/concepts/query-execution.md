@@ -25,8 +25,11 @@ Each agent runs queries under admission control so it never oversubscribes memor
 memory budget is cgroup-aware (it respects a container/pod limit). Capacity is sized one of two ways:
 
 - **`auto` (default)** — the agent runs `EXPLAIN` and estimates a query's peak memory from the optimizer's plan, then
-  reserves a proportional "T-shirt" slice; cheap queries pack in, heavy ones queue.
-- **Static slot ladders** — a fixed weighted split (`single`, `equal_2`, `decaying_2`, `decaying_3`).
+  reserves a proportional "T-shirt" slice; cheap queries pack in, heavy ones queue. This applies to one-shot queries
+  **and** to statements run inside a [SQL session](sql-sessions.md#pinning-lifetime-and-failure) — a session grows to
+  fit each statement and shrinks back between them, rather than holding one size for its whole life.
+- **Static slot ladders** — a fixed weighted split (`single`, `equal_2`, `decaying_2`, `decaying_3`). Slots are fixed,
+  so a session under a static profile holds its whole slot for its lifetime.
 
 The profile is switchable at runtime and applies per agent. See
 [Runbook §6](../operations/runbook.md#6-query-queueing-concurrency) and [Scaling compute](../operations/scaling.md).

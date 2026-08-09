@@ -50,11 +50,25 @@ class Settings(BaseSettings):
     memory_headroom_fraction: float = 0.10
     max_queue_depth: int = 100
     queued_timeout_s: float = 0.0
-    # Memory a held SQL session reserves for its whole lifetime (occupying an
-    # admission slot so long-lived sessions can't oversubscribe the budget or
-    # starve interactive queries). Fixes the session connection's `memory_limit`
-    # at open (DuckDB has no live resize), clamped to the agent's budget.
-    session_reservation_bytes: int = 256 * 1024 * 1024
+    # What a held SQL session reserves while it is idle: enough for the attached
+    # connection's own footprint, not for the heaviest query it might ever run.
+    # Under `auto` each statement grows the reservation to its own estimate and
+    # shrinks back here afterwards, so this is a floor, not a ceiling. Keeping it
+    # small is what leaves headroom to grow into: at the old flat 256 MiB, 14 open
+    # sessions committed a 4 GB agent's entire budget and no statement could ever
+    # grow. Clamped to the agent's budget.
+    session_baseline_bytes: int = 64 * 1024 * 1024
+    # Ceiling on how far one session statement may grow, as a fraction of the
+    # agent's budget. 1.0 lets a single heavy statement use the whole agent when
+    # nothing else is running; lower it to keep more in reserve for other tenants.
+    session_max_bucket_fraction: float = 1.0
+    # How long a session open may sit in the admission queue before it is failed.
+    # Unlike a query (``queued_timeout_s = 0``, wait indefinitely), an open races
+    # the control plane's own ``SQL_SESSION_OPENING_DEADLINE_S``: waiting past it
+    # cannot succeed, it only replaces a prompt error with a two-minute hang. Kept
+    # under that deadline so the agent is the one that reports the failure; <= 0
+    # restores the old wait-forever behaviour.
+    session_queued_timeout_s: float = 30.0
     # Agent-owned session lease (the backstop under the API reaper). The agent
     # self-expires a held session idle past ``session_idle_timeout_s`` or older than
     # ``session_max_lifetime_s``, freeing its connection + admission slot even if a

@@ -170,7 +170,16 @@ async def test_close_frees_slot_for_reuse(api_client, workspace, spawn_agent) ->
     backstop: fill the one slot, prove a second open is refused, DELETE the
     first, then prove a third open succeeds on the now-freed slot."""
     before = {a["id"] for a in (await api_client.get("/api/agents")).json()}
-    spawn_agent({"MAX_CONCURRENCY_PROFILE": "single", "QUEUED_TIMEOUT_S": "2"})
+    # SESSION_QUEUED_TIMEOUT_S, not QUEUED_TIMEOUT_S: a session open has its own
+    # queue bound, because it races the control plane's opening deadline in a way
+    # a query does not.
+    spawn_agent(
+        {
+            "MAX_CONCURRENCY_PROFILE": "single",
+            "QUEUED_TIMEOUT_S": "2",
+            "SESSION_QUEUED_TIMEOUT_S": "2",
+        }
+    )
     agent_id = await _wait_new_agent_id(api_client, before)
 
     # Fill the agent's one admission slot.
@@ -314,13 +323,13 @@ _orig = ch._handle_exec_statement
 _dropped = []
 
 
-async def _drop_first(ws, payload, results_dir):
+async def _drop_first(ws, payload, results_dir, admission):
     # Swallow the first statement whole: no ack, no QUERY_DONE, no execution —
     # indistinguishable from the frame never arriving.
     if not _dropped:
         _dropped.append(payload["query_id"])
         return
-    await _orig(ws, payload, results_dir)
+    await _orig(ws, payload, results_dir, admission)
 
 
 ch._handle_exec_statement = _drop_first

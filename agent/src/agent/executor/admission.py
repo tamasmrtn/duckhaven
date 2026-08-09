@@ -186,13 +186,23 @@ class Admission:
                 return Reservation(slot, slot.memory_bytes, slot.threads)
         return None
 
-    async def acquire(self, request: ReservationRequest | None = None) -> Reservation:
+    async def acquire(
+        self,
+        request: ReservationRequest | None = None,
+        *,
+        queued_timeout_s: float | None = None,
+    ) -> Reservation:
         """Admit immediately if capacity allows, else queue FIFO until it does.
 
         ``request`` sizes an ``auto`` reservation; ``None`` uses the static slot
         ladder. Raises ``QueueFull`` when the queue is at capacity, ``QueuedTimeout``
-        when the wait exceeds ``queued_timeout_s``. Cancellation while queued
+        when the wait exceeds the queued timeout. Cancellation while queued
         removes the waiter cleanly.
+
+        ``queued_timeout_s`` overrides the agent-wide ``queued_timeout_s`` for this
+        caller only. Session opens use it because the control plane fails them at a
+        deadline of its own, so waiting past that only turns a fast, actionable
+        error into a long hang; queries keep the agent-wide setting.
         """
         reservation = self._try_admit(request)
         if reservation is not None:
@@ -201,11 +211,12 @@ class Admission:
         if len(self._waiters) >= self._max_queue_depth:
             raise QueueFull("admission queue is full")
 
+        timeout_s = self._queued_timeout_s if queued_timeout_s is None else queued_timeout_s
         waiter: asyncio.Future = asyncio.get_running_loop().create_future()
         self._waiters.append((waiter, request))
         try:
-            if self._queued_timeout_s > 0:
-                await asyncio.wait_for(waiter, self._queued_timeout_s)
+            if timeout_s > 0:
+                await asyncio.wait_for(waiter, timeout_s)
             else:
                 await waiter
             return waiter.result()
@@ -218,8 +229,43 @@ class Admission:
             elif waiter.done() and not waiter.cancelled():
                 self.release(waiter.result())
             if isinstance(exc, TimeoutError):
-                raise QueuedTimeout("query exceeded queued timeout") from exc
+                raise QueuedTimeout("exceeded queued timeout") from exc
             raise
+
+    def try_amend(self, reservation: Reservation, request: ReservationRequest) -> bool:
+        """Resize a live ``auto`` reservation in place. Returns whether it was
+        granted in full.
+
+        This is how a held session sizes itself to the statement it is about to
+        run: grow to the estimate, then shrink back when the statement is done.
+        Growth **never blocks** — the caller is already holding memory while
+        asking for more, so waiting for the rest could deadlock two growing
+        sessions against each other with nothing to break the tie. When the
+        budget cannot cover the whole request the caller gets whatever is free
+        and a ``False``, and decides for itself whether to run at that size.
+
+        Both the reservation and ``_committed`` move together, which is what
+        keeps ``release``'s ``_committed -= reservation.memory_bytes`` correct.
+        Never assign to ``reservation.memory_bytes`` directly — the byte counter
+        would drift and the budget invariant would silently break.
+        """
+        if reservation.slot is not None:
+            # Static ladders hand out fixed slots; there is no partial slot to
+            # give back or take. The session keeps the slot it was admitted with.
+            return False
+
+        previous = reservation.memory_bytes
+        target = self._clamp(request.memory_bytes)
+        free = self._budget - self._committed
+        granted = min(target, previous + free)
+
+        self._committed += granted - previous
+        reservation.memory_bytes = granted
+        reservation.threads = max(1, request.threads)
+        if granted < previous:
+            # A shrink frees budget the queue may already be waiting on.
+            self._promote()
+        return granted >= target
 
     def release(self, reservation: Reservation) -> None:
         """Return a reservation and promote the oldest waiter that now fits."""

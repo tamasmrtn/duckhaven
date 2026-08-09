@@ -3,6 +3,8 @@ import logging
 import platform
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 
 import websockets
@@ -24,7 +26,12 @@ from agent.executor.admission import (
 from agent.executor.estimator import bucket_for, estimate_memory_bytes
 from agent.executor.runner import open_and_attach
 from agent.executor.supervisor import run_query, run_statement
-from agent.metrics.system import MetricsSampler, cpu_capability, effective_memory_bytes
+from agent.metrics.system import (
+    MetricsSampler,
+    cpu_capability,
+    effective_cores,
+    effective_memory_bytes,
+)
 from duckhaven_shared.concurrency import BUCKET_FRACTIONS
 from duckhaven_shared.protocol import Frame, FrameType
 from duckhaven_shared.schemas import AgentCapabilities
@@ -41,16 +48,63 @@ _in_flight: dict[str, asyncio.Task] = {}
 # query/statement tasks, this covers the rest.
 _background_tasks: set[asyncio.Task] = set()
 
+
+@dataclass
+class _OpeningSession:
+    """An open that has not registered yet, so ``session.remove`` cannot see it.
+
+    ``acquiring`` distinguishes the two halves of an open, which have to be
+    stopped differently: while waiting on ``Admission.acquire`` the task holds
+    nothing and can simply be cancelled, but once ``_open()`` is on the executor
+    a cancel cannot stop that thread and would strand the connection it builds.
+    """
+
+    task: asyncio.Task
+    acquiring: bool = True
+
+
+# Opens between their OPEN_SESSION frame and session.register(). Without this a
+# CLOSE_SESSION arriving in that window — exactly what the control plane's
+# opening deadline produces under load — finds nothing in `session._sessions`,
+# frees neither the reservation nor the connection, and silently costs the agent
+# that much budget for the rest of its life.
+_opening: dict[str, _OpeningSession] = {}
+
+# Opens flagged to clean up after themselves because a CLOSE_SESSION arrived
+# while they were already running on the executor.
+_abandoned: set[str] = set()
+
+_open_executor: ThreadPoolExecutor | None = None
+
+
+def _session_open_executor() -> ThreadPoolExecutor:
+    """The pool session opens run on, sized to the cgroup's real CPU budget.
+
+    Opens would otherwise land on the interpreter's default pool, shared with
+    query execution and with the ``conn.close()`` in session teardown — so a
+    burst of opens can queue ahead of the very closes that would free capacity
+    for them. ``effective_cores`` reads the cgroup quota; ``os.cpu_count`` (what
+    the default pool is sized from) reports the host's cores instead.
+    """
+    global _open_executor
+    if _open_executor is None:
+        _open_executor = ThreadPoolExecutor(
+            max_workers=max(2, effective_cores()), thread_name_prefix="dh-open"
+        )
+    return _open_executor
+
+
 # Control-plane protocol features this agent implements, advertised so the API can
 # gate on them without a version number (see duckhaven_shared.schemas).
 _PROTOCOL_FEATURES = ["statement_ack"]
 
 
-def _spawn(coro) -> None:
+def _spawn(coro) -> asyncio.Task:
     """Run a handler as a detached task, holding a strong ref until it finishes."""
     task = asyncio.create_task(coro)
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
+    return task
 
 
 def _frame_ref(payload: dict) -> str:
@@ -174,13 +228,46 @@ async def _traced_dispatch(ws, msg: Frame, results_dir: Path, admission: Admissi
 
 
 def _session_reservation_request(admission: Admission) -> ReservationRequest:
-    """Size a held session's reservation: the configured session memory clamped to
-    the agent's budget, with threads proportional to that fraction."""
+    """A held session's idle baseline: enough for the attached connection itself.
+
+    Under ``auto`` each statement grows from here to its own estimate and shrinks
+    back afterwards (see ``_statement_reservation_request``), so this is a floor
+    rather than the memory the session's queries get."""
     budget = admission.budget_bytes
-    mem = max(1, min(settings.session_reservation_bytes, budget))
+    mem = max(1, min(settings.session_baseline_bytes, budget))
     frac = mem / budget
     threads = max(1, round(admission.cores * frac))
     return ReservationRequest(memory_bytes=mem, threads=threads)
+
+
+def _statement_reservation_request(
+    estimate: int | None, admission: Admission, current_bytes: int
+) -> ReservationRequest | None:
+    """Size one session statement from its estimate, or None to keep the current size.
+
+    An unestimable statement falls back to ``estimate_fallback_bucket``, exactly as
+    the one-shot path does — ``estimate_memory_bytes`` only estimates single
+    SELECTs, so None covers every DDL/DML statement, and those are not cheap.
+    An Iceberg ``CREATE TABLE … AS SELECT`` needs a ~76 MiB Parquet row-group
+    buffer in one allocation no matter how few rows it writes, so leaving it at the
+    idle baseline OOMs it outright. Being more conservative here than the one-shot
+    path buys nothing: the fallback is held for the statement and handed straight
+    back, the same trade the one-shot path already makes.
+    """
+    budget = admission.budget_bytes
+    if estimate is None:
+        frac = BUCKET_FRACTIONS[settings.estimate_fallback_bucket]
+        mem = int(frac * budget)
+    else:
+        mem, frac, _ = bucket_for(estimate, budget, BUCKET_FRACTIONS)
+    ceiling = max(1, int(settings.session_max_bucket_fraction * budget))
+    if mem > ceiling:
+        mem, frac = ceiling, ceiling / budget
+    if mem <= current_bytes:
+        # Never shrink mid-session on an estimate; the baseline shrink after the
+        # statement is what returns the memory, and it does so unconditionally.
+        return None
+    return ReservationRequest(memory_bytes=mem, threads=max(1, round(admission.cores * frac)))
 
 
 async def _send_session_opened(ws, session_id: str, status: str, error: str | None = None) -> None:
@@ -210,56 +297,156 @@ async def _handle_open_session(ws, payload: dict, admission: Admission) -> None:
     }
 
     request = _session_reservation_request(admission)
+    inflight = _opening.get(session_id)
     try:
-        reservation = await admission.acquire(request if admission.is_auto else None)
-    except (QueueFull, QueuedTimeout) as exc:
-        await _send_session_opened(ws, session_id, "failed", str(exc))
-        return
-    except asyncio.CancelledError:
-        raise
+        try:
+            reservation = await admission.acquire(
+                request if admission.is_auto else None,
+                queued_timeout_s=settings.session_queued_timeout_s,
+            )
+        except (QueueFull, QueuedTimeout) as exc:
+            await _send_session_opened(ws, session_id, "failed", str(exc))
+            return
+        except asyncio.CancelledError:
+            # Abandoned while queued. acquire() has already dropped our waiter
+            # and we hold nothing, so there is nothing to release, and
+            # _handle_close_session has acked the close.
+            raise
+        finally:
+            # Nothing awaits between here and the _abandoned check below, so a
+            # close handler can never read `acquiring` as stale and cancel us
+            # once _open() is on the executor, where a cancel cannot help.
+            if inflight is not None:
+                inflight.acquiring = False
 
+        if session_id in _abandoned:
+            # Closed while queued, but we won the slot before the cancel landed.
+            # Hand it straight back rather than opening a connection nobody holds.
+            admission.release(reservation)
+            return
+
+        loop = asyncio.get_running_loop()
+        trace_headers = inject_trace_context()
+
+        def _open() -> object:
+            conn = open_and_attach(
+                catalogs=catalogs,
+                active_catalog=active_catalog,
+                polaris=polaris,
+                trace_headers=trace_headers,
+                disabled_filesystems=settings.sandbox_disabled_filesystems,
+                lock_config=settings.sandbox_lock_configuration,
+            )
+            # Fix the session's resource slice once; statements run within it.
+            # GiB, not GB — see the note in executor.runner._run_one_statement.
+            conn.execute(f"SET memory_limit='{reservation.memory_bytes / 1024**3}GiB'")
+            conn.execute(f"SET threads={reservation.threads}")
+            return conn
+
+        try:
+            conn = await loop.run_in_executor(_session_open_executor(), _open)
+        except asyncio.CancelledError:
+            # CancelledError is a BaseException, so the `except Exception` below
+            # does not catch it and the reservation would leak on any cancel.
+            admission.release(reservation)
+            raise
+        except Exception as exc:  # noqa: BLE001 - report and release on any open failure
+            admission.release(reservation)
+            trace.get_current_span().set_status(Status(StatusCode.ERROR, "session open failed"))
+            await _send_session_opened(ws, session_id, "failed", str(exc))
+            return
+
+        if session_id in _abandoned:
+            # The close landed while _open() was on the executor. That thread could
+            # not be stopped, so the connection exists and is ours to dispose of:
+            # close it and hand the slot back, staying unregistered and silent so
+            # the control plane's view (session already failed) stands.
+            await _discard_open(conn, session_id, reservation, admission)
+            return
+
+        opened_at = time.monotonic()
+        session.register(
+            session.SessionState(
+                session_id=session_id,
+                conn=conn,
+                reservation=reservation,
+                memory_bytes=reservation.memory_bytes,
+                threads=reservation.threads,
+                opened_at=opened_at,
+                last_active_at=opened_at,
+            )
+        )
+        await _send_session_opened(ws, session_id, "open")
+    finally:
+        _opening.pop(session_id, None)
+        _abandoned.discard(session_id)
+
+
+async def _discard_open(conn, session_id: str, reservation, admission: Admission) -> None:
+    """Throw away a connection whose session was closed before the open finished."""
     loop = asyncio.get_running_loop()
-    trace_headers = inject_trace_context()
-
-    def _open() -> object:
-        conn = open_and_attach(
-            catalogs=catalogs,
-            active_catalog=active_catalog,
-            polaris=polaris,
-            trace_headers=trace_headers,
-            disabled_filesystems=settings.sandbox_disabled_filesystems,
-            lock_config=settings.sandbox_lock_configuration,
-        )
-        # Fix the session's resource slice once; statements run within it.
-        # GiB, not GB — see the note in executor.runner._run_one_statement.
-        conn.execute(f"SET memory_limit='{reservation.memory_bytes / 1024**3}GiB'")
-        conn.execute(f"SET threads={reservation.threads}")
-        return conn
-
     try:
-        conn = await loop.run_in_executor(None, _open)
-    except Exception as exc:  # noqa: BLE001 - report and release on any open failure
+        # Off the event-loop thread, for the same reason session._teardown is.
+        await loop.run_in_executor(_session_open_executor(), conn.close)
+    except Exception as exc:  # noqa: BLE001 - close is best-effort
+        logger.warning("Closing abandoned session %s connection failed: %s", session_id, exc)
+    finally:
         admission.release(reservation)
-        trace.get_current_span().set_status(Status(StatusCode.ERROR, "session open failed"))
-        await _send_session_opened(ws, session_id, "failed", str(exc))
+
+
+async def _resize_for_statement(state, sql: str, admission: Admission) -> None:
+    """Grow a session's reservation to fit the statement it is about to run.
+
+    The session holds only its idle baseline between statements, so this is where
+    a query actually gets sized — the same EXPLAIN estimate and T-shirt bucket the
+    one-shot dispatch path uses, just against the connection the session already
+    has attached (no open/attach round trip needed).
+
+    Growth is best-effort by design: ``try_amend`` hands back whatever the budget
+    can spare rather than blocking, because the session is already holding memory
+    while asking for more and a blocking wait could deadlock two growing sessions
+    against each other. A partial grant still beats the baseline, and a statement
+    that cannot grow at all simply runs as it would have before.
+    """
+    if not admission.is_auto:
+        return
+    loop = asyncio.get_running_loop()
+    try:
+        estimate = await loop.run_in_executor(
+            None,
+            lambda: estimate_memory_bytes(
+                state.conn, sql, safety=settings.estimate_safety_multiplier
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 - estimation must never fail a statement
+        logger.warning("Statement estimate failed for session %s: %s", state.session_id, exc)
         return
 
-    opened_at = time.monotonic()
-    session.register(
-        session.SessionState(
-            session_id=session_id,
-            conn=conn,
-            reservation=reservation,
-            memory_bytes=reservation.memory_bytes,
-            threads=reservation.threads,
-            opened_at=opened_at,
-            last_active_at=opened_at,
-        )
-    )
-    await _send_session_opened(ws, session_id, "open")
+    request = _statement_reservation_request(estimate, admission, state.memory_bytes)
+    if request is None:
+        return
+    admission.try_amend(state.reservation, request)
+    state.memory_bytes = state.reservation.memory_bytes
+    state.threads = state.reservation.threads
 
 
-async def _handle_exec_statement(ws, payload: dict, results_dir: Path) -> None:
+def _shrink_to_baseline(state, admission: Admission) -> None:
+    """Return a session to its idle baseline once its statement is done.
+
+    Unconditional, and on every exit path: without it one heavy query would pin a
+    large reservation for the rest of the session's life, which is exactly the
+    starvation `auto` exists to prevent.
+    """
+    if not admission.is_auto:
+        return
+    admission.try_amend(state.reservation, _session_reservation_request(admission))
+    state.memory_bytes = state.reservation.memory_bytes
+    state.threads = state.reservation.threads
+
+
+async def _handle_exec_statement(
+    ws, payload: dict, results_dir: Path, admission: Admission
+) -> None:
     """Run one statement on a held session connection and reply with QUERY_DONE.
 
     Statements reuse the query id / QUERY_DONE plumbing so their results page
@@ -285,15 +472,22 @@ async def _handle_exec_statement(ws, payload: dict, results_dir: Path) -> None:
     result_path = results_dir / f"{statement_id}.parquet"
     try:
         async with state.lock:
-            stats = await run_statement(
-                sql,
-                result_path,
-                timeout_s,
-                conn=state.conn,
-                memory_bytes=state.memory_bytes,
-                threads=state.threads,
-                enable_profiling=settings.profiling_enabled,
-            )
+            # Inside the lock: the size applies to this statement only, and the
+            # session runs one statement at a time.
+            await _resize_for_statement(state, sql, admission)
+            try:
+                stats = await run_statement(
+                    sql,
+                    result_path,
+                    timeout_s,
+                    conn=state.conn,
+                    memory_bytes=state.memory_bytes,
+                    threads=state.threads,
+                    enable_profiling=settings.profiling_enabled,
+                    watermarks=state.watermarks,
+                )
+            finally:
+                _shrink_to_baseline(state, admission)
         done_payload: dict[str, object] = {
             "query_id": statement_id,
             "status": "done",
@@ -318,10 +512,32 @@ async def _handle_exec_statement(ws, payload: dict, results_dir: Path) -> None:
         _in_flight.pop(statement_id, None)
 
 
+def _abandon_open(session_id: str) -> None:
+    """Stop an open that has not registered yet, so it frees what it holds.
+
+    Cancel is only safe while the task is waiting on ``Admission.acquire``:
+    ``acquire`` drops its own waiter and nothing has been built yet. Once
+    ``_open()`` is on the executor a cancel cannot stop that thread, so the open
+    is flagged instead and disposes of its own connection when it returns.
+    """
+    inflight = _opening.get(session_id)
+    if inflight is None:
+        return
+    _abandoned.add(session_id)
+    if inflight.acquiring:
+        inflight.task.cancel()
+
+
 async def _handle_close_session(ws, payload: dict, admission: Admission) -> None:
-    """Close a held session: drop the connection, free the admission slot, ack."""
+    """Close a held session: drop the connection, free the admission slot, ack.
+
+    A session only enters `session._sessions` once its open has finished, so a
+    close arriving before that has to reach the in-flight open instead — see
+    `_opening`.
+    """
     session_id = payload["session_id"]
-    await session.remove(session_id, admission)
+    if not await session.remove(session_id, admission):
+        _abandon_open(session_id)
     await ws.send(
         Frame(
             type=FrameType.SESSION_CLOSED,
@@ -340,7 +556,7 @@ async def _traced_open_session(ws, msg: Frame, admission: Admission) -> None:
         await _handle_open_session(ws, msg.payload, admission)
 
 
-async def _traced_exec_statement(ws, msg: Frame, results_dir: Path) -> None:
+async def _traced_exec_statement(ws, msg: Frame, results_dir: Path, admission: Admission) -> None:
     with _tracer.start_as_current_span(
         "handle_exec_statement",
         context=extract_trace_context(msg.trace_context),
@@ -350,7 +566,7 @@ async def _traced_exec_statement(ws, msg: Frame, results_dir: Path) -> None:
             "duckhaven.statement_id": msg.payload.get("query_id", ""),
         },
     ):
-        await _handle_exec_statement(ws, msg.payload, results_dir)
+        await _handle_exec_statement(ws, msg.payload, results_dir, admission)
 
 
 async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admission) -> None:
@@ -543,6 +759,12 @@ async def run_control_channel(
         headroom=settings.memory_headroom_fraction,
         max_queue_depth=settings.max_queue_depth,
         queued_timeout_s=settings.queued_timeout_s,
+        # Documented as operator-tunable but never passed until now, so setting
+        # either env var did nothing. They happened to match Admission's own
+        # defaults, which is why it went unnoticed — but the floor now bounds
+        # every session's idle baseline, so it has to be honoured.
+        floor_bytes=settings.estimate_floor_bytes,
+        ceiling_fraction=settings.estimate_ceiling_fraction,
     )
 
     while True:
@@ -651,11 +873,17 @@ async def _consume(ws, results_dir: Path, admission: Admission) -> None:
                 task.cancel()
 
         elif msg.type == FrameType.OPEN_SESSION:
-            _spawn(_traced_open_session(ws, msg, admission))
+            # Recorded here, not inside the handler: frames are read in order but
+            # the handler is a task, so a CLOSE_SESSION read straight after could
+            # otherwise be handled before the open task has registered itself.
+            session_id = msg.payload.get("session_id")
+            task = _spawn(_traced_open_session(ws, msg, admission))
+            if session_id:
+                _opening[session_id] = _OpeningSession(task=task)
 
         elif msg.type == FrameType.EXEC_STATEMENT:
             statement_id = msg.payload.get("query_id", str(uuid.uuid4()))
-            task = asyncio.create_task(_traced_exec_statement(ws, msg, results_dir))
+            task = asyncio.create_task(_traced_exec_statement(ws, msg, results_dir, admission))
             _in_flight[statement_id] = task
 
         elif msg.type == FrameType.CLOSE_SESSION:

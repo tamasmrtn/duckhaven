@@ -34,6 +34,32 @@ memory budget is cgroup-aware (it respects a container/pod limit). Capacity is s
 The profile is switchable at runtime and applies per agent. See
 [Runbook §6](../operations/runbook.md#6-query-queueing-concurrency) and [Scaling compute](../operations/scaling.md).
 
+### What a query is actually given
+
+A reservation has two parts, and they answer different questions.
+
+**Required memory** is what the query must have in order to finish — the estimate above, snapped to a bucket. It is
+what the admission gate blocks on, and it is never taken away once granted. The sum of every running query's required
+memory always stays inside the agent's budget; that is the guarantee that stops the agent being OOM-killed.
+
+**Elastic memory** is spare budget *lent* to a query on top of that. DuckDB's memory limit does not only cap operator
+memory — it also sizes the cache DuckDB keeps of the Parquet files it has read from object storage. A query sized to
+its operators alone has nowhere to keep that cache, so every scan goes back to the object store and re-decompresses
+data it has already read. Lending it the agent's idle memory removes that cost, and costs other tenants nothing:
+elastic memory is **revocable**, so the moment another query needs those bytes the agent takes them back (the lender
+simply loses some cache) rather than making the newcomer queue. A query never waits on memory that is only being used
+to cache with.
+
+**Threads** are separate from both. Every statement is given the agent's full core count. The container's CPU quota is
+the real limit on how much CPU an agent can use, and the operating system shares it out between concurrent queries, so
+handing each query fewer threads than the agent has cores only makes that query slower without leaving anything extra
+for anyone else.
+
+!!! note "Sessions keep their cache between statements"
+    A [SQL session](sql-sessions.md) hands its *required* memory back after each statement but keeps its elastic
+    grant, so consecutive statements against the same tables do not re-read them from object storage. An idle session
+    holding cache never blocks another query — see above.
+
 ## Scheduled vs. interactive runs
 
 Most queries are **interactive**: a person presses Run, picks the agent, and waits

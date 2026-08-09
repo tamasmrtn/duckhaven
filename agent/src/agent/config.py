@@ -103,6 +103,22 @@ class Settings(BaseSettings):
     # way, so an idle session holding cache never blocks anyone.
     elastic_ceiling_fraction: float = 0.85
 
+    # A statement that cannot grow to a workable share of its estimate waits for
+    # budget rather than running into a spill storm. On a saturated agent this is
+    # what turns a thundering herd into a staggered one: 22 simultaneous SF10
+    # queries at the 64 MiB idle baseline spilled hard enough to take the agent
+    # process down, where waiting their turn lets each run at a size it can
+    # actually use. The wait is additionally bounded by the statement's own
+    # timeout, so it can never outlive the query it is sizing.
+    #
+    # Deliberately long: waiting is the stability mechanism, not a hiccup. Set to
+    # 0 to restore the old never-block behaviour. `admission_wait_ms` in the query
+    # profile reports what each statement actually spent here.
+    statement_admission_wait_s: float = 300.0
+    # Wait only while the granted reservation is below this fraction of what the
+    # statement asked for. 1.0 waits for the full estimate; 0 never waits.
+    statement_admission_floor_fraction: float = 0.5
+
     # Post-execution profiling: capture DuckDB's JSON profile per query and ship
     # it in QUERY_DONE. Best-effort; this flag is the kill switch.
     profiling_enabled: bool = True

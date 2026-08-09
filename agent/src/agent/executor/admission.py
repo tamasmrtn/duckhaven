@@ -43,7 +43,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from agent.metrics.system import effective_cores, effective_memory_bytes
@@ -89,10 +89,11 @@ class Reservation:
     ``is_idle``/``on_resize`` are supplied by the session layer (see
     ``agent.control.session.register``) for reservations that can take elastic:
     ``is_idle`` reports whether the connection is safe to resize *right now*
-    (no statement running on it), and ``on_resize`` applies a new total to
-    DuckDB. A reservation missing either is never reclaimed from — revoking
-    memory the holder cannot actually give back would break the invariant in
-    the one direction that matters.
+    (no statement running on it), and ``on_resize`` is an **async** hook that
+    takes the session's lock and applies the new total to DuckDB off the event
+    loop. A reservation missing either is never reclaimed from — revoking memory
+    the holder cannot actually give back would break the invariant in the one
+    direction that matters.
     """
 
     slot: _Slot | None
@@ -100,7 +101,7 @@ class Reservation:
     threads: int
     elastic_bytes: int = 0
     is_idle: Callable[[], bool] | None = None
-    on_resize: Callable[[int], None] | None = None
+    on_resize: Callable[[int], Awaitable[None]] | None = None
 
     @property
     def total_bytes(self) -> int:
@@ -144,6 +145,15 @@ class Admission:
         # rather than a set because Reservation is an unhashable dataclass, and
         # membership is by identity.
         self._elastic: list[Reservation] = []
+        # Reservations whose elastic grant has been reclaimed in accounting but
+        # whose DuckDB connection has not been shrunk yet. Drained by
+        # ``apply_pending_resizes``; see there for why this is not done inline.
+        self._pending_resizes: list[Reservation] = []
+        # Set whenever ``_committed`` falls, so a statement waiting for room to
+        # grow wakes the moment there is some instead of polling for it.
+        self._budget_freed = asyncio.Event()
+        # Statements currently waiting on that event (reported in METRICS_SAMPLE).
+        self._growth_waiting = 0
         self.set_profile(profile)
 
     # -- profile -----------------------------------------------------------
@@ -343,29 +353,42 @@ class Admission:
             return 0
         reservation.elastic_bytes -= give
         self._committed -= give
+        self._budget_freed.set()
         if reservation.elastic_bytes == 0:
             self._elastic = [held for held in self._elastic if held is not reservation]
-        if apply:
-            self._apply_resize(reservation)
+        if apply and not any(queued is reservation for queued in self._pending_resizes):
+            self._pending_resizes.append(reservation)
         return give
 
-    def _apply_resize(self, reservation: Reservation) -> None:
-        """Move a holder's connection down to its new total.
+    async def apply_pending_resizes(self) -> None:
+        """Shrink the connections whose elastic memory was reclaimed.
 
-        Synchronous and on the event-loop thread, which is what makes reclaim
-        safe: ``_reclaim_elastic`` checks ``is_idle`` and calls this with no
-        ``await`` in between, so no other coroutine can start a statement on that
-        connection in the window. It costs ~12 ms per holder (DuckDB evicts the
-        file cache inline) and is best-effort — a failure leaves DuckDB with a
-        *higher* limit than we accounted, so it is logged loudly rather than
-        swallowed.
+        Reclaim happens inside ``_try_admit``/``try_amend``, which are synchronous
+        and run on the event loop. Applying ``SET memory_limit`` there blocked the
+        whole control channel — under a 22-way burst it fired on nearly every
+        admission decision and the agent stopped answering heartbeats for seconds
+        at a time. So the reclaim records the holder here and an async caller
+        drains it: ``on_resize`` takes that session's lock and runs the ``SET`` on
+        an executor thread.
+
+        The cost is a window in which admission has already counted the bytes as
+        free while DuckDB still holds them. It is bounded by one session's fair
+        share of the budget (see ``channel._elastic_target``) and closed by the
+        next drain — every async admission path drains, and the metrics loop
+        drains as a backstop, so the window is at most one sampling interval.
+
+        Best-effort per holder: one connection that will not shrink must not stop
+        the others, and a failure leaves DuckDB *higher* than accounted, which the
+        holder's next statement corrects when it sets its own limit.
         """
-        if reservation.on_resize is None:
-            return
-        try:
-            reservation.on_resize(reservation.total_bytes)
-        except Exception as exc:  # noqa: BLE001 - one bad holder must not stall admission
-            logger.warning("Reclaiming elastic memory failed; limit may be stale: %s", exc)
+        pending, self._pending_resizes = self._pending_resizes, []
+        for reservation in pending:
+            if reservation.on_resize is None:
+                continue
+            try:
+                await reservation.on_resize(reservation.total_bytes)
+            except Exception as exc:  # noqa: BLE001 - one bad holder must not stall the rest
+                logger.warning("Applying a reclaimed memory limit failed: %s", exc)
 
     def _reclaim_elastic(self, needed: int) -> int:
         """Reclaim up to ``needed`` bytes of elastic memory from idle holders.
@@ -473,8 +496,38 @@ class Admission:
         reservation.threads = max(1, request.threads)
         if granted < previous:
             # A shrink frees budget the queue may already be waiting on.
+            self._budget_freed.set()
             self._promote()
         return granted >= target
+
+    # -- waiting for room to grow -------------------------------------------
+
+    @property
+    def growth_waiting(self) -> int:
+        """Statements currently waiting for budget to grow into."""
+        return self._growth_waiting
+
+    def arm_budget_wait(self) -> None:
+        """Arm the budget signal *before* attempting a sizing.
+
+        Ordering matters: arming first means anything freed while the sizing runs
+        still counts, so a waiter can never miss the wakeup it was about to sleep
+        for and stall until its deadline.
+        """
+        self._budget_freed.clear()
+
+    async def wait_for_budget(self, timeout: float) -> bool:
+        """Sleep until budget is freed or ``timeout`` elapses. True if signalled."""
+        if timeout <= 0:
+            return False
+        self._growth_waiting += 1
+        try:
+            await asyncio.wait_for(self._budget_freed.wait(), timeout)
+        except TimeoutError:
+            return False
+        finally:
+            self._growth_waiting -= 1
+        return True
 
     def release(self, reservation: Reservation) -> None:
         """Return a reservation — both tiers — and promote the oldest waiter that
@@ -486,6 +539,7 @@ class Admission:
         if reservation.slot is not None:
             reservation.slot.occupied = False
         self._committed -= reservation.total_bytes
+        self._budget_freed.set()
         reservation.elastic_bytes = 0
         self._elastic = [held for held in self._elastic if held is not reservation]
         self._running -= 1

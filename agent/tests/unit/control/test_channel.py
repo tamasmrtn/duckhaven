@@ -1488,12 +1488,14 @@ async def test_statement_grows_the_reservation_to_its_estimate(monkeypatch):
     await ch._resize_for_statement(state, "SELECT 1", admission)
 
     assert state.memory_bytes > baseline, "a heavy statement must get more than the idle baseline"
-    assert state.reservation.memory_bytes == state.memory_bytes
+    assert state.memory_bytes == state.reservation.total_bytes
     assert admission.committed_fraction <= 1.0
 
-    ch._shrink_to_baseline(state, admission)
-    assert state.memory_bytes == baseline, "must return to baseline when the statement is done"
-    assert state.reservation.memory_bytes == baseline
+    await ch._shrink_to_baseline(state, admission)
+    # The *required* tier is what must come back; the cache grant on top is
+    # deliberately kept so the next statement does not re-read what this one read.
+    assert state.reservation.memory_bytes == baseline, "the required floor must return"
+    assert state.memory_bytes >= baseline
 
 
 async def test_an_unestimable_statement_gets_the_fallback_bucket(monkeypatch):
@@ -1520,7 +1522,7 @@ async def test_an_unestimable_statement_gets_the_fallback_bucket(monkeypatch):
     assert state.reservation.memory_bytes == expected
     assert state.memory_bytes >= expected
 
-    ch._shrink_to_baseline(state, admission)
+    await ch._shrink_to_baseline(state, admission)
     assert state.reservation.memory_bytes == baseline
 
 
@@ -1557,7 +1559,7 @@ async def test_estimate_failure_does_not_fail_the_statement(monkeypatch):
     monkeypatch.setattr(ch_module, "estimate_memory_bytes", _boom)
     await ch._resize_for_statement(state, "SELECT 1", admission)
 
-    assert state.memory_bytes == baseline
+    assert state.reservation.memory_bytes == baseline
 
 
 async def test_static_profile_sessions_are_left_alone(monkeypatch):
@@ -1582,7 +1584,7 @@ async def test_static_profile_sessions_are_left_alone(monkeypatch):
 
     monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: 1)
     await ch_module._resize_for_statement(state, "SELECT 1", admission)
-    ch_module._shrink_to_baseline(state, admission)
+    await ch_module._shrink_to_baseline(state, admission)
 
     assert state.memory_bytes == before
 
@@ -1618,8 +1620,12 @@ async def test_concurrent_sessions_never_oversubscribe_while_growing(monkeypatch
     assert admission.committed_fraction <= 1.0, "concurrent growth oversubscribed the budget"
 
     for st in states:
-        ch_module._shrink_to_baseline(st, admission)
-    assert admission.committed_fraction <= 6 * (64 * 1024**2) / admission.budget_bytes
+        await ch_module._shrink_to_baseline(st, admission)
+    # Every *required* tier is back at the baseline. The sessions still hold cache
+    # grants on top, which is why this checks the reservations rather than
+    # `committed_fraction` — but between them they still fit in the budget.
+    assert all(st.reservation.memory_bytes == 64 * 1024**2 for st in states)
+    assert admission.committed_fraction <= 1.0
 
 
 # ── the statement's resource slice: CPU, and revocable cache memory ───────────
@@ -1682,10 +1688,165 @@ async def test_the_cache_grant_survives_between_statements(monkeypatch):
     monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: 1)
     await ch._resize_for_statement(state, "SELECT 1", admission)
     lent = state.reservation.elastic_bytes
-    ch._shrink_to_baseline(state, admission)
+    await ch._shrink_to_baseline(state, admission)
 
     assert state.reservation.memory_bytes == 64 * 1024**2, "the required floor went back"
-    assert state.reservation.elastic_bytes == lent, "the cache grant stayed"
+    assert state.reservation.elastic_bytes >= lent, "the cache grant stayed"
+
+
+async def test_what_a_session_keeps_does_not_depend_on_what_it_just_ran(monkeypatch):
+    """The cache grant is sized "ceiling minus required", so carrying it across the
+    shrink unchanged made an idle session's cache inversely proportional to the
+    weight of its last statement — and zero at the largest bucket, where required
+    already exceeds the ceiling. That evicted the whole file cache after every
+    heavy statement and cost the five heaviest SF10 queries 2.5-5x."""
+    import agent.control.channel as ch_module
+
+    kept = {}
+    for label in ("cheap", "heaviest"):
+        admission = _admission(profile="auto")
+        ch, state = _session_state(admission, 64 * 1024**2)
+        state.conn = _RecordingConn()
+        # "heaviest" overflows every bucket, so it lands in the top one, whose
+        # required reservation is the whole budget and leaves no room under the
+        # ceiling for a cache grant.
+        estimate = 1 if label == "cheap" else admission.budget_bytes * 10
+        monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: estimate)
+        await ch._resize_for_statement(state, "SELECT 1", admission)
+        await ch._shrink_to_baseline(state, admission)
+        kept[label] = state.memory_bytes
+        session._sessions.clear()  # noqa: SLF001 - the registry is process-global
+
+    assert kept["heaviest"] > 64 * 1024**2, "the heaviest statement's session kept no cache"
+    assert kept["heaviest"] == kept["cheap"], "retention still depends on the last statement"
+
+
+async def test_one_session_cannot_take_the_whole_budget_as_cache(monkeypatch):
+    """Without a fair-share bound the first session to ask takes everything free and
+    every session behind it runs on the bare idle baseline — measured on a 22-way
+    SF10 burst as one session at 2,342 MiB and twenty-one at 64 MiB."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    states = []
+    for i in range(8):
+        reservation = admission._try_admit(  # noqa: SLF001
+            ReservationRequest(memory_bytes=64 * 1024**2, threads=admission.cores)
+        )
+        assert reservation is not None
+        st = session.SessionState(
+            session_id=f"s{i}",
+            conn=_RecordingConn(),
+            reservation=reservation,
+            memory_bytes=reservation.memory_bytes,
+            threads=reservation.threads,
+            opened_at=0.0,
+            last_active_at=0.0,
+        )
+        session.register(st)
+        states.append(st)
+
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: 1)
+    for st in states:
+        await ch_module._resize_for_statement(st, "SELECT 1", admission)
+
+    grants = [st.reservation.elastic_bytes for st in states]
+    assert admission.committed_fraction <= 1.0
+    assert all(g <= admission.budget_bytes // len(states) for g in grants), (
+        f"a session took more than its fair share: {grants}"
+    )
+    assert sum(1 for st in states if st.memory_bytes > 64 * 1024**2) >= len(states) - 1, (
+        "sessions were starved at the idle baseline while one held the budget"
+    )
+
+
+async def test_a_starved_statement_waits_for_budget_instead_of_running_tiny(monkeypatch):
+    """22 simultaneous SF10 queries at the 64 MiB idle baseline spilled hard enough
+    to take the agent process down. A statement that cannot reach a workable share
+    of its estimate now waits for room rather than running into that."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    ch, state = _session_state(admission, 64 * 1024**2)
+    state.conn = _RecordingConn()
+    # Somebody else holds effectively the whole budget, and is executing, so the
+    # deadlock guard does not fire.
+    hog = admission._try_admit(  # noqa: SLF001
+        ReservationRequest(memory_bytes=admission.budget_bytes - 64 * 1024**2, threads=1)
+    )
+    assert hog is not None
+    busy = session.SessionState(
+        session_id="busy",
+        conn=_RecordingConn(),
+        reservation=hog,
+        memory_bytes=hog.memory_bytes,
+        threads=hog.threads,
+        opened_at=0.0,
+        last_active_at=0.0,
+    )
+    session.register(busy)
+
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: 700 * 1024**2)
+
+    async def _statement() -> None:
+        # Sizing runs inside the session lock, exactly as _handle_exec_statement
+        # does it — which is also what makes this session count as "executing".
+        async with state.lock:
+            await ch._resize_for_statement(state, "SELECT 1", admission, 30.0)
+
+    async with busy.lock:  # `busy` is mid-statement, so waiting can pay off
+        sizing = asyncio.create_task(_statement())
+        await asyncio.sleep(0.05)
+        assert not sizing.done(), "ran at the idle baseline instead of waiting"
+        assert admission.growth_waiting == 1
+
+    admission.release(hog)  # the other statement finishes
+    await asyncio.wait_for(sizing, timeout=5)
+
+    assert state.reservation.memory_bytes > 64 * 1024**2, "did not grow once budget freed"
+    assert state.admission_wait_ms > 0
+
+
+async def test_a_statement_does_not_wait_when_nothing_can_free_budget(monkeypatch):
+    """The tie-break growth has to have: every waiter is holding memory while asking
+    for more, so waiting when nobody is executing would just burn the deadline."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    ch, state = _session_state(admission, 64 * 1024**2)
+    state.conn = _RecordingConn()
+    hog = admission._try_admit(  # noqa: SLF001
+        ReservationRequest(memory_bytes=admission.budget_bytes - 64 * 1024**2, threads=1)
+    )
+    assert hog is not None  # held by nobody that is running: no one will release it
+
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: 700 * 1024**2)
+    async with state.lock:  # only this session is executing
+        await asyncio.wait_for(
+            ch._resize_for_statement(state, "SELECT 1", admission, 30.0), timeout=5
+        )
+
+    assert state.admission_wait_ms < 1000, "waited even though nothing could free budget"
+
+
+async def test_use_and_set_are_not_charged_a_third_of_the_agent():
+    """`USE`/`SET` move no data. Charging them the unestimable fallback bucket had
+    every session in a burst claim a third of the budget for a 1 ms statement."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    baseline = 64 * 1024**2
+    fallback = int(
+        BUCKET_FRACTIONS[ch_module.settings.estimate_fallback_bucket] * admission.budget_bytes
+    )
+
+    for sql in ('USE "cat"."schema"', "SET timezone = 'UTC'"):
+        assert ch_module._statement_reservation_request(None, admission, baseline, sql) is None, sql
+    # Real DDL is still not cheap — an Iceberg CTAS needs a row-group buffer.
+    ddl = ch_module._statement_reservation_request(
+        None, admission, baseline, "CREATE TABLE t(i INT)"
+    )
+    assert ddl is not None and ddl.memory_bytes == fallback
 
 
 async def test_shrinking_resizes_the_connection_not_just_the_accounting(monkeypatch):
@@ -1702,7 +1863,7 @@ async def test_shrinking_resizes_the_connection_not_just_the_accounting(monkeypa
     monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: 700 * 1024**2)
     await ch._resize_for_statement(state, "SELECT 1", admission)
     conn.executed.clear()
-    ch._shrink_to_baseline(state, admission)
+    await ch._shrink_to_baseline(state, admission)
 
     limits = [sql for sql in conn.executed if sql.startswith("SET memory_limit=")]
     assert limits, "the connection was never resized"
@@ -1806,7 +1967,7 @@ async def test_exec_statement_sizes_the_session_to_the_statement(tmp_path, monke
     )
 
     assert seen and seen[0] > baseline, "the statement must run at its estimated size"
-    assert state.memory_bytes == baseline, "and the session must be back at baseline after"
+    assert state.reservation.memory_bytes == baseline, "the required floor must return after"
     assert admission.committed_fraction <= 1.0
     await session.remove("s1", admission)
 
@@ -1828,5 +1989,5 @@ async def test_exec_statement_returns_to_baseline_when_the_statement_fails(tmp_p
     )
 
     assert Frame.model_validate_json(ws.sent[-1]).payload["status"] == "failed"
-    assert state.memory_bytes == baseline
+    assert state.reservation.memory_bytes == baseline
     await session.remove("s1", admission)

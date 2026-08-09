@@ -370,6 +370,7 @@ async def test_switching_to_a_bigger_ladder_reclaims_idle_cache():
 
     adm.set_profile("single")  # the new ladder wants a BUDGET-sized slot
     admitted = adm._try_admit()  # noqa: SLF001 - the decision a waiter would make
+    await adm.apply_pending_resizes()
 
     assert admitted is None, "the required 2 bytes are not reclaimable, so it cannot fit"
     assert held.elastic_bytes == 0, "but the idle cache was handed back"
@@ -385,9 +386,17 @@ async def test_switching_to_a_bigger_ladder_reclaims_idle_cache():
 
 
 def _holder(idle=True):
-    """Callbacks a session supplies so its grant counts as reclaimable."""
+    """Callbacks a session supplies so its grant counts as reclaimable.
+
+    ``on_resize`` is async and records what it was asked to apply: reclaim only
+    *queues* a resize, so a test asserting the connection actually moved has to
+    drain ``apply_pending_resizes`` first."""
     resized: list[int] = []
-    return resized, (lambda: idle), resized.append
+
+    async def _on_resize(total: int) -> None:
+        resized.append(total)
+
+    return resized, (lambda: idle), _on_resize
 
 
 async def test_elastic_tops_up_from_idle_budget_only():
@@ -421,6 +430,7 @@ async def test_a_required_reservation_reclaims_idle_cache_instead_of_queueing():
     assert adm.committed_fraction == 1.0
 
     res = await adm.acquire(_req(6))  # would have queued forever before
+    await adm.apply_pending_resizes()
 
     assert res.memory_bytes == 6
     assert hog.elastic_bytes == 4, "took exactly what was needed, no more"
@@ -444,6 +454,7 @@ async def test_reclaim_skips_a_holder_that_is_running_a_statement():
 
     pending = asyncio.create_task(adm.acquire(_req(4)))
     await asyncio.sleep(0)
+    await adm.apply_pending_resizes()
 
     assert busy.elastic_bytes == 5 and busy_resized == [], "the busy holder was untouched"
     assert idle.elastic_bytes == 0 and idle_resized == [idle.total_bytes]
@@ -466,6 +477,44 @@ async def test_reclaim_ignores_a_holder_it_cannot_resize():
     pending.cancel()
     with pytest.raises(asyncio.CancelledError):
         await pending
+
+
+async def test_reclaim_queues_the_resize_instead_of_running_it_inline():
+    """Applying `SET memory_limit` inside the admission decision put it on the event
+    loop, where it blocked the whole control channel — under a 22-way burst it fired
+    on nearly every decision and the agent stopped answering for seconds at a time.
+    The decision now records the holder; an async caller drains it."""
+    adm = _auto()
+    hog = await adm.acquire(_req(2))
+    resized, is_idle, on_resize = _holder()
+    hog.is_idle, hog.on_resize = is_idle, on_resize
+    adm.grant_elastic(hog, 10)
+
+    await adm.acquire(_req(6))  # forces a reclaim
+
+    assert hog.elastic_bytes == 4, "the accounting moved immediately"
+    assert resized == [], "but nothing touched the connection inside the decision"
+
+    await adm.apply_pending_resizes()
+    assert resized == [hog.total_bytes]
+
+    await adm.apply_pending_resizes()
+    assert resized == [hog.total_bytes], "draining twice must not re-apply"
+
+
+async def test_a_holder_reclaimed_twice_is_resized_once_per_drain():
+    adm = _auto()
+    hog = await adm.acquire(_req(1))
+    resized, is_idle, on_resize = _holder()
+    hog.is_idle, hog.on_resize = is_idle, on_resize
+    adm.grant_elastic(hog, 11)
+
+    await adm.acquire(_req(5))
+    await adm.acquire(_req(5))  # a second reclaim from the same holder
+    await adm.apply_pending_resizes()
+
+    assert len(resized) == 1, f"queued the same holder more than once: {resized}"
+    assert resized == [hog.total_bytes], "and applied the final size, not an interim one"
 
 
 async def test_revoke_elastic_is_accounting_only():

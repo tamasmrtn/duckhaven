@@ -76,12 +76,23 @@ def _type_bytes(column_type: str) -> int:
 
 
 def _row_width(conn: duckdb.DuckDBPyConnection, sql: str, default: int) -> int:
-    """Output row width from ``DESCRIBE`` (binds, does not execute the query)."""
+    """Output row width from the statement's result types.
+
+    ``conn.sql`` builds a lazy relation — it binds but does not execute — and
+    exposes the same logical types ``DESCRIBE`` prints, so this is one bind
+    instead of the two a separate ``DESCRIBE`` round trip cost (10-96 ms per
+    statement, measured at SF10). ``DESCRIBE`` stays as the fallback: it accepts
+    a few shapes ``conn.sql`` refuses, notably the row-returning ``PRAGMA``s that
+    ``_is_single_select`` deliberately admits.
+    """
     try:
-        rows = conn.execute(f"DESCRIBE {sql}").fetchall()
-    except Exception:  # noqa: BLE001 - fall back to a flat width
-        return default
-    width = sum(_type_bytes(str(r[1])) for r in rows)
+        types = conn.sql(sql).types
+    except Exception:  # noqa: BLE001 - fall back to DESCRIBE for the shapes conn.sql refuses
+        try:
+            types = [row[1] for row in conn.execute(f"DESCRIBE {sql}").fetchall()]
+        except Exception:  # noqa: BLE001 - fall back to a flat width
+            return default
+    width = sum(_type_bytes(str(t)) for t in types)
     return width or default
 
 

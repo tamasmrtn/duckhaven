@@ -310,31 +310,179 @@ async def test_amend_clamps_to_the_ceiling():
     assert res.memory_bytes == BUDGET // 2
 
 
+# ── threads are not a slice of the memory budget ──────────────────────────────
+
+
+async def test_threads_are_the_whole_core_budget_regardless_of_memory():
+    """Thread count used to be scaled by the reservation's share of *memory*, which
+    floored every bucket below the largest to a single thread on a small agent.
+    Nothing in the byte invariant depends on it, so a tiny reservation is entitled
+    to the same CPU as a huge one."""
+    adm = _auto()
+    tiny = await adm.acquire(_req(1, threads=adm.threads_for_statement()))
+    big = await adm.acquire(_req(BUDGET - 1, threads=adm.threads_for_statement()))
+
+    assert adm.threads_for_statement() == CORES
+    assert tiny.threads == big.threads == CORES
+
+
+# ── elastic (revocable cache) memory ──────────────────────────────────────────
+#
+# `memory_bytes` is what a query must have; `elastic_bytes` is idle budget lent
+# to it for DuckDB's file cache and taken straight back when someone needs it.
+# The invariant covers both tiers: sum(required + elastic) <= budget.
+
+
+def _holder(idle=True):
+    """Callbacks a session supplies so its grant counts as reclaimable."""
+    resized: list[int] = []
+    return resized, (lambda: idle), resized.append
+
+
+async def test_elastic_tops_up_from_idle_budget_only():
+    adm = _auto()
+    res = await adm.acquire(_req(2))
+
+    assert adm.grant_elastic(res, 8) == 8
+    assert (res.memory_bytes, res.elastic_bytes, res.total_bytes) == (2, 8, 10)
+    # Only 2 left, so a second holder gets what is free and not a byte more.
+    other = await adm.acquire(_req(1))
+    assert adm.grant_elastic(other, 8) == 1
+    assert adm.committed_fraction == 1.0
+
+
+async def test_elastic_never_pushes_committed_past_the_budget():
+    adm = _auto()
+    reservations = [await adm.acquire(_req(1)) for _ in range(4)]
+    for res in reservations:
+        adm.grant_elastic(res, BUDGET)
+        assert adm.committed_fraction <= 1.0
+    assert sum(r.total_bytes for r in reservations) <= BUDGET
+
+
+async def test_a_required_reservation_reclaims_idle_cache_instead_of_queueing():
+    """The point of the tier: cache never makes a query that needs the memory wait."""
+    adm = _auto()
+    hog = await adm.acquire(_req(2))
+    resized, is_idle, on_resize = _holder()
+    hog.is_idle, hog.on_resize = is_idle, on_resize
+    adm.grant_elastic(hog, 10)  # hog now holds the whole budget, 10 of it as cache
+    assert adm.committed_fraction == 1.0
+
+    res = await adm.acquire(_req(6))  # would have queued forever before
+
+    assert res.memory_bytes == 6
+    assert hog.elastic_bytes == 4, "took exactly what was needed, no more"
+    assert resized == [hog.total_bytes], "the holder's connection was actually resized"
+    assert adm.committed_fraction <= 1.0
+
+
+async def test_reclaim_skips_a_holder_that_is_running_a_statement():
+    """A busy holder's memory is genuinely in use; it gives its grant back itself
+    when the statement finishes."""
+    adm = _auto()
+    busy = await adm.acquire(_req(2))
+    busy_resized, _, busy_resize = _holder()
+    busy.is_idle, busy.on_resize = (lambda: False), busy_resize
+    adm.grant_elastic(busy, 5)
+    idle = await adm.acquire(_req(1))
+    idle_resized, idle_is_idle, idle_resize = _holder()
+    idle.is_idle, idle.on_resize = idle_is_idle, idle_resize
+    adm.grant_elastic(idle, 4)
+    assert adm.committed_fraction == 1.0
+
+    pending = asyncio.create_task(adm.acquire(_req(4)))
+    await asyncio.sleep(0)
+
+    assert busy.elastic_bytes == 5 and busy_resized == [], "the busy holder was untouched"
+    assert idle.elastic_bytes == 0 and idle_resized == [idle.total_bytes]
+    assert (await pending).memory_bytes == 4
+
+
+async def test_reclaim_ignores_a_holder_it_cannot_resize():
+    """Revoking memory the holder cannot actually hand back would break the
+    invariant in the only direction that matters."""
+    adm = _auto()
+    orphan = await adm.acquire(_req(2))
+    adm.grant_elastic(orphan, 10)  # no is_idle/on_resize wired up
+    assert adm.committed_fraction == 1.0
+
+    pending = asyncio.create_task(adm.acquire(_req(4)))
+    await asyncio.sleep(0)
+
+    assert orphan.elastic_bytes == 10
+    assert adm.queued_count == 1
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+
+
+async def test_revoke_elastic_is_accounting_only():
+    """The owner re-grants immediately afterwards, so touching the connection here
+    would evict the file cache the grant exists to hold."""
+    adm = _auto()
+    res = await adm.acquire(_req(2))
+    resized, is_idle, on_resize = _holder()
+    res.is_idle, res.on_resize = is_idle, on_resize
+    adm.grant_elastic(res, 8)
+
+    assert adm.revoke_elastic(res) == 8
+    assert res.elastic_bytes == 0
+    assert resized == [], "nothing was applied to the connection"
+    assert adm.committed_fraction == 2 / BUDGET
+
+
+async def test_release_returns_both_tiers():
+    adm = _auto()
+    res = await adm.acquire(_req(2))
+    adm.grant_elastic(res, 8)
+    adm.release(res)
+    assert adm.committed_fraction == 0.0
+    assert adm.running_count == 0
+
+
 async def test_committed_never_exceeds_budget_under_random_churn():
     """The invariant `auto` exists for, exercised the way sessions actually move:
-    acquire a baseline, grow for a statement, shrink back, release. If any of
-    those paths forgets to keep `_committed` in step with the reservation, the
-    agent silently oversubscribes its cgroup and DuckDB gets OOM-killed."""
+    acquire a baseline, grow for a statement, take a cache top-up, hand it back,
+    shrink, release. If any of those paths forgets to keep `_committed` in step
+    with the reservation, the agent silently oversubscribes its cgroup and DuckDB
+    gets OOM-killed.
+
+    `_committed` is checked against the reservations themselves, not just against
+    the budget: a counter that drifts low still passes a `<= budget` assertion
+    while handing out memory that is already spoken for."""
     import random
 
     rng = random.Random(1234)
     adm = _auto()
     live = []
 
-    for _ in range(400):
-        action = rng.choice(("acquire", "grow", "shrink", "release"))
+    def _track(res):
+        # Half the holders look reclaimable, half look busy, so the churn covers
+        # both sides of the reclaim predicate.
+        res.is_idle = (lambda: rng.random() < 0.5) if rng.random() < 0.75 else None
+        res.on_resize = (lambda _total: None) if res.is_idle is not None else None
+        return res
+
+    for _ in range(600):
+        action = rng.choice(("acquire", "grow", "shrink", "lend", "reclaim", "release"))
         if action == "acquire" and len(live) < 6:
             free = int((1 - adm.committed_fraction) * BUDGET)
             if free >= 1:
-                live.append(await adm.acquire(_req(rng.randint(1, free))))
+                live.append(_track(await adm.acquire(_req(rng.randint(1, free)))))
         elif action == "grow" and live:
             adm.try_amend(rng.choice(live), _req(rng.randint(1, BUDGET)))
         elif action == "shrink" and live:
             adm.try_amend(rng.choice(live), _req(1))
+        elif action == "lend" and live:
+            adm.grant_elastic(rng.choice(live), rng.randint(0, BUDGET))
+        elif action == "reclaim" and live:
+            adm.revoke_elastic(rng.choice(live))
         elif action == "release" and live:
             adm.release(live.pop(rng.randrange(len(live))))
 
         assert 0.0 <= adm.committed_fraction <= 1.0, "budget oversubscribed"
+        assert adm._committed == sum(r.total_bytes for r in live), "counter drifted"  # noqa: SLF001
         assert adm.running_count == len(live)
 
     for res in live:

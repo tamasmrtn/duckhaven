@@ -282,6 +282,7 @@ Best-effort knobs that only apply under the `auto` profile. See
 | `ESTIMATE_CEILING_FRACTION` | `1.0` | Caps a reservation at this fraction of the budget. |
 | `EXPLAIN_TIMEOUT_S` | `2.0` | Time budget for the pre-run `EXPLAIN`; on timeout the query uses the fallback bucket. |
 | `ESTIMATE_FALLBACK_BUCKET` | `M` | Bucket used when a query is unestimable (DDL/DML, multi-statement, EXPLAIN error/timeout). |
+| `ELASTIC_CEILING_FRACTION` | `0.85` | How far the agent's *idle* memory may top a statement up beyond its required reservation, so DuckDB can cache the Parquet it reads from object storage. Revocable: reclaimed as soon as another query needs the bytes. Below `1.0` because DuckDB's limit bounds its own allocations, not the whole process. Lower it to hold more back for other tenants. |
 
 ### Queueing knobs
 

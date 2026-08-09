@@ -120,6 +120,15 @@ Growth is bounded by what the agent can actually spare at that moment. If the bu
 whatever is free and runs at that size — slower, possibly spilling to disk, but never blocked and never at the expense
 of another session's memory. `SESSION_MAX_BUCKET_FRACTION` caps how much of the agent one statement may take.
 
+On top of that required size, a statement is also lent whatever memory the agent has idle, up to
+`ELASTIC_CEILING_FRACTION` of its budget. That lent memory is what DuckDB uses to cache the Parquet files it reads from
+object storage, so a session that queries the same tables repeatedly — a `dbt` run, an analyst iterating on a
+query — does not fetch and decompress the same data over and over. Unlike the required part, it is **kept** across
+statements rather than handed back, because dropping it would throw the cache away between every statement. It stays
+revocable throughout: if another session needs those bytes the agent reclaims them immediately, so a session sitting
+idle with a warm cache never makes anyone wait. See
+[what a query is actually given](query-execution.md#what-a-query-is-actually-given).
+
 Because the idle baseline is small, sessions-per-agent is bounded by the baseline rather than by peak query size:
 roughly the memory budget divided by `SESSION_BASELINE_BYTES` (about 56 on a 4 GB agent at the default). Opens beyond
 that **queue** for capacity rather than failing outright, and an open that has waited `SESSION_QUEUED_TIMEOUT_S` gives

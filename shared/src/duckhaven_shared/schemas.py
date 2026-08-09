@@ -50,4 +50,9 @@ class MetricsSample(BaseModel):
     # Number of open SQL sessions holding a persistent connection (+ admission
     # reservation) on this agent. Defaulted for back-compat with older agents.
     session_count: int = 0
+    # Statements parked waiting for budget to grow into rather than running at the
+    # idle baseline (see agent.control.channel._resize_for_statement). Distinct
+    # from ``queued_queries``, which counts work not yet admitted at all.
+    # Defaulted for back-compat with older agents.
+    growth_waiting: int = 0
     sampled_at: datetime

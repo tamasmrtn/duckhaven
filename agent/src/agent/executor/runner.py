@@ -137,6 +137,33 @@ def _is_single_select(sql: str) -> bool:
     return len(statements) == 1 and statements[0].type == duckdb.StatementType.SELECT
 
 
+# Statement types that touch no data and need no memory beyond the connection
+# itself. Everything else that is not a single SELECT — DDL, DML, multi-statement
+# scripts — keeps the fallback bucket, because those genuinely are not cheap (an
+# Iceberg `CREATE TABLE … AS SELECT` needs a ~76 MiB Parquet row-group buffer in
+# one allocation however few rows it writes).
+_CHEAP_STATEMENT_TYPES = frozenset(
+    getattr(duckdb.StatementType, name)
+    for name in ("SET", "TRANSACTION", "ANALYZE")
+    if hasattr(duckdb.StatementType, name)
+)
+
+
+def is_cheap_statement(sql: str) -> bool:
+    """True when ``sql`` cannot need more than a session's idle baseline.
+
+    `USE`/`SET` are typed ``SET`` by DuckDB. They were being charged the
+    unestimable-statement fallback bucket — a third of the whole agent — which on
+    a 22-way burst meant every session claimed a third of the budget to run a
+    one-millisecond statement, fragmenting it before a single real query started.
+    """
+    try:
+        statements = duckdb.extract_statements(sql)
+    except Exception:  # noqa: BLE001 - a parse failure surfaces when executed
+        return False
+    return len(statements) == 1 and statements[0].type in _CHEAP_STATEMENT_TYPES
+
+
 def _safe_install_load(conn: duckdb.DuckDBPyConnection, name: str) -> bool:
     """INSTALL + LOAD an extension; log + return False on failure."""
     try:
@@ -662,6 +689,7 @@ def _run_one_statement(
     threads: int,
     enable_profiling: bool,
     watermarks: dict[str, int] | None = None,
+    admission_wait_ms: float = 0.0,
 ) -> dict[str, Any]:
     """Set the connection's resource slice and run one statement.
 
@@ -734,6 +762,7 @@ def _run_one_statement(
                 profile["summary"]["rows_returned"] = row_count
                 profile["summary"]["reserved_memory_bytes"] = memory_bytes
                 profile["summary"]["reserved_threads"] = threads
+                profile["summary"]["admission_wait_ms"] = admission_wait_ms
                 if watermarks is not None:
                     _apply_watermarks(profile["summary"], watermarks)
             # Size of the materialized result so the UI can show how large it is.
@@ -905,6 +934,7 @@ def run_statement_sync(
     threads: int,
     enable_profiling: bool = True,
     watermarks: dict[str, int] | None = None,
+    admission_wait_ms: float = 0.0,
 ) -> dict[str, Any]:
     """Run one statement on a held SQL-session connection.
 
@@ -932,4 +962,5 @@ def run_statement_sync(
         threads=threads,
         enable_profiling=enable_profiling,
         watermarks=watermarks,
+        admission_wait_ms=admission_wait_ms,
     )

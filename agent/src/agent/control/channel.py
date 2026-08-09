@@ -520,7 +520,7 @@ async def _resize_for_statement(
     wanted = request.memory_bytes if request is not None else state.reservation.memory_bytes
     floor = int(settings.statement_admission_floor_fraction * wanted)
     baseline = _session_reservation_request(admission).memory_bytes
-    # Jittered, so a queue of waivers that started together does not expire
+    # Jittered, so a queue of waiters that started together does not expire
     # together: ten simultaneous timeouts once released ten statements at the same
     # instant and took the agent down 33 seconds later.
     ceiling = settings.statement_admission_wait_s * random.uniform(0.85, 1.15)

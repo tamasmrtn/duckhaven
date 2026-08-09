@@ -52,6 +52,25 @@ to cache with. Elastic memory belongs to `auto` alone — a static ladder's slot
 to choose one, so it neither grows nor shrinks. On a static profile a query gets exactly its slot's share, and a small
 slot on a small agent may be too tight to cache with.
 
+No query can take more than a **fair share** of the lendable memory — the agent's budget divided by the number of live
+sessions. Without that bound the first query to ask takes everything free and every session behind it runs on the bare
+idle minimum, which is far worse for everyone than an even split. The share is recalculated every time memory is handed
+out, so it shrinks as sessions arrive and each holder gives the excess back when its next statement finishes.
+
+### When the agent is full
+
+Sometimes there is simply not enough memory to go round — twenty concurrent scans over a large table do not fit in a
+small agent under any allocation. A query that cannot reach a workable fraction of what it asked for **waits** for room
+rather than running in a size it cannot work in, because a query squeezed into the idle minimum spills to disk so hard
+that it hurts everything else running beside it. It stops waiting as soon as memory frees up, when its own timeout
+would be exceeded, or immediately if nothing else is running (in which case no memory is going to be released and
+waiting could only make things slower).
+
+Waiting is visible rather than mysterious: every query reports how long it spent waiting for memory in its
+[profile](../guides/query-profiles.md), so a query that was slow because the agent was busy is distinguishable from one
+that was slow because it was expensive. `STATEMENT_ADMISSION_WAIT_S` bounds the wait; setting it to `0` restores the
+older behaviour of always running immediately at whatever size was available.
+
 **Threads** are separate from both, and work the same way under **every** profile: each statement is given the agent's
 full core count. Neither the `auto` estimator's buckets nor a static ladder's weights touch it — they divide memory. The
 container's CPU quota is the real limit on how much CPU an agent can use, and the operating system shares it out

@@ -282,7 +282,9 @@ Best-effort knobs that only apply under the `auto` profile. See
 | `ESTIMATE_CEILING_FRACTION` | `1.0` | Caps a reservation at this fraction of the budget. |
 | `EXPLAIN_TIMEOUT_S` | `2.0` | Time budget for the pre-run `EXPLAIN`; on timeout the query uses the fallback bucket. |
 | `ESTIMATE_FALLBACK_BUCKET` | `M` | Bucket used when a query is unestimable (DDL/DML, multi-statement, EXPLAIN error/timeout). |
-| `ELASTIC_CEILING_FRACTION` | `0.85` | How far the agent's *idle* memory may top a statement up beyond its required reservation, so DuckDB can cache the Parquet it reads from object storage. Revocable: reclaimed as soon as another query needs the bytes. Below `1.0` because DuckDB's limit bounds its own allocations, not the whole process. Lower it to hold more back for other tenants. |
+| `ELASTIC_CEILING_FRACTION` | `0.85` | How far the agent's *idle* memory may top a statement up beyond its required reservation, so DuckDB can cache the Parquet it reads from object storage. Revocable: reclaimed as soon as another query needs the bytes. Additionally bounded by an even share of the budget between open sessions, so one session cannot take it all. Below `1.0` because DuckDB's limit bounds its own allocations, not the whole process. |
+| `STATEMENT_ADMISSION_WAIT_S` | `300.0` | How long a statement may wait for memory to free up before running at whatever it could get. Long on purpose — waiting is what keeps a saturated agent stable instead of letting every query spill at once. Also bounded by the statement's own timeout. `0` never waits. |
+| `STATEMENT_ADMISSION_FLOOR_FRACTION` | `0.5` | Wait only while the granted reservation is below this fraction of what the statement asked for. `1.0` waits for the full estimate; `0` never waits. |
 
 ### Queueing knobs
 

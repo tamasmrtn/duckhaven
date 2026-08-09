@@ -74,3 +74,9 @@ agent/results/
 
 qa/
 .playwright-mcp/
+# Benchmark harness + its artifacts. Kept out of the repo entirely: it is a
+# standalone project with its own pyproject/uv.lock, and the runs, corpus and
+# .duckdb files it generates dwarf the source. Untracked in the same commit that
+# added this rule, so `git rm -r --cached benchmarks/` is what actually removed
+# it — a gitignore entry alone never untracks anything.
+benchmarks/

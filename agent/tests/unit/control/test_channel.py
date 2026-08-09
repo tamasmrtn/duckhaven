@@ -1514,11 +1514,14 @@ async def test_an_unestimable_statement_gets_the_fallback_bucket(monkeypatch):
     monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: None)
     await ch._resize_for_statement(state, "CREATE TABLE t (i INT)", admission)
 
-    assert state.memory_bytes > baseline
-    assert state.memory_bytes == expected
+    # The fallback bucket is the *required* floor. `state.memory_bytes` is what
+    # DuckDB is told it may use, which is that floor plus the revocable cache
+    # grant on top, so the guarantee this test exists for lives on the reservation.
+    assert state.reservation.memory_bytes == expected
+    assert state.memory_bytes >= expected
 
     ch._shrink_to_baseline(state, admission)
-    assert state.memory_bytes == baseline
+    assert state.reservation.memory_bytes == baseline
 
 
 async def test_statement_runs_at_a_partial_size_when_the_budget_is_tight(monkeypatch):
@@ -1617,6 +1620,161 @@ async def test_concurrent_sessions_never_oversubscribe_while_growing(monkeypatch
     for st in states:
         ch_module._shrink_to_baseline(st, admission)
     assert admission.committed_fraction <= 6 * (64 * 1024**2) / admission.budget_bytes
+
+
+# ── the statement's resource slice: CPU, and revocable cache memory ───────────
+
+
+class _RecordingConn:
+    """A stand-in connection that only records the `SET`s applied to it."""
+
+    def __init__(self) -> None:
+        self.executed: list[str] = []
+
+    def execute(self, sql):
+        self.executed.append(sql)
+        return self
+
+
+async def test_a_cheap_statement_still_gets_every_core(monkeypatch):
+    """The regression that made 21 of 22 TPC-H queries single-threaded: threads
+    were scaled by the *memory* bucket, so anything that estimated small ran on
+    one core however much scanning it actually did."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    ch, state = _session_state(admission, 64 * 1024**2)
+
+    # The smallest bucket there is — a scan-heavy query aggregating to one row.
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: 1)
+    await ch._resize_for_statement(state, "SELECT sum(x) FROM big", admission)
+
+    assert state.threads == admission.cores
+
+
+async def test_an_idle_agent_lends_its_spare_budget_as_cache(monkeypatch):
+    """DuckDB's `memory_limit` also caps EXTERNAL_FILE_CACHE, so a statement sized
+    to its operator working set alone re-reads its Parquet from object storage on
+    every pass. Idle budget is lent to it instead."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    ch, state = _session_state(admission, 64 * 1024**2)
+
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: 1)
+    await ch._resize_for_statement(state, "SELECT sum(x) FROM big", admission)
+
+    assert state.reservation.elastic_bytes > 0
+    assert state.memory_bytes == state.reservation.total_bytes
+    assert state.memory_bytes > state.reservation.memory_bytes, "grew beyond the required floor"
+    assert admission.committed_fraction <= 1.0
+
+
+async def test_the_cache_grant_survives_between_statements(monkeypatch):
+    """Handing it back at the end of every statement would evict the cache it
+    exists to hold, which is the whole benefit."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    ch, state = _session_state(admission, 64 * 1024**2)
+    state.conn = _RecordingConn()
+
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: 1)
+    await ch._resize_for_statement(state, "SELECT 1", admission)
+    lent = state.reservation.elastic_bytes
+    ch._shrink_to_baseline(state, admission)
+
+    assert state.reservation.memory_bytes == 64 * 1024**2, "the required floor went back"
+    assert state.reservation.elastic_bytes == lent, "the cache grant stayed"
+
+
+async def test_shrinking_resizes_the_connection_not_just_the_accounting(monkeypatch):
+    """Accounting-only shrink leaves DuckDB holding the previous statement's limit
+    while admission believes the memory is free — the drift that lets two sessions
+    between them exceed the cgroup."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    ch, state = _session_state(admission, 64 * 1024**2)
+    conn = _RecordingConn()
+    state.conn = conn
+
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: 700 * 1024**2)
+    await ch._resize_for_statement(state, "SELECT 1", admission)
+    conn.executed.clear()
+    ch._shrink_to_baseline(state, admission)
+
+    limits = [sql for sql in conn.executed if sql.startswith("SET memory_limit=")]
+    assert limits, "the connection was never resized"
+    # GiB, not GB: DuckDB reads a `GB` suffix as 10**9 and would hand back ~7% less.
+    assert limits[-1].endswith("GiB'")
+    assert limits[-1] == f"SET memory_limit='{state.reservation.total_bytes / 1024**3}GiB'"
+
+
+async def test_a_busy_session_never_has_its_memory_pulled_out_from_under_it(monkeypatch):
+    """`is_idle` is the guarantee; without it a reclaim could shrink a connection
+    that is mid-scan."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    ch, state = _session_state(admission, 64 * 1024**2)
+    state.conn = _RecordingConn()
+
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: 1)
+    await ch._resize_for_statement(state, "SELECT 1", admission)
+    assert state.reservation.elastic_bytes > 0
+
+    async with state.lock:  # a statement is now in flight on this session
+        assert not state.is_idle()
+        # Something big enough that it can only be satisfied by reclaiming.
+        assert (
+            admission._try_admit(  # noqa: SLF001
+                ReservationRequest(memory_bytes=admission.budget_bytes, threads=1)
+            )
+            is None
+        )
+        assert state.reservation.elastic_bytes > 0, "cache was pulled from a running statement"
+
+    assert state.is_idle()
+
+
+async def test_the_estimate_is_reused_across_identical_statements(monkeypatch):
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    ch, state = _session_state(admission, 64 * 1024**2)
+    calls = []
+
+    def _estimate(conn, sql, **kwargs):
+        calls.append(sql)
+        return 1
+
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", _estimate)
+    for _ in range(3):
+        await ch._resize_for_statement(state, "SELECT 1", admission)
+
+    assert calls == ["SELECT 1"], "re-EXPLAINed a statement it had already planned"
+
+
+async def test_a_non_select_invalidates_remembered_estimates(monkeypatch):
+    """DDL can change what a later plan binds to, so everything remembered on this
+    connection is suspect once one runs."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    ch, state = _session_state(admission, 64 * 1024**2)
+    calls = []
+
+    def _estimate(conn, sql, **kwargs):
+        calls.append(sql)
+        return 1
+
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", _estimate)
+    await ch._resize_for_statement(state, "SELECT 1", admission)
+    await ch._resize_for_statement(state, "CREATE TABLE t (i INT)", admission)
+    await ch._resize_for_statement(state, "SELECT 1", admission)
+
+    assert calls.count("SELECT 1") == 2, "kept an estimate across a DDL statement"
 
 
 async def test_exec_statement_sizes_the_session_to_the_statement(tmp_path, monkeypatch):

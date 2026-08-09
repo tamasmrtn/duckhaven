@@ -577,6 +577,25 @@ def open_and_attach(
     return conn
 
 
+def apply_memory_limit(conn: duckdb.DuckDBPyConnection, memory_bytes: int) -> None:
+    """Move a connection's DuckDB memory limit to ``memory_bytes``.
+
+    GiB, not GB: the value is bytes/1024**3, and DuckDB reads a `GB` suffix as
+    10**9. Labelling it GB handed DuckDB ~7% less than the admission manager
+    granted, so the real headroom was ~17% against a configured 10% and every
+    slot silently lost ~250 MiB of its slice. This is the one place that
+    spelling lives — every caller that resizes a connection goes through here.
+
+    Note the limit bounds more than operator memory: it also caps DuckDB's
+    ``EXTERNAL_FILE_CACHE``, which is what keeps an Iceberg scan from re-reading
+    its Parquet from object storage. Lowering it evicts that cache (measured on
+    1.5.5: 383 MB -> 64 MB in 12 ms), which is exactly what makes the admission
+    manager's elastic tier revocable — and also why nothing should lower it
+    casually.
+    """
+    conn.execute(f"SET memory_limit='{memory_bytes / 1024**3}GiB'")
+
+
 def _capture_profile(conn: duckdb.DuckDBPyConnection, profile_path: Path) -> dict[str, Any] | None:
     """Read + normalize the DuckDB JSON profile written to ``profile_path``.
 
@@ -659,14 +678,10 @@ def _run_one_statement(
     # The admission manager sizes each query's slice of the agent's budget
     # (memory_bytes + threads) so concurrent sessions never oversubscribe the
     # cgroup memory limit. DuckDB's default thread count ignores the cgroup CPU
-    # quota, so `threads` is set explicitly. (For a held session these are the
-    # session's fixed reservation, re-applied harmlessly per statement.)
-    # GiB, not GB: the value is bytes/1024**3, and DuckDB reads a `GB` suffix as
-    # 10**9. Labelling it GB handed DuckDB ~7% less than the admission manager
-    # granted, so the real headroom was ~17% against a configured 10% and every
-    # slot silently lost ~250 MiB of its slice.
-    mem_gib = memory_bytes / 1024**3
-    conn.execute(f"SET memory_limit='{mem_gib}GiB'")
+    # quota, so `threads` is set explicitly. (For a held session `memory_bytes`
+    # is the reservation's required floor plus whatever revocable cache the
+    # admission manager could spare, so it moves from statement to statement.)
+    apply_memory_limit(conn, memory_bytes)
     conn.execute(f"SET threads={threads}")
     # Sibling of the result file; retention only sweeps `*.parquet`, so we own
     # this file's lifecycle and unlink it ourselves.

@@ -24,7 +24,7 @@ from agent.executor.admission import (
     ReservationRequest,
 )
 from agent.executor.estimator import bucket_for, estimate_memory_bytes
-from agent.executor.runner import open_and_attach
+from agent.executor.runner import _is_single_select, apply_memory_limit, open_and_attach
 from agent.executor.supervisor import run_query, run_statement
 from agent.metrics.system import (
     MetricsSampler,
@@ -201,14 +201,30 @@ async def _prepare_and_estimate(sql: str, **attach_kwargs) -> tuple[object | Non
 
 
 def _build_request(estimate: int | None, admission: Admission) -> ReservationRequest:
-    """Map an estimate (or the fallback bucket) to a reservation request."""
+    """Map an estimate (or the fallback bucket) to a reservation request.
+
+    Only the *memory* side comes from the bucket. Threads used to be scaled by the
+    same fraction, which floored every bucket below XL to one thread on a 2-core
+    agent; see ``Admission.threads_for_statement``.
+    """
     if estimate is None:
         frac = BUCKET_FRACTIONS[settings.estimate_fallback_bucket]
         mem = int(frac * admission.budget_bytes)
     else:
-        mem, frac, _ = bucket_for(estimate, admission.budget_bytes, BUCKET_FRACTIONS)
-    threads = max(1, round(admission.cores * frac))
-    return ReservationRequest(memory_bytes=mem, threads=threads)
+        mem, _, _ = bucket_for(estimate, admission.budget_bytes, BUCKET_FRACTIONS)
+    return ReservationRequest(memory_bytes=mem, threads=admission.threads_for_statement())
+
+
+def _elastic_target(admission: Admission, required_bytes: int) -> int:
+    """Revocable cache memory to ask for on top of ``required_bytes``.
+
+    Capped at ``elastic_ceiling_fraction`` of the budget rather than all of it:
+    DuckDB's ``memory_limit`` bounds its own allocations, not the process, so the
+    agent needs a cushion above the reservation for Python, Arrow buffers and the
+    extensions' own memory. Returns 0 when the required floor already covers it.
+    """
+    ceiling = int(settings.elastic_ceiling_fraction * admission.budget_bytes)
+    return max(0, ceiling - required_bytes)
 
 
 async def _traced_dispatch(ws, msg: Frame, results_dir: Path, admission: Admission) -> None:
@@ -235,9 +251,7 @@ def _session_reservation_request(admission: Admission) -> ReservationRequest:
     rather than the memory the session's queries get."""
     budget = admission.budget_bytes
     mem = max(1, min(settings.session_baseline_bytes, budget))
-    frac = mem / budget
-    threads = max(1, round(admission.cores * frac))
-    return ReservationRequest(memory_bytes=mem, threads=threads)
+    return ReservationRequest(memory_bytes=mem, threads=admission.threads_for_statement())
 
 
 def _statement_reservation_request(
@@ -256,18 +270,15 @@ def _statement_reservation_request(
     """
     budget = admission.budget_bytes
     if estimate is None:
-        frac = BUCKET_FRACTIONS[settings.estimate_fallback_bucket]
-        mem = int(frac * budget)
+        mem = int(BUCKET_FRACTIONS[settings.estimate_fallback_bucket] * budget)
     else:
-        mem, frac, _ = bucket_for(estimate, budget, BUCKET_FRACTIONS)
-    ceiling = max(1, int(settings.session_max_bucket_fraction * budget))
-    if mem > ceiling:
-        mem, frac = ceiling, ceiling / budget
+        mem, _, _ = bucket_for(estimate, budget, BUCKET_FRACTIONS)
+    mem = min(mem, max(1, int(settings.session_max_bucket_fraction * budget)))
     if mem <= current_bytes:
         # Never shrink mid-session on an estimate; the baseline shrink after the
         # statement is what returns the memory, and it does so unconditionally.
         return None
-    return ReservationRequest(memory_bytes=mem, threads=max(1, round(admission.cores * frac)))
+    return ReservationRequest(memory_bytes=mem, threads=admission.threads_for_statement())
 
 
 async def _send_session_opened(ws, session_id: str, status: str, error: str | None = None) -> None:
@@ -337,9 +348,10 @@ async def _handle_open_session(ws, payload: dict, admission: Admission) -> None:
                 disabled_filesystems=settings.sandbox_disabled_filesystems,
                 lock_config=settings.sandbox_lock_configuration,
             )
-            # Fix the session's resource slice once; statements run within it.
-            # GiB, not GB — see the note in executor.runner._run_one_statement.
-            conn.execute(f"SET memory_limit='{reservation.memory_bytes / 1024**3}GiB'")
+            # The session's idle slice. Each statement resizes from here to its
+            # own required floor plus whatever cache the agent can spare, and
+            # back again (see _resize_for_statement / _shrink_to_baseline).
+            apply_memory_limit(conn, reservation.total_bytes)
             conn.execute(f"SET threads={reservation.threads}")
             return conn
 
@@ -407,26 +419,50 @@ async def _resize_for_statement(state, sql: str, admission: Admission) -> None:
     while asking for more and a blocking wait could deadlock two growing sessions
     against each other. A partial grant still beats the baseline, and a statement
     that cannot grow at all simply runs as it would have before.
+
+    On top of the required floor the statement takes a revocable **elastic**
+    grant of whatever budget is idle. That is what pays for DuckDB's external
+    file cache, without which every Iceberg scan re-reads its Parquet from object
+    storage — and it costs other tenants nothing, because admission takes it back
+    the moment someone needs the bytes.
     """
     if not admission.is_auto:
         return
-    loop = asyncio.get_running_loop()
-    try:
-        estimate = await loop.run_in_executor(
-            None,
-            lambda: estimate_memory_bytes(
-                state.conn, sql, safety=settings.estimate_safety_multiplier
-            ),
-        )
-    except Exception as exc:  # noqa: BLE001 - estimation must never fail a statement
-        logger.warning("Statement estimate failed for session %s: %s", state.session_id, exc)
-        return
+    if not _is_single_select(sql):
+        # DDL/DML/`USE`/`SET` can change what a plan would bind to, so every
+        # estimate remembered on this connection is now suspect. Cheaper and far
+        # easier to reason about than tracking which tables a plan touched.
+        state.estimates.clear()
 
-    request = _statement_reservation_request(estimate, admission, state.memory_bytes)
-    if request is None:
-        return
-    admission.try_amend(state.reservation, request)
-    state.memory_bytes = state.reservation.memory_bytes
+    if sql in state.estimates:
+        estimate = state.estimates[sql]
+    else:
+        loop = asyncio.get_running_loop()
+        try:
+            estimate = await loop.run_in_executor(
+                None,
+                lambda: estimate_memory_bytes(
+                    state.conn, sql, safety=settings.estimate_safety_multiplier
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 - estimation must never fail a statement
+            logger.warning("Statement estimate failed for session %s: %s", state.session_id, exc)
+            return
+        state.remember_estimate(sql, estimate)
+
+    request = _statement_reservation_request(estimate, admission, state.reservation.memory_bytes)
+    # Hand the previous statement's cache grant back before sizing this one, so
+    # the required floor is measured against the budget that is really free. This
+    # is accounting only — nothing touches the connection until the final total
+    # below — so re-granting the same bytes leaves the file cache intact.
+    admission.revoke_elastic(state.reservation)
+    if request is not None:
+        admission.try_amend(state.reservation, request)
+    admission.grant_elastic(
+        state.reservation, _elastic_target(admission, state.reservation.memory_bytes)
+    )
+    # The runner applies this total to the connection when it runs the statement.
+    state.memory_bytes = state.reservation.total_bytes
     state.threads = state.reservation.threads
 
 
@@ -434,14 +470,24 @@ def _shrink_to_baseline(state, admission: Admission) -> None:
     """Return a session to its idle baseline once its statement is done.
 
     Unconditional, and on every exit path: without it one heavy query would pin a
-    large reservation for the rest of the session's life, which is exactly the
-    starvation `auto` exists to prevent.
+    large *required* reservation for the rest of the session's life, which is
+    exactly the starvation `auto` exists to prevent.
+
+    The elastic grant deliberately survives — it is the DuckDB file cache, and
+    dropping it between statements would make the next one re-read every Parquet
+    file it just read. It stays revocable, so an idle session holding cache never
+    blocks anyone; admission reclaims it the moment the budget is wanted.
+
+    The connection is resized here, not just the accounting. Skipping that (which
+    is what this function used to do) leaves DuckDB holding the previous
+    statement's limit while admission believes the memory is free — the exact
+    drift that lets two sessions between them exceed the cgroup.
     """
     if not admission.is_auto:
         return
     admission.try_amend(state.reservation, _session_reservation_request(admission))
-    state.memory_bytes = state.reservation.memory_bytes
     state.threads = state.reservation.threads
+    state.resize(state.reservation.total_bytes)
 
 
 async def _handle_exec_statement(

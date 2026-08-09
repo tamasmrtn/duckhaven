@@ -88,6 +88,21 @@ class Settings(BaseSettings):
     explain_timeout_s: float = 2.0
     estimate_fallback_bucket: str = "M"
 
+    # How far the revocable "elastic" cache grant may top a statement up, as a
+    # fraction of the agent's budget. A statement is grown to this fraction *if*
+    # its required reservation is smaller (a required reservation already above
+    # it is left alone — that tier has its own `estimate_ceiling_fraction`).
+    #
+    # This is what lets an otherwise-idle agent give a scan-heavy query enough
+    # memory to keep DuckDB's EXTERNAL_FILE_CACHE warm instead of re-reading its
+    # Parquet from object storage on every pass. Below 1.0 on purpose, and
+    # independent of `memory_headroom_fraction`: `memory_limit` bounds DuckDB's
+    # own allocations, not the process, so the agent needs room for Python, Arrow
+    # buffers and the httpfs/iceberg extensions above what DuckDB may use. Lower
+    # it to keep more in reserve for other tenants; the grant is revocable either
+    # way, so an idle session holding cache never blocks anyone.
+    elastic_ceiling_fraction: float = 0.85
+
     # Post-execution profiling: capture DuckDB's JSON profile per query and ship
     # it in QUERY_DONE. Best-effort; this flag is the kill switch.
     profiling_enabled: bool = True

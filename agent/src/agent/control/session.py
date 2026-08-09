@@ -17,13 +17,20 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 
 import duckdb
 
+from agent.executor import runner
 from agent.executor.admission import Admission, Reservation
 
 logger = logging.getLogger(__name__)
+
+# Per-session cap on remembered EXPLAIN estimates. Sessions are long-lived
+# (dbt/dlt run hundreds of statements) so this is bounded rather than unbounded;
+# 64 covers a re-run of any realistic model set without growing without limit.
+_ESTIMATE_CACHE_MAX = 64
 
 
 @dataclass
@@ -50,15 +57,56 @@ class SessionState:
     # is what each statement's reported peak/spill is measured against; see
     # executor.runner._apply_watermarks.
     watermarks: dict[str, int] = field(default_factory=dict)
+    # EXPLAIN estimates already computed on this connection, keyed by the exact
+    # statement text. Cleared whenever a statement runs that could have changed
+    # what a plan would bind to (see channel._resize_for_statement).
+    estimates: OrderedDict[str, int | None] = field(default_factory=OrderedDict)
 
     def touch(self) -> None:
         self.last_active_at = time.monotonic()
+
+    def is_idle(self) -> bool:
+        """Whether the connection is safe to resize right now.
+
+        The lock is held for exactly as long as a statement is in flight, so this
+        is the admission manager's guarantee that reclaiming this session's
+        elastic memory cannot pull it out from under a running query.
+        """
+        return not self.lock.locked()
+
+    def resize(self, total_bytes: int) -> None:
+        """Move the connection's DuckDB memory limit to a new total.
+
+        Called both by the admission manager (reclaiming elastic memory) and by
+        the statement path when a session shrinks back to its baseline. Failures
+        are logged rather than raised: a shrink that does not land leaves DuckDB
+        holding *more* than admission accounted, which the next statement's own
+        `SET memory_limit` corrects.
+        """
+        self.memory_bytes = total_bytes
+        try:
+            runner.apply_memory_limit(self.conn, total_bytes)
+        except Exception as exc:  # noqa: BLE001 - a stale limit must not fail a session
+            logger.warning(
+                "Resizing session %s to %d bytes failed: %s", self.session_id, total_bytes, exc
+            )
+
+    def remember_estimate(self, sql: str, estimate: int | None) -> None:
+        self.estimates[sql] = estimate
+        self.estimates.move_to_end(sql)
+        while len(self.estimates) > _ESTIMATE_CACHE_MAX:
+            self.estimates.popitem(last=False)
 
 
 _sessions: dict[str, SessionState] = {}
 
 
 def register(state: SessionState) -> None:
+    # Hand the admission manager the two things it needs to treat this session's
+    # elastic grant as revocable: whether the connection is free right now, and
+    # how to shrink it. Without both, `_reclaim_elastic` skips the reservation.
+    state.reservation.is_idle = state.is_idle
+    state.reservation.on_resize = state.resize
     _sessions[state.session_id] = state
 
 
@@ -98,6 +146,10 @@ async def _teardown(state: SessionState, admission: Admission) -> None:
                 await loop.run_in_executor(None, state.conn.close)
             except Exception as exc:  # noqa: BLE001 - close is best-effort
                 logger.warning("Closing session %s connection failed: %s", state.session_id, exc)
+            # Unhook before releasing: the connection is gone, so a reclaim that
+            # still held these would try to `SET memory_limit` on a closed handle.
+            state.reservation.is_idle = None
+            state.reservation.on_resize = None
     finally:
         admission.release(state.reservation)
 

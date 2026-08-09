@@ -24,7 +24,12 @@ from agent.executor.admission import (
     ReservationRequest,
 )
 from agent.executor.estimator import bucket_for, estimate_memory_bytes
-from agent.executor.runner import _is_single_select, apply_memory_limit, open_and_attach
+from agent.executor.runner import (
+    _is_single_select,
+    apply_memory_limit,
+    is_cheap_statement,
+    open_and_attach,
+)
 from agent.executor.supervisor import run_query, run_statement
 from agent.metrics.system import (
     MetricsSampler,
@@ -218,13 +223,25 @@ def _build_request(estimate: int | None, admission: Admission) -> ReservationReq
 def _elastic_target(admission: Admission, required_bytes: int) -> int:
     """Revocable cache memory to ask for on top of ``required_bytes``.
 
-    Capped at ``elastic_ceiling_fraction`` of the budget rather than all of it:
-    DuckDB's ``memory_limit`` bounds its own allocations, not the process, so the
+    Two bounds, and both matter:
+
+    ``elastic_ceiling_fraction`` of the budget, rather than all of it, because
+    DuckDB's ``memory_limit`` bounds its own allocations and not the process — the
     agent needs a cushion above the reservation for Python, Arrow buffers and the
-    extensions' own memory. Returns 0 when the required floor already covers it.
+    extensions' own memory.
+
+    A **fair share** of the budget, ``budget / live reservations``, because without
+    it the first session to ask takes everything that is free and every session
+    behind it runs on the bare idle baseline. Measured on a 22-way SF10 burst: one
+    session at 2,342 MiB and twenty-one at 64 MiB, where DuckDB spills itself (and
+    the container) to death. The share is recomputed on every grant, so it falls as
+    sessions arrive and each holder gives the excess back at its next shrink —
+    which is what keeps this working without having to reclaim from a connection
+    that is busy running a statement.
     """
     ceiling = int(settings.elastic_ceiling_fraction * admission.budget_bytes)
-    return max(0, ceiling - required_bytes)
+    fair_share = admission.budget_bytes // max(1, admission.running_count)
+    return max(0, min(ceiling - required_bytes, fair_share))
 
 
 async def _traced_dispatch(ws, msg: Frame, results_dir: Path, admission: Admission) -> None:
@@ -255,7 +272,7 @@ def _session_reservation_request(admission: Admission) -> ReservationRequest:
 
 
 def _statement_reservation_request(
-    estimate: int | None, admission: Admission, current_bytes: int
+    estimate: int | None, admission: Admission, current_bytes: int, sql: str = ""
 ) -> ReservationRequest | None:
     """Size one session statement from its estimate, or None to keep the current size.
 
@@ -269,6 +286,11 @@ def _statement_reservation_request(
     back, the same trade the one-shot path already makes.
     """
     budget = admission.budget_bytes
+    if estimate is None and is_cheap_statement(sql):
+        # `USE`/`SET` move no data. Charging them the unestimable fallback bucket
+        # had every session in a burst claim a third of the agent to run a
+        # one-millisecond statement.
+        return None
     if estimate is None:
         mem = int(BUCKET_FRACTIONS[settings.estimate_fallback_bucket] * budget)
     else:
@@ -329,6 +351,8 @@ async def _handle_open_session(ws, payload: dict, admission: Admission) -> None:
             # once _open() is on the executor, where a cancel cannot help.
             if inflight is not None:
                 inflight.acquiring = False
+
+        await admission.apply_pending_resizes()
 
         if session_id in _abandoned:
             # Closed while queued, but we won the slot before the cancel landed.
@@ -406,7 +430,9 @@ async def _discard_open(conn, session_id: str, reservation, admission: Admission
         admission.release(reservation)
 
 
-async def _resize_for_statement(state, sql: str, admission: Admission) -> None:
+async def _resize_for_statement(
+    state, sql: str, admission: Admission, timeout_s: float = 0.0
+) -> None:
     """Grow a session's reservation to fit the statement it is about to run.
 
     The session holds only its idle baseline between statements, so this is where
@@ -450,33 +476,81 @@ async def _resize_for_statement(state, sql: str, admission: Admission) -> None:
             return
         state.remember_estimate(sql, estimate)
 
-    request = _statement_reservation_request(estimate, admission, state.reservation.memory_bytes)
-    # Hand the previous statement's cache grant back before sizing this one, so
-    # the required floor is measured against the budget that is really free. This
-    # is accounting only — nothing touches the connection until the final total
-    # below — so re-granting the same bytes leaves the file cache intact.
-    admission.revoke_elastic(state.reservation)
-    if request is not None:
-        admission.try_amend(state.reservation, request)
-    admission.grant_elastic(
-        state.reservation, _elastic_target(admission, state.reservation.memory_bytes)
+    request = _statement_reservation_request(
+        estimate, admission, state.reservation.memory_bytes, sql
     )
+
+    async def _size_once() -> None:
+        # Hand the previous statement's cache grant back before sizing this one,
+        # so the required floor is measured against the budget that is really
+        # free. Accounting only — nothing touches this connection until the runner
+        # applies the total — so re-granting the same bytes leaves the cache intact.
+        admission.revoke_elastic(state.reservation)
+        if request is not None:
+            admission.try_amend(state.reservation, request)
+        admission.grant_elastic(
+            state.reservation, _elastic_target(admission, state.reservation.memory_bytes)
+        )
+        # Any cache reclaimed from other sessions above is still resident in their
+        # DuckDB until this lands; drain before we start using the bytes ourselves.
+        await admission.apply_pending_resizes()
+
+    wanted = request.memory_bytes if request is not None else state.reservation.memory_bytes
+    floor = int(settings.statement_admission_floor_fraction * wanted)
+    deadline = time.monotonic() + min(settings.statement_admission_wait_s, timeout_s)
+    started = time.monotonic()
+
+    while True:
+        # Armed before sizing, so budget freed *during* the attempt still counts
+        # and we never sleep through the wakeup we were about to wait for.
+        admission.arm_budget_wait()
+        await _size_once()
+        if state.reservation.memory_bytes >= floor:
+            break
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        if session.executing_count() <= 1:
+            # Only this session is running anything, so no one is going to release
+            # the budget we are short of. Waiting cannot help and burning the
+            # deadline would just delay a statement that is going to run anyway.
+            break
+        await admission.wait_for_budget(remaining)
+
+    state.admission_wait_ms = (time.monotonic() - started) * 1000
+    if state.admission_wait_ms >= 1.0:
+        logger.info(
+            "Statement on session %s waited %.0f ms for budget (granted %d of %d bytes)",
+            state.session_id,
+            state.admission_wait_ms,
+            state.reservation.memory_bytes,
+            wanted,
+        )
     # The runner applies this total to the connection when it runs the statement.
     state.memory_bytes = state.reservation.total_bytes
     state.threads = state.reservation.threads
 
 
-def _shrink_to_baseline(state, admission: Admission) -> None:
+async def _shrink_to_baseline(state, admission: Admission) -> None:
     """Return a session to its idle baseline once its statement is done.
 
     Unconditional, and on every exit path: without it one heavy query would pin a
     large *required* reservation for the rest of the session's life, which is
     exactly the starvation `auto` exists to prevent.
 
-    The elastic grant deliberately survives — it is the DuckDB file cache, and
-    dropping it between statements would make the next one re-read every Parquet
-    file it just read. It stays revocable, so an idle session holding cache never
-    blocks anyone; admission reclaims it the moment the budget is wanted.
+    The cache grant survives — it is the DuckDB file cache, and dropping it between
+    statements would make the next one re-read every Parquet file it just read. It
+    stays revocable, so an idle session holding cache never blocks anyone.
+
+    It is re-granted against the *baseline*, not simply left where the statement
+    left it. The grant is sized as "ceiling minus what this statement required", so
+    carrying it over unchanged makes an idle session's cache inversely proportional
+    to the weight of the last thing it ran — and at the largest bucket, where
+    required already exceeds the ceiling, the grant is zero and the shrink drops
+    the connection to the bare 64 MiB baseline, evicting the whole cache after
+    every statement. That cost the five heaviest SF10 queries 2.5-5x (q01 measured
+    at 4,856 ms/rep against 1,630 ms with the cache kept). Re-granting here returns
+    every idle session to the same ceiling regardless of what it just ran.
 
     The connection is resized here, not just the accounting. Skipping that (which
     is what this function used to do) leaves DuckDB holding the previous
@@ -486,8 +560,14 @@ def _shrink_to_baseline(state, admission: Admission) -> None:
     if not admission.is_auto:
         return
     admission.try_amend(state.reservation, _session_reservation_request(admission))
+    admission.grant_elastic(
+        state.reservation, _elastic_target(admission, state.reservation.memory_bytes)
+    )
     state.threads = state.reservation.threads
-    state.resize(state.reservation.total_bytes)
+    # `apply_resize`, not `resize_when_free`: this runs inside the statement's own
+    # `async with state.lock`, so taking the lock again would deadlock.
+    await state.apply_resize(state.reservation.total_bytes)
+    await admission.apply_pending_resizes()
 
 
 async def _handle_exec_statement(
@@ -520,7 +600,7 @@ async def _handle_exec_statement(
         async with state.lock:
             # Inside the lock: the size applies to this statement only, and the
             # session runs one statement at a time.
-            await _resize_for_statement(state, sql, admission)
+            await _resize_for_statement(state, sql, admission, timeout_s)
             try:
                 stats = await run_statement(
                     sql,
@@ -531,9 +611,10 @@ async def _handle_exec_statement(
                     threads=state.threads,
                     enable_profiling=settings.profiling_enabled,
                     watermarks=state.watermarks,
+                    admission_wait_ms=state.admission_wait_ms,
                 )
             finally:
-                _shrink_to_baseline(state, admission)
+                await _shrink_to_baseline(state, admission)
         done_payload: dict[str, object] = {
             "query_id": statement_id,
             "status": "done",
@@ -690,6 +771,8 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
         _in_flight.pop(query_id, None)
         raise
 
+    await admission.apply_pending_resizes()
+
     progress = Frame(type=FrameType.QUERY_PROGRESS, payload={"query_id": query_id})
     await ws.send(progress.model_dump_json())
 
@@ -755,6 +838,7 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
         admission.release(reservation)
         _in_flight.pop(query_id, None)
 
+    await admission.apply_pending_resizes()
     await ws.send(done.model_dump_json())
 
 
@@ -773,11 +857,17 @@ async def _push_metrics(ws, sampler: MetricsSampler, admission: Admission) -> No
                 payload={"session_id": session_id, "status": "closed", "reason": "agent_self_reap"},
             )
             await ws.send(frame.model_dump_json())
+        # Backstop for the reclaim path: every async admission site drains its own
+        # pending resizes, but a drop here bounds the window in which admission has
+        # freed bytes DuckDB is still holding to one sampling interval, whatever
+        # path reclaimed them.
+        await admission.apply_pending_resizes()
         sample = sampler.sample(
             running_queries=admission.running_count,
             queued_queries=admission.queued_count,
             active_profile=admission.active_profile,
             session_count=session.count(),
+            growth_waiting=admission.growth_waiting,
         )
         frame = Frame(type=FrameType.METRICS_SAMPLE, payload=sample.model_dump(mode="json"))
         await ws.send(frame.model_dump_json())

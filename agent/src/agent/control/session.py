@@ -61,6 +61,9 @@ class SessionState:
     # statement text. Cleared whenever a statement runs that could have changed
     # what a plan would bind to (see channel._resize_for_statement).
     estimates: OrderedDict[str, int | None] = field(default_factory=OrderedDict)
+    # How long the last statement spent waiting for budget before it could run,
+    # surfaced in its profile as `admission_wait_ms`. Reset per statement.
+    admission_wait_ms: float = 0.0
 
     def touch(self) -> None:
         self.last_active_at = time.monotonic()
@@ -74,22 +77,38 @@ class SessionState:
         """
         return not self.lock.locked()
 
-    def resize(self, total_bytes: int) -> None:
+    async def apply_resize(self, total_bytes: int) -> None:
         """Move the connection's DuckDB memory limit to a new total.
 
-        Called both by the admission manager (reclaiming elastic memory) and by
-        the statement path when a session shrinks back to its baseline. Failures
-        are logged rather than raised: a shrink that does not land leaves DuckDB
-        holding *more* than admission accounted, which the next statement's own
-        `SET memory_limit` corrects.
+        **The caller must hold ``lock``.** The `SET` runs on an executor thread:
+        lowering a limit makes DuckDB evict its file cache inline, which is fast
+        (~12 ms for 383 MB) but not free, and it has no business happening on the
+        event loop while 20-odd other sessions are waiting to be served.
+
+        Failures are logged rather than raised: a limit that does not land leaves
+        DuckDB holding *more* than admission accounted, which the session's next
+        statement corrects when it sets its own limit.
         """
         self.memory_bytes = total_bytes
+        loop = asyncio.get_running_loop()
         try:
-            runner.apply_memory_limit(self.conn, total_bytes)
+            await loop.run_in_executor(None, runner.apply_memory_limit, self.conn, total_bytes)
         except Exception as exc:  # noqa: BLE001 - a stale limit must not fail a session
             logger.warning(
                 "Resizing session %s to %d bytes failed: %s", self.session_id, total_bytes, exc
             )
+
+    async def resize_when_free(self, total_bytes: int) -> None:
+        """Resize from the outside — the admission manager reclaiming cache.
+
+        Takes the lock first, because unlike ``apply_resize``'s callers this one
+        does not own the session and the connection may be mid-statement. Waiting
+        is correct: the accounting has already been updated, so the bytes are
+        merely late in coming back, and a statement that finishes first hands them
+        over itself.
+        """
+        async with self.lock:
+            await self.apply_resize(total_bytes)
 
     def remember_estimate(self, sql: str, estimate: int | None) -> None:
         self.estimates[sql] = estimate
@@ -106,7 +125,7 @@ def register(state: SessionState) -> None:
     # elastic grant as revocable: whether the connection is free right now, and
     # how to shrink it. Without both, `_reclaim_elastic` skips the reservation.
     state.reservation.is_idle = state.is_idle
-    state.reservation.on_resize = state.resize
+    state.reservation.on_resize = state.resize_when_free
     _sessions[state.session_id] = state
 
 
@@ -116,6 +135,18 @@ def get(session_id: str) -> SessionState | None:
 
 def count() -> int:
     return len(_sessions)
+
+
+def executing_count() -> int:
+    """Sessions currently running a statement (their lock is held).
+
+    The deadlock guard for the statement admission wait: a statement only waits
+    for budget while somebody else is actually executing and will therefore free
+    some. If nothing is running, waiting cannot help and would just burn the
+    timeout — which is the tie-break `try_amend`'s docstring says growth has to
+    have, since every waiter is holding memory while asking for more.
+    """
+    return sum(1 for state in _sessions.values() if state.lock.locked())
 
 
 async def _teardown(state: SessionState, admission: Admission) -> None:
@@ -152,6 +183,9 @@ async def _teardown(state: SessionState, admission: Admission) -> None:
             state.reservation.on_resize = None
     finally:
         admission.release(state.reservation)
+        # Releasing frees budget, which can promote a waiter and reclaim cache from
+        # somebody else; that resize is queued, not applied, so drain it here.
+        await admission.apply_pending_resizes()
 
 
 async def remove(session_id: str, admission: Admission) -> bool:

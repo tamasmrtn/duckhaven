@@ -138,12 +138,12 @@ async def test_the_cache_survives_between_statements(
 
     await _resize_for_statement(state, sql, admission)
     cold_cpu = _run("cold")
-    _shrink_to_baseline(state, admission)
+    await _shrink_to_baseline(state, admission)
     lent = state.reservation.elastic_bytes
 
     await _resize_for_statement(state, sql, admission)
     warm_cpu = _run("warm")
-    _shrink_to_baseline(state, admission)
+    await _shrink_to_baseline(state, admission)
 
     assert lent > 0, "the cache grant was dropped at the end of the statement"
     # CPU, not wall time: a re-read burns CPU decompressing Parquet it already
@@ -151,6 +151,37 @@ async def test_the_cache_survives_between_statements(
     # wall clock on a shared CI box. Generous margin — this asserts "did not get
     # dramatically worse", not a performance target.
     assert warm_cpu <= cold_cpu * 1.5
+
+
+async def test_a_heavy_statement_keeps_its_cache_too(
+    polaris_s3_catalog, attach_factory, tmp_path
+) -> None:
+    """The cache grant is sized "ceiling minus required", so a statement whose
+    required reservation already exceeds the ceiling was granted nothing and the
+    shrink dropped its connection to the bare baseline — evicting the whole file
+    cache after every statement. That is the shape of the heaviest queries, which
+    are exactly the ones that can least afford to re-read from object storage."""
+    catalog, ns = polaris_s3_catalog
+    conn = attach_factory(catalog, ns)
+    _seed(conn)
+    admission = _admission()
+    state = _register(admission, conn)
+
+    sql = "SELECT sum(id), count(*) FROM res_src"
+    # Prime the session's estimate cache with a figure past every bucket, so the
+    # statement is sized into the top one — where its required reservation is the
+    # whole budget — through the ordinary path rather than by poking the
+    # reservation behind admission's back.
+    state.remember_estimate(sql, admission.budget_bytes * 10)
+
+    await _resize_for_statement(state, sql, admission)
+    ran_at = state.memory_bytes
+    await _shrink_to_baseline(state, admission)
+
+    baseline = _session_reservation_request(admission).memory_bytes
+    assert ran_at >= baseline
+    assert state.memory_bytes > baseline, "the heaviest statements are left with no cache at all"
+    assert admission.committed_fraction <= 1.0
 
 
 async def test_a_second_session_reclaims_idle_cache_rather_than_queueing(
@@ -163,7 +194,7 @@ async def test_a_second_session_reclaims_idle_cache_rather_than_queueing(
     first = _register(admission, attach_factory(catalog, ns), "res-a")
 
     await _resize_for_statement(first, "SELECT 1", admission)
-    _shrink_to_baseline(first, admission)
+    await _shrink_to_baseline(first, admission)
     assert first.reservation.elastic_bytes > 0, "nothing was lent, so nothing to reclaim"
 
     # A second session opening and sizing a statement, while the first sits idle

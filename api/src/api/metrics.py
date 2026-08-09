@@ -413,6 +413,13 @@ def _agent_families(agents: list[dict]) -> Iterator[GaugeMetricFamily]:
         "Open SQL sessions holding a connection + admission slot on the agent.",
         labels=_AGENT_LABELS,
     )
+    growth = GaugeMetricFamily(
+        "duckhaven_agent_growth_waiting",
+        "Statements parked waiting for memory to grow into on the agent. Distinct "
+        "from queued_queries, which counts work not admitted at all. Sustained "
+        "growth_waiting with no CPU means statements are waiting on each other.",
+        labels=_AGENT_LABELS,
+    )
     for a in agents:
         base = [settings.replica_id, a["agent_id"], a["agent_name"]]
         up.add_metric(base, 1)
@@ -422,7 +429,8 @@ def _agent_families(agents: list[dict]) -> Iterator[GaugeMetricFamily]:
         queued.add_metric(base, a["queued_queries"])
         profile.add_metric([*base, a["active_profile"]], 1)
         sessions.add_metric(base, a["session_count"])
-    yield from (up, cpu, mem, running, queued, profile, sessions)
+        growth.add_metric(base, a["growth_waiting"])
+    yield from (up, cpu, mem, running, queued, profile, sessions, growth)
 
 
 REGISTRY.register(_ScrapeCollector())
@@ -450,6 +458,7 @@ async def _collect_agents(db: AsyncSession) -> list[dict]:
                 "queued_queries": latest.get("queued_queries", 0),
                 "active_profile": latest.get("active_profile", "auto"),
                 "session_count": latest.get("session_count", 0),
+                "growth_waiting": latest.get("growth_waiting", 0),
             }
         )
     return out

@@ -66,10 +66,17 @@ that it hurts everything else running beside it. It stops waiting as soon as mem
 would be exceeded, or immediately if nothing else is running (in which case no memory is going to be released and
 waiting could only make things slower).
 
+A waiting query **gives its memory back** while it waits, keeping only the idle minimum. That matters more than it
+sounds: a query that slept holding a partial allocation would be holding exactly the memory it — and everyone behind
+it — was waiting for, and a group of them can end up holding all of it between them while all of them wait. Waiters are
+then served **one at a time, in the order they arrived**, so whoever is at the front gets the whole of what is free
+rather than every waiter getting a useless slice of it.
+
 Waiting is visible rather than mysterious: every query reports how long it spent waiting for memory in its
 [profile](../guides/query-profiles.md), so a query that was slow because the agent was busy is distinguishable from one
-that was slow because it was expensive. `STATEMENT_ADMISSION_WAIT_S` bounds the wait; setting it to `0` restores the
-older behaviour of always running immediately at whatever size was available.
+that was slow because it was expensive, and `duckhaven_agent_growth_waiting` in
+[monitoring](../operations/monitoring.md) shows how many are waiting right now. `STATEMENT_ADMISSION_WAIT_S` bounds the
+wait; setting it to `0` restores the older behaviour of always running immediately at whatever size was available.
 
 **Threads** are separate from both, and work the same way under **every** profile: each statement is given the agent's
 full core count. Neither the `auto` estimator's buckets nor a static ladder's weights touch it — they divide memory. The

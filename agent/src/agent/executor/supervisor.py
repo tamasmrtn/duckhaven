@@ -97,6 +97,7 @@ async def run_statement(
     threads: int,
     enable_profiling: bool = True,
     watermarks: dict[str, int] | None = None,
+    admission_wait_ms: float = 0.0,
 ) -> dict[str, Any]:
     """Run one statement on a held SQL-session connection with a wall-clock
     timeout (and cancellation) enforced via DuckDB's thread-safe `interrupt()`.
@@ -115,6 +116,7 @@ async def run_statement(
             threads=threads,
             enable_profiling=enable_profiling,
             watermarks=watermarks,
+            admission_wait_ms=admission_wait_ms,
         )
 
     def _interrupt() -> None:

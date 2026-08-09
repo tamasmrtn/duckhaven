@@ -140,6 +140,7 @@ class MetricsSampler:
         queued_queries: int = 0,
         active_profile: str = DEFAULT_PROFILE,
         session_count: int = 0,
+        growth_waiting: int = 0,
     ) -> MetricsSample:
         # Resource percentages are sampled here; the admission counts/profile and
         # held-session count are supplied by the caller (channel) so this stays a
@@ -151,6 +152,7 @@ class MetricsSampler:
             queued_queries=queued_queries,
             active_profile=active_profile,
             session_count=session_count,
+            growth_waiting=growth_waiting,
             sampled_at=datetime.now(tz=UTC),
         )
 

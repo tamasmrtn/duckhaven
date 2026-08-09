@@ -59,9 +59,12 @@ class NormalizedNode:
 class QuerySummary:
     """Query-level actuals from the profile root (QUERY_ROOT).
 
-    ``reserved_memory_bytes``/``reserved_threads`` are not part of DuckDB's
-    profile — they are the admission reservation the runner ran under, injected
-    so the UI can compare actual peak/spill against what the query was given.
+    ``reserved_memory_bytes``/``reserved_threads``/``admission_wait_ms`` are not
+    part of DuckDB's profile — they are the admission reservation the runner ran
+    under and how long the statement waited for it, injected so the UI can compare
+    actual peak/spill against what the query was given, and see when a slow query
+    was slow because it was queued behind other tenants rather than because it was
+    expensive.
 
     ``peak_memory_bytes``/``spill_bytes`` come from DuckDB metrics that are
     high-water marks for the whole connection, so on a held session the runner
@@ -83,6 +86,7 @@ class QuerySummary:
     memory_allocated_bytes: int = 0
     reserved_memory_bytes: int = 0
     reserved_threads: int = 0
+    admission_wait_ms: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -97,6 +101,7 @@ class QuerySummary:
             "memory_allocated_bytes": self.memory_allocated_bytes,
             "reserved_memory_bytes": self.reserved_memory_bytes,
             "reserved_threads": self.reserved_threads,
+            "admission_wait_ms": self.admission_wait_ms,
         }
 
 

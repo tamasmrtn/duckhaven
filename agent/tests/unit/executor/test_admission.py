@@ -541,6 +541,108 @@ async def test_release_returns_both_tiers():
     assert adm.running_count == 0
 
 
+# ── the growth queue: parked statements waiting for room ──────────────────────
+#
+# Waking every waiter on every free had them re-race and split the same bytes into
+# fractions too small for any of them to use — and, because each retry kept what it
+# won, they ended up holding between them exactly the budget they were all waiting
+# for. The queue is FIFO and wakes one at a time so the head always sees the whole
+# of what is free.
+
+
+async def test_growth_wakes_one_waiter_at_a_time_in_order():
+    adm = _auto()
+    res = await adm.acquire(_req(BUDGET))  # everything is committed
+    first = asyncio.create_task(adm.await_growth(4, 5))
+    await asyncio.sleep(0)
+    second = asyncio.create_task(adm.await_growth(4, 5))
+    await asyncio.sleep(0)
+    assert adm.growth_waiting == 2
+
+    adm.try_amend(res, _req(BUDGET - 4))  # frees exactly 4
+    await asyncio.sleep(0)
+
+    assert first.done() and not second.done(), "woke more than the head of the queue"
+    assert await first is True
+    second.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await second
+
+
+async def test_growth_head_of_line_is_not_skipped():
+    """A large waiter blocks the queue rather than letting a smaller one behind it
+    jump ahead — the same rule `_promote` already applies to admissions."""
+    adm = _auto()
+    res = await adm.acquire(_req(BUDGET))
+    big = asyncio.create_task(adm.await_growth(10, 5))
+    await asyncio.sleep(0)
+    small = asyncio.create_task(adm.await_growth(2, 5))
+    await asyncio.sleep(0)
+
+    adm.try_amend(res, _req(BUDGET - 3))  # frees 3: enough for `small`, not for `big`
+    await asyncio.sleep(0)
+
+    assert not big.done() and not small.done(), "skipped the head of the queue"
+    for task in (big, small):
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+
+async def test_a_cancelled_growth_waiter_is_dropped_not_woken():
+    adm = _auto()
+    res = await adm.acquire(_req(BUDGET))
+    gone = asyncio.create_task(adm.await_growth(2, 5))
+    await asyncio.sleep(0)
+    behind = asyncio.create_task(adm.await_growth(2, 5))
+    await asyncio.sleep(0)
+
+    gone.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await gone
+    adm.try_amend(res, _req(BUDGET - 2))
+    await asyncio.sleep(0)
+
+    assert behind.done(), "a cancelled head waiter blocked the queue"
+    assert await behind is True
+    assert adm.growth_waiting == 0
+
+
+async def test_release_growth_head_frees_one_waiter_to_proceed():
+    """The escape hatch for a queue nothing can serve. It hands back `False` — "no
+    budget came free, run with what you have" — and releases exactly one, so the
+    whole starved queue does not land on the agent at the same instant."""
+    adm = _auto()
+    await adm.acquire(_req(BUDGET))
+    waiters = [asyncio.create_task(adm.await_growth(4, 5)) for _ in range(3)]
+    await asyncio.sleep(0)
+    assert adm.growth_waiting == 3
+
+    assert adm.release_growth_head() is True
+    await asyncio.sleep(0)
+
+    done = [t for t in waiters if t.done()]
+    assert len(done) == 1, "released more than one waiter"
+    assert await done[0] is False, "must report that budget did NOT come free"
+    assert adm.growth_waiting == 2
+
+    for t in waiters:
+        t.cancel()
+    await asyncio.gather(*waiters, return_exceptions=True)
+
+
+async def test_release_growth_head_on_an_empty_queue_is_a_no_op():
+    adm = _auto()
+    assert adm.release_growth_head() is False
+
+
+async def test_growth_waiter_times_out_and_leaves_the_queue():
+    adm = _auto()
+    await adm.acquire(_req(BUDGET))
+    assert await adm.await_growth(4, 0.05) is False
+    assert adm.growth_waiting == 0
+
+
 async def test_committed_never_exceeds_budget_under_random_churn():
     """The invariant `auto` exists for, exercised the way sessions actually move:
     acquire a baseline, grow for a statement, take a cache top-up, hand it back,
@@ -556,6 +658,7 @@ async def test_committed_never_exceeds_budget_under_random_churn():
     rng = random.Random(1234)
     adm = _auto()
     live = []
+    parked: list[asyncio.Task] = []
 
     def _track(res):
         # Half the holders look reclaimable, half look busy, so the churn covers
@@ -565,7 +668,7 @@ async def test_committed_never_exceeds_budget_under_random_churn():
         return res
 
     for _ in range(600):
-        action = rng.choice(("acquire", "grow", "shrink", "lend", "reclaim", "release"))
+        action = rng.choice(("acquire", "grow", "shrink", "lend", "reclaim", "park", "release"))
         if action == "acquire" and len(live) < 6:
             free = int((1 - adm.committed_fraction) * BUDGET)
             if free >= 1:
@@ -578,6 +681,11 @@ async def test_committed_never_exceeds_budget_under_random_churn():
             adm.grant_elastic(rng.choice(live), rng.randint(0, BUDGET))
         elif action == "reclaim" and live:
             adm.revoke_elastic(rng.choice(live))
+        elif action == "park":
+            # A parked waiter must never make the counter drift, and must never be
+            # woken for budget that is not actually there.
+            parked.append(asyncio.create_task(adm.await_growth(rng.randint(1, BUDGET), 5)))
+            await asyncio.sleep(0)
         elif action == "release" and live:
             adm.release(live.pop(rng.randrange(len(live))))
 
@@ -585,6 +693,10 @@ async def test_committed_never_exceeds_budget_under_random_churn():
         assert adm._committed == sum(r.total_bytes for r in live), "counter drifted"  # noqa: SLF001
         assert adm.running_count == len(live)
 
+    for task in parked:
+        task.cancel()
+    await asyncio.gather(*parked, return_exceptions=True)
     for res in live:
         adm.release(res)
     assert adm.committed_fraction == 0.0
+    assert adm.growth_waiting == 0, "a waiter leaked out of the growth queue"

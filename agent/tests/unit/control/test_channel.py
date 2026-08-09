@@ -1807,6 +1807,30 @@ async def test_a_starved_statement_waits_for_budget_instead_of_running_tiny(monk
     assert state.admission_wait_ms > 0
 
 
+def _idle_session(admission, session_id: str, memory_bytes: int):
+    """A registered session holding a reservation but running nothing.
+
+    Nobody is going to release what it holds, so it is the honest model of
+    "budget that will never come free" — unlike a bare reservation, which the
+    guard rightly reads as a one-shot query that *will* release.
+    """
+    reservation = admission._try_admit(  # noqa: SLF001
+        ReservationRequest(memory_bytes=memory_bytes, threads=admission.cores)
+    )
+    assert reservation is not None
+    state = session.SessionState(
+        session_id=session_id,
+        conn=_RecordingConn(),
+        reservation=reservation,
+        memory_bytes=reservation.memory_bytes,
+        threads=reservation.threads,
+        opened_at=0.0,
+        last_active_at=0.0,
+    )
+    session.register(state)
+    return state
+
+
 async def test_a_statement_does_not_wait_when_nothing_can_free_budget(monkeypatch):
     """The tie-break growth has to have: every waiter is holding memory while asking
     for more, so waiting when nobody is executing would just burn the deadline."""
@@ -1815,18 +1839,187 @@ async def test_a_statement_does_not_wait_when_nothing_can_free_budget(monkeypatc
     admission = _admission(profile="auto")
     ch, state = _session_state(admission, 64 * 1024**2)
     state.conn = _RecordingConn()
-    hog = admission._try_admit(  # noqa: SLF001
-        ReservationRequest(memory_bytes=admission.budget_bytes - 64 * 1024**2, threads=1)
-    )
-    assert hog is not None  # held by nobody that is running: no one will release it
+    _idle_session(admission, "idle-hog", admission.budget_bytes - 128 * 1024**2)
 
     monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: 700 * 1024**2)
-    async with state.lock:  # only this session is executing
+    async with state.lock:  # only this session is executing, and it is us
         await asyncio.wait_for(
             ch._resize_for_statement(state, "SELECT 1", admission, 30.0), timeout=5
         )
 
     assert state.admission_wait_ms < 1000, "waited even though nothing could free budget"
+
+
+async def test_waiters_are_not_mistaken_for_executors(monkeypatch):
+    """The guard that could not fire. A waiting statement holds its session lock for
+    the whole wait, so `executing_count()` alone cannot tell a parked session from a
+    working one — during the live deadlock it read 10 "executors", none of which
+    would ever release anything, and every waiter sat out the full 300s timeout."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    baseline = 64 * 1024**2
+    ch, state = _session_state(admission, baseline)
+    state.conn = _RecordingConn()
+    # Three sessions parked in the wait loop (locks held, nothing executing) plus a
+    # hog, sized so almost nothing is free and our statement would park too.
+    parked = [_idle_session(admission, f"parked{i}", baseline) for i in range(3)]
+    _idle_session(admission, "idle-hog", admission.budget_bytes - 5 * baseline)
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: 700 * 1024**2)
+
+    async def _park(st):
+        async with st.lock:
+            await admission.await_growth(admission.budget_bytes, 5.0)
+
+    tasks = [asyncio.create_task(_park(st)) for st in parked]
+    await asyncio.sleep(0.05)
+    # The trap: all three are asleep, yet every one of them holds its lock, so the
+    # naive "is anybody executing?" count sees three busy sessions (four once we
+    # take our own lock below) and none of them will ever release anything.
+    assert admission.growth_waiting == 3
+    assert session.executing_count() == 3, "parked sessions do look like executors"
+
+    async with state.lock:
+        await asyncio.wait_for(
+            ch._resize_for_statement(state, "SELECT 1", admission, 30.0), timeout=5
+        )
+
+    assert state.admission_wait_ms < 1000, "waited on sessions that were themselves parked"
+    for t in tasks:
+        t.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def test_a_parked_statement_holds_only_its_baseline(monkeypatch):
+    """The deadlock in one assertion. Waiters used to keep whatever partial grant
+    each retry won, so they collectively absorbed the budget they were all waiting
+    for — ten of them once held 100.000000% of a 4 GiB agent's budget, to the byte,
+    and only the 300s timeout broke it."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    baseline = 64 * 1024**2
+    ch, state = _session_state(admission, baseline)
+    state.conn = _RecordingConn()
+    # Someone else is executing, so waiting is worthwhile and the guard stays quiet.
+    # It holds nearly everything, so our statement cannot reach its floor.
+    busy = _idle_session(admission, "busy", admission.budget_bytes - 2 * baseline)
+
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: 700 * 1024**2)
+
+    async def _statement():
+        async with state.lock:
+            await ch._resize_for_statement(state, "SELECT 1", admission, 30.0)
+
+    async with busy.lock:
+        sizing = asyncio.create_task(_statement())
+        await asyncio.sleep(0.05)
+        assert admission.growth_waiting == 1, "did not park"
+        assert state.reservation.total_bytes <= baseline, (
+            f"parked while holding {state.reservation.total_bytes} bytes, "
+            f"not the {baseline}-byte baseline"
+        )
+
+    admission.release(busy.reservation)
+    await asyncio.wait_for(sizing, timeout=5)
+    assert state.reservation.memory_bytes > baseline, "did not grow once budget freed"
+
+
+async def test_a_running_one_shot_query_is_worth_waiting_for(monkeypatch):
+    """A one-shot query holds budget and will release it, but is not in the session
+    registry — so `executing_count()` cannot see it. Without counting it, a waiter
+    gives up the moment the only other consumer is a one-shot query."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    baseline = 64 * 1024**2
+    ch, state = _session_state(admission, baseline)
+    state.conn = _RecordingConn()
+    # Not a session: exactly the shape `_handle_dispatch` acquires.
+    one_shot = admission._try_admit(  # noqa: SLF001
+        ReservationRequest(memory_bytes=admission.budget_bytes - 2 * baseline, threads=1)
+    )
+    assert one_shot is not None
+
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: 700 * 1024**2)
+
+    async def _statement():
+        async with state.lock:
+            await ch._resize_for_statement(state, "SELECT 1", admission, 30.0)
+
+    sizing = asyncio.create_task(_statement())
+    await asyncio.sleep(0.05)
+    assert admission.growth_waiting == 1, "gave up while a one-shot query was still running"
+
+    admission.release(one_shot)
+    await asyncio.wait_for(sizing, timeout=5)
+    assert state.reservation.memory_bytes > baseline
+
+
+async def test_wait_deadlines_are_jittered(monkeypatch):
+    """Ten timeouts firing in an 8-second window released ten statements at once and
+    took the agent down 33 seconds later. Spreading the deadlines removes the herd."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    baseline = 64 * 1024**2
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: 700 * 1024**2)
+    monkeypatch.setattr(ch_module.settings, "statement_admission_wait_s", 0.4)
+    # Nothing else is executing, so each statement bails out of the wait immediately
+    # after computing its deadline; what we are pinning is that the deadlines differ.
+    seen: list[float] = []
+    real_uniform = ch_module.random.uniform
+    monkeypatch.setattr(
+        ch_module.random, "uniform", lambda a, b: seen.append(real_uniform(a, b)) or seen[-1]
+    )
+
+    for _ in range(8):
+        _, st = _session_state(admission, baseline)
+        st.conn = _RecordingConn()
+        async with st.lock:
+            await ch_module._resize_for_statement(st, "SELECT 1", admission, 30.0)
+        # Hand the whole reservation back before the next one, or the budget runs
+        # out after a couple of iterations and `_try_admit` starts refusing.
+        admission.release(st.reservation)
+        session._sessions.clear()  # noqa: SLF001
+
+    assert len(seen) == 8
+    assert len(set(seen)) > 1, "every waiter got an identical deadline"
+    assert all(0.85 <= f <= 1.15 for f in seen), f"jitter escaped its bounds: {seen}"
+
+
+async def test_the_watchdog_rescues_a_queue_that_went_quiet_after_parking(monkeypatch):
+    """The V2 failure exactly. A statement checks before parking whether anything is
+    left to free budget, but the agent can go quiet *after* it parks — and a parked
+    statement re-evaluates nothing. Ten of them sat for 255 seconds on an idle agent
+    and then all resumed at once. The metrics-loop watchdog releases them one at a
+    time instead."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    baseline = 64 * 1024**2
+    ch, state = _session_state(admission, baseline)
+    state.conn = _RecordingConn()
+    # An executor holds the budget, so parking is the right call when we check...
+    busy = _idle_session(admission, "busy", admission.budget_bytes - 2 * baseline)
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: 700 * 1024**2)
+
+    async def _statement():
+        async with state.lock:
+            await ch._resize_for_statement(state, "SELECT 1", admission, 30.0)
+
+    async with busy.lock:
+        sizing = asyncio.create_task(_statement())
+        await asyncio.sleep(0.05)
+        assert admission.growth_waiting == 1, "did not park"
+    # ...and now the executor stops without releasing. Nothing will ever free
+    # budget, and the parked statement cannot notice on its own.
+    assert ch_module._nobody_can_free_budget(admission, self_is_waiter=False)
+    assert not sizing.done(), "should still be parked with no way to notice"
+
+    assert admission.release_growth_head() is True  # what _push_metrics does
+    await asyncio.wait_for(sizing, timeout=5)
+    assert state.admission_wait_ms < 5000, "waited out the full deadline"
 
 
 async def test_use_and_set_are_not_charged_a_third_of_the_agent():

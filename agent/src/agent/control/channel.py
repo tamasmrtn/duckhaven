@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import platform
+import random
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -242,6 +243,27 @@ def _elastic_target(admission: Admission, required_bytes: int) -> int:
     ceiling = int(settings.elastic_ceiling_fraction * admission.budget_bytes)
     fair_share = admission.budget_bytes // max(1, admission.running_count)
     return max(0, min(ceiling - required_bytes, fair_share))
+
+
+def _nobody_can_free_budget(admission: Admission, *, self_is_waiter: bool) -> bool:
+    """True when every live consumer is itself parked, so waiting cannot help.
+
+    `session.executing_count()` counts sessions holding their lock — and a waiting
+    statement holds its lock for the whole wait, so waiters are indistinguishable
+    from executors by that count alone. Subtracting the parked ones (and ourselves)
+    is what makes the guard mean what it says; without it a deadlocked agent sees
+    ten "executors", none of which will ever release anything, and waits out the
+    full timeout instead of running.
+
+    ``one_shot`` covers the queries dispatched outside a session: they hold budget
+    and will release it, but are not in the session registry, so a waiter would
+    otherwise give up while one was still running.
+    """
+    others_executing = session.executing_count() - admission.growth_waiting
+    if self_is_waiter:
+        others_executing -= 1  # we hold our own lock and are not counted as parked yet
+    one_shot = admission.running_count - session.count()
+    return others_executing <= 0 and one_shot <= 0
 
 
 async def _traced_dispatch(ws, msg: Frame, results_dir: Path, admission: Admission) -> None:
@@ -497,25 +519,39 @@ async def _resize_for_statement(
 
     wanted = request.memory_bytes if request is not None else state.reservation.memory_bytes
     floor = int(settings.statement_admission_floor_fraction * wanted)
-    deadline = time.monotonic() + min(settings.statement_admission_wait_s, timeout_s)
+    baseline = _session_reservation_request(admission).memory_bytes
+    # Jittered, so a queue of waivers that started together does not expire
+    # together: ten simultaneous timeouts once released ten statements at the same
+    # instant and took the agent down 33 seconds later.
+    ceiling = settings.statement_admission_wait_s * random.uniform(0.85, 1.15)
+    deadline = time.monotonic() + min(ceiling, timeout_s)
     started = time.monotonic()
 
     while True:
-        # Armed before sizing, so budget freed *during* the attempt still counts
-        # and we never sleep through the wakeup we were about to wait for.
-        admission.arm_budget_wait()
         await _size_once()
         if state.reservation.memory_bytes >= floor:
             break
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
-        if session.executing_count() <= 1:
-            # Only this session is running anything, so no one is going to release
-            # the budget we are short of. Waiting cannot help and burning the
-            # deadline would just delay a statement that is going to run anyway.
+        if _nobody_can_free_budget(admission, self_is_waiter=True):
+            # Every other consumer is parked too, so nothing will be released and
+            # waiting can only burn the deadline. This is the tie-break growth has
+            # to have, since every waiter holds memory while asking for more.
             break
-        await admission.wait_for_budget(remaining)
+        # Give it all back before parking. A waiter that sleeps holding a partial
+        # grant is holding exactly what it — and everyone behind it — is waiting
+        # for; ten of them once held 100.000% of the budget between them.
+        admission.try_amend(state.reservation, _session_reservation_request(admission))
+        admission.revoke_elastic(state.reservation)
+        # `apply_resize`, not `resize_when_free`: we are inside the session's own
+        # lock. Dropping the connection too is the point — a parked session has no
+        # business holding file cache other statements need.
+        await state.apply_resize(state.reservation.total_bytes)
+        if not await admission.await_growth(max(0, floor - baseline), remaining):
+            # Timed out, or the watchdog released us because nothing was left to
+            # wait for. Either way there is no point going round again.
+            break
 
     state.admission_wait_ms = (time.monotonic() - started) * 1000
     if state.admission_wait_ms >= 1.0:
@@ -862,6 +898,17 @@ async def _push_metrics(ws, sampler: MetricsSampler, admission: Admission) -> No
         # freed bytes DuckDB is still holding to one sampling interval, whatever
         # path reclaimed them.
         await admission.apply_pending_resizes()
+        # Deadlock watchdog. A statement checks before parking whether anything is
+        # left to free budget, but the agent can go quiet *after* it parks — and a
+        # parked statement re-evaluates nothing. That is how ten of them once sat
+        # for 255 seconds on an idle agent. Release the oldest, one per tick: it
+        # runs, finishes, and frees enough for the next.
+        if admission.growth_waiting and _nobody_can_free_budget(admission, self_is_waiter=False):
+            if admission.release_growth_head():
+                logger.warning(
+                    "Released a statement waiting for budget: %d parked, nothing running",
+                    admission.growth_waiting + 1,
+                )
         sample = sampler.sample(
             running_queries=admission.running_count,
             queued_queries=admission.queued_count,

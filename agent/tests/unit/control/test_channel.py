@@ -26,10 +26,16 @@ def _clear_sessions():
     session._sessions.clear()
     ch_module._opening.clear()
     ch_module._abandoned.clear()
+    # The estimate cache and the estimate-pool counters are process-global too, so
+    # one test's cached plan would otherwise satisfy the next test's estimate.
+    ch_module._estimates.invalidate_all()
+    ch_module._estimates_in_flight = 0
+    ch_module._estimates_abandoned = 0
     yield
     session._sessions.clear()
     ch_module._opening.clear()
     ch_module._abandoned.clear()
+    ch_module._estimates.invalidate_all()
 
 
 def _admission(profile: str = "single", **kwargs) -> Admission:
@@ -1455,7 +1461,7 @@ async def test_repeated_reaped_bursts_do_not_erode_capacity(tmp_path):
 # the whole point of `auto` — never applied to any session traffic at all.
 
 
-def _session_state(admission, memory_bytes, threads=1):
+def _session_state(admission, memory_bytes, threads=1, session_id="s1"):
     """A registered session holding a real reservation, with a stub connection."""
     import agent.control.channel as ch_module
 
@@ -1464,7 +1470,7 @@ def _session_state(admission, memory_bytes, threads=1):
     )
     assert reservation is not None
     state = session.SessionState(
-        session_id="s1",
+        session_id=session_id,
         conn=object(),
         reservation=reservation,
         memory_bytes=reservation.memory_bytes,
@@ -1569,38 +1575,85 @@ async def test_estimate_failure_falls_back_rather_than_failing_the_statement(mon
     assert state.reservation.memory_bytes == fallback > baseline
 
 
-async def test_a_hanging_explain_is_interrupted_and_falls_back(monkeypatch):
-    """DuckDB's planner can spin inside EXPLAIN itself — seen twice on TPC-H Q08
-    against SF10. The session estimate path had no timeout at all, so the statement
-    never started, a core burned, and nothing unwound it: the statement's own
-    timeout only covers execution, which had not begun."""
+async def test_an_uninterruptible_explain_does_not_wedge_the_session(monkeypatch):
+    """The real failure. DuckDB's planner can spin inside EXPLAIN, and it does NOT
+    honour `interrupt()` while planning -- measured as a thread still inside
+    `conn.execute` eleven minutes after the interrupt. So the estimate has to be
+    abandonable, not merely interruptible: an earlier fix armed an interrupt and
+    still awaited the executor, which is exactly as wedged as before."""
     import agent.control.channel as ch_module
 
     admission = _admission(profile="auto")
     ch, state = _session_state(admission, 64 * 1024**2)
     baseline = state.memory_bytes
     monkeypatch.setattr(ch_module.settings, "explain_timeout_s", 0.05)
+    monkeypatch.setattr(ch_module, "_estimates_abandoned", 0)
+    monkeypatch.setattr(ch_module, "_estimates_in_flight", 0)
 
-    interrupted = threading.Event()
+    release = threading.Event()
 
-    class _SpinningConn:
-        """Blocks in EXPLAIN until somebody interrupts it, like the real thing."""
+    class _DeafConn:
+        """Ignores interrupt, like a spinning planner."""
 
         def interrupt(self):
-            interrupted.set()
+            pass
 
-    state.conn = _SpinningConn()
+    state.conn = _DeafConn()
 
-    def _hang(conn, sql, **kwargs):
-        if not interrupted.wait(timeout=10):
-            raise AssertionError("EXPLAIN was never interrupted")
-        raise RuntimeError("INTERRUPT: query interrupted")  # what DuckDB raises
+    def _spin(conn, sql, **kwargs):
+        release.wait(timeout=30)  # never returns within the timeout
+        return 1
 
-    monkeypatch.setattr(ch_module, "estimate_memory_bytes", _hang)
-    await asyncio.wait_for(ch._resize_for_statement(state, "SELECT 1", admission, 30.0), timeout=10)
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", _spin)
+    try:
+        await asyncio.wait_for(
+            ch._resize_for_statement(state, "SELECT 1", admission, 30.0), timeout=5
+        )
+        assert state.reservation.memory_bytes > baseline, "did not fall back to a usable size"
+        assert ch_module._estimates_abandoned == 1
+    finally:
+        release.set()  # let the worker go so the pool is not poisoned for other tests
 
-    assert interrupted.is_set(), "the hung EXPLAIN was never interrupted"
-    assert state.reservation.memory_bytes > baseline, "did not fall back to a usable size"
+
+async def test_estimates_do_not_run_on_the_query_execution_pool(monkeypatch):
+    """An abandoned estimate holds its worker forever, so it must not be holding one
+    of the workers `run_statement` needs."""
+    import agent.control.channel as ch_module
+
+    seen: list[str] = []
+
+    def _record(conn, sql, **kwargs):
+        seen.append(threading.current_thread().name)
+        return 1
+
+    admission = _admission(profile="auto")
+    ch, state = _session_state(admission, 64 * 1024**2)
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", _record)
+    await ch._resize_for_statement(state, "SELECT 1", admission, 30.0)
+
+    assert seen and seen[0].startswith("dh-estimate"), (
+        f"estimate ran on {seen} rather than the dedicated pool"
+    )
+
+
+async def test_estimation_is_skipped_once_the_pool_is_lost_to_spinners(monkeypatch):
+    """Degrade to the fallback bucket rather than queueing behind threads that are
+    never coming back."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    ch, state = _session_state(admission, 64 * 1024**2)
+    baseline = state.memory_bytes
+    # Every worker already lost to an abandoned planner. The pool is sized from
+    # the real cgroup core count, not the admission fixture's mocked one.
+    monkeypatch.setattr(ch_module, "_estimates_in_flight", max(2, ch_module.effective_cores()))
+    called = []
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: called.append(1) or 1)
+
+    await asyncio.wait_for(ch._resize_for_statement(state, "SELECT 1", admission, 30.0), timeout=5)
+
+    assert not called, "tried to estimate with no estimate workers left"
+    assert state.reservation.memory_bytes > baseline, "did not fall back"
 
 
 async def test_static_profile_sessions_are_left_alone(monkeypatch):
@@ -2133,43 +2186,73 @@ async def test_a_busy_session_never_has_its_memory_pulled_out_from_under_it(monk
     assert state.is_idle()
 
 
-async def test_the_estimate_is_reused_across_identical_statements(monkeypatch):
+async def test_the_estimate_is_reused_across_sessions(monkeypatch):
+    """An estimate depends on the SQL and the catalogs, not on who asked, so it has
+    to outlive the session that produced it. A client that opens a session per
+    query used to re-plan every statement -- which is exactly where DuckDB's
+    planner was observed to spin."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    calls = []
+    monkeypatch.setattr(
+        ch_module, "estimate_memory_bytes", lambda conn, sql, **k: calls.append(sql) or 1
+    )
+
+    for i in range(3):
+        _, st = _session_state(admission, 64 * 1024**2, session_id=f"s{i}")
+        st.catalogs, st.schema = frozenset({"tpch"}), "sf10"
+        await ch_module._resize_for_statement(st, "SELECT 1", admission)
+        admission.release(st.reservation)
+        session._sessions.clear()  # noqa: SLF001
+
+    assert calls == ["SELECT 1"], f"re-planned across sessions: {calls}"
+
+
+async def test_the_estimate_cache_does_not_cross_catalogs(monkeypatch):
+    """`analytics`, `sf10` and `sf100` all have a `lineitem`. Serving one schema's
+    estimate for another would badly mis-size the reservation."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    calls = []
+    monkeypatch.setattr(
+        ch_module, "estimate_memory_bytes", lambda conn, sql, **k: calls.append(sql) or 1
+    )
+
+    for schema in ("analytics", "sf10"):
+        _, st = _session_state(admission, 64 * 1024**2, session_id=f"s-{schema}")
+        st.catalogs, st.schema = frozenset({"tpch"}), schema
+        await ch_module._resize_for_statement(st, "SELECT count(*) FROM lineitem", admission)
+        admission.release(st.reservation)
+        session._sessions.clear()  # noqa: SLF001
+
+    assert len(calls) == 2, "reused an estimate across schemas"
+
+
+async def test_ddl_invalidates_estimates_but_use_does_not(monkeypatch):
+    """DDL can change what a later plan binds to, so it drops the cache. `USE`
+    changes only the binding *context*, which is already part of the key -- and a
+    client that opens every session with a `USE` would otherwise clear the cache
+    before it could ever be used."""
     import agent.control.channel as ch_module
 
     admission = _admission(profile="auto")
     ch, state = _session_state(admission, 64 * 1024**2)
+    state.catalogs, state.schema = frozenset({"tpch"}), "sf10"
     calls = []
+    monkeypatch.setattr(
+        ch_module, "estimate_memory_bytes", lambda conn, sql, **k: calls.append(sql) or 1
+    )
 
-    def _estimate(conn, sql, **kwargs):
-        calls.append(sql)
-        return 1
-
-    monkeypatch.setattr(ch_module, "estimate_memory_bytes", _estimate)
-    for _ in range(3):
-        await ch._resize_for_statement(state, "SELECT 1", admission)
-
-    assert calls == ["SELECT 1"], "re-EXPLAINed a statement it had already planned"
-
-
-async def test_a_non_select_invalidates_remembered_estimates(monkeypatch):
-    """DDL can change what a later plan binds to, so everything remembered on this
-    connection is suspect once one runs."""
-    import agent.control.channel as ch_module
-
-    admission = _admission(profile="auto")
-    ch, state = _session_state(admission, 64 * 1024**2)
-    calls = []
-
-    def _estimate(conn, sql, **kwargs):
-        calls.append(sql)
-        return 1
-
-    monkeypatch.setattr(ch_module, "estimate_memory_bytes", _estimate)
     await ch._resize_for_statement(state, "SELECT 1", admission)
+    await ch._resize_for_statement(state, 'USE "tpch"."sf10"', admission)
+    await ch._resize_for_statement(state, "SELECT 1", admission)
+    assert calls.count("SELECT 1") == 1, "a USE threw the cache away"
+
     await ch._resize_for_statement(state, "CREATE TABLE t (i INT)", admission)
     await ch._resize_for_statement(state, "SELECT 1", admission)
-
-    assert calls.count("SELECT 1") == 2, "kept an estimate across a DDL statement"
+    assert calls.count("SELECT 1") == 2, "DDL did not invalidate the cache"
 
 
 async def test_exec_statement_sizes_the_session_to_the_statement(tmp_path, monkeypatch):

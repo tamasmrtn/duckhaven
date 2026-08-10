@@ -16,6 +16,7 @@ import asyncio
 
 import pytest
 
+import agent.control.channel as ch_module
 from agent.control import session
 from agent.control.channel import (
     _resize_for_statement,
@@ -23,6 +24,7 @@ from agent.control.channel import (
     _shrink_to_baseline,
 )
 from agent.executor.admission import Admission
+from agent.executor.estimate_cache import EstimateKey
 from agent.executor.runner import run_statement_sync
 
 pytestmark = pytest.mark.integration
@@ -63,8 +65,10 @@ def _register(admission: Admission, conn, session_id: str = "res-test"):
 @pytest.fixture(autouse=True)
 def _clear_sessions():
     session._sessions.clear()  # noqa: SLF001 - the registry is process-global
+    ch_module._estimates.invalidate_all()
     yield
     session._sessions.clear()  # noqa: SLF001
+    ch_module._estimates.invalidate_all()
 
 
 async def test_a_scan_heavy_statement_runs_on_every_core(
@@ -168,11 +172,14 @@ async def test_a_heavy_statement_keeps_its_cache_too(
     state = _register(admission, conn)
 
     sql = "SELECT sum(id), count(*) FROM res_src"
-    # Prime the session's estimate cache with a figure past every bucket, so the
-    # statement is sized into the top one — where its required reservation is the
-    # whole budget — through the ordinary path rather than by poking the
-    # reservation behind admission's back.
-    state.remember_estimate(sql, admission.budget_bytes * 10)
+    # Prime the estimate cache with a figure past every bucket, so the statement is
+    # sized into the top one — where its required reservation is the whole budget —
+    # through the ordinary path rather than by poking the reservation behind
+    # admission's back.
+    ch_module._estimates.put(
+        EstimateKey(catalogs=state.catalogs, schema=state.schema, sql=sql),
+        admission.budget_bytes * 10,
+    )
 
     await _resize_for_statement(state, sql, admission)
     ran_at = state.memory_bytes

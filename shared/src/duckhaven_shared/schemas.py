@@ -55,4 +55,9 @@ class MetricsSample(BaseModel):
     # from ``queued_queries``, which counts work not yet admitted at all.
     # Defaulted for back-compat with older agents.
     growth_waiting: int = 0
+    # EXPLAIN-based estimates abandoned because DuckDB's planner spun and would
+    # not stop when interrupted. Each one costs a thread and a core until the
+    # agent restarts, so a rising number is worth alerting on. Defaulted for
+    # back-compat with older agents.
+    estimates_abandoned: int = 0
     sampled_at: datetime

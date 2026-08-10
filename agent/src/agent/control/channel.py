@@ -24,6 +24,7 @@ from agent.executor.admission import (
     Reservation,
     ReservationRequest,
 )
+from agent.executor.estimate_cache import EstimateCache, EstimateKey
 from agent.executor.estimator import bucket_for, estimate_memory_bytes
 from agent.executor.runner import (
     _is_single_select,
@@ -167,20 +168,80 @@ async def _send_failed(ws, query_id: str, error: str) -> None:
     await ws.send(done.model_dump_json())
 
 
-async def _estimate_under_timeout(work, get_conn, *, what: str) -> int | None:
-    """Run an EXPLAIN-based estimate on an executor, bounded by ``explain_timeout_s``.
+# Estimates outlive the session that produced them: they depend on the SQL and
+# the catalogs, not on who asked. See executor.estimate_cache.
+_estimates = EstimateCache(
+    ttl_s=settings.estimate_cache_ttl_s, max_entries=settings.estimate_cache_max_entries
+)
 
-    DuckDB's planner can occasionally spin inside ``EXPLAIN`` itself — observed
-    twice on TPC-H Q08 (an eight-table join) against SF10, pinning a core with
-    the statement never starting, no I/O and a perfectly healthy event loop.
-    Nothing unwinds that except ``conn.interrupt()``, so every estimate path arms
-    one. The estimator treats an interrupted EXPLAIN as unestimable, so the caller
-    simply falls back to its default bucket.
+_estimate_executor: ThreadPoolExecutor | None = None
+# Estimates currently occupying a worker in that pool, including any abandoned by
+# a timeout — an abandoned one never returns, so the counter only goes back down
+# for estimates that actually finished.
+_estimates_in_flight = 0
+# Estimates given up on. Reported in METRICS_SAMPLE; each one is also a thread and
+# a core lost until the agent restarts, so a rising number is worth alerting on.
+_estimates_abandoned = 0
+
+
+def _estimate_pool() -> ThreadPoolExecutor:
+    """The pool EXPLAIN-based estimates run on, kept apart from query execution.
+
+    Same reasoning as ``_session_open_executor``: work that can block for an
+    unbounded time has no business sharing the interpreter's default pool with
+    ``run_statement``. Here it is not merely slow but *unkillable* — a spinning
+    DuckDB planner ignores ``interrupt()`` — so an abandoned estimate holds its
+    worker forever. Isolating them means the damage is bounded to estimation:
+    queries keep executing, and once this pool is used up estimation degrades to
+    the fallback bucket instead of queueing behind threads that will never return.
+    """
+    global _estimate_executor
+    if _estimate_executor is None:
+        _estimate_executor = ThreadPoolExecutor(
+            max_workers=max(2, effective_cores()), thread_name_prefix="dh-estimate"
+        )
+    return _estimate_executor
+
+
+def _estimate_capacity() -> int:
+    """Workers in the estimate pool that are not lost to abandoned work."""
+    return max(2, effective_cores()) - _estimates_in_flight
+
+
+async def _estimate_under_timeout(work, get_conn, *, what: str) -> int | None:
+    """Run an EXPLAIN-based estimate, bounded by ``explain_timeout_s``.
+
+    DuckDB's planner can spin inside ``EXPLAIN`` itself — observed twice on TPC-H
+    Q08 (an eight-table join) planned against a freshly attached Iceberg catalog,
+    pinning a core with the statement never starting, no I/O, and a perfectly
+    healthy event loop. A warm connection plans the same query in ~112 ms.
+
+    **``conn.interrupt()`` cannot stop it.** DuckDB honours interrupts while
+    processing tuples, not while planning, so a spinning optimizer ignores them —
+    measured here as a thread still inside ``conn.execute`` eleven minutes after
+    the interrupt. The interrupt is still attempted, because it does work for an
+    EXPLAIN that is merely slow, but nothing depends on it: the timeout abandons
+    the work and returns. The estimate is then simply unestimable and the caller
+    falls back to its default bucket, which is what that bucket is for.
+
+    The abandoned worker never comes back, so estimates run on their own pool and
+    stop being attempted once it is used up — see ``_estimate_pool``.
 
     ``get_conn`` is a callable rather than a connection because the one-shot path
-    opens its connection *inside* the work function, so there is nothing to
-    interrupt until that has happened.
+    opens its connection *inside* ``work``, so there is nothing to interrupt until
+    that has happened.
     """
+    global _estimates_in_flight, _estimates_abandoned
+
+    if _estimate_capacity() <= 0:
+        logger.warning(
+            "Skipping the estimate for %s: %d estimate workers are lost to spinning "
+            "planners; falling back",
+            what,
+            _estimates_abandoned,
+        )
+        return None
+
     loop = asyncio.get_running_loop()
     running = True
 
@@ -190,25 +251,41 @@ async def _estimate_under_timeout(work, get_conn, *, what: str) -> int | None:
         conn = get_conn()
         if conn is None:
             return
-        logger.warning(
-            "EXPLAIN estimate for %s exceeded %.1fs; interrupting and falling back",
-            what,
-            settings.explain_timeout_s,
-        )
         try:
             conn.interrupt()
         except Exception:  # noqa: BLE001 - interrupt is best-effort
             pass
 
     handle = loop.call_later(settings.explain_timeout_s, _interrupt)
+    _estimates_in_flight += 1
+    finished = False
     try:
-        return await loop.run_in_executor(None, work)
+        # `wait_for`, not a bare await: the executor future is the only thing that
+        # can be abandoned, because the thread behind it cannot be stopped.
+        result = await asyncio.wait_for(
+            loop.run_in_executor(_estimate_pool(), work), settings.explain_timeout_s
+        )
+        finished = True
+        return result
+    except TimeoutError:
+        _estimates_abandoned += 1
+        logger.warning(
+            "EXPLAIN estimate for %s exceeded %.1fs and did not stop when interrupted; "
+            "abandoning the worker and falling back (%d abandoned so far)",
+            what,
+            settings.explain_timeout_s,
+            _estimates_abandoned,
+        )
+        return None
     except Exception as exc:  # noqa: BLE001 - estimation must never drop a statement
+        finished = True
         logger.warning("Estimate failed for %s: %s", what, exc)
         return None
     finally:
         running = False
         handle.cancel()
+        if finished:
+            _estimates_in_flight -= 1
 
 
 async def _prepare_and_estimate(sql: str, **attach_kwargs) -> tuple[object | None, int | None]:
@@ -453,17 +530,21 @@ async def _handle_open_session(ws, payload: dict, admission: Admission) -> None:
             return
 
         opened_at = time.monotonic()
-        session.register(
-            session.SessionState(
-                session_id=session_id,
-                conn=conn,
-                reservation=reservation,
-                memory_bytes=reservation.memory_bytes,
-                threads=reservation.threads,
-                opened_at=opened_at,
-                last_active_at=opened_at,
-            )
+        active = next((c for c in catalogs if c["slug"] == active_catalog), None) or (
+            catalogs[0] if catalogs else {}
         )
+        state = session.SessionState(
+            session_id=session_id,
+            conn=conn,
+            reservation=reservation,
+            memory_bytes=reservation.memory_bytes,
+            threads=reservation.threads,
+            opened_at=opened_at,
+            last_active_at=opened_at,
+            catalogs=frozenset(c["slug"] for c in catalogs),
+            schema=str(active.get("default_schema") or ""),
+        )
+        session.register(state)
         await _send_session_opened(ws, session_id, "open")
     finally:
         _opening.pop(session_id, None)
@@ -506,15 +587,18 @@ async def _resize_for_statement(
     """
     if not admission.is_auto:
         return
-    if not _is_single_select(sql):
-        # DDL/DML/`USE`/`SET` can change what a plan would bind to, so every
-        # estimate remembered on this connection is now suspect. Cheaper and far
-        # easier to reason about than tracking which tables a plan touched.
-        state.estimates.clear()
+    if not _is_single_select(sql) and not is_cheap_statement(sql):
+        # DDL/DML can change what a plan would bind to, so every remembered
+        # estimate is now suspect — cheaper and far easier to reason about than
+        # tracking which tables a plan touched. `USE`/`SET` are excluded on
+        # purpose: they change the binding *context*, which is already part of
+        # the key, and a client that opens each session with a `USE` would
+        # otherwise clear the cache before it could ever be used.
+        _estimates.invalidate_all()
 
-    if sql in state.estimates:
-        estimate = state.estimates[sql]
-    else:
+    key = EstimateKey(catalogs=frozenset(state.catalogs), schema=state.schema, sql=sql)
+    hit, estimate = _estimates.get(key)
+    if not hit:
         # Bounded by the same EXPLAIN timeout the one-shot path uses. Without it a
         # planner that spins takes the session with it: the statement never starts,
         # a core burns, and nothing times out because the statement's own timeout
@@ -526,7 +610,7 @@ async def _resize_for_statement(
             lambda: state.conn,
             what=f"session {state.session_id}",
         )
-        state.remember_estimate(sql, estimate)
+        _estimates.put(key, estimate)
 
     request = _statement_reservation_request(
         estimate, admission, state.reservation.memory_bytes, sql
@@ -681,6 +765,13 @@ async def _handle_exec_statement(
                 )
             finally:
                 await _shrink_to_baseline(state, admission)
+                if is_cheap_statement(sql):
+                    # `USE` moves what unqualified names bind to, and that is part
+                    # of the estimate cache key. Only cheap statements can move it,
+                    # so this costs one metadata read per `USE`, not per statement.
+                    await asyncio.get_running_loop().run_in_executor(
+                        _estimate_pool(), state.refresh_schema
+                    )
         done_payload: dict[str, object] = {
             "query_id": statement_id,
             "status": "done",
@@ -945,6 +1036,7 @@ async def _push_metrics(ws, sampler: MetricsSampler, admission: Admission) -> No
             active_profile=admission.active_profile,
             session_count=session.count(),
             growth_waiting=admission.growth_waiting,
+            estimates_abandoned=_estimates_abandoned,
         )
         frame = Frame(type=FrameType.METRICS_SAMPLE, payload=sample.model_dump(mode="json"))
         await ws.send(frame.model_dump_json())

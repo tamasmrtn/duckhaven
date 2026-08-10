@@ -94,6 +94,13 @@ class Settings(BaseSettings):
     # falls back to `estimate_fallback_bucket`. Q08's EXPLAIN normally takes ~90 ms
     # at SF10, so 2s is a wide margin, not a tight budget.
     explain_timeout_s: float = 2.0
+    # Agent-global cache of EXPLAIN estimates (see executor.estimate_cache). An
+    # estimate depends only on the SQL and the catalogs it binds against, so it
+    # survives the session that produced it — which matters most for clients that
+    # open a session per query, where every statement used to be re-planned. The
+    # TTL exists because table statistics move as data lands and compaction runs.
+    estimate_cache_ttl_s: float = 300.0
+    estimate_cache_max_entries: int = 512
     estimate_fallback_bucket: str = "M"
 
     # How far the revocable "elastic" cache grant may top a statement up, as a

@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections import OrderedDict
 from dataclasses import dataclass, field
 
 import duckdb
@@ -26,11 +25,6 @@ from agent.executor import runner
 from agent.executor.admission import Admission, Reservation
 
 logger = logging.getLogger(__name__)
-
-# Per-session cap on remembered EXPLAIN estimates. Sessions are long-lived
-# (dbt/dlt run hundreds of statements) so this is bounded rather than unbounded;
-# 64 covers a re-run of any realistic model set without growing without limit.
-_ESTIMATE_CACHE_MAX = 64
 
 
 @dataclass
@@ -57,10 +51,12 @@ class SessionState:
     # is what each statement's reported peak/spill is measured against; see
     # executor.runner._apply_watermarks.
     watermarks: dict[str, int] = field(default_factory=dict)
-    # EXPLAIN estimates already computed on this connection, keyed by the exact
-    # statement text. Cleared whenever a statement runs that could have changed
-    # what a plan would bind to (see channel._resize_for_statement).
-    estimates: OrderedDict[str, int | None] = field(default_factory=OrderedDict)
+    # What this connection's unqualified names bind against, and therefore part of
+    # the estimate cache key: `analytics`, `sf10` and `sf100` all have a
+    # `lineitem`, so an estimate is only reusable within the same catalog set and
+    # schema. `schema` is refreshed after any statement that can change it.
+    catalogs: frozenset[str] = field(default_factory=frozenset)
+    schema: str = ""
     # How long the last statement spent waiting for budget before it could run,
     # surfaced in its profile as `admission_wait_ms`. Reset per statement.
     admission_wait_ms: float = 0.0
@@ -110,11 +106,18 @@ class SessionState:
         async with self.lock:
             await self.apply_resize(total_bytes)
 
-    def remember_estimate(self, sql: str, estimate: int | None) -> None:
-        self.estimates[sql] = estimate
-        self.estimates.move_to_end(sql)
-        while len(self.estimates) > _ESTIMATE_CACHE_MAX:
-            self.estimates.popitem(last=False)
+    def refresh_schema(self) -> None:
+        """Re-read the connection's current schema after something may have moved it.
+
+        `USE` is the only statement that changes it, and it is cheap, so this runs
+        after those rather than before every estimate."""
+        try:
+            row = self.conn.execute("SELECT current_schema()").fetchone()
+        except Exception as exc:  # noqa: BLE001 - a stale schema only costs a cache miss
+            logger.warning("Reading current_schema for session %s failed: %s", self.session_id, exc)
+            return
+        if row:
+            self.schema = str(row[0])
 
 
 _sessions: dict[str, SessionState] = {}

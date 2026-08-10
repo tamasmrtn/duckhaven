@@ -420,6 +420,14 @@ def _agent_families(agents: list[dict]) -> Iterator[GaugeMetricFamily]:
         "growth_waiting with no CPU means statements are waiting on each other.",
         labels=_AGENT_LABELS,
     )
+    abandoned = GaugeMetricFamily(
+        "duckhaven_agent_estimates_abandoned",
+        "EXPLAIN estimates the agent gave up on because DuckDB's planner spun and "
+        "ignored the interrupt. Each one costs a worker thread and a core until the "
+        "agent restarts, so this should stay flat; a rising value means queries are "
+        "being sized from the fallback bucket rather than their real estimate.",
+        labels=_AGENT_LABELS,
+    )
     for a in agents:
         base = [settings.replica_id, a["agent_id"], a["agent_name"]]
         up.add_metric(base, 1)
@@ -430,7 +438,8 @@ def _agent_families(agents: list[dict]) -> Iterator[GaugeMetricFamily]:
         profile.add_metric([*base, a["active_profile"]], 1)
         sessions.add_metric(base, a["session_count"])
         growth.add_metric(base, a["growth_waiting"])
-    yield from (up, cpu, mem, running, queued, profile, sessions, growth)
+        abandoned.add_metric(base, a["estimates_abandoned"])
+    yield from (up, cpu, mem, running, queued, profile, sessions, growth, abandoned)
 
 
 REGISTRY.register(_ScrapeCollector())
@@ -459,6 +468,7 @@ async def _collect_agents(db: AsyncSession) -> list[dict]:
                 "active_profile": latest.get("active_profile", "auto"),
                 "session_count": latest.get("session_count", 0),
                 "growth_waiting": latest.get("growth_waiting", 0),
+                "estimates_abandoned": latest.get("estimates_abandoned", 0),
             }
         )
     return out

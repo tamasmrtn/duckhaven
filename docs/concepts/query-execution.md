@@ -42,6 +42,11 @@ A reservation has two parts, and they answer different questions.
 what the admission gate blocks on, and it is never taken away once granted. The sum of every running query's required
 memory always stays inside the agent's budget; that is the guarantee that stops the agent being OOM-killed.
 
+Estimates are remembered across sessions, keyed by the query text together with the catalogs and schema it binds
+against, so the same query is planned once rather than once per session. Estimating is also bounded: if DuckDB takes
+too long to plan a query, the agent stops waiting and sizes it from a default instead. That costs the agent a little
+capacity, so it is reported as `duckhaven_agent_estimates_abandoned` in [monitoring](../operations/monitoring.md).
+
 **Elastic memory** is spare budget *lent* to a query on top of that. DuckDB's memory limit does not only cap operator
 memory — it also sizes the cache DuckDB keeps of the Parquet files it has read from object storage. A query sized to
 its operators alone has nowhere to keep that cache, so every scan goes back to the object store and re-decompresses

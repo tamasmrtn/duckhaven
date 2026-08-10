@@ -146,6 +146,7 @@ the conventional `_total` suffix in the exposition (e.g. `duckhaven_queries_tota
 | `duckhaven_agent_running_queries` | gauge | (same) | Queries running on the agent. |
 | `duckhaven_agent_queued_queries` | gauge | (same) | Queries queued on the agent. |
 | `duckhaven_agent_growth_waiting` | gauge | (same) | Statements parked waiting for memory to grow into — already admitted, unlike `queued_queries`. A steady non-zero value alongside near-zero `duckhaven_agent_cpu_percent` means statements are waiting on each other rather than on work, and is the signal to look at. |
+| `duckhaven_agent_estimates_abandoned` | gauge | (same) | Query-cost estimates the agent gave up on because DuckDB's planner stopped responding. Each one costs the agent a worker thread and a CPU core until it restarts, and the affected query is sized from a default rather than its real estimate — so this should stay flat. A rising value on one agent is a reason to restart it. |
 | `duckhaven_agent_active_profile_info` | gauge | (same) + `profile` | Active concurrency profile (value always `1`). |
 | `duckhaven_agents` | gauge | `provider`, `lifecycle` | Elastic agents by backend and lifecycle state. Reported by the reap leader only, so it is a cluster-wide count — do not sum it across replicas. |
 | `duckhaven_agent_provisions_total` | counter | `replica_id`, `provider`, `outcome` | Elastic provisioning attempts (`outcome`: `success`/`failure`). |

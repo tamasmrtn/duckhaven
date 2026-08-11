@@ -2186,6 +2186,48 @@ async def test_a_busy_session_never_has_its_memory_pulled_out_from_under_it(monk
     assert state.is_idle()
 
 
+async def test_admission_wait_is_subtracted_from_the_execution_timeout(tmp_path, monkeypatch):
+    """A statement that spent part of its declared timeout waiting for admission
+    budget must not then get a second, fresh full timeout to execute -- that can
+    double its wall time under the exact saturated-agent load `auto` targets."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    ch, state = _session_state(admission, 64 * 1024**2)
+
+    async def fake_resize(state, sql, admission, timeout_s):
+        # Simulate having spent 4s of a 10s declared timeout waiting for budget.
+        state.admission_wait_ms = 4000.0
+
+    captured: dict[str, object] = {}
+
+    async def fake_run_statement(sql, result_path, timeout_s, **kwargs):
+        captured["timeout_s"] = timeout_s
+        return {
+            "row_count": 0,
+            "duration_ms": 0,
+            "result_bytes": None,
+            "wrote_result": False,
+            "profile": None,
+            "result_schema": None,
+        }
+
+    monkeypatch.setattr(ch_module, "_resize_for_statement", fake_resize)
+    monkeypatch.setattr(ch_module, "run_statement", fake_run_statement)
+
+    ws = _FakeWS()
+    await ch_module._handle_exec_statement(
+        ws,
+        {"session_id": state.session_id, "query_id": "q1", "sql": "SELECT 1", "timeout_s": 10.0},
+        tmp_path,
+        admission,
+    )
+
+    assert captured["timeout_s"] == pytest.approx(6.0)
+    done = Frame.model_validate_json(ws.sent[-1])
+    assert done.payload["status"] == "done"
+
+
 async def test_the_estimate_is_reused_across_sessions(monkeypatch):
     """An estimate depends on the SQL and the catalogs, not on who asked, so it has
     to outlive the session that produced it. A client that opens a session per

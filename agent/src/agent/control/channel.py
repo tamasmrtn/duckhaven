@@ -32,7 +32,7 @@ from agent.executor.runner import (
     is_cheap_statement,
     open_and_attach,
 )
-from agent.executor.supervisor import run_query, run_statement
+from agent.executor.supervisor import StatementAbandoned, run_query, run_statement
 from agent.metrics.system import (
     MetricsSampler,
     cpu_capability,
@@ -629,7 +629,10 @@ async def _resize_for_statement(
         )
         # Any cache reclaimed from other sessions above is still resident in their
         # DuckDB until this lands; drain before we start using the bytes ourselves.
-        await admission.apply_pending_resizes()
+        # Excludes our own reservation: a stale self-targeting entry queued while
+        # we were idle would otherwise deadlock on our own lock, which we hold
+        # for the whole statement — see `apply_pending_resizes`.
+        await admission.apply_pending_resizes(exclude=state.reservation)
 
     wanted = request.memory_bytes if request is not None else state.reservation.memory_bytes
     floor = int(settings.statement_admission_floor_fraction * wanted)
@@ -713,11 +716,14 @@ async def _shrink_to_baseline(state, admission: Admission) -> None:
     admission.grant_elastic(
         state.reservation, _elastic_target(admission, state.reservation.memory_bytes)
     )
-    state.threads = state.reservation.threads
     # `apply_resize`, not `resize_when_free`: this runs inside the statement's own
     # `async with state.lock`, so taking the lock again would deadlock.
     await state.apply_resize(state.reservation.total_bytes)
-    await admission.apply_pending_resizes()
+    # Excludes our own reservation for the same reason `_resize_for_statement`
+    # does: the resize above already applied our final size directly, so a
+    # stale self-targeting pending entry here is redundant and would deadlock
+    # on our own lock via `resize_when_free`.
+    await admission.apply_pending_resizes(exclude=state.reservation)
 
 
 async def _handle_exec_statement(
@@ -751,11 +757,17 @@ async def _handle_exec_statement(
             # Inside the lock: the size applies to this statement only, and the
             # session runs one statement at a time.
             await _resize_for_statement(state, sql, admission, timeout_s)
+            # A statement that waited for admission budget already spent part of
+            # its declared timeout doing so; without subtracting that, it gets a
+            # second, fresh full window here, and can run up to 2x its declared
+            # timeout under exactly the saturated-agent load this PR targets.
+            remaining_timeout_s = max(0.0, timeout_s - state.admission_wait_ms / 1000)
+            abandoned = False
             try:
                 stats = await run_statement(
                     sql,
                     result_path,
-                    timeout_s,
+                    remaining_timeout_s,
                     conn=state.conn,
                     memory_bytes=state.memory_bytes,
                     threads=state.threads,
@@ -763,15 +775,32 @@ async def _handle_exec_statement(
                     watermarks=state.watermarks,
                     admission_wait_ms=state.admission_wait_ms,
                 )
+            except StatementAbandoned:
+                # The executor worker never returned -- it may still be running
+                # against `state.conn` on its own thread. Nothing below this
+                # point may touch that connection again: skip the shrink and
+                # the schema refresh (both would race the orphaned thread), and
+                # let the outer handler discard the session instead of
+                # returning it to the pool of reusable connections.
+                abandoned = True
+                raise
             finally:
-                await _shrink_to_baseline(state, admission)
-                if is_cheap_statement(sql):
-                    # `USE` moves what unqualified names bind to, and that is part
-                    # of the estimate cache key. Only cheap statements can move it,
-                    # so this costs one metadata read per `USE`, not per statement.
-                    await asyncio.get_running_loop().run_in_executor(
-                        _estimate_pool(), state.refresh_schema
-                    )
+                if not abandoned:
+                    await _shrink_to_baseline(state, admission)
+                    if is_cheap_statement(sql):
+                        # `USE` moves what unqualified names bind to, and that is
+                        # part of the estimate cache key. Only cheap statements can
+                        # move it, so this costs one metadata read per `USE`, not
+                        # per statement. Routed through the same pool-capacity/
+                        # timeout guard every other estimate-pool job uses: a bare
+                        # `run_in_executor` here can queue behind workers abandoned
+                        # by a spinning planner and hang forever, holding this
+                        # session's lock the whole time.
+                        await _estimate_under_timeout(
+                            state.refresh_schema,
+                            lambda: state.conn,
+                            what=f"refresh_schema {state.session_id}",
+                        )
         done_payload: dict[str, object] = {
             "query_id": statement_id,
             "status": "done",
@@ -783,6 +812,14 @@ async def _handle_exec_statement(
             "result_schema": stats["result_schema"],
         }
         await ws.send(Frame(type=FrameType.QUERY_DONE, payload=done_payload).model_dump_json())
+    except StatementAbandoned as exc:
+        # The lock has already been released (the `async with` block above
+        # exited via this exception), so the session is safe to remove from
+        # the registry now -- but never safe to interrupt/close (see
+        # `session.discard_poisoned`).
+        trace.get_current_span().set_status(Status(StatusCode.ERROR, "statement abandoned"))
+        await session.discard_poisoned(session_id, admission)
+        await _send_failed(ws, statement_id, str(exc))
     except TimeoutError as exc:
         trace.get_current_span().set_status(Status(StatusCode.ERROR, "statement timeout"))
         await _send_failed(ws, statement_id, str(exc))

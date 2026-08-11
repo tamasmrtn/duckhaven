@@ -161,6 +161,14 @@ async def _teardown(state: SessionState, admission: Admission) -> None:
     failures are logged, not raised, and the reservation is always released even
     if this task is itself cancelled mid-teardown (e.g. while awaiting the lock)."""
     loop = asyncio.get_running_loop()
+    # Unhooked first, before anything else: `is_idle()` reports True until the
+    # lock below is actually acquired, so a reclaim could otherwise queue a
+    # resize for this reservation in the gap between interrupt() and taking the
+    # lock, landing after the connection is closed. Clearing these makes the
+    # reservation immediately ineligible as a reclaim target for the rest of
+    # teardown, closing that window rather than merely tolerating it.
+    state.reservation.is_idle = None
+    state.reservation.on_resize = None
     try:
         try:
             # Thread-safe (same mechanism as executor.supervisor's timeout path):
@@ -180,10 +188,6 @@ async def _teardown(state: SessionState, admission: Admission) -> None:
                 await loop.run_in_executor(None, state.conn.close)
             except Exception as exc:  # noqa: BLE001 - close is best-effort
                 logger.warning("Closing session %s connection failed: %s", state.session_id, exc)
-            # Unhook before releasing: the connection is gone, so a reclaim that
-            # still held these would try to `SET memory_limit` on a closed handle.
-            state.reservation.is_idle = None
-            state.reservation.on_resize = None
     finally:
         admission.release(state.reservation)
         # Releasing frees budget, which can promote a waiter and reclaim cache from
@@ -198,6 +202,33 @@ async def remove(session_id: str, admission: Admission) -> bool:
     if state is None:
         return False
     await _teardown(state, admission)
+    return True
+
+
+async def discard_poisoned(session_id: str, admission: Admission) -> bool:
+    """Drop a session whose connection may still be in use by an abandoned
+    executor worker (``supervisor.StatementAbandoned``), without touching it.
+
+    Unlike ``remove``/``_teardown``, this never calls ``conn.interrupt()`` or
+    ``conn.close()`` — a worker abandoned to a spinning DuckDB planner keeps
+    running against the connection indefinitely, on its own thread, and
+    calling into that same connection from another thread while it does would
+    race it. So the connection is simply never touched again: the Python
+    reference is dropped (the object itself stays alive as long as the
+    orphaned thread's stack still references it) and only the accounting
+    (reservation, registry entry) is cleaned up. One leaked connection per
+    incident is the deliberately bounded cost of never letting one poisoned
+    connection take the whole agent down with it.
+    """
+    state = _sessions.pop(session_id, None)
+    if state is None:
+        return False
+    # Unhook first, same reasoning as `_teardown`: a reclaim must never try to
+    # resize a connection nobody will ever touch safely again.
+    state.reservation.is_idle = None
+    state.reservation.on_resize = None
+    admission.release(state.reservation)
+    await admission.apply_pending_resizes()
     return True
 
 

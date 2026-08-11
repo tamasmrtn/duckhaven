@@ -4,6 +4,7 @@ import platform
 import random
 import time
 import uuid
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -81,24 +82,32 @@ _opening: dict[str, _OpeningSession] = {}
 # while they were already running on the executor.
 _abandoned: set[str] = set()
 
-_open_executor: ThreadPoolExecutor | None = None
 
+def _make_pool_getter(prefix: str) -> Callable[[], ThreadPoolExecutor]:
+    """A lazily-created, cgroup-sized thread pool getter.
 
-def _session_open_executor() -> ThreadPoolExecutor:
-    """The pool session opens run on, sized to the cgroup's real CPU budget.
-
-    Opens would otherwise land on the interpreter's default pool, shared with
-    query execution and with the ``conn.close()`` in session teardown — so a
-    burst of opens can queue ahead of the very closes that would free capacity
-    for them. ``effective_cores`` reads the cgroup quota; ``os.cpu_count`` (what
-    the default pool is sized from) reports the host's cores instead.
+    ``effective_cores`` reads the cgroup quota; ``os.cpu_count`` (what the
+    interpreter's default pool is sized from) reports the host's cores
+    instead — every pool here needs the cgroup-aware count, not the host's.
     """
-    global _open_executor
-    if _open_executor is None:
-        _open_executor = ThreadPoolExecutor(
-            max_workers=max(2, effective_cores()), thread_name_prefix="dh-open"
-        )
-    return _open_executor
+    pool: ThreadPoolExecutor | None = None
+
+    def get() -> ThreadPoolExecutor:
+        nonlocal pool
+        if pool is None:
+            pool = ThreadPoolExecutor(
+                max_workers=max(2, effective_cores()), thread_name_prefix=prefix
+            )
+        return pool
+
+    return get
+
+
+# The pool session opens run on. Opens would otherwise land on the
+# interpreter's default pool, shared with query execution and with the
+# ``conn.close()`` in session teardown — so a burst of opens can queue ahead
+# of the very closes that would free capacity for them.
+_session_open_executor = _make_pool_getter("dh-open")
 
 
 # Control-plane protocol features this agent implements, advertised so the API can
@@ -174,7 +183,6 @@ _estimates = EstimateCache(
     ttl_s=settings.estimate_cache_ttl_s, max_entries=settings.estimate_cache_max_entries
 )
 
-_estimate_executor: ThreadPoolExecutor | None = None
 # Estimates currently occupying a worker in that pool, including any abandoned by
 # a timeout — an abandoned one never returns, so the counter only goes back down
 # for estimates that actually finished.
@@ -183,24 +191,15 @@ _estimates_in_flight = 0
 # a core lost until the agent restarts, so a rising number is worth alerting on.
 _estimates_abandoned = 0
 
-
-def _estimate_pool() -> ThreadPoolExecutor:
-    """The pool EXPLAIN-based estimates run on, kept apart from query execution.
-
-    Same reasoning as ``_session_open_executor``: work that can block for an
-    unbounded time has no business sharing the interpreter's default pool with
-    ``run_statement``. Here it is not merely slow but *unkillable* — a spinning
-    DuckDB planner ignores ``interrupt()`` — so an abandoned estimate holds its
-    worker forever. Isolating them means the damage is bounded to estimation:
-    queries keep executing, and once this pool is used up estimation degrades to
-    the fallback bucket instead of queueing behind threads that will never return.
-    """
-    global _estimate_executor
-    if _estimate_executor is None:
-        _estimate_executor = ThreadPoolExecutor(
-            max_workers=max(2, effective_cores()), thread_name_prefix="dh-estimate"
-        )
-    return _estimate_executor
+# The pool EXPLAIN-based estimates run on, kept apart from query execution. Work
+# that can block for an unbounded time has no business sharing the interpreter's
+# default pool with ``run_statement``. Here it is not merely slow but
+# *unkillable* — a spinning DuckDB planner ignores ``interrupt()`` — so an
+# abandoned estimate holds its worker forever. Isolating them means the damage
+# is bounded to estimation: queries keep executing, and once this pool is used
+# up estimation degrades to the fallback bucket instead of queueing behind
+# threads that will never return.
+_estimate_pool = _make_pool_getter("dh-estimate")
 
 
 def _estimate_capacity() -> int:

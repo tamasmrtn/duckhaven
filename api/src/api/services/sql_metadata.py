@@ -30,7 +30,7 @@ SELECT function_name,
        any_value(varargs)                                AS varargs,
        any_value(array_to_string(examples, ' | '))       AS examples
 FROM duckdb_functions()
-WHERE function_type IN ('scalar', 'aggregate', 'macro')
+WHERE function_type IN ('scalar', 'aggregate', 'macro', 'table', 'table_macro')
   -- Keep only names a user would actually type: drop operator functions under
   -- symbolic names (!, !~~, ||, @, …) and DuckDB's internal __-prefixed helpers
   -- by requiring the name to start with a letter.

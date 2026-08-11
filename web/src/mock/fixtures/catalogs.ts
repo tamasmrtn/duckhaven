@@ -104,6 +104,7 @@ function makeCatalogSchemas(): Record<string, CatalogSchema[]> {
             catalog: "curated",
             workspace_id: "ws-1",
             row_count: 730,
+            row_count_estimate: 730,
             size_bytes: 65536,
             format: "Iceberg",
             catalog_commits: true,

@@ -1,4 +1,5 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -6,9 +7,48 @@ import duckdb
 from opentelemetry import trace
 
 from agent.executor.runner import run_query_sync, run_statement_sync
+from agent.metrics.system import effective_cores
 from duckhaven_shared.telemetry import inject_trace_context
 
 _tracer = trace.get_tracer("duckhaven.agent")
+
+
+class StatementAbandoned(TimeoutError):
+    """A statement's executor worker was abandoned, not confirmed stopped.
+
+    Raised instead of a plain ``TimeoutError`` when ``conn.interrupt()`` did not
+    make the executor future return before the wait bound below gave up on it.
+    DuckDB honours interrupts while processing tuples but not while planning —
+    a spinning optimizer holds the worker (and the connection) indefinitely,
+    exactly like the EXPLAIN-based estimator's own documented spin (see
+    ``channel._estimate_under_timeout``), just on the real statement's own
+    ``conn.sql(...)`` call this time, which has no such bound today.
+
+    The worker thread is never coming back and may still be running against
+    ``conn`` at any point in the future — the caller must never touch that
+    connection again (no ``execute``, no ``close``, no reuse for another
+    statement). Subclasses ``TimeoutError`` so existing ``except TimeoutError``
+    handling still sees a timeout; callers that must avoid reusing the
+    connection check for this type specifically.
+    """
+
+
+# Statement/query execution runs on its own pool, isolated from connection
+# housekeeping (`session.apply_resize`'s `SET memory_limit`, `_teardown`'s
+# `conn.close()`, both on the interpreter's default pool). Without this, a
+# worker abandoned to a spinning planner (see `StatementAbandoned`) would
+# eventually exhaust the default pool too, the same way an unbounded EXPLAIN
+# would have exhausted query execution before `_estimate_pool` split it off.
+_execution_pool: ThreadPoolExecutor | None = None
+
+
+def _execution_pool_get() -> ThreadPoolExecutor:
+    global _execution_pool
+    if _execution_pool is None:
+        _execution_pool = ThreadPoolExecutor(
+            max_workers=max(2, effective_cores()), thread_name_prefix="dh-exec"
+        )
+    return _execution_pool
 
 
 async def run_query(
@@ -56,7 +96,9 @@ async def run_query(
 
     def _interrupt() -> None:
         # Called from the event-loop thread; DuckDB's interrupt is thread-safe
-        # and stops the in-flight query running on the executor thread.
+        # and stops the in-flight query running on the executor thread. Best
+        # effort: it does nothing while the worker is still planning, which is
+        # exactly the case `wait_for` below exists to bound.
         conn = conn_box.get("conn")
         if conn is not None:
             conn.interrupt()
@@ -77,7 +119,17 @@ async def run_query(
             # worker thread, so trace.get_current_span() would see nothing
             # if called from inside _run.
             trace_headers = inject_trace_context()
-            return await loop.run_in_executor(None, _run, trace_headers)
+            # `wait_for`, not a bare await: the executor future is the only
+            # thing that can be abandoned, because the thread behind it cannot
+            # be stopped once it is inside a spinning DuckDB call that ignores
+            # `interrupt()`. Without this bound, that one query holds this
+            # coroutine (and everything serialized behind it) forever.
+            try:
+                return await asyncio.wait_for(
+                    loop.run_in_executor(_execution_pool_get(), _run, trace_headers), timeout_s
+                )
+            except TimeoutError as exc:
+                raise StatementAbandoned("query exceeded statement timeout") from exc
     except duckdb.InterruptException as exc:
         raise TimeoutError("query exceeded statement timeout") from exc
     except asyncio.CancelledError:
@@ -100,10 +152,14 @@ async def run_statement(
     admission_wait_ms: float = 0.0,
 ) -> dict[str, Any]:
     """Run one statement on a held SQL-session connection with a wall-clock
-    timeout (and cancellation) enforced via DuckDB's thread-safe `interrupt()`.
+    timeout (and cancellation) enforced via DuckDB's thread-safe `interrupt()`,
+    backstopped by `wait_for` for when interrupt doesn't help (see
+    `StatementAbandoned`).
 
     Mirrors `run_query`, but the connection is owned by the session and is never
     closed here; `run_statement_sync` runs the materialize-or-execute path on it.
+    A `StatementAbandoned` here means the caller must tear the session down
+    rather than run another statement on it — see `channel._handle_exec_statement`.
     """
     loop = asyncio.get_running_loop()
 
@@ -131,7 +187,12 @@ async def run_statement(
                 "duckhaven.statement_id": result_path.stem,
             },
         ):
-            return await loop.run_in_executor(None, _run)
+            try:
+                return await asyncio.wait_for(
+                    loop.run_in_executor(_execution_pool_get(), _run), timeout_s
+                )
+            except TimeoutError as exc:
+                raise StatementAbandoned("statement exceeded timeout") from exc
     except duckdb.InterruptException as exc:
         raise TimeoutError("statement exceeded timeout") from exc
     except asyncio.CancelledError:

@@ -359,22 +359,23 @@ class Admission:
         ``apply`` drives the connection resize; it is True when we are taking the
         memory from someone who is not expecting it (reclaim) and False when the
         owner will apply its own new size. Never promotes — callers are either
-        inside an admission decision (where ``_promote`` would recurse) or promote
-        themselves afterwards.
+        inside an admission decision, where the freed bytes are about to be
+        consumed by that same decision (promoting here would wake a growth
+        waiter on budget that is about to disappear again), or promote
+        themselves afterwards once they know what is genuinely left over.
         """
         give = min(amount, reservation.elastic_bytes)
         if give <= 0:
             return 0
         reservation.elastic_bytes -= give
         self._committed -= give
-        self._promote_growth()
         if reservation.elastic_bytes == 0:
             self._elastic = [held for held in self._elastic if held is not reservation]
         if apply and not any(queued is reservation for queued in self._pending_resizes):
             self._pending_resizes.append(reservation)
         return give
 
-    async def apply_pending_resizes(self) -> None:
+    async def apply_pending_resizes(self, *, exclude: Reservation | None = None) -> None:
         """Shrink the connections whose elastic memory was reclaimed.
 
         Reclaim happens inside ``_try_admit``/``try_amend``, which are synchronous
@@ -394,9 +395,18 @@ class Admission:
         Best-effort per holder: one connection that will not shrink must not stop
         the others, and a failure leaves DuckDB *higher* than accounted, which the
         holder's next statement corrects when it sets its own limit.
+
+        ``exclude`` drops (does not re-queue) a pending entry for the caller's
+        own reservation instead of draining it. A caller already holding that
+        session's lock (e.g. ``channel._resize_for_statement``) always applies
+        its own final size through a different path that never touches the
+        lock, so draining a stale self-targeting entry here would only
+        self-deadlock on ``resize_when_free``'s ``async with self.lock``.
         """
         pending, self._pending_resizes = self._pending_resizes, []
         for reservation in pending:
+            if exclude is not None and reservation is exclude:
+                continue
             if reservation.on_resize is None:
                 continue
             try:

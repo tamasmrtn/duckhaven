@@ -467,3 +467,206 @@ def test_capabilities_advertise_statement_ack():
     import agent.control.channel as ch
 
     assert "statement_ack" in ch._PROTOCOL_FEATURES
+
+
+# ── a stale reclaim of an idle session's elastic grant must never deadlock ────
+#
+# `Admission._reclaim_elastic` can queue a session's reservation into
+# `_pending_resizes` while it is idle. If that session then gets a new
+# statement before the entry drains, `_resize_for_statement`/
+# `_shrink_to_baseline` would previously drain their own stale entry via
+# `apply_pending_resizes()` while already holding `state.lock` -- calling
+# `resize_when_free`, which re-acquires that same non-reentrant lock.
+# Permanent deadlock; `sweep_expired` skips locked sessions, so nothing
+# recovers it short of an agent restart.
+
+
+async def test_statement_does_not_deadlock_on_a_stale_reclaim_of_its_own_session(tmp_path):
+    import agent.control.channel as ch
+
+    admission = _admission(profile="auto")
+    await ch._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
+    state = session.get("s1")
+
+    # Give the idle session an elastic grant, then reclaim it directly (as a
+    # concurrent admission decision would) without draining the pending resize
+    # -- reproducing the exact stale-entry precondition.
+    admission.grant_elastic(state.reservation, 32 * 1024 * 1024)
+    assert state.is_idle()
+    reclaimed = admission._reclaim_elastic(16 * 1024 * 1024)  # noqa: SLF001
+    assert reclaimed > 0
+    assert any(r is state.reservation for r in admission._pending_resizes)  # noqa: SLF001
+
+    # A new statement on the same session must complete, not hang draining its
+    # own stale entry against its own held lock.
+    ws = _FakeWS()
+    await asyncio.wait_for(
+        ch._handle_exec_statement(
+            ws,
+            {"session_id": "s1", "query_id": "stmt1", "sql": "SELECT 1 AS n"},
+            tmp_path,
+            admission,
+        ),
+        timeout=5,
+    )
+    assert _last(ws).payload["status"] == "done"
+
+
+# ── teardown closes the reclaim race window instead of merely tolerating it ──
+#
+# `is_idle()` reports True until `state.lock` is actually acquired inside
+# `_teardown`, so a reclaim could previously queue a resize for a session in
+# the gap between `conn.interrupt()` and taking the lock, landing after the
+# connection is closed (caught by `apply_resize`'s own try/except, but a real
+# gap). Unhooking the reclaim hooks before `interrupt()` instead of after
+# `close()` makes the reservation ineligible as a reclaim target for the
+# whole of teardown.
+
+
+async def test_teardown_unhooks_reclaim_targeting_before_interrupting(tmp_path):
+    import agent.control.channel as ch
+
+    admission = _admission(profile="auto")
+    await ch._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
+    state = session.get("s1")
+    reservation = state.reservation
+
+    seen_during_interrupt: list[tuple[object, object]] = []
+
+    class _SpyConn:
+        def __init__(self, conn) -> None:
+            self._conn = conn
+
+        def interrupt(self) -> None:
+            seen_during_interrupt.append((reservation.is_idle, reservation.on_resize))
+            self._conn.interrupt()
+
+        def __getattr__(self, name):
+            return getattr(self._conn, name)
+
+    state.conn = _SpyConn(state.conn)
+
+    assert await session.remove("s1", admission) is True
+    assert seen_during_interrupt == [(None, None)], (
+        "reservation was still a reclaim target while teardown was interrupting it"
+    )
+
+
+# ── the post-statement schema refresh must never hang a session ──────────────
+#
+# A bare `run_in_executor` call for `refresh_schema` had no bound: once enough
+# EXPLAINs had spun and been abandoned to exhaust the estimate pool, it would
+# queue behind workers that never return -- inside the session's own lock, so
+# the session (and any CLOSE_SESSION on it) hung forever. Routed through the
+# same capacity/timeout guard every other estimate-pool job uses, it must
+# instead skip the refresh once the pool is exhausted.
+
+
+async def test_refresh_schema_runs_after_a_use_statement(tmp_path):
+    import agent.control.channel as ch
+
+    admission = _admission()
+    await ch._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
+    state = session.get("s1")
+
+    called = []
+    state.refresh_schema = lambda: called.append(1)
+
+    ws = _FakeWS()
+    await asyncio.wait_for(
+        ch._handle_exec_statement(
+            ws,
+            {"session_id": "s1", "query_id": "stmt1", "sql": "SET threads=2"},
+            tmp_path,
+            admission,
+        ),
+        timeout=5,
+    )
+    assert _last(ws).payload["status"] == "done"
+    assert called, "did not refresh schema after a cheap (SET) statement"
+
+
+class _NeverTouchConn:
+    """Raises if anything calls a method on it -- the whole point of
+    `discard_poisoned` is that the poisoned connection is never touched
+    again, since an abandoned worker may still be running against it."""
+
+    def __getattr__(self, name):
+        raise AssertionError(f"poisoned connection was touched via .{name}()")
+
+
+async def test_discard_poisoned_drops_the_session_without_touching_its_connection(tmp_path):
+    import agent.control.channel as ch
+
+    admission = _admission(profile="auto")
+    await ch._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
+    state = session.get("s1")
+    state.conn = _NeverTouchConn()
+    running_before = admission.running_count
+
+    assert await session.discard_poisoned("s1", admission) is True
+
+    assert session.get("s1") is None
+    assert admission.running_count == running_before - 1
+    # Calling again (e.g. a duplicate discard) is a no-op, not an error.
+    assert await session.discard_poisoned("s1", admission) is False
+
+
+async def test_abandoned_statement_discards_the_session_without_shrinking_it(tmp_path, monkeypatch):
+    """`_handle_exec_statement` must skip `_shrink_to_baseline`/schema refresh
+    (both would touch the same connection an abandoned worker may still be
+    running against) and discard the session instead of returning it to the
+    pool of reusable connections."""
+    import agent.control.channel as ch
+    from agent.executor.supervisor import StatementAbandoned
+
+    admission = _admission(profile="auto")
+    await ch._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
+    state = session.get("s1")
+    state.conn = _NeverTouchConn()
+
+    async def fake_resize(*args, **kwargs):
+        pass  # bypass resize entirely -- it isn't what this test is about
+
+    async def fake_run_statement(*args, **kwargs):
+        raise StatementAbandoned("statement exceeded timeout")
+
+    monkeypatch.setattr(ch, "_resize_for_statement", fake_resize)
+    monkeypatch.setattr(ch, "run_statement", fake_run_statement)
+
+    ws = _FakeWS()
+    await ch._handle_exec_statement(
+        ws, {"session_id": "s1", "query_id": "stmt1", "sql": "SELECT 1"}, tmp_path, admission
+    )
+
+    assert _last(ws).payload["status"] == "failed"
+    assert session.get("s1") is None, "poisoned session was left reusable"
+
+
+async def test_refresh_schema_is_skipped_not_hung_when_the_estimate_pool_is_exhausted(
+    tmp_path, monkeypatch
+):
+    import agent.control.channel as ch
+
+    admission = _admission()
+    await ch._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
+    state = session.get("s1")
+
+    called = []
+    state.refresh_schema = lambda: called.append(1)
+    # Every estimate-pool worker already lost to an abandoned planner.
+    monkeypatch.setattr(ch, "_estimates_in_flight", max(2, ch.effective_cores()))
+
+    ws = _FakeWS()
+    await asyncio.wait_for(
+        ch._handle_exec_statement(
+            ws,
+            {"session_id": "s1", "query_id": "stmt1", "sql": "SET threads=2"},
+            tmp_path,
+            admission,
+        ),
+        timeout=5,
+    )
+
+    assert _last(ws).payload["status"] == "done"
+    assert not called, "refreshed schema despite the estimate pool being exhausted"

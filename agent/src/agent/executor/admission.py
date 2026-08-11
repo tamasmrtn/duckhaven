@@ -168,6 +168,10 @@ class Admission:
         # for any of them to use, so they parked again still holding what they
         # took. See ``_promote_growth``.
         self._growth_queue: deque[_GrowthWaiter] = deque()
+        # Alternated by `_release_promote` so a run of one-shot admissions can't
+        # out-compete a growth waiter on every single release purely because of
+        # a fixed check order; see `_release_promote`.
+        self._promote_growth_first = False
         self.set_profile(profile)
 
     # -- profile -----------------------------------------------------------
@@ -311,7 +315,14 @@ class Admission:
         if reservation is not None:
             return reservation
         if self._reclaim_elastic(self._shortfall(request)) > 0:
-            return self._admit_from_free(request)
+            reservation = self._admit_from_free(request)
+            if reservation is None:
+                # Reclaimed something but this admission still didn't fit
+                # (conservative shortfall math, or a partial reclaim) — those
+                # bytes are genuinely free now and unused, so a growth waiter
+                # should get a chance at them.
+                self._promote_growth()
+            return reservation
         return None
 
     # -- elastic (revocable) memory ----------------------------------------
@@ -350,7 +361,9 @@ class Admission:
         """
         released = self._revoke(reservation, reservation.elastic_bytes, apply=False)
         if released:
-            self._promote()
+            # A genuine give-back: the bytes are really free now, so both
+            # queues compete for them fairly (see `_release_promote`).
+            self._release_promote()
         return released
 
     def _revoke(self, reservation: Reservation, amount: int, *, apply: bool) -> int:
@@ -520,8 +533,7 @@ class Admission:
         reservation.threads = max(1, request.threads)
         if granted < previous:
             # A shrink frees budget the queues may already be waiting on.
-            self._promote()
-            self._promote_growth()
+            self._release_promote()
         return granted >= target
 
     # -- waiting for room to grow -------------------------------------------
@@ -612,8 +624,8 @@ class Admission:
             return
 
     def release(self, reservation: Reservation) -> None:
-        """Return a reservation — both tiers — and promote the oldest waiter that
-        now fits.
+        """Return a reservation — both tiers — and promote whichever queue's
+        turn it is to go first (see ``_release_promote``).
 
         The elastic grant is dropped by accounting alone: the connection it
         belonged to is being closed, so there is nothing left to resize.
@@ -624,11 +636,35 @@ class Admission:
         reservation.elastic_bytes = 0
         self._elastic = [held for held in self._elastic if held is not reservation]
         self._running -= 1
-        # New admissions first, so the FIFO `_promote` documents stays the one
-        # that orders arrivals; a growth waiter is already holding a session, and
-        # admissions are baseline-sized, so this cannot meaningfully starve it.
-        self._promote()
-        self._promote_growth()
+        self._release_promote()
+
+    def _release_promote(self) -> None:
+        """Promote from the FIFO and growth queues, alternating which goes first.
+
+        FIFO admissions and growth waiters both compete for the same freed
+        budget. A fixed order (always drain ``_waiters`` first) used to assume
+        this "cannot meaningfully starve" growth, on the reasoning that
+        admissions are baseline-sized — true for session opens, false for
+        one-shot ``DISPATCH_QUERY`` admissions, which are sized from the real
+        EXPLAIN estimate and can be as large as the bucket ceiling. A steady
+        backlog of those can then repeatedly out-compete a longer-waiting
+        growth waiter purely because of code order. Alternating which queue
+        goes first spreads that out instead of always favoring one.
+
+        This does not fully solve "dribble" starvation, where a growth request
+        never fits any single release's freed increment and a continuous
+        trickle of smaller FIFO admissions keeps consuming each increment
+        before growth's threshold is ever reached in one shot — a genuine
+        fix for that needs wait-time-ordered promotion across both queues,
+        which is a larger change than this fairness bug warrants.
+        """
+        self._promote_growth_first = not self._promote_growth_first
+        if self._promote_growth_first:
+            self._promote_growth()
+            self._promote()
+        else:
+            self._promote()
+            self._promote_growth()
 
     def _promote(self) -> None:
         """Admit queued waiters (oldest first) while the head-of-line fits.
@@ -639,7 +675,7 @@ class Admission:
         """
         while self._waiters:
             waiter, request = self._waiters[0]
-            if waiter.cancelled():
+            if waiter.done():
                 self._waiters.popleft()
                 continue
             reservation = self._try_admit(request)

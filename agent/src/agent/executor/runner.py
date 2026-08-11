@@ -141,10 +141,11 @@ def _is_single_select(sql: str) -> bool:
 # itself. Everything else that is not a single SELECT — DDL, DML, multi-statement
 # scripts — keeps the fallback bucket, because those genuinely are not cheap (an
 # Iceberg `CREATE TABLE … AS SELECT` needs a ~76 MiB Parquet row-group buffer in
-# one allocation however few rows it writes).
+# one allocation however few rows it writes). `ANALYZE` is deliberately not here
+# — see `is_cheap_statement`, DuckDB doesn't type it as its own statement type.
 _CHEAP_STATEMENT_TYPES = frozenset(
     getattr(duckdb.StatementType, name)
-    for name in ("SET", "TRANSACTION", "ANALYZE")
+    for name in ("SET", "TRANSACTION")
     if hasattr(duckdb.StatementType, name)
 )
 
@@ -156,12 +157,24 @@ def is_cheap_statement(sql: str) -> bool:
     unestimable-statement fallback bucket — a third of the whole agent — which on
     a 22-way burst meant every session claimed a third of the budget to run a
     one-millisecond statement, fragmenting it before a single real query started.
+
+    `ANALYZE` has the same problem but can't be caught by statement type alone:
+    DuckDB types both bare `ANALYZE` and `ANALYZE <table>` as
+    ``StatementType.VACUUM`` (verified against 1.5.5), the same type a real
+    `VACUUM` gets — and a real `VACUUM` is not necessarily cheap, so it's not
+    safe to treat the whole type as cheap. Disambiguate on the statement's own
+    leading keyword instead.
     """
     try:
         statements = duckdb.extract_statements(sql)
     except Exception:  # noqa: BLE001 - a parse failure surfaces when executed
         return False
-    return len(statements) == 1 and statements[0].type in _CHEAP_STATEMENT_TYPES
+    if len(statements) != 1:
+        return False
+    stmt = statements[0]
+    if stmt.type in _CHEAP_STATEMENT_TYPES:
+        return True
+    return stmt.type == duckdb.StatementType.VACUUM and sql.strip().lower().startswith("analyze")
 
 
 def _safe_install_load(conn: duckdb.DuckDBPyConnection, name: str) -> bool:

@@ -67,7 +67,9 @@ export const FALLBACK_KEYWORDS: string[] = [
   "RETURNING",
 ];
 
-// The keywords that can legally start a statement.
+// The keywords that can legally start a statement. DuckDB's own
+// duckdb_keywords() doesn't categorize words by statement position, so this
+// stays a curated, hand-maintained list rather than something derived live.
 export const STATEMENT_START_KEYWORDS: string[] = [
   "SELECT",
   "WITH",
@@ -80,4 +82,23 @@ export const STATEMENT_START_KEYWORDS: string[] = [
   "DROP TABLE",
   "ALTER TABLE",
   "EXPLAIN",
+  "ATTACH",
+  "DETACH",
+  "USE",
+  "CALL",
+  "PRAGMA",
+  "SET",
+  "COPY",
+  "VACUUM",
+  "CHECKPOINT",
+  "EXPORT DATABASE",
+  "IMPORT DATABASE",
+  "SUMMARIZE",
+  "DESCRIBE",
+  "SHOW",
+  "LOAD",
+  "INSTALL",
+  "BEGIN",
+  "COMMIT",
+  "ROLLBACK",
 ];

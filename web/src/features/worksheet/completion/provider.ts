@@ -1,5 +1,6 @@
 import type { Monaco } from "@monaco-editor/react";
 import type { languages, editor, Position, IRange } from "monaco-editor";
+import { formatRowCount } from "@/utils";
 import { activeStatement } from "../statements";
 import { getCompletions, pendingColumns } from "./engine";
 import { getCursorContext, referencedTables } from "./statementContext";
@@ -9,6 +10,14 @@ import type { SqlMetadata } from "@/types/sqlMetadata";
 export interface ColumnRef {
   schema?: string;
   table: string;
+}
+
+// A table's row count, resolved lazily. `exact` distinguishes a real (agent-
+// probed) count from the free Iceberg-snapshot estimate, so the UI never
+// implies more precision than it has.
+export interface RowCountInfo {
+  count: number;
+  exact: boolean;
 }
 
 interface CompletionContext {
@@ -25,6 +34,11 @@ interface CompletionContext {
     schema: string,
     table: string,
   ) => void;
+  // Lazily fetch one table's row count for the completion-detail panel,
+  // fired from `resolveCompletionItem` for whichever table suggestion is
+  // currently highlighted — never for the whole list at once.
+  ensureTableDetail: (schema: string, table: string) => void;
+  rowCountByTable: Record<string, RowCountInfo | null>;
 }
 
 const EMPTY_SNAPSHOT: CatalogSnapshot = {
@@ -45,6 +59,8 @@ const context: CompletionContext = {
   ensureCrossCatalogSchemas: () => {},
   ensureCrossCatalogTables: () => {},
   ensureCrossCatalogColumns: () => {},
+  ensureTableDetail: () => {},
+  rowCountByTable: {},
 };
 
 let registered = false;
@@ -100,6 +116,13 @@ function mapKind(
       return K.Module;
   }
 }
+
+// A completion item for a table suggestion carries its schema/table so
+// `resolveCompletionItem` can look up (and lazily fetch) its row count
+// without re-deriving it from `detail`/`label` string parsing.
+type TableCompletionItem = languages.CompletionItem & {
+  schemaRef?: { schema: string; table: string };
+};
 
 // The inner parameter list of a `name(a TYPE, b TYPE) → ret` signature.
 function signatureParams(signature: string): string[] {
@@ -187,7 +210,7 @@ export function registerSqlProviders(monaco: Monaco): void {
         // parens, ready to type an argument (and trigger signature help via
         // the `(`/`,` triggers below) instead of landing after a bare name.
         const isFunction = s.kind === "function";
-        return {
+        const item: TableCompletionItem = {
           label: s.label,
           kind: mapKind(monaco, s.kind),
           detail: s.detail,
@@ -199,6 +222,14 @@ export function registerSqlProviders(monaco: Monaco): void {
           sortText: s.sortText,
           range,
         };
+        // Row count is resolved lazily on hover/highlight (see
+        // `resolveCompletionItem` below), only for the active catalog's own
+        // tables — `detail` there is a bare schema name; a cross-catalog
+        // table suggestion's `detail` is "catalog.schema" instead.
+        if (s.kind === "table" && s.detail && !s.detail.includes(".")) {
+          item.schemaRef = { schema: s.detail, table: s.label };
+        }
+        return item;
       });
 
       // Mark the list incomplete while the columns/tables it depends on are
@@ -206,6 +237,24 @@ export function registerSqlProviders(monaco: Monaco): void {
       // instead of caching a function-only (or empty) result.
       const incomplete = pendingColumns(text, offset, context.snapshot);
       return { suggestions, incomplete };
+    },
+    // Fires only for the item currently highlighted in an open suggest
+    // list — the right place to fetch a per-table row count on demand
+    // instead of bulk-fetching one for every table candidate up front.
+    resolveCompletionItem(
+      item: TableCompletionItem,
+    ): languages.ProviderResult<languages.CompletionItem> {
+      const ref = item.schemaRef;
+      if (!ref) return item;
+      context.ensureTableDetail(ref.schema, ref.table);
+      const info = context.rowCountByTable[`${ref.schema}.${ref.table}`];
+      // `undefined` = not loaded yet (first resolve call, fetch just kicked
+      // off); `null` = loaded, no count available. Only a resolved count
+      // gets rendered.
+      if (info) {
+        item.documentation = `${info.exact ? "" : "~"}${formatRowCount(info.count)} rows`;
+      }
+      return item;
     },
   });
 

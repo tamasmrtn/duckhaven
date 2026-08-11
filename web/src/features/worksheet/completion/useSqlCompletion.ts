@@ -8,6 +8,7 @@ import type { CatalogTable } from "@/types/catalog";
 import type { CatalogEntry, CatalogSnapshot, SnapshotColumn } from "./types";
 import {
   type ColumnRef,
+  type RowCountInfo,
   retriggerSuggest,
   updateCompletionContext,
 } from "./provider";
@@ -254,6 +255,49 @@ export function useSqlCompletion(ws: string, catalog?: string): void {
     [qc, ws, catalog],
   );
 
+  // Row count for the completion-detail panel, fetched lazily one table at a
+  // time (see `resolveCompletionItem` in provider.ts) — same query key as
+  // `ensureColumns`/`useTable`, so it shares a cache entry with the catalog
+  // tree's click-expand and hover-preview fetches.
+  const [rowCountByTable, setRowCountByTable] = useState<
+    Record<string, RowCountInfo | null>
+  >({});
+  const requestedDetail = useRef<Set<string>>(new Set());
+
+  const ensureTableDetail = useCallback(
+    (schema: string, table: string) => {
+      const key = `${schema}.${table}`;
+      if (requestedDetail.current.has(key)) return;
+      requestedDetail.current.add(key);
+      qc.ensureQueryData<CatalogTable>({
+        queryKey: [
+          "workspace",
+          ws,
+          "catalog",
+          catalog,
+          "schema",
+          schema,
+          "table",
+          table,
+        ],
+        queryFn: () => schemasApi.getTable(ws, catalog, schema, table),
+      })
+        .then((t) => {
+          const info: RowCountInfo | null =
+            t.row_count != null
+              ? { count: t.row_count, exact: true }
+              : t.row_count_estimate != null
+                ? { count: t.row_count_estimate, exact: false }
+                : null;
+          setRowCountByTable((prev) =>
+            key in prev ? prev : { ...prev, [key]: info },
+          );
+        })
+        .catch(() => requestedDetail.current.delete(key));
+    },
+    [qc, ws, catalog],
+  );
+
   useEffect(() => {
     updateCompletionContext({
       snapshot,
@@ -261,6 +305,8 @@ export function useSqlCompletion(ws: string, catalog?: string): void {
       ensureColumns,
       ensureCrossCatalogSchemas,
       ensureCrossCatalogTables,
+      ensureTableDetail,
+      rowCountByTable,
       ensureCrossCatalogColumns,
     });
   }, [
@@ -270,13 +316,21 @@ export function useSqlCompletion(ws: string, catalog?: string): void {
     ensureCrossCatalogSchemas,
     ensureCrossCatalogTables,
     ensureCrossCatalogColumns,
+    ensureTableDetail,
+    rowCountByTable,
   ]);
 
   // Refresh an open suggest widget when lazily-fetched columns land, so a
   // held-open Ctrl+Space fills in without the user having to type.
   useEffect(() => {
     retriggerSuggest();
-  }, [columnsByTable, crossSchemas, crossTables, crossColumns]);
+  }, [
+    columnsByTable,
+    crossSchemas,
+    crossTables,
+    crossColumns,
+    rowCountByTable,
+  ]);
 
   // When the catalog is refetched (e.g. after a DDL run invalidates it), drop
   // the lazy column cache so altered/created/dropped tables re-fetch fresh

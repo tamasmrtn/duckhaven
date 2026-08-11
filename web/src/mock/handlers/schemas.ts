@@ -122,6 +122,7 @@ function makeHandlers(prefix: string) {
         catalog: slug,
         workspace_id: ws.id,
         row_count: 0,
+        row_count_estimate: null,
         size_bytes: 0,
         format: "Iceberg",
         catalog_commits: true,

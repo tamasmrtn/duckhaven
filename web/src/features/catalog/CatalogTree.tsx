@@ -48,16 +48,8 @@ import {
 } from "@/features/catalog/CatalogInfoDialog";
 import { StorageIcon } from "@/components/app/StorageIcon";
 import type { BackendKind } from "@/types/storage-backend";
-import { cn } from "@/utils";
+import { cn, formatRowCount } from "@/utils";
 import type { Catalog, CatalogTable } from "@/types/catalog";
-
-function formatRowCount(n: number | null) {
-  if (n == null) return "";
-  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`;
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
-}
 
 interface TableNodeProps {
   ws: string;

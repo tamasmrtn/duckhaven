@@ -35,6 +35,10 @@ export interface CatalogTable {
   catalog?: string;
   workspace_id: string;
   row_count: number | null;
+  // A free estimate from the table's current Iceberg snapshot summary (no
+  // scan) — present even when `row_count` (an explicit stats refresh) is
+  // still null.
+  row_count_estimate: number | null;
   size_bytes: number | null;
   format: string;
   catalog_commits: boolean;

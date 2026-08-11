@@ -83,6 +83,98 @@ export function splitStatements(sql: string): string[] {
     .filter((s) => s.length > 0);
 }
 
+// Blank out the *contents* of single-quoted string literals and comments with
+// spaces, preserving every other character (including double-quoted
+// identifiers, which stay untouched so their real text is still readable) and
+// the string's length/offsets exactly. Used to keep keyword/table-reference
+// scanning in the completion engine from misfiring on keyword-shaped text
+// sitting inside a string literal or a comment (e.g. `WHERE msg = 'select from
+// users'` must not be read as introducing a FROM clause). Mirrors
+// `statementRanges`'s quote/comment state walk above, adapted to masking
+// instead of `;`-boundary tracking.
+export function maskLiteralsAndComments(sql: string): string {
+  const n = sql.length;
+  const out: string[] = [];
+  let i = 0;
+
+  while (i < n) {
+    const ch = sql[i];
+    const next = sql[i + 1];
+
+    if (ch === "'") {
+      // Single-quoted string literal; a doubled quote is an escaped quote.
+      // The opening/closing quotes stay, only the interior is blanked.
+      out.push("'");
+      i++;
+      while (i < n) {
+        if (sql[i] === "'") {
+          if (sql[i + 1] === "'") {
+            out.push("  ");
+            i += 2;
+            continue;
+          }
+          out.push("'");
+          i++;
+          break;
+        }
+        out.push(" ");
+        i++;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      // Double-quoted identifier — real identifier text, not a value
+      // literal. Left untouched so unquoting/reference parsing still works.
+      out.push('"');
+      i++;
+      while (i < n) {
+        out.push(sql[i]);
+        if (sql[i] === '"') {
+          if (sql[i + 1] === '"') {
+            out.push('"');
+            i += 2;
+            continue;
+          }
+          i++;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+
+    if (ch === "-" && next === "-") {
+      out.push("  ");
+      i += 2;
+      while (i < n && sql[i] !== "\n") {
+        out.push(" ");
+        i++;
+      }
+      continue;
+    }
+
+    if (ch === "/" && next === "*") {
+      out.push("  ");
+      i += 2;
+      while (i < n && !(sql[i] === "*" && sql[i + 1] === "/")) {
+        out.push(" ");
+        i++;
+      }
+      if (i < n) {
+        out.push("  ");
+        i += 2;
+      }
+      continue;
+    }
+
+    out.push(ch);
+    i++;
+  }
+
+  return out.join("");
+}
+
 // The raw statement segment enclosing `offset`, with the cursor re-based to that
 // segment. Unlike `activeStatement` this keeps the text un-trimmed so offsets
 // stay aligned — used by the completion engine for cursor-context detection.

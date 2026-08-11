@@ -1,4 +1,4 @@
-import { activeStatementBounds } from "../statements";
+import { activeStatementBounds, maskLiteralsAndComments } from "../statements";
 import type { Clause, CursorContext, TableRef } from "./types";
 
 const IDENT = /[A-Za-z0-9_$]/;
@@ -65,6 +65,10 @@ const ALIAS_LOOKAHEAD = `(?!(?:${[...ALIAS_STOPWORDS].join("|")})\\b)`;
 
 // Tables referenced in the statement's FROM/JOIN/INTO/UPDATE, best-effort.
 export function referencedTables(statement: string): TableRef[] {
+  // Blank out string-literal/comment content first so a value literal that
+  // happens to contain keyword-shaped text (e.g. `'from users'`) can't be
+  // mistaken for an actual FROM/JOIN target.
+  const masked = maskLiteralsAndComments(statement);
   const re = new RegExp(
     `\\b(?:from|join|into|update)\\s+("?[A-Za-z_$][\\w$]*"?)` +
       `(?:\\s*\\.\\s*("?[A-Za-z_$][\\w$]*"?))?` +
@@ -72,7 +76,7 @@ export function referencedTables(statement: string): TableRef[] {
     "gi",
   );
   const refs: TableRef[] = [];
-  for (const m of statement.matchAll(re)) {
+  for (const m of masked.matchAll(re)) {
     const first = unquote(m[1]);
     const second = m[2] ? unquote(m[2]) : undefined;
     const aliasRaw = m[3] ? unquote(m[3]) : undefined;
@@ -118,11 +122,15 @@ function detectClause(before: string): Clause {
 
 export function getCursorContext(text: string, offset: number): CursorContext {
   const { text: statement, offset: pos } = activeStatementBounds(text, offset);
-  const before = statement.slice(0, pos);
+  // Masking preserves length/offsets exactly, so `pos` stays valid and every
+  // other character (including double-quoted identifiers) is unaffected —
+  // only string-literal/comment interiors are blanked.
+  const masked = maskLiteralsAndComments(statement);
+  const before = masked.slice(0, pos);
 
-  const { word, start } = wordBefore(statement, pos);
+  const { word, start } = wordBefore(masked, pos);
   const wordPrefix = word;
-  const qualifier = parseQualifier(statement, start);
+  const qualifier = parseQualifier(masked, start);
   const fromTables = referencedTables(statement);
 
   // Statement start: nothing meaningful typed yet.

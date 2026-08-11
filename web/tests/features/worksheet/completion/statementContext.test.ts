@@ -42,6 +42,14 @@ describe("referencedTables", () => {
       { schema: "s", table: "b", alias: undefined },
     ]);
   });
+
+  it("ignores keyword-shaped text inside a string literal", () => {
+    expect(
+      referencedTables(
+        "UPDATE logs SET msg = 'select from users' WHERE id = 1",
+      ),
+    ).toEqual([{ table: "logs", alias: undefined }]);
+  });
 });
 
 describe("getCursorContext", () => {
@@ -70,6 +78,15 @@ describe("getCursorContext", () => {
     ]);
   });
 
+  it("captures a catalog.schema.table qualifier", () => {
+    const { text, offset } = at("SELECT * FROM shared.public.customers.|");
+    expect(getCursorContext(text, offset).qualifier).toEqual([
+      "shared",
+      "public",
+      "customers",
+    ]);
+  });
+
   it("detects a CAST type context", () => {
     const { text, offset } = at("SELECT CAST(x AS |) FROM analytics.sales");
     expect(getCursorContext(text, offset).clause).toBe("type");
@@ -78,5 +95,12 @@ describe("getCursorContext", () => {
   it("detects a :: cast type context", () => {
     const { text, offset } = at("SELECT x::| FROM analytics.sales");
     expect(getCursorContext(text, offset).clause).toBe("type");
+  });
+
+  it("does not let a keyword-shaped string literal shift the clause", () => {
+    // The literal contains "where", but the cursor is still in the SELECT
+    // list — clause detection must not be fooled by string contents.
+    const { text, offset } = at("SELECT 'x where y', |");
+    expect(getCursorContext(text, offset).clause).toBe("select");
   });
 });

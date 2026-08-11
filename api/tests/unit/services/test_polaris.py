@@ -228,6 +228,49 @@ async def test_get_table_maps_columns(polaris: PolarisClient) -> None:
 
 
 @respx.mock
+async def test_get_table_reads_current_snapshot_summary(polaris: PolarisClient) -> None:
+    """`current_snapshot_summary` comes from the same LoadTableResult payload
+    `get_table` already fetches — no extra request."""
+    _mock_token()
+    respx.get(f"{CAT}/ws_alpha/namespaces/main/tables/events").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "metadata": {
+                    "table-uuid": "abc-123",
+                    "current-snapshot-id": 22,
+                    "snapshots": [
+                        {
+                            "snapshot-id": 11,
+                            "timestamp-ms": 1000,
+                            "summary": {"operation": "append", "total-records": "5"},
+                        },
+                        {
+                            "snapshot-id": 22,
+                            "parent-snapshot-id": 11,
+                            "timestamp-ms": 2000,
+                            "summary": {"operation": "overwrite", "total-records": "8"},
+                        },
+                    ],
+                },
+            },
+        )
+    )
+    t = await polaris.get_table("ws_alpha", "main", "events")
+    assert t.current_snapshot_summary == {"operation": "overwrite", "total-records": "8"}
+
+
+@respx.mock
+async def test_get_table_has_no_snapshot_summary_when_no_snapshots(polaris: PolarisClient) -> None:
+    _mock_token()
+    respx.get(f"{CAT}/ws_alpha/namespaces/main/tables/fresh").mock(
+        return_value=httpx.Response(200, json={"metadata": {"table-uuid": "x"}})
+    )
+    t = await polaris.get_table("ws_alpha", "main", "fresh")
+    assert t.current_snapshot_summary is None
+
+
+@respx.mock
 async def test_list_snapshots_orders_newest_first_and_flags_current(
     polaris: PolarisClient,
 ) -> None:

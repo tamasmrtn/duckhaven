@@ -497,6 +497,38 @@ async def test_create_table_enriches_metadata(auth_client: AsyncClient, backend:
     assert body["row_count"] == 0
 
 
+async def test_table_detail_surfaces_row_count_estimate_without_refresh(
+    auth_client: AsyncClient, backend: StorageBackend, fake_polaris: FakePolaris
+):
+    """`row_count_estimate` comes from the table's current Iceberg snapshot
+    summary — populated even though no stats-refresh/recount call ran, unlike
+    the exact (agent-probed) `row_count`."""
+    slug = await _make_workspace(auth_client, backend, "alpha")
+    await auth_client.post(
+        f"/workspaces/{slug}/schemas/main/tables",
+        json={"name": "events", "columns": [{"name": "id", "type": "BIGINT"}]},
+    )
+    fake_polaris.tables[(slug, "main", "events")].current_snapshot_summary = {
+        "operation": "append",
+        "total-records": "42",
+    }
+
+    body = (await auth_client.get(f"/workspaces/{slug}/schemas/main/tables/events")).json()
+    assert body["row_count_estimate"] == 42
+
+
+async def test_table_detail_row_count_estimate_null_without_snapshots(
+    auth_client: AsyncClient, backend: StorageBackend
+):
+    slug = await _make_workspace(auth_client, backend, "alpha")
+    await auth_client.post(
+        f"/workspaces/{slug}/schemas/main/tables",
+        json={"name": "events", "columns": [{"name": "id", "type": "BIGINT"}]},
+    )
+    body = (await auth_client.get(f"/workspaces/{slug}/schemas/main/tables/events")).json()
+    assert body["row_count_estimate"] is None
+
+
 async def test_table_detail_surfaces_iceberg_metadata(
     auth_client: AsyncClient, backend: StorageBackend, fake_polaris: FakePolaris, db_session
 ):

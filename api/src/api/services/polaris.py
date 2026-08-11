@@ -96,6 +96,10 @@ class PolarisTable(_PolarisModel):
     comment: str | None = None
     # Iceberg table-format version, from the REST LoadTableResult metadata.
     format_version: int | None = None
+    # The current snapshot's raw summary dict (e.g. "total-records"), read
+    # from the same LoadTableResult payload already fetched for this table —
+    # no extra request. None for a table with no snapshots yet.
+    current_snapshot_summary: dict[str, str] | None = None
 
 
 class PolarisSnapshot(_PolarisModel):
@@ -637,6 +641,16 @@ class PolarisClient:
                 break
         if not table_schema:
             table_schema = metadata.get("schema") or (metadata.get("schemas") or [{}])[0]
+        # The current snapshot's summary (has "total-records" etc.) — a free
+        # row-count estimate with no table scan, straight from this same
+        # payload's snapshot log.
+        current_snapshot_id = metadata.get("current-snapshot-id")
+        current_snapshot_summary: dict[str, str] | None = None
+        if current_snapshot_id is not None:
+            for snap in metadata.get("snapshots") or []:
+                if snap.get("snapshot-id") == current_snapshot_id:
+                    current_snapshot_summary = snap.get("summary") or {}
+                    break
         return PolarisTable(
             name=name,
             catalog_name=catalog,
@@ -646,6 +660,7 @@ class PolarisClient:
             columns=_columns_from_iceberg_schema(table_schema),
             properties=metadata.get("properties") or {},
             format_version=metadata.get("format-version"),
+            current_snapshot_summary=current_snapshot_summary,
         )
 
     @staticmethod

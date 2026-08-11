@@ -76,6 +76,10 @@ class TableOut(BaseModel):
     # Control-plane metadata (TableMetadata); null until first tracked event.
     catalog_commits: bool = False
     row_count: int | None = None
+    # A free, always-available estimate read from the table's current Iceberg
+    # snapshot summary (no scan) — populated even when `row_count` (which
+    # requires an explicit stats refresh) is still null.
+    row_count_estimate: int | None = None
     size_bytes: int | None = None
     owner: str | None = None
     last_write_at: datetime | None = None

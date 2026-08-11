@@ -204,6 +204,11 @@ def _table_to_out(
         # Every Iceberg REST table is catalog-managed by definition.
         catalog_commits=True,
         row_count=meta.row_count if meta else None,
+        row_count_estimate=(
+            _snapshot_metric(table.current_snapshot_summary, "total-records")
+            if table.current_snapshot_summary
+            else None
+        ),
         size_bytes=meta.size_bytes if meta else None,
         owner=meta.owner if meta else None,
         last_write_at=meta.last_write_at if meta else None,

@@ -81,6 +81,31 @@ async def test_freed_slot_promotes_oldest_waiter_fifo():
         await second
 
 
+async def test_promote_skips_a_done_but_not_cancelled_waiter():
+    """`_promote`'s head-of-line check used to test `waiter.cancelled()` alone;
+    a future that resolved some other way without being popped would hit
+    `set_result()` on an already-resolved future and raise. `.done()` is a
+    superset of `.cancelled()` and catches both, matching `_promote_growth`'s
+    own check."""
+    adm = _admission()
+    await adm.acquire()  # 6
+    await adm.acquire()  # 4
+    # Leaves the 2-byte slot free.
+
+    loop = asyncio.get_running_loop()
+    stray = loop.create_future()
+    stray.set_result("already resolved")  # done, but not cancelled -- not popped yet
+    real_waiter = loop.create_future()
+    adm._waiters.append((stray, None))  # noqa: SLF001 - simulate a stray resolved entry
+    adm._waiters.append((real_waiter, None))  # noqa: SLF001
+
+    adm._promote()  # noqa: SLF001 - must not raise InvalidStateError on `stray`
+
+    assert real_waiter.done()
+    assert (await real_waiter).memory_bytes == 2
+    assert list(adm._waiters) == []  # noqa: SLF001
+
+
 async def test_largest_free_slot_is_reused():
     adm = _admission()
     r1 = await adm.acquire()  # 6
@@ -539,6 +564,100 @@ async def test_release_returns_both_tiers():
     adm.release(res)
     assert adm.committed_fraction == 0.0
     assert adm.running_count == 0
+
+
+async def test_growth_waiter_is_not_woken_before_the_reclaim_decision_consumes_it():
+    """`_revoke`'s docstring said it "never promotes", but it used to call
+    `_promote_growth()` unconditionally -- waking a growth waiter on budget a
+    concurrent reclaim was mid-decision on, before that decision consumed it.
+    The woken waiter would then find the budget already gone and re-park:
+    spurious wakeup/re-park churn under contention."""
+    adm = _auto()
+    hog = await adm.acquire(_req(2))
+    resized, is_idle, on_resize = _holder()
+    hog.is_idle, hog.on_resize = is_idle, on_resize
+    adm.grant_elastic(hog, 10)  # hog holds the whole budget: 2 required + 10 cache
+
+    waiter = asyncio.create_task(adm.await_growth(4, 5))
+    await asyncio.sleep(0)
+    assert adm.growth_waiting == 1
+
+    # Needs exactly what reclaiming from hog frees -- no leftover for the waiter.
+    await adm.acquire(_req(6))
+    await asyncio.sleep(0)
+
+    assert not waiter.done(), "woken on budget the reclaiming acquire() consumed itself"
+    assert adm.growth_waiting == 1
+
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+
+
+async def test_growth_waiter_is_woken_when_a_reclaim_leaves_genuine_leftover():
+    """If a reclaim frees more than a failed admission could use, the leftover
+    really is free, and a parked growth waiter should get a chance at it."""
+    adm = _auto()
+    hog = await adm.acquire(_req(2))
+    resized, is_idle, on_resize = _holder()
+    hog.is_idle, hog.on_resize = is_idle, on_resize
+    adm.grant_elastic(hog, 10)
+
+    waiter = asyncio.create_task(adm.await_growth(3, 5))
+    await asyncio.sleep(0)
+
+    # Reclaims everything hog holds (10) but the request still can't be
+    # admitted even so (needs 12 after clamping, only 10 comes free) -- the
+    # reclaimed bytes are genuinely unused by this failed admission.
+    assert adm._try_admit(_req(20)) is None  # noqa: SLF001
+    await asyncio.sleep(0)
+
+    assert waiter.done(), "reclaimed-but-unused budget did not reach the growth waiter"
+    assert await waiter is True
+
+
+async def test_revoke_elastic_promotes_a_parked_growth_waiter():
+    """`revoke_elastic` is a genuine give-back, unlike a mid-decision reclaim --
+    the freed bytes are really free, so a parked growth waiter must get a
+    chance at them, not just a parked FIFO admission."""
+    adm = _auto()
+    res = await adm.acquire(_req(2))
+    adm.grant_elastic(res, 8)  # res holds 2 required + 8 cache = the whole budget
+
+    waiter = asyncio.create_task(adm.await_growth(6, 5))
+    await asyncio.sleep(0)
+
+    assert adm.revoke_elastic(res) == 8
+    await asyncio.sleep(0)
+
+    assert waiter.done()
+    assert await waiter is True
+
+
+async def test_release_promote_alternates_which_queue_goes_first(monkeypatch):
+    """A fixed order (always drain the FIFO queue first) let a backlog of
+    one-shot admissions repeatedly out-compete a longer-waiting growth waiter
+    for freed budget purely because of code order. `_release_promote`
+    alternates instead."""
+    adm = _auto()
+    calls_this_round: list[str] = []
+
+    def _record(name):
+        def _fn():
+            calls_this_round.append(name)
+
+        return _fn
+
+    monkeypatch.setattr(adm, "_promote", _record("fifo"))
+    monkeypatch.setattr(adm, "_promote_growth", _record("growth"))
+
+    first_movers = []
+    for _ in range(3):
+        calls_this_round.clear()
+        adm._release_promote()  # noqa: SLF001
+        first_movers.append(calls_this_round[0])
+
+    assert first_movers == ["growth", "fifo", "growth"], "did not alternate which queue goes first"
 
 
 # ── the growth queue: parked statements waiting for room ──────────────────────

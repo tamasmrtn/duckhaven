@@ -606,3 +606,42 @@ def test_one_shot_queries_still_report_the_raw_peak(tmp_path):
         enable_profiling=True,
     )
     assert stats["profile"]["summary"]["peak_memory_bytes"] > 0
+
+
+# ── is_cheap_statement: ANALYZE and VACUUM share a DuckDB statement type ──────
+#
+# DuckDB types both bare `ANALYZE` and `ANALYZE <table>` as
+# `StatementType.VACUUM` -- the same type a real `VACUUM` gets -- so `ANALYZE`
+# used to be listed as its own cheap statement type and never matched anything,
+# silently falling to the fallback bucket (a third of the whole agent) for a
+# statement that moves no data.
+
+
+def test_analyze_is_cheap():
+    from agent.executor.runner import is_cheap_statement
+
+    assert is_cheap_statement("ANALYZE")
+    assert is_cheap_statement("ANALYZE my_table")
+    assert is_cheap_statement("analyze my_table")  # case-insensitive
+
+
+def test_plain_vacuum_is_not_cheap():
+    """Only ANALYZE is known to be cheap; a real VACUUM shares ANALYZE's
+    statement type but isn't assumed cheap without evidence either way."""
+    from agent.executor.runner import is_cheap_statement
+
+    assert not is_cheap_statement("VACUUM")
+
+
+def test_set_and_transaction_are_still_cheap():
+    """Unchanged by the ANALYZE/VACUUM disambiguation."""
+    from agent.executor.runner import is_cheap_statement
+
+    assert is_cheap_statement("SET threads=2")
+    assert is_cheap_statement("BEGIN TRANSACTION")
+
+
+def test_a_select_is_not_cheap():
+    from agent.executor.runner import is_cheap_statement
+
+    assert not is_cheap_statement("SELECT 1")

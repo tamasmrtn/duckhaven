@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { splitStatements, activeStatement } from '@/features/worksheet/statements'
+import {
+  splitStatements,
+  activeStatement,
+  maskLiteralsAndComments,
+} from '@/features/worksheet/statements'
 
 describe('splitStatements', () => {
   it('splits multiple statements and strips trailing semicolons', () => {
@@ -88,5 +92,45 @@ describe('activeStatement', () => {
 
   it('does not split on a semicolon inside a string', () => {
     expect(activeStatement("SELECT 'a;b'", 4)).toBe("SELECT 'a;b'")
+  })
+})
+
+describe('maskLiteralsAndComments', () => {
+  it('preserves length and blanks a single-quoted literal, keeping the quotes', () => {
+    const sql = "WHERE msg = 'select from users'"
+    const masked = maskLiteralsAndComments(sql)
+    expect(masked.length).toBe(sql.length)
+    expect(masked).toBe("WHERE msg = '                 '")
+  })
+
+  it('preserves escaped quotes inside a literal as blanks', () => {
+    const sql = "SELECT 'a''b'"
+    const masked = maskLiteralsAndComments(sql)
+    expect(masked.length).toBe(sql.length)
+    expect(masked).toBe("SELECT '    '")
+  })
+
+  it('leaves double-quoted identifiers untouched', () => {
+    const sql = 'SELECT "from" FROM t'
+    expect(maskLiteralsAndComments(sql)).toBe(sql)
+  })
+
+  it('blanks a line comment, preserving length up to the newline', () => {
+    const sql = 'SELECT 1 -- from users\nFROM t'
+    const masked = maskLiteralsAndComments(sql)
+    expect(masked.length).toBe(sql.length)
+    expect(masked).toBe('SELECT 1              \nFROM t')
+  })
+
+  it('blanks a block comment entirely', () => {
+    const sql = 'SELECT /* from users */ 1'
+    const masked = maskLiteralsAndComments(sql)
+    expect(masked.length).toBe(sql.length)
+    expect(masked).toBe('SELECT                  1')
+  })
+
+  it('leaves ordinary code untouched', () => {
+    const sql = 'SELECT * FROM analytics.sales WHERE x = 1'
+    expect(maskLiteralsAndComments(sql)).toBe(sql)
   })
 })

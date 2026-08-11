@@ -35,8 +35,6 @@ class SessionState:
     session_id: str
     conn: duckdb.DuckDBPyConnection
     reservation: Reservation
-    memory_bytes: int
-    threads: int
     # Lease clocks (monotonic seconds): ``opened_at`` bounds a session's total
     # lifetime; ``last_active_at`` (bumped by ``touch`` on each statement) bounds
     # its idle time. The agent self-expires orphaned sessions from these so a lost
@@ -60,6 +58,14 @@ class SessionState:
     # How long the last statement spent waiting for budget before it could run,
     # surfaced in its profile as `admission_wait_ms`. Reset per statement.
     admission_wait_ms: float = 0.0
+
+    @property
+    def memory_bytes(self) -> int:
+        return self.reservation.total_bytes
+
+    @property
+    def threads(self) -> int:
+        return self.reservation.threads
 
     def touch(self) -> None:
         self.last_active_at = time.monotonic()
@@ -85,7 +91,6 @@ class SessionState:
         DuckDB holding *more* than admission accounted, which the session's next
         statement corrects when it sets its own limit.
         """
-        self.memory_bytes = total_bytes
         loop = asyncio.get_running_loop()
         try:
             await loop.run_in_executor(None, runner.apply_memory_limit, self.conn, total_bytes)

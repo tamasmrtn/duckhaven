@@ -5,17 +5,35 @@ export interface SnapshotColumn {
   type: string;
 }
 
-// An in-memory view of the workspace catalog the completion engine reads.
-// `columnsByTable` is keyed by "schema.table" and is sparse: only tables whose
-// columns have been fetched (lazily) are present.
-export interface CatalogSnapshot {
+// One catalog's worth of schema/table/column data, in the same shape as the
+// active catalog's top-level fields below. Used for every catalog other than
+// the active one.
+export interface CatalogEntry {
   schemas: string[];
   tablesBySchema: Record<string, string[]>;
   columnsByTable: Record<string, SnapshotColumn[]>;
 }
 
+// An in-memory view of the workspace catalog the completion engine reads.
+// `columnsByTable` is keyed by "schema.table" and is sparse: only tables whose
+// columns have been fetched (lazily) are present.
+//
+// `schemas`/`tablesBySchema`/`columnsByTable` are always the *active* catalog
+// (the one unqualified names resolve against). `catalogs` lists every catalog
+// attached to the workspace (including the active one, for fully-qualified
+// references); `crossCatalog` holds the same shape as the active catalog's
+// fields, one entry per *non-active* catalog, loaded lazily one level at a
+// time as a `catalog.`/`catalog.schema.` qualifier is typed.
+export interface CatalogSnapshot {
+  schemas: string[];
+  tablesBySchema: Record<string, string[]>;
+  columnsByTable: Record<string, SnapshotColumn[]>;
+  catalogs: string[];
+  crossCatalog: Record<string, CatalogEntry>;
+}
+
 export type SuggestionKind =
-  "keyword" | "function" | "column" | "table" | "schema" | "type";
+  "keyword" | "function" | "column" | "table" | "schema" | "type" | "catalog";
 
 export interface Suggestion {
   label: string;

@@ -46,15 +46,27 @@ function keywordSuggestions(metadata: SqlMetadata | null): Suggestion[] {
   return names.map((name) => ({ label: name, kind: "keyword" as const }));
 }
 
-function functionSuggestions(metadata: SqlMetadata | null): Suggestion[] {
+// DuckDB `duckdb_functions()` categorizes functions by `type` — this project
+// only ever offers a completion for the callable-anywhere kinds by default;
+// table-position callers (see `getCompletions`'s "from" branch) pass
+// `typeFilter` to narrow to the table-valued kinds instead.
+function functionSuggestions(
+  metadata: SqlMetadata | null,
+  typeFilter?: (type: string) => boolean,
+): Suggestion[] {
   if (!metadata) return [];
-  return metadata.functions.map((f) => ({
+  const fns = typeFilter
+    ? metadata.functions.filter((f) => typeFilter(f.type))
+    : metadata.functions;
+  return fns.map((f) => ({
     label: f.name,
     kind: "function" as const,
     detail: f.signature,
     documentation: f.examples ?? undefined,
   }));
 }
+
+const TABLE_VALUED_FUNCTION_TYPES = new Set(["table", "table_macro"]);
 
 function typeSuggestions(metadata: SqlMetadata | null): Suggestion[] {
   if (!metadata) return [];
@@ -67,6 +79,9 @@ function typeSuggestions(metadata: SqlMetadata | null): Suggestion[] {
 
 function tableSuggestions(snapshot: CatalogSnapshot): Suggestion[] {
   const out: Suggestion[] = [];
+  for (const cat of snapshot.catalogs) {
+    out.push({ label: cat, kind: "catalog" });
+  }
   for (const schema of snapshot.schemas) {
     out.push({ label: schema, kind: "schema" });
     for (const table of snapshot.tablesBySchema[schema] ?? []) {
@@ -76,13 +91,49 @@ function tableSuggestions(snapshot: CatalogSnapshot): Suggestion[] {
   return out;
 }
 
-// Suggestions for a dotted qualifier (`a.`, `schema.`, `schema.table.`).
+// Suggestions for a dotted qualifier (`a.`, `schema.`, `schema.table.`,
+// `catalog.schema.`, `catalog.schema.table.`). A qualifier's first segment is
+// checked against the known catalog list before assuming it's a schema —
+// matching how DuckDB itself resolves a qualified name (catalog membership is
+// checked first, not assumed positionally).
 function qualifierSuggestions(
   qualifier: string[],
   clause: string,
   snapshot: CatalogSnapshot,
   fromTables: TableRef[],
 ): Suggestion[] {
+  const [head, ...rest] = qualifier;
+  const isCatalog = snapshot.catalogs.includes(head);
+
+  if (isCatalog) {
+    const entry = snapshot.crossCatalog[head];
+    if (rest.length === 0) {
+      // `catalog.` → that catalog's schemas.
+      return (entry?.schemas ?? []).map((s) => ({
+        label: s,
+        kind: "schema" as const,
+        detail: head,
+      }));
+    }
+    if (rest.length === 1) {
+      // `catalog.schema.` → that schema's tables.
+      return (entry?.tablesBySchema[rest[0]] ?? []).map((t) => ({
+        label: t,
+        kind: "table" as const,
+        detail: `${head}.${rest[0]}`,
+      }));
+    }
+    // `catalog.schema.table.` → that table's columns.
+    const [schema, table] = rest.slice(-2);
+    return (entry?.columnsByTable[`${schema}.${table}`] ?? []).map((c) => ({
+      label: c.name,
+      kind: "column" as const,
+      detail: c.type,
+      documentation: `from ${head}.${schema}.${table}`,
+      source: `${head}.${schema}.${table}`,
+    }));
+  }
+
   if (qualifier.length >= 2) {
     const [schema, table] = qualifier.slice(-2);
     return columnSuggestions(snapshot, `${schema}.${table}`);
@@ -108,10 +159,42 @@ function qualifierSuggestions(
 }
 
 const KIND_RANK: Record<string, Record<SuggestionKind, number>> = {
-  from: { schema: 0, table: 1, column: 2, function: 3, keyword: 4, type: 5 },
-  select: { column: 0, function: 1, keyword: 2, table: 3, schema: 4, type: 5 },
-  type: { type: 0, keyword: 1, function: 2, column: 3, table: 4, schema: 5 },
-  start: { keyword: 0, function: 1, column: 2, table: 3, schema: 4, type: 5 },
+  from: {
+    schema: 0,
+    table: 1,
+    column: 2,
+    function: 3,
+    keyword: 4,
+    type: 5,
+    catalog: 6,
+  },
+  select: {
+    column: 0,
+    function: 1,
+    keyword: 2,
+    table: 3,
+    schema: 4,
+    type: 5,
+    catalog: 6,
+  },
+  type: {
+    type: 0,
+    keyword: 1,
+    function: 2,
+    column: 3,
+    table: 4,
+    schema: 5,
+    catalog: 6,
+  },
+  start: {
+    keyword: 0,
+    function: 1,
+    column: 2,
+    table: 3,
+    schema: 4,
+    type: 5,
+    catalog: 6,
+  },
 };
 
 function rankAndFilter(
@@ -159,7 +242,14 @@ export function getCompletions(input: CompletionInput): Suggestion[] {
       kind: "keyword" as const,
     }));
   } else if (ctx.clause === "from") {
-    raw = tableSuggestions(catalog);
+    // Table-valued functions (read_csv(...), range(...), …) are legal FROM
+    // targets alongside schemas/tables.
+    raw = [
+      ...tableSuggestions(catalog),
+      ...functionSuggestions(metadata, (t) =>
+        TABLE_VALUED_FUNCTION_TYPES.has(t),
+      ),
+    ];
   } else if (ctx.clause === "type") {
     raw = typeSuggestions(metadata);
   } else {
@@ -195,6 +285,17 @@ export function pendingColumns(
   const ctx = getCursorContext(text, offset);
 
   if (ctx.qualifier.length > 0) {
+    const [head, ...rest] = ctx.qualifier;
+    if (catalog.catalogs.includes(head)) {
+      const entry = catalog.crossCatalog[head];
+      if (!entry) return true;
+      if (rest.length === 0) return entry.schemas.length === 0;
+      if (rest.length === 1) {
+        return (entry.tablesBySchema[rest[0]] ?? []).length === 0;
+      }
+      const [schema, table] = rest.slice(-2);
+      return !(`${schema}.${table}` in entry.columnsByTable);
+    }
     if (ctx.qualifier.length >= 2) {
       const [schema, table] = ctx.qualifier.slice(-2);
       return !(`${schema}.${table}` in catalog.columnsByTable);

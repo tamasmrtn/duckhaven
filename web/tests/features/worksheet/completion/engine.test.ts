@@ -19,6 +19,8 @@ const catalog: CatalogSnapshot = {
       { name: "sale_id", type: "BIGINT" },
     ],
   },
+  catalogs: [],
+  crossCatalog: {},
 };
 
 const metadata: SqlMetadata = {
@@ -29,6 +31,20 @@ const metadata: SqlMetadata = {
       return_type: "DOUBLE",
       signature: "sum(x DOUBLE) → DOUBLE",
       examples: "sum(amount)",
+    },
+    {
+      name: "read_csv",
+      type: "table",
+      return_type: null,
+      signature: "read_csv(path VARCHAR)",
+      examples: "read_csv('data.csv')",
+    },
+    {
+      name: "histogram",
+      type: "table_macro",
+      return_type: null,
+      signature: "histogram(source, col)",
+      examples: null,
     },
   ],
   keywords: [
@@ -64,6 +80,17 @@ describe("getCompletions", () => {
     expect(byKind("table")).toEqual(
       expect.arrayContaining(["sales", "orders", "events"]),
     );
+  });
+
+  it("suggests table-valued functions alongside schemas/tables after FROM", () => {
+    const out = complete("SELECT * FROM |");
+    const fns = out.filter((s) => s.kind === "function").map((s) => s.label);
+    expect(fns).toEqual(["read_csv", "histogram"]);
+  });
+
+  it("excludes non-table-valued functions (aggregates) from FROM", () => {
+    const out = complete("SELECT * FROM |");
+    expect(out.some((s) => s.label === "sum")).toBe(false);
   });
 
   it("suggests tables in a schema after `schema.`", () => {
@@ -157,6 +184,8 @@ describe("multi-table (JOIN) completion", () => {
         "s.a": [{ name: "id", type: "BIGINT" }],
         "s.b": [{ name: "id", type: "VARCHAR" }],
       },
+      catalogs: [],
+      crossCatalog: {},
     };
     const text = "SELECT  FROM s.a JOIN s.b ON s.a.id = s.b.id";
     const out = getCompletions({
@@ -167,6 +196,60 @@ describe("multi-table (JOIN) completion", () => {
     });
     const ids = out.filter((c) => c.kind === "column" && c.label === "id");
     expect(ids).toHaveLength(2);
+  });
+});
+
+describe("cross-catalog completion", () => {
+  const multi: CatalogSnapshot = {
+    ...catalog,
+    catalogs: ["main", "shared"],
+    crossCatalog: {
+      shared: {
+        schemas: ["public"],
+        tablesBySchema: { public: ["customers"] },
+        columnsByTable: {
+          "public.customers": [
+            { name: "customer_id", type: "BIGINT" },
+            { name: "name", type: "VARCHAR" },
+          ],
+        },
+      },
+    },
+  };
+
+  function completeIn(withCursor: string, cat: CatalogSnapshot) {
+    const { text, offset } = at(withCursor);
+    return getCompletions({ text, offset, catalog: cat, metadata });
+  }
+
+  it("suggests catalog names in a FROM clause", () => {
+    const out = completeIn("SELECT * FROM |", multi);
+    const catalogs = out.filter((s) => s.kind === "catalog").map((s) => s.label);
+    expect(catalogs).toEqual(expect.arrayContaining(["main", "shared"]));
+  });
+
+  it("suggests a non-active catalog's schemas after `catalog.`", () => {
+    const out = completeIn("SELECT * FROM shared.|", multi);
+    expect(out.map((s) => s.label)).toEqual(["public"]);
+    expect(out.every((s) => s.kind === "schema")).toBe(true);
+  });
+
+  it("suggests a non-active catalog's tables after `catalog.schema.`", () => {
+    const out = completeIn("SELECT * FROM shared.public.|", multi);
+    expect(out.map((s) => s.label)).toEqual(["customers"]);
+    expect(out.every((s) => s.kind === "table")).toBe(true);
+  });
+
+  it("suggests columns after `catalog.schema.table.`", () => {
+    const out = completeIn("SELECT shared.public.customers.| FROM t", multi);
+    expect(out.map((s) => s.label)).toEqual(["customer_id", "name"]);
+    expect(out.every((s) => s.kind === "column")).toBe(true);
+  });
+
+  it("does not treat a non-catalog first segment as a catalog", () => {
+    // "analytics" is a schema of the active catalog, not a known catalog name.
+    const out = completeIn("SELECT * FROM analytics.|", multi);
+    expect(out.map((s) => s.label)).toEqual(["sales", "orders"]);
   });
 });
 

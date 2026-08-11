@@ -2,7 +2,7 @@ import type { Monaco } from "@monaco-editor/react";
 import type { languages, editor, Position, IRange } from "monaco-editor";
 import { activeStatement } from "../statements";
 import { getCompletions, pendingColumns } from "./engine";
-import { referencedTables } from "./statementContext";
+import { getCursorContext, referencedTables } from "./statementContext";
 import type { CatalogSnapshot, SuggestionKind } from "./types";
 import type { SqlMetadata } from "@/types/sqlMetadata";
 
@@ -15,12 +15,24 @@ interface CompletionContext {
   snapshot: CatalogSnapshot;
   metadata: SqlMetadata | null;
   ensureColumns: (refs: ColumnRef[]) => void;
+  // Lazily load a non-active catalog's schema list / a schema's table list /
+  // a table's columns, mirroring `ensureColumns` one level up — called as a
+  // `catalog.`/`catalog.schema.`/`catalog.schema.table.` qualifier is typed.
+  ensureCrossCatalogSchemas: (catalogName: string) => void;
+  ensureCrossCatalogTables: (catalogName: string, schema: string) => void;
+  ensureCrossCatalogColumns: (
+    catalogName: string,
+    schema: string,
+    table: string,
+  ) => void;
 }
 
 const EMPTY_SNAPSHOT: CatalogSnapshot = {
   schemas: [],
   tablesBySchema: {},
   columnsByTable: {},
+  catalogs: [],
+  crossCatalog: {},
 };
 
 // Module-level singleton: the providers are registered once for the whole app
@@ -30,6 +42,9 @@ const context: CompletionContext = {
   snapshot: EMPTY_SNAPSHOT,
   metadata: null,
   ensureColumns: () => {},
+  ensureCrossCatalogSchemas: () => {},
+  ensureCrossCatalogTables: () => {},
+  ensureCrossCatalogColumns: () => {},
 };
 
 let registered = false;
@@ -81,6 +96,8 @@ function mapKind(
       return K.Module;
     case "type":
       return K.TypeParameter;
+    case "catalog":
+      return K.Module;
   }
 }
 
@@ -136,6 +153,22 @@ export function registerSqlProviders(monaco: Monaco): void {
       const stmt = activeStatement(text, offset);
       context.ensureColumns(referencedTables(stmt));
 
+      // Lazily pull a non-active catalog's schema/table/column data once its
+      // name appears as the first segment of a dotted qualifier, one level
+      // at a time as the qualifier gets longer.
+      const qualifier = getCursorContext(text, offset).qualifier;
+      const [qHead, ...qRest] = qualifier;
+      if (qHead && context.snapshot.catalogs.includes(qHead)) {
+        if (qRest.length === 0) {
+          context.ensureCrossCatalogSchemas(qHead);
+        } else if (qRest.length === 1) {
+          context.ensureCrossCatalogTables(qHead, qRest[0]);
+        } else {
+          const [schema, table] = qRest.slice(-2);
+          context.ensureCrossCatalogColumns(qHead, schema, table);
+        }
+      }
+
       const word = model.getWordUntilPosition(position);
       const range: IRange = {
         startLineNumber: position.lineNumber,
@@ -149,15 +182,24 @@ export function registerSqlProviders(monaco: Monaco): void {
         offset,
         catalog: context.snapshot,
         metadata: context.metadata,
-      }).map((s) => ({
-        label: s.label,
-        kind: mapKind(monaco, s.kind),
-        detail: s.detail,
-        documentation: s.documentation,
-        insertText: s.insertText ?? s.label,
-        sortText: s.sortText,
-        range,
-      }));
+      }).map((s) => {
+        // Functions insert as a snippet with the cursor placed inside the
+        // parens, ready to type an argument (and trigger signature help via
+        // the `(`/`,` triggers below) instead of landing after a bare name.
+        const isFunction = s.kind === "function";
+        return {
+          label: s.label,
+          kind: mapKind(monaco, s.kind),
+          detail: s.detail,
+          documentation: s.documentation,
+          insertText: s.insertText ?? (isFunction ? `${s.label}($1)` : s.label),
+          insertTextRules: isFunction
+            ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
+            : undefined,
+          sortText: s.sortText,
+          range,
+        };
+      });
 
       // Mark the list incomplete while the columns/tables it depends on are
       // still loading, so Monaco re-queries this provider once they arrive

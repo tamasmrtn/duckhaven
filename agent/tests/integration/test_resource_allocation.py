@@ -53,8 +53,6 @@ def _register(admission: Admission, conn, session_id: str = "res-test"):
         session_id=session_id,
         conn=conn,
         reservation=reservation,
-        memory_bytes=reservation.memory_bytes,
-        threads=reservation.threads,
         opened_at=0.0,
         last_active_at=0.0,
     )

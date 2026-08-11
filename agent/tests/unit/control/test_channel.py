@@ -1478,8 +1478,6 @@ def _session_state(admission, memory_bytes, threads=1, session_id="s1"):
         session_id=session_id,
         conn=object(),
         reservation=reservation,
-        memory_bytes=reservation.memory_bytes,
-        threads=reservation.threads,
         opened_at=0.0,
         last_active_at=0.0,
     )
@@ -1673,8 +1671,6 @@ async def test_static_profile_sessions_are_left_alone(monkeypatch):
         session_id="s1",
         conn=object(),
         reservation=reservation,
-        memory_bytes=reservation.memory_bytes,
-        threads=reservation.threads,
         opened_at=0.0,
         last_active_at=0.0,
     )
@@ -1705,8 +1701,6 @@ async def test_concurrent_sessions_never_oversubscribe_while_growing(monkeypatch
                 session_id=f"s{i}",
                 conn=object(),
                 reservation=reservation,
-                memory_bytes=reservation.memory_bytes,
-                threads=reservation.threads,
                 opened_at=0.0,
                 last_active_at=0.0,
             )
@@ -1837,8 +1831,6 @@ async def test_one_session_cannot_take_the_whole_budget_as_cache(monkeypatch):
             session_id=f"s{i}",
             conn=_RecordingConn(),
             reservation=reservation,
-            memory_bytes=reservation.memory_bytes,
-            threads=reservation.threads,
             opened_at=0.0,
             last_active_at=0.0,
         )
@@ -1878,8 +1870,6 @@ async def test_a_starved_statement_waits_for_budget_instead_of_running_tiny(monk
         session_id="busy",
         conn=_RecordingConn(),
         reservation=hog,
-        memory_bytes=hog.memory_bytes,
-        threads=hog.threads,
         opened_at=0.0,
         last_active_at=0.0,
     )
@@ -1921,8 +1911,6 @@ def _idle_session(admission, session_id: str, memory_bytes: int):
         session_id=session_id,
         conn=_RecordingConn(),
         reservation=reservation,
-        memory_bytes=reservation.memory_bytes,
-        threads=reservation.threads,
         opened_at=0.0,
         last_active_at=0.0,
     )

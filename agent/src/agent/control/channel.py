@@ -536,8 +536,6 @@ async def _handle_open_session(ws, payload: dict, admission: Admission) -> None:
             session_id=session_id,
             conn=conn,
             reservation=reservation,
-            memory_bytes=reservation.memory_bytes,
-            threads=reservation.threads,
             opened_at=opened_at,
             last_active_at=opened_at,
             catalogs=frozenset(c["slug"] for c in catalogs),
@@ -678,9 +676,8 @@ async def _resize_for_statement(
             state.reservation.memory_bytes,
             wanted,
         )
-    # The runner applies this total to the connection when it runs the statement.
-    state.memory_bytes = state.reservation.total_bytes
-    state.threads = state.reservation.threads
+    # `state.memory_bytes`/`.threads` derive live from `state.reservation`, so
+    # the runner picks up this total automatically when it runs the statement.
 
 
 async def _shrink_to_baseline(state, admission: Admission) -> None:

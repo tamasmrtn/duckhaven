@@ -869,8 +869,11 @@ async def test_auto_mode_estimates_then_sizes(tmp_path, monkeypatch):
 
     # The auto path opened a connection (for EXPLAIN) and handed it to the runner.
     assert captured["conn"] is not None
-    # SELECT 1 has no blocking operator -> smallest (XS) bucket = budget/12.
-    assert captured["memory_bytes"] == int(admission.budget_bytes * (1 / 12))
+    # SELECT 1 has no blocking operator -> smallest (XS) bucket = budget/12, the
+    # required floor. The runner's actual value is that plus an elastic cache
+    # top-up (see the one-shot-dispatch elastic grant tests), so this only
+    # checks the floor was sized correctly, not the total.
+    assert captured["memory_bytes"] >= int(admission.budget_bytes * (1 / 12))
     done = Frame.model_validate_json(ws.sent[-1])
     assert done.payload["status"] == "done"
 
@@ -899,8 +902,10 @@ async def test_auto_estimate_failure_falls_back_without_dropping(tmp_path, monke
     ws = _FakeWS()
     await ch_module._handle_dispatch(ws, {"query_id": "q", "sql": "SELECT 1"}, tmp_path, admission)
 
-    # Fallback bucket M = budget/3.
-    assert captured["memory_bytes"] == int(admission.budget_bytes * (1 / 3))
+    # Fallback bucket M = budget/3, the required floor; the runner's actual
+    # value also includes an elastic cache top-up on top of it (see the
+    # one-shot-dispatch elastic grant tests).
+    assert captured["memory_bytes"] >= int(admission.budget_bytes * (1 / 3))
     done = Frame.model_validate_json(ws.sent[-1])
     assert done.payload["status"] == "done"
 
@@ -2224,6 +2229,37 @@ async def test_admission_wait_is_subtracted_from_the_execution_timeout(tmp_path,
     )
 
     assert captured["timeout_s"] == pytest.approx(6.0)
+    done = Frame.model_validate_json(ws.sent[-1])
+    assert done.payload["status"] == "done"
+
+
+async def test_one_shot_dispatch_gets_an_elastic_grant(tmp_path, monkeypatch):
+    """One-shot DISPATCH_QUERY is the module's own motivating scenario (a cold
+    object-storage scan with nowhere to cache its Parquet) -- it must get the
+    same elastic top-up a held session's statements get, and that top-up must
+    actually reach the connection's DuckDB `memory_limit`, not just admission's
+    own accounting."""
+    import agent.control.channel as ch_module
+
+    captured: dict[str, object] = {}
+
+    async def fake_run_query(sql, result_path, timeout_s, **kwargs):
+        captured["memory_bytes"] = kwargs["memory_bytes"]
+        result_path.write_bytes(b"PAR1fake")
+        return {"row_count": 0, "duration_ms": 0, "wrote_result": True, "profile": None}
+
+    monkeypatch.setattr(ch_module, "run_query", fake_run_query)
+    # A generous, mostly-free budget with only this one query in flight, so the
+    # elastic grant has plenty of room to actually take.
+    admission = _admission(profile="auto", floor_bytes=1, ceiling_fraction=1.0)
+
+    ws = _FakeWS()
+    await ch_module._handle_dispatch(ws, {"query_id": "q", "sql": "SELECT 1"}, tmp_path, admission)
+
+    # SELECT 1 -> XS bucket (budget/12) required. Everything above that in the
+    # value the runner actually received is the elastic top-up.
+    required = int(admission.budget_bytes * (1 / 12))
+    assert captured["memory_bytes"] > required, "one-shot dispatch got no elastic top-up"
     done = Frame.model_validate_json(ws.sent[-1])
     assert done.payload["status"] == "done"
 

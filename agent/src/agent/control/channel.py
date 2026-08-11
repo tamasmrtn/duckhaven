@@ -941,6 +941,16 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
                 lock_config=settings.sandbox_lock_configuration,
             )
             reservation: Reservation = await admission.acquire(_build_request(estimate, admission))
+            # One-shot dispatch is the module docstring's own motivating
+            # scenario (a cold object-storage scan re-reading its Parquet with
+            # no file cache) — without this it got none of the elastic top-up
+            # the PR built to fix exactly that, unlike a held session's
+            # statements. The grant is fully returned on `release()` below
+            # when the query finishes, same as the required-bytes tier already
+            # is for one-shot queries today.
+            admission.grant_elastic(
+                reservation, _elastic_target(admission, reservation.memory_bytes)
+            )
         else:
             reservation = await admission.acquire()
     except QueueFull:
@@ -975,7 +985,11 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
             sql,
             result_path,
             timeout_s,
-            memory_bytes=reservation.memory_bytes,
+            # `total_bytes`, not `memory_bytes`: the latter is only the required
+            # floor. Without the elastic top-up folded in here, fix 5's
+            # `grant_elastic` call above would be accounted for but never
+            # actually applied to the connection's DuckDB `memory_limit`.
+            memory_bytes=reservation.total_bytes,
             threads=reservation.threads,
             catalogs=catalogs,
             active_catalog=active_catalog,

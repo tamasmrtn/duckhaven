@@ -103,6 +103,26 @@ describe("getCompletions", () => {
     expect(out.some((s) => s.label === "histogram")).toBe(true);
   });
 
+  it("suggests WHERE once a target is typed and a new word starts", () => {
+    // The clause detector has no notion of "the FROM target is done" until an
+    // actual WHERE/GROUP BY/… is fully typed — this locks in that a fresh
+    // word after a complete target still offers clause keywords.
+    const out = labels("SELECT * FROM analytics.sales w|");
+    expect(out).toContain("WHERE");
+  });
+
+  it("suggests GROUP BY once a target is typed and a new word starts", () => {
+    const out = labels("SELECT * FROM analytics.sales g|", null);
+    expect(out).toContain("GROUP BY");
+  });
+
+  it("does not suggest clause keywords while still typing the FROM target itself", () => {
+    // No target has been parsed yet at this point (only a partial identifier
+    // right after FROM) — offering WHERE/GROUP BY here would be premature.
+    const out = complete("SELECT * FROM |");
+    expect(out.some((s) => s.kind === "keyword")).toBe(false);
+  });
+
   it("suggests tables in a schema after `schema.`", () => {
     const out = complete("SELECT * FROM analytics.|");
     expect(out.map((s) => s.label)).toEqual(["sales", "orders"]);

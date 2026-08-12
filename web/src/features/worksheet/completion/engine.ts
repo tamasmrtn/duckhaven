@@ -160,14 +160,16 @@ function qualifierSuggestions(
 }
 
 const KIND_RANK: Record<string, Record<SuggestionKind, number>> = {
+  // Catalog first, then schema, then table: the broadest-to-narrowest object
+  // hierarchy, matching how a qualified name is actually built up.
   from: {
-    schema: 0,
-    table: 1,
-    column: 2,
-    function: 3,
-    keyword: 4,
-    type: 5,
-    catalog: 6,
+    catalog: 0,
+    schema: 1,
+    table: 2,
+    column: 3,
+    function: 4,
+    keyword: 5,
+    type: 6,
   },
   select: {
     column: 0,
@@ -257,20 +259,30 @@ export function completionsForContext(
       kind: "keyword" as const,
     }));
   } else if (ctx.clause === "from") {
-    // Table-valued functions (read_csv(...), range(...), …) are legal FROM
-    // targets alongside schemas/tables — but a DuckDB instance can report
-    // 100+ of them, so (mirroring the same call below for SELECT-position
-    // functions/keywords) they're only added once a prefix narrows the list,
-    // instead of dumping the full set into every bare `FROM `.
-    raw =
-      ctx.wordPrefix.length > 0
+    // The regex-based clause detector has no notion of "the FROM target is
+    // now complete" — it just sees "from" as the last clause keyword until an
+    // actual WHERE/GROUP BY/… is fully typed. So once at least one table has
+    // already been parsed out of this FROM (the common case: the user is now
+    // past it, starting the next word) also offer clause keywords, not just
+    // more tables — otherwise typing "w" toward WHERE suggests nothing.
+    //
+    // Table-valued functions (read_csv(...), range(...), …) are also legal
+    // FROM targets — but a DuckDB instance can report 100+ of them, so
+    // (mirroring the same call below for SELECT-position functions/keywords)
+    // both of these are only added once a prefix narrows the list, instead of
+    // dumping the full set into every bare `FROM `.
+    const showExtras = ctx.wordPrefix.length > 0 && ctx.fromTables.length > 0;
+    raw = [
+      ...tableSuggestions(catalog),
+      ...(showExtras
         ? [
-            ...tableSuggestions(catalog),
             ...functionSuggestions(metadata, (t) =>
               TABLE_VALUED_FUNCTION_TYPES.has(t),
             ),
+            ...keywordSuggestions(metadata),
           ]
-        : tableSuggestions(catalog);
+        : []),
+    ];
   } else if (ctx.clause === "type") {
     raw = typeSuggestions(metadata);
   } else {

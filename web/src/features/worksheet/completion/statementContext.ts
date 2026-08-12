@@ -131,7 +131,10 @@ export function getCursorContext(text: string, offset: number): CursorContext {
   const { word, start } = wordBefore(masked, pos);
   const wordPrefix = word;
   const qualifier = parseQualifier(masked, start);
-  const fromTables = referencedTables(statement);
+  // `referencedTables` masks its input itself (so it stays correct when
+  // called directly on raw text elsewhere) — masking is idempotent, so
+  // passing the already-masked text here just skips redoing that pass.
+  const fromTables = referencedTables(masked);
 
   // Statement start: nothing meaningful typed yet.
   if (before.replace(/[\w$.]+$/, "").trim() === "" && qualifier.length === 0) {

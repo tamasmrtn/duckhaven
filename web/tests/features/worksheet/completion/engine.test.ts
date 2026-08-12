@@ -82,15 +82,25 @@ describe("getCompletions", () => {
     );
   });
 
-  it("suggests table-valued functions alongside schemas/tables after FROM", () => {
+  it("withholds functions from a bare FROM with no prefix typed", () => {
+    // A DuckDB instance can report 100+ table-valued functions — dumping the
+    // full set into every bare `FROM ` (mirroring the same judgment call
+    // already made for SELECT-position functions/keywords below) would bury
+    // the schemas/tables list a user almost always wants first.
     const out = complete("SELECT * FROM |");
+    expect(out.some((s) => s.kind === "function")).toBe(false);
+  });
+
+  it("suggests table-valued functions after FROM once a prefix is typed", () => {
+    const out = complete("SELECT * FROM re|");
     const fns = out.filter((s) => s.kind === "function").map((s) => s.label);
-    expect(fns).toEqual(["read_csv", "histogram"]);
+    expect(fns).toEqual(["read_csv"]);
   });
 
   it("excludes non-table-valued functions (aggregates) from FROM", () => {
-    const out = complete("SELECT * FROM |");
+    const out = complete("SELECT * FROM h|");
     expect(out.some((s) => s.label === "sum")).toBe(false);
+    expect(out.some((s) => s.label === "histogram")).toBe(true);
   });
 
   it("suggests tables in a schema after `schema.`", () => {

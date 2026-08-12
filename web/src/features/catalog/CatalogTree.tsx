@@ -28,6 +28,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card";
 import { useSchemas, useTable, useTables } from "@/queries/schemas";
 import { useRefreshCatalogStats } from "@/queries/schemas.mutations";
 import {
@@ -48,8 +53,88 @@ import {
 } from "@/features/catalog/CatalogInfoDialog";
 import { StorageIcon } from "@/components/app/StorageIcon";
 import type { BackendKind } from "@/types/storage-backend";
-import { cn, formatRowCount } from "@/utils";
+import { cn, formatBytes, formatRowCount } from "@/utils";
 import type { Catalog, CatalogTable } from "@/types/catalog";
+
+// A table's row count, preferring the exact (explicitly refreshed) count and
+// falling back to the free snapshot-summary estimate, with a "~" marking the
+// less-precise value so the hover card never implies false precision.
+function displayRowCount(table: CatalogTable): string | null {
+  if (table.row_count != null) return formatRowCount(table.row_count);
+  if (table.row_count_estimate != null) {
+    return `~${formatRowCount(table.row_count_estimate)}`;
+  }
+  return null;
+}
+
+interface TableHoverCardProps {
+  catalog: string;
+  schemaName: string;
+  table: CatalogTable;
+  detail: CatalogTable | undefined;
+  isLoading: boolean;
+}
+
+function TableHoverCard({
+  catalog,
+  schemaName,
+  table,
+  detail,
+  isLoading,
+}: TableHoverCardProps) {
+  // Sourced from `detail` only (not the row's own list-level `row_count`,
+  // even though it's often already known) so every stat in the card arrives
+  // together once the detail fetch resolves, instead of "Rows" alone
+  // flashing in ahead of the loading skeleton for the rest.
+  const rows = detail ? displayRowCount(detail) : null;
+  return (
+    <HoverCardContent side="right" align="start" className="w-64 text-xs">
+      <div className="space-y-2">
+        <div>
+          <p className="truncate font-mono text-sm font-medium text-text-primary">
+            {table.name}
+          </p>
+          <p className="truncate text-2xs text-text-tertiary">
+            {catalog}.{schemaName}
+          </p>
+        </div>
+        {isLoading ? (
+          <div className="space-y-1.5">
+            <Skeleton className="h-3 w-full animate-shimmer rounded" />
+            <Skeleton className="h-3 w-2/3 animate-shimmer rounded" />
+          </div>
+        ) : (
+          <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-text-secondary">
+            <dt className="text-text-tertiary">Rows</dt>
+            <dd className="truncate text-right font-mono font-tabular">
+              {rows ?? "—"}
+            </dd>
+            <dt className="text-text-tertiary">Size</dt>
+            <dd className="truncate text-right font-mono font-tabular">
+              {detail?.size_bytes != null
+                ? formatBytes(detail.size_bytes)
+                : "—"}
+            </dd>
+            <dt className="text-text-tertiary">Columns</dt>
+            <dd className="truncate text-right font-mono font-tabular">
+              {detail?.columns.length ?? "—"}
+            </dd>
+            <dt className="text-text-tertiary">Format</dt>
+            <dd className="truncate text-right">{detail?.format ?? "—"}</dd>
+            <dt className="text-text-tertiary">Owner</dt>
+            <dd className="truncate text-right">{detail?.owner ?? "—"}</dd>
+            <dt className="text-text-tertiary">Last write</dt>
+            <dd className="truncate text-right">
+              {detail?.last_write_at
+                ? new Date(detail.last_write_at).toLocaleString()
+                : "—"}
+            </dd>
+          </dl>
+        )}
+      </div>
+    </HoverCardContent>
+  );
+}
 
 interface TableNodeProps {
   ws: string;
@@ -67,52 +152,74 @@ function TableNode({
   onTableClick,
 }: TableNodeProps) {
   const [open, setOpen] = useState(false);
+  const [hovered, setHovered] = useState(false);
   // Columns aren't in the table-list payload (Polaris lists identifiers only),
-  // so fetch the table detail lazily on expand — sharing the detail view's cache.
+  // so fetch the table detail lazily on expand — sharing the detail view's
+  // cache with the hover-preview card below (same query key), so neither
+  // triggers a duplicate fetch if the other already warmed the cache.
   const { data, isLoading } = useTable(
     ws,
     catalog,
     schemaName,
-    open ? table.name : "",
+    open || hovered ? table.name : "",
   );
   const columns = data?.columns ?? [];
 
   return (
     <div>
-      <CatalogNodeMenu
-        ws={ws}
-        catalog={catalog}
-        node={{ kind: "table", schema: schemaName, table: table.name }}
-      >
-        <div className="flex w-full items-center rounded text-text-secondary hover:bg-accent hover:text-text-primary">
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            className="shrink-0 rounded p-1 text-text-tertiary hover:text-text-primary focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
-            aria-expanded={open}
-            aria-label={open ? "Hide columns" : "Show columns"}
+      <HoverCard openDelay={400}>
+        <CatalogNodeMenu
+          ws={ws}
+          catalog={catalog}
+          node={{ kind: "table", schema: schemaName, table: table.name }}
+        >
+          {/* HoverCardTrigger's `asChild` must land directly on the real DOM
+              node (CatalogNodeMenu doesn't forward extra props anywhere) —
+              nested inside CatalogNodeMenu's own `asChild` ContextMenuTrigger,
+              which clones this already-composed element in turn. */}
+          <HoverCardTrigger
+            asChild
+            onMouseEnter={() => setHovered(true)}
+            onMouseLeave={() => setHovered(false)}
           >
-            {open ? (
-              <ChevronDown className="size-3" />
-            ) : (
-              <ChevronRight className="size-3" />
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => onTableClick(catalog, schemaName, table.name)}
-            className="flex min-w-0 flex-1 items-center gap-1.5 rounded py-1 pr-1.5 text-sm focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
-          >
-            <Table2 className="size-3.5 shrink-0 text-text-tertiary" />
-            <span className="truncate">{table.name}</span>
-            {table.row_count != null && (
-              <span className="ml-auto font-mono text-2xs text-text-tertiary font-tabular">
-                {formatRowCount(table.row_count)}
-              </span>
-            )}
-          </button>
-        </div>
-      </CatalogNodeMenu>
+            <div className="flex w-full items-center rounded text-text-secondary hover:bg-accent hover:text-text-primary">
+              <button
+                type="button"
+                onClick={() => setOpen((v) => !v)}
+                className="shrink-0 rounded p-1 text-text-tertiary hover:text-text-primary focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+                aria-expanded={open}
+                aria-label={open ? "Hide columns" : "Show columns"}
+              >
+                {open ? (
+                  <ChevronDown className="size-3" />
+                ) : (
+                  <ChevronRight className="size-3" />
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => onTableClick(catalog, schemaName, table.name)}
+                className="flex min-w-0 flex-1 items-center gap-1.5 rounded py-1 pr-1.5 text-sm focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+              >
+                <Table2 className="size-3.5 shrink-0 text-text-tertiary" />
+                <span className="truncate">{table.name}</span>
+                {table.row_count != null && (
+                  <span className="ml-auto font-mono text-2xs text-text-tertiary font-tabular">
+                    {formatRowCount(table.row_count)}
+                  </span>
+                )}
+              </button>
+            </div>
+          </HoverCardTrigger>
+        </CatalogNodeMenu>
+        <TableHoverCard
+          catalog={catalog}
+          schemaName={schemaName}
+          table={table}
+          detail={data}
+          isLoading={isLoading}
+        />
+      </HoverCard>
 
       {open && (
         <div className="ml-4 border-l border-[var(--border-subtle)] pl-2">

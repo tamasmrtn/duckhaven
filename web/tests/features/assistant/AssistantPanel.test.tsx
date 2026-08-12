@@ -525,7 +525,7 @@ describe("AssistantPanel", () => {
     );
   });
 
-  it("labels a multi-hunk proposal's controls as accept/reject all", async () => {
+  it("accepts a proposal spanning multiple changed blocks as a single unit", async () => {
     const user = userEvent.setup();
     renderWithProviders({ initialRoute: ROUTE });
     await openPanel(user);
@@ -534,17 +534,13 @@ describe("AssistantPanel", () => {
     await user.type(screen.getByLabelText("Message"), "multi-hunk edit please");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
+    // Multiple changed blocks still resolve through the same single
+    // Accept/Reject bar — there's no per-hunk control.
     expect(
       await screen.findByText(/Assistant proposed changes/),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Accept all" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Reject all" }),
-    ).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Accept all" }));
+    const accept = screen.getByRole("button", { name: /Accept/ });
+    await user.click(accept);
     await waitFor(() =>
       expect(
         screen.queryByText(/Assistant proposed changes/),

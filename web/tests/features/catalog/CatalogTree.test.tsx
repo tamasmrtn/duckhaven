@@ -229,6 +229,46 @@ describe('CatalogTree', () => {
     ).toBeInTheDocument()
   })
 
+  it('shows a hover-preview card with table stats', async () => {
+    renderTree(() => {})
+    const eventsName = await screen.findByRole('button', { name: /events/i })
+    const row = eventsName.closest('div') as HTMLElement
+
+    await userEvent.hover(row)
+
+    // "Marton" (owner) only ever appears inside the hover card — the
+    // collapsed row itself already shows a "42.1M" row-count badge, so that
+    // text alone can't distinguish "the card loaded" from "the row rendered".
+    expect(
+      await screen.findByText('Marton', undefined, { timeout: 2000 }),
+    ).toBeInTheDocument()
+    expect(screen.getByText('312.0 MB')).toBeInTheDocument()
+    expect(screen.getByText('acme_analytics.raw')).toBeInTheDocument()
+  })
+
+  it('shares the table-detail fetch between expand and hover (no duplicate request)', async () => {
+    let requests = 0
+    const onStart = ({ request }: { request: Request }) => {
+      if (/\/tables\/events(\?|$)/.test(request.url)) requests++
+    }
+    server.events.on('request:start', onStart)
+    try {
+      renderTree(() => {})
+
+      const eventsName = await screen.findByRole('button', { name: /events/i })
+      const row = eventsName.closest('div') as HTMLElement
+      fireEvent.click(within(row).getByRole('button', { name: /show columns/i }))
+      await screen.findByText('event_id')
+      expect(requests).toBe(1)
+
+      await userEvent.hover(row)
+      await screen.findByText('Marton', undefined, { timeout: 2000 })
+      expect(requests).toBe(1)
+    } finally {
+      server.events.removeListener('request:start', onStart)
+    }
+  })
+
   it('probes row-count stats via the refresh endpoint on refresh', async () => {
     let probed = false
     server.use(

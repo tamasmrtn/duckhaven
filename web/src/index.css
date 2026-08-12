@@ -111,34 +111,6 @@
   text-decoration: line-through;
   white-space: pre;
 }
-.dh-diff-actions {
-  align-items: center;
-  background: var(--bg-surface);
-  border-bottom: 1px solid var(--border-subtle);
-  display: flex;
-  gap: 6px;
-  height: 20px;
-  padding: 0 4px;
-}
-.dh-diff-actions button {
-  border-radius: 4px;
-  cursor: pointer;
-  font-family: inherit;
-  font-size: 11px;
-  font-weight: 500;
-  padding: 1px 8px;
-}
-.dh-diff-accept {
-  background: color-mix(in oklab, var(--status-success) 20%, transparent);
-  border: 1px solid color-mix(in oklab, var(--status-success) 40%, transparent);
-  color: var(--status-success);
-}
-.dh-diff-reject {
-  background: transparent;
-  border: 1px solid var(--border-subtle);
-  color: var(--text-secondary);
-}
-
 /* Keep the assistant thread within its fixed-width panel. Radix ScrollArea wraps
    its content in a `display: table` box that shrink-wraps to the widest child
    (e.g. a wide result table or code block), overflowing the panel and getting

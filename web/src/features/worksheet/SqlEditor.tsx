@@ -5,14 +5,10 @@ import { activeStatement } from "./statements";
 import { computeHunks } from "./diffHunks";
 import { registerSqlProviders, setActiveEditor } from "./completion/provider";
 
-export interface DiffHunkHandlers {
-  onAcceptHunk: (id: string) => void;
-  onRejectHunk: (id: string) => void;
-}
-
 // Above this many hunks, skip per-hunk view zones (still show the added-line
-// decorations) and rely on the proposal bar's whole-file Accept/Reject —
-// a very large AI rewrite shouldn't render dozens of view zones at once.
+// decorations) — a very large AI rewrite shouldn't render dozens of view
+// zones at once. Accept/reject only ever applies to the whole proposal (see
+// WorksheetPage's proposal bar) — there's no per-hunk control anymore.
 const MAX_INLINE_DIFF_HUNKS = 8;
 
 export interface SqlEditorHandle {
@@ -25,14 +21,9 @@ export interface SqlEditorHandle {
   getSelectionRange: () => { text: string; start: number; end: number } | null;
   // Render an inline diff between an AI proposal's old and new SQL: added
   // lines are decorated in place (the document already holds the new text),
-  // removed lines are shown as ghost text in a ~view zone above them, and
-  // each hunk gets its own Accept/Reject controls calling back into
-  // `handlers`. Replaces any diff already showing.
-  showDiff: (
-    oldSql: string,
-    newSql: string,
-    handlers: DiffHunkHandlers,
-  ) => void;
+  // removed lines are shown as ghost text in a view zone above them.
+  // Replaces any diff already showing.
+  showDiff: (oldSql: string, newSql: string) => void;
   // Clear any inline diff rendering.
   clearDiff: () => void;
 }
@@ -184,11 +175,7 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
         });
         return { text, start, end };
       },
-      showDiff: (
-        oldSql: string,
-        newSql: string,
-        handlers: DiffHunkHandlers,
-      ) => {
+      showDiff: (oldSql: string, newSql: string) => {
         const editor = editorRef.current;
         const monaco = monacoRef.current;
         if (!editor || !monaco) return;
@@ -212,35 +199,18 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
         );
 
         // A very large AI rewrite could otherwise produce dozens of view
-        // zones at once — cap per-hunk controls and fall back to the whole-
-        // proposal Accept/Reject bar beyond that. The green/red decorations
-        // above still show what changed either way.
-        const hunksForZones = hunks.slice(0, MAX_INLINE_DIFF_HUNKS);
+        // zones at once — cap the removed-line ghost text and rely on the
+        // proposal bar's whole-file Accept/Reject beyond that. The green
+        // added-line decorations above still show what changed either way.
+        const hunksForZones = hunks
+          .filter((h) => h.removedLines.length > 0)
+          .slice(0, MAX_INLINE_DIFF_HUNKS);
 
         editor.changeViewZones((accessor) => {
           const zoneIds: string[] = [];
           for (const hunk of hunksForZones) {
             const domNode = document.createElement("div");
             domNode.className = "dh-diff-zone";
-
-            const actions = document.createElement("div");
-            actions.className = "dh-diff-actions";
-            const accept = document.createElement("button");
-            accept.type = "button";
-            accept.className = "dh-diff-accept";
-            accept.textContent = "Accept";
-            accept.addEventListener("click", () =>
-              handlers.onAcceptHunk(hunk.id),
-            );
-            const reject = document.createElement("button");
-            reject.type = "button";
-            reject.className = "dh-diff-reject";
-            reject.textContent = "Reject";
-            reject.addEventListener("click", () =>
-              handlers.onRejectHunk(hunk.id),
-            );
-            actions.append(accept, reject);
-            domNode.append(actions);
             for (const line of hunk.removedLines) {
               domNode.append(buildRemovedLineRow(line));
             }
@@ -248,7 +218,7 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
             zoneIds.push(
               accessor.addZone({
                 afterLineNumber: hunk.addStartLine - 1,
-                heightInLines: hunk.removedLines.length + 1,
+                heightInLines: hunk.removedLines.length,
                 domNode,
               }),
             );

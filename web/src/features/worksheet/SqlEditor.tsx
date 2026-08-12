@@ -2,7 +2,18 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { Editor, type OnMount, type BeforeMount } from "@monaco-editor/react";
 import { useIsDark } from "@/hooks/useIsDark";
 import { activeStatement } from "./statements";
+import { computeHunks } from "./diffHunks";
 import { registerSqlProviders, setActiveEditor } from "./completion/provider";
+
+export interface DiffHunkHandlers {
+  onAcceptHunk: (id: string) => void;
+  onRejectHunk: (id: string) => void;
+}
+
+// Above this many hunks, skip per-hunk view zones (still show the added-line
+// decorations) and rely on the proposal bar's whole-file Accept/Reject —
+// a very large AI rewrite shouldn't render dozens of view zones at once.
+const MAX_INLINE_DIFF_HUNKS = 8;
 
 export interface SqlEditorHandle {
   // The SQL to run for the current cursor/selection: the selected text if any,
@@ -12,23 +23,18 @@ export interface SqlEditorHandle {
   // document, or null if nothing is selected. Used to scope an AI-proposed edit
   // to just the selected fragment instead of the whole worksheet.
   getSelectionRange: () => { text: string; start: number; end: number } | null;
-  // Highlight the lines that differ between the previous and proposed SQL, so an
-  // AI-proposed edit is visually distinct from the user's own code.
-  highlightDiff: (oldSql: string, newSql: string) => void;
-  // Clear any AI-diff highlighting.
-  clearHighlight: () => void;
-}
-
-// Naive line-level diff: the 1-based line numbers in `newSql` that differ from
-// `oldSql` at the same position (or are new). Enough to visually flag changes.
-function changedLineNumbers(oldSql: string, newSql: string): number[] {
-  const oldLines = oldSql.split("\n");
-  const newLines = newSql.split("\n");
-  const changed: number[] = [];
-  for (let i = 0; i < newLines.length; i++) {
-    if (oldLines[i] !== newLines[i]) changed.push(i + 1);
-  }
-  return changed;
+  // Render an inline diff between an AI proposal's old and new SQL: added
+  // lines are decorated in place (the document already holds the new text),
+  // removed lines are shown as ghost text in a ~view zone above them, and
+  // each hunk gets its own Accept/Reject controls calling back into
+  // `handlers`. Replaces any diff already showing.
+  showDiff: (
+    oldSql: string,
+    newSql: string,
+    handlers: DiffHunkHandlers,
+  ) => void;
+  // Clear any inline diff rendering.
+  clearDiff: () => void;
 }
 
 interface SqlEditorProps {
@@ -104,6 +110,7 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
     const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
     const monacoRef = useRef<Parameters<OnMount>[1] | null>(null);
     const decorationsRef = useRef<string[]>([]);
+    const zoneIdsRef = useRef<string[]>([]);
     const isDark = useIsDark();
 
     // Monaco command callbacks are captured once at mount, so route onRun/onSave
@@ -133,6 +140,31 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
       return activeStatement(model.getValue(), offset);
     };
 
+    // Removes every decoration/view-zone the inline diff added, leaving the
+    // document itself untouched (it already holds whichever text is live).
+    const clearDiffZones = () => {
+      const editor = editorRef.current;
+      if (!editor) return;
+      decorationsRef.current = editor.deltaDecorations(
+        decorationsRef.current,
+        [],
+      );
+      if (zoneIdsRef.current.length > 0) {
+        editor.changeViewZones((accessor) => {
+          for (const id of zoneIdsRef.current) accessor.removeZone(id);
+        });
+        zoneIdsRef.current = [];
+      }
+    };
+
+    // One removed-line ghost row inside a hunk's view zone.
+    const buildRemovedLineRow = (line: string): HTMLDivElement => {
+      const row = document.createElement("div");
+      row.className = "dh-diff-removed-line";
+      row.textContent = line.length > 0 ? line : " "; // keep empty lines visible
+      return row;
+    };
+
     useImperativeHandle(ref, () => ({
       getRunPayload: computeRunPayload,
       getSelectionRange: () => {
@@ -152,32 +184,79 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
         });
         return { text, start, end };
       },
-      highlightDiff: (oldSql: string, newSql: string) => {
+      showDiff: (
+        oldSql: string,
+        newSql: string,
+        handlers: DiffHunkHandlers,
+      ) => {
         const editor = editorRef.current;
         const monaco = monacoRef.current;
         if (!editor || !monaco) return;
-        const decos = changedLineNumbers(oldSql, newSql).map((ln) => ({
-          range: new monaco.Range(ln, 1, ln, 1),
-          options: {
-            isWholeLine: true,
-            className: "dh-ai-diff-line",
-            linesDecorationsClassName: "dh-ai-diff-gutter",
-          },
-        }));
+        clearDiffZones();
+
+        const hunks = computeHunks(oldSql, newSql);
+
+        const decos = hunks
+          .filter((h) => h.addStartLine <= h.addEndLine)
+          .map((h) => ({
+            range: new monaco.Range(h.addStartLine, 1, h.addEndLine, 1),
+            options: {
+              isWholeLine: true,
+              className: "dh-diff-add-line",
+              linesDecorationsClassName: "dh-diff-add-gutter",
+            },
+          }));
         decorationsRef.current = editor.deltaDecorations(
           decorationsRef.current,
           decos,
         );
+
+        // A very large AI rewrite could otherwise produce dozens of view
+        // zones at once — cap per-hunk controls and fall back to the whole-
+        // proposal Accept/Reject bar beyond that. The green/red decorations
+        // above still show what changed either way.
+        const hunksForZones = hunks.slice(0, MAX_INLINE_DIFF_HUNKS);
+
+        editor.changeViewZones((accessor) => {
+          const zoneIds: string[] = [];
+          for (const hunk of hunksForZones) {
+            const domNode = document.createElement("div");
+            domNode.className = "dh-diff-zone";
+
+            const actions = document.createElement("div");
+            actions.className = "dh-diff-actions";
+            const accept = document.createElement("button");
+            accept.type = "button";
+            accept.className = "dh-diff-accept";
+            accept.textContent = "Accept";
+            accept.addEventListener("click", () =>
+              handlers.onAcceptHunk(hunk.id),
+            );
+            const reject = document.createElement("button");
+            reject.type = "button";
+            reject.className = "dh-diff-reject";
+            reject.textContent = "Reject";
+            reject.addEventListener("click", () =>
+              handlers.onRejectHunk(hunk.id),
+            );
+            actions.append(accept, reject);
+            domNode.append(actions);
+            for (const line of hunk.removedLines) {
+              domNode.append(buildRemovedLineRow(line));
+            }
+
+            zoneIds.push(
+              accessor.addZone({
+                afterLineNumber: hunk.addStartLine - 1,
+                heightInLines: hunk.removedLines.length + 1,
+                domNode,
+              }),
+            );
+          }
+          zoneIdsRef.current = zoneIds;
+        });
       },
-      clearHighlight: () => {
-        const editor = editorRef.current;
-        if (editor) {
-          decorationsRef.current = editor.deltaDecorations(
-            decorationsRef.current,
-            [],
-          );
-        }
-      },
+      clearDiff: clearDiffZones,
     }));
 
     const handleBeforeMount: BeforeMount = (monaco) => {

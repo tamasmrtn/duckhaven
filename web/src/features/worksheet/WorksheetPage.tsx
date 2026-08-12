@@ -56,6 +56,7 @@ import { takePendingQuery } from "@/features/catalog/worksheetSql";
 import { ProfilePanel } from "@/features/worksheet/profile/ProfilePanel";
 import { SqlEditor, type SqlEditorHandle } from "./SqlEditor";
 import { applyScopedEdit } from "./scopedEdit";
+import { computeHunks, applyHunkResolutions, type DiffHunk } from "./diffHunks";
 import { useSqlCompletion } from "./completion/useSqlCompletion";
 import { splitStatements } from "./statements";
 import { isDdl } from "./ddl";
@@ -299,6 +300,7 @@ export function WorksheetPage() {
     newSql: string;
     explanation: string;
     note?: string;
+    hunks: DiffHunk[];
   } | null>(null);
   const currentSqlRef = useRef("");
   const resolvedCatalogRef = useRef<string | undefined>(undefined);
@@ -369,6 +371,7 @@ export function WorksheetPage() {
       newSql: applied.sql,
       explanation,
       note: applied.note,
+      hunks: computeHunks(oldSql, applied.sql),
     });
     setTabs((prev) =>
       prev.map((t) =>
@@ -397,15 +400,22 @@ export function WorksheetPage() {
     };
   }, [assistantEditorRef, proposeEditRef, currentSqlRef]);
 
-  // Highlight the proposed lines once the editor reflects the new SQL.
+  // Render the inline diff once the editor reflects the new SQL.
   useEffect(() => {
     if (proposal && proposal.tabId === activeTab) {
-      editorRef.current?.highlightDiff(proposal.oldSql, proposal.newSql);
+      editorRef.current?.showDiff(proposal.oldSql, proposal.newSql, {
+        onAcceptHunk: acceptHunk,
+        onRejectHunk: rejectHunk,
+      });
     }
+    // acceptHunk/rejectHunk are re-created each render (they close over
+    // `proposal`) but are stable in behavior; keying off proposal/activeTab
+    // alone avoids re-rendering the diff on every unrelated render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [proposal, activeTab]);
 
   function acceptProposal() {
-    editorRef.current?.clearHighlight();
+    editorRef.current?.clearDiff();
     setProposal(null);
   }
 
@@ -416,8 +426,41 @@ export function WorksheetPage() {
         prev.map((t) => (t.id === tabId ? { ...t, sql: oldSql } : t)),
       );
     }
-    editorRef.current?.clearHighlight();
+    editorRef.current?.clearDiff();
     setProposal(null);
+  }
+
+  // Resolve one hunk of a multi-hunk proposal. Accepting is a no-op on the
+  // document (its text is already live); rejecting splices that hunk's old
+  // text back in via `applyHunkResolutions`. Once every hunk is resolved the
+  // proposal closes the same way a whole-file Accept/Reject would.
+  function resolveHunk(id: string, status: "accepted" | "rejected") {
+    setProposal((prev) => {
+      if (!prev) return prev;
+      const hunks = prev.hunks.map((h) => (h.id === id ? { ...h, status } : h));
+      const allResolved = hunks.every((h) => h.status !== "pending");
+
+      if (status === "rejected") {
+        const sql = applyHunkResolutions(prev.oldSql, prev.newSql, hunks);
+        setTabs((ts) =>
+          ts.map((t) => (t.id === prev.tabId ? { ...t, sql, dirty: true } : t)),
+        );
+      }
+
+      if (allResolved) {
+        editorRef.current?.clearDiff();
+        return null;
+      }
+      return { ...prev, hunks };
+    });
+  }
+
+  function acceptHunk(id: string) {
+    resolveHunk(id, "accepted");
+  }
+
+  function rejectHunk(id: string) {
+    resolveHunk(id, "rejected");
   }
 
   function addTab() {
@@ -879,7 +922,7 @@ export function WorksheetPage() {
                   onClick={rejectProposal}
                 >
                   <X className="size-3.5" />
-                  Reject
+                  {proposal.hunks.length > 1 ? "Reject all" : "Reject"}
                 </Button>
                 <Button
                   size="sm"
@@ -887,7 +930,7 @@ export function WorksheetPage() {
                   onClick={acceptProposal}
                 >
                   <Check className="size-3.5" />
-                  Accept
+                  {proposal.hunks.length > 1 ? "Accept all" : "Accept"}
                 </Button>
               </div>
             </div>

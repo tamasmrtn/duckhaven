@@ -524,4 +524,31 @@ describe("AssistantPanel", () => {
       ).not.toBeInTheDocument(),
     );
   });
+
+  it("labels a multi-hunk proposal's controls as accept/reject all", async () => {
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    await user.type(screen.getByLabelText("Message"), "multi-hunk edit please");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(
+      await screen.findByText(/Assistant proposed changes/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Accept all" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Reject all" }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Accept all" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/Assistant proposed changes/),
+      ).not.toBeInTheDocument(),
+    );
+  });
 });

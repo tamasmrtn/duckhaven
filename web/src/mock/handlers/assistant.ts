@@ -154,6 +154,39 @@ export const assistantHandlers = [
         ]);
       }
 
+      // Simulate proposing an edit with two separate, non-adjacent changed
+      // lines — exercises the multi-hunk review flow.
+      if (/\bmulti-hunk\b/i.test(prompt)) {
+        const proposed = [
+          "SELECT",
+          "  date_trunc('day', event_time) d,",
+          "  count(*) n",
+          "FROM raw.events",
+          "WHERE event_time >= '2026-06-01'",
+          "GROUP BY 1",
+          "ORDER BY 1 DESC;",
+        ].join("\n");
+        conv.transcript.push({
+          role: "assistant",
+          text: "I updated two parts of your query.",
+          sql: proposed,
+        });
+        return sse([
+          {
+            type: "propose_edit",
+            sql: proposed,
+            explanation: "widen the date filter and sort newest first",
+            scoped: Boolean(selection_sql),
+          },
+          { type: "token", text: "I updated two parts of your query." },
+          {
+            type: "done",
+            message_id: nextId("msg"),
+            usage: { input: 8, output: 6 },
+          },
+        ]);
+      }
+
       // Simulate proposing an editor edit.
       if (/\b(write|edit|filter|add|column|query)\b/i.test(prompt)) {
         const proposed = "SELECT * FROM events LIMIT 10";

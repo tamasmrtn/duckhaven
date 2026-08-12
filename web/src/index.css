@@ -85,17 +85,58 @@
   }
 }
 
-/* AI-proposed edits: lines changed by the assistant are tinted with the brand
-   accent and marked in the gutter, so it's clear what is AI-generated vs. the
-   user's own SQL. Applied to Monaco decoration elements (outside the React tree),
-   so these are plain global rules. */
-.dh-ai-diff-line {
-  background: color-mix(in oklab, var(--brand-yellow) 16%, transparent);
+/* AI-proposed edits: an inline diff over the proposed change, so it's clear
+   what is AI-generated vs. the user's own SQL. Applied to Monaco decoration/
+   view-zone elements (outside the React tree), so these are plain global
+   rules rather than component-scoped classes. */
+.dh-diff-add-line {
+  background: color-mix(in oklab, var(--status-success) 16%, transparent);
 }
-.dh-ai-diff-gutter {
-  background: var(--brand-yellow);
+.dh-diff-add-gutter {
+  background: var(--status-success);
   width: 3px !important;
   margin-left: 2px;
+}
+.dh-diff-zone {
+  background: var(--bg-canvas);
+  overflow: hidden;
+}
+.dh-diff-removed-line {
+  background: color-mix(in oklab, var(--status-failed) 12%, transparent);
+  color: var(--text-tertiary);
+  font-family: "JetBrains Mono", Menlo, monospace;
+  font-size: 13px;
+  line-height: 20px;
+  padding-left: 4px;
+  text-decoration: line-through;
+  white-space: pre;
+}
+.dh-diff-actions {
+  align-items: center;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  gap: 6px;
+  height: 20px;
+  padding: 0 4px;
+}
+.dh-diff-actions button {
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 8px;
+}
+.dh-diff-accept {
+  background: color-mix(in oklab, var(--status-success) 20%, transparent);
+  border: 1px solid color-mix(in oklab, var(--status-success) 40%, transparent);
+  color: var(--status-success);
+}
+.dh-diff-reject {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
 }
 
 /* Keep the assistant thread within its fixed-width panel. Radix ScrollArea wraps

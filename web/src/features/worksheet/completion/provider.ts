@@ -1,9 +1,8 @@
 import type { Monaco } from "@monaco-editor/react";
 import type { languages, editor, Position, IRange } from "monaco-editor";
 import { formatRowCount } from "@/utils";
-import { activeStatement } from "../statements";
-import { getCompletions, pendingColumns } from "./engine";
-import { getCursorContext, referencedTables } from "./statementContext";
+import { completionsForContext, pendingColumnsForContext } from "./engine";
+import { getCursorContext } from "./statementContext";
 import type { CatalogSnapshot, SuggestionKind } from "./types";
 import type { SqlMetadata } from "@/types/sqlMetadata";
 
@@ -172,15 +171,19 @@ export function registerSqlProviders(monaco: Monaco): void {
       const text = model.getValue();
       const offset = model.getOffsetAt(position);
 
+      // Computed once per completion request and reused below (lazy-loading,
+      // suggestions, the incomplete flag) — cursor-context parsing masks and
+      // regex-scans the active statement, not cheap enough to redo several
+      // times per keystroke.
+      const ctx = getCursorContext(text, offset);
+
       // Lazily pull columns for tables referenced in this statement.
-      const stmt = activeStatement(text, offset);
-      context.ensureColumns(referencedTables(stmt));
+      context.ensureColumns(ctx.fromTables);
 
       // Lazily pull a non-active catalog's schema/table/column data once its
       // name appears as the first segment of a dotted qualifier, one level
       // at a time as the qualifier gets longer.
-      const qualifier = getCursorContext(text, offset).qualifier;
-      const [qHead, ...qRest] = qualifier;
+      const [qHead, ...qRest] = ctx.qualifier;
       if (qHead && context.snapshot.catalogs.includes(qHead)) {
         if (qRest.length === 0) {
           context.ensureCrossCatalogSchemas(qHead);
@@ -200,12 +203,11 @@ export function registerSqlProviders(monaco: Monaco): void {
         endColumn: word.endColumn,
       };
 
-      const suggestions = getCompletions({
-        text,
-        offset,
-        catalog: context.snapshot,
-        metadata: context.metadata,
-      }).map((s) => {
+      const suggestions = completionsForContext(
+        ctx,
+        context.snapshot,
+        context.metadata,
+      ).map((s) => {
         // Functions insert as a snippet with the cursor placed inside the
         // parens, ready to type an argument (and trigger signature help via
         // the `(`/`,` triggers below) instead of landing after a bare name.
@@ -235,7 +237,7 @@ export function registerSqlProviders(monaco: Monaco): void {
       // Mark the list incomplete while the columns/tables it depends on are
       // still loading, so Monaco re-queries this provider once they arrive
       // instead of caching a function-only (or empty) result.
-      const incomplete = pendingColumns(text, offset, context.snapshot);
+      const incomplete = pendingColumnsForContext(ctx, context.snapshot);
       return { suggestions, incomplete };
     },
     // Fires only for the item currently highlighted in an open suggest

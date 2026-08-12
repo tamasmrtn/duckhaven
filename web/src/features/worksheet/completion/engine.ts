@@ -3,6 +3,7 @@ import { FALLBACK_KEYWORDS, STATEMENT_START_KEYWORDS } from "./keywords";
 import type {
   CatalogSnapshot,
   CompletionInput,
+  CursorContext,
   Suggestion,
   SuggestionKind,
   TableRef,
@@ -226,8 +227,22 @@ function rankAndFilter(
 
 export function getCompletions(input: CompletionInput): Suggestion[] {
   const { text, offset, catalog, metadata } = input;
-  const ctx = getCursorContext(text, offset);
+  return completionsForContext(
+    getCursorContext(text, offset),
+    catalog,
+    metadata,
+  );
+}
 
+// Same as `getCompletions`, but takes an already-computed cursor context.
+// `provider.ts` computes the context once per completion request (it also
+// needs it for cross-catalog lazy-loading) and reuses it here and in
+// `pendingColumnsForContext`, instead of each recomputing it independently.
+export function completionsForContext(
+  ctx: CursorContext,
+  catalog: CatalogSnapshot,
+  metadata: SqlMetadata | null,
+): Suggestion[] {
   let raw: Suggestion[];
   if (ctx.qualifier.length > 0) {
     raw = qualifierSuggestions(
@@ -243,13 +258,19 @@ export function getCompletions(input: CompletionInput): Suggestion[] {
     }));
   } else if (ctx.clause === "from") {
     // Table-valued functions (read_csv(...), range(...), …) are legal FROM
-    // targets alongside schemas/tables.
-    raw = [
-      ...tableSuggestions(catalog),
-      ...functionSuggestions(metadata, (t) =>
-        TABLE_VALUED_FUNCTION_TYPES.has(t),
-      ),
-    ];
+    // targets alongside schemas/tables — but a DuckDB instance can report
+    // 100+ of them, so (mirroring the same call below for SELECT-position
+    // functions/keywords) they're only added once a prefix narrows the list,
+    // instead of dumping the full set into every bare `FROM `.
+    raw =
+      ctx.wordPrefix.length > 0
+        ? [
+            ...tableSuggestions(catalog),
+            ...functionSuggestions(metadata, (t) =>
+              TABLE_VALUED_FUNCTION_TYPES.has(t),
+            ),
+          ]
+        : tableSuggestions(catalog);
   } else if (ctx.clause === "type") {
     raw = typeSuggestions(metadata);
   } else {
@@ -282,8 +303,15 @@ export function pendingColumns(
   offset: number,
   catalog: CatalogSnapshot,
 ): boolean {
-  const ctx = getCursorContext(text, offset);
+  return pendingColumnsForContext(getCursorContext(text, offset), catalog);
+}
 
+// Same as `pendingColumns`, but takes an already-computed cursor context —
+// see `completionsForContext`.
+export function pendingColumnsForContext(
+  ctx: CursorContext,
+  catalog: CatalogSnapshot,
+): boolean {
   if (ctx.qualifier.length > 0) {
     const [head, ...rest] = ctx.qualifier;
     if (catalog.catalogs.includes(head)) {

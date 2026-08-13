@@ -690,6 +690,7 @@ export function WorksheetPage() {
                   ws={ws}
                   workspaceName={workspace?.name ?? ws}
                   onTableClick={() => {}}
+                  onMetaViewClick={() => {}}
                 />
               </div>
             </div>
@@ -728,6 +729,7 @@ export function WorksheetPage() {
                       ws={ws}
                       workspaceName={workspace?.name ?? ws}
                       onTableClick={() => setCatalogOpen(false)}
+                      onMetaViewClick={() => {}}
                     />
                   </div>
                 </SheetContent>

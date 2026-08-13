@@ -417,6 +417,18 @@ describe('WorksheetPage catalog sidebar', () => {
     expect(stored[0].sql).toBe('SELECT 1 -- keep me')
     expect(stored[0].dirty).toBe(false)
   })
+
+  it('does not render information_schema view rows as disabled', async () => {
+    // Regression test: dropping onMetaViewClick entirely (rather than passing
+    // a no-op) left these rows visibly greyed out and inert.
+    renderWithProviders({ initialRoute: WS_ROUTE })
+    await screen.findByRole('button', { name: /information_schema/i })
+
+    await userEvent.click(
+      screen.getByRole('button', { name: /information_schema/i }),
+    )
+    expect(screen.getByRole('button', { name: 'tables' })).not.toBeDisabled()
+  })
 })
 
 describe('WorksheetPage responsive', () => {

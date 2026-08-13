@@ -39,8 +39,9 @@ On the worksheet, ask the assistant to write or change the SQL you're editing �
 by day", "add a WHERE clause for 2025", "fix this join". Instead of only chatting, it proposes an edit **directly in
 your editor**:
 
-- The proposed SQL replaces the editor content, with the **changed lines highlighted** so it's obvious what the
-  assistant wrote versus what was already yours.
+- The proposed SQL replaces the editor content, shown as an inline diff: added lines are highlighted in place, and any
+  line the assistant removed appears as struck-through ghost text just above where it used to be — so it's obvious
+  what changed versus what was already yours.
 - If you have text selected in the editor when you ask, the assistant proposes a replacement for just that selection
   instead of rewriting the whole worksheet — handy for a small tweak in a long query. If the worksheet changed since
   you asked, it falls back to a full replacement rather than risk applying the edit in the wrong place.

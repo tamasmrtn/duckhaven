@@ -268,6 +268,7 @@ function TableDetail({
               ) : (
                 <ResultsTable
                   columns={sampleData?.columns ?? []}
+                  columnSchema={sampleData?.column_schema}
                   rows={sampleData?.rows ?? []}
                   total={sampleData?.total ?? 0}
                   isLoading={sampleLoading}

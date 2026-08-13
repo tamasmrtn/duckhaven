@@ -64,6 +64,12 @@ describe("CatalogPage", () => {
     const user = userEvent.setup();
     renderWithProviders({ initialRoute: CATALOG_ROUTE });
 
+    // Wait for the shallower "raw" schema node before reaching for "events"
+    // (nested a level deeper, under its own table fetch) — splitting the
+    // wait keeps each findByRole's default timeout budget on just its own
+    // remaining fetch instead of the whole catalog->schema->table chain,
+    // which otherwise flakes under CI's slower/loaded runners.
+    await screen.findByRole("button", { name: /raw/i });
     const eventsRow = await screen.findByRole("button", { name: /events/i });
     fireEvent.contextMenu(eventsRow);
     await user.click(

@@ -71,9 +71,15 @@ export interface QueryRow {
   [column: string]: string | number | boolean | null;
 }
 
+export interface ColumnSchema {
+  name: string;
+  type: string;
+}
+
 export interface QueryRowsPage {
   rows: QueryRow[];
   columns: string[];
   cursor: string | null;
   total: number;
+  column_schema?: ColumnSchema[] | null;
 }

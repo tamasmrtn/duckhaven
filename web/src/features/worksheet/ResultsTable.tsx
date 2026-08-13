@@ -159,6 +159,8 @@ export function ResultsTable({
   }
 
   const isPartialSort = sorting.length > 0 && rows.length < total;
+  // Export/copy must reflect the active sort, not the pre-sort fetch order.
+  const sortedRows = table.getRowModel().rows.map((r) => r.original);
 
   return (
     <div className="flex h-full flex-col">
@@ -185,7 +187,9 @@ export function ResultsTable({
               void navigator.clipboard.writeText(
                 [
                   columns.join("\t"),
-                  ...rows.map((r) => columns.map((c) => r[c] ?? "").join("\t")),
+                  ...sortedRows.map((r) =>
+                    columns.map((c) => r[c] ?? "").join("\t"),
+                  ),
                 ].join("\n"),
               )
             }
@@ -197,7 +201,7 @@ export function ResultsTable({
             variant="ghost"
             size="sm"
             className="h-7 gap-1 text-xs"
-            onClick={() => downloadCsv(columns, rows)}
+            onClick={() => downloadCsv(columns, sortedRows)}
           >
             <Download className="size-3" />
             Download CSV

@@ -394,6 +394,31 @@ describe('WorksheetPage active query persistence', () => {
   })
 })
 
+describe('WorksheetPage catalog sidebar', () => {
+  it('does not overwrite the active tab when a catalog table is clicked', async () => {
+    // Regression test: clicking a table used to replace the whole tab with a
+    // fresh SELECT snippet, silently discarding whatever the user had typed.
+    localStorage.setItem(
+      'dh-worksheets-acme-analytics',
+      JSON.stringify([
+        { id: 'tab-1', title: 'my work', sql: 'SELECT 1 -- keep me', dirty: false },
+      ]),
+    )
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: WS_ROUTE })
+    await screen.findByText('my work')
+
+    const events = await screen.findByRole('button', { name: /events/i })
+    await user.click(events)
+
+    const stored = JSON.parse(
+      localStorage.getItem('dh-worksheets-acme-analytics') ?? '[]',
+    )
+    expect(stored[0].sql).toBe('SELECT 1 -- keep me')
+    expect(stored[0].dirty).toBe(false)
+  })
+})
+
 describe('WorksheetPage responsive', () => {
   const originalMatchMedia = window.matchMedia
   afterEach(() => {

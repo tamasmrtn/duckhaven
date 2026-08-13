@@ -177,8 +177,15 @@ export function registerSqlProviders(monaco: Monaco): void {
       // times per keystroke.
       const ctx = getCursorContext(text, offset);
 
-      // Lazily pull columns for tables referenced in this statement.
-      context.ensureColumns(ctx.fromTables);
+      // Lazily pull columns for tables referenced in this statement — a
+      // fully-qualified `catalog.schema.table` ref needs the cross-catalog
+      // fetch (it lives outside the active catalog's own column cache).
+      context.ensureColumns(ctx.fromTables.filter((r) => !r.catalog));
+      for (const ref of ctx.fromTables) {
+        if (ref.catalog && ref.schema) {
+          context.ensureCrossCatalogColumns(ref.catalog, ref.schema, ref.table);
+        }
+      }
 
       // Lazily pull a non-active catalog's schema/table/column data once its
       // name appears as the first segment of a dotted qualifier, one level

@@ -47,8 +47,11 @@ export interface Suggestion {
   source?: string;
 }
 
-// A table referenced in the current statement's FROM/JOIN clause.
+// A table referenced in the current statement's FROM/JOIN clause. `catalog`
+// is only set for a fully-qualified `catalog.schema.table` reference — it
+// implies `schema` is also set (see `referencedTables`).
 export interface TableRef {
+  catalog?: string;
   schema?: string;
   table: string;
   alias?: string;

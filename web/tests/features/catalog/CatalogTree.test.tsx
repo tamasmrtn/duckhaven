@@ -131,6 +131,24 @@ describe('CatalogTree', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('makes an information_schema view row a drag source', async () => {
+    renderTree(() => {})
+    await screen.findByRole('button', { name: /events/i })
+    await userEvent.click(
+      screen.getByRole('button', { name: /information_schema/i }),
+    )
+
+    const tables = screen.getByRole('button', { name: 'tables' })
+    expect(tables).toHaveAttribute('draggable', 'true')
+
+    const setData = vi.fn()
+    fireEvent.dragStart(tables, { dataTransfer: { setData, effectAllowed: '' } })
+    expect(setData).toHaveBeenCalledWith(
+      'text/plain',
+      'information_schema.tables',
+    )
+  })
+
   it('hides the information_schema node for a scoped catalog', async () => {
     // Under a scoped attachment the API rejects these views: DuckDB computes
     // them across every attached catalog and cannot narrow them to the

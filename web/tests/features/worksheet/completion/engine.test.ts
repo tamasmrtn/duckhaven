@@ -281,6 +281,23 @@ describe("cross-catalog completion", () => {
     const out = completeIn("SELECT * FROM analytics.|", multi);
     expect(out.map((s) => s.label)).toEqual(["sales", "orders"]);
   });
+
+  it("resolves an alias for a table referenced as catalog.schema.table", () => {
+    const out = completeIn(
+      "SELECT s.| FROM shared.public.customers s",
+      multi,
+    );
+    expect(out.map((s) => s.label)).toEqual(["customer_id", "name"]);
+    expect(out.every((s) => s.kind === "column")).toBe(true);
+  });
+
+  it("suggests columns unqualified when the FROM target is catalog.schema.table", () => {
+    const out = completeIn("SELECT | FROM shared.public.customers", multi);
+    const cols = out.filter((s) => s.kind === "column").map((s) => s.label);
+    expect(cols).toEqual(
+      expect.arrayContaining(["customer_id", "name"]),
+    );
+  });
 });
 
 describe("pendingColumns", () => {

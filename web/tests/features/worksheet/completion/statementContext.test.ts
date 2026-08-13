@@ -50,6 +50,27 @@ describe("referencedTables", () => {
       ),
     ).toEqual([{ table: "logs", alias: undefined }]);
   });
+
+  it("parses a fully-qualified catalog.schema.table reference with alias", () => {
+    expect(
+      referencedTables("SELECT c.id FROM shared.public.customers c"),
+    ).toEqual([
+      { catalog: "shared", schema: "public", table: "customers", alias: "c" },
+    ]);
+  });
+
+  it("parses a fully-qualified catalog.schema.table reference without alias", () => {
+    expect(
+      referencedTables("SELECT * FROM shared.public.customers WHERE id = 1"),
+    ).toEqual([
+      {
+        catalog: "shared",
+        schema: "public",
+        table: "customers",
+        alias: undefined,
+      },
+    ]);
+  });
 });
 
 describe("getCursorContext", () => {

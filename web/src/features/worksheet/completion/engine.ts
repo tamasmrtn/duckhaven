@@ -22,21 +22,53 @@ function tableKey(snapshot: CatalogSnapshot, ref: TableRef): string | null {
   return null;
 }
 
-function columnSuggestions(
-  snapshot: CatalogSnapshot,
-  key: string | null,
+// Whether a reference's columns have not loaded yet, whether it's in the
+// active catalog or a cross-catalog one.
+function isRefPending(snapshot: CatalogSnapshot, ref: TableRef): boolean {
+  if (ref.catalog && ref.schema) {
+    const entry = snapshot.crossCatalog[ref.catalog];
+    return !entry || !(`${ref.schema}.${ref.table}` in entry.columnsByTable);
+  }
+  const key = tableKey(snapshot, ref);
+  return !key || !(key in snapshot.columnsByTable);
+}
+
+function columnsToSuggestions(
+  columns: { name: string; type: string }[] | undefined,
+  key: string,
   // When several tables are in scope (a JOIN), show the source table in the row
   // detail so identically-named columns can be told apart at a glance.
   withSource = false,
 ): Suggestion[] {
-  if (!key) return [];
-  return (snapshot.columnsByTable[key] ?? []).map((c) => ({
+  return (columns ?? []).map((c) => ({
     label: c.name,
     kind: "column" as const,
     detail: withSource ? `${c.type} · ${key}` : c.type,
     documentation: `from ${key}`,
     source: key,
   }));
+}
+
+// Resolves a table reference to its columns, whether it's in the active
+// catalog or (for a fully-qualified `catalog.schema.table` ref) a
+// cross-catalog one.
+function columnSuggestions(
+  snapshot: CatalogSnapshot,
+  ref: TableRef | null,
+  withSource = false,
+): Suggestion[] {
+  if (!ref) return [];
+  if (ref.catalog && ref.schema) {
+    const key = `${ref.catalog}.${ref.schema}.${ref.table}`;
+    const columns =
+      snapshot.crossCatalog[ref.catalog]?.columnsByTable[
+        `${ref.schema}.${ref.table}`
+      ];
+    return columnsToSuggestions(columns, key, withSource);
+  }
+  const key = tableKey(snapshot, ref);
+  if (!key) return [];
+  return columnsToSuggestions(snapshot.columnsByTable[key], key, withSource);
 }
 
 function keywordSuggestions(metadata: SqlMetadata | null): Suggestion[] {
@@ -137,7 +169,8 @@ function qualifierSuggestions(
 
   if (qualifier.length >= 2) {
     const [schema, table] = qualifier.slice(-2);
-    return columnSuggestions(snapshot, `${schema}.${table}`);
+    const key = `${schema}.${table}`;
+    return columnsToSuggestions(snapshot.columnsByTable[key], key);
   }
   const part = qualifier[0];
   // In a FROM clause a single qualifier is a schema → list its tables.
@@ -150,7 +183,7 @@ function qualifierSuggestions(
   }
   // Elsewhere: an alias or table name → that table's columns.
   const ref = fromTables.find((r) => r.alias === part || r.table === part);
-  if (ref) return columnSuggestions(snapshot, tableKey(snapshot, ref));
+  if (ref) return columnSuggestions(snapshot, ref);
   // Fall back to treating it as a schema (qualified table reference).
   return (snapshot.tablesBySchema[part] ?? []).map((t) => ({
     label: t,
@@ -289,7 +322,7 @@ export function completionsForContext(
     // SELECT / WHERE / GROUP BY / … → columns merged from every table in scope.
     const multiTable = ctx.fromTables.length > 1;
     const columns = ctx.fromTables.flatMap((ref) =>
-      columnSuggestions(catalog, tableKey(catalog, ref), multiTable),
+      columnSuggestions(catalog, ref, multiTable),
     );
     // When columns are in scope, don't bury them under the full function/keyword
     // dump: only add those once the user starts typing a prefix to filter by.
@@ -347,10 +380,7 @@ export function pendingColumnsForContext(
     const ref = ctx.fromTables.find(
       (r) => r.alias === part || r.table === part,
     );
-    if (ref) {
-      const key = tableKey(catalog, ref);
-      return !key || !(key in catalog.columnsByTable);
-    }
+    if (ref) return isRefPending(catalog, ref);
     return (catalog.tablesBySchema[part] ?? []).length === 0;
   }
 
@@ -359,10 +389,7 @@ export function pendingColumnsForContext(
     ctx.clause !== "from" &&
     ctx.clause !== "type"
   ) {
-    return ctx.fromTables.some((ref) => {
-      const key = tableKey(catalog, ref);
-      return !key || !(key in catalog.columnsByTable);
-    });
+    return ctx.fromTables.some((ref) => isRefPending(catalog, ref));
   }
   return false;
 }

@@ -72,6 +72,7 @@ export function referencedTables(statement: string): TableRef[] {
   const re = new RegExp(
     `\\b(?:from|join|into|update)\\s+("?[A-Za-z_$][\\w$]*"?)` +
       `(?:\\s*\\.\\s*("?[A-Za-z_$][\\w$]*"?))?` +
+      `(?:\\s*\\.\\s*("?[A-Za-z_$][\\w$]*"?))?` +
       `(?:\\s+(?:as\\s+)?${ALIAS_LOOKAHEAD}("?[A-Za-z_$][\\w$]*"?))?`,
     "gi",
   );
@@ -79,16 +80,21 @@ export function referencedTables(statement: string): TableRef[] {
   for (const m of masked.matchAll(re)) {
     const first = unquote(m[1]);
     const second = m[2] ? unquote(m[2]) : undefined;
-    const aliasRaw = m[3] ? unquote(m[3]) : undefined;
+    // Only reachable once `second` has matched (the regex's third dotted
+    // group can't match before its second), so `catalog.schema.table`.
+    const third = m[3] ? unquote(m[3]) : undefined;
+    const aliasRaw = m[4] ? unquote(m[4]) : undefined;
     const alias =
       aliasRaw && !ALIAS_STOPWORDS.has(aliasRaw.toLowerCase())
         ? aliasRaw
         : undefined;
-    refs.push(
-      second
-        ? { schema: first, table: second, alias }
-        : { table: first, alias },
-    );
+    if (third && second) {
+      refs.push({ catalog: first, schema: second, table: third, alias });
+    } else if (second) {
+      refs.push({ schema: first, table: second, alias });
+    } else {
+      refs.push({ table: first, alias });
+    }
   }
   return refs;
 }

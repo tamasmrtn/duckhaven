@@ -27,7 +27,9 @@ drill into it.
 
 What it offers depends on context:
 
-- after `FROM` / `JOIN` — the workspace's **schemas** and **tables**;
+- after `FROM` / `JOIN` — the workspace's **catalogs**, **schemas**, and **tables**;
+- after `catalog.` or `catalog.schema.` — that catalog's **schemas** and **tables**, fetched on demand, so you can
+  reference another catalog attached to the workspace without switching your active one;
 - after `schema.` — the **tables** in that schema;
 - after a table or alias and a dot (e.g. `s.` for `FROM sales s`) — that table's **columns**, with their types. Aliases
   are resolved from the statement's `FROM`/`JOIN`;
@@ -45,6 +47,13 @@ catalog automatically, so a newly created or altered object is available to comp
 catalog refresh needed.
 
 This release does autocomplete and signature help only; it does not flag SQL errors with red underlines.
+
+## Browse the catalog while you write
+
+The catalog tree beside the editor is read-only browsing — clicking a table never changes what's in your worksheet, so
+exploring the catalog never risks losing what you've typed. Hover a table for a preview card (row count, size,
+columns); to reference it in your query, **drag it onto the editor** — the fully-qualified `catalog.schema.table` name
+drops in wherever you release it, leaving the rest of your SQL untouched.
 
 ## Read results
 
@@ -73,8 +82,8 @@ DESCRIBE analytics.analytics.events;
 ```
 
 In the catalog tree it appears under each catalog as a lock-marked **`information_schema`** node badged *read-only*;
-expand it to see the supported views, and click one to drop a scoped query into the editor. It is not a stored schema —
-it never appears in Polaris and cannot be written to.
+expand it to browse the supported views. It is not a stored schema — it never appears in Polaris and cannot be
+written to.
 
 See [Inspecting metadata](../reference/sql-support.md#inspecting-metadata-information_schema) for the full surface.
 

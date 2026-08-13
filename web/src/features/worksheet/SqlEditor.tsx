@@ -324,6 +324,11 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
           // the catalog sidebar.
           fixedOverflowWidgets: true,
           padding: { top: 12, bottom: 12 },
+          // Monaco's own built-in drop handling would otherwise fire alongside
+          // the custom "drop" listener registered in handleMount, inserting
+          // the dropped table name a second time (as a snippet, leaking a
+          // literal "$0" final-tabstop marker into the text).
+          dropIntoEditor: { enabled: false },
         }}
         loading={
           <div className="flex h-full items-center justify-center bg-[var(--bg-canvas)] text-text-secondary text-sm">

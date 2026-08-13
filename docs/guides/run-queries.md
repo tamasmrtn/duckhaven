@@ -49,6 +49,10 @@ This release does autocomplete and signature help only; it does not flag SQL err
 ## Read results
 
 - Results appear in a grid below the editor, paged on demand so large results never load whole.
+- Each column header shows its data type; hover a header for the full type when it's too long to fit.
+- Click a column header to sort by that column. Sorting only reorders the rows already loaded — if
+  not all rows have loaded yet, the row count switches to **Sorted: N of M loaded** as a reminder to
+  page through the rest before treating the order as final.
 - If a query fails, the full error message shows in the results pane in place of the grid.
 - Export the current result to **CSV**.
 - After a run, open the **Profile** tab to inspect performance — see [Read query profiles](query-profiles.md).

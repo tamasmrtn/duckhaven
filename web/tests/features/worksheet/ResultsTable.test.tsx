@@ -112,3 +112,71 @@ describe('ResultsTable error state', () => {
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
   })
 })
+
+describe('ResultsTable column types', () => {
+  it('shows each column type next to its header when columnSchema is passed', () => {
+    render(
+      <ResultsTable
+        columns={['n']}
+        columnSchema={[{ name: 'n', type: 'BIGINT' }]}
+        rows={[{ n: 1 }]}
+        total={1}
+      />,
+    )
+    expect(screen.getByText('BIGINT')).toBeInTheDocument()
+  })
+
+  it('shows no type badge when columnSchema is omitted', () => {
+    render(<ResultsTable columns={['n']} rows={[{ n: 1 }]} total={1} />)
+    expect(screen.queryByText('BIGINT')).not.toBeInTheDocument()
+  })
+})
+
+describe('ResultsTable sorting', () => {
+  function bodyRowValues() {
+    return screen
+      .getAllByRole('row')
+      .slice(1) // drop the header row
+      .map((row) => row.textContent)
+  }
+
+  it('cycles a column through descending, ascending, and back to unsorted on repeated clicks', () => {
+    render(
+      <ResultsTable
+        columns={['n']}
+        rows={[{ n: 3 }, { n: 1 }, { n: 2 }]}
+        total={3}
+      />,
+    )
+    const header = screen.getByRole('button', { name: 'n' })
+    expect(bodyRowValues()).toEqual(['3', '1', '2'])
+
+    fireEvent.click(header)
+    expect(bodyRowValues()).toEqual(['3', '2', '1'])
+
+    fireEvent.click(header)
+    expect(bodyRowValues()).toEqual(['1', '2', '3'])
+
+    fireEvent.click(header)
+    expect(bodyRowValues()).toEqual(['3', '1', '2'])
+  })
+
+  it('flags the row count as partial while a sort is active and not all rows are loaded', () => {
+    render(
+      <ResultsTable
+        columns={['n']}
+        rows={[{ n: 1 }, { n: 2 }]}
+        total={5}
+      />,
+    )
+    expect(screen.getByText('2 / 5 rows')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'n' }))
+    expect(screen.getByText('Sorted: 2 of 5 loaded')).toBeInTheDocument()
+
+    // Clearing the sort (third click) restores the plain count.
+    fireEvent.click(screen.getByRole('button', { name: 'n' }))
+    fireEvent.click(screen.getByRole('button', { name: 'n' }))
+    expect(screen.getByText('2 / 5 rows')).toBeInTheDocument()
+  })
+})

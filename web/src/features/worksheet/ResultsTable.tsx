@@ -1,14 +1,23 @@
-import type { UIEvent } from "react";
+import { useMemo, useState, type UIEvent } from "react";
 import {
   useReactTable,
   getCoreRowModel,
+  getSortedRowModel,
   flexRender,
   type ColumnDef,
+  type SortingState,
 } from "@tanstack/react-table";
-import { Download, Copy, AlertCircle } from "lucide-react";
+import {
+  Download,
+  Copy,
+  AlertCircle,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { QueryRow } from "@/types/query";
+import type { ColumnSchema, QueryRow } from "@/types/query";
 import { cn } from "@/utils";
 
 interface ResultsTableProps {
@@ -20,6 +29,7 @@ interface ResultsTableProps {
   onLoadMore?: () => void;
   hasMore?: boolean;
   isLoadingMore?: boolean;
+  columnSchema?: ColumnSchema[] | null;
 }
 
 function cellDisplay(value: unknown): string {
@@ -56,7 +66,16 @@ export function ResultsTable({
   onLoadMore,
   hasMore,
   isLoadingMore,
+  columnSchema,
 }: ResultsTableProps) {
+  const [sorting, setSorting] = useState<SortingState>([]);
+
+  const typeByColumn = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const c of columnSchema ?? []) map.set(c.name, c.type);
+    return map;
+  }, [columnSchema]);
+
   function handleScroll(e: UIEvent<HTMLDivElement>) {
     if (!onLoadMore || !hasMore || isLoadingMore) return;
     const el = e.currentTarget;
@@ -93,7 +112,10 @@ export function ResultsTable({
   const table = useReactTable({
     data: rows,
     columns: colDefs,
+    state: { sorting },
+    onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
   });
 
   if (error) {
@@ -136,12 +158,23 @@ export function ResultsTable({
     );
   }
 
+  const isPartialSort = sorting.length > 0 && rows.length < total;
+
   return (
     <div className="flex h-full flex-col">
       {/* Header bar */}
       <div className="flex items-center justify-between border-b border-[var(--border-subtle)] px-3 py-2 shrink-0">
-        <span className="text-xs text-text-secondary font-tabular">
-          {rows.length} / {total} rows
+        <span
+          className="text-xs text-text-secondary font-tabular"
+          title={
+            isPartialSort
+              ? "Sort only applies to the rows loaded so far — load the rest to sort the full result."
+              : undefined
+          }
+        >
+          {isPartialSort
+            ? `Sorted: ${rows.length} of ${total} loaded`
+            : `${rows.length} / ${total} rows`}
         </span>
         <div className="flex items-center gap-1">
           <Button
@@ -181,14 +214,44 @@ export function ResultsTable({
                 key={hg.id}
                 className="border-b border-[var(--border-subtle)]"
               >
-                {hg.headers.map((h) => (
-                  <th
-                    key={h.id}
-                    className="whitespace-nowrap px-3 py-1.5 text-left text-xs font-medium text-text-secondary"
-                  >
-                    {flexRender(h.column.columnDef.header, h.getContext())}
-                  </th>
-                ))}
+                {hg.headers.map((h) => {
+                  const sortDir = h.column.getIsSorted();
+                  const type = typeByColumn.get(h.column.id);
+                  return (
+                    <th
+                      key={h.id}
+                      className="whitespace-nowrap px-3 py-1.5 text-left text-xs font-medium text-text-secondary"
+                    >
+                      <button
+                        type="button"
+                        onClick={h.column.getToggleSortingHandler()}
+                        className="flex items-center gap-1"
+                      >
+                        <span>
+                          {flexRender(
+                            h.column.columnDef.header,
+                            h.getContext(),
+                          )}
+                        </span>
+                        {sortDir === "asc" ? (
+                          <ArrowUp className="size-3" />
+                        ) : sortDir === "desc" ? (
+                          <ArrowDown className="size-3" />
+                        ) : (
+                          <ArrowUpDown className="size-3 text-text-tertiary" />
+                        )}
+                      </button>
+                      {type && (
+                        <span
+                          className="block font-mono text-2xs font-normal text-[var(--brand-maya-blue)]"
+                          title={type}
+                        >
+                          {type}
+                        </span>
+                      )}
+                    </th>
+                  );
+                })}
               </tr>
             ))}
           </thead>

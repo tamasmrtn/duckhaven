@@ -996,6 +996,7 @@ export function WorksheetPage() {
               ) : (
                 <ResultsTable
                   columns={queryRows.columns}
+                  columnSchema={queryRows.columnSchema}
                   rows={queryRows.rows}
                   total={queryRows.total}
                   error={

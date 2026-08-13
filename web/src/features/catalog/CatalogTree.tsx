@@ -419,7 +419,15 @@ function InformationSchemaNode({
               type="button"
               disabled={!onMetaViewClick}
               onClick={() => onMetaViewClick?.(catalog, view)}
-              className="flex w-full items-center gap-1.5 rounded py-1 pr-1.5 pl-1.5 text-sm text-text-secondary hover:bg-accent hover:text-text-primary focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)] disabled:cursor-default disabled:hover:bg-transparent"
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.setData(
+                  "text/plain",
+                  `${INFORMATION_SCHEMA}.${view}`,
+                );
+                e.dataTransfer.effectAllowed = "copy";
+              }}
+              className="flex w-full items-center gap-1.5 rounded py-1 pr-1.5 pl-1.5 text-sm text-text-secondary cursor-grab hover:bg-accent hover:text-text-primary focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)] active:cursor-grabbing disabled:cursor-default disabled:hover:bg-transparent"
             >
               <Table2 className="size-3.5 shrink-0 text-text-tertiary" />
               <span className="truncate">{view}</span>

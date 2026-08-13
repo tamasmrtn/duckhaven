@@ -30,6 +30,16 @@ describe('CatalogTree', () => {
     expect(onTableClick).toHaveBeenCalledWith('acme_analytics', 'raw', 'events')
   })
 
+  it('makes the table row a drag source carrying its fully-qualified name', async () => {
+    renderTree(() => {})
+    const events = await screen.findByRole('button', { name: /events/i })
+    expect(events).toHaveAttribute('draggable', 'true')
+
+    const setData = vi.fn()
+    fireEvent.dragStart(events, { dataTransfer: { setData, effectAllowed: '' } })
+    expect(setData).toHaveBeenCalledWith('text/plain', 'acme_analytics.raw.events')
+  })
+
   it('filters table rows by the search box', async () => {
     renderTree(() => {})
 

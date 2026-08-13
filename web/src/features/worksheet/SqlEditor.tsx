@@ -261,6 +261,34 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
         onRunRef.current?.(computeRunPayload());
       });
+
+      // Dropping a table from the catalog sidebar inserts its fully-qualified
+      // name at the drop position, instead of the sidebar's click handler
+      // overwriting the whole tab (see CatalogTree's draggable table rows).
+      const domNode = editor.getDomNode();
+      domNode?.addEventListener("dragover", (e) => {
+        e.preventDefault();
+      });
+      domNode?.addEventListener("drop", (e) => {
+        e.preventDefault();
+        const text = e.dataTransfer?.getData("text/plain");
+        if (!text) return;
+        const target = editor.getTargetAtClientPoint(e.clientX, e.clientY);
+        const position = target?.position ?? editor.getPosition();
+        if (!position) return;
+        editor.executeEdits("drag-drop-table", [
+          {
+            range: new monaco.Range(
+              position.lineNumber,
+              position.column,
+              position.lineNumber,
+              position.column,
+            ),
+            text,
+          },
+        ]);
+        editor.focus();
+      });
     };
 
     return (

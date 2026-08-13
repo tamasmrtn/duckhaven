@@ -199,7 +199,15 @@ function TableNode({
               <button
                 type="button"
                 onClick={() => onTableClick(catalog, schemaName, table.name)}
-                className="flex min-w-0 flex-1 items-center gap-1.5 rounded py-1 pr-1.5 text-sm focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.setData(
+                    "text/plain",
+                    `${catalog}.${schemaName}.${table.name}`,
+                  );
+                  e.dataTransfer.effectAllowed = "copy";
+                }}
+                className="flex min-w-0 flex-1 items-center gap-1.5 rounded py-1 pr-1.5 text-sm cursor-grab focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)] active:cursor-grabbing"
               >
                 <Table2 className="size-3.5 shrink-0 text-text-tertiary" />
                 <span className="truncate">{table.name}</span>

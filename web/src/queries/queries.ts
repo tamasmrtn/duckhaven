@@ -39,6 +39,7 @@ export function useQueryRows(id: string | null, enabled = true) {
   const pages = query.data?.pages ?? [];
   return {
     columns: pages[0]?.columns ?? [],
+    columnSchema: pages[0]?.column_schema ?? null,
     rows: pages.flatMap((p) => p.rows),
     total: pages[0]?.total ?? 0,
     isLoading: query.isLoading,

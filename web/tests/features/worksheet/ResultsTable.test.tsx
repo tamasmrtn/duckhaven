@@ -161,6 +161,21 @@ describe('ResultsTable sorting', () => {
     expect(bodyRowValues()).toEqual(['3', '1', '2'])
   })
 
+  it('copies rows in the active sort order, not the pre-sort fetch order', () => {
+    render(
+      <ResultsTable
+        columns={['n']}
+        rows={[{ n: 3 }, { n: 1 }, { n: 2 }]}
+        total={3}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'n' })) // descending
+    // Exact match: cell buttons are also named "Copy <value>" via aria-label.
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }))
+
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('n\n3\n2\n1')
+  })
+
   it('flags the row count as partial while a sort is active and not all rows are loaded', () => {
     render(
       <ResultsTable

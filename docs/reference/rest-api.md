@@ -95,15 +95,21 @@ Read the [lineage](../concepts/lineage.md) graph around a table, and import line
 | `POST /api/workspaces/{ws}/lineage/imports` | Import canonical edges from any producer. Requires workspace **writer**, plus `writer` on each target's catalog. |
 | `POST /api/workspaces/{ws}/lineage/imports/{provider}` | Import a producer's own artifact — `dbt` takes a `manifest.json` body. Same authorization. |
 | `DELETE /api/workspaces/{ws}/lineage/imports?provider=<name>` | Remove every edge a retired producer asserted. Requires workspace **owner**. |
+| `POST /api/workspaces/{ws}/lineage/backfill` | Queue a [reconstruction from query history](../guides/backfill-lineage.md). Body accepts `since` and `dry_run`. Returns **202**, or **409** if one is already outstanding. Requires workspace **owner**. |
+| `GET /api/workspaces/{ws}/lineage/backfill` | Status and counters for the workspace's backfill. **404** before one has been requested. Requires workspace **owner**. |
+| `DELETE /api/workspaces/{ws}/lineage/backfill` | Ask a running backfill to stop at the next batch boundary. Requires workspace **owner**. |
 
 Read parameters: `direction` (`upstream` \| `downstream` \| `both`, default `both`), `depth` (1–5, default 2), and a
-repeatable `provider` filter. The response carries `nodes`, `edges` and `truncated`; `truncated` is `true` when a cap
-stopped the walk early, so a partial graph is never mistaken for a complete one.
+repeatable `provider` filter. The response carries `nodes`, `edges`, `truncated` and `hidden`. `truncated` is `true`
+when a cap stopped the walk early; `hidden` is `true` when the walk reached lineage in a catalog the workspace does not
+attach and dropped it — deliberately a bare flag, so a caller can tell "nothing here" from "something here you may not
+see" without learning anything about what was withheld.
 
 Node `kind` is `table`, `external` (an asset outside DuckHaven, named by whoever imported it), or `redacted` (a table
 in a scoped catalog the caller holds no grant on — present with no names, so the graph keeps its shape). Every edge
-carries a `providers` list, since more than one producer can assert the same relationship, and a `columns` list that is
-always empty today.
+carries a `providers` list — one entry per producer, each with its own `first_seen_at`, `last_seen_at`,
+`observation_count` and `stale` — plus edge-level totals and a `stale` that is `true` only when every producer's claim
+is stale. The `columns` list is always empty today.
 
 The provider name `execution` is reserved for lineage DuckHaven derives from SQL it ran: importing it is rejected with
 **422**, and it cannot be purged. Imports are idempotent, and edges whose endpoints cannot be resolved are returned in

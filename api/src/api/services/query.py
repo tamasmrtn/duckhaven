@@ -1,5 +1,6 @@
 import asyncio
 import datetime as dt
+import logging
 import os
 import tempfile
 import uuid
@@ -44,6 +45,7 @@ from api.services.workspace import (
 from duckhaven_shared.protocol import Frame, FrameType
 from duckhaven_shared.telemetry import inject_trace_context
 
+logger = logging.getLogger(__name__)
 _tracer = trace.get_tracer("duckhaven.api")
 
 
@@ -225,6 +227,26 @@ async def handle_agent_frame(db: AsyncSession, frame: Frame) -> None:
                 from api.services.maintenance.ingest import record_health_sample
 
                 await record_health_sample(db, query, health)
+            if query is not None:
+                await _record_lineage(db, query)
+
+
+async def _record_lineage(db: AsyncSession, query: Query) -> None:
+    """Derive lineage for a completed query, never at the query's expense.
+
+    Runs on the agent's frame-receive path, so every failure mode is swallowed:
+    a graph that misses an edge is a much smaller problem than a frame handler
+    that stops processing an agent's traffic. Should this ever show up in
+    profiling, it can move to a background loop without any model change.
+    """
+    from api.services.lineage.ingest import record_execution_lineage
+
+    try:
+        await record_execution_lineage(db, query)
+        await db.commit()
+    except Exception:
+        logger.exception("Lineage extraction failed for query %s", query.id)
+        await db.rollback()
 
 
 async def _upsert_table_stats(db: AsyncSession, query_id: uuid.UUID, frame: Frame) -> None:

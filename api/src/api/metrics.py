@@ -153,6 +153,14 @@ STATEMENT_POLICY_REJECTIONS = Counter(
     "Session statements rejected by the capability-scoped policy, by rule.",
     ["replica_id", "rule"],
 )
+# Lineage extraction fails open — a statement the parser cannot read records no
+# edges and the query is unaffected — so this counter is the only signal that a
+# dialect gap is quietly shrinking the graph.
+LINEAGE_EXTRACT_FAILURES = Counter(
+    "duckhaven_lineage_extract_failures",
+    "Completed statements whose SQL could not be parsed for lineage.",
+    ["replica_id"],
+)
 
 
 # ── Inline instrumentation helpers (called from the query service) ────────────
@@ -170,6 +178,10 @@ def record_query_completion(status: str, duration_ms: int | None, result_bytes: 
         QUERY_DURATION.labels(settings.replica_id).observe(duration_ms / 1000.0)
     if result_bytes is not None:
         QUERY_RESULT_BYTES.labels(settings.replica_id).observe(result_bytes)
+
+
+def record_lineage_extract_failure() -> None:
+    LINEAGE_EXTRACT_FAILURES.labels(settings.replica_id).inc()
 
 
 def record_query_queue_wait(seconds: float) -> None:

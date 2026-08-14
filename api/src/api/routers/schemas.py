@@ -41,6 +41,7 @@ from api.schemas.catalog import (
 from api.schemas.query import RowsPageOut
 from api.services import grants as grant_service
 from api.services import query as query_service
+from api.services.lineage import ingest as lineage_ingest
 from api.services.polaris import (
     PolarisClient,
     PolarisConflictError,
@@ -456,6 +457,7 @@ async def drop_schema(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
     # Drop dangling grants for the schema and every table that was under it.
     await grant_service.delete_schema_grants(db, cat.id, schema)
+    await lineage_ingest.delete_schema_lineage(db, cat.id, schema)
     await db.commit()
 
 
@@ -577,6 +579,7 @@ async def drop_table(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
     await _delete_table_meta(db, cat.id, schema, table)
     await grant_service.delete_table_grants(db, cat.id, schema, table)
+    await lineage_ingest.delete_table_lineage(db, cat.id, schema, table)
     await db.commit()
 
 

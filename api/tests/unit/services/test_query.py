@@ -302,6 +302,99 @@ async def test_query_done_without_profile_stays_null(db_session):
     assert query.profile is None
 
 
+async def test_done_frame_records_lineage(db_session):
+    """A completed write leaves a lineage edge behind, from the same hook that
+    persists table stats and health samples."""
+    from api.models.lineage import LineageEdge
+
+    ws, catalog = await _make_workspace(db_session)
+    query = Query(
+        workspace_id=ws.id,
+        sql=(
+            f"CREATE TABLE {catalog.slug}.analytics.dim "
+            f"AS SELECT * FROM {catalog.slug}.analytics.src"
+        ),
+        status="queued",
+        active_catalog=catalog.slug,
+    )
+    db_session.add(query)
+    await db_session.commit()
+
+    await query_service.handle_agent_frame(
+        db_session,
+        Frame(type=FrameType.QUERY_DONE, payload={"query_id": str(query.id), "status": "done"}),
+    )
+
+    edges = (await db_session.execute(select(LineageEdge))).scalars().all()
+    assert [(e.source_table, e.target_table) for e in edges] == [("src", "dim")]
+
+
+async def test_failed_frame_records_no_lineage(db_session):
+    from api.models.lineage import LineageEdge
+
+    ws, catalog = await _make_workspace(db_session)
+    query = Query(
+        workspace_id=ws.id,
+        sql=(
+            f"CREATE TABLE {catalog.slug}.analytics.dim "
+            f"AS SELECT * FROM {catalog.slug}.analytics.src"
+        ),
+        status="queued",
+        active_catalog=catalog.slug,
+    )
+    db_session.add(query)
+    await db_session.commit()
+
+    await query_service.handle_agent_frame(
+        db_session,
+        Frame(
+            type=FrameType.QUERY_DONE,
+            payload={"query_id": str(query.id), "status": "failed", "error": "boom"},
+        ),
+    )
+
+    assert (await db_session.execute(select(LineageEdge))).scalars().all() == []
+
+
+async def test_lineage_failure_does_not_break_frame_handling(db_session, monkeypatch):
+    """Lineage runs on the agent's frame-receive path, so it must never be able to
+    stall that path — a broken extractor costs an edge, not an agent."""
+    from api.models.lineage import LineageEdge
+
+    ws, catalog = await _make_workspace(db_session)
+    # A statement that *would* produce an edge, so the assertions below can tell
+    # a swallowed failure apart from a patch that never took effect.
+    query = Query(
+        workspace_id=ws.id,
+        sql=(
+            f"CREATE TABLE {catalog.slug}.analytics.dim "
+            f"AS SELECT * FROM {catalog.slug}.analytics.src"
+        ),
+        status="queued",
+        active_catalog=catalog.slug,
+    )
+    db_session.add(query)
+    await db_session.commit()
+
+    async def boom(*_args, **_kwargs):
+        raise RuntimeError("extractor exploded")
+
+    monkeypatch.setattr("api.services.lineage.ingest.record_execution_lineage", boom)
+
+    await query_service.handle_agent_frame(
+        db_session,
+        Frame(
+            type=FrameType.QUERY_DONE,
+            payload={"query_id": str(query.id), "status": "done", "row_count": 3},
+        ),
+    )
+
+    await db_session.refresh(query)
+    assert query.status == "done"
+    assert query.row_count == 3
+    assert (await db_session.execute(select(LineageEdge))).scalars().all() == []
+
+
 async def test_pick_agent_for(db_session):
     ws, _catalog = await _make_workspace(db_session)
     agent = Agent(name="a", status="healthy", capabilities={"extensions": ["iceberg", "httpfs"]})

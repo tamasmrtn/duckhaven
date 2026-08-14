@@ -76,18 +76,43 @@ The workspace is still the boundary you *read* through: traversal never leaves t
 
 ## Provenance
 
-Every edge records:
+Every edge records, **for each producer separately**:
 
 - **Provider** — what asserted it. `execution` is lineage DuckHaven derived from SQL it ran; anything else is the name
   of an importer, such as `dbt`.
 - **Operation** — the kind of statement, from the table above.
-- **First seen, last seen, and an observation count** — when the relationship first appeared, when it was last
-  re-asserted, and how many times.
+- **First seen, last seen, and an observation count** — when that producer first reported the relationship, when it
+  last did, and how many times.
 - **The producing query**, for execution-derived edges, so you can open the exact SQL from the graph.
+
+Keeping those per producer is the point. A pair confirmed by a query this morning and by an import that stopped
+running last quarter is one edge with two very different stories, and a single "last seen" would let the live producer
+vouch for the abandoned one.
 
 DuckHaven stores the *current* graph rather than an event log. It does not need one: query history already retains
 every statement's SQL text and timestamps indefinitely, so the history is recoverable from the audit trail, and the
-three fields above answer "when did this start, and is it still happening" without a second copy of it.
+fields above answer "when did this start, and is it still happening" without a second copy of it.
+
+## Freshness
+
+A relationship is **stale** when no producer has re-asserted it within `LINEAGE_STALE_AFTER_DAYS` (30 by default; set
+it to `0` to switch the concept off).
+
+Stale means *unconfirmed*, not *wrong*. A table rebuilt once a year has perfectly correct lineage that nothing will
+confirm again for eleven months. What staleness tells you is how recently something vouched for the relationship, which
+is what you need in order to decide how hard to check before acting on it.
+
+The threshold applies to each producer's own claim:
+
+- If dbt stopped reporting three months ago but queries still build the table, the **dbt claim** is marked stale and the
+  relationship is not. Something still confirms it.
+- If dbt was the only producer and it stopped, the **relationship** is stale.
+- A relationship reconstructed by [backfill](../guides/backfill-lineage.md) from a statement that ran six months ago is
+  stale immediately, because that is when it was last observed.
+
+Stale relationships stay in the graph, drawn dashed and faint, with the producer that went quiet labelled. They are not
+removed: silently dropping a relationship that is probably still true is a worse answer than showing it with a caveat.
+To retire a producer's lineage deliberately, purge it — see [importing from dbt](../guides/import-dbt-lineage.md).
 
 ## When producers disagree
 
@@ -117,6 +142,19 @@ you cannot see".
 Importing lineage requires `writer` on the target's catalog, and imported names are redacted on the way out just like
 any other, so importing a graph is not a way to learn names you could not otherwise see.
 
+### When the graph is incomplete
+
+Nodes outside your workspace's catalogs cannot be shown even as restricted placeholders — they are out of scope, not
+merely unreadable, and a placeholder would itself reveal that something is there and roughly where. But saying nothing
+at all would be worse, because "nothing depends on this table" and "something depends on it that you cannot see" lead to
+opposite decisions.
+
+So the graph reports **that** it is incomplete, and nothing more. The Lineage tab shows a note when part of the graph
+was dropped, and when *all* of it was, the tab says the lineage is outside this workspace rather than that there is
+none. No count, no direction, no catalog, no name — a count alone would say how much is out there.
+
+If you need the whole picture, attach the catalogs involved to your workspace, or ask someone who already has them.
+
 ## Limits
 
 !!! note "Column-level lineage is not available yet"
@@ -125,16 +163,24 @@ any other, so importing a graph is not a way to learn names you could not otherw
 
 Other limits worth knowing:
 
-- **Renaming a table breaks its lineage.** The renamed table is a new asset with no history, and the old table's edges
-  are removed when the old name is dropped. Re-running the transformation rebuilds them.
+- **Renaming a table keeps its lineage**, but not instantly. DuckHaven has no rename operation of its own, so a rename
+  arrives out of band — through `ALTER TABLE … RENAME TO` or another Iceberg client. It is recognised the next time
+  DuckHaven loads that table's metadata, which happens as soon as anyone opens it in the catalog explorer, and the
+  lineage moves to the new name then. Until that point the edges still sit under the old name.
+- **A table dropped and recreated under the same name is a different table**, and starts with no lineage. DuckHaven can
+  tell the two cases apart because Iceberg gives every table an id that survives a rename and changes on recreation — so
+  a rename keeps its history and a recreation does not inherit someone else's.
 - **Dropping a table removes its edges**, on both sides — the same cleanup that removes its metadata sidecar and its
   grants. Recreating the table and re-running the work restores them.
 - **Renaming a catalog is safe.** Assets are keyed by the catalog's identity, not its slug.
+- **The same table name in two catalogs is two assets.** Identity is always resolved within a catalog.
 - **Graphs are bounded.** Traversal is capped at 5 hops and 500 nodes; when a cap is hit the response says so and the
   UI tells you rather than quietly showing a subset.
 
 ## Related
 
+- [Reconstruct lineage from query history](../guides/backfill-lineage.md) — filling the graph in for work that ran
+  before lineage existed.
 - [Import lineage from dbt](../guides/import-dbt-lineage.md) — the first importer.
 - [Metadata](metadata.md) — what else DuckHaven records about a table.
 - [Permissions](permissions.md) — the grant tiers redaction is based on.

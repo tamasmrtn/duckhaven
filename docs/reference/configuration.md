@@ -118,6 +118,19 @@ due schedule — leave it enabled everywhere (see
 | `SCHEDULER_ENABLED` | `true` | Whether this replica participates in the (leader-elected) scheduler loop. Safe to leave `true` on every replica; set `false` only to exclude a replica entirely. |
 | `SCHEDULER_TICK_S` | `60` | How often (seconds) the loop wakes to dispatch due schedules. Also the finest effective cadence — a schedule cannot run more often than one tick. |
 
+### Lineage
+
+Tunes how [lineage](../concepts/lineage.md) ages and how it is
+[reconstructed from query history](../guides/backfill-lineage.md). The backfill walker is leader-elected via a Postgres
+advisory lock like the scheduler, so leave it enabled everywhere.
+
+| Variable | Default | Description |
+|---|---|---|
+| `LINEAGE_STALE_AFTER_DAYS` | `30` | How long a relationship goes unconfirmed before the graph marks it stale. Applied to each producer's own claim, so an import that stopped running ages out while a query still confirming the same pair keeps the edge current. Stale relationships are marked, never removed. `0` disables the concept. |
+| `LINEAGE_BACKFILL_ENABLED` | `true` | Whether this replica participates in the (leader-elected) lineage-backfill loop. It is idle unless an operator has requested a backfill. |
+| `LINEAGE_BACKFILL_TICK_S` | `15` | How often (seconds) the loop wakes to advance an outstanding backfill. |
+| `LINEAGE_BACKFILL_BATCH_SIZE` | `500` | How many historical statements one pass reads before committing and yielding. The knob for trading backfill speed against load on a busy control plane. |
+
 ### Catalog storage migration
 
 Gates and tunes the background runner that performs

@@ -281,8 +281,16 @@ export function LineagePanel({
       ) : (
         <EmptyState
           icon={GitBranch}
-          title="No lineage recorded for this table yet"
-          description="Lineage appears once a query builds this table from another one, or once you import it from the tool that does."
+          title={
+            direction === "both"
+              ? "No lineage recorded for this table yet"
+              : `No ${direction} lineage for this table`
+          }
+          description={
+            direction === "both"
+              ? "Lineage appears once a query builds this table from another one, or once you import it from the tool that does."
+              : "Nothing in this direction. The other direction may still have lineage — try the Direction toggle above."
+          }
         />
       )}
     </div>

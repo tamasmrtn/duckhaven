@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { http, HttpResponse } from "msw";
 import userEvent from "@testing-library/user-event";
 import { server } from "@tests/mock/server";
+import { makeLineage } from "@/mock/fixtures/lineage";
 import { renderWithProviders, screen, waitFor, within } from "@tests/utils";
 
 const LINEAGE_URL =
@@ -118,6 +119,32 @@ describe("LineagePanel", () => {
     expect(
       await screen.findByText(/No lineage recorded for this table yet/i),
     ).toBeVisible();
+  });
+
+  it("does not claim there is no lineage when only one direction is empty", async () => {
+    // A table can have upstream lineage and no downstream. Saying "no lineage
+    // recorded" while Downstream is selected gives the user no reason to try
+    // the other toggle.
+    server.use(
+      http.get(LINEAGE_URL, ({ request }) => {
+        const direction = new URL(request.url).searchParams.get("direction");
+        if (direction === "downstream") {
+          return HttpResponse.json({
+            root: "r",
+            nodes: [],
+            edges: [],
+            truncated: false,
+          });
+        }
+        return HttpResponse.json(makeLineage());
+      }),
+    );
+    renderWithProviders({ initialRoute: TABLE_ROUTE });
+    await openLineageTab();
+    await userEvent.click(screen.getByRole("button", { name: "Downstream" }));
+
+    expect(await screen.findByText(/No downstream lineage/i)).toBeVisible();
+    expect(screen.queryByText(/No lineage recorded/i)).toBeNull();
   });
 
   it("warns when the graph was truncated", async () => {

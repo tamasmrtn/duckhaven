@@ -19,6 +19,7 @@ import { ConfirmDropDialog } from "@/features/catalog/ConfirmDropDialog";
 import { SnapshotHistoryPanel } from "@/features/catalog/SnapshotHistoryPanel";
 import { PermissionsPanel } from "@/features/catalog/PermissionsPanel";
 import { TableHealthPanel } from "@/features/health/TableHealthPanel";
+import { LineagePanel } from "@/features/lineage/LineagePanel";
 import {
   alterTemplate,
   selectTemplate,
@@ -242,6 +243,9 @@ function TableDetail({
             <TabsTrigger value="health" className="text-xs">
               Health
             </TabsTrigger>
+            <TabsTrigger value="lineage" className="text-xs">
+              Lineage
+            </TabsTrigger>
             <TabsTrigger value="permissions" className="text-xs">
               Permissions
             </TabsTrigger>
@@ -293,6 +297,17 @@ function TableDetail({
             className="mt-0 flex flex-1 flex-col overflow-hidden border-t border-[var(--border-subtle)]"
           >
             <TableHealthPanel ws={ws} schema={schema} table={table} />
+          </TabsContent>
+          <TabsContent
+            value="lineage"
+            className="mt-0 flex flex-1 flex-col overflow-hidden border-t border-[var(--border-subtle)]"
+          >
+            <LineagePanel
+              ws={ws}
+              catalog={catalog}
+              schema={schema}
+              table={table}
+            />
           </TabsContent>
           <TabsContent
             value="permissions"

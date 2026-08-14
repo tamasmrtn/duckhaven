@@ -263,7 +263,7 @@ class Settings(BaseSettings):
     # Microsoft.ContainerInstance/containerGroups.
     elastic_azure_subnet_id: str | None = None
     # Azure Container Instances pay-as-you-go rates, surfaced so the UI shows the
-    # hourly cost of a size before it is created (Databricks-style). Defaults are
+    # hourly cost of a size before it is created. Defaults are
     # approximate Linux/eastus list prices — override per region/agreement.
     elastic_azure_price_vcpu_hour: float = 0.0486
     elastic_azure_price_memory_gb_hour: float = 0.0054

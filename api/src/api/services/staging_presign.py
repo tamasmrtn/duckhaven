@@ -1,6 +1,6 @@
 """Presigned staging URLs for a SQL session's stage (issue #160).
 
-Treats a session's ``staging_uri`` as a Snowflake-style stage: given file names,
+Treats a session's ``staging_uri`` as a file stage: given file names,
 mint a short-lived presigned ``PUT`` (upload) and ``GET`` (read) URL per file,
 scoped to a key under the session's staging prefix. The client uploads with a
 plain HTTP ``PUT``; the agent reads with ``read_parquet('<get_url>')`` over

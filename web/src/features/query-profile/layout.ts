@@ -1,7 +1,8 @@
 // Tidy layered layout for a DuckDB plan tree: the result/root operator sits at
 // the top and children fan out below (data flows upward, scans at the bottom —
-// the Snowflake/Databricks convention). Leaves take sequential horizontal slots
-// and each parent is centered over its children, so subtrees never overlap.
+// the conventional direction for a query plan). Leaves take sequential
+// horizontal slots and each parent is centered over its children, so subtrees
+// never overlap.
 //
 // DuckDB plans are small trees (single root, fan-in only at joins), so this
 // linear post-order pass is plenty — no external graph/layout dependency.

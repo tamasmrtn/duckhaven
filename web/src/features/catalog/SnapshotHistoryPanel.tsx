@@ -13,7 +13,7 @@ function fmt(n: number | null): string {
   return n == null ? "—" : n.toLocaleString();
 }
 
-// Relative-offset convenience picks (Snowflake-style OFFSET), resolved to an
+// Relative-offset convenience picks (the usual time-travel OFFSET), resolved to an
 // absolute timestamp client-side and fed to the same AT (TIMESTAMP => …) query.
 const RELATIVE_OFFSETS: { label: string; ms: number }[] = [
   { label: "1 hour ago", ms: 3600_000 },

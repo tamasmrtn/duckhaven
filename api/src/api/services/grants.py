@@ -10,7 +10,7 @@ The tier vocabulary extends the workspace roles with a discovery-only level:
 ``metadata < reader < writer`` (``owner`` is a workspace role only, never
 grantable here). Resolution is a hierarchy walk — a grant at a coarser node
 (catalog, or a schema) covers every finer node beneath it, including tables
-created *after* the grant ("future grants for free", matching Unity Catalog's
+created *after* the grant ("future grants for free" — the conventional
 inheriting model). Grants are additive: the effective tier at a node is the
 highest covering grant, then **capped** at the principal's workspace role so a
 grant can only narrow access, never promote a ``reader`` past ``writer``.

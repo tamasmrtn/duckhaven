@@ -273,8 +273,12 @@ async def delete_schema_grants(db: AsyncSession, catalog_id: uuid.UUID, schema: 
 _WRITE_NODES = (exp.Insert, exp.Update, exp.Delete, exp.Merge, exp.Create, exp.Drop, exp.Alter)
 
 
-def _target_tables(stmt: exp.Expression) -> list[exp.Table]:
-    """The write target table(s) of a statement; empty for a pure read."""
+def target_tables(stmt: exp.Expression) -> list[exp.Table]:
+    """The write target table(s) of a statement; empty for a pure read.
+
+    Public because the lineage extractor (`services/lineage/extract.py`) needs
+    the same target/source split this module already computes for grant checks.
+    """
     if isinstance(stmt, exp.TruncateTable):
         # TRUNCATE keeps its target(s) in `expressions` (`this` is None) and
         # destroys every row in them — a write, exactly like the DELETE that
@@ -307,7 +311,7 @@ def extract_table_refs(sql: str) -> list[TableRef]:
         if stmt is None:
             continue
         cte_names = {c.alias_or_name for c in stmt.find_all(exp.CTE)}
-        targets = _target_tables(stmt)
+        targets = target_tables(stmt)
         # Tables under a DESCRIBE, by identity. Collected from anywhere in the
         # tree rather than only the top level, so `SELECT … FROM (DESCRIBE t)` —
         # the form dlt and dbt emit — is recognized as well as a bare `DESCRIBE t`.

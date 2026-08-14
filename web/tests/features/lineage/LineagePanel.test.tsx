@@ -64,8 +64,27 @@ describe("LineagePanel", () => {
 
     expect(await screen.findAllByText("dbt")).toHaveLength(2);
     expect(await screen.findByText("execution")).toBeVisible();
-    expect(await screen.findByText(/Created from/)).toBeVisible();
-    expect(await screen.findByText(/Declared dependency/)).toBeVisible();
+    // Incoming: `events` was declared as depending on the external source.
+    expect(await screen.findByText(/Declared dependency on/)).toBeVisible();
+    // Outgoing: `events` was used to build the root table.
+    expect(await screen.findByText(/Used to create/)).toBeVisible();
+  });
+
+  it("describes an outgoing edge from the selected node's side", async () => {
+    // Regression: every edge used the incoming phrasing, so an outgoing one read
+    // as "Created from <the table it actually created> (downstream)" — stating
+    // the relationship backwards on the one screen whose job is direction.
+    renderWithProviders({ initialRoute: TABLE_ROUTE });
+    await openLineageTab();
+
+    const canvas = await graph();
+    await userEvent.click(await canvas.findByText("events"));
+
+    // The label and the table name are separate elements, so assert on the row.
+    const label = await screen.findByText(/Used to create/);
+    expect(label.textContent).toMatch(/daily_active_users/);
+    expect(screen.queryByText(/\(downstream\)/)).toBeNull();
+    expect(screen.queryByText(/Created from/)).toBeNull();
   });
 
   it("refetches when the depth changes", async () => {

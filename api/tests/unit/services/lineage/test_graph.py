@@ -257,3 +257,33 @@ async def test_direction_is_honoured(graph_env, direction):
         assert tables == {"dim"}  # nothing is built *from* dim
     else:
         assert tables == {"src", "dim"}
+
+
+async def test_a_redacted_endpoint_withholds_the_query_link(graph_env):
+    """The query behind an edge is readable by any workspace member and its SQL
+    names every table it touched, so handing over the link would undo the
+    redaction sitting next to it."""
+    db = graph_env["db"]
+    await upsert_edges(
+        db,
+        [
+            CanonicalEdge(
+                source=internal_ref(graph_env["catalogs"]["raw"].id, "analytics", "src"),
+                target=internal_ref(graph_env["catalogs"]["warehouse"].id, "analytics", "dim"),
+                operation="create_table_as",
+            )
+        ],
+        provider="execution",
+        last_query_id=graph_env["workspace"].id,  # any uuid; only presence matters
+    )
+    # Baseline first: while the catalog is still `open`, the link is served.
+    visible = await _graph(graph_env)
+    assert visible.edges[0].last_query_id is not None
+
+    # Scoping `raw` and asking as a principal with no grant on it redacts the
+    # source — and must take the link with it.
+    stranger = await _make_scoped_stranger(graph_env)
+    hidden = await _graph(graph_env, principal=stranger.id)
+
+    assert "redacted" in _by_kind(hidden)
+    assert hidden.edges[0].last_query_id is None

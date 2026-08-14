@@ -157,6 +157,25 @@ class Settings(BaseSettings):
     # to roll back (reverse-migrate) if a problem surfaces post-cutover.
     migration_retention_days: int = 7
 
+    # ── Lineage ───────────────────────────────────────────────────────────────
+    # How long a relationship goes unconfirmed before the graph says so. Applied
+    # per producer, not per relationship: an import that stopped running ages out
+    # on its own while a query still confirming the same pair keeps the edge
+    # current. Stale edges are marked, never removed — the claim is "nobody has
+    # re-asserted this lately", not "this is wrong". 0 turns the concept off, for
+    # an operator who would rather DuckHaven made no judgement about age.
+    lineage_stale_after_days: int = 30
+    # Backfill: replaying query history through lineage extraction so a graph is
+    # complete the day the feature is switched on rather than three weeks later.
+    # Operator-initiated per workspace; the loop only drains what was requested,
+    # so leaving it enabled costs one idle query per tick. Leader-elected by a
+    # Postgres advisory lock like the scheduler/scanner, so it is safe on every
+    # replica. The batch size bounds how much history one tick walks — it is the
+    # knob for trading backfill speed against load on a busy control plane.
+    lineage_backfill_enabled: bool = True
+    lineage_backfill_tick_s: float = 15.0
+    lineage_backfill_batch_size: int = 500
+
     # ── SQL sessions (dbt/dlt session layer) ──────────────────────────────────
     # The whole session surface — and thus the relaxed statement policy — is
     # OFF by default: an operator enables it only after deploying the hardened

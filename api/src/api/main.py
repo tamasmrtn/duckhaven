@@ -113,6 +113,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             migration_loop(async_session_factory, app.state.polaris_client)
         )
 
+    lineage_backfill_task: asyncio.Task | None = None
+    if settings.lineage_backfill_enabled:
+        from api.services.lineage.backfill import backfill_loop
+
+        lineage_backfill_task = asyncio.create_task(backfill_loop(async_session_factory))
+
     reaper_task: asyncio.Task | None = None
     if settings.sql_sessions_enabled:
         from api.services.sql_sessions.reaper import reaper_loop
@@ -135,6 +141,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             scanner_task,
             scheduler_task,
             migration_task,
+            lineage_backfill_task,
             reaper_task,
             compute_reaper_task,
         ):

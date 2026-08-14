@@ -8,6 +8,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     UniqueConstraint,
@@ -30,12 +31,21 @@ class TableMetadata(Base):
     __tablename__ = "table_metadata"
     __table_args__ = (
         UniqueConstraint("catalog_id", "schema_name", "table_name", name="uq_table_metadata_ident"),
+        # Rename detection looks a table up by its Iceberg id within a catalog.
+        Index("ix_table_metadata_uuid", "catalog_id", "table_uuid"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     catalog_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("catalogs.id"), nullable=False)
     schema_name: Mapped[str] = mapped_column(String(255), nullable=False)
     table_name: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # The Iceberg table id, recorded whenever a handler that already loaded this
+    # table's metadata passes through. It is what distinguishes a renamed table
+    # (same id, new name) from a dropped one recreated under the old name (same
+    # name, new id) — see `services.lineage.identity`. Null until first observed;
+    # everything else here works without it.
+    table_uuid: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     owner_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     row_count: Mapped[int | None] = mapped_column(BigInteger, nullable=True)

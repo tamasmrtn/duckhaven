@@ -1,0 +1,146 @@
+{
+  "metadata": {
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json",
+    "dbt_version": "1.9.0",
+    "generated_at": "2026-08-14T09:00:00.000000Z",
+    "invocation_id": "b1a7c0de-0000-4000-8000-000000000001",
+    "project_name": "acme"
+  },
+  "nodes": {
+    "model.acme.stg_orders": {
+      "resource_type": "model",
+      "name": "stg_orders",
+      "database": "warehouse",
+      "schema": "analytics",
+      "alias": "stg_orders",
+      "depends_on": {
+        "nodes": [
+          "source.acme.raw.orders",
+          "source.acme.crm.customers"
+        ]
+      }
+    },
+    "model.acme.dim_orders": {
+      "resource_type": "model",
+      "name": "dim_orders",
+      "database": "warehouse",
+      "schema": "analytics",
+      "alias": "dim_orders_v2",
+      "depends_on": {
+        "nodes": [
+          "model.acme.stg_orders",
+          "seed.acme.country_codes",
+          "test.acme.not_null_id"
+        ]
+      }
+    },
+    "seed.acme.country_codes": {
+      "resource_type": "seed",
+      "name": "country_codes",
+      "database": "warehouse",
+      "schema": "analytics",
+      "alias": "country_codes",
+      "depends_on": {
+        "nodes": []
+      }
+    },
+    "snapshot.acme.orders_history": {
+      "resource_type": "snapshot",
+      "name": "orders_history",
+      "database": "warehouse",
+      "schema": "analytics",
+      "alias": "orders_history",
+      "depends_on": {
+        "nodes": [
+          "model.acme.stg_orders"
+        ]
+      }
+    },
+    "test.acme.not_null_id": {
+      "resource_type": "test",
+      "name": "not_null_id",
+      "database": "warehouse",
+      "schema": "analytics_dbt_test__audit",
+      "alias": "not_null_id",
+      "depends_on": {
+        "nodes": [
+          "model.acme.dim_orders"
+        ]
+      }
+    },
+    "model.acme.external_target": {
+      "resource_type": "model",
+      "name": "external_target",
+      "database": "not_a_duckhaven_catalog",
+      "schema": "analytics",
+      "alias": "external_target",
+      "depends_on": {
+        "nodes": [
+          "model.acme.stg_orders"
+        ]
+      }
+    },
+    "model.acme.disabled_model": {
+      "resource_type": "model",
+      "name": "disabled_model",
+      "database": "warehouse",
+      "schema": "analytics",
+      "alias": "disabled_model",
+      "depends_on": {
+        "nodes": [
+          "model.acme.stg_orders"
+        ]
+      }
+    }
+  },
+  "sources": {
+    "source.acme.raw.orders": {
+      "resource_type": "source",
+      "name": "orders",
+      "database": "raw",
+      "schema": "analytics",
+      "identifier": "orders",
+      "alias": "orders"
+    },
+    "source.acme.crm.customers": {
+      "resource_type": "source",
+      "name": "customers",
+      "database": "crm_pg",
+      "schema": "public",
+      "identifier": "customers",
+      "alias": "customers"
+    }
+  },
+  "disabled": {
+    "model.acme.disabled_model": []
+  },
+  "parent_map": {
+    "model.acme.stg_orders": [
+      "source.acme.raw.orders",
+      "source.acme.crm.customers"
+    ],
+    "model.acme.dim_orders": [
+      "model.acme.stg_orders",
+      "seed.acme.country_codes",
+      "test.acme.not_null_id"
+    ],
+    "seed.acme.country_codes": [],
+    "snapshot.acme.orders_history": [
+      "model.acme.stg_orders"
+    ],
+    "test.acme.not_null_id": [
+      "model.acme.dim_orders"
+    ],
+    "model.acme.external_target": [
+      "model.acme.stg_orders"
+    ],
+    "model.acme.disabled_model": [
+      "model.acme.stg_orders"
+    ],
+    "source.acme.raw.orders": [],
+    "source.acme.crm.customers": []
+  },
+  "exposures": {},
+  "metrics": {},
+  "macros": {}
+}

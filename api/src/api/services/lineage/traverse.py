@@ -124,7 +124,14 @@ async def _expand(
             if other in visited:
                 continue  # cycle guard, and a diamond's shared node stays one node
             visited.add(other)
-            if other not in result.distances:
+            # A node can be reachable in *both* directions -- `a` writes `b` and
+            # `b` later writes `a`, which incremental and merge workloads do all
+            # the time. Only one distance can be reported, so report the nearer
+            # relationship: showing a one-hop downstream table three hops
+            # upstream buries the fact that matters. Upstream wins an exact tie,
+            # which is arbitrary but at least deterministic.
+            existing = result.distances.get(other)
+            if existing is None or abs(step * level) < abs(existing):
                 result.distances[other] = step * level
             if len(result.distances) >= MAX_NODES:
                 result.truncated = True

@@ -64,6 +64,21 @@ def _validate_reconcile(reconcile: str) -> None:
         )
 
 
+def _require_run_id(reconcile: str, run_id: str | None) -> None:
+    """Reject a reconcile the caller cannot possibly satisfy, before any writing.
+
+    Only the generic route needs this: an artifact carries its own run id, and
+    one that has none degrades to `reconcile="none"` rather than failing.
+    Checked up front because the alternative -- discovering it after the whole
+    upsert pass has run -- does the entire write for a request it then rejects.
+    """
+    if reconcile == "provider_run" and not run_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="reconcile='provider_run' requires run_id",
+        )
+
+
 def _reject_reserved(provider: str) -> None:
     if provider == EXECUTION_PROVIDER:
         raise HTTPException(
@@ -127,12 +142,7 @@ async def _persist(
         workspace_id=workspace_id,
     )
     removed = 0
-    if reconcile == "provider_run":
-        if not run_id:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail="reconcile='provider_run' requires run_id",
-            )
+    if reconcile == "provider_run" and run_id:
         removed = await lineage_ingest.reconcile_provider_run(
             db,
             provider=provider,
@@ -164,6 +174,7 @@ async def import_lineage(
     """Import a batch of already-canonical edges from any producer."""
     _reject_reserved(body.provider)
     _validate_reconcile(body.reconcile)
+    _require_run_id(body.reconcile, body.run_id)
     if len(body.edges) > MAX_EDGES_PER_IMPORT:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

@@ -43,6 +43,7 @@ A server old enough to lack this endpoint returns **404**; treat that as the old
 | `workspaces` | Create and list workspaces and members |
 | `catalog` | Catalogs (create/attach/detach/drop), [storage migrations](#catalog-storage-migrations), schemas, tables, table detail, sample rows, snapshot history |
 | `queries` | Submit queries, page result rows, profiles, saved queries, history |
+| `lineage` | Read a table's [lineage](../concepts/lineage.md) graph; import and retire external lineage |
 | `agents` | List the agents you may use, with their capabilities |
 | `admin` | Agents (detail, monitoring, lifecycle, bootstrap/revoke, [access](#per-agent-access)), storage backends, users, service accounts & PATs, maintenance |
 
@@ -83,6 +84,30 @@ The field is **additive** — `columns` still carries the names-only list it alw
 - the statement produced no result grid (DDL and DML), and
 - the query ran on an agent older than this feature. The control plane reports nothing rather than deriving types from
   the result Parquet, whose writer is lossy.
+
+## Lineage
+
+Read the [lineage](../concepts/lineage.md) graph around a table, and import lineage produced elsewhere.
+
+| Method & path | Purpose |
+|---|---|
+| `GET /api/workspaces/{ws}/catalogs/{catalog}/schemas/{schema}/tables/{table}/lineage` | The bounded graph around a table. Requires `metadata` tier on the table. |
+| `POST /api/workspaces/{ws}/lineage/imports` | Import canonical edges from any producer. Requires workspace **writer**, plus `writer` on each target's catalog. |
+| `POST /api/workspaces/{ws}/lineage/imports/{provider}` | Import a producer's own artifact — `dbt` takes a `manifest.json` body. Same authorization. |
+| `DELETE /api/workspaces/{ws}/lineage/imports?provider=<name>` | Remove every edge a retired producer asserted. Requires workspace **owner**. |
+
+Read parameters: `direction` (`upstream` \| `downstream` \| `both`, default `both`), `depth` (1–5, default 2), and a
+repeatable `provider` filter. The response carries `nodes`, `edges` and `truncated`; `truncated` is `true` when a cap
+stopped the walk early, so a partial graph is never mistaken for a complete one.
+
+Node `kind` is `table`, `external` (an asset outside DuckHaven, named by whoever imported it), or `redacted` (a table
+in a scoped catalog the caller holds no grant on — present with no names, so the graph keeps its shape). Every edge
+carries a `providers` list, since more than one producer can assert the same relationship, and a `columns` list that is
+always empty today.
+
+The provider name `execution` is reserved for lineage DuckHaven derives from SQL it ran: importing it is rejected with
+**422**, and it cannot be purged. Imports are idempotent, and edges whose endpoints cannot be resolved are returned in
+`skipped` alongside a **200** rather than failing the whole batch.
 
 ## Catalog storage migrations
 

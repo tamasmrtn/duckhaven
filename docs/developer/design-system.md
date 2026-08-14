@@ -50,8 +50,9 @@ the size.
 - **No notebook/cell model** (architecture D4). A worksheet is one buffer.
 - **No AI assistant panel in MVP**. The right side of the worksheet is for
   results, not chat.
-- **No marketplace, no lineage graph, no governance dashboard**. Those are
-  enterprise distractions.
+- **No marketplace, no governance dashboard**. Those are enterprise
+  distractions. Lineage is the exception we did take: it earns its place as a
+  tab on the table you are already looking at, not as a destination of its own.
 - **No expandable mega-nav**. Five top-level destinations max.
 
 ---
@@ -687,7 +688,8 @@ The same way `ARCHITECTURE.md §2` declares non-goals, this doc declares
 **design** non-goals so they don't sneak in during M1:
 
 - No AI/Copilot/Assistant panel.
-- No lineage graphs, no data-quality dashboards.
+- No data-quality dashboards. (Lineage shipped after M1, as a table-detail tab —
+  see [Lineage](../concepts/lineage.md).)
 - No marketing pages — `/` redirects to `/worksheets` after login.
 - No notification center. Toasts only.
 - No customizable themes beyond light/dark. Brand stays brand.

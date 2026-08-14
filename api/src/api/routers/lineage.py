@@ -47,6 +47,23 @@ router = APIRouter()
 MAX_EDGES_PER_IMPORT = 5000
 
 
+_RECONCILE_MODES = ("none", "provider_run")
+
+
+def _validate_reconcile(reconcile: str) -> None:
+    """Both import routes accept `reconcile`, so both must reject a bad value.
+
+    Silently ignoring an unrecognised mode is worse here than elsewhere: these
+    endpoints are meant to run unattended in CI, where a typo that returns 200
+    and quietly stops pruning is invisible until the graph is wrong.
+    """
+    if reconcile not in _RECONCILE_MODES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"reconcile must be one of: {', '.join(_RECONCILE_MODES)}",
+        )
+
+
 def _reject_reserved(provider: str) -> None:
     if provider == EXECUTION_PROVIDER:
         raise HTTPException(
@@ -100,6 +117,7 @@ async def _persist(
     edges: list[CanonicalEdge],
     skipped: list[Skipped],
     workspace_id: uuid.UUID,
+    reconcile_targets: set[str] | None = None,
 ) -> LineageImportOut:
     result = await lineage_ingest.upsert_edges(
         db,
@@ -119,7 +137,14 @@ async def _persist(
             db,
             provider=provider,
             provider_run_id=run_id,
-            target_keys={e.target.key for e in edges},
+            # Defaults to the edges' targets; an adapter that knows the wider
+            # set it describes passes that instead, so an asset whose last
+            # dependency was removed can still be pruned.
+            target_keys=(
+                reconcile_targets
+                if reconcile_targets is not None
+                else {e.target.key for e in edges}
+            ),
         )
     await db.commit()
     return LineageImportOut(
@@ -138,11 +163,7 @@ async def import_lineage(
 ) -> LineageImportOut:
     """Import a batch of already-canonical edges from any producer."""
     _reject_reserved(body.provider)
-    if body.reconcile not in ("none", "provider_run"):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="reconcile must be one of: none, provider_run",
-        )
+    _validate_reconcile(body.reconcile)
     if len(body.edges) > MAX_EDGES_PER_IMPORT:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -218,6 +239,7 @@ async def import_provider_artifact(
     mentions is the correct behaviour.
     """
     _reject_reserved(provider)
+    _validate_reconcile(reconcile)
     try:
         adapter = get_adapter(provider)
     except KeyError:
@@ -230,7 +252,8 @@ async def import_provider_artifact(
     await assert_workspace_member(db, workspace.id, user.id, min_role="writer")
     catalogs = await resolve_workspace_catalogs(db, workspace.id)
 
-    edges, skipped = adapter(body, resolve=Resolver(catalogs))
+    produced = adapter(body, resolve=Resolver(catalogs))
+    edges, skipped = produced.edges, produced.skipped
     if len(edges) > MAX_EDGES_PER_IMPORT:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -258,6 +281,7 @@ async def import_provider_artifact(
         edges=edges,
         skipped=skipped,
         workspace_id=workspace.id,
+        reconcile_targets=produced.targets,
     )
 
 

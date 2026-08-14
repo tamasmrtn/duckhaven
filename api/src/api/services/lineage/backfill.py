@@ -53,6 +53,7 @@ from api.services.lineage.ingest import (
     record_execution_lineage,
     workspace_catalog_context,
 )
+from api.services.lineage.times import aware_utc as _aware
 
 logger = logging.getLogger(__name__)
 
@@ -160,19 +161,13 @@ async def _begin(db: AsyncSession, row: LineageBackfill, context: WorkspaceCatal
     everything from there up has already been read.
     """
     now = datetime.now(tz=UTC)
-    live_from = await _live_from(db, context)
-    covered_through = row.covered_through
-    if covered_through is None:
-        covered_through = min(now, _aware(live_from)) if live_from is not None else now
-        row.covered_through = covered_through
+    if row.covered_through is None:
+        live_from = await _live_from(db, context)
+        row.covered_through = now if live_from is None else min(now, _aware(live_from))
 
     row.status = "running"
     row.started_at = now
     await db.flush()
-
-
-def _aware(value: datetime) -> datetime:
-    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 def _window(row: LineageBackfill) -> tuple[datetime | None, datetime | None]:

@@ -275,3 +275,48 @@ def test_classify(sql, expected):
 def test_operation_is_recorded_on_the_edge():
     edges = extract("CREATE VIEW warehouse.analytics.v AS SELECT id FROM raw.analytics.src")
     assert [e.operation for e in edges] == ["create_view"]
+
+
+# --- temporary relations ----------------------------------------------------
+
+
+def test_a_temp_table_is_not_a_node():
+    # It lives and dies inside one connection, so it is not a catalog object and
+    # a durable node for it would be permanent junk nothing ever cleans up.
+    assert extract("CREATE TEMP TABLE staging AS SELECT * FROM raw.analytics.src") == []
+
+
+def test_a_script_is_spliced_through_its_temp_table():
+    # Dropping the temp without splicing would lose the relationship entirely:
+    # `dim` would show no upstream at all.
+    assert pairs(
+        "CREATE TEMP TABLE staging AS SELECT * FROM raw.analytics.src;"
+        "CREATE TABLE warehouse.analytics.dim AS SELECT * FROM staging;"
+    ) == {("raw.analytics.src", "warehouse.analytics.dim")}
+
+
+def test_splicing_survives_a_chain_of_temps():
+    assert pairs(
+        "CREATE TEMP TABLE a AS SELECT * FROM raw.analytics.src;"
+        "CREATE TEMP TABLE b AS SELECT * FROM a;"
+        "CREATE TABLE warehouse.analytics.dim AS SELECT * FROM b;"
+    ) == {("raw.analytics.src", "warehouse.analytics.dim")}
+
+
+def test_a_temp_joined_with_a_real_table_keeps_both_sources():
+    assert pairs(
+        "CREATE TEMP TABLE staging AS SELECT * FROM raw.analytics.a;"
+        "CREATE TABLE warehouse.analytics.dim AS "
+        "SELECT * FROM staging JOIN raw.analytics.b USING (id);"
+    ) == {
+        ("raw.analytics.a", "warehouse.analytics.dim"),
+        ("raw.analytics.b", "warehouse.analytics.dim"),
+    }
+
+
+def test_a_real_table_sharing_a_temps_name_is_unaffected():
+    # The splice only applies to an unqualified name matching a temp built in
+    # this same script.
+    assert pairs("CREATE TABLE warehouse.analytics.dim AS SELECT * FROM raw.analytics.staging") == {
+        ("raw.analytics.staging", "warehouse.analytics.dim")
+    }

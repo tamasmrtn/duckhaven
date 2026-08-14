@@ -105,10 +105,12 @@ jobs:
             --cov=api/src \
             --cov-config=pyproject.toml \
             --cov-report=
+      # The agent suite stays serial: its control-channel tests settle with
+      # fixed sleeps, which flake under xdist worker contention, and the whole
+      # suite runs in ~13s anyway. The API suite above is the parallel one.
       - name: Run agent tests
         run: |
           uv run --package duckhaven-agent pytest agent/tests/unit/ \
-            -n auto \
             --cov=agent/src --cov-append \
             --cov-config=pyproject.toml \
             --cov-report=xml:coverage.xml \

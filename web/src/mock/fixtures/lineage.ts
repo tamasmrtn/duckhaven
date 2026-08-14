@@ -3,13 +3,17 @@ import type { LineageGraph } from "@/types/lineage";
 // A graph around `analytics.daily_active_users`, exercising every node kind the
 // UI has to render: plain tables, an imported external source, and a node the
 // viewer holds no grant on. Two providers agree on one edge, which is what the
-// merged `providers` list is for.
+// merged `providers` list is for — and on that edge the imported claim has gone
+// stale while the execution-derived one has not, so the per-provider freshness
+// markers are reachable in dev without a handler override.
 function key(schema: string, table: string): string {
   return `cat:11111111-1111-1111-1111-111111111111/${schema}/${table}`;
 }
 
 const NOW = "2026-08-14T09:30:00Z";
 const EARLIER = "2026-07-01T08:00:00Z";
+// Comfortably past the default 30-day staleness window.
+const LONG_AGO = "2026-02-11T08:00:00Z";
 
 export function makeLineage(): LineageGraph {
   return {
@@ -63,26 +67,55 @@ export function makeLineage(): LineageGraph {
     ],
     edges: [
       {
+        // Nothing has re-imported this in months: stale, and the only producer
+        // asserting it, so the edge itself is stale.
         source_key: "ext:crm_pg/public/customers",
         target_key: key("raw", "events"),
         operation: "model",
-        providers: ["dbt"],
+        providers: [
+          {
+            name: "dbt",
+            first_seen_at: EARLIER,
+            last_seen_at: LONG_AGO,
+            observation_count: 12,
+            stale: true,
+          },
+        ],
         confidence: "exact",
         first_seen_at: EARLIER,
-        last_seen_at: NOW,
+        last_seen_at: LONG_AGO,
         observation_count: 12,
+        stale: true,
         last_query_id: null,
         columns: [],
       },
       {
+        // Two producers, one of which stopped. The edge stays current because
+        // the other still confirms it.
         source_key: key("raw", "events"),
         target_key: key("analytics", "daily_active_users"),
         operation: "create_table_as",
-        providers: ["dbt", "execution"],
+        providers: [
+          {
+            name: "dbt",
+            first_seen_at: EARLIER,
+            last_seen_at: LONG_AGO,
+            observation_count: 12,
+            stale: true,
+          },
+          {
+            name: "execution",
+            first_seen_at: EARLIER,
+            last_seen_at: NOW,
+            observation_count: 35,
+            stale: false,
+          },
+        ],
         confidence: "exact",
         first_seen_at: EARLIER,
         last_seen_at: NOW,
         observation_count: 47,
+        stale: false,
         last_query_id: "q-1",
         columns: [],
       },
@@ -90,11 +123,20 @@ export function makeLineage(): LineageGraph {
         source_key: "redacted:9f2c4a1b7e0d3856",
         target_key: key("analytics", "daily_active_users"),
         operation: "create_table_as",
-        providers: ["execution"],
+        providers: [
+          {
+            name: "execution",
+            first_seen_at: EARLIER,
+            last_seen_at: NOW,
+            observation_count: 47,
+            stale: false,
+          },
+        ],
         confidence: "exact",
         first_seen_at: EARLIER,
         last_seen_at: NOW,
         observation_count: 47,
+        stale: false,
         last_query_id: "q-1",
         columns: [],
       },
@@ -102,22 +144,39 @@ export function makeLineage(): LineageGraph {
         source_key: key("analytics", "daily_active_users"),
         target_key: key("analytics", "funnel"),
         operation: "insert",
-        providers: ["execution"],
+        providers: [
+          {
+            name: "execution",
+            first_seen_at: EARLIER,
+            last_seen_at: NOW,
+            observation_count: 3,
+            stale: false,
+          },
+        ],
         confidence: "exact",
         first_seen_at: EARLIER,
         last_seen_at: NOW,
         observation_count: 3,
+        stale: false,
         last_query_id: "q-2",
         columns: [],
       },
     ],
     truncated: false,
+    hidden: false,
   };
 }
 
 // A table nothing has been built from and nothing reads: the empty state.
 export function makeEmptyLineage(root: string): LineageGraph {
-  return { root, nodes: [], edges: [], truncated: false };
+  return { root, nodes: [], edges: [], truncated: false, hidden: false };
+}
+
+// A table that *does* have lineage, all of it in catalogs this workspace cannot
+// see. Indistinguishable from the empty graph without the `hidden` flag, which
+// is the entire reason the flag exists.
+export function makeHiddenLineage(root: string): LineageGraph {
+  return { root, nodes: [], edges: [], truncated: false, hidden: true };
 }
 
 export let LINEAGE = makeLineage();

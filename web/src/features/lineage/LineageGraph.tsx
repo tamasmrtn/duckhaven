@@ -122,6 +122,10 @@ export function LineageGraph({
                 const x2 = to.x - NODE_WIDTH / 2;
                 const y2 = to.y + NODE_HEIGHT / 2;
                 const midX = (x1 + x2) / 2;
+                // A relationship no producer has re-asserted lately is drawn
+                // dashed and faint: still there, still navigable, but visibly
+                // unconfirmed. Removing it would be the worse lie of the two.
+                const stale = e.edge.stale;
                 return (
                   <path
                     key={`${e.from}->${e.to}`}
@@ -129,6 +133,8 @@ export function LineageGraph({
                     fill="none"
                     stroke="var(--border-strong)"
                     strokeWidth="1.2"
+                    strokeDasharray={stale ? "4 3" : undefined}
+                    opacity={stale ? 0.5 : undefined}
                     markerEnd="url(#dh-lineage-arrow)"
                   />
                 );

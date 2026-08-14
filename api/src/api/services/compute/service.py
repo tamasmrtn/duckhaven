@@ -142,7 +142,7 @@ async def provision_elastic_agent(
     """Provision one elastic agent at an explicit size (admin-initiated).
 
     Unlike ``ensure_agent`` this is a deliberate action — no pool coalescing or cap
-    — mirroring starting a Databricks cluster. The agent is not bound to a pool
+    — mirroring starting a compute cluster by hand. The agent is not bound to a pool
     (``pool_key`` NULL); it serves interactive queries once it registers, and the
     idle reaper (using ``idle_timeout_s``, or the global default when None)
     auto-terminates it. Returns the agent, or ``None`` if elastic compute is

@@ -64,7 +64,7 @@ function GrantRow({
 }
 
 /**
- * Databricks-style permissions surface for one catalog / schema / table node.
+ * The permissions surface for one catalog / schema / table node.
  * Direct grants at this exact level are editable; grants inherited from a
  * coarser level are shown read-only. The open↔scoped toggle appears only at the
  * catalog level, since access mode is a per-catalog attachment setting.

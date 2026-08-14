@@ -4,8 +4,8 @@ Attribution's minimal, zero-contract form: clients are expected to lead their
 ``User-Agent`` with the calling application, ``<product>/<version>`` (e.g.
 ``dbt-duckhaven/0.1.0`` / ``dlt-duckhaven/0.2.0``), so the API can record *what
 workload this is* without adding a request field the published client would have to
-learn. Same idea as Postgres' ``application_name`` (set once, on connect) and
-Databricks' ``system.query.history.client_application``.
+learn. Same idea as Postgres' ``application_name``: set once, on connect, and
+recorded against every statement the session runs.
 
 The connector leads with the application from ``duckhaven-sql-connector`` 0.3.0. A
 connector older than that — or one opened with no ``application=`` set — leads with

@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ApiError } from "@/api/client";
 
-// Databricks-style destructive confirm: the user must type the object name.
+// Destructive confirm: the user must type the object name to proceed.
 // For a non-empty schema the API replies 409 asking for cascade; we surface a
 // checkbox and require a second confirm.
 export function ConfirmDropDialog({

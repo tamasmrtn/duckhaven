@@ -52,7 +52,7 @@ export function ProfileGraph({
   const [isPanning, setIsPanning] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Click-drag to pan, like Snowflake/Databricks' plan viewers. A press that
+  // Click-drag to pan, the usual plan-viewer interaction. A press that
   // starts on a node button is left alone so selecting a node still works;
   // everything else grabs the scroll container and drags it under the cursor.
   function handleMouseDown(e: React.MouseEvent<HTMLDivElement>) {

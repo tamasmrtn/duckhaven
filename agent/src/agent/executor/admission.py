@@ -1,4 +1,4 @@
-"""Memory-budget admission control with a FIFO queue (Snowflake-style).
+"""Memory-budget admission control with a FIFO queue.
 
 The agent must never oversubscribe its memory: the sum of the ``memory_limit``
 of all concurrently RUNNING DuckDB sessions must stay within the cgroup-aware

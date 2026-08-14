@@ -30,7 +30,7 @@ export const schedulesApi = {
 
   remove: (ws: string, id: string) => del(`/workspaces/${ws}/schedules/${id}`),
 
-  // Databricks-style per-job run history (newest first).
+  // Per-job run history (newest first).
   listRuns: (ws: string, id: string) =>
     get<Query[]>(`/workspaces/${ws}/schedules/${id}/runs`),
 

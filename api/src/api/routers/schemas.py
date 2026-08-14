@@ -16,9 +16,9 @@ import uuid
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,9 +38,11 @@ from api.schemas.catalog import (
     TableCreate,
     TableOut,
 )
+from api.schemas.lineage import LineageGraphOut
 from api.schemas.query import RowsPageOut
 from api.services import grants as grant_service
 from api.services import query as query_service
+from api.services.lineage import graph as lineage_graph
 from api.services.lineage import ingest as lineage_ingest
 from api.services.polaris import (
     PolarisClient,
@@ -56,6 +58,7 @@ from api.services.workspace import (
     get_workspace,
     polaris_storage,
     resolve_catalog,
+    resolve_workspace_catalogs,
 )
 
 logger = logging.getLogger(__name__)
@@ -519,6 +522,48 @@ async def list_snapshots(
     return [_snapshot_to_out(s) for s in snapshots]
 
 
+async def get_table_lineage(
+    schema: str,
+    table: str,
+    direction: str = "both",
+    depth: int = 2,
+    provider: Annotated[list[str] | None, Query()] = None,
+    target: _Target = Depends(target_catalog("reader")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> LineageGraphOut:
+    """The bounded lineage graph around a table.
+
+    Reads only from the control plane's own store — no Polaris call and no agent
+    round trip — so it stays cheap enough to open a tab on. Nodes the caller
+    cannot see are redacted rather than dropped, and nodes outside the
+    workspace's attached catalogs are dropped rather than redacted; see
+    ``services/lineage/redact.py`` for why those two differ.
+    """
+    if direction not in ("upstream", "downstream", "both"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="direction must be one of: upstream, downstream, both",
+        )
+    cat = target.catalog
+    await grant_service.enforce_leaf(
+        db, target.workspace.id, cat, user.id, schema=schema, table=table, need="metadata"
+    )
+    catalogs = await resolve_workspace_catalogs(db, target.workspace.id)
+    return await lineage_graph.table_lineage(
+        db,
+        workspace_id=target.workspace.id,
+        principal_id=user.id,
+        catalogs=catalogs,
+        catalog=cat,
+        schema=schema,
+        table=table,
+        direction=direction,
+        depth=depth,
+        providers=provider,
+    )
+
+
 async def create_table(
     schema: str,
     body: TableCreate,
@@ -711,6 +756,12 @@ _ROUTES: list[tuple[str, Callable[..., Any], list[str], dict[str, Any]]] = [
         list_snapshots,
         ["GET"],
         {"response_model": list[SnapshotOut]},
+    ),
+    (
+        "/{schema}/tables/{table}/lineage",
+        get_table_lineage,
+        ["GET"],
+        {"response_model": LineageGraphOut},
     ),
     ("/{schema}/tables/{table}/sample", sample_table, ["GET"], {"response_model": RowsPageOut}),
     ("/{schema}/tables/{table}/recount", recount_table, ["POST"], {}),

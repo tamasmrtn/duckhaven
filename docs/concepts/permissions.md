@@ -234,6 +234,19 @@ silently every time someone joined.
 
 Manage this from **Compute → (an agent) → Access**.
 
+## Lineage
+
+A [lineage](lineage.md) graph names tables, and a name can reveal more than the rows do — so the graph is filtered on
+the way out, by the same tiers as everything else:
+
+- Tables in catalogs the workspace does not attach are absent from the graph entirely.
+- In a `scoped` catalog, a table the caller holds no tier on is returned as a **restricted node**: it keeps its place
+  and its connections, but carries no catalog, schema, or table name.
+
+Restricted nodes are shown rather than dropped so a partial graph stays distinguishable from a complete one. Importing
+lineage requires `writer` on the target's catalog, and imported names are redacted on read like any other, so an import
+cannot be used to learn names the caller could not otherwise see.
+
 ## What is not in scope
 
 - **No row- or column-level security.** Object-level grants reach down to the

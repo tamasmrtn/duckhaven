@@ -258,10 +258,10 @@ cutting a new release see [docs/developer/releasing.md](docs/developer/releasing
 
 The full shipped feature set is above. Here's what's actively being worked on:
 
-- **Data lineage** — column- and table-level lineage across worksheets, saved
-  queries, and scheduled jobs, including importing a dbt `manifest.json` so
-  lineage that already exists in your dbt project shows up in the catalog
-  instead of being re-derived from scratch.
+- **Column-level lineage** — table-level lineage now ships: DuckHaven derives it
+  from the SQL it runs (worksheets, scheduled jobs, and external tools alike)
+  and imports a dbt `manifest.json` so lineage that already exists in your dbt
+  project shows up in the catalog. Column-to-column derivation is the next step.
 - **A semantic layer for the AI assistant** — curated metric and dimension
   definitions the assistant grounds its SQL in, instead of inferring intent
   from raw table/column names alone.

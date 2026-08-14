@@ -498,8 +498,35 @@ async def get_table(
         t = await polaris.get_table(cat.polaris_name, schema, table)
     except PolarisNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
+    # The one place DuckHaven reliably holds a table's Iceberg identity without
+    # asking for it, so it is where a rename gets noticed and the lineage that
+    # would otherwise be orphaned is moved across. A no-op — and no write — once
+    # the identity is already on record, which is every call but the first.
+    await _reconcile_identity(db, cat.id, schema, table, t.table_id)
     meta = await _load_table_meta(db, cat.id, schema)
     return _table_to_out(t, cat, target.workspace.id, meta.get(table))
+
+
+async def _reconcile_identity(
+    db: AsyncSession, catalog_id: uuid.UUID, schema: str, table: str, table_uuid: str | None
+) -> None:
+    """Record a table's Iceberg identity, repairing lineage if it has moved.
+
+    Lineage is metadata: failing to reconcile it must never turn a table anyone
+    can otherwise read into an error. A failure here is logged and the read
+    continues, and the next look at the table tries again.
+    """
+    from api.services.lineage.identity import reconcile_table_identity
+
+    try:
+        outcome = await reconcile_table_identity(
+            db, catalog_id=catalog_id, schema=schema, table=table, table_uuid=table_uuid
+        )
+        if outcome not in (None, "unchanged"):
+            await db.commit()
+    except Exception:
+        logger.exception("Lineage identity reconcile failed for %s.%s", schema, table)
+        await db.rollback()
 
 
 async def list_snapshots(
@@ -594,6 +621,9 @@ async def create_table(
             catalog_id=cat.id,
             schema_name=schema,
             table_name=body.name,
+            # Recorded at birth, so this table's identity is on file before
+            # anything can rename it out from under its lineage.
+            table_uuid=t.table_id,
             owner_id=user.id,
             row_count=0,
             size_bytes=0,

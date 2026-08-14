@@ -15,6 +15,7 @@ import { catalogMigrationHandlers } from '@/mock/handlers/catalog-migrations'
 import { userHandlers } from '@/mock/handlers/users'
 import { serviceAccountHandlers } from '@/mock/handlers/service-accounts'
 import { maintenanceHandlers } from '@/mock/handlers/maintenance'
+import { lineageHandlers } from '@/mock/handlers/lineage'
 
 export const server = setupServer(
   ...authHandlers,
@@ -33,4 +34,5 @@ export const server = setupServer(
   ...userHandlers,
   ...serviceAccountHandlers,
   ...maintenanceHandlers,
+  ...lineageHandlers,
 )

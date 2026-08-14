@@ -17,6 +17,7 @@ import { resetServiceAccounts } from "./fixtures/service-accounts";
 import { resetGrants } from "./fixtures/grants";
 import { resetMetrics } from "./fixtures/metrics";
 import { resetMaintenance } from "./fixtures/maintenance";
+import { resetLineage } from "./fixtures/lineage";
 import { resetLiveQueries } from "./handlers/queries";
 import { resetSeed } from "./lib/seed";
 
@@ -35,6 +36,7 @@ export function resetMockState(): void {
   resetGrants();
   resetMetrics();
   resetMaintenance();
+  resetLineage();
   resetLiveQueries();
   resetSeed();
 }

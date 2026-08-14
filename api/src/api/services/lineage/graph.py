@@ -140,6 +140,13 @@ def _merge_by_pair(
         target = resolved.get(edge.target_key)
         if source is None or target is None:
             continue
+        # Withheld when either endpoint is redacted. The query it points at is
+        # readable by any workspace member and its SQL text names every table it
+        # touched, so handing over the link would undo the redaction beside it —
+        # the caller would read the name the node deliberately does not carry.
+        hidden = source.kind == "redacted" or target.kind == "redacted"
+        query_id = None if hidden else edge.last_query_id
+
         pair = (source.key, target.key)
         existing = merged.get(pair)
         if existing is None:
@@ -152,7 +159,7 @@ def _merge_by_pair(
                 first_seen_at=edge.first_seen_at,
                 last_seen_at=edge.last_seen_at,
                 observation_count=edge.observation_count,
-                last_query_id=edge.last_query_id,
+                last_query_id=query_id,
             )
             continue
         if edge.provider not in existing.providers:
@@ -160,7 +167,7 @@ def _merge_by_pair(
         existing.observation_count += edge.observation_count
         existing.first_seen_at = min(_aware(existing.first_seen_at), _aware(edge.first_seen_at))
         existing.last_seen_at = max(_aware(existing.last_seen_at), _aware(edge.last_seen_at))
-        existing.last_query_id = existing.last_query_id or edge.last_query_id
+        existing.last_query_id = existing.last_query_id or query_id
         existing.operation = existing.operation or edge.operation
     for out in merged.values():
         out.providers.sort()

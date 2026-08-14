@@ -247,6 +247,9 @@ Restricted nodes are shown rather than dropped so a partial graph stays distingu
 lineage requires `writer` on the target's catalog, and imported names are redacted on read like any other, so an import
 cannot be used to learn names the caller could not otherwise see.
 
+Redaction covers what sits *beside* the node too. An edge normally links to the query that produced it, and that
+query's SQL names every table it touched — so the link is withheld whenever either endpoint of the edge is restricted.
+
 ## What is not in scope
 
 - **No row- or column-level security.** Object-level grants reach down to the

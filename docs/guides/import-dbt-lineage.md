@@ -66,14 +66,16 @@ effect: if the API is unreachable, that should fail a small visible CI step, not
 
 ## How your project maps onto the catalog
 
-DuckHaven reads the physical relation behind each dbt resource — its `database`, `schema` and `alias` — rather than the
-model name, so a model with a configured `alias` points at the table it actually writes.
+DuckHaven reads the physical relation behind each dbt resource rather than its model name, so a model with a
+configured `alias` points at the table it actually writes. Which field carries that name depends on the resource: a
+model, seed or snapshot uses `alias`; a **source** has no `alias` and names its table with `identifier`, where `name`
+is only the handle `source('crm', 'customers')` uses.
 
 | In dbt | In DuckHaven |
 |---|---|
 | `database` | the catalog slug |
 | `schema` | the schema |
-| `alias` (or `name`) | the table |
+| `alias` for a model/seed/snapshot, `identifier` for a source | the table |
 | `ref()` / `source()` dependencies | edges into that model |
 | `invocation_id` | the import batch |
 

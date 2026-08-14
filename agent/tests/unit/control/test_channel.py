@@ -1413,6 +1413,20 @@ async def test_a_queued_open_fails_fast_instead_of_hanging(monkeypatch):
     assert admission.running_count == 1
 
 
+async def _wait_until(predicate, *, timeout: float = 5.0) -> None:
+    """Poll ``predicate`` until it holds, or fail after ``timeout`` seconds.
+
+    The session open/close handlers run as detached background tasks, so a
+    fixed sleep before an assert flakes under CPU contention (pytest-xdist
+    workers). Wait for the condition itself instead of a slice of time.
+    """
+    deadline = asyncio.get_running_loop().time() + timeout
+    while not predicate():
+        if asyncio.get_running_loop().time() >= deadline:
+            raise AssertionError(f"condition not met within {timeout}s")
+        await asyncio.sleep(0.01)
+
+
 async def test_repeated_reaped_bursts_do_not_erode_capacity(tmp_path):
     """The whole bug, in one assertion: capacity must survive repeated bursts.
 
@@ -1438,7 +1452,9 @@ async def test_repeated_reaped_bursts_do_not_erode_capacity(tmp_path):
             ]
         )
         await ch_module._consume(ws, tmp_path, admission)
-        await asyncio.sleep(0.2)
+        await _wait_until(
+            lambda: len([sid for sid in ids if session.get(sid) is not None]) == capacity
+        )
         opened = [sid for sid in ids if session.get(sid) is not None]
         assert len(opened) == capacity, (
             f"round {round_no}: admitted {len(opened)} of {capacity} — "
@@ -1453,7 +1469,7 @@ async def test_repeated_reaped_bursts_do_not_erode_capacity(tmp_path):
             ]
         )
         await ch_module._consume(close_ws, tmp_path, admission)
-        await asyncio.sleep(0.2)
+        await _wait_until(lambda: admission.running_count == 0 and admission.queued_count == 0)
         assert admission.running_count == 0, f"round {round_no}: slots leaked after close"
         assert admission.queued_count == 0, f"round {round_no}: waiters leaked after close"
 

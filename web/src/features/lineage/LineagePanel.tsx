@@ -21,15 +21,35 @@ const DIRECTIONS: { value: LineageDirection; label: string }[] = [
 
 const DEPTHS = [1, 2, 3];
 
-const OPERATION_LABEL: Record<string, string> = {
+// Direction-aware, because one phrasing cannot serve both sides of an edge:
+// read from the target, `create_table_as` means "created from X"; read from the
+// source it means "used to create X". A single map plus a "(downstream)" suffix
+// states the relationship backwards for every outgoing edge.
+const INCOMING_LABEL: Record<string, string> = {
   create_table_as: "Created from",
   create_view: "View over",
   insert: "Inserted from",
   update: "Updated from",
   merge: "Merged from",
   delete: "Deleted using",
-  model: "Declared dependency",
+  model: "Declared dependency on",
 };
+
+const OUTGOING_LABEL: Record<string, string> = {
+  create_table_as: "Used to create",
+  create_view: "Backs the view",
+  insert: "Inserted into",
+  update: "Used to update",
+  merge: "Merged into",
+  delete: "Used to delete from",
+  model: "Declared dependency of",
+};
+
+function edgeLabel(operation: string | null, isIncoming: boolean): string {
+  const map = isIncoming ? INCOMING_LABEL : OUTGOING_LABEL;
+  if (!operation) return isIncoming ? "Built using" : "Used to build";
+  return map[operation] ?? operation;
+}
 
 function Segmented<T extends string | number>({
   label,
@@ -109,13 +129,10 @@ function EdgeDetails({
           >
             <div className="flex items-center justify-between gap-2">
               <span className="min-w-0 truncate text-text-secondary">
-                {edge.operation
-                  ? (OPERATION_LABEL[edge.operation] ?? edge.operation)
-                  : "Related to"}{" "}
+                {edgeLabel(edge.operation, isIncoming)}{" "}
                 <span className="font-mono text-text-primary">
                   {nodeName(other)}
                 </span>
-                {isIncoming ? "" : " (downstream)"}
               </span>
               <span className="shrink-0 font-mono text-2xs text-text-tertiary">
                 seen {edge.observation_count}×

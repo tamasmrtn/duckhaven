@@ -4,6 +4,20 @@ Walks the store, decides what the caller may see, and merges the per-provider
 rows into one edge per relationship. Kept apart from ``traverse`` (which knows
 only about keys and hops) and ``redact`` (which knows only about visibility) so
 each of the three can be tested without standing the other two up.
+
+Two things a caller needs in order to know how much to trust what comes back are
+decided here, because this is the only place that sees both the stored rows and
+the visibility verdict:
+
+* **Completeness.** ``redact`` drops nodes outside the workspace entirely. That
+  is the right call — they are out of scope, not merely unreadable — but the
+  result is that a graph missing half of itself looks exactly like a graph that
+  never had a second half. So the drop is *counted*, and the response says a drop
+  happened without saying what was dropped.
+* **Freshness.** Each stored row is one producer's observation with its own
+  timestamps, and they are reported that way instead of being flattened into a
+  single "last seen" that lets whichever producer ran most recently vouch for all
+  the others.
 """
 
 from __future__ import annotations
@@ -13,12 +27,19 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.config import settings
 from api.models.catalog import Catalog
 from api.models.lineage import LineageEdge
-from api.schemas.lineage import LineageEdgeOut, LineageGraphOut, LineageNodeOut
+from api.schemas.lineage import (
+    LineageEdgeOut,
+    LineageGraphOut,
+    LineageNodeOut,
+    LineageProviderOut,
+)
 from api.services.lineage import traverse
 from api.services.lineage.keys import internal_ref
 from api.services.lineage.redact import Visibility, VisibleNode, visible_node
+from api.services.lineage.times import aware_utc, is_stale
 
 
 async def table_lineage(
@@ -47,6 +68,7 @@ async def table_lineage(
     # Resolve every node once. An endpoint appears on many edges, so the map is
     # keyed by the stored key and holds the (possibly redacted) presentation.
     resolved: dict[str, VisibleNode] = {}
+    hidden = False
     for edge in walked.edges:
         for key, catalog_id, system, node_schema, node_table in (
             (
@@ -75,8 +97,13 @@ async def table_lineage(
                 table=node_table,
                 distance=walked.distances.get(key, 0),
             )
-            if node is not None:
-                resolved[key] = node
+            if node is None:
+                # Out of the workspace's scope entirely. It leaves the graph, and
+                # every edge through it goes with it — so record that the answer
+                # is short of the truth before the evidence disappears.
+                hidden = True
+                continue
+            resolved[key] = node
 
     # The root is always present, even when nothing links to it — an empty graph
     # for a real table is a meaningful answer, not a 404.
@@ -101,6 +128,7 @@ async def table_lineage(
         nodes=[_node_out(n) for n in ordered],
         edges=merged,
         truncated=walked.truncated,
+        hidden=hidden,
     )
 
 
@@ -116,15 +144,6 @@ def _node_out(node: VisibleNode) -> LineageNodeOut:
     )
 
 
-def _aware(value: datetime) -> datetime:
-    """Timestamps come back naive from SQLite and aware from Postgres.
-
-    Merging edges compares them, so they are normalised to UTC here rather than
-    letting the comparison raise on one backend and not the other.
-    """
-    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
-
-
 def _merge_by_pair(
     edges: list[LineageEdge], resolved: dict[str, VisibleNode]
 ) -> list[LineageEdgeOut]:
@@ -135,17 +154,32 @@ def _merge_by_pair(
     through it stays visible.
     """
     merged: dict[tuple[str, str], LineageEdgeOut] = {}
+    # One clock for the whole response, so two edges of the same age cannot
+    # disagree about whether they are stale.
+    now = datetime.now(tz=UTC)
+    after_days = settings.lineage_stale_after_days
+
     for edge in edges:
         source = resolved.get(edge.source_key)
         target = resolved.get(edge.target_key)
+        # The endpoint was pruned above, which already recorded the graph as
+        # incomplete; the edge simply cannot be drawn without it.
         if source is None or target is None:
             continue
         # Withheld when either endpoint is redacted. The query it points at is
         # readable by any workspace member and its SQL text names every table it
         # touched, so handing over the link would undo the redaction beside it —
         # the caller would read the name the node deliberately does not carry.
-        hidden = source.kind == "redacted" or target.kind == "redacted"
-        query_id = None if hidden else edge.last_query_id
+        withheld = source.kind == "redacted" or target.kind == "redacted"
+        query_id = None if withheld else edge.last_query_id
+
+        observation = LineageProviderOut(
+            name=edge.provider,
+            first_seen_at=aware_utc(edge.first_seen_at),
+            last_seen_at=aware_utc(edge.last_seen_at),
+            observation_count=edge.observation_count,
+            stale=is_stale(edge.last_seen_at, now=now, after_days=after_days),
+        )
 
         pair = (source.key, target.key)
         existing = merged.get(pair)
@@ -154,21 +188,26 @@ def _merge_by_pair(
                 source_key=source.key,
                 target_key=target.key,
                 operation=edge.operation,
-                providers=[edge.provider],
+                providers=[observation],
                 confidence=edge.confidence,
-                first_seen_at=edge.first_seen_at,
-                last_seen_at=edge.last_seen_at,
-                observation_count=edge.observation_count,
+                first_seen_at=observation.first_seen_at,
+                last_seen_at=observation.last_seen_at,
+                observation_count=observation.observation_count,
+                stale=observation.stale,
                 last_query_id=query_id,
             )
             continue
-        if edge.provider not in existing.providers:
-            existing.providers.append(edge.provider)
-        existing.observation_count += edge.observation_count
-        existing.first_seen_at = min(_aware(existing.first_seen_at), _aware(edge.first_seen_at))
-        existing.last_seen_at = max(_aware(existing.last_seen_at), _aware(edge.last_seen_at))
+        existing.providers.append(observation)
+        existing.observation_count += observation.observation_count
+        existing.first_seen_at = min(existing.first_seen_at, observation.first_seen_at)
+        existing.last_seen_at = max(existing.last_seen_at, observation.last_seen_at)
+        # One producer still confirming the pair keeps the edge current; the
+        # producer that stopped is marked on its own entry rather than dragging
+        # the relationship down with it.
+        existing.stale = existing.stale and observation.stale
         existing.last_query_id = existing.last_query_id or query_id
         existing.operation = existing.operation or edge.operation
+
     for out in merged.values():
-        out.providers.sort()
+        out.providers.sort(key=lambda p: p.name)
     return sorted(merged.values(), key=lambda e: (e.source_key, e.target_key))

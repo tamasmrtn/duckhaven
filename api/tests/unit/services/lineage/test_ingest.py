@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -16,6 +17,7 @@ from api.services.lineage.ingest import (
     purge_provider,
     reconcile_provider_run,
     record_execution_lineage,
+    rekey_table_lineage,
     upsert_edges,
 )
 from api.services.lineage.keys import external_ref, internal_ref
@@ -53,7 +55,7 @@ async def test_first_observation_creates_the_edge(graph_env):
 async def test_reobservation_updates_in_place(graph_env):
     db = graph_env["db"]
     first = datetime.now(tz=UTC) - timedelta(days=1)
-    await upsert_edges(db, [_edge(graph_env)], provider="execution", now=first)
+    await upsert_edges(db, [_edge(graph_env)], provider="execution", observed_at=first)
     result = await upsert_edges(db, [_edge(graph_env)], provider="execution")
 
     assert (result.created, result.updated) == (0, 1)
@@ -300,3 +302,155 @@ async def test_repeated_runs_of_the_same_statement_converge_on_one_edge(graph_en
 
     (edge,) = await _edges(db)
     assert edge.observation_count == 3
+
+
+# --- observation time -------------------------------------------------------
+
+
+async def test_an_older_observation_widens_the_window_without_moving_last_seen(graph_env):
+    """The property that makes replaying history safe. A statement from March,
+    discovered today, extends when the relationship started — it does not claim
+    the relationship was confirmed today."""
+    db = graph_env["db"]
+    recent = datetime.now(tz=UTC) - timedelta(days=1)
+    old = datetime.now(tz=UTC) - timedelta(days=200)
+
+    await upsert_edges(db, [_edge(graph_env)], provider="execution", observed_at=recent)
+    await upsert_edges(db, [_edge(graph_env)], provider="execution", observed_at=old)
+
+    (edge,) = await _edges(db)
+    assert edge.first_seen_at.replace(tzinfo=UTC) == old
+    assert edge.last_seen_at.replace(tzinfo=UTC) == recent
+    assert edge.observation_count == 2
+
+
+async def test_an_older_observation_does_not_steal_the_query_link(graph_env):
+    """`last_query_id` means "the query that most recently produced this". An
+    older statement arriving later must not take that over, or the click-through
+    would open the wrong SQL."""
+    db = graph_env["db"]
+    newer, older = uuid.uuid4(), uuid.uuid4()
+    await upsert_edges(
+        db,
+        [_edge(graph_env)],
+        provider="execution",
+        observed_at=datetime.now(tz=UTC) - timedelta(days=1),
+        last_query_id=newer,
+    )
+    await upsert_edges(
+        db,
+        [_edge(graph_env)],
+        provider="execution",
+        observed_at=datetime.now(tz=UTC) - timedelta(days=200),
+        last_query_id=older,
+    )
+
+    (edge,) = await _edges(db)
+    assert edge.last_query_id == newer
+
+
+async def test_observations_land_the_same_way_in_either_order(graph_env):
+    db = graph_env["db"]
+    a = datetime.now(tz=UTC) - timedelta(days=90)
+    b = datetime.now(tz=UTC) - timedelta(days=5)
+
+    for stamps in ((a, b), (b, a)):
+        await db.execute(sa.delete(LineageEdge))
+        await db.flush()
+        for stamp in stamps:
+            await upsert_edges(db, [_edge(graph_env)], provider="execution", observed_at=stamp)
+        (edge,) = await _edges(db)
+        assert (
+            edge.first_seen_at.replace(tzinfo=UTC),
+            edge.last_seen_at.replace(tzinfo=UTC),
+            edge.observation_count,
+        ) == (a, b, 2)
+
+
+async def test_execution_lineage_is_stamped_with_when_the_statement_ran(graph_env):
+    db = graph_env["db"]
+    query = await _query(
+        graph_env, "CREATE TABLE warehouse.analytics.dim AS SELECT * FROM raw.analytics.src"
+    )
+    ran_at = datetime.now(tz=UTC) - timedelta(days=45)
+    query.started_at = ran_at
+    query.finished_at = ran_at
+    await db.flush()
+
+    await record_execution_lineage(db, query)
+
+    (edge,) = await _edges(db)
+    assert edge.last_seen_at.replace(tzinfo=UTC) == ran_at
+
+
+async def test_a_parse_failure_is_reported_distinctly_from_an_empty_result(graph_env):
+    """A backfill counts the two separately: only one of them points at a gap in
+    the parser rather than at a statement that simply moves no data."""
+    db = graph_env["db"]
+    broken = await record_execution_lineage(db, await _query(graph_env, "selct * from foo"))
+    read = await record_execution_lineage(
+        db, await _query(graph_env, "SELECT * FROM raw.analytics.src")
+    )
+
+    assert broken.parse_failed is True
+    assert read.parse_failed is False
+
+
+# --- rekey ------------------------------------------------------------------
+
+
+async def test_rekey_moves_an_edge_and_keeps_its_history(graph_env):
+    db = graph_env["db"]
+    catalog_id = graph_env["catalogs"]["warehouse"].id
+    await upsert_edges(db, [_edge(graph_env)], provider="execution")
+    await upsert_edges(db, [_edge(graph_env)], provider="execution")
+
+    moved = await rekey_table_lineage(
+        db,
+        catalog_id,
+        old_schema="analytics",
+        old_table="dim",
+        new_schema="analytics",
+        new_table="dim_v2",
+    )
+
+    assert moved == 1
+    (edge,) = await _edges(db)
+    assert edge.target_table == "dim_v2"
+    assert edge.target_key == internal_ref(catalog_id, "analytics", "dim_v2").key
+    assert edge.observation_count == 2
+
+
+async def test_rekey_to_the_same_address_is_a_no_op(graph_env):
+    db = graph_env["db"]
+    await upsert_edges(db, [_edge(graph_env)], provider="execution")
+
+    moved = await rekey_table_lineage(
+        db,
+        graph_env["catalogs"]["warehouse"].id,
+        old_schema="analytics",
+        old_table="dim",
+        new_schema="analytics",
+        new_table="dim",
+    )
+
+    assert moved == 0
+    assert len(await _edges(db)) == 1
+
+
+async def test_rekey_across_schemas_moves_the_edge(graph_env):
+    db = graph_env["db"]
+    catalog_id = graph_env["catalogs"]["warehouse"].id
+    await upsert_edges(db, [_edge(graph_env)], provider="execution")
+
+    await rekey_table_lineage(
+        db,
+        catalog_id,
+        old_schema="analytics",
+        old_table="dim",
+        new_schema="marts",
+        new_table="dim",
+    )
+
+    (edge,) = await _edges(db)
+    assert (edge.target_schema, edge.target_table) == ("marts", "dim")

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { http, HttpResponse } from "msw";
 import userEvent from "@testing-library/user-event";
 import { server } from "@tests/mock/server";
-import { makeLineage } from "@/mock/fixtures/lineage";
+import { makeHiddenLineage, makeLineage } from "@/mock/fixtures/lineage";
 import { renderWithProviders, screen, waitFor, within } from "@tests/utils";
 
 const LINEAGE_URL =
@@ -63,7 +63,9 @@ describe("LineagePanel", () => {
     const canvas = await graph();
     await userEvent.click(await canvas.findByText("events"));
 
-    expect(await screen.findAllByText("dbt")).toHaveLength(2);
+    // Both dbt claims have gone stale in the fixture, so the chips read
+    // "dbt · stale"; the execution one still confirms its edge.
+    expect(await screen.findAllByText(/^dbt/)).toHaveLength(2);
     expect(await screen.findByText("execution")).toBeVisible();
     // Incoming: `events` was declared as depending on the external source.
     expect(await screen.findByText(/Declared dependency on/)).toBeVisible();
@@ -98,6 +100,7 @@ describe("LineagePanel", () => {
           nodes: [],
           edges: [],
           truncated: false,
+          hidden: false,
         });
       }),
     );
@@ -134,6 +137,7 @@ describe("LineagePanel", () => {
             nodes: [],
             edges: [],
             truncated: false,
+            hidden: false,
           });
         }
         return HttpResponse.json(makeLineage());
@@ -177,16 +181,26 @@ describe("LineagePanel", () => {
               source_key: "u",
               target_key: "r",
               operation: "insert",
-              providers: ["execution"],
+              providers: [
+                {
+                  name: "execution",
+                  first_seen_at: "2026-01-01T00:00:00Z",
+                  last_seen_at: "2026-01-01T00:00:00Z",
+                  observation_count: 1,
+                  stale: false,
+                },
+              ],
               confidence: "exact",
               first_seen_at: "2026-01-01T00:00:00Z",
               last_seen_at: "2026-01-01T00:00:00Z",
               observation_count: 1,
+              stale: false,
               last_query_id: null,
               columns: [],
             },
           ],
           truncated: true,
+          hidden: false,
         }),
       ),
     );
@@ -206,5 +220,64 @@ describe("LineagePanel", () => {
     await openLineageTab();
 
     expect(await screen.findByText(/Could not load lineage/i)).toBeVisible();
+  });
+
+  it("says the graph is incomplete rather than showing it as whole", async () => {
+    server.use(
+      http.get(LINEAGE_URL, () =>
+        HttpResponse.json({ ...makeLineage(), hidden: true }),
+      ),
+    );
+    renderWithProviders({ initialRoute: TABLE_ROUTE });
+    await openLineageTab();
+
+    expect(
+      await screen.findByText(/outside this workspace and is not shown/i),
+    ).toBeVisible();
+  });
+
+  it("does not claim there is no lineage when all of it is out of reach", async () => {
+    // The wrong answer this signal exists to prevent: telling someone nothing
+    // depends on a table when something does and they simply cannot see it.
+    server.use(
+      http.get(LINEAGE_URL, () =>
+        HttpResponse.json(makeHiddenLineage("cat:0/analytics/daily_active_users")),
+      ),
+    );
+    renderWithProviders({ initialRoute: TABLE_ROUTE });
+    await openLineageTab();
+
+    expect(
+      await screen.findByText(/lineage is outside this workspace/i),
+    ).toBeVisible();
+    expect(screen.queryByText(/No lineage recorded/i)).toBeNull();
+  });
+
+  it("names nothing about the part of the graph it withheld", async () => {
+    server.use(
+      http.get(LINEAGE_URL, () =>
+        HttpResponse.json(makeHiddenLineage("cat:0/analytics/daily_active_users")),
+      ),
+    );
+    const { container } = renderWithProviders({ initialRoute: TABLE_ROUTE });
+    await openLineageTab();
+    await screen.findByText(/lineage is outside this workspace/i);
+
+    // A count would say how much is out there and a placeholder would say
+    // where; the panel is entitled to neither.
+    expect(container.textContent).not.toMatch(/\d+ (table|node|relationship)/i);
+  });
+
+  it("marks a producer that has stopped confirming its edge", async () => {
+    // dbt went quiet months ago while execution still confirms the same pair.
+    // The stale one has to be visible as such without condemning the edge.
+    renderWithProviders({ initialRoute: TABLE_ROUTE });
+    await openLineageTab();
+
+    const canvas = await graph();
+    await userEvent.click(await canvas.findByText("events"));
+
+    expect((await screen.findAllByText(/dbt · stale/)).length).toBeGreaterThan(0);
+    expect(screen.queryByText("execution · stale")).toBeNull();
   });
 });

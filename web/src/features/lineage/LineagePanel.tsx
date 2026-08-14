@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { GitBranch, TriangleAlert } from "lucide-react";
+import { EyeOff, GitBranch, TriangleAlert } from "lucide-react";
 import { Banner } from "@/components/ui/banner";
 import { EmptyState } from "@/components/app/EmptyState";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -139,12 +139,23 @@ function EdgeDetails({
               </span>
             </div>
             <div className="flex flex-wrap items-center gap-1">
+              {/* Each producer carries its own last-seen date, because that is
+                  the whole point: one that stopped reporting should be visible
+                  as such even while another keeps confirming the same pair. */}
               {edge.providers.map((provider) => (
                 <span
-                  key={provider}
-                  className="rounded border border-[var(--border-subtle)] px-1.5 py-0.5 font-mono text-2xs text-text-secondary"
+                  key={provider.name}
+                  title={`${provider.name} last confirmed this on ${new Date(
+                    provider.last_seen_at,
+                  ).toLocaleDateString()} (seen ${provider.observation_count}×)`}
+                  className={
+                    provider.stale
+                      ? "rounded border border-dashed border-[var(--border-subtle)] px-1.5 py-0.5 font-mono text-2xs text-text-tertiary"
+                      : "rounded border border-[var(--border-subtle)] px-1.5 py-0.5 font-mono text-2xs text-text-secondary"
+                  }
                 >
-                  {provider}
+                  {provider.name}
+                  {provider.stale && " · stale"}
                 </span>
               ))}
               <span className="text-2xs text-text-tertiary">
@@ -224,6 +235,7 @@ export function LineagePanel({
     nodes: [],
     edges: [],
     truncated: false,
+    hidden: false,
   };
   const layout = layoutLineage(graph.nodes, graph.edges);
   const hasLineage = graph.edges.length > 0;
@@ -259,6 +271,15 @@ export function LineagePanel({
         </Banner>
       )}
 
+      {/* Deliberately says nothing about what is missing. The point is only that
+          "nothing here" would be the wrong conclusion to draw. */}
+      {graph.hidden && hasLineage && (
+        <Banner className="mx-4 mb-2">
+          <EyeOff className="size-3.5 shrink-0" />
+          Part of this graph is outside this workspace and is not shown.
+        </Banner>
+      )}
+
       {hasLineage ? (
         <>
           <div className="min-h-0 flex-1">
@@ -278,6 +299,16 @@ export function LineagePanel({
             />
           )}
         </>
+      ) : graph.hidden ? (
+        // The case this whole signal exists for. Telling someone "nothing
+        // depends on this" when something does — and they simply cannot see it —
+        // is the one wrong answer lineage must never give, because it is the
+        // answer people act on.
+        <EmptyState
+          icon={EyeOff}
+          title="This table's lineage is outside this workspace"
+          description="There are relationships here, but every one of them reaches a catalog this workspace does not attach. Nothing about them can be shown."
+        />
       ) : (
         <EmptyState
           icon={GitBranch}

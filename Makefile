@@ -33,7 +33,7 @@ dev:
 test: test-api test-agent test-web test-deploy test-shared
 
 test-api:
-	uv run --package duckhaven-api pytest api/tests/unit/ -v \
+	uv run --package duckhaven-api pytest api/tests/unit/ -n auto \
 		--cov=api \
 		--cov-config=pyproject.toml \
 		--cov-report=term-missing \

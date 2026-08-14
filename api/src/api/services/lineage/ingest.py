@@ -8,7 +8,16 @@ identity, deduplication and reconciliation are decided in exactly one place.
 ``record_execution_lineage`` is called from the agent frame handler when a query
 completes, mirroring how
 :func:`~api.services.maintenance.ingest.record_health_sample` persists a health
-probe from the same hook.
+probe from the same hook. It is also what replays historical statements during a
+backfill — the same function, given an older ``observed_at``, so history and live
+traffic cannot drift apart.
+
+Writes are **order-independent**. An observation carries the time it happened
+rather than the time it was recorded, and merging one into an existing edge takes
+the earliest first sighting, the latest last sighting, and the descriptive fields
+of whichever observation is newer. Replaying six months of history in any order
+therefore lands on the same rows, and a statement from March cannot make a
+relationship look like it was confirmed today.
 
 Reconciliation deserves care: it is the only operation here that deletes. It is
 always scoped to a single ``provider``, so re-importing a dbt project can never
@@ -27,10 +36,12 @@ from datetime import UTC, datetime
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.models.catalog import Catalog
 from api.models.lineage import LineageEdge
 from api.models.query import Query
 from api.services.lineage.extract import LineageParseError, edges_from_sql
-from api.services.lineage.keys import AssetRef
+from api.services.lineage.keys import AssetRef, asset_key
+from api.services.lineage.times import aware_utc
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +75,11 @@ class IngestResult:
     updated: int = 0
     removed: int = 0
     skipped: list[dict[str, str]] = field(default_factory=list)
+    # The statement could not be parsed at all, so nothing could be derived from
+    # it. Distinct from an empty result, which means it parsed and established
+    # nothing — a backfill counts the two separately because only the first
+    # points at a parser gap.
+    parse_failed: bool = False
 
 
 async def upsert_edges(
@@ -74,18 +90,25 @@ async def upsert_edges(
     provider_run_id: str | None = None,
     workspace_id: uuid.UUID | None = None,
     last_query_id: uuid.UUID | None = None,
-    now: datetime | None = None,
+    observed_at: datetime | None = None,
 ) -> IngestResult:
     """Insert or refresh each edge, returning what changed.
 
-    Idempotent: re-asserting a relationship bumps ``last_seen_at`` and
-    ``observation_count`` rather than duplicating the row. Two providers naming
-    the same pair keep two rows, because ``provider`` is part of the identity.
+    ``observed_at`` is when the relationship was *observed*, which is not
+    necessarily now: a backfilled statement passes the time it originally ran.
+    Defaults to now, which is right for anything happening live.
+
+    Idempotent in the sense that matters: re-asserting a relationship refreshes
+    the existing row rather than duplicating it. Two providers naming the same
+    pair keep two rows, because ``provider`` is part of the identity.
     """
     result = IngestResult()
     if not edges:
         return result
-    stamp = now or datetime.now(tz=UTC)
+    # Normalised up front: `observed_at` reaches here straight off a `queries`
+    # row, which SQLite hands back naive, and every comparison below mixes it
+    # with a stored timestamp.
+    stamp = aware_utc(observed_at) if observed_at is not None else datetime.now(tz=UTC)
 
     for edge in edges:
         source_key = edge.source.key
@@ -101,16 +124,26 @@ async def upsert_edges(
         ).scalar_one_or_none()
 
         if existing is not None:
-            existing.last_seen_at = stamp
-            existing.observation_count = (existing.observation_count or 0) + 1
-            existing.operation = edge.operation or existing.operation
-            existing.confidence = edge.confidence
+            existing.first_seen_at = min(aware_utc(existing.first_seen_at), stamp)
+            if stamp >= aware_utc(existing.last_seen_at):
+                # The newest observation describes the relationship. An older one
+                # arriving later — a backfill walking history, a delayed frame —
+                # still counts and still widens the window, but it must not
+                # overwrite what a more recent statement said, nor claim the
+                # click-through to "the query that produced this".
+                existing.last_seen_at = stamp
+                existing.operation = edge.operation or existing.operation
+                existing.confidence = edge.confidence
+                if last_query_id is not None:
+                    existing.last_query_id = last_query_id
+                if workspace_id is not None:
+                    existing.workspace_id = workspace_id
+            # Bookkeeping for the reconcile pass rather than a fact about the
+            # observation: it records which run last touched this row, so it is
+            # always the caller's run id regardless of ordering.
             if provider_run_id is not None:
                 existing.provider_run_id = provider_run_id
-            if last_query_id is not None:
-                existing.last_query_id = last_query_id
-            if workspace_id is not None:
-                existing.workspace_id = workspace_id
+            existing.observation_count = (existing.observation_count or 0) + 1
             result.updated += 1
             continue
 
@@ -213,6 +246,118 @@ async def delete_table_lineage(
     )
 
 
+async def rekey_table_lineage(
+    db: AsyncSession,
+    catalog_id: uuid.UUID,
+    *,
+    old_schema: str,
+    old_table: str,
+    new_schema: str,
+    new_table: str,
+) -> int:
+    """Move every edge touching one address onto another, keeping its history.
+
+    The repair behind rename survival. Lineage keys on the address
+    ``(catalog, schema, table)`` because that is what makes traversal a single
+    indexed equality lookup; a rename changes the address, so the edges have to
+    be rewritten to follow it. Deciding *that* a rename happened is
+    ``services.lineage.identity``'s job — this only carries out the move, once
+    that is settled.
+
+    Two collisions have to be survived rather than raised on, because the unique
+    constraint would otherwise abort the whole transaction:
+
+    * the new address already has an edge from the same provider to or from the
+      same counterpart — the two are the same relationship seen under two names,
+      so they are merged into the widest window and the summed count;
+    * the move would make an edge point at itself, which happens when a table is
+      renamed onto the name of something it was built from. A self-edge carries
+      no information, so it is dropped, matching what extraction does.
+
+    Returns how many rows were rewritten, merged or dropped.
+    """
+    if (old_schema, old_table) == (new_schema, new_table):
+        return 0
+
+    old_key = asset_key(schema=old_schema, table=old_table, catalog_id=catalog_id)
+    new_key = asset_key(schema=new_schema, table=new_table, catalog_id=catalog_id)
+
+    moving = list(
+        (
+            await db.execute(
+                sa.select(LineageEdge).where(
+                    sa.or_(
+                        LineageEdge.source_key == old_key,
+                        LineageEdge.target_key == old_key,
+                    )
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not moving:
+        return 0
+
+    # Everything already at the new address, so a collision can be detected
+    # without a query per moved edge.
+    settled = {
+        (e.provider, e.source_key, e.target_key): e
+        for e in (
+            await db.execute(
+                sa.select(LineageEdge).where(
+                    sa.or_(
+                        LineageEdge.source_key == new_key,
+                        LineageEdge.target_key == new_key,
+                    )
+                )
+            )
+        )
+        .scalars()
+        .all()
+    }
+
+    touched = 0
+    for edge in moving:
+        source_key = new_key if edge.source_key == old_key else edge.source_key
+        target_key = new_key if edge.target_key == old_key else edge.target_key
+        touched += 1
+
+        if source_key == target_key:
+            await db.delete(edge)
+            continue
+
+        clash = settled.get((edge.provider, source_key, target_key))
+        if clash is not None:
+            _absorb(clash, edge)
+            await db.delete(edge)
+            continue
+
+        if edge.source_key == old_key:
+            edge.source_key = source_key
+            edge.source_schema = new_schema
+            edge.source_table = new_table
+        if edge.target_key == old_key:
+            edge.target_key = target_key
+            edge.target_schema = new_schema
+            edge.target_table = new_table
+        settled[(edge.provider, source_key, target_key)] = edge
+
+    await db.flush()
+    return touched
+
+
+def _absorb(keeper: LineageEdge, other: LineageEdge) -> None:
+    """Fold one edge's history into another describing the same relationship."""
+    keeper.first_seen_at = min(aware_utc(keeper.first_seen_at), aware_utc(other.first_seen_at))
+    if aware_utc(other.last_seen_at) >= aware_utc(keeper.last_seen_at):
+        keeper.last_seen_at = aware_utc(other.last_seen_at)
+        keeper.operation = other.operation or keeper.operation
+        keeper.last_query_id = other.last_query_id or keeper.last_query_id
+        keeper.provider_run_id = other.provider_run_id or keeper.provider_run_id
+    keeper.observation_count = (keeper.observation_count or 0) + (other.observation_count or 0)
+
+
 async def delete_schema_lineage(db: AsyncSession, catalog_id: uuid.UUID, schema: str) -> None:
     """Remove every edge touching any table in a dropped schema."""
     await db.execute(
@@ -231,7 +376,49 @@ async def delete_schema_lineage(db: AsyncSession, catalog_id: uuid.UUID, schema:
     )
 
 
-async def _active_catalog(db: AsyncSession, query: Query, catalogs: list) -> str | None:
+@dataclass(frozen=True)
+class WorkspaceCatalogs:
+    """Everything resolving a statement's table names needs, resolved once.
+
+    Live extraction resolves this per completed query — one indexed lookup on a
+    path that already did several. A backfill walks thousands of statements
+    belonging to the same workspace, so it resolves this once per batch instead,
+    which is the difference between a constant and an N+1 over query history.
+    """
+
+    catalogs: list[Catalog]
+    ids: dict[str, uuid.UUID]
+    default_slug: str | None
+
+
+async def workspace_catalog_context(db: AsyncSession, workspace_id: uuid.UUID) -> WorkspaceCatalogs:
+    """The catalogs a workspace attaches, and which one unqualified names mean.
+
+    One query for both, rather than reusing ``resolve_workspace_catalogs`` and
+    ``get_default_catalog`` in sequence: the default is a column on the same
+    attachment row the first query already reads, and this runs on the path every
+    completed query takes.
+    """
+    from api.models.catalog import WorkspaceCatalog
+
+    rows = list(
+        await db.execute(
+            sa.select(Catalog, WorkspaceCatalog.is_default)
+            .join(WorkspaceCatalog, WorkspaceCatalog.catalog_id == Catalog.id)
+            .where(WorkspaceCatalog.workspace_id == workspace_id)
+            .order_by(Catalog.slug)
+        )
+    )
+    catalogs = [catalog for catalog, _ in rows]
+    default_slug = next((c.slug for c, is_default in rows if is_default), None)
+    return WorkspaceCatalogs(
+        catalogs=catalogs,
+        ids={c.slug: c.id for c in catalogs},
+        default_slug=default_slug,
+    )
+
+
+def _active_catalog(query: Query, context: WorkspaceCatalogs) -> str | None:
     """The catalog unqualified names in this query resolved against.
 
     ``queries.active_catalog`` records only what the *caller* asked for, and is
@@ -247,42 +434,49 @@ async def _active_catalog(db: AsyncSession, query: Query, catalogs: list) -> str
     """
     if query.active_catalog:
         return query.active_catalog
-    from api.services.workspace import get_default_catalog
-
-    default = await get_default_catalog(db, query.workspace_id)
-    if default is not None:
-        return default.slug
-    return catalogs[0].slug if catalogs else None
+    if context.default_slug is not None:
+        return context.default_slug
+    return context.catalogs[0].slug if context.catalogs else None
 
 
-async def record_execution_lineage(db: AsyncSession, query: Query) -> IngestResult:
-    """Derive and persist lineage for a query that just completed successfully.
+async def record_execution_lineage(
+    db: AsyncSession,
+    query: Query,
+    *,
+    context: WorkspaceCatalogs | None = None,
+    observed_at: datetime | None = None,
+) -> IngestResult:
+    """Derive and persist lineage for a query that completed successfully.
 
-    Called from the agent frame handler. Never raises for a reason the caller
-    could not act on: a statement that cannot be parsed, or that establishes no
-    relationship, simply records nothing.
+    Called from the agent frame handler for a query that just finished, and from
+    the backfill for one that finished long ago — the same derivation either way,
+    differing only in the ``observed_at`` it stamps and in whether the caller
+    already resolved the workspace's catalogs.
+
+    Never raises for a reason the caller could not act on: a statement that
+    cannot be parsed, or that establishes no relationship, simply records
+    nothing. ``parse_failed`` on the result distinguishes the two.
     """
-    from api.services.workspace import resolve_workspace_catalogs
-
     result = IngestResult()
     if not query.sql or query.origin in _INTERNAL_ORIGINS:
         return result
 
-    catalogs = await resolve_workspace_catalogs(db, query.workspace_id)
-    catalog_ids = {c.slug: c.id for c in catalogs}
-    if not catalog_ids:
+    if context is None:
+        context = await workspace_catalog_context(db, query.workspace_id)
+    if not context.ids:
         return result
 
-    active_catalog = await _active_catalog(db, query, catalogs)
+    active_catalog = _active_catalog(query, context)
     try:
         extracted = edges_from_sql(
-            query.sql, active_catalog=active_catalog, catalog_ids=catalog_ids
+            query.sql, active_catalog=active_catalog, catalog_ids=context.ids
         )
     except LineageParseError as exc:
         from api.metrics import record_lineage_extract_failure
 
         record_lineage_extract_failure()
         logger.debug("Lineage extraction skipped for query %s: %s", query.id, exc)
+        result.parse_failed = True
         return result
 
     if not extracted:
@@ -294,4 +488,6 @@ async def record_execution_lineage(db: AsyncSession, query: Query) -> IngestResu
         provider=EXECUTION_PROVIDER,
         workspace_id=query.workspace_id,
         last_query_id=query.id,
+        # When the statement actually ran, not when we got around to reading it.
+        observed_at=observed_at or query.finished_at or query.started_at,
     )

@@ -148,3 +148,19 @@ async def test_an_isolated_table_walks_to_just_itself(graph_env, cat):
     result = await traverse.walk(graph_env["db"], root_key=key(cat, "lonely"))
     assert result.distances == {key(cat, "lonely"): 0}
     assert result.edges == []
+
+
+async def test_a_node_reachable_both_ways_reports_the_nearer_distance(graph_env, cat):
+    """`hub` is one hop downstream of the root and three hops upstream of it.
+
+    Upstream is expanded first, so without preferring the nearer relationship
+    the node would be reported at -3 and laid out far to the left of the very
+    table it directly feeds.
+    """
+    db = graph_env["db"]
+    await link(db, cat, "root", "hub")  # hub is +1
+    await link(db, cat, "hub", "a", "b", "root")  # ...and also -3
+
+    result = await traverse.walk(db, root_key=key(cat, "root"), direction="both", depth=3)
+
+    assert result.distances[key(cat, "hub")] == 1

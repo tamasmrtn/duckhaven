@@ -266,3 +266,32 @@ async def test_purge_refuses_execution_lineage(auth_client, ws):
         "DELETE", f"/workspaces/{ws}/lineage/imports", params={"provider": "execution"}
     )
     assert resp.status_code == 422
+
+
+async def test_artifact_route_rejects_an_unknown_reconcile_mode(auth_client, ws):
+    """These endpoints run unattended in CI, where a typo that returns 200 and
+    quietly stops pruning stays invisible until the graph is wrong."""
+    manifest = json.loads(MANIFEST.read_text())
+    resp = await auth_client.post(
+        f"/workspaces/{ws}/lineage/imports/dbt",
+        params={"reconcile": "provider-run"},  # hyphen, not underscore
+        json=manifest,
+    )
+    assert resp.status_code == 422
+    assert "reconcile must be one of" in resp.json()["detail"]
+
+
+async def test_dbt_reimport_prunes_a_model_that_lost_every_dependency(auth_client, ws, db_session):
+    manifest = json.loads(MANIFEST.read_text())
+    await auth_client.post(f"/workspaces/{ws}/lineage/imports/dbt", json=manifest)
+    assert any(e.target_table == "dim_orders_v2" for e in await _stored(db_session))
+
+    # The model now refs nothing at all, so it contributes no edge — the case
+    # that used to leave its old edges asserted forever.
+    manifest["metadata"]["invocation_id"] = "b1a7c0de-0000-4000-8000-000000000009"
+    manifest["parent_map"]["model.acme.dim_orders"] = []
+    manifest["nodes"]["model.acme.dim_orders"]["depends_on"]["nodes"] = []
+    resp = await auth_client.post(f"/workspaces/{ws}/lineage/imports/dbt", json=manifest)
+
+    assert resp.json()["removed"] >= 1
+    assert not any(e.target_table == "dim_orders_v2" for e in await _stored(db_session))

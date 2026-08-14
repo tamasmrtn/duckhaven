@@ -66,15 +66,31 @@ class _ParsedRef:
     table: str
 
 
+def _is_temporary(stmt: exp.Expression) -> bool:
+    """Whether a CREATE declares a temporary relation.
+
+    A temp table lives and dies inside one connection, so it is not a catalog
+    object and never will be. Recording one would resolve its bare name against
+    the active catalog and write a permanent node for something that never
+    existed there — and nothing would ever clean it up, because the drop-path
+    cleanup only fires for a real ``DROP`` through the catalog API.
+    """
+    properties = stmt.args.get("properties")
+    if properties is None:
+        return False
+    return any(isinstance(p, exp.TemporaryProperty) for p in properties.expressions)
+
+
 def classify(stmt: exp.Expression) -> str | None:
     """The lineage operation a statement performs, or ``None`` if it performs none.
 
     ``CREATE TABLE`` without a query body (a bare column list) is not lineage:
-    it declares a shape, it does not derive data from anywhere.
+    it declares a shape, it does not derive data from anywhere. Neither is a
+    temporary relation, which is not a catalog object at all.
     """
     if isinstance(stmt, exp.Create):
         kind = (stmt.kind or "").upper()
-        if stmt.expression is None:
+        if stmt.expression is None or _is_temporary(stmt):
             return None
         if kind in _VIEW_KINDS:
             return "create_view"
@@ -164,14 +180,39 @@ def edges_from_sql(
 
     edges: list[ExtractedEdge] = []
     seen: set[tuple[str, str, str]] = set()
+    # Temp relations built earlier in this script, mapped to what they were built
+    # from. A temp table is not a catalog object, so it must not become a node —
+    # but simply dropping it would lose the relationship the script expresses, so
+    # a later statement reading one is spliced through to its real sources.
+    temp_sources: dict[str, list[AssetRef]] = {}
+
+    def resolve_sources(refs: list[_ParsedRef]) -> list[AssetRef]:
+        """Resolve source refs, substituting a script-local temp for its own."""
+        out: list[AssetRef] = []
+        for ref in refs:
+            if ref.catalog is None and ref.schema is None and ref.table in temp_sources:
+                out.extend(temp_sources[ref.table])
+                continue
+            resolved = _resolve(ref, active_catalog=active_catalog, catalog_ids=catalog_ids)
+            if resolved is not None:
+                out.append(resolved)
+        return out
+
     for stmt in statements:
         if stmt is None:
+            continue
+        if isinstance(stmt, exp.Create) and stmt.expression is not None and _is_temporary(stmt):
+            # Emit nothing, but remember where it came from.
+            temp_targets, temp_refs = _statement_refs(stmt)
+            if temp_targets:
+                temp_sources[temp_targets[0].table] = resolve_sources(temp_refs)
             continue
         operation = classify(stmt)
         if operation is None:
             continue
         target_refs, source_refs = _statement_refs(stmt)
-        if not target_refs or not source_refs:
+        resolved_sources = resolve_sources(source_refs)
+        if not target_refs or not resolved_sources:
             # No target, or a write with no source dataset (INSERT ... VALUES,
             # COPY FROM a file). Inventing an edge here would be a false positive.
             continue
@@ -179,12 +220,7 @@ def edges_from_sql(
             target = _resolve(target_ref, active_catalog=active_catalog, catalog_ids=catalog_ids)
             if target is None:
                 continue
-            for source_ref in source_refs:
-                source = _resolve(
-                    source_ref, active_catalog=active_catalog, catalog_ids=catalog_ids
-                )
-                if source is None:
-                    continue
+            for source in resolved_sources:
                 if source.key == target.key:
                     continue  # a self-edge carries no information
                 dedup = (source.key, target.key, operation)

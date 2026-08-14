@@ -58,7 +58,7 @@ async def test_ctas_records_lineage(api_client, workspace, healthy_agent, catalo
     tables = {n["table"] for n in graph["nodes"]}
     assert tables == {"lin_src", "lin_dim"}
     (edge,) = graph["edges"]
-    assert edge["providers"] == ["execution"]
+    assert [pr["name"] for pr in edge["providers"]] == ["execution"]
     assert edge["operation"] == "create_table_as"
     # The click-through to the SQL that produced the relationship.
     assert edge["last_query_id"] == built["id"]
@@ -142,7 +142,7 @@ async def test_imported_lineage_merges_with_execution_lineage(
 
     # Both producers describe the same relationship: one edge, two providers.
     (edge,) = graph["edges"]
-    assert edge["providers"] == ["dbt", "execution"]
+    assert [pr["name"] for pr in edge["providers"]] == ["dbt", "execution"]
 
 
 async def test_dropping_a_table_removes_its_lineage(

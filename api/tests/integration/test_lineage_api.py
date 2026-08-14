@@ -8,10 +8,21 @@ when the catalogs are genuine Polaris catalogs rather than fixtures.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
+import sqlalchemy as sa
+
+from api.models.catalog import Catalog
+from api.models.lineage import LineageEdge
+from api.models.lineage_backfill import LineageBackfill
+from api.models.query import Query
+from api.models.table_metadata import TableMetadata
+from api.models.workspace import Workspace
+from api.services.lineage.backfill import advance
+from api.services.lineage.identity import reconcile_table_identity
 
 pytestmark = pytest.mark.integration
 
@@ -63,7 +74,7 @@ async def test_imported_lineage_round_trips(admin_client, workspace_factory) -> 
 
     graph = await _graph(admin_client, ws, catalog, "dim", direction="upstream")
     assert {n["table"] for n in graph["nodes"]} == {"src", "dim"}
-    assert graph["edges"][0]["providers"] == ["dbt"]
+    assert [p["name"] for p in graph["edges"][0]["providers"]] == ["dbt"]
 
 
 async def test_the_unique_constraint_makes_reimport_idempotent(
@@ -91,7 +102,7 @@ async def test_two_providers_coexist_on_one_pair(admin_client, workspace_factory
         assert resp.status_code == 200, resp.text
 
     graph = await _graph(admin_client, ws, catalog, "dim", direction="upstream")
-    assert graph["edges"][0]["providers"] == ["dbt", "other_tool"]
+    assert [p["name"] for p in graph["edges"][0]["providers"]] == ["dbt", "other_tool"]
 
 
 async def test_a_catalog_in_another_workspace_is_invisible(admin_client, workspace_factory) -> None:
@@ -162,3 +173,119 @@ async def test_traversal_depth_is_honoured_on_postgres(admin_client, workspace_f
 
     assert {n["table"] for n in shallow["nodes"]} == {"c", "d"}
     assert {n["table"] for n in deep["nodes"]} == {"a", "b", "c", "d"}
+
+
+async def test_a_rename_carries_lineage_under_the_real_unique_constraint(
+    admin_client, workspace_factory, db_session
+) -> None:
+    """Rekeying can collide with an edge already at the new address. On SQLite
+    the merge is easy to get accidentally right; this proves it under the real
+    constraint, where getting it wrong aborts the transaction."""
+    ws, catalog = await _workspace_with_catalog(admin_client, workspace_factory)
+    for source, target in (("src", "dim"), ("src", "dim_v2")):
+        resp = await admin_client.post(
+            f"/workspaces/{ws}/lineage/imports",
+            json={"provider": "dbt", "edges": [_edge(catalog, source, target)]},
+        )
+        assert resp.status_code == 200, resp.text
+
+    cat = (await db_session.execute(sa.select(Catalog).where(Catalog.slug == catalog))).scalar_one()
+    table_uuid = str(uuid4())
+    db_session.add(
+        TableMetadata(
+            catalog_id=cat.id,
+            schema_name="analytics",
+            table_name="dim",
+            table_uuid=table_uuid,
+        )
+    )
+    await db_session.commit()
+
+    outcome = await reconcile_table_identity(
+        db_session,
+        catalog_id=cat.id,
+        schema="analytics",
+        table="dim_v2",
+        table_uuid=table_uuid,
+    )
+    await db_session.commit()
+    assert outcome == "renamed"
+
+    rows = list(
+        (
+            await db_session.execute(
+                sa.select(LineageEdge).where(LineageEdge.target_catalog_id == cat.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert [r.target_table for r in rows] == ["dim_v2"]
+    assert rows[0].observation_count == 2
+
+
+async def test_backfill_state_is_one_row_per_workspace(admin_client, workspace_factory) -> None:
+    """The unique constraint is what makes a repeat request adjust the existing
+    walk rather than race a second one over the same history."""
+    ws, _ = await _workspace_with_catalog(admin_client, workspace_factory)
+
+    first = await admin_client.post(f"/workspaces/{ws}/lineage/backfill", json={})
+    assert first.status_code == 202, first.text
+
+    second = await admin_client.post(f"/workspaces/{ws}/lineage/backfill", json={})
+    assert second.status_code == 409
+
+    status = await admin_client.get(f"/workspaces/{ws}/lineage/backfill")
+    assert status.status_code == 200
+    assert status.json()["status"] in ("pending", "running", "completed")
+
+
+async def test_backfill_reconstructs_lineage_from_real_history(
+    admin_client, workspace_factory, db_session
+) -> None:
+    """A statement recorded months ago, replayed through the live extraction path
+    on the real backend, and landing with the timestamp it actually ran at."""
+    ws, catalog = await _workspace_with_catalog(admin_client, workspace_factory)
+    workspace = (
+        await db_session.execute(sa.select(Workspace).where(Workspace.slug == ws))
+    ).scalar_one()
+
+    ran_at = datetime.now(tz=UTC) - timedelta(days=120)
+    db_session.add(
+        Query(
+            workspace_id=workspace.id,
+            sql=(f"CREATE TABLE {catalog}.analytics.dim AS SELECT * FROM {catalog}.analytics.src"),
+            status="done",
+            started_at=ran_at,
+            finished_at=ran_at,
+            active_catalog=catalog,
+        )
+    )
+    await db_session.commit()
+
+    queued = await admin_client.post(f"/workspaces/{ws}/lineage/backfill", json={})
+    assert queued.status_code == 202, queued.text
+
+    row = (
+        await db_session.execute(
+            sa.select(LineageBackfill).where(LineageBackfill.workspace_id == workspace.id)
+        )
+    ).scalar_one()
+    for _ in range(5):
+        await advance(db_session, row, batch_size=100)
+        await db_session.commit()
+        if row.status not in ("pending", "running"):
+            break
+
+    assert row.status == "completed"
+    assert row.queries_with_lineage == 1
+
+    edge = (
+        await db_session.execute(sa.select(LineageEdge).where(LineageEdge.provider == "execution"))
+    ).scalar_one()
+    assert (edge.source_table, edge.target_table) == ("src", "dim")
+    assert edge.last_seen_at == ran_at
+
+    # And therefore stale on the way out, rather than looking like today's work.
+    graph = await _graph(admin_client, ws, catalog, "dim", direction="upstream")
+    assert graph["edges"][0]["stale"] is True

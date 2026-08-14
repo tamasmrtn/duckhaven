@@ -32,22 +32,49 @@ class LineageColumnOut(BaseModel):
     target_column: str
 
 
+class LineageProviderOut(BaseModel):
+    """What one producer says about a relationship, and how recently it said it.
+
+    Freshness belongs here rather than on the edge because producers keep their
+    own cadence. A pair confirmed by a query this morning and by an import that
+    stopped running last quarter is one edge with two very different stories, and
+    flattening them to a single "last seen" would let the live one vouch for the
+    abandoned one.
+    """
+
+    name: str
+    first_seen_at: datetime
+    last_seen_at: datetime
+    observation_count: int
+    # Nothing has re-asserted this producer's claim within the configured
+    # window. A statement about confirmation, not about correctness.
+    stale: bool = False
+
+
 class LineageEdgeOut(BaseModel):
     """One relationship, merged across every provider that asserted it.
 
     Providers are listed rather than reconciled: two producers describing the same
     pair is agreement worth showing, and two producers disagreeing is information,
     not a conflict for the API to silently resolve.
+
+    ``first_seen_at`` / ``last_seen_at`` / ``observation_count`` are the merged
+    view — earliest, latest and total across every producer. The per-producer
+    breakdown is in ``providers``.
     """
 
     source_key: str
     target_key: str
     operation: str | None = None
-    providers: list[str]
+    providers: list[LineageProviderOut]
     confidence: str
     first_seen_at: datetime
     last_seen_at: datetime
     observation_count: int
+    # True only when *every* producer's claim is stale. One producer still
+    # confirming the relationship keeps the edge current, even if another
+    # stopped reporting long ago.
+    stale: bool = False
     last_query_id: uuid.UUID | None = None
     # Column-level lineage is not derived yet, so this is always empty. Present
     # from the start so adding it later changes no contract.
@@ -61,6 +88,16 @@ class LineageGraphOut(BaseModel):
     # True when a cap stopped the walk early, so a partial graph is never
     # mistaken for a complete one.
     truncated: bool = False
+    # True when the walk reached lineage this caller may not see at all — a node
+    # in a catalog their workspace does not attach — and dropped it.
+    #
+    # Deliberately a bare flag. A count would say how much is out there, and a
+    # placeholder node would say where; both are things the caller is not
+    # entitled to know. All it asserts is that "nothing here" would have been the
+    # wrong conclusion. (Nodes that are merely ungranted *within* the workspace
+    # are a different case: those stay in the graph as `redacted` and do not set
+    # this.)
+    hidden: bool = False
 
 
 class LineageAssetIn(BaseModel):
@@ -118,3 +155,44 @@ class LineageImportOut(BaseModel):
     updated: int
     removed: int
     skipped: list[LineageSkippedOut] = Field(default_factory=list)
+
+
+class LineageBackfillIn(BaseModel):
+    """A request to reconstruct lineage from this workspace's query history.
+
+    ``since`` bounds how far back to walk; omitting it means all available
+    history, which is usually what you want the first time. ``dry_run`` derives
+    everything and persists nothing, so the counts can be read before committing
+    to the real pass.
+    """
+
+    since: datetime | None = None
+    dry_run: bool = False
+
+
+class LineageBackfillOut(BaseModel):
+    """The state of a workspace's backfill: what was asked, and what it found.
+
+    The counters are deliberately separate rather than one "processed" number.
+    After a backfill the useful question is which of them is surprisingly large —
+    a high ``parse_failures`` points at a dialect gap, a high ``queries_failed``
+    at something worth a bug report, and a high ``queries_skipped`` is usually
+    just a workspace that mostly reads.
+    """
+
+    status: str
+    dry_run: bool
+    since: datetime | None = None
+    # How far back the graph has been reconstructed, across every run so far.
+    covered_from: datetime | None = None
+    queries_scanned: int
+    queries_with_lineage: int
+    queries_skipped: int
+    parse_failures: int
+    queries_failed: int
+    edges_created: int
+    edges_updated: int
+    error: str | None = None
+    requested_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None

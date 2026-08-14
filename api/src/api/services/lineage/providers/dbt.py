@@ -20,7 +20,8 @@ from __future__ import annotations
 from typing import Any
 
 from api.services.lineage.ingest import CanonicalEdge
-from api.services.lineage.resolve import Resolver, Skipped
+from api.services.lineage.providers import ProviderEdges
+from api.services.lineage.resolve import Resolver
 
 # Resource types that correspond to a physical relation lineage can point at.
 # `test`, `unit_test`, `analysis` and `operation` produce no persistent dataset;
@@ -30,16 +31,22 @@ _MATERIAL_NODE_TYPES = frozenset({"model", "snapshot", "seed"})
 
 
 def _relation(node: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
-    """The physical (database, schema, table) a dbt node writes to.
+    """The physical (database, schema, table) a dbt node reads or writes.
 
-    ``alias`` wins over ``name``: a model configured with an alias is written to
-    the alias, and pointing lineage at the model's file name instead would name a
-    table that does not exist.
+    Which field carries the physical name depends on the resource. A model,
+    seed or snapshot uses ``alias``; a *source* has no ``alias`` at all and
+    names its table with the required ``identifier`` — ``name`` there is the
+    logical handle used by ``source('crm', 'customers')``, which frequently
+    differs from the table it points at. Falling back to ``name`` for a source
+    silently names a table that does not exist, so the graph gains a phantom
+    node and never joins up with the real one.
+
+    ``name`` remains the last resort, for a model with no alias set.
     """
     return (
         node.get("database"),
         node.get("schema"),
-        node.get("alias") or node.get("name"),
+        node.get("alias") or node.get("identifier") or node.get("name"),
     )
 
 
@@ -63,9 +70,7 @@ def run_id(manifest: dict[str, Any]) -> str | None:
     return (manifest.get("metadata") or {}).get("invocation_id")
 
 
-def edges_from_manifest(
-    manifest: dict[str, Any], *, resolve: Resolver
-) -> tuple[list[CanonicalEdge], list[Skipped]]:
+def edges_from_manifest(manifest: dict[str, Any], *, resolve: Resolver) -> ProviderEdges:
     """Every table-level relationship the dbt project declares.
 
     Reads ``parent_map`` when present — dbt precomputes it — and falls back to
@@ -77,20 +82,18 @@ def edges_from_manifest(
     disabled = set(manifest.get("disabled") or {})
     parent_map = manifest.get("parent_map") or {}
 
-    edges: list[CanonicalEdge] = []
-    skipped: list[Skipped] = []
+    result = ProviderEdges()
+    edges = result.edges
+    skipped = result.skipped
     seen: set[tuple[str, str]] = set()
 
     for unique_id, node in nodes.items():
         if unique_id in disabled:
             continue
-        # Sources have no parents by definition; they only ever appear as the
-        # source side of somebody else's edge.
-        parents = parent_map.get(unique_id)
-        if parents is None:
-            parents = (node.get("depends_on") or {}).get("nodes") or []
-        if not parents:
-            continue
+        # A source is never a target: dbt does not build it, it only ever
+        # appears as the source side of somebody else's edge. Everything else
+        # here is something dbt writes.
+        is_source = node.get("resource_type") == "source"
 
         database, schema, table = _relation(node)
         target, skip = resolve.resolve(
@@ -101,8 +104,20 @@ def edges_from_manifest(
             allow_external=False,
         )
         if target is None:
-            if skip is not None:
+            if skip is not None and not is_source:
                 skipped.append(skip)
+            continue
+
+        # Recorded before the parent check, so a model that lost its last
+        # dependency still scopes reconciliation and its stale edges can be
+        # pruned. Skipping it here is what let them survive forever.
+        if not is_source:
+            result.targets.add(target.key)
+
+        parents = parent_map.get(unique_id)
+        if parents is None:
+            parents = (node.get("depends_on") or {}).get("nodes") or []
+        if not parents:
             continue
 
         for parent_id in parents:
@@ -132,4 +147,4 @@ def edges_from_manifest(
             edges.append(
                 CanonicalEdge(source=source, target=target, operation="model", confidence="exact")
             )
-    return edges, skipped
+    return result

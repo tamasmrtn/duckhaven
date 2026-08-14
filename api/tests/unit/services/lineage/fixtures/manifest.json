@@ -99,16 +99,14 @@
       "name": "orders",
       "database": "raw",
       "schema": "analytics",
-      "identifier": "orders",
-      "alias": "orders"
+      "identifier": "orders_raw_v2"
     },
     "source.acme.crm.customers": {
       "resource_type": "source",
       "name": "customers",
       "database": "crm_pg",
       "schema": "public",
-      "identifier": "customers",
-      "alias": "customers"
+      "identifier": "customers_export"
     }
   },
   "disabled": {

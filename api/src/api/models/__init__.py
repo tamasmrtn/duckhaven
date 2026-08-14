@@ -13,6 +13,7 @@ from api.models.catalog_migration import (
     CatalogMigrationTable,
 )
 from api.models.lineage import LineageColumnEdge, LineageEdge
+from api.models.lineage_backfill import LineageBackfill
 from api.models.maintenance import (
     MaintenancePolicy,
     MaintenanceRecommendation,
@@ -40,6 +41,7 @@ __all__ = [
     "CatalogMigrationEvent",
     "CatalogMigrationTable",
     "Credential",
+    "LineageBackfill",
     "LineageColumnEdge",
     "LineageEdge",
     "MaintenancePolicy",

@@ -159,3 +159,14 @@ def test_sources_are_never_reconcile_targets(manifest, resolver):
     # dbt does not build a source, so pruning "edges into it" is meaningless.
     _edges, _skipped, targets = _unpack(manifest, resolve=resolver)
     assert not any(key.endswith("/analytics/orders_raw_v2") for key in targets)
+
+
+def test_an_ephemeral_model_is_spliced_through(manifest, resolver):
+    """dbt inlines an ephemeral model into its consumer rather than building a
+    table, so naming it would invent a relation *and* lose the real one."""
+    edges, _, targets = _unpack(manifest, resolve=resolver)
+    pairs = names(edges)
+
+    assert ("internal:analytics.stg_orders", "internal:analytics.fct_orders") in pairs
+    assert not any("int_orders" in label for pair in pairs for label in pair)
+    assert not any(key.endswith("/analytics/int_orders") for key in targets)

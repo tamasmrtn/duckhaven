@@ -91,6 +91,36 @@
           "model.acme.stg_orders"
         ]
       }
+    },
+    "model.acme.int_orders": {
+      "resource_type": "model",
+      "name": "int_orders",
+      "database": "warehouse",
+      "schema": "analytics",
+      "alias": "int_orders",
+      "config": {
+        "materialized": "ephemeral"
+      },
+      "depends_on": {
+        "nodes": [
+          "model.acme.stg_orders"
+        ]
+      }
+    },
+    "model.acme.fct_orders": {
+      "resource_type": "model",
+      "name": "fct_orders",
+      "database": "warehouse",
+      "schema": "analytics",
+      "alias": "fct_orders",
+      "config": {
+        "materialized": "table"
+      },
+      "depends_on": {
+        "nodes": [
+          "model.acme.int_orders"
+        ]
+      }
     }
   },
   "sources": {
@@ -136,7 +166,13 @@
       "model.acme.stg_orders"
     ],
     "source.acme.raw.orders": [],
-    "source.acme.crm.customers": []
+    "source.acme.crm.customers": [],
+    "model.acme.int_orders": [
+      "model.acme.stg_orders"
+    ],
+    "model.acme.fct_orders": [
+      "model.acme.int_orders"
+    ]
   },
   "exposures": {},
   "metrics": {},

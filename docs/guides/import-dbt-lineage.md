@@ -6,13 +6,15 @@ the ones DuckHaven [observes for itself](../concepts/lineage.md).
 
 ## What you need
 
-The `target/manifest.json` your project writes on every `dbt` command except `deps`, `clean`, `debug` and `init`, and
-**writer** access to the workspace.
+The `target/manifest.json` your project writes, and a token with **writer** access to the workspace — see
+[Service accounts](service-accounts.md).
 
-## Import it
+## Publishing the manifest
+
+Post the artifact to the dbt import endpoint exactly as dbt wrote it. There is nothing to extract or transform first:
 
 ```sh
-curl -X POST \
+curl -fsS -X POST \
   -H "Authorization: Bearer $DUCKHAVEN_PAT" \
   -H "Content-Type: application/json" \
   --data @target/manifest.json \
@@ -26,6 +28,41 @@ The response says what changed:
 ```
 
 Open any imported table in the catalog explorer and the Lineage tab shows the graph, with each edge labelled `dbt`.
+
+### When to publish
+
+**Publish when the project changes, not when it runs.** The manifest describes the dependencies your *code* declares,
+so it changes when someone edits a model — not when a schedule fires. Re-posting an unchanged manifest is harmless but
+achieves nothing.
+
+The natural home is therefore the pipeline that deploys the project — a merge to your main branch — rather than the
+job that runs it:
+
+```yaml
+# CI, on merge. `dbt parse` needs no warehouse: it reads the project and
+# writes target/manifest.json without connecting or executing anything.
+- run: dbt parse --target prod
+- run: |
+    curl -fsS -X POST \
+      -H "Authorization: Bearer $DUCKHAVEN_PAT" \
+      -H "Content-Type: application/json" \
+      --data @target/manifest.json \
+      "$DUCKHAVEN_URL/api/workspaces/$DUCKHAVEN_WORKSPACE/lineage/imports/dbt"
+```
+
+!!! note "Publish once per environment"
+    A node's `database` and `schema` come from the dbt target, so `dev` and `prod` produce different manifests
+    describing different tables. Publish each one against the workspace that owns those catalogs, using the matching
+    `--target`. Publishing a developer's local target into a shared workspace would add that developer's personal
+    schema to everyone's graph.
+
+Keep publishing an explicit step rather than something a `dbt run` does implicitly. Lineage is a governance side
+effect: if the API is unreachable, that should fail a small visible CI step, not the pipeline that moves your data.
+
+!!! note "A DuckHaven CLI will cover this later"
+    Publishing is a plain HTTP POST today, and deliberately so — nothing extra to install. A future DuckHaven CLI will
+    wrap it, so credentials and workspace can come from existing configuration instead of being wired into CI by hand.
+    The endpoint and its behaviour will not change.
 
 ## How your project maps onto the catalog
 
@@ -54,15 +91,15 @@ A *model* targeting an unknown catalog is treated differently — it is skipped 
 DuckHaven cannot be building a table in a catalog it does not attach. Usually this means the workspace is missing a
 catalog attachment, or the project's `database` does not match the catalog's slug.
 
-## Re-importing
+## Re-publishing
 
-Re-import after every production run; it is idempotent. An import prunes **dbt** edges that this run no longer
-declares, scoped to the models the run actually mentions — so `dbt run --select one_model` will not delete lineage for
-models it did not build.
+Publishing is idempotent: posting the same manifest twice changes nothing except when each relationship was last
+seen. Posting a *changed* manifest prunes the **dbt** edges the project no longer declares, scoped to the models the
+payload actually mentions — so a manifest covering part of a project will not delete lineage for the rest of it.
 
-Reconciliation never touches edges from another producer. Lineage DuckHaven derived itself always survives an import.
-
-To automate it, add the `curl` above to whatever runs your project, after `dbt run`.
+Reconciliation never touches edges from another producer. Lineage DuckHaven derived itself always survives an import,
+which is what makes the two comparable: if dbt stops declaring a dependency that execution-derived lineage still shows,
+the graph keeps both and labels them, and that disagreement is usually worth a look.
 
 ## Retiring the integration
 
@@ -84,8 +121,9 @@ This requires workspace **owner**.
 - Very large projects: a single import is capped at 5,000 edges. Beyond that, use the generic
   `POST /workspaces/<ws>/lineage/imports` endpoint and send edges in batches.
 - If your dbt project runs *against* DuckHaven through a [SQL session](../concepts/sql-sessions.md), you will also get
-  execution-derived lineage for free. The two agree most of the time; where they do not, both are shown, which is
-  usually worth investigating.
+  execution-derived lineage for free — no import needed for the models that actually ran. Publishing the manifest is
+  still worth it: it covers models a given run did not build, and it is what makes "declared" and "observed"
+  comparable. The two agree most of the time; where they do not, both are shown.
 
 ## Related
 

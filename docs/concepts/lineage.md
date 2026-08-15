@@ -171,7 +171,9 @@ Other limits worth knowing:
   tell the two cases apart because Iceberg gives every table an id that survives a rename and changes on recreation — so
   a rename keeps its history and a recreation does not inherit someone else's.
 - **Dropping a table removes its edges**, on both sides — the same cleanup that removes its metadata sidecar and its
-  grants. Recreating the table and re-running the work restores them.
+  grants. Recreating the table and re-running the work restores them. A
+  [backfill](../guides/backfill-lineage.md) also restores them, since the statement that built the table is still in
+  history and nothing there records the later drop.
 - **Renaming a catalog is safe.** Assets are keyed by the catalog's identity, not its slug.
 - **The same table name in two catalogs is two assets.** Identity is always resolved within a catalog.
 - **Graphs are bounded.** Traversal is capped at 5 hops and 500 nodes; when a cap is hit the response says so and the

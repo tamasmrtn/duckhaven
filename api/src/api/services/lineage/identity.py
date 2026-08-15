@@ -91,6 +91,16 @@ async def reconcile_table_identity(
         # Same address, different table. Whatever the old lineage described is
         # gone; the new table has to earn its own. Deliberately the same rule the
         # drop path applies, because this *is* a drop that DuckHaven did not see.
+        #
+        # Note this fires even when the displaced table is still alive under a
+        # name nothing has looked at yet — two renames crossing over, where the
+        # old occupant moved aside and something else took its address. Its
+        # lineage is lost rather than followed, which is the deliberate choice:
+        # the alternative is leaving the old table's edges attached to the new
+        # one until somebody happens to open the old name, and lineage that is
+        # confidently wrong is worse than lineage that is missing. Nothing here
+        # can tell the two situations apart without a catalog listing, which is
+        # exactly the per-request lookup this module exists to avoid.
         await delete_table_lineage(db, catalog_id, schema, table)
         here.table_uuid = table_uuid
         logger.info(

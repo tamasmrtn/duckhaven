@@ -25,6 +25,7 @@ from api.services.lineage.backfill import (
     advance,
     request_backfill,
 )
+from api.services.lineage.times import aware_utc
 
 CTAS = "CREATE TABLE warehouse.analytics.dim AS SELECT * FROM raw.analytics.src"
 OTHER_CTAS = "CREATE TABLE warehouse.analytics.rollup AS SELECT * FROM raw.analytics.events"
@@ -529,3 +530,232 @@ async def test_a_tick_runs_a_cycle_when_this_replica_leads(db_engine):
     point of the test is that the tick delegates rather than short-circuits."""
     factory = async_sessionmaker(db_engine, expire_on_commit=False)
     assert (await backfill.run_tick(factory))["status"] == "idle"
+
+
+# --- failure isolation under a real transaction -----------------------------
+
+
+async def test_a_statement_that_fails_mid_write_does_not_poison_the_batch(graph_env, monkeypatch):
+    """Catching the exception is not enough on its own.
+
+    A database-level failure aborts the surrounding transaction, so without a
+    per-statement savepoint the half-written state would still be there and every
+    *later* statement in the batch would fail too — one bad row reported as four
+    hundred casualties. The savepoint is what makes the recovery real.
+    """
+    db = graph_env["db"]
+    boom = await _history(graph_env, sql=CTAS, ran_at=NOW - timedelta(days=9))
+    await _history(graph_env, sql=OTHER_CTAS, ran_at=NOW - timedelta(days=8))
+
+    real = backfill.record_execution_lineage
+
+    async def half_written(session, query, **kwargs):
+        result = await real(session, query, **kwargs)
+        if query.id == boom.id:
+            raise RuntimeError("failed after writing")
+        return result
+
+    monkeypatch.setattr(backfill, "record_execution_lineage", half_written)
+
+    row = await _run(graph_env)
+
+    assert row.status == "completed"
+    assert (row.queries_scanned, row.queries_failed) == (2, 1)
+    # The statement after the failure was processed normally...
+    assert row.queries_with_lineage == 1
+    # ...and the failed one left nothing behind.
+    assert {e.target_table for e in await _edges(db)} == {"rollup"}
+
+
+async def test_a_commit_failure_is_recorded_on_the_row(graph_env, db_engine, monkeypatch):
+    """Otherwise it escapes past the handler that would mark the run failed, the
+    row stays `running` with its cursor unmoved, and the next tick replays the
+    identical batch forever with nothing to say why."""
+    db = graph_env["db"]
+    workspace_id = graph_env["workspace"].id
+    await request_backfill(
+        db, workspace_id=workspace_id, since=None, dry_run=False, requested_by=None
+    )
+    await db.commit()
+
+    async def advance_then_break(session, row, **_kwargs):
+        # Leave the session holding a write that cannot commit: a second state
+        # row for a workspace that already has one.
+        session.add(LineageBackfill(workspace_id=workspace_id))
+        return {"backfill": str(row.id), "backfill_status": row.status, "scanned": 1}
+
+    monkeypatch.setattr(backfill, "advance", advance_then_break)
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    result = await backfill.run_cycle(factory)
+
+    assert result == {"status": "ran", "failed": True}
+    async with factory() as check:
+        row = (await check.execute(sa.select(LineageBackfill))).scalar_one()
+        assert row.status == "failed"
+        assert row.error
+
+
+# --- coverage bookkeeping ---------------------------------------------------
+
+
+async def test_a_run_with_no_catalogs_records_no_coverage(graph_env):
+    """It read nothing, so it must not claim to have. Recording the window would
+    lock the workspace out of ever backfilling once a catalog is attached."""
+    from api.models.catalog import WorkspaceCatalog
+
+    db = graph_env["db"]
+    await _history(graph_env, sql=CTAS, ran_at=NOW - timedelta(days=30))
+    detached = await db.execute(
+        sa.delete(WorkspaceCatalog).where(
+            WorkspaceCatalog.workspace_id == graph_env["workspace"].id
+        )
+    )
+    assert detached.rowcount
+    await db.flush()
+
+    row = await _run(graph_env)
+    assert (row.status, row.covered_from) == ("completed", None)
+
+
+async def test_another_workspaces_lineage_does_not_shrink_this_ones_window(graph_env):
+    """Edges are catalog-scoped facts shared across workspaces, so asking the
+    catalog when recording started would answer for whoever started earliest. A
+    workspace created against a long-lived catalog would then be told its whole
+    history was covered and would silently backfill nothing."""
+    from api.models.workspace import Workspace
+    from api.services.lineage.ingest import CanonicalEdge, upsert_edges
+    from api.services.lineage.keys import internal_ref
+
+    db = graph_env["db"]
+    older = Workspace(slug=f"older-{uuid.uuid4().hex[:6]}", name="Older")
+    db.add(older)
+    await db.flush()
+    # The other workspace has been recording lineage in a shared catalog for ages.
+    await upsert_edges(
+        db,
+        [
+            CanonicalEdge(
+                source=internal_ref(graph_env["catalogs"]["raw"].id, "analytics", "src"),
+                target=internal_ref(graph_env["catalogs"]["warehouse"].id, "analytics", "old"),
+            )
+        ],
+        provider="execution",
+        workspace_id=older.id,
+        observed_at=NOW - timedelta(days=500),
+    )
+    await _history(graph_env, sql=CTAS, ran_at=NOW - timedelta(days=30))
+
+    row = await _run(graph_env)
+
+    assert row.queries_scanned == 1, "this workspace's own history is still readable"
+    assert {e.target_table for e in await _edges(db)} == {"old", "dim"}
+
+
+# --- resuming ---------------------------------------------------------------
+
+
+async def test_resuming_a_cancelled_run_does_not_recount_what_it_already_read(graph_env):
+    """Coverage is only recorded on completion, so a cancelled walk's only record
+    of how far it got is the cursor. Discarding it would replay everything the
+    run had already read and add a second observation to each relationship."""
+    db = graph_env["db"]
+    for day in range(4):
+        await _history(graph_env, sql=CTAS, ran_at=NOW - timedelta(days=50 + day))
+
+    row = await request_backfill(
+        db,
+        workspace_id=graph_env["workspace"].id,
+        since=None,
+        dry_run=False,
+        requested_by=None,
+    )
+    await advance(db, row, batch_size=2)
+    row.cancel_requested = True
+    await advance(db, row, batch_size=2)
+    assert row.status == "cancelled"
+
+    resumed = await _run(graph_env)
+
+    assert resumed.status == "completed"
+    assert resumed.queries_scanned == 2, "only the two it had not reached"
+    # Four statements, four observations — not six.
+    (edge,) = await _edges(db)
+    assert edge.observation_count == 4
+
+
+async def test_asking_for_a_different_window_starts_a_fresh_walk(graph_env):
+    db = graph_env["db"]
+    for day in range(4):
+        await _history(graph_env, sql=CTAS, ran_at=NOW - timedelta(days=50 + day))
+
+    row = await request_backfill(
+        db,
+        workspace_id=graph_env["workspace"].id,
+        since=None,
+        dry_run=False,
+        requested_by=None,
+    )
+    await advance(db, row, batch_size=2)
+    row.cancel_requested = True
+    await advance(db, row, batch_size=2)
+
+    restarted = await request_backfill(
+        db,
+        workspace_id=graph_env["workspace"].id,
+        since=NOW - timedelta(days=60),
+        dry_run=False,
+        requested_by=None,
+    )
+    assert restarted.cursor_query_id is None
+
+
+async def test_a_re_request_reports_the_time_it_was_asked_for(graph_env):
+    db = graph_env["db"]
+    first = await _run(graph_env)
+    original = first.created_at
+
+    again = await request_backfill(
+        db,
+        workspace_id=graph_env["workspace"].id,
+        since=None,
+        dry_run=False,
+        requested_by=None,
+    )
+
+    assert aware_utc(again.created_at) > aware_utc(original)
+
+
+# --- what gets read ---------------------------------------------------------
+
+
+async def test_synthetic_reads_are_excluded_without_being_paged_through(graph_env):
+    """They fire on every click in the catalog explorer, so on a busy workspace
+    they are most of what `queries` holds. Filtering them in SQL keeps the walk
+    off rows it would only throw away — and keeps `queries_skipped` meaning
+    something."""
+    db = graph_env["db"]
+    for origin in ("sample", "metadata"):
+        noise = await _history(graph_env, sql=CTAS, ran_at=NOW - timedelta(days=20))
+        noise.origin = origin
+    await db.flush()
+    await _history(graph_env, sql=CTAS, ran_at=NOW - timedelta(days=10))
+
+    row = await _run(graph_env)
+
+    assert row.queries_scanned == 1, "the synthetic rows never reached the walk"
+    assert row.queries_with_lineage == 1
+
+
+async def test_an_interactive_query_is_still_read(graph_env):
+    """`origin` is NULL for every interactive query, and `NOT IN` against NULL is
+    NULL — so a bare `notin_` would filter out precisely the statements the walk
+    exists to find. This is that regression."""
+    db = graph_env["db"]
+    query = await _history(graph_env, sql=CTAS, ran_at=NOW - timedelta(days=10))
+    assert query.origin is None
+
+    row = await _run(graph_env)
+
+    assert (row.queries_scanned, row.queries_with_lineage) == (1, 1)
+    assert len(await _edges(db)) == 1

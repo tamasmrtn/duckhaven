@@ -54,7 +54,10 @@ EXECUTION_PROVIDER = "execution"
 # would establish nothing anyway; skipping them keeps the parse off the path that
 # runs every time somebody clicks a table in the catalog explorer. They are
 # already excluded from query history for the same reason.
-_INTERNAL_ORIGINS = frozenset({"sample", "metadata"})
+#
+# Public because the backfill excludes the same rows in SQL rather than paging
+# through them only to discard them here. One list, two readers.
+INTERNAL_ORIGINS = frozenset({"sample", "metadata"})
 
 
 @dataclass(frozen=True)
@@ -458,7 +461,7 @@ async def record_execution_lineage(
     nothing. ``parse_failed`` on the result distinguishes the two.
     """
     result = IngestResult()
-    if not query.sql or query.origin in _INTERNAL_ORIGINS:
+    if not query.sql or query.origin in INTERNAL_ORIGINS:
         return result
 
     if context is None:

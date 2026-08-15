@@ -115,8 +115,13 @@ to spike load; `LINEAGE_BACKFILL_BATCH_SIZE` is the knob if you want it faster o
 **Only completed statements count.** A run that failed or was cancelled may have written nothing, so asserting a
 relationship from it would be a guess.
 
-**Tables that have since been dropped come back as nodes** if a historical statement named them. The relationships were
-real when they happened. Dropping the table again through DuckHaven removes them.
+**Tables that have since been dropped come back as nodes** if a historical statement named them. Dropping a table
+removes its lineage, but a backfill reads the statement that built it and records the relationship again — it was real
+when it happened, and nothing in the history says the table was later removed.
+
+There is no way to clear those edges afterwards short of dropping the table again, which you cannot do to a table that
+is already gone. If that matters more to you than the history does, bound the backfill with `since` to a window you
+know post-dates the drops.
 
 ## Configuration
 

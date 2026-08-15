@@ -5,7 +5,7 @@ requires-python = ">=3.14"
 dependencies = [
     "fastapi>=0.141.1",
     "uvicorn[standard]>=0.52.1",
-    "sqlalchemy[asyncio]>=2.0.51",
+    "sqlalchemy[asyncio]>=2.0.52",
     "alembic>=1.19.0",
     "asyncpg>=0.29",
     "bcrypt>=4.0",

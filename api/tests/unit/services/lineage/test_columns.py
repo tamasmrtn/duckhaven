@@ -612,3 +612,63 @@ async def test_unqualified_names_resolve_against_the_active_catalog():
 async def test_no_active_catalog_leaves_unqualified_names_unresolvable():
     sql = "CREATE TABLE target AS SELECT amount FROM orders"
     assert await derive(sql, active_catalog=None) == {}
+
+
+# ── Stars that are not projections ────────────────────────────────────────────
+
+
+async def test_count_star_does_not_look_like_an_unexpanded_projection():
+    """`COUNT(*)` counts rows; it names no column and needs no schema.
+
+    Treating any surviving star as an unresolved projection threw away the
+    column lineage of every aggregate written the ordinary way — and paid for a
+    round of catalog reads first, which could not have helped.
+    """
+    sql = """
+        CREATE TABLE target AS
+        SELECT customer_id, COUNT(*) AS orders FROM orders GROUP BY customer_id
+    """
+    assert await pairs_for(sql) == {("customer_id", "customer_id")}
+
+
+async def test_count_star_needs_no_schema_lookup():
+    lookup = CountingLookup(SCHEMAS)
+    sql = """
+        CREATE TABLE target AS
+        SELECT o.customer_id, COUNT(*) AS n FROM orders o GROUP BY o.customer_id
+    """
+    await derive(sql, schemas=lookup)
+    assert lookup.calls == []
+
+
+async def test_count_star_alongside_a_real_star_still_refuses():
+    """The projection star is the one that means the schema was missing."""
+    result = await derive(
+        "CREATE TABLE target AS SELECT *, COUNT(*) OVER () AS n FROM orders",
+        schemas=MappingSchemaLookup({}),
+    )
+    assert result[(ref("orders").key, ref("target").key)].state == UNSUPPORTED
+
+
+# ── Declared target column lists ──────────────────────────────────────────────
+
+
+async def test_create_view_with_a_column_list_uses_the_declared_names():
+    """`CREATE VIEW v (a, b)` builds a view whose columns are `a` and `b`.
+
+    Recording the query's own output names would name columns that do not exist
+    on the view — confidently wrong lineage, which is worse than none.
+    """
+    sql = "CREATE VIEW target (first, second) AS SELECT id, amount FROM orders"
+    assert await pairs_for(sql) == {("id", "first"), ("amount", "second")}
+
+
+async def test_ctas_with_a_column_list_uses_the_declared_names():
+    sql = "CREATE TABLE target (first INT, second INT) AS SELECT id, amount FROM orders"
+    assert await pairs_for(sql) == {("id", "first"), ("amount", "second")}
+
+
+async def test_a_declared_list_that_does_not_line_up_is_refused():
+    sql = "CREATE TABLE target (only_one INT) AS SELECT id, amount FROM orders"
+    result = await derive(sql)
+    assert result[(ref("orders").key, ref("target").key)].state == UNSUPPORTED

@@ -166,9 +166,17 @@ class LineageAssetIn(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+# Bounded to what the store can hold and to what the native extractor allows
+# itself per statement, so an import cannot assert something DuckHaven's own
+# extraction would have refused. Over-length names are a 422 rather than a
+# truncation error from the database.
+_MAX_COLUMN_NAME = 255
+_MAX_COLUMNS_PER_EDGE = 2000
+
+
 class LineageColumnIn(BaseModel):
-    source_column: str
-    target_column: str
+    source_column: str = Field(min_length=1, max_length=_MAX_COLUMN_NAME)
+    target_column: str = Field(min_length=1, max_length=_MAX_COLUMN_NAME)
 
 
 class LineageEdgeIn(BaseModel):
@@ -188,7 +196,7 @@ class LineageEdgeIn(BaseModel):
     target: LineageAssetIn
     operation: str | None = None
     confidence: str = "exact"
-    columns: list[LineageColumnIn] = Field(default_factory=list)
+    columns: list[LineageColumnIn] = Field(default_factory=list, max_length=_MAX_COLUMNS_PER_EDGE)
     column_lineage: str | None = None
 
     @field_validator("column_lineage")

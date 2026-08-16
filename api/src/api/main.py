@@ -229,9 +229,14 @@ class SPAStaticFiles(StaticFiles):
 
 
 @asynccontextmanager
-async def _outer_lifespan(_: FastAPI) -> AsyncIterator[None]:
+async def _outer_lifespan(outer: FastAPI) -> AsyncIterator[None]:
     # Starlette does not run a mounted sub-app's lifespan, so drive it here.
     async with api_app.router.lifespan_context(api_app):
+        # The lifespan owns the client but sets it on the inner app, and the agent
+        # WebSocket is mounted on this one — so anything the WS path needs has to
+        # be reachable from here as well. Lineage extraction reads a source
+        # table's columns through it when it cannot resolve them from the SQL.
+        outer.state.polaris_client = api_app.state.polaris_client
         yield
 
 

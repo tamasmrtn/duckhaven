@@ -1,5 +1,4 @@
-"""Import lineage produced outside DuckHaven, retire a producer's edges, and
-reconstruct the graph from history.
+"""Import lineage produced outside DuckHaven, and retire a producer's edges.
 
 Two ways in, one path through: the generic endpoint takes an already-canonical
 edge list, and the per-producer endpoint takes that producer's own artifact and
@@ -12,37 +11,24 @@ claim about that table, so it needs ``writer`` on the target's catalog wherever
 that catalog is attached scoped, on top of workspace ``writer``. Reading it back
 is separately redacted, so a scoped principal cannot import a graph naming
 objects they cannot see and then read the names out of it.
-
-Backfill sits here too rather than under ``/admin``, because it is scoped to one
-workspace's own history and its own catalogs — the same blast radius as purging a
-provider, which is why it takes the same workspace ``owner``. The request only
-*queues* the work; a background runner walks the history a batch at a time, so
-neither a large history nor a slow one can hold a request open or compete with
-the queries it is reading about.
 """
 
 from __future__ import annotations
 
 import uuid
 
-import sqlalchemy as sa
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user, get_db
 from api.models.catalog import Catalog
-from api.models.lineage_backfill import ACTIVE_STATUSES as ACTIVE_BACKFILL_STATUSES
-from api.models.lineage_backfill import LineageBackfill as LineageBackfillModel
 from api.models.user import User
 from api.schemas.lineage import (
-    LineageBackfillIn,
-    LineageBackfillOut,
     LineageImportIn,
     LineageImportOut,
     LineageSkippedOut,
 )
 from api.services import grants as grant_service
-from api.services.lineage import backfill as lineage_backfill
 from api.services.lineage import ingest as lineage_ingest
 from api.services.lineage.ingest import EXECUTION_PROVIDER, CanonicalEdge
 from api.services.lineage.keys import AssetRef
@@ -334,106 +320,6 @@ async def purge_provider_lineage(
     return LineageImportOut(created=0, updated=0, removed=removed)
 
 
-def _backfill_out(row: LineageBackfillModel) -> LineageBackfillOut:
-    return LineageBackfillOut(
-        status=row.status,
-        dry_run=row.dry_run,
-        since=row.since_at,
-        covered_from=row.covered_from,
-        queries_scanned=row.queries_scanned,
-        queries_with_lineage=row.queries_with_lineage,
-        queries_skipped=row.queries_skipped,
-        parse_failures=row.parse_failures,
-        queries_failed=row.queries_failed,
-        edges_created=row.edges_created,
-        edges_updated=row.edges_updated,
-        error=row.error,
-        requested_at=row.created_at,
-        started_at=row.started_at,
-        finished_at=row.finished_at,
-    )
-
-
-async def start_backfill(
-    ws: str,
-    body: LineageBackfillIn = Body(default_factory=LineageBackfillIn),
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> LineageBackfillOut:
-    """Queue a reconstruction of this workspace's lineage from its query history.
-
-    Returns immediately with the queued state; poll the same path to watch it.
-    Requires workspace ``owner``: it reads every statement the workspace has ever
-    run and writes lineage across every catalog it attaches, which is the same
-    reach as retiring a provider.
-    """
-    workspace = await get_workspace(db, ws)
-    await assert_workspace_member(db, workspace.id, user.id, min_role="owner")
-    try:
-        row = await lineage_backfill.request_backfill(
-            db,
-            workspace_id=workspace.id,
-            since=body.since,
-            dry_run=body.dry_run,
-            requested_by=user.id,
-        )
-    except lineage_backfill.BackfillInProgress as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    await db.commit()
-    return _backfill_out(row)
-
-
-async def get_backfill(
-    ws: str,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> LineageBackfillOut:
-    """How far this workspace's lineage backfill has got, and what it found."""
-    workspace = await get_workspace(db, ws)
-    await assert_workspace_member(db, workspace.id, user.id, min_role="owner")
-    row = (
-        await db.execute(
-            sa.select(LineageBackfillModel).where(LineageBackfillModel.workspace_id == workspace.id)
-        )
-    ).scalar_one_or_none()
-    if row is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No lineage backfill has been requested for this workspace",
-        )
-    return _backfill_out(row)
-
-
-async def cancel_backfill(
-    ws: str,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> LineageBackfillOut:
-    """Ask a running backfill to stop at the next batch boundary.
-
-    Cooperative rather than immediate: the runner checks between batches, so the
-    cursor never ends up claiming history it did not finish reading. Whatever was
-    written before the cancel stays — it is real lineage, derived the same way as
-    everything else.
-    """
-    workspace = await get_workspace(db, ws)
-    await assert_workspace_member(db, workspace.id, user.id, min_role="owner")
-    row = (
-        await db.execute(
-            sa.select(LineageBackfillModel).where(LineageBackfillModel.workspace_id == workspace.id)
-        )
-    ).scalar_one_or_none()
-    if row is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No lineage backfill has been requested for this workspace",
-        )
-    if row.status in ACTIVE_BACKFILL_STATUSES:
-        row.cancel_requested = True
-        await db.commit()
-    return _backfill_out(row)
-
-
 router.add_api_route(
     "/workspaces/{ws}/lineage/imports",
     import_lineage,
@@ -451,23 +337,4 @@ router.add_api_route(
     purge_provider_lineage,
     methods=["DELETE"],
     response_model=LineageImportOut,
-)
-router.add_api_route(
-    "/workspaces/{ws}/lineage/backfill",
-    start_backfill,
-    methods=["POST"],
-    response_model=LineageBackfillOut,
-    status_code=status.HTTP_202_ACCEPTED,
-)
-router.add_api_route(
-    "/workspaces/{ws}/lineage/backfill",
-    get_backfill,
-    methods=["GET"],
-    response_model=LineageBackfillOut,
-)
-router.add_api_route(
-    "/workspaces/{ws}/lineage/backfill",
-    cancel_backfill,
-    methods=["DELETE"],
-    response_model=LineageBackfillOut,
 )

@@ -107,8 +107,6 @@ The threshold applies to each producer's own claim:
 - If dbt stopped reporting three months ago but queries still build the table, the **dbt claim** is marked stale and the
   relationship is not. Something still confirms it.
 - If dbt was the only producer and it stopped, the **relationship** is stale.
-- A relationship reconstructed by [backfill](../guides/backfill-lineage.md) from a statement that ran six months ago is
-  stale immediately, because that is when it was last observed.
 
 Stale relationships stay in the graph, drawn dashed and faint, with the producer that went quiet labelled. They are not
 removed: silently dropping a relationship that is probably still true is a worse answer than showing it with a caveat.
@@ -171,9 +169,7 @@ Other limits worth knowing:
   tell the two cases apart because Iceberg gives every table an id that survives a rename and changes on recreation — so
   a rename keeps its history and a recreation does not inherit someone else's.
 - **Dropping a table removes its edges**, on both sides — the same cleanup that removes its metadata sidecar and its
-  grants. Recreating the table and re-running the work restores them. A
-  [backfill](../guides/backfill-lineage.md) also restores them, since the statement that built the table is still in
-  history and nothing there records the later drop.
+  grants. Recreating the table and re-running the work restores them.
 - **Renaming a catalog is safe.** Assets are keyed by the catalog's identity, not its slug.
 - **The same table name in two catalogs is two assets.** Identity is always resolved within a catalog.
 - **Graphs are bounded.** Traversal is capped at 5 hops and 500 nodes; when a cap is hit the response says so and the
@@ -181,8 +177,6 @@ Other limits worth knowing:
 
 ## Related
 
-- [Reconstruct lineage from query history](../guides/backfill-lineage.md) — filling the graph in for work that ran
-  before lineage existed.
 - [Import lineage from dbt](../guides/import-dbt-lineage.md) — the first importer.
 - [Metadata](metadata.md) — what else DuckHaven records about a table.
 - [Permissions](permissions.md) — the grant tiers redaction is based on.

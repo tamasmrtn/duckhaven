@@ -26,6 +26,7 @@ export function makeLineage(): LineageGraph {
         schema_name: "public",
         table: "customers",
         system: "crm_pg",
+        column_count: 0,
         distance: -2,
       },
       {
@@ -35,6 +36,7 @@ export function makeLineage(): LineageGraph {
         schema_name: "raw",
         table: "events",
         system: null,
+        column_count: 4,
         distance: -1,
       },
       {
@@ -44,6 +46,7 @@ export function makeLineage(): LineageGraph {
         schema_name: null,
         table: null,
         system: null,
+        column_count: 0,
         distance: -1,
       },
       {
@@ -53,6 +56,7 @@ export function makeLineage(): LineageGraph {
         schema_name: "analytics",
         table: "daily_active_users",
         system: null,
+        column_count: 3,
         distance: 0,
       },
       {
@@ -62,6 +66,7 @@ export function makeLineage(): LineageGraph {
         schema_name: "analytics",
         table: "funnel",
         system: null,
+        column_count: 0,
         distance: 1,
       },
     ],
@@ -79,6 +84,7 @@ export function makeLineage(): LineageGraph {
             last_seen_at: LONG_AGO,
             observation_count: 12,
             stale: true,
+            column_lineage: "unsupported",
           },
         ],
         confidence: "exact",
@@ -87,7 +93,11 @@ export function makeLineage(): LineageGraph {
         observation_count: 12,
         stale: true,
         last_query_id: null,
+        // An external source whose columns cannot be tied to an asset: data does
+        // flow, we just cannot say which columns, and that is not the same as
+        // saying none do.
         columns: [],
+        column_lineage: "unsupported",
       },
       {
         // Two producers, one of which stopped. The edge stays current because
@@ -102,6 +112,7 @@ export function makeLineage(): LineageGraph {
             last_seen_at: LONG_AGO,
             observation_count: 12,
             stale: true,
+            column_lineage: "derived",
           },
           {
             name: "execution",
@@ -109,6 +120,7 @@ export function makeLineage(): LineageGraph {
             last_seen_at: NOW,
             observation_count: 35,
             stale: false,
+            column_lineage: "derived",
           },
         ],
         confidence: "exact",
@@ -117,7 +129,36 @@ export function makeLineage(): LineageGraph {
         observation_count: 47,
         stale: false,
         last_query_id: "q-1",
-        columns: [],
+        // Two upstream columns feeding one output, and one feeding two — both
+        // shapes the model has to support — plus a mapping that has gone stale
+        // on its own while the rest of the edge stayed current.
+        columns: [
+          {
+            source_column: "user_id",
+            target_column: "user_id",
+            providers: ["dbt", "execution"],
+            stale: false,
+          },
+          {
+            source_column: "event_id",
+            target_column: "active_count",
+            providers: ["execution"],
+            stale: false,
+          },
+          {
+            source_column: "session_id",
+            target_column: "active_count",
+            providers: ["execution"],
+            stale: false,
+          },
+          {
+            source_column: "occurred_at",
+            target_column: "day",
+            providers: ["dbt", "execution"],
+            stale: true,
+          },
+        ],
+        column_lineage: "derived",
       },
       {
         source_key: "redacted:9f2c4a1b7e0d3856",
@@ -130,6 +171,7 @@ export function makeLineage(): LineageGraph {
             last_seen_at: NOW,
             observation_count: 47,
             stale: false,
+            column_lineage: "derived",
           },
         ],
         confidence: "exact",
@@ -138,7 +180,10 @@ export function makeLineage(): LineageGraph {
         observation_count: 47,
         stale: false,
         last_query_id: "q-1",
+        // Withheld: naming a restricted table's columns would give away more
+        // than the table name the redaction already holds back.
         columns: [],
+        column_lineage: "derived",
       },
       {
         source_key: key("analytics", "daily_active_users"),
@@ -151,6 +196,7 @@ export function makeLineage(): LineageGraph {
             last_seen_at: NOW,
             observation_count: 3,
             stale: false,
+            column_lineage: "derived",
           },
         ],
         confidence: "exact",
@@ -159,24 +205,42 @@ export function makeLineage(): LineageGraph {
         observation_count: 3,
         stale: false,
         last_query_id: "q-2",
+        // Read and filtered on, but none of its values reach the target. The
+        // finding the table graph could never state.
         columns: [],
+        column_lineage: "derived",
       },
     ],
     truncated: false,
     hidden: false,
+    columns_truncated: false,
   };
 }
 
 // A table nothing has been built from and nothing reads: the empty state.
 export function makeEmptyLineage(root: string): LineageGraph {
-  return { root, nodes: [], edges: [], truncated: false, hidden: false };
+  return {
+    root,
+    nodes: [],
+    edges: [],
+    truncated: false,
+    hidden: false,
+    columns_truncated: false,
+  };
 }
 
 // A table that *does* have lineage, all of it in catalogs this workspace cannot
 // see. Indistinguishable from the empty graph without the `hidden` flag, which
 // is the entire reason the flag exists.
 export function makeHiddenLineage(root: string): LineageGraph {
-  return { root, nodes: [], edges: [], truncated: false, hidden: true };
+  return {
+    root,
+    nodes: [],
+    edges: [],
+    truncated: false,
+    hidden: true,
+    columns_truncated: false,
+  };
 }
 
 export let LINEAGE = makeLineage();

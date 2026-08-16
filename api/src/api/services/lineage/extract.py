@@ -58,7 +58,7 @@ class ExtractedEdge:
 
 
 @dataclass(frozen=True)
-class _ParsedRef:
+class ParsedRef:
     """A table name as written, before catalog/schema defaults are applied."""
 
     catalog: str | None
@@ -108,7 +108,7 @@ def classify(stmt: exp.Expression) -> str | None:
     return None
 
 
-def _statement_refs(stmt: exp.Expression) -> tuple[list[_ParsedRef], list[_ParsedRef]]:
+def statement_refs(stmt: exp.Expression) -> tuple[list[ParsedRef], list[ParsedRef]]:
     """Split one statement's table references into (targets, sources).
 
     Mirrors the filtering :func:`~api.services.grants.extract_table_refs` applies —
@@ -122,8 +122,8 @@ def _statement_refs(stmt: exp.Expression) -> tuple[list[_ParsedRef], list[_Parse
     targets = target_tables(stmt)
     target_ids = {id(t) for t in targets}
 
-    target_refs: list[_ParsedRef] = []
-    source_refs: list[_ParsedRef] = []
+    target_refs: list[ParsedRef] = []
+    source_refs: list[ParsedRef] = []
     for table in stmt.find_all(exp.Table):
         if not table.name:
             continue  # table function, not a catalog object
@@ -131,7 +131,7 @@ def _statement_refs(stmt: exp.Expression) -> tuple[list[_ParsedRef], list[_Parse
         schema = table.db or None
         if catalog is None and schema is None and table.name in cte_names:
             continue
-        ref = _ParsedRef(catalog=catalog, schema=schema, table=table.name)
+        ref = ParsedRef(catalog=catalog, schema=schema, table=table.name)
         if id(table) in target_ids:
             target_refs.append(ref)
         else:
@@ -139,8 +139,8 @@ def _statement_refs(stmt: exp.Expression) -> tuple[list[_ParsedRef], list[_Parse
     return target_refs, source_refs
 
 
-def _resolve(
-    ref: _ParsedRef, *, active_catalog: str | None, catalog_ids: dict[str, uuid.UUID]
+def resolve_ref(
+    ref: ParsedRef, *, active_catalog: str | None, catalog_ids: dict[str, uuid.UUID]
 ) -> AssetRef | None:
     """Apply the catalog/schema defaults and resolve the slug to a catalog id.
 
@@ -148,6 +148,10 @@ def _resolve(
     same thing to the grant check and to the graph. An unknown slug yields
     ``None``: the reference is dropped rather than guessed at, because a wrong
     edge is worse than a missing one.
+
+    Public for the same reason :func:`~api.services.grants.target_tables` is:
+    column extraction has to resolve a name to an asset by exactly this rule, or
+    a column edge could name an endpoint the table edge beside it does not.
     """
     from api.services.workspace import DEFAULT_SCHEMA
 
@@ -186,14 +190,14 @@ def edges_from_sql(
     # a later statement reading one is spliced through to its real sources.
     temp_sources: dict[str, list[AssetRef]] = {}
 
-    def resolve_sources(refs: list[_ParsedRef]) -> list[AssetRef]:
+    def resolve_sources(refs: list[ParsedRef]) -> list[AssetRef]:
         """Resolve source refs, substituting a script-local temp for its own."""
         out: list[AssetRef] = []
         for ref in refs:
             if ref.catalog is None and ref.schema is None and ref.table in temp_sources:
                 out.extend(temp_sources[ref.table])
                 continue
-            resolved = _resolve(ref, active_catalog=active_catalog, catalog_ids=catalog_ids)
+            resolved = resolve_ref(ref, active_catalog=active_catalog, catalog_ids=catalog_ids)
             if resolved is not None:
                 out.append(resolved)
         return out
@@ -203,21 +207,21 @@ def edges_from_sql(
             continue
         if isinstance(stmt, exp.Create) and stmt.expression is not None and _is_temporary(stmt):
             # Emit nothing, but remember where it came from.
-            temp_targets, temp_refs = _statement_refs(stmt)
+            temp_targets, temp_refs = statement_refs(stmt)
             if temp_targets:
                 temp_sources[temp_targets[0].table] = resolve_sources(temp_refs)
             continue
         operation = classify(stmt)
         if operation is None:
             continue
-        target_refs, source_refs = _statement_refs(stmt)
+        target_refs, source_refs = statement_refs(stmt)
         resolved_sources = resolve_sources(source_refs)
         if not target_refs or not resolved_sources:
             # No target, or a write with no source dataset (INSERT ... VALUES,
             # COPY FROM a file). Inventing an edge here would be a false positive.
             continue
         for target_ref in target_refs:
-            target = _resolve(target_ref, active_catalog=active_catalog, catalog_ids=catalog_ids)
+            target = resolve_ref(target_ref, active_catalog=active_catalog, catalog_ids=catalog_ids)
             if target is None:
                 continue
             for source in resolved_sources:

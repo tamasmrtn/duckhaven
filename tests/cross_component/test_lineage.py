@@ -62,7 +62,8 @@ async def test_ctas_records_lineage(api_client, workspace, healthy_agent, catalo
     assert edge["operation"] == "create_table_as"
     # The click-through to the SQL that produced the relationship.
     assert edge["last_query_id"] == built["id"]
-    # Column-level lineage is not derived yet, and says so rather than being absent.
+    # Column detail was not asked for, so none comes back — the default response
+    # stays the table graph no matter what was derived underneath.
     assert edge["columns"] == []
 
 
@@ -160,3 +161,108 @@ async def test_dropping_a_table_removes_its_lineage(
 
     graph = await _lineage(api_client, workspace, catalog, "dr_dim")
     assert graph["edges"] == []
+
+
+async def _column_pairs(api_client, workspace, catalog, table) -> tuple[dict, set]:
+    """The one edge into ``table``, with its column detail requested."""
+    graph = await _lineage(api_client, workspace, catalog, table, direction="upstream")
+    key = next(n["key"] for n in graph["nodes"] if n["table"] == table)
+    detailed = await _lineage(
+        api_client, workspace, catalog, table, direction="upstream", columns_for=key
+    )
+    (edge,) = detailed["edges"]
+    return edge, {(c["source_column"], c["target_column"]) for c in edge["columns"]}
+
+
+async def test_column_lineage_is_derived_over_the_live_channel(
+    api_client, workspace, healthy_agent, catalog
+) -> None:
+    """A statement's column flow, worked out from a frame the real agent sent.
+
+    Also the end-to-end proof of the rule that makes column lineage worth more
+    than the table graph: `c` is only in the WHERE, so it decided which rows
+    survived and not what any value is, and it must not appear.
+    """
+    agent = healthy_agent["id"]
+    await _run(
+        api_client, workspace, agent, "CREATE TABLE col_src AS SELECT 1 AS a, 2 AS b, 3 AS c"
+    )
+    built = await _run(
+        api_client,
+        workspace,
+        agent,
+        "CREATE TABLE col_dim AS SELECT a, b * 2 AS doubled FROM col_src WHERE c > 0",
+    )
+    assert built["status"] == "done", built
+
+    edge, pairs = await _column_pairs(api_client, workspace, catalog, "col_dim")
+
+    assert edge["column_lineage"] == "derived"
+    assert pairs == {("a", "a"), ("b", "doubled")}
+    # Each mapping keeps the provenance of the edge it hangs off.
+    assert all(c["providers"] == ["execution"] for c in edge["columns"])
+
+
+async def test_select_star_expands_against_the_live_catalog(
+    api_client, workspace, healthy_agent, catalog
+) -> None:
+    """The case that genuinely needs the catalog read.
+
+    Every other shape resolves from the SQL alone. `SELECT *` cannot: the column
+    names only exist in the catalog, so this is the one test that proves reading
+    them from a real Polaris works rather than from a fake that always answers.
+    """
+    agent = healthy_agent["id"]
+    await _run(
+        api_client, workspace, agent, "CREATE TABLE star_src AS SELECT 1 AS a, 'x' AS b, 3.5 AS c"
+    )
+    built = await _run(
+        api_client, workspace, agent, "CREATE TABLE star_dim AS SELECT * FROM star_src"
+    )
+    assert built["status"] == "done", built
+
+    edge, pairs = await _column_pairs(api_client, workspace, catalog, "star_dim")
+
+    assert edge["column_lineage"] == "derived"
+    assert pairs == {("a", "a"), ("b", "b"), ("c", "c")}
+
+
+async def test_a_source_only_filtered_on_is_reported_as_carrying_no_columns(
+    api_client, workspace, healthy_agent, catalog
+) -> None:
+    """The finding the table graph cannot state, end to end.
+
+    `flt_ref` is read and joined against, but none of its values reach the
+    target. That is `derived` with no columns — a real answer — and not the same
+    as having failed to work it out.
+    """
+    agent = healthy_agent["id"]
+    await _run(api_client, workspace, agent, "CREATE TABLE flt_src AS SELECT 1 AS id, 9 AS v")
+    await _run(
+        api_client, workspace, agent, "CREATE TABLE flt_ref AS SELECT 1 AS id, 'keep' AS tag"
+    )
+    built = await _run(
+        api_client,
+        workspace,
+        agent,
+        "CREATE TABLE flt_dim AS SELECT s.v FROM flt_src s "
+        "JOIN flt_ref r ON s.id = r.id WHERE r.tag = 'keep'",
+    )
+    assert built["status"] == "done", built
+
+    graph = await _lineage(api_client, workspace, catalog, "flt_dim", direction="upstream")
+    key = next(n["key"] for n in graph["nodes"] if n["table"] == "flt_dim")
+    detailed = await _lineage(
+        api_client, workspace, catalog, "flt_dim", direction="upstream", columns_for=key
+    )
+    by_source = {
+        next(n["table"] for n in detailed["nodes"] if n["key"] == e["source_key"]): e
+        for e in detailed["edges"]
+    }
+
+    assert {(c["source_column"], c["target_column"]) for c in by_source["flt_src"]["columns"]} == {
+        ("v", "v")
+    }
+    # Read, joined and filtered on — and contributing nothing.
+    assert by_source["flt_ref"]["column_lineage"] == "derived"
+    assert by_source["flt_ref"]["columns"] == []

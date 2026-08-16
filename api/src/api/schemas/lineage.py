@@ -5,7 +5,12 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, field_validator
+
+# What an edge can say about its column-level detail. "unknown" means nobody
+# tried, "unsupported" means somebody tried and could not, and "derived" means
+# somebody worked it out — possibly to no columns at all, which is a real answer.
+_COLUMN_STATES = frozenset({"unknown", "derived", "unsupported"})
 
 
 class LineageNodeOut(BaseModel):
@@ -25,11 +30,34 @@ class LineageNodeOut(BaseModel):
     system: str | None = None
     # Signed: negative upstream of the root, positive downstream, 0 for the root.
     distance: int
+    # How many of this dataset's columns take part in the lineage around it —
+    # the number of rows it would show if opened. Always present, because it is
+    # what lets a *closed* node say whether it is worth opening at all; the
+    # mappings themselves still only arrive for the nodes a caller asks about.
+    # Zero means the relationships were worked out and none of this dataset's
+    # values flow, which is a real answer and not something to offer opening.
+    column_count: int = 0
 
 
 class LineageColumnOut(BaseModel):
+    """One ``source column -> target column`` relationship on an edge.
+
+    Means "the value of the target column may be derived from the value of the
+    source column" — data flow, not a mention. A column used only to filter rows,
+    or only as a join key, is deliberately absent.
+
+    ``providers`` survives the merge that collapses one relationship's per-producer
+    rows into a single edge; without it a column pair could not say which producer
+    claimed it, which is the one thing somebody deciding whether to trust it needs.
+    """
+
     source_column: str
     target_column: str
+    providers: list[str] = Field(default_factory=list)
+    # Nothing has re-asserted this mapping within the configured window. Column
+    # mappings accumulate rather than being replaced, so a column dropped from a
+    # transformation ages out here rather than disappearing.
+    stale: bool = False
 
 
 class LineageProviderOut(BaseModel):
@@ -49,6 +77,11 @@ class LineageProviderOut(BaseModel):
     # Nothing has re-asserted this producer's claim within the configured
     # window. A statement about confirmation, not about correctness.
     stale: bool = False
+    # Whether *this* producer worked out the column detail. Per-producer for the
+    # same reason freshness is: one that can and one that cannot are two different
+    # stories about the same relationship, and flattening them would let the one
+    # that can vouch for the one that cannot.
+    column_lineage: str = "unknown"
 
 
 class LineageEdgeOut(BaseModel):
@@ -76,9 +109,20 @@ class LineageEdgeOut(BaseModel):
     # stopped reporting long ago.
     stale: bool = False
     last_query_id: uuid.UUID | None = None
-    # Column-level lineage is not derived yet, so this is always empty. Present
-    # from the start so adding it later changes no contract.
+    # Which columns' values flow along this relationship, merged across every
+    # producer that named them. Empty unless the request asked for column detail
+    # on one of this edge's endpoints — see ``columns_for`` on the read endpoint —
+    # because attaching it unasked would multiply a graph's size by the width of
+    # the tables in it.
     columns: list[LineageColumnOut] = Field(default_factory=list)
+    # Whether anything worked the columns out: "derived", "unsupported", or
+    # "unknown". This is what makes an empty ``columns`` readable. "derived" with
+    # no columns is a real answer — the source was read and none of its values
+    # reached the target, which is the case table-level lineage cannot express —
+    # whereas "unsupported" and "unknown" mean nobody established anything.
+    # "derived" if any producer managed it, since one that did is not undone by
+    # one that did not.
+    column_lineage: str = "unknown"
 
 
 class LineageGraphOut(BaseModel):
@@ -98,6 +142,10 @@ class LineageGraphOut(BaseModel):
     # are a different case: those stay in the graph as `redacted` and do not set
     # this.)
     hidden: bool = False
+    # A cap stopped column detail short, so an edge's ``columns`` may be missing
+    # some of its mappings. Separate from ``truncated`` because the graph's shape
+    # is complete even when this is set — only the detail within it is not.
+    columns_truncated: bool = False
 
 
 class LineageAssetIn(BaseModel):
@@ -118,11 +166,50 @@ class LineageAssetIn(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+# Bounded to what the store can hold and to what the native extractor allows
+# itself per statement, so an import cannot assert something DuckHaven's own
+# extraction would have refused. Over-length names are a 422 rather than a
+# truncation error from the database.
+_MAX_COLUMN_NAME = 255
+_MAX_COLUMNS_PER_EDGE = 2000
+
+
+class LineageColumnIn(BaseModel):
+    source_column: str = Field(min_length=1, max_length=_MAX_COLUMN_NAME)
+    target_column: str = Field(min_length=1, max_length=_MAX_COLUMN_NAME)
+
+
 class LineageEdgeIn(BaseModel):
+    """One imported relationship, optionally with its column-level detail.
+
+    ``columns`` is how any producer that knows which columns flow populates the
+    same model DuckHaven's own extraction does. Nothing about the graph depends on
+    which of the two filled it in.
+
+    ``column_lineage`` is inferred when omitted: ``derived`` if columns were
+    given, ``unknown`` otherwise. A producer that checked and found nothing flowing
+    — a source only filtered on — says so by sending ``derived`` with an empty
+    list, which is a different claim from not having looked.
+    """
+
     source: LineageAssetIn
     target: LineageAssetIn
     operation: str | None = None
     confidence: str = "exact"
+    columns: list[LineageColumnIn] = Field(default_factory=list, max_length=_MAX_COLUMNS_PER_EDGE)
+    column_lineage: str | None = None
+
+    @field_validator("column_lineage")
+    @classmethod
+    def _known_state(cls, value: str | None) -> str | None:
+        if value is not None and value not in _COLUMN_STATES:
+            raise ValueError(f"column_lineage must be one of {sorted(_COLUMN_STATES)}")
+        return value
+
+    def resolved_column_lineage(self) -> str:
+        if self.column_lineage is not None:
+            return self.column_lineage
+        return "derived" if self.columns else "unknown"
 
 
 class LineageImportIn(BaseModel):

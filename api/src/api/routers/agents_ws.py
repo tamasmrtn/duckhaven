@@ -351,7 +351,13 @@ async def agent_connect(
                     from api.services.query import handle_agent_frame
 
                     async with session_factory() as db:
-                        await handle_agent_frame(db, msg_frame)
+                        # The catalog client goes along so lineage extraction can
+                        # resolve a source table's columns. It is the process-wide
+                        # one the lifespan owns, the same instance every request
+                        # handler is given.
+                        await handle_agent_frame(
+                            db, msg_frame, getattr(ws.app.state, "polaris_client", None)
+                        )
 
                 elif msg_frame.type in (FrameType.SESSION_OPENED, FrameType.SESSION_CLOSED):
                     from api.services.sql_sessions.service import handle_session_frame

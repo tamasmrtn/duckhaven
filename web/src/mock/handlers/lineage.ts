@@ -7,7 +7,11 @@ import type { LineageGraph } from "@/types/lineage";
 // a handler override.
 const SEEDED_TABLE = "daily_active_users";
 
-function filtered(direction: string | null, depth: number): LineageGraph {
+function filtered(
+  direction: string | null,
+  depth: number,
+  columnsFor: string[],
+): LineageGraph {
   const nodes = LINEAGE.nodes.filter((n) => {
     if (Math.abs(n.distance) > depth) return false;
     if (direction === "upstream") return n.distance <= 0;
@@ -15,12 +19,19 @@ function filtered(direction: string | null, depth: number): LineageGraph {
     return true;
   });
   const keys = new Set(nodes.map((n) => n.key));
+  // Mirrors the API: column detail comes back only for edges touching a node the
+  // caller named, so a client that asks for none gets none.
+  const wanted = new Set(columnsFor);
   return {
     ...LINEAGE,
     nodes,
-    edges: LINEAGE.edges.filter(
-      (e) => keys.has(e.source_key) && keys.has(e.target_key),
-    ),
+    edges: LINEAGE.edges
+      .filter((e) => keys.has(e.source_key) && keys.has(e.target_key))
+      .map((e) =>
+        wanted.has(e.source_key) || wanted.has(e.target_key)
+          ? e
+          : { ...e, columns: [] },
+      ),
   };
 }
 
@@ -38,6 +49,7 @@ export const lineageHandlers = [
         filtered(
           url.searchParams.get("direction"),
           Number(url.searchParams.get("depth") ?? 2),
+          url.searchParams.getAll("columns_for"),
         ),
       );
     },

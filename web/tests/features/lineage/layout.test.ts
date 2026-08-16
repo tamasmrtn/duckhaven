@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { layoutLineage, NODE_WIDTH } from "@/features/lineage/layout";
-import type { LineageEdge, LineageNode } from "@/types/lineage";
+import {
+  layoutLineage,
+  NODE_HEIGHT,
+  NODE_WIDTH,
+  ROW_HEIGHT,
+  ROWS_PADDING,
+  STRIP_HEIGHT,
+} from "@/features/lineage/layout";
+import type { LineageColumn, LineageEdge, LineageNode } from "@/types/lineage";
 
-function node(key: string, distance: number): LineageNode {
+function node(key: string, distance: number, columnCount = 0): LineageNode {
   return {
     key,
     kind: "table",
@@ -11,21 +18,48 @@ function node(key: string, distance: number): LineageNode {
     table: key,
     system: null,
     distance,
+    // What decides whether the node carries a strip, and what the strip says.
+    // Server-supplied, because a closed node has no mappings of its own to count.
+    column_count: columnCount,
   };
 }
 
-function edge(source: string, target: string): LineageEdge {
+function column(source: string, target: string): LineageColumn {
+  return {
+    source_column: source,
+    target_column: target,
+    providers: ["execution"],
+    stale: false,
+  };
+}
+
+function edge(
+  source: string,
+  target: string,
+  columns: LineageColumn[] = [],
+): LineageEdge {
   return {
     source_key: source,
     target_key: target,
     operation: "create_table_as",
-    providers: ["execution"],
+    providers: [
+      {
+        name: "execution",
+        first_seen_at: "2026-01-01T00:00:00Z",
+        last_seen_at: "2026-01-02T00:00:00Z",
+        observation_count: 1,
+        stale: false,
+        column_lineage: columns.length > 0 ? "derived" : "unknown",
+      },
+    ],
     confidence: "exact",
     first_seen_at: "2026-01-01T00:00:00Z",
     last_seen_at: "2026-01-02T00:00:00Z",
     observation_count: 1,
+    stale: false,
     last_query_id: null,
-    columns: [],
+    columns,
+    column_lineage: columns.length > 0 ? "derived" : "unknown",
   };
 }
 
@@ -126,5 +160,130 @@ describe("layoutLineage", () => {
     const layout = layoutLineage([node("only", 0)], []);
     expect(layout.nodes).toHaveLength(1);
     expect(layout.width).toBe(NODE_WIDTH);
+  });
+});
+
+describe("layoutLineage with expanded nodes", () => {
+  const columns = [column("a", "x"), column("b", "y")];
+  const pair = () => [node("src", -1, 2), node("dst", 0, 2)];
+
+  it("carries the strip while collapsed, but no rows", () => {
+    // The strip is the affordance, so it is part of the node whether or not
+    // anyone has opened it — otherwise expanding would shift the whole graph.
+    const layout = layoutLineage(pair(), [edge("src", "dst", columns)]);
+
+    const src = layout.nodes.find((n) => n.id === "src")!;
+    expect(src.openable).toBe(true);
+    expect(src.columnCount).toBe(2);
+    expect(src.height).toBe(NODE_HEIGHT + STRIP_HEIGHT);
+    expect(src.rows).toEqual([]);
+    expect(layout.edges[0].columnLinks).toEqual([]);
+  });
+
+  it("leaves a node with nothing to show at the plain header height", () => {
+    const layout = layoutLineage(
+      [node("src", -1), node("dst", 0)],
+      [edge("src", "dst")],
+    );
+
+    const src = layout.nodes.find((n) => n.id === "src")!;
+    expect(src.openable).toBe(false);
+    expect(src.height).toBe(NODE_HEIGHT);
+  });
+
+  it("refuses to expand a node that has nothing to show", () => {
+    // Guards the case the old chevron got wrong: an edge can be `derived` and
+    // still carry no columns, and opening it would reveal an empty box.
+    const layout = layoutLineage(
+      [node("src", -1), node("dst", 0)],
+      [edge("src", "dst")],
+      new Set(["src"]),
+    );
+
+    const src = layout.nodes.find((n) => n.id === "src")!;
+    expect(src.rows).toEqual([]);
+    expect(src.expanded).toBe(false);
+    expect(src.height).toBe(NODE_HEIGHT);
+  });
+
+  it("gives an expanded node a row per participating column", () => {
+    const layout = layoutLineage(
+      pair(),
+      [edge("src", "dst", columns)],
+      new Set(["src"]),
+    );
+
+    const src = layout.nodes.find((n) => n.id === "src")!;
+    expect(src.rows.map((r) => r.column)).toEqual(["a", "b"]);
+    expect(src.height).toBe(
+      NODE_HEIGHT + STRIP_HEIGHT + ROWS_PADDING * 2 + 2 * ROW_HEIGHT,
+    );
+    // Rows begin below the header *and* the strip that sits between them.
+    expect(src.rows[0].y).toBeGreaterThan(NODE_HEIGHT + STRIP_HEIGHT);
+    expect(src.rows[1].y - src.rows[0].y).toBe(ROW_HEIGHT);
+  });
+
+  it("lists only the columns that take part in this graph", () => {
+    const layout = layoutLineage(
+      [node("src", -1, 1), node("dst", 0, 1)],
+      [edge("src", "dst", [column("a", "x")])],
+      new Set(["src", "dst"]),
+    );
+
+    expect(
+      layout.nodes.find((n) => n.id === "src")!.rows.map((r) => r.column),
+    ).toEqual(["a"]);
+    expect(
+      layout.nodes.find((n) => n.id === "dst")!.rows.map((r) => r.column),
+    ).toEqual(["x"]);
+  });
+
+  it("draws column links only once both endpoints are open", () => {
+    const edges = [edge("src", "dst", columns)];
+
+    const halfOpen = layoutLineage(pair(), edges, new Set(["src"]));
+    expect(halfOpen.edges[0].columnLinks).toEqual([]);
+
+    const bothOpen = layoutLineage(pair(), edges, new Set(["src", "dst"]));
+    expect(bothOpen.edges[0].columnLinks).toHaveLength(2);
+  });
+
+  it("anchors each column link on its own row", () => {
+    const layout = layoutLineage(
+      pair(),
+      [edge("src", "dst", columns)],
+      new Set(["src", "dst"]),
+    );
+
+    const src = layout.nodes.find((n) => n.id === "src")!;
+    const dst = layout.nodes.find((n) => n.id === "dst")!;
+    const [first, second] = layout.edges[0].columnLinks;
+
+    expect(first.fromY).toBe(src.y + src.rows[0].y);
+    expect(first.toY).toBe(dst.y + dst.rows[0].y);
+    expect(second.fromY).not.toBe(first.fromY);
+  });
+
+  it("stacks a column around a tall expanded node without overlapping", () => {
+    const layout = layoutLineage(
+      [node("a", -1, 2), node("b", -1, 1), node("dst", 0, 3)],
+      [edge("a", "dst", columns), edge("b", "dst", [column("c", "z")])],
+      new Set(["a"]),
+    );
+
+    const a = layout.nodes.find((n) => n.id === "a")!;
+    const b = layout.nodes.find((n) => n.id === "b")!;
+    expect(a.height).toBeGreaterThan(b.height);
+    expect(b.y).toBeGreaterThanOrEqual(a.y + a.height);
+  });
+
+  it("grows the canvas to fit the tallest expanded column", () => {
+    const edges = [edge("src", "dst", columns)];
+
+    const collapsed = layoutLineage(pair(), edges);
+    const opened = layoutLineage(pair(), edges, new Set(["src"]));
+
+    expect(opened.height).toBeGreaterThan(collapsed.height);
+    expect(opened.width).toBe(collapsed.width);
   });
 });

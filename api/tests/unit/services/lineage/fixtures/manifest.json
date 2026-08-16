@@ -18,7 +18,8 @@
           "source.acme.raw.orders",
           "source.acme.crm.customers"
         ]
-      }
+      },
+      "compiled_code": "select\n    o.id as order_id,\n    o.amount * o.quantity as total,\n    c.full_name as customer_name\nfrom raw.analytics.orders_raw_v2 as o\njoin crm_pg.public.customers_export as c on o.customer_id = c.id\nwhere o.status = 'paid'"
     },
     "model.acme.dim_orders": {
       "resource_type": "model",
@@ -32,7 +33,8 @@
           "seed.acme.country_codes",
           "test.acme.not_null_id"
         ]
-      }
+      },
+      "compiled_code": "select\n    s.order_id,\n    s.total as order_total,\n    s.total as order_total_copy\nfrom warehouse.analytics.stg_orders as s\njoin warehouse.analytics.country_codes as cc on s.order_id = cc.id\nwhere cc.code = 'GB'"
     },
     "seed.acme.country_codes": {
       "resource_type": "seed",

@@ -117,6 +117,15 @@ class LineageEdge(Base):
     # producers. Nothing emits "inferred" today — the column exists so uncertainty
     # has somewhere to live rather than being laundered into fact.
     confidence: Mapped[str] = mapped_column(String(16), nullable=False, default="exact")
+    # Whether this provider worked out the column-level detail, and not merely
+    # whether any :class:`LineageColumnEdge` rows exist. "derived" with no children
+    # is a real and useful answer — the source was joined against or filtered on but
+    # none of its values reached the target — and it must not read as "we don't
+    # know", which is what "unknown" (never attempted) and "unsupported" (attempted,
+    # could not) say.
+    column_lineage: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="unknown", server_default="unknown"
+    )
 
     # The query that most recently produced this edge, for click-through to the
     # exact SQL. A soft pointer with no FK (like `schedules.last_run_query_id`) so
@@ -141,11 +150,17 @@ class LineageColumnEdge(Base):
 
     Deliberately a child of the dataset edge rather than an independent
     relationship: a column edge cannot exist without the dataset edge it refines,
-    so the table graph is always a correct coarsening of the column graph.
+    so the table graph is always a correct coarsening of the column graph. Hanging
+    off ``edge_id`` also means these inherit the parent's provenance for free —
+    which provider asserted the mapping is whichever one owns the parent row — and
+    that a table rename, which rewrites the parent in place, carries them along
+    without touching a single child.
 
-    Created empty. Column-level extraction is Phase 2 work — the table exists now
-    so that adding it later is purely additive (a writer and a serializer), with
-    no migration of, or change to, anything already shipped.
+    Re-observation *accumulates*. Two statements can legitimately build the same
+    target from the same source through different columns, so the union is the
+    truth and deleting whatever the newest statement did not mention would make a
+    mapping flap in and out. A mapping nothing re-asserts ages out through
+    ``last_seen_at`` instead, exactly as the parent edge does.
     """
 
     __tablename__ = "lineage_column_edges"
@@ -154,6 +169,9 @@ class LineageColumnEdge(Base):
             "edge_id", "source_column", "target_column", name="uq_lineage_column_edges_identity"
         ),
         Index("ix_lineage_column_edges_edge", "edge_id"),
+        # "What feeds this column?" The unique constraint above already indexes
+        # the (edge_id, source_column) prefix for the other direction.
+        Index("ix_lineage_column_edges_edge_target", "edge_id", "target_column"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -162,3 +180,10 @@ class LineageColumnEdge(Base):
     )
     source_column: Mapped[str] = mapped_column(String(255), nullable=False)
     target_column: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

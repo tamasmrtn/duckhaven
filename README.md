@@ -76,6 +76,14 @@ trail — with data sovereignty, network privacy, and no SaaS lock-in.
   ON, governed by Polaris.
 - **Snapshot history & time travel** — Browse a table's Iceberg snapshots and run
   "query at this snapshot" against any point in its history.
+- **Data lineage, down to the column** — See where a table's data came from and
+  what was built from it, on a Lineage tab on the table you are already looking
+  at. Derived from the SQL DuckHaven runs — worksheets, scheduled jobs and
+  external tools alike, with no instrumentation — and importable from a tool
+  that already knows, dbt first. Open a table in the graph to see which of its
+  columns feed which downstream ones. Because that tracks values rather than
+  mentions, a source that was only joined against or filtered on reports
+  carrying nothing, which the table-level graph alone cannot tell you.
 - **Built-in metadata** — A read-only `information_schema` per catalog, plus a
   Postgres-side sidecar for ownership, last-write provenance, and row/size stats
   that Polaris does not track.
@@ -258,10 +266,6 @@ cutting a new release see [docs/developer/releasing.md](docs/developer/releasing
 
 The full shipped feature set is above. Here's what's actively being worked on:
 
-- **Column-level lineage** — table-level lineage now ships: DuckHaven derives it
-  from the SQL it runs (worksheets, scheduled jobs, and external tools alike)
-  and imports a dbt `manifest.json` so lineage that already exists in your dbt
-  project shows up in the catalog. Column-to-column derivation is the next step.
 - **A semantic layer for the AI assistant** — curated metric and dimension
   definitions the assistant grounds its SQL in, instead of inferring intent
   from raw table/column names alone.

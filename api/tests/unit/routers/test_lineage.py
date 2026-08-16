@@ -9,15 +9,15 @@ import pytest
 import sqlalchemy as sa
 from httpx import AsyncClient
 
-from api.models.lineage import LineageEdge
+from api.models.lineage import LineageColumnEdge, LineageEdge
 from api.models.storage_backend import StorageBackend
 from api.models.user import User
 from api.models.workspace import Workspace, WorkspaceMember
 from api.services.auth import hash_password
 
-MANIFEST = (
-    Path(__file__).resolve().parents[1] / "services" / "lineage" / "fixtures" / "manifest.json"
-)
+_FIXTURES = Path(__file__).resolve().parents[1] / "services" / "lineage" / "fixtures"
+MANIFEST = _FIXTURES / "manifest.json"
+CATALOG = _FIXTURES / "catalog.json"
 
 
 @pytest.fixture
@@ -318,3 +318,162 @@ async def test_the_graph_reports_completeness_and_per_provider_freshness(auth_cl
     assert provider["name"] == "custom"
     assert provider["stale"] is False
     assert provider["observation_count"] == 1
+
+
+# --- column-level detail over the wire ---------------------------------------
+
+
+async def test_a_producer_can_import_column_pairs_directly(auth_client, ws, db_session):
+    """The provider-neutral route: anything that knows its columns can say so.
+
+    Nothing here goes near dbt or any other producer's format — this is the shape
+    the canonical model accepts, and it is the same one DuckHaven's own extraction
+    fills in.
+    """
+    payload = {
+        "provider": "acme",
+        "edges": [
+            {
+                "source": {"catalog": "raw", "schema": "analytics", "table": "src"},
+                "target": {"catalog": "warehouse", "schema": "analytics", "table": "dim"},
+                "columns": [
+                    {"source_column": "a", "target_column": "x"},
+                    {"source_column": "b", "target_column": "x"},
+                ],
+            }
+        ],
+    }
+    resp = await auth_client.post(f"/workspaces/{ws}/lineage/imports", json=payload)
+
+    assert resp.status_code == 200
+    (edge,) = await _stored(db_session)
+    assert edge.column_lineage == "derived"
+    rows = await db_session.execute(
+        sa.select(LineageColumnEdge).where(LineageColumnEdge.edge_id == edge.id)
+    )
+    assert {(c.source_column, c.target_column) for c in rows.scalars().all()} == {
+        ("a", "x"),
+        ("b", "x"),
+    }
+
+
+async def test_an_import_without_columns_stays_table_level(auth_client, ws, db_session):
+    payload = {
+        "provider": "acme",
+        "edges": [
+            {
+                "source": {"catalog": "raw", "schema": "analytics", "table": "src"},
+                "target": {"catalog": "warehouse", "schema": "analytics", "table": "dim"},
+            }
+        ],
+    }
+    resp = await auth_client.post(f"/workspaces/{ws}/lineage/imports", json=payload)
+
+    assert resp.status_code == 200
+    (edge,) = await _stored(db_session)
+    assert edge.column_lineage == "unknown"
+
+
+async def test_a_producer_can_state_that_nothing_flows(auth_client, ws, db_session):
+    """ "I checked and no columns flow" is a different claim from "I did not check"."""
+    payload = {
+        "provider": "acme",
+        "edges": [
+            {
+                "source": {"catalog": "raw", "schema": "analytics", "table": "src"},
+                "target": {"catalog": "warehouse", "schema": "analytics", "table": "dim"},
+                "columns": [],
+                "column_lineage": "derived",
+            }
+        ],
+    }
+    resp = await auth_client.post(f"/workspaces/{ws}/lineage/imports", json=payload)
+
+    assert resp.status_code == 200
+    (edge,) = await _stored(db_session)
+    assert edge.column_lineage == "derived"
+
+
+async def test_an_unknown_column_lineage_state_is_rejected(auth_client, ws):
+    payload = {
+        "provider": "acme",
+        "edges": [
+            {
+                "source": {"catalog": "raw", "schema": "analytics", "table": "src"},
+                "target": {"catalog": "warehouse", "schema": "analytics", "table": "dim"},
+                "column_lineage": "probably",
+            }
+        ],
+    }
+    resp = await auth_client.post(f"/workspaces/{ws}/lineage/imports", json=payload)
+
+    assert resp.status_code == 422
+
+
+async def test_a_manifest_posted_with_a_catalog_gains_column_detail(auth_client, ws, db_session):
+    manifest = json.loads(MANIFEST.read_text())
+    catalog = json.loads(CATALOG.read_text())
+
+    resp = await auth_client.post(
+        f"/workspaces/{ws}/lineage/imports/dbt",
+        json={"manifest": manifest, "catalog": catalog},
+    )
+
+    assert resp.status_code == 200
+    edges = await _stored(db_session)
+    stg = next(
+        e for e in edges if e.target_table == "stg_orders" and e.source_table.startswith("orders")
+    )
+    assert stg.column_lineage == "derived"
+    rows = await db_session.execute(
+        sa.select(LineageColumnEdge).where(LineageColumnEdge.edge_id == stg.id)
+    )
+    assert ("amount", "total") in {(c.source_column, c.target_column) for c in rows.scalars().all()}
+
+
+async def test_a_bare_manifest_is_still_accepted(auth_client, ws, db_session):
+    """The pre-existing request shape has to keep working exactly as it did."""
+    manifest = json.loads(MANIFEST.read_text())
+    resp = await auth_client.post(f"/workspaces/{ws}/lineage/imports/dbt", json=manifest)
+
+    assert resp.status_code == 200
+    edges = await _stored(db_session)
+    assert edges
+    assert all(e.column_lineage == "unknown" for e in edges)
+
+
+async def test_an_over_long_column_name_is_rejected_not_truncated(auth_client, ws):
+    """The store holds 255 characters; anything longer is the client's mistake.
+
+    Without the bound this reached Postgres and came back a 500.
+    """
+    payload = {
+        "provider": "acme",
+        "edges": [
+            {
+                "source": {"catalog": "raw", "schema": "analytics", "table": "src"},
+                "target": {"catalog": "warehouse", "schema": "analytics", "table": "dim"},
+                "columns": [{"source_column": "a" * 256, "target_column": "x"}],
+            }
+        ],
+    }
+    resp = await auth_client.post(f"/workspaces/{ws}/lineage/imports", json=payload)
+
+    assert resp.status_code == 422
+
+
+async def test_an_unbounded_column_list_is_rejected(auth_client, ws):
+    """An import must not be able to assert more than extraction allows itself."""
+    payload = {
+        "provider": "acme",
+        "edges": [
+            {
+                "source": {"catalog": "raw", "schema": "analytics", "table": "src"},
+                "target": {"catalog": "warehouse", "schema": "analytics", "table": "dim"},
+                "columns": [{"source_column": f"c{i}", "target_column": "x"} for i in range(2001)],
+            }
+        ],
+    }
+    resp = await auth_client.post(f"/workspaces/{ws}/lineage/imports", json=payload)
+
+    assert resp.status_code == 422

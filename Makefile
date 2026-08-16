@@ -233,17 +233,27 @@ migrate-down:
 # ── Docker / deployment ───────────────────────────────────────────────────────
 # The compose stack auto-applies migrations and runs the browser-driven
 # first-admin flow on first boot — `compose-up` is the whole install.
+#
+# Run from `deploy/` rather than pointing `-f` at the file from here. Compose
+# only looks for `docker-compose.override.yml` when it is discovering files on
+# its own, and naming one with `-f` turns that off — so the override was being
+# ignored, silently, by every target below. That is how a stack comes up without
+# the settings its own override file turns on (SQL sessions, say, which the dbt
+# adapter needs) and reports them as simply unavailable.
+#
+# The project name is derived from the directory either way, so this keeps
+# addressing the same `deploy-*` containers as before.
 compose-up:
-	docker compose -f deploy/docker-compose.yml up -d
+	cd deploy && docker compose up -d
 
 compose-down:
-	docker compose -f deploy/docker-compose.yml down
+	cd deploy && docker compose down
 
 compose-logs:
-	docker compose -f deploy/docker-compose.yml logs -f
+	cd deploy && docker compose logs -f
 
 compose-pull:
-	docker compose -f deploy/docker-compose.yml pull
+	cd deploy && docker compose pull
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 clean:

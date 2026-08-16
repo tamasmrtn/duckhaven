@@ -1,0 +1,86 @@
+{
+  "metadata": {
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/catalog/v1.json"
+  },
+  "nodes": {
+    "model.acme.stg_orders": {
+      "metadata": {
+        "database": "warehouse",
+        "schema": "analytics",
+        "name": "stg_orders"
+      },
+      "columns": {
+        "order_id": {
+          "name": "order_id",
+          "type": "BIGINT",
+          "index": 1
+        },
+        "total": {
+          "name": "total",
+          "type": "DOUBLE",
+          "index": 2
+        },
+        "customer_name": {
+          "name": "customer_name",
+          "type": "VARCHAR",
+          "index": 3
+        }
+      }
+    },
+    "seed.acme.country_codes": {
+      "metadata": {
+        "database": "warehouse",
+        "schema": "analytics",
+        "name": "country_codes"
+      },
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "BIGINT",
+          "index": 1
+        },
+        "code": {
+          "name": "code",
+          "type": "VARCHAR",
+          "index": 2
+        }
+      }
+    }
+  },
+  "sources": {
+    "source.acme.raw.orders": {
+      "metadata": {
+        "database": "raw",
+        "schema": "analytics",
+        "name": "orders_raw_v2"
+      },
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "BIGINT",
+          "index": 1
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "type": "BIGINT",
+          "index": 2
+        },
+        "amount": {
+          "name": "amount",
+          "type": "DOUBLE",
+          "index": 3
+        },
+        "quantity": {
+          "name": "quantity",
+          "type": "BIGINT",
+          "index": 4
+        },
+        "status": {
+          "name": "status",
+          "type": "VARCHAR",
+          "index": 5
+        }
+      }
+    }
+  }
+}

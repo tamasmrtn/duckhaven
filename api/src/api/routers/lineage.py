@@ -30,6 +30,7 @@ from api.schemas.lineage import (
 )
 from api.services import grants as grant_service
 from api.services.lineage import ingest as lineage_ingest
+from api.services.lineage.columns import ColumnPair
 from api.services.lineage.ingest import EXECUTION_PROVIDER, CanonicalEdge
 from api.services.lineage.keys import AssetRef
 from api.services.lineage.providers import get_adapter
@@ -214,6 +215,11 @@ async def import_lineage(
                 target=target,
                 operation=edge.operation,
                 confidence=edge.confidence,
+                column_lineage=edge.resolved_column_lineage(),
+                columns=tuple(
+                    ColumnPair(source_column=c.source_column, target_column=c.target_column)
+                    for c in edge.columns
+                ),
             )
         )
 
@@ -263,7 +269,8 @@ async def import_provider_artifact(
     await assert_workspace_member(db, workspace.id, user.id, min_role="writer")
     catalogs = await resolve_workspace_catalogs(db, workspace.id)
 
-    produced = adapter(body, resolve=Resolver(catalogs))
+    artifact, catalog_artifact = _split_artifacts(body)
+    produced = await adapter(artifact, resolve=Resolver(catalogs), catalog=catalog_artifact)
     edges, skipped = produced.edges, produced.skipped
     if len(edges) > MAX_EDGES_PER_IMPORT:
         raise HTTPException(
@@ -275,7 +282,7 @@ async def import_provider_artifact(
     if provider == "dbt":
         from api.services.lineage.providers.dbt import run_id as dbt_run_id
 
-        run_id = dbt_run_id(body)
+        run_id = dbt_run_id(artifact)
 
     await _assert_can_write_targets(
         db,
@@ -294,6 +301,23 @@ async def import_provider_artifact(
         workspace_id=workspace.id,
         reconcile_targets=produced.targets,
     )
+
+
+def _split_artifacts(body: dict) -> tuple[dict, dict | None]:
+    """Separate a producer's main artifact from the optional schema one beside it.
+
+    Posting the artifact on its own stays valid and unchanged. A producer that
+    also publishes its view of each relation's columns — dbt's ``catalog.json`` —
+    sends both under ``{"manifest": ..., "catalog": ...}``, which is what makes
+    column-level detail possible without a catalog round trip per model.
+
+    The two shapes cannot be confused: a real manifest has no top-level
+    ``manifest`` key.
+    """
+    if isinstance(body, dict) and isinstance(body.get("manifest"), dict):
+        catalog = body.get("catalog")
+        return body["manifest"], catalog if isinstance(catalog, dict) else None
+    return body, None
 
 
 async def purge_provider_lineage(

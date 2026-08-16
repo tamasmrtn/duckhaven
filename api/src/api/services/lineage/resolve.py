@@ -15,6 +15,7 @@ The rule for an unknown catalog is asymmetric on purpose:
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 
 from api.models.catalog import Catalog
@@ -34,6 +35,16 @@ class Resolver:
 
     def __init__(self, catalogs: list[Catalog]) -> None:
         self._by_slug = {c.slug: c for c in catalogs}
+
+    @property
+    def catalog_ids(self) -> dict[str, uuid.UUID]:
+        """Slug to catalog id, for resolving names inside a producer's own SQL.
+
+        An importer that carries the query behind a relationship — dbt's compiled
+        model SQL, say — has to resolve the names in it by the same rule the
+        native extractor does, and that rule takes this map rather than catalogs.
+        """
+        return {slug: catalog.id for slug, catalog in self._by_slug.items()}
 
     def resolve(
         self,

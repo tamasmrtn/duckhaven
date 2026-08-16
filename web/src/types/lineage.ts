@@ -12,12 +12,36 @@ export interface LineageNode {
   system: string | null;
   /** Signed hops from the root: negative upstream, positive downstream. */
   distance: number;
+  /** How many columns this node would show if opened. Arrives for every node,
+   *  unlike the mappings themselves, so a closed node can say whether it is
+   *  worth opening. Zero means there is nothing to open. */
+  column_count: number;
 }
 
+/**
+ * One `source column -> target column` relationship on an edge.
+ *
+ * Means the target column's values may be derived from the source column's — data
+ * flow, not a mention. A column used only to filter rows, or only as a join key,
+ * is deliberately absent.
+ */
 export interface LineageColumn {
   source_column: string;
   target_column: string;
+  /** Which producers assert this mapping. api `LineageColumnOut.providers`. */
+  providers: string[];
+  stale: boolean;
 }
+
+/**
+ * Whether anything worked out an edge's column detail.
+ *
+ * `derived` with no columns is a real answer — the source was read and none of
+ * its values reached the target — which is exactly what the table graph cannot
+ * express. `unsupported` means somebody tried and could not; `unknown` means
+ * nobody tried. Never present the last two as "nothing flows".
+ */
+export type LineageColumnState = "unknown" | "derived" | "unsupported";
 
 /** One producer's claim about a relationship, with its own freshness. Producers
  *  keep their own cadence, so an import that stopped running last quarter is
@@ -29,6 +53,8 @@ export interface LineageProvider {
   observation_count: number;
   /** Nothing has re-asserted this producer's claim recently. */
   stale: boolean;
+  /** Whether *this* producer worked out the column detail. */
+  column_lineage: LineageColumnState;
 }
 
 export interface LineageEdge {
@@ -45,8 +71,12 @@ export interface LineageEdge {
   /** True only when every producer's claim is stale. */
   stale: boolean;
   last_query_id: string | null;
-  /** Always empty today — column-level lineage is not derived yet. */
+  /** Empty unless the request named one of this edge's endpoints in
+   *  `columns_for`. Column detail scales with how wide the tables are, so it is
+   *  fetched for the nodes somebody actually opened rather than for the graph. */
   columns: LineageColumn[];
+  /** Makes an empty `columns` readable. See {@link LineageColumnState}. */
+  column_lineage: LineageColumnState;
 }
 
 export interface LineageGraph {
@@ -58,6 +88,9 @@ export interface LineageGraph {
   /** Part of the graph is outside this workspace and was dropped. Says only
    *  that something is missing — never what, where, or how much. */
   hidden: boolean;
+  /** A cap stopped column detail short. The graph's shape is still complete;
+   *  only the mappings inside it are partial. */
+  columns_truncated: boolean;
 }
 
 export type LineageDirection = "upstream" | "downstream" | "both";

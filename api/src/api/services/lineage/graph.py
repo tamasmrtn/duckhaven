@@ -25,12 +25,14 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
+import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
 from api.models.catalog import Catalog
-from api.models.lineage import LineageEdge
+from api.models.lineage import LineageColumnEdge, LineageEdge
 from api.schemas.lineage import (
+    LineageColumnOut,
     LineageEdgeOut,
     LineageGraphOut,
     LineageNodeOut,
@@ -40,6 +42,12 @@ from api.services.lineage import traverse
 from api.services.lineage.keys import internal_ref
 from api.services.lineage.redact import Visibility, VisibleNode, visible_node
 from api.services.lineage.times import aware_utc, is_stale
+
+# The most column mappings one response will carry. Column detail multiplies with
+# the width of the tables involved, so a graph that is perfectly reasonable at
+# table level can be enormous one level down; past this the response stops being
+# something a browser should be asked to hold, and `columns_truncated` says so.
+MAX_COLUMN_PAIRS = 2000
 
 
 async def table_lineage(
@@ -54,8 +62,16 @@ async def table_lineage(
     direction: str = "both",
     depth: int = 2,
     providers: list[str] | None = None,
+    columns_for: set[str] | None = None,
 ) -> LineageGraphOut:
-    """The bounded lineage graph around one table, as this caller may see it."""
+    """The bounded lineage graph around one table, as this caller may see it.
+
+    ``columns_for`` names the nodes whose column detail the caller actually wants,
+    and is empty by default. Column mappings are not attached otherwise: a graph
+    is bounded by node count, but its column detail is bounded by the *width* of
+    the tables in it, so returning everything would make the cost of asking for
+    lineage depend on something the caller never sees.
+    """
     root_key = internal_ref(catalog.id, schema, table).key
     walked = await traverse.walk(
         db, root_key=root_key, direction=direction, depth=depth, providers=providers
@@ -120,19 +136,130 @@ async def table_lineage(
         if root_node is not None:
             resolved[root_key] = root_node
 
-    merged = _merge_by_pair(walked.edges, resolved)
+    pairs, columns_truncated = await _column_pairs(db, walked.edges, columns_for or set())
+    # Counted over the edges whose columns this response would actually carry,
+    # not over every edge the walk found. An edge into a redacted node has its
+    # columns withheld and one into a pruned node is dropped entirely, so
+    # counting those would promise rows the node cannot then show.
+    counts = await _column_counts(db, [e for e in walked.edges if _carries_columns(e, resolved)])
+    merged = _merge_by_pair(walked.edges, resolved, pairs)
     root = resolved[root_key].key if root_key in resolved else root_key
     ordered = sorted(resolved.values(), key=lambda n: (n.distance, n.key))
     return LineageGraphOut(
         root=root,
-        nodes=[_node_out(n) for n in ordered],
+        nodes=[_node_out(n, counts) for n in ordered],
         edges=merged,
         truncated=walked.truncated,
         hidden=hidden,
+        columns_truncated=columns_truncated,
     )
 
 
-def _node_out(node: VisibleNode) -> LineageNodeOut:
+def _carries_columns(edge: LineageEdge, resolved: dict[str, VisibleNode]) -> bool:
+    """Whether this edge's column mappings will survive into the response.
+
+    The same test ``_merge_by_pair`` applies: both endpoints have to be visible,
+    and neither may be redacted — a restricted table's column names are withheld
+    along with its name.
+    """
+    source = resolved.get(edge.source_key)
+    target = resolved.get(edge.target_key)
+    if source is None or target is None:
+        return False
+    return source.kind != "redacted" and target.kind != "redacted"
+
+
+async def _column_counts(db: AsyncSession, edges: list[LineageEdge]) -> dict[str, int]:
+    """How many columns each dataset contributes to or receives, by node key.
+
+    Counted rather than listed, and counted for every node rather than only the
+    ones a caller asked about, because this is what a *closed* node needs in order
+    to say whether opening it is worthwhile. Sending the mappings themselves for
+    that purpose would defeat the point of asking per node.
+
+    The two sides are unioned rather than added: a dataset in the middle of a
+    graph has columns arriving and columns leaving, and a column that does both
+    is one row when the node opens, not two.
+    """
+    if not edges:
+        return {}
+    ids = [e.id for e in edges]
+    joined = LineageColumnEdge.edge_id == LineageEdge.id
+    incoming = (
+        sa.select(
+            LineageEdge.target_key.label("node"),
+            LineageColumnEdge.target_column.label("column"),
+        )
+        .select_from(LineageColumnEdge)
+        .join(LineageEdge, joined)
+        .where(LineageEdge.id.in_(ids))
+    )
+    outgoing = (
+        sa.select(
+            LineageEdge.source_key.label("node"),
+            LineageColumnEdge.source_column.label("column"),
+        )
+        .select_from(LineageColumnEdge)
+        .join(LineageEdge, joined)
+        .where(LineageEdge.id.in_(ids))
+    )
+    participating = sa.union(incoming, outgoing).subquery()
+    rows = await db.execute(
+        sa.select(participating.c.node, sa.func.count()).group_by(participating.c.node)
+    )
+    return {node: count for node, count in rows.all()}
+
+
+async def _column_pairs(
+    db: AsyncSession, edges: list[LineageEdge], columns_for: set[str]
+) -> tuple[dict[uuid.UUID, list[LineageColumnEdge]], bool]:
+    """Column mappings for the edges touching ``columns_for``, and whether capped.
+
+    One query over the edges the walk already found, rather than a second
+    traversal: the column graph is a refinement of the table graph, so everything
+    it can reach is already in hand.
+    """
+    if not columns_for:
+        return {}, False
+    wanted = [
+        edge.id
+        for edge in edges
+        if edge.source_key in columns_for or edge.target_key in columns_for
+    ]
+    if not wanted:
+        return {}, False
+
+    rows = (
+        (
+            await db.execute(
+                sa.select(LineageColumnEdge)
+                .where(LineageColumnEdge.edge_id.in_(wanted))
+                # Ordered so the cap takes a stable prefix rather than an
+                # arbitrary one — a truncated answer that reshuffles between
+                # identical requests is worse than a truncated answer.
+                .order_by(
+                    LineageColumnEdge.edge_id,
+                    LineageColumnEdge.target_column,
+                    LineageColumnEdge.source_column,
+                )
+                .limit(MAX_COLUMN_PAIRS + 1)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    truncated = len(rows) > MAX_COLUMN_PAIRS
+    by_edge: dict[uuid.UUID, list[LineageColumnEdge]] = {}
+    for row in rows[:MAX_COLUMN_PAIRS]:
+        by_edge.setdefault(row.edge_id, []).append(row)
+    return by_edge, truncated
+
+
+def _node_out(node: VisibleNode, counts: dict[str, int]) -> LineageNodeOut:
+    # Withheld for a redacted node along with its name: how many columns a table
+    # has is a smaller disclosure than what they are called, but it is still a
+    # fact about a table the caller was deliberately not shown.
+    count = 0 if node.kind == "redacted" else counts.get(node.key, 0)
     return LineageNodeOut(
         key=node.key,
         kind=node.kind,
@@ -141,19 +268,30 @@ def _node_out(node: VisibleNode) -> LineageNodeOut:
         table=node.table,
         system=node.system,
         distance=node.distance,
+        column_count=count,
     )
 
 
 def _merge_by_pair(
-    edges: list[LineageEdge], resolved: dict[str, VisibleNode]
+    edges: list[LineageEdge],
+    resolved: dict[str, VisibleNode],
+    pairs: dict[uuid.UUID, list[LineageColumnEdge]],
 ) -> list[LineageEdgeOut]:
     """Collapse per-provider rows into one edge per (source, target) pair.
 
     Edges whose endpoints were pruned as out-of-workspace drop out here; edges
     into a *redacted* node survive, rewritten onto the opaque key so the path
     through it stays visible.
+
+    Column mappings merge the same way the providers above them do: the same pair
+    named by two producers is one mapping listing both, and two producers naming
+    different pairs is two mappings, because disagreement between producers is
+    information and not something to quietly resolve.
     """
     merged: dict[tuple[str, str], LineageEdgeOut] = {}
+    # Column mappings, keyed within an edge so the merge can find a pair another
+    # provider already contributed.
+    columns: dict[tuple[str, str], dict[tuple[str, str], LineageColumnOut]] = {}
     # One clock for the whole response, so two edges of the same age cannot
     # disagree about whether they are stale.
     now = datetime.now(tz=UTC)
@@ -179,9 +317,34 @@ def _merge_by_pair(
             last_seen_at=aware_utc(edge.last_seen_at),
             observation_count=edge.observation_count,
             stale=is_stale(edge.last_seen_at, now=now, after_days=after_days),
+            column_lineage=edge.column_lineage,
         )
 
         pair = (source.key, target.key)
+        # Withheld alongside the query link, and for the same reason: a restricted
+        # table's column names are exactly the kind of detail the redaction exists
+        # to keep back, and handing them over beside a node deliberately carrying
+        # no name would undo it.
+        if not withheld:
+            slot = columns.setdefault(pair, {})
+            for row in pairs.get(edge.id, ()):
+                key = (row.source_column, row.target_column)
+                found = slot.get(key)
+                fresh = is_stale(row.last_seen_at, now=now, after_days=after_days)
+                if found is None:
+                    slot[key] = LineageColumnOut(
+                        source_column=row.source_column,
+                        target_column=row.target_column,
+                        providers=[edge.provider],
+                        stale=fresh,
+                    )
+                    continue
+                if edge.provider not in found.providers:
+                    found.providers.append(edge.provider)
+                # One producer still confirming the mapping keeps it current, the
+                # same rule the edge itself follows.
+                found.stale = found.stale and fresh
+
         existing = merged.get(pair)
         if existing is None:
             merged[pair] = LineageEdgeOut(
@@ -195,8 +358,10 @@ def _merge_by_pair(
                 observation_count=observation.observation_count,
                 stale=observation.stale,
                 last_query_id=query_id,
+                column_lineage=edge.column_lineage,
             )
             continue
+        existing.column_lineage = _better_state(existing.column_lineage, edge.column_lineage)
         existing.providers.append(observation)
         existing.observation_count += observation.observation_count
         existing.first_seen_at = min(existing.first_seen_at, observation.first_seen_at)
@@ -208,6 +373,25 @@ def _merge_by_pair(
         existing.last_query_id = existing.last_query_id or query_id
         existing.operation = existing.operation or edge.operation
 
-    for out in merged.values():
+    for pair, out in merged.items():
         out.providers.sort(key=lambda p: p.name)
+        out.columns = sorted(
+            columns.get(pair, {}).values(),
+            key=lambda c: (c.target_column, c.source_column),
+        )
+        for column in out.columns:
+            column.providers.sort()
     return sorted(merged.values(), key=lambda e: (e.source_key, e.target_key))
+
+
+def _better_state(existing: str, incoming: str) -> str:
+    """The stronger of two producers' claims about an edge's column detail.
+
+    A producer that worked the columns out is not contradicted by one that did
+    not, so ``derived`` wins; ``unsupported`` at least says somebody tried, which
+    beats ``unknown``.
+    """
+    for state in ("derived", "unsupported"):
+        if state in (existing, incoming):
+            return state
+    return existing

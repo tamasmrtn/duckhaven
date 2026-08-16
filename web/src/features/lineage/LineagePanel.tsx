@@ -104,16 +104,72 @@ function nodeName(node: LineageNode | undefined): string {
  * commonly sits on several edges with different providers behind each, so
  * picking one arbitrarily would misreport where the data came from.
  */
+/**
+ * What an edge can say about its columns, in words rather than a state name.
+ *
+ * The three cases are genuinely different answers and must not collapse into
+ * one. "No columns flow" is a finding — the source was read and none of its
+ * values reached the target, which is precisely what the table graph could never
+ * tell you. "Not available" is an absence of knowledge. Showing an empty list for
+ * both would turn the second into the first.
+ */
+function ColumnDetails({ edge }: { edge: LineageEdge }) {
+  if (edge.column_lineage !== "derived") {
+    return (
+      <p className="text-2xs text-text-tertiary">
+        Column detail is not available for this relationship.
+      </p>
+    );
+  }
+  if (edge.columns.length === 0) {
+    return (
+      <p className="text-2xs text-text-tertiary">
+        No columns flow along this relationship — the source was read but none
+        of its values reached the target.
+      </p>
+    );
+  }
+  return (
+    <ul className="flex flex-col gap-0.5">
+      {edge.columns.map((column) => (
+        <li
+          key={`${column.source_column}->${column.target_column}`}
+          className="flex items-center gap-1.5 font-mono text-2xs"
+        >
+          <span className="text-text-secondary">{column.source_column}</span>
+          <span className="text-text-tertiary">→</span>
+          <span className="text-text-primary">{column.target_column}</span>
+          {column.providers.map((name) => (
+            <span
+              key={name}
+              className="rounded border border-[var(--border-subtle)] px-1 text-2xs text-text-tertiary"
+            >
+              {name}
+            </span>
+          ))}
+          {column.stale && (
+            <span className="text-2xs text-text-tertiary">· stale</span>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function EdgeDetails({
   ws,
   edges,
   selected,
   nodesByKey,
+  expanded,
 }: {
   ws: string;
   edges: LineageEdge[];
   selected: string;
   nodesByKey: Map<string, LineageNode>;
+  /** Only once a node is open — otherwise nothing has been fetched to show. */
+  /** Which nodes were opened, and so which edges had their detail fetched. */
+  expanded: ReadonlySet<string>;
 }) {
   return (
     <div className="flex max-h-40 flex-col gap-3 overflow-y-auto border-t border-[var(--border-subtle)] p-3 text-xs">
@@ -171,6 +227,12 @@ function EdgeDetails({
                 </Link>
               )}
             </div>
+            {/* Only for an edge whose detail was actually requested. An
+                edge nobody opened comes back with an empty `columns` whatever
+                its state, and reading that as "no columns flow" would report a
+                finding about the data that came from not having asked. */}
+            {(expanded.has(edge.source_key) ||
+              expanded.has(edge.target_key)) && <ColumnDetails edge={edge} />}
           </div>
         );
       })}
@@ -201,6 +263,14 @@ export function LineagePanel({
   const [direction, setDirection] = useState<LineageDirection>("both");
   const [depth, setDepth] = useState(2);
   const [selected, setSelected] = useState<string | null>(null);
+  // Nodes whose columns the user has opened. Empty by default, and the request
+  // asks for no column detail at all while it stays that way — so anyone who
+  // only wants the table graph pays nothing for the fact that this exists.
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const [selectedColumn, setSelectedColumn] = useState<{
+    key: string;
+    column: string;
+  } | null>(null);
 
   const { data, isLoading, error } = useTableLineage(
     ws,
@@ -209,7 +279,21 @@ export function LineagePanel({
     table,
     direction,
     depth,
+    true,
+    [...expanded],
   );
+
+  function toggleExpanded(key: string) {
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+    // A column highlighted inside a node that is being closed has nowhere left
+    // to show itself.
+    setSelectedColumn((current) => (current?.key === key ? null : current));
+  }
 
   if (isLoading) {
     return (
@@ -236,8 +320,9 @@ export function LineagePanel({
     edges: [],
     truncated: false,
     hidden: false,
+    columns_truncated: false,
   };
-  const layout = layoutLineage(graph.nodes, graph.edges);
+  const layout = layoutLineage(graph.nodes, graph.edges, expanded);
   const hasLineage = graph.edges.length > 0;
   const nodesByKey = new Map(graph.nodes.map((n) => [n.key, n]));
   const selectedEdges = selected
@@ -271,6 +356,14 @@ export function LineagePanel({
         </Banner>
       )}
 
+      {graph.columns_truncated && (
+        <Banner className="mx-4 mb-2">
+          <TriangleAlert className="size-3.5 shrink-0" />
+          There is more column detail here than we show at once — some column
+          relationships are not listed. Collapse a table to narrow it down.
+        </Banner>
+      )}
+
       {/* Deliberately says nothing about what is missing. The point is only that
           "nothing here" would be the wrong conclusion to draw. */}
       {graph.hidden && hasLineage && (
@@ -288,6 +381,16 @@ export function LineagePanel({
               rootKey={graph.root}
               selectedId={selected}
               onSelect={setSelected}
+              expanded={expanded}
+              onToggleExpanded={toggleExpanded}
+              selectedColumn={selectedColumn}
+              onSelectColumn={(key, column) =>
+                setSelectedColumn((current) =>
+                  current?.key === key && current.column === column
+                    ? null
+                    : { key, column },
+                )
+              }
             />
           </div>
           {selected && selectedEdges.length > 0 && (
@@ -296,6 +399,7 @@ export function LineagePanel({
               edges={selectedEdges}
               selected={selected}
               nodesByKey={nodesByKey}
+              expanded={expanded}
             />
           )}
         </>

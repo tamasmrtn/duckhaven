@@ -241,7 +241,9 @@ describe("LineagePanel", () => {
     // depends on a table when something does and they simply cannot see it.
     server.use(
       http.get(LINEAGE_URL, () =>
-        HttpResponse.json(makeHiddenLineage("cat:0/analytics/daily_active_users")),
+        HttpResponse.json(
+          makeHiddenLineage("cat:0/analytics/daily_active_users"),
+        ),
       ),
     );
     renderWithProviders({ initialRoute: TABLE_ROUTE });
@@ -256,7 +258,9 @@ describe("LineagePanel", () => {
   it("names nothing about the part of the graph it withheld", async () => {
     server.use(
       http.get(LINEAGE_URL, () =>
-        HttpResponse.json(makeHiddenLineage("cat:0/analytics/daily_active_users")),
+        HttpResponse.json(
+          makeHiddenLineage("cat:0/analytics/daily_active_users"),
+        ),
       ),
     );
     const { container } = renderWithProviders({ initialRoute: TABLE_ROUTE });
@@ -277,7 +281,184 @@ describe("LineagePanel", () => {
     const canvas = await graph();
     await userEvent.click(await canvas.findByText("events"));
 
-    expect((await screen.findAllByText(/dbt · stale/)).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/dbt · stale/)).length).toBeGreaterThan(
+      0,
+    );
     expect(screen.queryByText("execution · stale")).toBeNull();
+  });
+});
+
+describe("LineagePanel column detail", () => {
+  it("asks for no column detail until a node is opened", async () => {
+    // The default has to stay the table graph. Column detail scales with how
+    // wide the tables are, so requesting it unasked would make opening the tab
+    // cost something that depends on tables nobody is looking at.
+    const requests: string[] = [];
+    server.use(
+      http.get(LINEAGE_URL, ({ request }) => {
+        requests.push(new URL(request.url).search);
+        return HttpResponse.json(makeLineage());
+      }),
+    );
+    renderWithProviders({ initialRoute: TABLE_ROUTE });
+    await openLineageTab();
+    await (await graph()).findByText("events");
+
+    expect(requests.length).toBeGreaterThan(0);
+    expect(requests.every((q) => !q.includes("columns_for"))).toBe(true);
+  });
+
+  it("offers no expander on a node with no column detail", async () => {
+    renderWithProviders({ initialRoute: TABLE_ROUTE });
+    await openLineageTab();
+    const canvas = await graph();
+    await canvas.findByText("events");
+
+    // `customers` sits on the one edge nothing worked the columns out for.
+    expect(
+      canvas.queryByRole("button", { name: /show columns for customers/i }),
+    ).toBeNull();
+  });
+
+  it("requests and shows a node's columns when it is expanded", async () => {
+    const requests: string[] = [];
+    server.use(
+      http.get(LINEAGE_URL, ({ request }) => {
+        const url = new URL(request.url);
+        requests.push(url.search);
+        const graph = makeLineage();
+        const wanted = new Set(url.searchParams.getAll("columns_for"));
+        return HttpResponse.json({
+          ...graph,
+          edges: graph.edges.map((e) =>
+            wanted.has(e.source_key) || wanted.has(e.target_key)
+              ? e
+              : { ...e, columns: [] },
+          ),
+        });
+      }),
+    );
+    renderWithProviders({ initialRoute: TABLE_ROUTE });
+    await openLineageTab();
+    const canvas = await graph();
+
+    await userEvent.click(
+      await canvas.findByRole("button", { name: /show columns for events/i }),
+    );
+
+    await waitFor(() =>
+      expect(requests.some((q) => q.includes("columns_for"))).toBe(true),
+    );
+    expect(await canvas.findByText("occurred_at")).toBeVisible();
+    expect(await canvas.findByText("session_id")).toBeVisible();
+  });
+
+  it("collapses again, hiding the columns", async () => {
+    renderWithProviders({ initialRoute: TABLE_ROUTE });
+    await openLineageTab();
+    const canvas = await graph();
+
+    const toggle = await canvas.findByRole("button", {
+      name: /show columns for events/i,
+    });
+    await userEvent.click(toggle);
+    expect(await canvas.findByText("occurred_at")).toBeVisible();
+
+    await userEvent.click(
+      await canvas.findByRole("button", { name: /hide columns for events/i }),
+    );
+    await waitFor(() => expect(canvas.queryByText("occurred_at")).toBeNull());
+  });
+
+  it("draws column links once both ends of an edge are open", async () => {
+    renderWithProviders({ initialRoute: TABLE_ROUTE });
+    await openLineageTab();
+    const canvas = await graph();
+
+    await userEvent.click(
+      await canvas.findByRole("button", { name: /show columns for events/i }),
+    );
+    expect(canvas.queryAllByTestId("lineage-column-link")).toHaveLength(0);
+
+    await userEvent.click(
+      await canvas.findByRole("button", {
+        name: /show columns for daily_active_users/i,
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        canvas.queryAllByTestId("lineage-column-link").length,
+      ).toBeGreaterThan(0),
+    );
+  });
+
+  it("says a relationship carries no columns rather than showing nothing", async () => {
+    // The finding the table graph could never state. It must not read the same
+    // as "we could not work it out".
+    renderWithProviders({ initialRoute: TABLE_ROUTE });
+    await openLineageTab();
+    const canvas = await graph();
+
+    await userEvent.click(
+      await canvas.findByRole("button", { name: /show columns for events/i }),
+    );
+    await userEvent.click(await canvas.findByText("funnel"));
+
+    expect(
+      await screen.findByText(/no columns flow along this/i),
+    ).toBeVisible();
+  });
+
+  it("says column detail is unavailable when nothing worked it out", async () => {
+    renderWithProviders({ initialRoute: TABLE_ROUTE });
+    await openLineageTab();
+    const canvas = await graph();
+
+    await userEvent.click(
+      await canvas.findByRole("button", { name: /show columns for events/i }),
+    );
+    await userEvent.click(await canvas.findByText("customers"));
+
+    expect(
+      await screen.findByText(/column detail is not available/i),
+    ).toBeVisible();
+  });
+
+  it("warns when column detail was capped", async () => {
+    server.use(
+      http.get(LINEAGE_URL, () =>
+        HttpResponse.json({ ...makeLineage(), columns_truncated: true }),
+      ),
+    );
+    renderWithProviders({ initialRoute: TABLE_ROUTE });
+    await openLineageTab();
+
+    expect(
+      await screen.findByText(/more column detail here than we show/i),
+    ).toBeVisible();
+  });
+
+  it("leaves the table-level graph intact when nothing has column detail", async () => {
+    server.use(
+      http.get(LINEAGE_URL, () => {
+        const graph = makeLineage();
+        return HttpResponse.json({
+          ...graph,
+          edges: graph.edges.map((e) => ({
+            ...e,
+            columns: [],
+            column_lineage: "unknown" as const,
+          })),
+        });
+      }),
+    );
+    renderWithProviders({ initialRoute: TABLE_ROUTE });
+    await openLineageTab();
+    const canvas = await graph();
+
+    expect(await canvas.findByText("events")).toBeVisible();
+    expect(canvas.queryAllByRole("button", { name: /show columns/i })).toEqual(
+      [],
+    );
   });
 });

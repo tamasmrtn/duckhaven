@@ -35,8 +35,15 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.models.catalog import Catalog
-from api.models.lineage import LineageEdge
+from api.models.lineage import LineageColumnEdge, LineageEdge
 from api.models.query import Query
+from api.services.lineage.columns import (
+    DERIVED,
+    UNKNOWN,
+    ColumnPair,
+    SchemaLookup,
+    columns_for_sql,
+)
 from api.services.lineage.extract import LineageParseError, edges_from_sql
 from api.services.lineage.keys import AssetRef, asset_key
 from api.services.lineage.times import aware_utc
@@ -57,12 +64,24 @@ _INTERNAL_ORIGINS = frozenset({"sample", "metadata"})
 
 @dataclass(frozen=True)
 class CanonicalEdge:
-    """One relationship in the form the store accepts, whatever produced it."""
+    """One relationship in the form the store accepts, whatever produced it.
+
+    ``columns`` and ``column_lineage`` are the whole provider-neutral surface for
+    column-level detail. A producer that can work out which columns flow fills
+    them in; one that cannot leaves ``column_lineage`` at ``unknown`` and still
+    gets its table-level edge. Nothing downstream of here can tell, or needs to
+    tell, whether the pairs came from DuckHaven parsing its own SQL or from a
+    manifest somebody published.
+    """
 
     source: AssetRef
     target: AssetRef
     operation: str | None = None
     confidence: str = "exact"
+    # "unknown" (never worked out), "derived" (worked out — possibly to nothing,
+    # which is a real answer), or "unsupported" (tried and could not).
+    column_lineage: str = UNKNOWN
+    columns: tuple[ColumnPair, ...] = ()
 
 
 @dataclass
@@ -103,6 +122,10 @@ async def upsert_edges(
     # with a stored timestamp.
     stamp = aware_utc(observed_at) if observed_at is not None else datetime.now(tz=UTC)
 
+    # The row each edge landed on, so the column pass below can hang children off
+    # it without going looking for it again.
+    rows: list[tuple[CanonicalEdge, LineageEdge]] = []
+
     for edge in edges:
         source_key = edge.source.key
         target_key = edge.target.key
@@ -131,6 +154,12 @@ async def upsert_edges(
                     existing.last_query_id = last_query_id
                 if workspace_id is not None:
                     existing.workspace_id = workspace_id
+            # Deliberately not gated on recency, unlike the fields above. This
+            # producer having worked the columns out even once is a durable fact
+            # about what it can do, and a later observation that happened not to
+            # (a statement shape the parser declines) does not take it back.
+            if edge.column_lineage != UNKNOWN and existing.column_lineage != DERIVED:
+                existing.column_lineage = edge.column_lineage
             # Bookkeeping for the reconcile pass rather than a fact about the
             # observation: it records which run last touched this row, so it is
             # always the caller's run id regardless of ordering.
@@ -138,34 +167,114 @@ async def upsert_edges(
                 existing.provider_run_id = provider_run_id
             existing.observation_count = (existing.observation_count or 0) + 1
             result.updated += 1
+            rows.append((edge, existing))
             continue
 
-        db.add(
-            LineageEdge(
-                source_key=source_key,
-                source_catalog_id=edge.source.catalog_id,
-                source_system=edge.source.system,
-                source_schema=edge.source.schema,
-                source_table=edge.source.table,
-                target_key=target_key,
-                target_catalog_id=edge.target.catalog_id,
-                target_system=edge.target.system,
-                target_schema=edge.target.schema,
-                target_table=edge.target.table,
-                provider=provider,
-                provider_run_id=provider_run_id,
-                workspace_id=workspace_id,
-                operation=edge.operation,
-                confidence=edge.confidence,
-                last_query_id=last_query_id,
-                first_seen_at=stamp,
-                last_seen_at=stamp,
-                observation_count=1,
-            )
+        row = LineageEdge(
+            source_key=source_key,
+            source_catalog_id=edge.source.catalog_id,
+            source_system=edge.source.system,
+            source_schema=edge.source.schema,
+            source_table=edge.source.table,
+            target_key=target_key,
+            target_catalog_id=edge.target.catalog_id,
+            target_system=edge.target.system,
+            target_schema=edge.target.schema,
+            target_table=edge.target.table,
+            provider=provider,
+            provider_run_id=provider_run_id,
+            workspace_id=workspace_id,
+            operation=edge.operation,
+            confidence=edge.confidence,
+            column_lineage=edge.column_lineage,
+            last_query_id=last_query_id,
+            first_seen_at=stamp,
+            last_seen_at=stamp,
+            observation_count=1,
         )
+        db.add(row)
         result.created += 1
+        rows.append((edge, row))
+
+    # One flush so every new row has an id, then the column children in a batch.
+    # Doing it per edge would cost a flush and a query each.
+    await db.flush()
+    await _upsert_columns(db, rows, stamp=stamp)
     await db.flush()
     return result
+
+
+async def _upsert_columns(
+    db: AsyncSession,
+    rows: list[tuple[CanonicalEdge, LineageEdge]],
+    *,
+    stamp: datetime,
+) -> None:
+    """Record each edge's column mappings, adding to what is already there.
+
+    Accumulating rather than replacing is the whole rule. Two statements can
+    legitimately build the same target from the same source through different
+    columns — ``INSERT ... (a) SELECT a`` and later ``INSERT ... (b) SELECT b`` —
+    so their union is the truth, and deleting whatever the newest statement did
+    not mention would make a mapping appear and disappear on alternate runs. A
+    mapping nothing re-asserts goes stale through ``last_seen_at`` instead, which
+    is what the parent edge already does and what the read API already knows how
+    to present.
+    """
+    wanted = {id(row): edge.columns for edge, row in rows if edge.columns}
+    if not wanted:
+        return
+
+    edge_ids = [row.id for _, row in rows if wanted.get(id(row))]
+    existing_rows = (
+        (
+            await db.execute(
+                sa.select(LineageColumnEdge).where(LineageColumnEdge.edge_id.in_(edge_ids))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    existing = {(r.edge_id, r.source_column, r.target_column): r for r in existing_rows}
+
+    for _, row in rows:
+        for pair in wanted.get(id(row), ()):
+            found = existing.get((row.id, pair.source_column, pair.target_column))
+            if found is not None:
+                # Same out-of-order rule the parent edge follows: a late-arriving
+                # older observation widens the window but cannot pull the last
+                # sighting backwards.
+                found.first_seen_at = min(aware_utc(found.first_seen_at), stamp)
+                if stamp >= aware_utc(found.last_seen_at):
+                    found.last_seen_at = stamp
+                continue
+            fresh = LineageColumnEdge(
+                edge_id=row.id,
+                source_column=pair.source_column,
+                target_column=pair.target_column,
+                first_seen_at=stamp,
+                last_seen_at=stamp,
+            )
+            db.add(fresh)
+            existing[(row.id, pair.source_column, pair.target_column)] = fresh
+
+
+async def _delete_edges(db: AsyncSession, where) -> int:
+    """Delete the edges matching ``where``, and their column children with them.
+
+    The children are removed explicitly rather than left to ``ON DELETE CASCADE``.
+    Postgres would handle it, but the unit suite runs on SQLite, which does not
+    enforce foreign keys unless asked to — so relying on the cascade would mean
+    the tests agreeing with each other and not with production. One statement
+    more, and the two behave identically.
+    """
+    await db.execute(
+        sa.delete(LineageColumnEdge).where(
+            LineageColumnEdge.edge_id.in_(sa.select(LineageEdge.id).where(where))
+        )
+    )
+    deleted = await db.execute(sa.delete(LineageEdge).where(where))
+    return deleted.rowcount or 0
 
 
 async def reconcile_provider_run(
@@ -185,17 +294,17 @@ async def reconcile_provider_run(
     """
     if not target_keys:
         return 0
-    deleted = await db.execute(
-        sa.delete(LineageEdge).where(
+    return await _delete_edges(
+        db,
+        sa.and_(
             LineageEdge.provider == provider,
             LineageEdge.target_key.in_(target_keys),
             sa.or_(
                 LineageEdge.provider_run_id.is_(None),
                 LineageEdge.provider_run_id != provider_run_id,
             ),
-        )
+        ),
     )
-    return deleted.rowcount or 0
 
 
 async def purge_provider(db: AsyncSession, *, provider: str) -> int:
@@ -206,8 +315,7 @@ async def purge_provider(db: AsyncSession, *, provider: str) -> int:
     """
     if provider == EXECUTION_PROVIDER:
         raise ValueError("Execution-derived lineage cannot be purged by provider")
-    deleted = await db.execute(sa.delete(LineageEdge).where(LineageEdge.provider == provider))
-    return deleted.rowcount or 0
+    return await _delete_edges(db, LineageEdge.provider == provider)
 
 
 async def delete_table_lineage(
@@ -221,21 +329,20 @@ async def delete_table_lineage(
     it — beats a bespoke tombstone the rest of the codebase knows nothing about.
     Re-creating the table and re-running the transformation restores the edges.
     """
-    await db.execute(
-        sa.delete(LineageEdge).where(
-            sa.or_(
-                sa.and_(
-                    LineageEdge.source_catalog_id == catalog_id,
-                    LineageEdge.source_schema == schema,
-                    LineageEdge.source_table == table,
-                ),
-                sa.and_(
-                    LineageEdge.target_catalog_id == catalog_id,
-                    LineageEdge.target_schema == schema,
-                    LineageEdge.target_table == table,
-                ),
-            )
-        )
+    await _delete_edges(
+        db,
+        sa.or_(
+            sa.and_(
+                LineageEdge.source_catalog_id == catalog_id,
+                LineageEdge.source_schema == schema,
+                LineageEdge.source_table == table,
+            ),
+            sa.and_(
+                LineageEdge.target_catalog_id == catalog_id,
+                LineageEdge.target_schema == schema,
+                LineageEdge.target_table == table,
+            ),
+        ),
     )
 
 
@@ -323,6 +430,7 @@ async def rekey_table_lineage(
         clash = settled.get((edge.provider, source_key, target_key))
         if clash is not None:
             _absorb(clash, edge)
+            await _absorb_columns(db, clash, edge)
             await db.delete(edge)
             continue
 
@@ -348,24 +456,68 @@ def _absorb(keeper: LineageEdge, other: LineageEdge) -> None:
         keeper.operation = other.operation or keeper.operation
         keeper.last_query_id = other.last_query_id or keeper.last_query_id
         keeper.provider_run_id = other.provider_run_id or keeper.provider_run_id
+    if other.column_lineage == DERIVED:
+        keeper.column_lineage = DERIVED
+    elif keeper.column_lineage == UNKNOWN:
+        keeper.column_lineage = other.column_lineage
     keeper.observation_count = (keeper.observation_count or 0) + (other.observation_count or 0)
+
+
+async def _absorb_columns(db: AsyncSession, keeper: LineageEdge, other: LineageEdge) -> None:
+    """Move the losing edge's column mappings onto the one being kept.
+
+    Without this a rename that collides — the renamed table already having an
+    edge from the same provider to the same counterpart — would fold the two
+    edges' histories together and then drop the loser's columns on the floor with
+    it. The two rows are the same relationship seen under two names, so their
+    column mappings are the same relationship's too.
+    """
+    children = (
+        (
+            await db.execute(
+                sa.select(LineageColumnEdge).where(LineageColumnEdge.edge_id == other.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not children:
+        return
+    kept = {
+        (r.source_column, r.target_column): r
+        for r in (
+            await db.execute(
+                sa.select(LineageColumnEdge).where(LineageColumnEdge.edge_id == keeper.id)
+            )
+        )
+        .scalars()
+        .all()
+    }
+    for child in children:
+        twin = kept.get((child.source_column, child.target_column))
+        if twin is None:
+            child.edge_id = keeper.id
+            kept[(child.source_column, child.target_column)] = child
+            continue
+        twin.first_seen_at = min(aware_utc(twin.first_seen_at), aware_utc(child.first_seen_at))
+        twin.last_seen_at = max(aware_utc(twin.last_seen_at), aware_utc(child.last_seen_at))
+        await db.delete(child)
 
 
 async def delete_schema_lineage(db: AsyncSession, catalog_id: uuid.UUID, schema: str) -> None:
     """Remove every edge touching any table in a dropped schema."""
-    await db.execute(
-        sa.delete(LineageEdge).where(
-            sa.or_(
-                sa.and_(
-                    LineageEdge.source_catalog_id == catalog_id,
-                    LineageEdge.source_schema == schema,
-                ),
-                sa.and_(
-                    LineageEdge.target_catalog_id == catalog_id,
-                    LineageEdge.target_schema == schema,
-                ),
-            )
-        )
+    await _delete_edges(
+        db,
+        sa.or_(
+            sa.and_(
+                LineageEdge.source_catalog_id == catalog_id,
+                LineageEdge.source_schema == schema,
+            ),
+            sa.and_(
+                LineageEdge.target_catalog_id == catalog_id,
+                LineageEdge.target_schema == schema,
+            ),
+        ),
     )
 
 
@@ -430,12 +582,19 @@ def _active_catalog(query: Query, context: WorkspaceCatalogs) -> str | None:
     return context.catalogs[0].slug if context.catalogs else None
 
 
-async def record_execution_lineage(db: AsyncSession, query: Query) -> IngestResult:
+async def record_execution_lineage(
+    db: AsyncSession, query: Query, *, schemas: SchemaLookup | None = None
+) -> IngestResult:
     """Derive and persist lineage for a query that just completed successfully.
 
     Called from the agent frame handler. Never raises for a reason the caller
     could not act on: a statement that cannot be parsed, or that establishes no
     relationship, simply records nothing.
+
+    ``schemas`` is where column-level extraction reads source table schemas.
+    Without one the graph is table-level, exactly as it was before columns
+    existed — so a caller that has no catalog client to hand loses detail rather
+    than failing.
     """
     result = IngestResult()
     if not query.sql or query.origin in _INTERNAL_ORIGINS:
@@ -460,9 +619,35 @@ async def record_execution_lineage(db: AsyncSession, query: Query) -> IngestResu
     if not extracted:
         return result
 
+    columns: dict[tuple[str, str], object] = {}
+    if schemas is not None:
+        columns = await columns_for_sql(
+            query.sql,
+            active_catalog=active_catalog,
+            catalog_ids=context.ids,
+            schemas=schemas,
+        )
+
+    edges = []
+    for edge in extracted:
+        # Keyed on asset keys so the two extractors need agree on nothing else.
+        # Column detail for a pair the table extractor did not produce is dropped
+        # on the way past, which is what keeps the table graph a correct
+        # coarsening of the column graph rather than a hopeful one.
+        detail = columns.get((edge.source.key, edge.target.key))
+        edges.append(
+            CanonicalEdge(
+                source=edge.source,
+                target=edge.target,
+                operation=edge.operation,
+                column_lineage=detail.state if detail is not None else UNKNOWN,
+                columns=detail.pairs if detail is not None else (),
+            )
+        )
+
     return await upsert_edges(
         db,
-        [CanonicalEdge(source=e.source, target=e.target, operation=e.operation) for e in extracted],
+        edges,
         provider=EXECUTION_PROVIDER,
         workspace_id=query.workspace_id,
         last_query_id=query.id,

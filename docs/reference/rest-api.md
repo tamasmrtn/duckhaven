@@ -104,7 +104,11 @@ flag, so a caller can tell "nothing here" from "something here you may not see" 
 was withheld.
 
 Node `kind` is `table`, `external` (an asset outside DuckHaven, named by whoever imported it), or `redacted` (a table
-in a scoped catalog the caller holds no grant on — present with no names, so the graph keeps its shape). Every edge
+in a scoped catalog the caller holds no grant on — present with no names, so the graph keeps its shape). Each node
+also carries `column_count`: how many of its columns take part in the lineage around it, and so how many rows it would
+show if opened. It arrives for every node — unlike the mappings, which only arrive for the nodes `columns_for` names —
+because it is what lets a client decide whether a node is worth opening. It is `0` for a redacted node, and `0`
+whenever there is nothing to show. Every edge
 carries a `providers` list — one entry per producer, each with its own `first_seen_at`, `last_seen_at`,
 `observation_count`, `stale` and `column_lineage` — plus edge-level totals and a `stale` that is `true` only when every
 producer's claim is stale.

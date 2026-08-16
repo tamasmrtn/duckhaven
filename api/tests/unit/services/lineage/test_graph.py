@@ -660,3 +660,108 @@ async def test_the_column_cap_truncates_and_says_so(graph_env):
     assert len(result.edges[0].columns) == 2
     # The graph's own shape is untouched — only the detail inside it was capped.
     assert result.truncated is False
+
+
+# --- column counts on the node ------------------------------------------------
+
+
+async def test_a_node_reports_how_many_columns_it_would_show(graph_env):
+    """What a *closed* node needs in order to say whether opening it is worthwhile.
+
+    Sent for every node, unlike the mappings themselves, because a node cannot
+    ask about itself before the user has expressed any interest in it.
+    """
+    await _seed_columns(graph_env, ("a", "x"), ("b", "y"))
+
+    result = await _graph(graph_env)
+
+    by_table = {n.table: n.column_count for n in result.nodes}
+    assert by_table == {"src": 2, "dim": 2}
+
+
+async def test_counts_arrive_without_asking_for_the_mappings(graph_env):
+    await _seed_columns(graph_env, ("a", "x"))
+
+    result = await _graph(graph_env)
+
+    assert all(e.columns == [] for e in result.edges)
+    assert {n.table: n.column_count for n in result.nodes} == {"src": 1, "dim": 1}
+
+
+async def test_a_column_arriving_and_leaving_is_counted_once(graph_env):
+    """A dataset in the middle has columns coming in and going out.
+
+    One that does both is one row when the node opens, so it has to be one in
+    the count — otherwise the label promises more than the node shows.
+    """
+    db = graph_env["db"]
+    raw = graph_env["catalogs"]["raw"].id
+    warehouse = graph_env["catalogs"]["warehouse"].id
+    await upsert_edges(
+        db,
+        [
+            CanonicalEdge(
+                source=internal_ref(raw, "analytics", "src"),
+                target=internal_ref(warehouse, "analytics", "dim"),
+                column_lineage="derived",
+                columns=(ColumnPair(source_column="a", target_column="shared"),),
+            ),
+            CanonicalEdge(
+                source=internal_ref(warehouse, "analytics", "dim"),
+                target=internal_ref(warehouse, "analytics", "leaf"),
+                column_lineage="derived",
+                columns=(ColumnPair(source_column="shared", target_column="z"),),
+            ),
+        ],
+        provider="execution",
+    )
+
+    result = await _graph(graph_env)
+
+    counts = {n.table: n.column_count for n in result.nodes}
+    assert counts["dim"] == 1  # `shared` arrives and leaves; still one row.
+    assert counts["src"] == 1
+    assert counts["leaf"] == 1
+
+
+async def test_an_edge_carrying_nothing_leaves_the_count_at_zero(graph_env):
+    """Nothing to open, so nothing should offer to open.
+
+    `derived` with no mappings is a real finding, but a control that expands to
+    an empty box is not how to report it — the edge detail says it in words.
+    """
+    await _seed_columns(graph_env)
+
+    result = await _graph(graph_env)
+
+    assert result.edges[0].column_lineage == "derived"
+    assert {n.column_count for n in result.nodes} == {0}
+
+
+async def test_an_unsupported_edge_leaves_the_count_at_zero(graph_env):
+    await _seed_columns(graph_env, state="unsupported")
+
+    result = await _graph(graph_env)
+
+    assert {n.column_count for n in result.nodes} == {0}
+
+
+async def test_two_providers_naming_the_same_mapping_count_it_once(graph_env):
+    await _seed_columns(graph_env, ("a", "x"), provider="execution")
+    await _seed_columns(graph_env, ("a", "x"), provider="dbt")
+
+    result = await _graph(graph_env)
+
+    assert {n.table: n.column_count for n in result.nodes} == {"src": 1, "dim": 1}
+
+
+async def test_a_redacted_node_reports_no_count(graph_env):
+    """How many columns a table has is smaller than what they are called, but it
+    is still a fact about a table the caller was deliberately not shown."""
+    await _seed_columns(graph_env, ("secret_column", "x"))
+    stranger = await _make_scoped_stranger(graph_env)
+
+    result = await _graph(graph_env, principal=stranger.id)
+
+    hidden = next(n for n in result.nodes if n.kind == "redacted")
+    assert hidden.column_count == 0

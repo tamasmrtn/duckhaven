@@ -137,17 +137,59 @@ async def table_lineage(
             resolved[root_key] = root_node
 
     pairs, columns_truncated = await _column_pairs(db, walked.edges, columns_for or set())
+    counts = await _column_counts(db, walked.edges)
     merged = _merge_by_pair(walked.edges, resolved, pairs)
     root = resolved[root_key].key if root_key in resolved else root_key
     ordered = sorted(resolved.values(), key=lambda n: (n.distance, n.key))
     return LineageGraphOut(
         root=root,
-        nodes=[_node_out(n) for n in ordered],
+        nodes=[_node_out(n, counts) for n in ordered],
         edges=merged,
         truncated=walked.truncated,
         hidden=hidden,
         columns_truncated=columns_truncated,
     )
+
+
+async def _column_counts(db: AsyncSession, edges: list[LineageEdge]) -> dict[str, int]:
+    """How many columns each dataset contributes to or receives, by node key.
+
+    Counted rather than listed, and counted for every node rather than only the
+    ones a caller asked about, because this is what a *closed* node needs in order
+    to say whether opening it is worthwhile. Sending the mappings themselves for
+    that purpose would defeat the point of asking per node.
+
+    The two sides are unioned rather than added: a dataset in the middle of a
+    graph has columns arriving and columns leaving, and a column that does both
+    is one row when the node opens, not two.
+    """
+    if not edges:
+        return {}
+    ids = [e.id for e in edges]
+    joined = LineageColumnEdge.edge_id == LineageEdge.id
+    incoming = (
+        sa.select(
+            LineageEdge.target_key.label("node"),
+            LineageColumnEdge.target_column.label("column"),
+        )
+        .select_from(LineageColumnEdge)
+        .join(LineageEdge, joined)
+        .where(LineageEdge.id.in_(ids))
+    )
+    outgoing = (
+        sa.select(
+            LineageEdge.source_key.label("node"),
+            LineageColumnEdge.source_column.label("column"),
+        )
+        .select_from(LineageColumnEdge)
+        .join(LineageEdge, joined)
+        .where(LineageEdge.id.in_(ids))
+    )
+    participating = sa.union(incoming, outgoing).subquery()
+    rows = await db.execute(
+        sa.select(participating.c.node, sa.func.count()).group_by(participating.c.node)
+    )
+    return {node: count for node, count in rows.all()}
 
 
 async def _column_pairs(
@@ -195,7 +237,11 @@ async def _column_pairs(
     return by_edge, truncated
 
 
-def _node_out(node: VisibleNode) -> LineageNodeOut:
+def _node_out(node: VisibleNode, counts: dict[str, int]) -> LineageNodeOut:
+    # Withheld for a redacted node along with its name: how many columns a table
+    # has is a smaller disclosure than what they are called, but it is still a
+    # fact about a table the caller was deliberately not shown.
+    count = 0 if node.kind == "redacted" else counts.get(node.key, 0)
     return LineageNodeOut(
         key=node.key,
         kind=node.kind,
@@ -204,6 +250,7 @@ def _node_out(node: VisibleNode) -> LineageNodeOut:
         table=node.table,
         system=node.system,
         distance=node.distance,
+        column_count=count,
     )
 
 

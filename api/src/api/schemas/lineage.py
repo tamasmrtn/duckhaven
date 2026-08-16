@@ -30,6 +30,13 @@ class LineageNodeOut(BaseModel):
     system: str | None = None
     # Signed: negative upstream of the root, positive downstream, 0 for the root.
     distance: int
+    # How many of this dataset's columns take part in the lineage around it —
+    # the number of rows it would show if opened. Always present, because it is
+    # what lets a *closed* node say whether it is worth opening at all; the
+    # mappings themselves still only arrive for the nodes a caller asks about.
+    # Zero means the relationships were worked out and none of this dataset's
+    # values flow, which is a real answer and not something to offer opening.
+    column_count: int = 0
 
 
 class LineageColumnOut(BaseModel):

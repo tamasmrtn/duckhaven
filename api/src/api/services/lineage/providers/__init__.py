@@ -10,10 +10,15 @@ Deliberately duck-typed with no ``Protocol`` or ABC, mirroring
 interface over a single function is the kind of abstraction that costs more than
 it explains. An adapter is:
 
-    def edges_from_<producer>(payload, *, resolve) -> ProviderEdges
+    async def edges_from_<producer>(payload, *, resolve, catalog=None) -> ProviderEdges
 
 ``resolve`` is supplied by the caller and turns a producer's idea of an endpoint
-into a DuckHaven asset — the adapter never touches the database itself.
+into a DuckHaven asset — the adapter never touches the database itself. ``catalog``
+is an optional second artifact carrying the producer's own view of each relation's
+columns, for producers that publish one.
+
+Adapters are ``async`` because working out column-level detail may need to read a
+schema the artifact does not carry. One that never does simply never awaits.
 
 ``execution`` is a reserved name with no adapter: that lineage is derived by
 DuckHaven from SQL it ran, so accepting it over the import API would let a client

@@ -161,6 +161,15 @@ LINEAGE_EXTRACT_FAILURES = Counter(
     "Completed statements whose SQL could not be parsed for lineage.",
     ["replica_id"],
 )
+# Column-level extraction refuses rather than guesses, so a relationship that
+# stays table-level looks exactly like one that has no columns to report. This is
+# what separates the two, and the only way to know whether the feature is
+# actually working against a real workload rather than declining every statement.
+LINEAGE_COLUMN_SKIPS = Counter(
+    "duckhaven_lineage_column_skips",
+    "Statements left table-level because column lineage could not be established.",
+    ["replica_id", "reason"],
+)
 
 
 # ── Inline instrumentation helpers (called from the query service) ────────────
@@ -182,6 +191,10 @@ def record_query_completion(status: str, duration_ms: int | None, result_bytes: 
 
 def record_lineage_extract_failure() -> None:
     LINEAGE_EXTRACT_FAILURES.labels(settings.replica_id).inc()
+
+
+def record_lineage_column_skip(reason: str) -> None:
+    LINEAGE_COLUMN_SKIPS.labels(settings.replica_id, reason).inc()
 
 
 def record_query_queue_wait(seconds: float) -> None:

@@ -15,6 +15,7 @@ from api.models.query import Query
 from api.models.user import User
 from api.models.workspace import WorkspaceMember
 from api.services.lineage import graph as lineage_graph
+from api.services.lineage.columns import ColumnPair
 from api.services.lineage.ingest import (
     CanonicalEdge,
     record_execution_lineage,
@@ -76,10 +77,17 @@ async def test_root_is_present_even_with_no_lineage(graph_env):
     assert result.edges == []
 
 
-async def test_column_lineage_is_reported_as_empty_not_absent(graph_env):
+async def test_column_detail_is_absent_unless_it_was_asked_for(graph_env):
+    """The default response is the table graph, unchanged and no bigger.
+
+    Column detail scales with how wide the tables are rather than how many nodes
+    the walk found, so attaching it unasked would make the cost of opening the
+    lineage tab depend on something nobody is looking at.
+    """
     await _seed_simple(graph_env)
     result = await _graph(graph_env)
     assert result.edges[0].columns == []
+    assert result.columns_truncated is False
 
 
 async def test_two_providers_merge_into_one_edge_listing_both(graph_env):
@@ -487,3 +495,168 @@ async def test_a_backfilled_historical_relationship_is_stale_on_first_read(graph
 
     assert edge.stale is True
     assert edge.last_seen_at.replace(tzinfo=UTC) == ran_at
+
+
+# --- column detail ----------------------------------------------------------
+
+
+async def _seed_columns(env, *pairs, provider="execution", state="derived", source="src"):
+    return await upsert_edges(
+        env["db"],
+        [
+            CanonicalEdge(
+                source=internal_ref(env["catalogs"]["raw"].id, "analytics", source),
+                target=internal_ref(env["catalogs"]["warehouse"].id, "analytics", "dim"),
+                operation="create_table_as",
+                column_lineage=state,
+                columns=tuple(ColumnPair(source_column=s, target_column=t) for s, t in pairs),
+            )
+        ],
+        provider=provider,
+    )
+
+
+def _dim_key(env):
+    return internal_ref(env["catalogs"]["warehouse"].id, "analytics", "dim").key
+
+
+async def test_asking_for_a_node_attaches_its_column_detail(graph_env):
+    await _seed_columns(graph_env, ("a", "x"), ("b", "x"))
+
+    result = await _graph(graph_env, columns_for={_dim_key(graph_env)})
+
+    edge = result.edges[0]
+    assert edge.column_lineage == "derived"
+    assert [(c.source_column, c.target_column) for c in edge.columns] == [("a", "x"), ("b", "x")]
+    assert edge.columns[0].providers == ["execution"]
+
+
+async def test_asking_for_an_unrelated_node_attaches_nothing(graph_env):
+    await _seed_columns(graph_env, ("a", "x"))
+
+    unrelated = internal_ref(graph_env["catalogs"]["warehouse"].id, "analytics", "elsewhere")
+    result = await _graph(graph_env, columns_for={unrelated.key})
+
+    assert result.edges[0].columns == []
+
+
+async def test_derived_with_no_columns_is_distinguishable_from_not_knowing(graph_env):
+    """The distinction the whole state field exists for.
+
+    An edge that was analysed and moves no column values — a source only filtered
+    on — has to read differently from one nobody could analyse, because the first
+    means "nothing flows here" and the second means "we cannot say".
+    """
+    await _seed_columns(graph_env)
+
+    result = await _graph(graph_env, columns_for={_dim_key(graph_env)})
+
+    assert result.edges[0].column_lineage == "derived"
+    assert result.edges[0].columns == []
+
+
+async def test_an_unsupported_edge_says_so(graph_env):
+    await _seed_columns(graph_env, state="unsupported")
+
+    result = await _graph(graph_env, columns_for={_dim_key(graph_env)})
+
+    assert result.edges[0].column_lineage == "unsupported"
+    assert result.edges[0].columns == []
+
+
+async def test_two_providers_naming_the_same_mapping_make_one_entry(graph_env):
+    """Agreement between producers is worth showing, not worth duplicating."""
+    await _seed_columns(graph_env, ("a", "x"), provider="execution")
+    await _seed_columns(graph_env, ("a", "x"), provider="dbt")
+
+    result = await _graph(graph_env, columns_for={_dim_key(graph_env)})
+
+    (column,) = result.edges[0].columns
+    assert (column.source_column, column.target_column) == ("a", "x")
+    assert column.providers == ["dbt", "execution"]
+
+
+async def test_two_providers_naming_different_mappings_keep_both(graph_env):
+    """Disagreement is information; the API reports it rather than picking."""
+    await _seed_columns(graph_env, ("a", "x"), provider="execution")
+    await _seed_columns(graph_env, ("b", "x"), provider="dbt")
+
+    result = await _graph(graph_env, columns_for={_dim_key(graph_env)})
+
+    assert [(c.source_column, c.providers) for c in result.edges[0].columns] == [
+        ("a", ["execution"]),
+        ("b", ["dbt"]),
+    ]
+
+
+async def test_a_provider_that_worked_columns_out_is_not_undone_by_one_that_did_not(graph_env):
+    await _seed_columns(graph_env, ("a", "x"), provider="execution")
+    await _seed_columns(graph_env, state="unsupported", provider="dbt")
+
+    result = await _graph(graph_env, columns_for={_dim_key(graph_env)})
+
+    edge = result.edges[0]
+    assert edge.column_lineage == "derived"
+    assert {p.name: p.column_lineage for p in edge.providers} == {
+        "execution": "derived",
+        "dbt": "unsupported",
+    }
+
+
+async def test_a_mapping_nothing_re_asserts_goes_stale(graph_env):
+    old = datetime.now(tz=UTC) - timedelta(days=settings.lineage_stale_after_days + 5)
+    await upsert_edges(
+        graph_env["db"],
+        [
+            CanonicalEdge(
+                source=internal_ref(graph_env["catalogs"]["raw"].id, "analytics", "src"),
+                target=internal_ref(graph_env["catalogs"]["warehouse"].id, "analytics", "dim"),
+                column_lineage="derived",
+                columns=(ColumnPair(source_column="a", target_column="x"),),
+            )
+        ],
+        provider="execution",
+        observed_at=old,
+    )
+
+    result = await _graph(graph_env, columns_for={_dim_key(graph_env)})
+
+    assert result.edges[0].columns[0].stale is True
+
+
+async def test_a_redacted_endpoint_withholds_the_column_names(graph_env):
+    """Column names of a restricted table are exactly what redaction holds back.
+
+    Serving them beside a node that deliberately carries no name would give away
+    the thing the redaction exists to keep, in more detail than the table name
+    itself would have.
+    """
+    await _seed_columns(graph_env, ("secret_column", "x"))
+    key = _dim_key(graph_env)
+
+    visible = await _graph(graph_env, columns_for={key})
+    assert visible.edges[0].columns
+
+    stranger = await _make_scoped_stranger(graph_env)
+    hidden = await _graph(graph_env, principal=stranger.id, columns_for={key})
+
+    assert "redacted" in _by_kind(hidden)
+    assert hidden.edges[0].columns == []
+
+
+async def test_the_column_cap_truncates_and_says_so(graph_env):
+    from api.services.lineage import graph as graph_module
+
+    await _seed_columns(graph_env, ("a", "x"), ("b", "y"), ("c", "z"))
+
+    original = graph_module.MAX_COLUMN_PAIRS
+    graph_module.MAX_COLUMN_PAIRS = 2
+    try:
+        result = await _graph(graph_env, columns_for={_dim_key(graph_env)})
+    finally:
+        graph_module.MAX_COLUMN_PAIRS = original
+
+    assert result.columns_truncated is True
+    assert len(result.edges[0].columns) == 2
+    # The graph's own shape is untouched — only the detail inside it was capped.
+    assert result.truncated is False

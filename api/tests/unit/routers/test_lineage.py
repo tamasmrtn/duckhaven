@@ -440,3 +440,40 @@ async def test_a_bare_manifest_is_still_accepted(auth_client, ws, db_session):
     edges = await _stored(db_session)
     assert edges
     assert all(e.column_lineage == "unknown" for e in edges)
+
+
+async def test_an_over_long_column_name_is_rejected_not_truncated(auth_client, ws):
+    """The store holds 255 characters; anything longer is the client's mistake.
+
+    Without the bound this reached Postgres and came back a 500.
+    """
+    payload = {
+        "provider": "acme",
+        "edges": [
+            {
+                "source": {"catalog": "raw", "schema": "analytics", "table": "src"},
+                "target": {"catalog": "warehouse", "schema": "analytics", "table": "dim"},
+                "columns": [{"source_column": "a" * 256, "target_column": "x"}],
+            }
+        ],
+    }
+    resp = await auth_client.post(f"/workspaces/{ws}/lineage/imports", json=payload)
+
+    assert resp.status_code == 422
+
+
+async def test_an_unbounded_column_list_is_rejected(auth_client, ws):
+    """An import must not be able to assert more than extraction allows itself."""
+    payload = {
+        "provider": "acme",
+        "edges": [
+            {
+                "source": {"catalog": "raw", "schema": "analytics", "table": "src"},
+                "target": {"catalog": "warehouse", "schema": "analytics", "table": "dim"},
+                "columns": [{"source_column": f"c{i}", "target_column": "x"} for i in range(2001)],
+            }
+        ],
+    }
+    resp = await auth_client.post(f"/workspaces/{ws}/lineage/imports", json=payload)
+
+    assert resp.status_code == 422

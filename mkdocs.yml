@@ -129,7 +129,6 @@ nav:
       - Schedule queries: guides/schedule-queries.md
       - Read the session audit trail: guides/session-audit.md
       - Import lineage from dbt: guides/import-dbt-lineage.md
-      - Backfill lineage from history: guides/backfill-lineage.md
       - Use the AI assistant: guides/using-the-assistant.md
       - How access works: guides/access-levels.md
       - Manage users & access: guides/users-access.md

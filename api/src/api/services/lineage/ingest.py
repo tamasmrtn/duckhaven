@@ -8,16 +8,14 @@ identity, deduplication and reconciliation are decided in exactly one place.
 ``record_execution_lineage`` is called from the agent frame handler when a query
 completes, mirroring how
 :func:`~api.services.maintenance.ingest.record_health_sample` persists a health
-probe from the same hook. It is also what replays historical statements during a
-backfill — the same function, given an older ``observed_at``, so history and live
-traffic cannot drift apart.
+probe from the same hook.
 
 Writes are **order-independent**. An observation carries the time it happened
 rather than the time it was recorded, and merging one into an existing edge takes
 the earliest first sighting, the latest last sighting, and the descriptive fields
-of whichever observation is newer. Replaying six months of history in any order
-therefore lands on the same rows, and a statement from March cannot make a
-relationship look like it was confirmed today.
+of whichever observation is newer. A frame that arrives late therefore cannot
+make a relationship look like it was confirmed after the statement that really
+was the last to touch it.
 
 Reconciliation deserves care: it is the only operation here that deletes. It is
 always scoped to a single ``provider``, so re-importing a dbt project can never
@@ -54,10 +52,7 @@ EXECUTION_PROVIDER = "execution"
 # would establish nothing anyway; skipping them keeps the parse off the path that
 # runs every time somebody clicks a table in the catalog explorer. They are
 # already excluded from query history for the same reason.
-#
-# Public because the backfill excludes the same rows in SQL rather than paging
-# through them only to discard them here. One list, two readers.
-INTERNAL_ORIGINS = frozenset({"sample", "metadata"})
+_INTERNAL_ORIGINS = frozenset({"sample", "metadata"})
 
 
 @dataclass(frozen=True)
@@ -78,11 +73,6 @@ class IngestResult:
     updated: int = 0
     removed: int = 0
     skipped: list[dict[str, str]] = field(default_factory=list)
-    # The statement could not be parsed at all, so nothing could be derived from
-    # it. Distinct from an empty result, which means it parsed and established
-    # nothing — a backfill counts the two separately because only the first
-    # points at a parser gap.
-    parse_failed: bool = False
 
 
 async def upsert_edges(
@@ -98,8 +88,8 @@ async def upsert_edges(
     """Insert or refresh each edge, returning what changed.
 
     ``observed_at`` is when the relationship was *observed*, which is not
-    necessarily now: a backfilled statement passes the time it originally ran.
-    Defaults to now, which is right for anything happening live.
+    necessarily now: a statement whose completion frame arrived late passes the
+    time it actually ran. Defaults to now.
 
     Idempotent in the sense that matters: re-asserting a relationship refreshes
     the existing row rather than duplicating it. Two providers naming the same
@@ -130,10 +120,10 @@ async def upsert_edges(
             existing.first_seen_at = min(aware_utc(existing.first_seen_at), stamp)
             if stamp >= aware_utc(existing.last_seen_at):
                 # The newest observation describes the relationship. An older one
-                # arriving later — a backfill walking history, a delayed frame —
-                # still counts and still widens the window, but it must not
-                # overwrite what a more recent statement said, nor claim the
-                # click-through to "the query that produced this".
+                # arriving later — a delayed frame — still counts and still
+                # widens the window, but it must not overwrite what a more recent
+                # statement said, nor claim the click-through to "the query that
+                # produced this".
                 existing.last_seen_at = stamp
                 existing.operation = edge.operation or existing.operation
                 existing.confidence = edge.confidence
@@ -383,10 +373,8 @@ async def delete_schema_lineage(db: AsyncSession, catalog_id: uuid.UUID, schema:
 class WorkspaceCatalogs:
     """Everything resolving a statement's table names needs, resolved once.
 
-    Live extraction resolves this per completed query — one indexed lookup on a
-    path that already did several. A backfill walks thousands of statements
-    belonging to the same workspace, so it resolves this once per batch instead,
-    which is the difference between a constant and an N+1 over query history.
+    Extraction resolves this per completed query — one indexed lookup on a path
+    that already did several.
     """
 
     catalogs: list[Catalog]
@@ -442,30 +430,18 @@ def _active_catalog(query: Query, context: WorkspaceCatalogs) -> str | None:
     return context.catalogs[0].slug if context.catalogs else None
 
 
-async def record_execution_lineage(
-    db: AsyncSession,
-    query: Query,
-    *,
-    context: WorkspaceCatalogs | None = None,
-    observed_at: datetime | None = None,
-) -> IngestResult:
-    """Derive and persist lineage for a query that completed successfully.
+async def record_execution_lineage(db: AsyncSession, query: Query) -> IngestResult:
+    """Derive and persist lineage for a query that just completed successfully.
 
-    Called from the agent frame handler for a query that just finished, and from
-    the backfill for one that finished long ago — the same derivation either way,
-    differing only in the ``observed_at`` it stamps and in whether the caller
-    already resolved the workspace's catalogs.
-
-    Never raises for a reason the caller could not act on: a statement that
-    cannot be parsed, or that establishes no relationship, simply records
-    nothing. ``parse_failed`` on the result distinguishes the two.
+    Called from the agent frame handler. Never raises for a reason the caller
+    could not act on: a statement that cannot be parsed, or that establishes no
+    relationship, simply records nothing.
     """
     result = IngestResult()
-    if not query.sql or query.origin in INTERNAL_ORIGINS:
+    if not query.sql or query.origin in _INTERNAL_ORIGINS:
         return result
 
-    if context is None:
-        context = await workspace_catalog_context(db, query.workspace_id)
+    context = await workspace_catalog_context(db, query.workspace_id)
     if not context.ids:
         return result
 
@@ -479,7 +455,6 @@ async def record_execution_lineage(
 
         record_lineage_extract_failure()
         logger.debug("Lineage extraction skipped for query %s: %s", query.id, exc)
-        result.parse_failed = True
         return result
 
     if not extracted:
@@ -492,5 +467,5 @@ async def record_execution_lineage(
         workspace_id=query.workspace_id,
         last_query_id=query.id,
         # When the statement actually ran, not when we got around to reading it.
-        observed_at=observed_at or query.finished_at or query.started_at,
+        observed_at=query.finished_at or query.started_at,
     )

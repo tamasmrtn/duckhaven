@@ -95,9 +95,6 @@ Read the [lineage](../concepts/lineage.md) graph around a table, and import line
 | `POST /api/workspaces/{ws}/lineage/imports` | Import canonical edges from any producer. Requires workspace **writer**, plus `writer` on each target's catalog. |
 | `POST /api/workspaces/{ws}/lineage/imports/{provider}` | Import a producer's own artifact — `dbt` takes a `manifest.json` body. Same authorization. |
 | `DELETE /api/workspaces/{ws}/lineage/imports?provider=<name>` | Remove every edge a retired producer asserted. Requires workspace **owner**. |
-| `POST /api/workspaces/{ws}/lineage/backfill` | Queue a [reconstruction from query history](../guides/backfill-lineage.md). Body accepts `since` and `dry_run`. Returns **202**, or **409** if one is already outstanding. Requires workspace **owner**. |
-| `GET /api/workspaces/{ws}/lineage/backfill` | Status and counters for the workspace's backfill. **404** before one has been requested. Requires workspace **owner**. |
-| `DELETE /api/workspaces/{ws}/lineage/backfill` | Ask a running backfill to stop at the next batch boundary. Requires workspace **owner**. |
 
 Read parameters: `direction` (`upstream` \| `downstream` \| `both`, default `both`), `depth` (1–5, default 2), and a
 repeatable `provider` filter. The response carries `nodes`, `edges`, `truncated` and `hidden`. `truncated` is `true`

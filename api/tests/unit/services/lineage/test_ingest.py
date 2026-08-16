@@ -383,19 +383,6 @@ async def test_execution_lineage_is_stamped_with_when_the_statement_ran(graph_en
     assert edge.last_seen_at.replace(tzinfo=UTC) == ran_at
 
 
-async def test_a_parse_failure_is_reported_distinctly_from_an_empty_result(graph_env):
-    """A backfill counts the two separately: only one of them points at a gap in
-    the parser rather than at a statement that simply moves no data."""
-    db = graph_env["db"]
-    broken = await record_execution_lineage(db, await _query(graph_env, "selct * from foo"))
-    read = await record_execution_lineage(
-        db, await _query(graph_env, "SELECT * FROM raw.analytics.src")
-    )
-
-    assert broken.parse_failed is True
-    assert read.parse_failed is False
-
-
 # --- rekey ------------------------------------------------------------------
 
 

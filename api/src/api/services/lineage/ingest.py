@@ -221,7 +221,16 @@ async def _upsert_columns(
     is what the parent edge already does and what the read API already knows how
     to present.
     """
-    wanted = {id(row): edge.columns for edge, row in rows if edge.columns}
+    # Accumulated rather than assigned: two canonical edges can describe the same
+    # pair — an importer listing a relationship twice with different columns, or
+    # a script writing the same target from the same source in two statements —
+    # and they land on one row, because `provider` plus the two keys is the whole
+    # identity. Keying by row and overwriting would keep only the last one's
+    # columns and silently drop the rest.
+    wanted: dict[int, list[ColumnPair]] = {}
+    for edge, row in rows:
+        if edge.columns:
+            wanted.setdefault(id(row), []).extend(edge.columns)
     if not wanted:
         return
 
@@ -237,7 +246,9 @@ async def _upsert_columns(
     )
     existing = {(r.edge_id, r.source_column, r.target_column): r for r in existing_rows}
 
-    for _, row in rows:
+    # By row rather than by edge: several edges can share one row, and their
+    # columns were already gathered under it above.
+    for row in {id(r): r for _, r in rows}.values():
         for pair in wanted.get(id(row), ()):
             found = existing.get((row.id, pair.source_column, pair.target_column))
             if found is not None:

@@ -671,3 +671,27 @@ async def test_a_colliding_rename_merges_column_detail_instead_of_losing_it(grap
         ("a", "x"),
         ("b", "y"),
     }
+
+
+async def test_two_edges_for_one_pair_keep_both_column_sets(graph_env):
+    """Edge identity is the provider and the two keys, so both land on one row.
+
+    Gathering their columns under that row rather than assigning them means the
+    second does not silently erase the first — which is what an importer listing
+    a relationship twice, or a script writing the same target twice, produces.
+    """
+    db = graph_env["db"]
+    await upsert_edges(
+        db,
+        [
+            _with_columns(graph_env, ("a", "x")),
+            _with_columns(graph_env, ("b", "y")),
+        ],
+        provider="acme",
+    )
+
+    (edge,) = await _edges(db)
+    assert {(c.source_column, c.target_column) for c in await _columns(db, edge.id)} == {
+        ("a", "x"),
+        ("b", "y"),
+    }

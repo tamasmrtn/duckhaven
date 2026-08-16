@@ -16,6 +16,11 @@
 //
 // Nodes are collapsed by default and expand to show their columns, so heights
 // vary and stacking has to use each node's own height rather than a constant.
+//
+// A node that has columns to show carries a strip along its bottom edge naming
+// how many. The strip is what makes the node openable, so it counts toward the
+// height whether the node is open or closed — and a node with nothing to show
+// has no strip and stays at the plain header height.
 
 import type { LineageColumn, LineageEdge, LineageNode } from "@/types/lineage";
 
@@ -25,6 +30,8 @@ export const NODE_HEIGHT = 58;
 export const ROW_HEIGHT = 18;
 /** Padding above the first column row and below the last. */
 export const ROWS_PADDING = 6;
+/** The "n columns" strip along the bottom of an openable node. */
+export const STRIP_HEIGHT = 22;
 const H_GAP = 72;
 const V_GAP = 22;
 
@@ -42,6 +49,9 @@ export interface LineageGraphNode {
   column: number; // signed distance
   height: number;
   expanded: boolean;
+  /** Whether this node carries the "n columns" strip, and what it says. */
+  openable: boolean;
+  columnCount: number;
   /** The node's columns that take part in a mapping in this graph. */
   rows: LineageColumnRow[];
 }
@@ -93,9 +103,11 @@ function columnsOf(key: string, edges: LineageEdge[]): string[] {
   return [...found].sort();
 }
 
-function nodeHeight(rows: number): number {
-  if (rows === 0) return NODE_HEIGHT;
-  return NODE_HEIGHT + ROWS_PADDING * 2 + rows * ROW_HEIGHT;
+function nodeHeight(openable: boolean, rows: number): number {
+  if (!openable) return NODE_HEIGHT;
+  const strip = NODE_HEIGHT + STRIP_HEIGHT;
+  if (rows === 0) return strip;
+  return strip + ROWS_PADDING * 2 + rows * ROW_HEIGHT;
 }
 
 export function layoutLineage(
@@ -118,10 +130,13 @@ export function layoutLineage(
   const rowsByKey = new Map<string, string[]>();
   const heightByKey = new Map<string, number>();
   for (const node of nodes) {
-    const isOpen = expanded.has(node.key);
-    const cols = isOpen ? columnsOf(node.key, edges) : [];
+    // The count decides the strip, and the strip is what makes a node openable.
+    // It comes from the server because a closed node has no mappings to count.
+    const openable = node.column_count > 0;
+    const cols =
+      openable && expanded.has(node.key) ? columnsOf(node.key, edges) : [];
     rowsByKey.set(node.key, cols);
-    heightByKey.set(node.key, nodeHeight(cols.length));
+    heightByKey.set(node.key, nodeHeight(openable, cols.length));
   }
 
   const columnHeights = new Map<number, number>();
@@ -153,9 +168,17 @@ export function layoutLineage(
         column,
         height: own,
         expanded: cols.length > 0,
+        openable: node.column_count > 0,
+        columnCount: node.column_count,
+        // Rows start below the header *and* the strip, which sits between them.
         rows: cols.map((name, index) => ({
           column: name,
-          y: NODE_HEIGHT + ROWS_PADDING + index * ROW_HEIGHT + ROW_HEIGHT / 2,
+          y:
+            NODE_HEIGHT +
+            STRIP_HEIGHT +
+            ROWS_PADDING +
+            index * ROW_HEIGHT +
+            ROW_HEIGHT / 2,
         })),
       });
       cursor += own + V_GAP;

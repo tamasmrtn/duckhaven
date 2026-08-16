@@ -12,6 +12,10 @@ export interface LineageNode {
   system: string | null;
   /** Signed hops from the root: negative upstream, positive downstream. */
   distance: number;
+  /** How many columns this node would show if opened. Arrives for every node,
+   *  unlike the mappings themselves, so a closed node can say whether it is
+   *  worth opening. Zero means there is nothing to open. */
+  column_count: number;
 }
 
 /**

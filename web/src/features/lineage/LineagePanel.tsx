@@ -161,14 +161,15 @@ function EdgeDetails({
   edges,
   selected,
   nodesByKey,
-  showColumns,
+  expanded,
 }: {
   ws: string;
   edges: LineageEdge[];
   selected: string;
   nodesByKey: Map<string, LineageNode>;
   /** Only once a node is open — otherwise nothing has been fetched to show. */
-  showColumns: boolean;
+  /** Which nodes were opened, and so which edges had their detail fetched. */
+  expanded: ReadonlySet<string>;
 }) {
   return (
     <div className="flex max-h-40 flex-col gap-3 overflow-y-auto border-t border-[var(--border-subtle)] p-3 text-xs">
@@ -226,7 +227,12 @@ function EdgeDetails({
                 </Link>
               )}
             </div>
-            {showColumns && <ColumnDetails edge={edge} />}
+            {/* Only for an edge whose detail was actually requested. An
+                edge nobody opened comes back with an empty `columns` whatever
+                its state, and reading that as "no columns flow" would report a
+                finding about the data that came from not having asked. */}
+            {(expanded.has(edge.source_key) ||
+              expanded.has(edge.target_key)) && <ColumnDetails edge={edge} />}
           </div>
         );
       })}
@@ -393,7 +399,7 @@ export function LineagePanel({
               edges={selectedEdges}
               selected={selected}
               nodesByKey={nodesByKey}
-              showColumns={expanded.size > 0}
+              expanded={expanded}
             />
           )}
         </>

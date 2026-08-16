@@ -12,12 +12,15 @@ records which of them asserted it.
 ## What a relationship means
 
 An edge runs from a **source** dataset to a **target** dataset and means *"data in the target was produced using the
-source"*. That is deliberately a slightly weaker claim than "data flowed from the source into the target": at
-table-level granularity DuckHaven cannot tell a column that was copied from a table that was only joined against or
-filtered on, and pretending otherwise would be the kind of confident-but-wrong metadata that is worse than none.
+source"*. That is deliberately a slightly weaker claim than "data flowed from the source into the target": on its own,
+a table-level edge does not distinguish a table that was copied from from one that was only joined against or filtered
+on, and pretending otherwise would be the kind of confident-but-wrong metadata that is worse than none.
 
 For impact analysis — the common reason to look — the weaker claim is the useful one anyway. If a table was referenced
 in building yours, changing it is your problem.
+
+[Column-level lineage](#column-level-lineage) makes the stronger claim where it can, and is how you tell those two
+cases apart.
 
 ## What creates lineage
 
@@ -153,11 +156,88 @@ none. No count, no direction, no catalog, no name — a count alone would say ho
 
 If you need the whole picture, attach the catalogs involved to your workspace, or ask someone who already has them.
 
+## Column-level lineage
+
+A table-level edge says two tables are related. A **column relationship** says which values came from where:
+
+> the value of `customer_orders.customer_id` may be derived from the value of `orders.customer_id`.
+
+Expand a table on the Lineage tab to see the columns taking part in the lineage around it, and the lines joining them
+to their upstream and downstream counterparts. Tables are collapsed by default: nothing about column detail is fetched
+or drawn until you open one, so the table graph costs exactly what it always did.
+
+### Which columns count
+
+A column contributes when it can change the **value** of an output column, and does not when it only changes **which
+rows** come out. That distinction is the whole point — it is what lets the graph say a table was read but none of its
+data reached the target.
+
+| Contributes | Does not contribute |
+|---|---|
+| Anything you select, aliased or not | `WHERE`, `HAVING` and `QUALIFY` predicates |
+| Every column in an expression — `price * quantity` feeds `total` | `JOIN … ON` predicates |
+| `CASE` branches, and the conditions that pick between them | `GROUP BY` keys you do not also select |
+| `COALESCE`, casts and function arguments | `ORDER BY` keys you do not also select |
+| An aggregate's argument — `SUM(amount)` traces to `amount`, not to the `GROUP BY` key | |
+| A window function's argument, plus its `PARTITION BY` and `ORDER BY` keys | |
+| Each branch of a `UNION` | |
+| `SELECT *`, expanded to the real columns | |
+
+Relationships are many-to-many in both directions: `first_name || ' ' || last_name AS full_name` records two, and
+`SELECT value AS a, value AS b` records two the other way. Intermediate CTEs and subqueries are followed through to the
+base tables — you see where the data came from, not how the query was organised.
+
+So for `CREATE TABLE t AS SELECT a FROM source WHERE b > 10`, the only column relationship is `source.a → t.a`. `b`
+decided which rows survived; it did not decide what any value is.
+
+### When a relationship has no columns
+
+Three answers are possible for any edge, and they mean different things:
+
+- **Columns are listed.** Those are the values that flow.
+- **No columns flow.** The source was read and none of its values reached the target — it was joined against or
+  filtered on. This is a finding, and the reason the feature is worth having.
+- **Column detail is not available.** Nothing established it. The table-level relationship still stands.
+
+The UI says which of the three it is rather than showing an empty list for the last two.
+
+### When column detail is not established
+
+DuckHaven declines rather than guesses, because a column relationship that is wrong is worse than one that is missing —
+it is the kind of thing people act on. Column detail is not recorded when:
+
+- the statement is not `CREATE TABLE … AS SELECT`, `CREATE VIEW … AS SELECT`, or `INSERT … SELECT`. `UPDATE`, `MERGE`
+  and `DELETE` stay table-level;
+- an identifier cannot be resolved to a specific table — an unqualified column name where two joined tables both have
+  one, for instance;
+- a source table's columns cannot be read, so `SELECT *` cannot be expanded honestly;
+- an `INSERT` column list does not line up with what the query selects;
+- two output columns end up with the same name. DuckDB accepts that and renames one, so the names in the SQL are not
+  the names in the table.
+
+In every case the table-level edge is recorded exactly as before.
+
+### Imported column lineage
+
+Column relationships are part of DuckHaven's own model rather than a feature of one importer, so any producer that
+knows which columns flow can record them, and they merge with DuckHaven's own the same way table-level relationships
+do. Two producers naming the same relationship is one entry listing both; two naming different ones is two entries,
+each attributed. Neither overwrites the other.
+
+For dbt specifically, see [Import lineage from dbt](../guides/import-dbt-lineage.md).
+
 ## Limits
 
-!!! note "Column-level lineage is not available yet"
-    Every edge carries an empty column list today. The graph is table-level only. The API field exists so that adding
-    column-level lineage later does not change the contract.
+Column-level limits worth knowing:
+
+- **Columns are matched by name.** DuckHaven has no stable identity for a column the way it does for a table, so a
+  renamed column is indistinguishable from one dropped and another added. The old relationships go stale and new ones
+  appear; nothing is silently reattached to the wrong column.
+- **Adding or reordering columns is safe.** Nothing is matched by position, with one exception: an `INSERT` with no
+  column list has nothing but position to go on, which is why that case records no column detail at all.
+- **Relationships accumulate.** Two statements can build the same table from the same source through different
+  columns, so both are kept. One that stops being re-asserted ages out as stale rather than disappearing.
+- **Column detail is capped per response.** A very wide graph shows a subset and says so.
 
 Other limits worth knowing:
 

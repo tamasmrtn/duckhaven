@@ -413,13 +413,17 @@ describe("LineagePanel column detail", () => {
   it("says a relationship carries no columns rather than showing nothing", async () => {
     // The finding the table graph could never state. It must not read the same
     // as "we could not work it out".
+    //
+    // The root is opened rather than `events`, because the verdict belongs to
+    // the daily_active_users -> funnel edge, and only opening a node on that
+    // edge causes its detail to be fetched.
     renderWithProviders({ initialRoute: TABLE_ROUTE });
     await openLineageTab();
     const canvas = await graph();
 
     await userEvent.click(
       await canvas.findByRole("button", {
-        name: /show \d+ columns for events/i,
+        name: /show \d+ columns for daily_active_users/i,
       }),
     );
     await userEvent.click(await canvas.findByText("funnel"));
@@ -485,5 +489,31 @@ describe("LineagePanel column detail", () => {
     expect(
       canvas.queryAllByRole("button", { name: /show \d+ column/i }),
     ).toEqual([]);
+  });
+});
+
+describe("LineagePanel column detail scoping", () => {
+  it("says nothing about columns for an edge whose detail was never fetched", async () => {
+    // Opening one node must not make the panel pronounce on a different edge.
+    // Detail arrives only for the nodes named in `columns_for`, so an
+    // unrequested edge comes back with an empty `columns` whatever its state —
+    // and reading that as "no columns flow" reports a finding about the data
+    // that actually came from not having asked.
+    renderWithProviders({ initialRoute: TABLE_ROUTE });
+    await openLineageTab();
+    const canvas = await graph();
+
+    await userEvent.click(
+      await canvas.findByRole("button", {
+        name: /show \d+ columns for events/i,
+      }),
+    );
+    await canvas.findByText("occurred_at");
+
+    // `funnel` sits downstream; nothing about its edge was requested.
+    await userEvent.click(await canvas.findByText("funnel"));
+
+    expect(screen.queryByText(/no columns flow along this/i)).toBeNull();
+    expect(screen.queryByText(/column detail is not available/i)).toBeNull();
   });
 });

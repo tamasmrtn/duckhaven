@@ -29,6 +29,7 @@ pre-quoted, adapter-dialect string that would have to be re-parsed to be trusted
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from api.services.lineage.columns import (
@@ -140,9 +141,9 @@ def _schema_lookup(catalog: dict[str, Any] | None, *, resolve: Resolver) -> Mapp
     """Every relation's columns, as ``dbt docs generate`` observed them.
 
     Keyed by resolved asset so it answers the same question the catalog would,
-    without the round trips. Columns come back in ``index`` order because a
-    positional mapping — an ``INSERT`` with no column list — depends on it, and
-    because a schema in a stable order is easier to read in a diff.
+    without the round trips. Columns come back in ``index`` order because that is
+    the order the warehouse reports them in, and a schema in a stable order is
+    easier to read in a diff.
     """
     if not catalog:
         return MappingSchemaLookup({})
@@ -271,6 +272,11 @@ async def edges_from_manifest(
         columns = None
         attempted = bool(catalog) and not is_source and bool(node.get("compiled_code"))
         if attempted:
+            # Parsing a model's SQL is real CPU work, and a project can bring
+            # thousands. Nothing in the parse awaits, so without this the whole
+            # import holds the event loop and every other request on the replica —
+            # the agent's control channel included — waits for it to finish.
+            await asyncio.sleep(0)
             columns = await _model_columns(node, target, resolve=resolve, schemas=schemas)
 
         for parent_id in parents:

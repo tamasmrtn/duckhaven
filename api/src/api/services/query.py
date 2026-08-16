@@ -160,7 +160,7 @@ async def dispatch_query(
     await db.commit()
 
 
-async def handle_agent_frame(db: AsyncSession, frame: Frame) -> None:
+async def handle_agent_frame(db: AsyncSession, frame: Frame, polaris=None) -> None:
     query_id = uuid.UUID(frame.payload["query_id"])
     if frame.type == FrameType.QUERY_PROGRESS:
         progress = {k: v for k, v in frame.payload.items() if k != "query_id"}
@@ -228,21 +228,32 @@ async def handle_agent_frame(db: AsyncSession, frame: Frame) -> None:
 
                 await record_health_sample(db, query, health)
             if query is not None:
-                await _record_lineage(db, query)
+                await _record_lineage(db, query, polaris)
 
 
-async def _record_lineage(db: AsyncSession, query: Query) -> None:
+async def _record_lineage(db: AsyncSession, query: Query, polaris=None) -> None:
     """Derive lineage for a completed query, never at the query's expense.
 
     Runs on the agent's frame-receive path, so every failure mode is swallowed:
     a graph that misses an edge is a much smaller problem than a frame handler
     that stops processing an agent's traffic. Should this ever show up in
     profiling, it can move to a background loop without any model change.
+
+    ``polaris`` is what column-level extraction reads source table schemas
+    through, and it is only consulted for the two statement shapes that cannot be
+    resolved without one — ``SELECT *``, and a multi-source query naming a column
+    without saying which relation it belongs to. Everything else costs no round
+    trip. Without a client the graph stays table-level rather than failing.
     """
-    from api.services.lineage.ingest import record_execution_lineage
+    from api.services.lineage.columns import CatalogSchemaLookup
+    from api.services.lineage.ingest import record_execution_lineage, workspace_catalog_context
 
     try:
-        await record_execution_lineage(db, query)
+        schemas = None
+        if polaris is not None:
+            context = await workspace_catalog_context(db, query.workspace_id)
+            schemas = CatalogSchemaLookup(polaris, {c.id: c.polaris_name for c in context.catalogs})
+        await record_execution_lineage(db, query, schemas=schemas)
         await db.commit()
     except Exception:
         logger.exception("Lineage extraction failed for query %s", query.id)

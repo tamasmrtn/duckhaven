@@ -115,11 +115,48 @@ curl -X DELETE \
 
 This requires workspace **owner**.
 
+## Column-level lineage
+
+Publishing `catalog.json` alongside the manifest gets you [column-level
+lineage](../concepts/lineage.md#column-level-lineage) for your dbt models as well as table-level.
+
+Generate both, then post them together:
+
+```sh
+dbt docs generate                      # writes manifest.json *and* catalog.json
+
+curl -X POST \
+  -H "Authorization: Bearer $DUCKHAVEN_PAT" \
+  -H "Content-Type: application/json" \
+  --data "$(jq -n \
+      --slurpfile m target/manifest.json \
+      --slurpfile c target/catalog.json \
+      '{manifest: $m[0], catalog: $c[0]}')" \
+  "https://duckhaven.internal/api/workspaces/<workspace>/lineage/imports/dbt"
+```
+
+Posting the manifest on its own still works and still gives you table-level lineage; nothing about the existing request
+shape changed.
+
+**Why two artifacts.** dbt does not publish column-to-column derivation — `manifest.json` records column *definitions*,
+and column-level lineage is a hosted-platform feature rather than something in the artifacts. What dbt *does* publish is
+each model's `compiled_code`: the exact SQL it ran, with every `ref()` and `source()` already resolved. DuckHaven reads
+the columns out of that with the same analysis it applies to SQL it runs itself, which needs each upstream relation's
+column list — and that is what `catalog.json` carries.
+
+Two things follow from that:
+
+- **`dbt docs generate` is what produces `catalog.json`.** A `dbt compile` or `dbt run` alone writes the manifest but
+  not the catalog, so column detail needs the extra step.
+- **Only compiled models get column detail.** A model dbt parsed but never compiled has no SQL to read. Its table-level
+  edges are unaffected.
+
+Sources outside DuckHaven are a known gap: a model reading a database DuckHaven does not manage keeps its table-level
+edge, but the columns coming from it cannot be tied to an asset, so that edge reports column detail as unavailable
+rather than claiming nothing flows.
+
 ## Notes
 
-- **Column-level lineage is not imported**, because `manifest.json` does not contain it — it records column
-  *definitions*, not column-to-column derivation. The import is table-level, like the rest of DuckHaven's lineage today.
-- `catalog.json` is not used. It holds column types and table statistics, and no dependencies.
 - Very large projects: a single import is capped at 5,000 edges. Beyond that, use the generic
   `POST /workspaces/<ws>/lineage/imports` endpoint and send edges in batches.
 - If your dbt project runs *against* DuckHaven through a [SQL session](../concepts/sql-sessions.md), you will also get

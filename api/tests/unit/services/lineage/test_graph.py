@@ -765,3 +765,31 @@ async def test_a_redacted_node_reports_no_count(graph_env):
 
     hidden = next(n for n in result.nodes if n.kind == "redacted")
     assert hidden.column_count == 0
+
+
+async def test_a_redacted_neighbour_does_not_inflate_a_visible_node_count(graph_env):
+    """The count has to agree with what the node can actually show.
+
+    Mappings on an edge into a redacted node are withheld, so counting them
+    would put an openable "1 column" strip on a node that expands to nothing.
+    """
+    db = graph_env["db"]
+    await upsert_edges(
+        db,
+        [
+            CanonicalEdge(
+                source=internal_ref(graph_env["catalogs"]["raw"].id, "analytics", "src"),
+                target=internal_ref(graph_env["catalogs"]["warehouse"].id, "analytics", "dim"),
+                column_lineage="derived",
+                columns=(ColumnPair(source_column="secret_column", target_column="x"),),
+            )
+        ],
+        provider="execution",
+    )
+    stranger = await _make_scoped_stranger(graph_env)
+
+    result = await _graph(graph_env, principal=stranger.id)
+
+    assert "redacted" in _by_kind(result)
+    # `dim` is visible, but its only edge reaches a redacted node.
+    assert {n.column_count for n in result.nodes} == {0}

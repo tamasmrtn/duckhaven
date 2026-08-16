@@ -137,7 +137,11 @@ async def table_lineage(
             resolved[root_key] = root_node
 
     pairs, columns_truncated = await _column_pairs(db, walked.edges, columns_for or set())
-    counts = await _column_counts(db, walked.edges)
+    # Counted over the edges whose columns this response would actually carry,
+    # not over every edge the walk found. An edge into a redacted node has its
+    # columns withheld and one into a pruned node is dropped entirely, so
+    # counting those would promise rows the node cannot then show.
+    counts = await _column_counts(db, [e for e in walked.edges if _carries_columns(e, resolved)])
     merged = _merge_by_pair(walked.edges, resolved, pairs)
     root = resolved[root_key].key if root_key in resolved else root_key
     ordered = sorted(resolved.values(), key=lambda n: (n.distance, n.key))
@@ -149,6 +153,20 @@ async def table_lineage(
         hidden=hidden,
         columns_truncated=columns_truncated,
     )
+
+
+def _carries_columns(edge: LineageEdge, resolved: dict[str, VisibleNode]) -> bool:
+    """Whether this edge's column mappings will survive into the response.
+
+    The same test ``_merge_by_pair`` applies: both endpoints have to be visible,
+    and neither may be redacted — a restricted table's column names are withheld
+    along with its name.
+    """
+    source = resolved.get(edge.source_key)
+    target = resolved.get(edge.target_key)
+    if source is None or target is None:
+        return False
+    return source.kind != "redacted" and target.kind != "redacted"
 
 
 async def _column_counts(db: AsyncSession, edges: list[LineageEdge]) -> dict[str, int]:

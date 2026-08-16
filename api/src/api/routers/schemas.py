@@ -555,6 +555,7 @@ async def get_table_lineage(
     direction: str = "both",
     depth: int = 2,
     provider: Annotated[list[str] | None, Query()] = None,
+    columns_for: Annotated[list[str] | None, Query()] = None,
     target: _Target = Depends(target_catalog("reader")),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -566,6 +567,13 @@ async def get_table_lineage(
     cannot see are redacted rather than dropped, and nodes outside the
     workspace's attached catalogs are dropped rather than redacted; see
     ``services/lineage/redact.py`` for why those two differ.
+
+    ``columns_for`` is a repeatable node key naming which nodes should come back
+    with their column-level detail attached, and defaults to none of them. The
+    table graph is bounded by node count, but its column detail is bounded by how
+    wide those tables are — so a caller that wants one node's columns asks for
+    that node, and the cost of opening the tab does not depend on the shape of
+    tables nobody is looking at.
     """
     if direction not in ("upstream", "downstream", "both"):
         raise HTTPException(
@@ -588,6 +596,7 @@ async def get_table_lineage(
         direction=direction,
         depth=depth,
         providers=provider,
+        columns_for=set(columns_for) if columns_for else None,
     )
 
 

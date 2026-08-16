@@ -8,8 +8,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 import sqlalchemy as sa
 
-from api.models.lineage import LineageEdge
+from api.models.lineage import LineageColumnEdge, LineageEdge
 from api.models.query import Query
+from api.services.lineage.columns import ColumnPair
 from api.services.lineage.ingest import (
     CanonicalEdge,
     delete_schema_lineage,
@@ -441,3 +442,232 @@ async def test_rekey_across_schemas_moves_the_edge(graph_env):
 
     (edge,) = await _edges(db)
     assert (edge.target_schema, edge.target_table) == ("marts", "dim")
+
+
+# --- column-level detail ----------------------------------------------------
+
+
+async def _columns(db, edge_id=None) -> list[LineageColumnEdge]:
+    stmt = sa.select(LineageColumnEdge)
+    if edge_id is not None:
+        stmt = stmt.where(LineageColumnEdge.edge_id == edge_id)
+    rows = await db.execute(stmt)
+    return list(rows.scalars().all())
+
+
+def _with_columns(env, *pairs, state="derived", **kwargs):
+    base = _edge(env, **kwargs)
+    return CanonicalEdge(
+        source=base.source,
+        target=base.target,
+        operation=base.operation,
+        column_lineage=state,
+        columns=tuple(ColumnPair(source_column=s, target_column=t) for s, t in pairs),
+    )
+
+
+async def test_an_edge_starts_with_no_column_detail(graph_env):
+    """The default has to be `unknown`, not `derived` with nothing in it.
+
+    Otherwise every producer that never looked would be claiming it had, and an
+    empty column list would stop meaning anything.
+    """
+    db = graph_env["db"]
+    await upsert_edges(db, [_edge(graph_env)], provider="execution")
+
+    (edge,) = await _edges(db)
+    assert edge.column_lineage == "unknown"
+    assert await _columns(db) == []
+
+
+async def test_column_pairs_are_written_against_their_edge(graph_env):
+    db = graph_env["db"]
+    await upsert_edges(db, [_with_columns(graph_env, ("a", "x"), ("b", "x"))], provider="execution")
+
+    (edge,) = await _edges(db)
+    assert edge.column_lineage == "derived"
+    assert {(c.source_column, c.target_column) for c in await _columns(db, edge.id)} == {
+        ("a", "x"),
+        ("b", "x"),
+    }
+
+
+async def test_derived_with_no_pairs_is_recorded_as_an_answer(graph_env):
+    """The filter-only case, and the reason the state column exists at all."""
+    db = graph_env["db"]
+    await upsert_edges(db, [_with_columns(graph_env)], provider="execution")
+
+    (edge,) = await _edges(db)
+    assert edge.column_lineage == "derived"
+    assert await _columns(db) == []
+
+
+async def test_reobserving_accumulates_rather_than_replacing(graph_env):
+    """Two statements can move different columns along the same relationship.
+
+    Replacing would make each run retract what the other established, so the
+    mapping would flicker depending on which statement ran last.
+    """
+    db = graph_env["db"]
+    await upsert_edges(db, [_with_columns(graph_env, ("a", "x"))], provider="execution")
+    await upsert_edges(db, [_with_columns(graph_env, ("b", "y"))], provider="execution")
+
+    (edge,) = await _edges(db)
+    assert {(c.source_column, c.target_column) for c in await _columns(db, edge.id)} == {
+        ("a", "x"),
+        ("b", "y"),
+    }
+
+
+async def test_reobserving_the_same_pair_refreshes_it_rather_than_duplicating(graph_env):
+    db = graph_env["db"]
+    earlier = datetime.now(tz=UTC) - timedelta(days=2)
+    await upsert_edges(
+        db, [_with_columns(graph_env, ("a", "x"))], provider="execution", observed_at=earlier
+    )
+    await upsert_edges(db, [_with_columns(graph_env, ("a", "x"))], provider="execution")
+
+    (edge,) = await _edges(db)
+    (pair,) = await _columns(db, edge.id)
+    assert pair.first_seen_at.replace(tzinfo=UTC) == earlier
+    assert pair.last_seen_at.replace(tzinfo=UTC) > earlier
+
+
+async def test_a_late_arriving_observation_cannot_pull_last_seen_backwards(graph_env):
+    db = graph_env["db"]
+    await upsert_edges(db, [_with_columns(graph_env, ("a", "x"))], provider="execution")
+    (edge,) = await _edges(db)
+    (before,) = await _columns(db, edge.id)
+    latest = before.last_seen_at
+
+    stale = datetime.now(tz=UTC) - timedelta(days=5)
+    await upsert_edges(
+        db, [_with_columns(graph_env, ("a", "x"))], provider="execution", observed_at=stale
+    )
+
+    (after,) = await _columns(db, edge.id)
+    assert after.last_seen_at == latest
+    assert after.first_seen_at.replace(tzinfo=UTC) <= stale
+
+
+async def test_two_providers_keep_their_own_column_detail(graph_env):
+    """Column pairs inherit the parent's provenance, so they cannot be confused."""
+    db = graph_env["db"]
+    await upsert_edges(db, [_with_columns(graph_env, ("a", "x"))], provider="execution")
+    await upsert_edges(db, [_with_columns(graph_env, ("b", "x"))], provider="dbt")
+
+    by_provider = {e.provider: e for e in await _edges(db)}
+    assert {
+        (c.source_column, c.target_column) for c in await _columns(db, by_provider["execution"].id)
+    } == {("a", "x")}
+    assert {
+        (c.source_column, c.target_column) for c in await _columns(db, by_provider["dbt"].id)
+    } == {("b", "x")}
+
+
+async def test_a_later_unsupported_observation_does_not_retract_derived(graph_env):
+    """One statement the parser declines does not unmake what another established."""
+    db = graph_env["db"]
+    await upsert_edges(db, [_with_columns(graph_env, ("a", "x"))], provider="execution")
+    await upsert_edges(db, [_with_columns(graph_env, state="unsupported")], provider="execution")
+
+    (edge,) = await _edges(db)
+    assert edge.column_lineage == "derived"
+    assert len(await _columns(db, edge.id)) == 1
+
+
+async def test_unsupported_is_recorded_when_nothing_established_columns(graph_env):
+    db = graph_env["db"]
+    await upsert_edges(db, [_with_columns(graph_env, state="unsupported")], provider="execution")
+
+    (edge,) = await _edges(db)
+    assert edge.column_lineage == "unsupported"
+
+
+# --- column detail follows the edge it refines -------------------------------
+
+
+async def test_dropping_a_table_takes_its_column_detail_with_it(graph_env):
+    db = graph_env["db"]
+    await upsert_edges(db, [_with_columns(graph_env, ("a", "x"))], provider="execution")
+    await delete_table_lineage(db, graph_env["catalogs"]["warehouse"].id, "analytics", "dim")
+
+    assert await _edges(db) == []
+    assert await _columns(db) == []
+
+
+async def test_dropping_a_schema_takes_its_column_detail_with_it(graph_env):
+    db = graph_env["db"]
+    await upsert_edges(db, [_with_columns(graph_env, ("a", "x"))], provider="execution")
+    await delete_schema_lineage(db, graph_env["catalogs"]["warehouse"].id, "analytics")
+
+    assert await _edges(db) == []
+    assert await _columns(db) == []
+
+
+async def test_purging_a_provider_takes_its_column_detail_with_it(graph_env):
+    db = graph_env["db"]
+    await upsert_edges(db, [_with_columns(graph_env, ("a", "x"))], provider="dbt")
+    await purge_provider(db, provider="dbt")
+
+    assert await _edges(db) == []
+    assert await _columns(db) == []
+
+
+async def test_reconciling_a_run_takes_its_column_detail_with_it(graph_env):
+    db = graph_env["db"]
+    edge = _with_columns(graph_env, ("a", "x"))
+    await upsert_edges(db, [edge], provider="dbt", provider_run_id="run-1")
+    await reconcile_provider_run(
+        db, provider="dbt", provider_run_id="run-2", target_keys={edge.target.key}
+    )
+
+    assert await _edges(db) == []
+    assert await _columns(db) == []
+
+
+async def test_a_rename_carries_column_detail_along(graph_env):
+    """Children hang off the edge id, so rewriting the edge in place keeps them."""
+    db = graph_env["db"]
+    await upsert_edges(db, [_with_columns(graph_env, ("a", "x"))], provider="execution")
+
+    await rekey_table_lineage(
+        db,
+        graph_env["catalogs"]["warehouse"].id,
+        old_schema="analytics",
+        old_table="dim",
+        new_schema="analytics",
+        new_table="dim_v2",
+    )
+
+    (edge,) = await _edges(db)
+    assert edge.target_table == "dim_v2"
+    assert {(c.source_column, c.target_column) for c in await _columns(db, edge.id)} == {("a", "x")}
+
+
+async def test_a_colliding_rename_merges_column_detail_instead_of_losing_it(graph_env):
+    """The one place a rename deletes an edge, so the one place columns can vanish.
+
+    `dim` and `dim_v2` are the same relationship under two names; folding their
+    histories together has to fold their column mappings together too.
+    """
+    db = graph_env["db"]
+    await upsert_edges(db, [_with_columns(graph_env, ("a", "x"))], provider="execution")
+    await upsert_edges(
+        db, [_with_columns(graph_env, ("b", "y"), target_table="dim_v2")], provider="execution"
+    )
+
+    await rekey_table_lineage(
+        db,
+        graph_env["catalogs"]["warehouse"].id,
+        old_schema="analytics",
+        old_table="dim",
+        new_schema="analytics",
+        new_table="dim_v2",
+    )
+
+    (edge,) = await _edges(db)
+    assert {(c.source_column, c.target_column) for c in await _columns(db, edge.id)} == {
+        ("a", "x"),
+        ("b", "y"),
+    }

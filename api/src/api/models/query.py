@@ -10,7 +10,6 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
-    Index,
     Integer,
     String,
     Text,
@@ -24,12 +23,6 @@ from api.db.base import Base
 
 class Query(Base):
     __tablename__ = "queries"
-    __table_args__ = (
-        # The lineage backfill walks a workspace's history forward in
-        # `(started_at, id)` order, which is a total order over these rows and so
-        # a place the walk can be interrupted and resumed exactly.
-        Index("ix_queries_workspace_started", "workspace_id", "started_at", "id"),
-    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id"), nullable=False)

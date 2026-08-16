@@ -1,4 +1,4 @@
-"""Migration 0033 adds backfill state, stable table identity, and a history index.
+"""Migration 0033 adds stable table identity.
 
 Drives just 0033's ``upgrade``/``downgrade`` against a bare SQLite connection via
 an Alembic operations context (the full chain can't run on SQLite), mirroring
@@ -7,7 +7,11 @@ an Alembic operations context (the full chain can't run on SQLite), mirroring
 
 The property most worth asserting is that every change is *additive*: an existing
 deployment's lineage keeps working untouched, because nothing here rewrites a row
-and both new columns are nullable.
+and the new column is nullable.
+
+0033 also created ``lineage_backfills`` and ``ix_queries_workspace_started``,
+which 0034 drops again once the backfill was withdrawn. Those are asserted in
+``test_migration_0034`` rather than here, so this file covers only what survives.
 """
 
 import importlib.util
@@ -79,41 +83,6 @@ def test_upgrade_then_downgrade(migration_module):
         migration_module.upgrade()
 
         inspector = inspect(conn)
-        assert "lineage_backfills" in set(inspector.get_table_names())
-
-        columns = {c["name"]: c for c in inspector.get_columns("lineage_backfills")}
-        assert {
-            "workspace_id",
-            "status",
-            "dry_run",
-            "since_at",
-            "covered_from",
-            "covered_through",
-            "cursor_started_at",
-            "cursor_query_id",
-            "queries_scanned",
-            "queries_with_lineage",
-            "queries_skipped",
-            "parse_failures",
-            "queries_failed",
-            "edges_created",
-            "edges_updated",
-            "cancel_requested",
-            "error",
-            "requested_by",
-            "created_at",
-            "started_at",
-            "finished_at",
-        } <= set(columns)
-
-        # One backfill per workspace: a second request adjusts the row rather
-        # than racing a duplicate walk over the same history.
-        uniques = {
-            u["name"]: u["column_names"]
-            for u in inspector.get_unique_constraints("lineage_backfills")
-        }
-        assert uniques["uq_lineage_backfills_workspace"] == ["workspace_id"]
-
         meta_columns = {c["name"]: c for c in inspector.get_columns("table_metadata")}
         assert "table_uuid" in meta_columns
         # Nullable, so an existing deployment needs no data migration and old
@@ -127,15 +96,9 @@ def test_upgrade_then_downgrade(migration_module):
         assert "ix_table_metadata_uuid" in {
             i["name"] for i in inspector.get_indexes("table_metadata")
         }
-        history = {i["name"]: i["column_names"] for i in inspector.get_indexes("queries")}
-        assert history["ix_queries_workspace_started"] == ["workspace_id", "started_at", "id"]
 
         migration_module.op = Operations(MigrationContext.configure(conn))
         migration_module.downgrade()
 
         after = inspect(conn)
-        assert "lineage_backfills" not in set(after.get_table_names())
         assert "table_uuid" not in {c["name"] for c in after.get_columns("table_metadata")}
-        assert "ix_queries_workspace_started" not in {
-            i["name"] for i in after.get_indexes("queries")
-        }

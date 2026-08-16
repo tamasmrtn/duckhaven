@@ -197,23 +197,43 @@ def _leaf_columns(node: LineageNode) -> list[tuple[exp.Table, str]]:
     return found
 
 
+def _declared_columns(into: exp.Expression | None) -> list[str] | None:
+    """The column names a statement spells out for its target, if it spells any.
+
+    ``CREATE TABLE t (a, b) AS SELECT ...``, ``CREATE VIEW v (a, b) AS ...`` and
+    ``INSERT INTO t (a, b) SELECT ...`` all rename the query's output on the way
+    in, and all park the list in an ``exp.Schema``. An entry whose name cannot be
+    read yields ``None`` rather than a shorter list, because a list that quietly
+    lost an entry would zip the remaining names onto the wrong columns.
+    """
+    if not isinstance(into, exp.Schema) or not into.expressions:
+        return None
+    names = [entry.name for entry in into.expressions if getattr(entry, "name", "")]
+    if len(names) != len(into.expressions):
+        return None
+    return names
+
+
 def _target_columns(stmt: exp.Expression, operation: str, outputs: list[str]) -> list[str] | None:
     """What the statement's output columns are called in the target.
 
     ``None`` means they cannot be established, which abandons the statement.
+
+    A declared list wins over the query's own output names wherever one is
+    given: ``CREATE VIEW v (a, b) AS SELECT user_id, ts`` builds a view whose
+    columns are ``a`` and ``b``, so recording ``user_id -> user_id`` would name
+    a column that does not exist. Position is the only thing tying the two sides
+    together, so a length mismatch is a refusal rather than a zip that silently
+    drops the tail.
     """
+    declared = _declared_columns(stmt.this)
+    if declared is not None:
+        return declared if len(declared) == len(outputs) else None
     if operation in ("create_table_as", "create_view"):
-        # The query's own output names are the created table's column names.
+        # No list given, so the query's own output names are the target's.
         return outputs
-    # INSERT. An explicit column list names the targets directly, and is the only
-    # case where position carries meaning — so a length mismatch is a refusal
-    # rather than a zip that silently drops the tail.
-    into = stmt.this
-    if isinstance(into, exp.Schema) and into.expressions:
-        declared = [c.name for c in into.expressions if isinstance(c, exp.Identifier | exp.Column)]
-        if len(declared) != len(outputs):
-            return None
-        return declared
+    # INSERT with no column list has nothing but position to go on, against a
+    # target schema this module deliberately does not fetch.
     return None
 
 
@@ -426,6 +446,26 @@ async def _derive(
     return pairs
 
 
+def _has_unexpanded_star(expression: exp.Expression) -> bool:
+    """Whether a ``*`` survived qualification *in a projection*.
+
+    Only a projected star means the schema was missing — that is the one qualify
+    would have expanded into real column names. A star anywhere else is ordinary
+    SQL that expands into nothing and needs no schema: ``COUNT(*)`` counts rows
+    rather than naming a column, and treating it as an unresolved projection
+    threw away the column lineage of every aggregate written the usual way, after
+    first paying for a round of catalog reads that could not have helped.
+    """
+    for select in expression.find_all(exp.Select):
+        for projection in select.expressions:
+            if isinstance(projection, exp.Star):
+                return True
+            # `t.*` parses as a column whose name is the star.
+            if isinstance(projection, exp.Column) and isinstance(projection.this, exp.Star):
+                return True
+    return False
+
+
 @dataclass(frozen=True)
 class _Resolved:
     """One query's projection, resolved.
@@ -473,7 +513,7 @@ def _walk(
         )
     except Exception:
         return None
-    if next(qualified.find_all(exp.Star), None) is not None:
+    if _has_unexpanded_star(qualified):
         return None
     if not isinstance(qualified, exp.Query):
         return None

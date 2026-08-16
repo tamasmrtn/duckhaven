@@ -26,6 +26,7 @@ export function makeLineage(): LineageGraph {
         schema_name: "public",
         table: "customers",
         system: "crm_pg",
+        column_count: 0,
         distance: -2,
       },
       {
@@ -35,6 +36,7 @@ export function makeLineage(): LineageGraph {
         schema_name: "raw",
         table: "events",
         system: null,
+        column_count: 4,
         distance: -1,
       },
       {
@@ -44,6 +46,7 @@ export function makeLineage(): LineageGraph {
         schema_name: null,
         table: null,
         system: null,
+        column_count: 0,
         distance: -1,
       },
       {
@@ -53,6 +56,7 @@ export function makeLineage(): LineageGraph {
         schema_name: "analytics",
         table: "daily_active_users",
         system: null,
+        column_count: 3,
         distance: 0,
       },
       {
@@ -62,6 +66,7 @@ export function makeLineage(): LineageGraph {
         schema_name: "analytics",
         table: "funnel",
         system: null,
+        column_count: 0,
         distance: 1,
       },
     ],

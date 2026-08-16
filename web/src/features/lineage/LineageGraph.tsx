@@ -14,6 +14,7 @@ import {
   NODE_HEIGHT,
   NODE_WIDTH,
   ROW_HEIGHT,
+  STRIP_HEIGHT,
   type LineageGraphLayout,
 } from "./layout";
 
@@ -50,7 +51,6 @@ export function LineageGraph({
   onSelect,
   expanded,
   onToggleExpanded,
-  canExpand,
   selectedColumn,
   onSelectColumn,
 }: {
@@ -60,8 +60,6 @@ export function LineageGraph({
   onSelect: (id: string) => void;
   expanded: ReadonlySet<string>;
   onToggleExpanded: (id: string) => void;
-  /** Whether this node has any column detail to show. */
-  canExpand: (id: string) => boolean;
   selectedColumn: { key: string; column: string } | null;
   onSelectColumn: (key: string, column: string) => void;
 }) {
@@ -219,7 +217,7 @@ export function LineageGraph({
               const selected = gn.id === selectedId;
               const isRoot = gn.id === rootKey;
               const isOpen = expanded.has(gn.id);
-              const expandable = canExpand(gn.id);
+              const expandable = gn.openable;
               const Icon =
                 gn.node.kind === "redacted"
                   ? EyeOff
@@ -265,21 +263,36 @@ export function LineageGraph({
                     </span>
                   </button>
 
-                  {/* Absent, not disabled, when there is nothing to open: an
-                      affordance that never does anything is worse than none. */}
+                  {/* Names what is inside rather than hinting at it: an icon can
+                      say "this opens", but only a counted label can say there is
+                      something in here worth opening — which matters because
+                      column detail is derived for some relationships and not
+                      others. Absent, not disabled, when the count is zero. */}
                   {expandable && (
                     <button
                       type="button"
                       aria-expanded={isOpen}
-                      aria-label={`${isOpen ? "Hide" : "Show"} columns for ${nodeLabel(gn.node)}`}
+                      aria-label={`${isOpen ? "Hide" : "Show"} ${gn.columnCount} ${
+                        gn.columnCount === 1 ? "column" : "columns"
+                      } for ${nodeLabel(gn.node)}`}
                       onClick={() => onToggleExpanded(gn.id)}
-                      className="absolute right-1 top-1 rounded p-0.5 text-text-tertiary hover:bg-accent hover:text-text-primary"
+                      style={{ height: STRIP_HEIGHT }}
+                      className={cn(
+                        "flex w-full shrink-0 items-center gap-1.5 border-t px-2.5 text-left font-mono text-2xs",
+                        "border-[var(--border-subtle)] text-[var(--brand-maya-blue)]",
+                        "bg-[color-mix(in_srgb,var(--brand-maya-blue)_7%,transparent)]",
+                        "hover:bg-[color-mix(in_srgb,var(--brand-maya-blue)_14%,transparent)]",
+                      )}
                     >
                       {isOpen ? (
-                        <ChevronDown className="size-3" />
+                        <ChevronDown className="size-2.5 shrink-0" />
                       ) : (
-                        <ChevronRight className="size-3" />
+                        <ChevronRight className="size-2.5 shrink-0" />
                       )}
+                      <span className="truncate">
+                        {gn.columnCount}{" "}
+                        {gn.columnCount === 1 ? "column" : "columns"}
+                      </span>
                     </button>
                   )}
 

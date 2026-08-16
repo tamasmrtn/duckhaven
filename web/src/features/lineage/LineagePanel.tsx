@@ -325,17 +325,6 @@ export function LineagePanel({
       )
     : [];
 
-  // A node is worth opening when some producer worked out the columns on an edge
-  // touching it. Offering it where nothing was ever derived would open an empty
-  // box and leave the user to guess why.
-  function canExpand(key: string): boolean {
-    return graph.edges.some(
-      (e) =>
-        (e.source_key === key || e.target_key === key) &&
-        e.column_lineage === "derived",
-    );
-  }
-
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       <div className="flex flex-wrap items-center gap-4 px-4 py-2 shrink-0">
@@ -388,7 +377,6 @@ export function LineagePanel({
               onSelect={setSelected}
               expanded={expanded}
               onToggleExpanded={toggleExpanded}
-              canExpand={canExpand}
               selectedColumn={selectedColumn}
               onSelectColumn={(key, column) =>
                 setSelectedColumn((current) =>

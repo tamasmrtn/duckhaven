@@ -308,16 +308,28 @@ describe("LineagePanel column detail", () => {
     expect(requests.every((q) => !q.includes("columns_for"))).toBe(true);
   });
 
-  it("offers no expander on a node with no column detail", async () => {
+  it("offers no strip on a node with nothing to open", async () => {
     renderWithProviders({ initialRoute: TABLE_ROUTE });
     await openLineageTab();
     const canvas = await graph();
     await canvas.findByText("events");
 
-    // `customers` sits on the one edge nothing worked the columns out for.
+    // `customers` is external: its columns could not be tied to an asset, so
+    // its count is zero and there is nothing to offer opening.
     expect(
-      canvas.queryByRole("button", { name: /show columns for customers/i }),
+      canvas.queryByRole("button", { name: /columns for customers/i }),
     ).toBeNull();
+  });
+
+  it("names how many columns are inside before anything is opened", async () => {
+    // The whole point of the strip over a bare icon: it answers "is there
+    // anything in here" without a click.
+    renderWithProviders({ initialRoute: TABLE_ROUTE });
+    await openLineageTab();
+    const canvas = await graph();
+
+    expect(await canvas.findByText("4 columns")).toBeVisible();
+    expect(await canvas.findByText("3 columns")).toBeVisible();
   });
 
   it("requests and shows a node's columns when it is expanded", async () => {
@@ -343,7 +355,9 @@ describe("LineagePanel column detail", () => {
     const canvas = await graph();
 
     await userEvent.click(
-      await canvas.findByRole("button", { name: /show columns for events/i }),
+      await canvas.findByRole("button", {
+        name: /show \d+ columns for events/i,
+      }),
     );
 
     await waitFor(() =>
@@ -359,13 +373,15 @@ describe("LineagePanel column detail", () => {
     const canvas = await graph();
 
     const toggle = await canvas.findByRole("button", {
-      name: /show columns for events/i,
+      name: /show \d+ columns for events/i,
     });
     await userEvent.click(toggle);
     expect(await canvas.findByText("occurred_at")).toBeVisible();
 
     await userEvent.click(
-      await canvas.findByRole("button", { name: /hide columns for events/i }),
+      await canvas.findByRole("button", {
+        name: /hide \d+ columns for events/i,
+      }),
     );
     await waitFor(() => expect(canvas.queryByText("occurred_at")).toBeNull());
   });
@@ -376,13 +392,15 @@ describe("LineagePanel column detail", () => {
     const canvas = await graph();
 
     await userEvent.click(
-      await canvas.findByRole("button", { name: /show columns for events/i }),
+      await canvas.findByRole("button", {
+        name: /show \d+ columns for events/i,
+      }),
     );
     expect(canvas.queryAllByTestId("lineage-column-link")).toHaveLength(0);
 
     await userEvent.click(
       await canvas.findByRole("button", {
-        name: /show columns for daily_active_users/i,
+        name: /show \d+ columns for daily_active_users/i,
       }),
     );
     await waitFor(() =>
@@ -400,7 +418,9 @@ describe("LineagePanel column detail", () => {
     const canvas = await graph();
 
     await userEvent.click(
-      await canvas.findByRole("button", { name: /show columns for events/i }),
+      await canvas.findByRole("button", {
+        name: /show \d+ columns for events/i,
+      }),
     );
     await userEvent.click(await canvas.findByText("funnel"));
 
@@ -415,7 +435,9 @@ describe("LineagePanel column detail", () => {
     const canvas = await graph();
 
     await userEvent.click(
-      await canvas.findByRole("button", { name: /show columns for events/i }),
+      await canvas.findByRole("button", {
+        name: /show \d+ columns for events/i,
+      }),
     );
     await userEvent.click(await canvas.findByText("customers"));
 
@@ -442,8 +464,11 @@ describe("LineagePanel column detail", () => {
     server.use(
       http.get(LINEAGE_URL, () => {
         const graph = makeLineage();
+        // A server that derived nothing reports it on both sides: no mappings
+        // on the edges, and no counts on the nodes.
         return HttpResponse.json({
           ...graph,
+          nodes: graph.nodes.map((n) => ({ ...n, column_count: 0 })),
           edges: graph.edges.map((e) => ({
             ...e,
             columns: [],
@@ -457,8 +482,8 @@ describe("LineagePanel column detail", () => {
     const canvas = await graph();
 
     expect(await canvas.findByText("events")).toBeVisible();
-    expect(canvas.queryAllByRole("button", { name: /show columns/i })).toEqual(
-      [],
-    );
+    expect(
+      canvas.queryAllByRole("button", { name: /show \d+ column/i }),
+    ).toEqual([]);
   });
 });

@@ -162,9 +162,15 @@ A table-level edge says two tables are related. A **column relationship** says w
 
 > the value of `customer_orders.customer_id` may be derived from the value of `orders.customer_id`.
 
-Expand a table on the Lineage tab to see the columns taking part in the lineage around it, and the lines joining them
-to their upstream and downstream counterparts. Tables are collapsed by default: nothing about column detail is fetched
-or drawn until you open one, so the table graph costs exactly what it always did.
+A table on the Lineage tab carries a strip along its bottom edge saying how many of its columns take part in the
+lineage around it — "3 columns". Open it to see them, and the lines joining them to their upstream and downstream
+counterparts. Tables are collapsed by default: nothing about the mappings is fetched or drawn until you open one, so
+the table graph costs exactly what it always did.
+
+The count is worth reading before you click. A table with **no strip** has nothing to show, and that is a finding
+rather than a gap — most often it means the table was joined against or filtered on without any of its values reaching
+the target. Scanning a row of downstream tables tells you which of them actually consume your data and which merely
+reference it.
 
 ### Which columns count
 

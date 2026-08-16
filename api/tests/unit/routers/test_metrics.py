@@ -130,10 +130,15 @@ async def test_failed_query_counts_but_skips_histograms(db_session):
 
 
 async def test_internal_queries_excluded(db_session):
-    before = _value("duckhaven_queries_total", {"replica_id": RID, "status": "done"}) or 0
+    # Both sides are coerced the same way. A counter no test in this worker has
+    # touched yet reads back as None rather than 0, so coercing only `before`
+    # made this compare None to 0 and fail purely on which tests xdist happened
+    # to put alongside it.
+    label = {"replica_id": RID, "status": "done"}
+    before = _value("duckhaven_queries_total", label) or 0
     query = await _make_query(db_session, origin="maintenance")
     await query_service.handle_agent_frame(db_session, await _done_frame(query.id))
-    assert _value("duckhaven_queries_total", {"replica_id": RID, "status": "done"}) == before
+    assert (_value("duckhaven_queries_total", label) or 0) == before
 
 
 async def test_agent_gauges_from_local_registry(client: AsyncClient, db_session):

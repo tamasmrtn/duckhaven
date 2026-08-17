@@ -1,0 +1,451 @@
+{
+  "metadata": {
+    "dbt_version": "1.12.2",
+    "invocation_id": "f08132c4-b5aa-45d7-9821-acce25b07d89",
+    "project_name": "semdemo"
+  },
+  "metrics": {
+    "metric.semdemo.avg_order_value": {
+      "config": {
+        "enabled": true,
+        "group": null,
+        "meta": {}
+      },
+      "created_at": 1786977496.0169148,
+      "depends_on": {
+        "macros": [],
+        "nodes": [
+          "metric.semdemo.revenue",
+          "metric.semdemo.order_count"
+        ]
+      },
+      "description": "",
+      "filter": null,
+      "fqn": [
+        "semdemo",
+        "avg_order_value"
+      ],
+      "group": null,
+      "label": "Average order value",
+      "meta": {},
+      "metadata": null,
+      "metrics": [],
+      "name": "avg_order_value",
+      "original_file_path": "models/semantic.yml",
+      "package_name": "semdemo",
+      "path": "semantic.yml",
+      "refs": [],
+      "resource_type": "metric",
+      "sources": [],
+      "tags": [],
+      "time_granularity": null,
+      "type": "ratio",
+      "type_params": {
+        "conversion_type_params": null,
+        "cumulative_type_params": null,
+        "denominator": {
+          "alias": null,
+          "filter": null,
+          "name": "order_count",
+          "offset_to_grain": null,
+          "offset_window": null
+        },
+        "expr": null,
+        "fill_nulls_with": null,
+        "grain_to_date": null,
+        "input_measures": [
+          {
+            "alias": null,
+            "fill_nulls_with": null,
+            "filter": null,
+            "join_to_timespine": false,
+            "name": "order_total"
+          },
+          {
+            "alias": null,
+            "fill_nulls_with": null,
+            "filter": null,
+            "join_to_timespine": false,
+            "name": "orders_placed"
+          }
+        ],
+        "is_private": null,
+        "join_to_timespine": false,
+        "measure": null,
+        "metric_aggregation_params": null,
+        "metrics": [],
+        "numerator": {
+          "alias": null,
+          "filter": null,
+          "name": "revenue",
+          "offset_to_grain": null,
+          "offset_window": null
+        },
+        "window": null
+      },
+      "unique_id": "metric.semdemo.avg_order_value",
+      "unrendered_config": {}
+    },
+    "metric.semdemo.order_count": {
+      "config": {
+        "enabled": true,
+        "group": null,
+        "meta": {}
+      },
+      "created_at": 1786977496.0153468,
+      "depends_on": {
+        "macros": [],
+        "nodes": [
+          "semantic_model.semdemo.orders"
+        ]
+      },
+      "description": "",
+      "filter": null,
+      "fqn": [
+        "semdemo",
+        "order_count"
+      ],
+      "group": null,
+      "label": "Orders",
+      "meta": {},
+      "metadata": null,
+      "metrics": [],
+      "name": "order_count",
+      "original_file_path": "models/semantic.yml",
+      "package_name": "semdemo",
+      "path": "semantic.yml",
+      "refs": [],
+      "resource_type": "metric",
+      "sources": [],
+      "tags": [],
+      "time_granularity": null,
+      "type": "simple",
+      "type_params": {
+        "conversion_type_params": null,
+        "cumulative_type_params": null,
+        "denominator": null,
+        "expr": null,
+        "fill_nulls_with": null,
+        "grain_to_date": null,
+        "input_measures": [
+          {
+            "alias": null,
+            "fill_nulls_with": null,
+            "filter": null,
+            "join_to_timespine": false,
+            "name": "orders_placed"
+          }
+        ],
+        "is_private": null,
+        "join_to_timespine": false,
+        "measure": {
+          "alias": null,
+          "fill_nulls_with": null,
+          "filter": null,
+          "join_to_timespine": false,
+          "name": "orders_placed"
+        },
+        "metric_aggregation_params": null,
+        "metrics": [],
+        "numerator": null,
+        "window": null
+      },
+      "unique_id": "metric.semdemo.order_count",
+      "unrendered_config": {}
+    },
+    "metric.semdemo.revenue": {
+      "config": {
+        "enabled": true,
+        "group": null,
+        "meta": {}
+      },
+      "created_at": 1786977496.014671,
+      "depends_on": {
+        "macros": [],
+        "nodes": [
+          "semantic_model.semdemo.orders"
+        ]
+      },
+      "description": "Net booked revenue.",
+      "filter": {
+        "where_filters": [
+          {
+            "where_sql_template": "{{ Dimension('order__status') }} != 'test'"
+          }
+        ]
+      },
+      "fqn": [
+        "semdemo",
+        "revenue"
+      ],
+      "group": null,
+      "label": "Revenue",
+      "meta": {},
+      "metadata": null,
+      "metrics": [],
+      "name": "revenue",
+      "original_file_path": "models/semantic.yml",
+      "package_name": "semdemo",
+      "path": "semantic.yml",
+      "refs": [],
+      "resource_type": "metric",
+      "sources": [],
+      "tags": [],
+      "time_granularity": null,
+      "type": "simple",
+      "type_params": {
+        "conversion_type_params": null,
+        "cumulative_type_params": null,
+        "denominator": null,
+        "expr": null,
+        "fill_nulls_with": null,
+        "grain_to_date": null,
+        "input_measures": [
+          {
+            "alias": null,
+            "fill_nulls_with": null,
+            "filter": null,
+            "join_to_timespine": false,
+            "name": "order_total"
+          }
+        ],
+        "is_private": null,
+        "join_to_timespine": false,
+        "measure": {
+          "alias": null,
+          "fill_nulls_with": null,
+          "filter": null,
+          "join_to_timespine": false,
+          "name": "order_total"
+        },
+        "metric_aggregation_params": null,
+        "metrics": [],
+        "numerator": null,
+        "window": null
+      },
+      "unique_id": "metric.semdemo.revenue",
+      "unrendered_config": {}
+    }
+  },
+  "semantic_models": {
+    "semantic_model.semdemo.customers": {
+      "config": {
+        "enabled": true,
+        "group": null,
+        "meta": {}
+      },
+      "created_at": 1786977496.0458782,
+      "defaults": null,
+      "depends_on": {
+        "macros": [],
+        "nodes": [
+          "model.semdemo.dbt_customers"
+        ]
+      },
+      "description": "One row per customer.",
+      "dimensions": [
+        {
+          "config": {
+            "meta": {}
+          },
+          "description": null,
+          "expr": null,
+          "is_partition": false,
+          "label": null,
+          "metadata": null,
+          "name": "country",
+          "type": "categorical",
+          "type_params": null
+        },
+        {
+          "config": {
+            "meta": {}
+          },
+          "description": null,
+          "expr": null,
+          "is_partition": false,
+          "label": null,
+          "metadata": null,
+          "name": "segment",
+          "type": "categorical",
+          "type_params": null
+        }
+      ],
+      "entities": [
+        {
+          "config": {
+            "meta": {}
+          },
+          "description": null,
+          "expr": "id",
+          "label": null,
+          "name": "customer",
+          "role": null,
+          "type": "primary"
+        }
+      ],
+      "fqn": [
+        "semdemo",
+        "customers"
+      ],
+      "group": null,
+      "label": null,
+      "measures": [],
+      "metadata": null,
+      "model": "ref('dbt_customers')",
+      "name": "customers",
+      "node_relation": {
+        "alias": "dbt_customers",
+        "database": "semcheck",
+        "relation_name": "\"semcheck\".\"analytics\".\"dbt_customers\"",
+        "schema_name": "analytics"
+      },
+      "original_file_path": "models/semantic.yml",
+      "package_name": "semdemo",
+      "path": "semantic.yml",
+      "primary_entity": null,
+      "refs": [
+        {
+          "name": "dbt_customers",
+          "package": null,
+          "version": null
+        }
+      ],
+      "resource_type": "semantic_model",
+      "unique_id": "semantic_model.semdemo.customers",
+      "unrendered_config": {}
+    },
+    "semantic_model.semdemo.orders": {
+      "config": {
+        "enabled": true,
+        "group": null,
+        "meta": {}
+      },
+      "created_at": 1786977496.044759,
+      "defaults": {
+        "agg_time_dimension": "order_date"
+      },
+      "depends_on": {
+        "macros": [],
+        "nodes": [
+          "model.semdemo.dbt_orders"
+        ]
+      },
+      "description": "One row per placed order.",
+      "dimensions": [
+        {
+          "config": {
+            "meta": {}
+          },
+          "description": null,
+          "expr": null,
+          "is_partition": false,
+          "label": null,
+          "metadata": null,
+          "name": "order_date",
+          "type": "time",
+          "type_params": {
+            "time_granularity": "day",
+            "validity_params": null
+          }
+        },
+        {
+          "config": {
+            "meta": {}
+          },
+          "description": null,
+          "expr": null,
+          "is_partition": false,
+          "label": null,
+          "metadata": null,
+          "name": "status",
+          "type": "categorical",
+          "type_params": null
+        }
+      ],
+      "entities": [
+        {
+          "config": {
+            "meta": {}
+          },
+          "description": null,
+          "expr": "id",
+          "label": null,
+          "name": "order",
+          "role": null,
+          "type": "primary"
+        },
+        {
+          "config": {
+            "meta": {}
+          },
+          "description": null,
+          "expr": "customer_id",
+          "label": null,
+          "name": "customer",
+          "role": null,
+          "type": "foreign"
+        }
+      ],
+      "fqn": [
+        "semdemo",
+        "orders"
+      ],
+      "group": null,
+      "label": null,
+      "measures": [
+        {
+          "agg": "sum",
+          "agg_params": null,
+          "agg_time_dimension": "order_date",
+          "config": {
+            "meta": {}
+          },
+          "create_metric": false,
+          "description": "Sum of order value.",
+          "expr": "total_amount",
+          "label": null,
+          "name": "order_total",
+          "non_additive_dimension": null
+        },
+        {
+          "agg": "count",
+          "agg_params": null,
+          "agg_time_dimension": null,
+          "config": {
+            "meta": {}
+          },
+          "create_metric": false,
+          "description": null,
+          "expr": "id",
+          "label": null,
+          "name": "orders_placed",
+          "non_additive_dimension": null
+        }
+      ],
+      "metadata": null,
+      "model": "ref('dbt_orders')",
+      "name": "orders",
+      "node_relation": {
+        "alias": "dbt_orders",
+        "database": "semcheck",
+        "relation_name": "\"semcheck\".\"analytics\".\"dbt_orders\"",
+        "schema_name": "analytics"
+      },
+      "original_file_path": "models/semantic.yml",
+      "package_name": "semdemo",
+      "path": "semantic.yml",
+      "primary_entity": null,
+      "refs": [
+        {
+          "name": "dbt_orders",
+          "package": null,
+          "version": null
+        }
+      ],
+      "resource_type": "semantic_model",
+      "unique_id": "semantic_model.semdemo.orders",
+      "unrendered_config": {}
+    }
+  }
+}

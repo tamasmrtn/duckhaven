@@ -131,6 +131,7 @@ nav:
       - Read the session audit trail: guides/session-audit.md
       - Import lineage from dbt: guides/import-dbt-lineage.md
       - Define metrics: guides/define-metrics.md
+      - Import semantics from dbt: guides/import-dbt-semantics.md
       - Use the AI assistant: guides/using-the-assistant.md
       - How access works: guides/access-levels.md
       - Manage users & access: guides/users-access.md

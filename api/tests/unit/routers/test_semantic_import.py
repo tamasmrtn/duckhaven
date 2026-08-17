@@ -310,3 +310,44 @@ async def test_purging_native_is_refused(auth_client, ws):
     )
 
     assert resp.status_code == 422
+
+
+async def test_an_imported_models_metrics_are_reachable_once_it_is_published(auth_client, ws):
+    """The lifecycle has to actually complete.
+
+    Imported metrics cannot be promoted individually — the API refuses to edit an
+    imported model — so if they arrived as drafts they could never become usable
+    and publishing the model would produce a model with nothing in it. The model
+    is the gate; the metrics inside it ride on that decision.
+    """
+    await _import(auth_client, ws)
+
+    # Withheld while the model is still a draft.
+    before = await auth_client.post(
+        f"/workspaces/{ws}/semantic/compile",
+        json={"model": "sales", "metrics": ["revenue"]},
+    )
+    assert before.status_code == 404, before.text
+
+    published = await auth_client.post(f"/workspaces/{ws}/semantic/models/sales/publish")
+    assert published.status_code == 200, published.text
+
+    after = await auth_client.post(
+        f"/workspaces/{ws}/semantic/compile",
+        json={"model": "sales", "metrics": ["revenue"]},
+    )
+    assert after.status_code == 200, after.text
+    assert "SUM(orders.total_amount)" in after.json()["sql"]
+
+
+async def test_publishing_an_imported_model_is_still_a_deliberate_act(auth_client, ws):
+    """It arrives as a draft, so nothing it defines answers a question by default."""
+    await _import(auth_client, ws)
+
+    body = (await auth_client.get(f"/workspaces/{ws}/semantic/models/sales")).json()
+
+    assert body["status"] == "draft"
+    hits = (
+        await auth_client.get(f"/workspaces/{ws}/semantic/search", params={"q": "turnover"})
+    ).json()
+    assert hits["hits"] == []

@@ -274,6 +274,14 @@ async def upsert_models(
                     time_dimension_id=axis,
                     caveat=metric.caveat,
                     owner_id=owner_id,
+                    # Published *within a draft model*. The trust gate for an
+                    # import is the model, which a person publishes deliberately;
+                    # per-metric status is an authoring affordance for definitions
+                    # written here. Leaving these as drafts would make them
+                    # unreachable — the API refuses to edit an imported model, so
+                    # nothing could ever promote them and the model would publish
+                    # with no usable metrics in it.
+                    status="published",
                 )
             )
 

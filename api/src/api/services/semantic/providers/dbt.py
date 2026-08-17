@@ -81,6 +81,17 @@ def _grains_from(granularity: str | None) -> tuple[str, ...]:
     return TIME_GRAINS[TIME_GRAINS.index(granularity) :]
 
 
+def run_id(manifest: dict[str, Any]) -> str | None:
+    """The dbt invocation that produced this manifest, used as the import batch.
+
+    Same name and same meaning as the lineage adapter's, so a semantic import and
+    a lineage import published from one ``dbt parse`` share a batch id and can be
+    correlated after the fact. A generated id would reconcile just as correctly
+    and tell nobody which dbt run it came from.
+    """
+    return (manifest.get("metadata") or {}).get("invocation_id")
+
+
 def _entities(semantic_model: dict, kind: str) -> list[dict]:
     return [e for e in semantic_model.get("entities") or [] if e.get("type") == kind]
 
@@ -131,6 +142,11 @@ async def models_from_manifest(payload, *, resolve: Resolver) -> ProviderModels:
 
     A dbt project maps to a single DuckHaven semantic model — a project *is* the
     subject area, and splitting it would need a grouping dbt does not express.
+
+    Unlike the lineage adapter this does not yield the event loop per model: that
+    one runs the SQL extractor over every model's compiled code and would hold
+    the replica for the length of a large project, whereas this walks a few
+    hundred dict entries and does no parsing.
     """
     manifest = payload if isinstance(payload, dict) else json.loads(payload)
     out = ProviderModels()
@@ -163,6 +179,10 @@ async def models_from_manifest(payload, *, resolve: Resolver) -> ProviderModels:
 
     for unique_id, sm in semantic_models.items():
         name = str(sm.get("name") or "")
+        # dbt precomputes `node_relation` for a semantic model, so unlike the
+        # lineage adapter there is no (database, schema, alias-or-identifier)
+        # triple to reconstruct: a semantic model always points at a `ref()`, and
+        # the source `identifier` subtlety that helper exists for cannot arise.
         relation = sm.get("node_relation") or {}
         schema = relation.get("schema_name")
         table = relation.get("alias")

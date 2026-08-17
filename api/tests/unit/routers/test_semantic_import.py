@@ -304,6 +304,24 @@ async def test_purging_a_provider_removes_only_its_models(auth_client, ws):
     assert slugs == {"mine"}
 
 
+async def test_a_json_artifact_is_accepted_without_a_text_content_type(auth_client, ws):
+    """One route, two formats: a YAML document and a JSON manifest.
+
+    The artifact is read as raw bytes, so a publisher posting `application/json`
+    is not rejected for it.
+    """
+    import json
+
+    resp = await auth_client.post(
+        f"/workspaces/{ws}/semantic/imports/duckhaven",
+        content=json.dumps({"models": [{"slug": "viajson", "name": "Via JSON"}]}),
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["created"] == 1
+
+
 async def test_purging_native_is_refused(auth_client, ws):
     resp = await auth_client.delete(
         f"/workspaces/{ws}/semantic/imports", params={"provider": "native"}

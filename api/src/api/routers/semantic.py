@@ -17,10 +17,12 @@ makes, rather than a separate approximation of it.
 
 from __future__ import annotations
 
+import contextlib
+import json
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -947,11 +949,7 @@ _RECONCILE_MODES = ("none", "provider_run")
 @router.post("/workspaces/{ws}/semantic/imports/{provider}", response_model=SemanticImportOut)
 async def import_semantics(
     provider: str,
-    # Raw text, whatever the producer's format: a YAML document or a dbt
-    # manifest. Taken as text rather than a typed body so a JSON manifest is
-    # handed to the adapter exactly as published, and so a YAML parse error
-    # reports the line the author wrote rather than one FastAPI re-encoded.
-    body: str = Body(media_type="text/plain"),
+    request: Request,
     reconcile: str = Query(default="provider_run"),
     ctx: _Context = Depends(_context("writer")),
     db: AsyncSession = Depends(get_db),
@@ -987,9 +985,18 @@ async def import_semantics(
             detail=f"No semantic adapter for provider {provider!r}.",
         ) from exc
 
+    # Read the artifact as raw bytes rather than a typed body. One route serves
+    # two formats — a hand-written YAML document and a machine-written JSON
+    # manifest — and this is what lets both arrive byte-for-byte as published,
+    # whatever content type the publisher sent. It also keeps a YAML parse error
+    # pointing at the line the author wrote rather than one FastAPI re-encoded.
+    # (The lineage import route takes a typed `dict` body because every producer
+    # it accepts publishes JSON.)
+    raw = (await request.body()).decode("utf-8", errors="replace")
+
     resolver = Resolver(ctx.catalogs)
     try:
-        parsed = await adapter(body, resolve=resolver)
+        parsed = await adapter(raw, resolve=resolver)
     except SemanticDocumentError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
@@ -1014,7 +1021,18 @@ async def import_semantics(
                 need="metadata",
             )
 
-    run_id = uuid.uuid4().hex
+    # The producer's own batch id where it publishes one, so an import can be
+    # traced back to the run that produced it — the same rule, and the same
+    # helper name, as the lineage route. Only a producer with no invocation of
+    # its own (a hand-written YAML document) falls back to a generated id.
+    run_id = None
+    if provider == "dbt":
+        from api.services.semantic.providers.dbt import run_id as dbt_run_id
+
+        with contextlib.suppress(Exception):
+            run_id = dbt_run_id(json.loads(raw))
+    run_id = run_id or uuid.uuid4().hex
+
     result = await upsert_models(
         db,
         parsed.models,

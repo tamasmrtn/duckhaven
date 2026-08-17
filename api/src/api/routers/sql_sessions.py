@@ -198,10 +198,9 @@ async def open_session(
     active = active or catalogs[0]
 
     # Which tool this is, from the User-Agent the client is expected to lead with its
-    # calling application. Recorded here (once, at open) rather than per statement —
-    # the lesson of dbt-snowflake #199, where a per-statement ALTER SESSION tag both
-    # cost a round trip each time and survived a failed materialization with the wrong
-    # value.
+    # calling application. Recorded here (once, at open) rather than per statement:
+    # tagging per statement costs a round trip every time, and a tag that outlives a
+    # failed materialization goes on reporting the wrong value afterwards.
     client_name, client_version = parse_user_agent(request.headers.get("user-agent"))
 
     now = datetime.now(tz=UTC)

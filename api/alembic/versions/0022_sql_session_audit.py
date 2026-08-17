@@ -14,8 +14,7 @@ Makes a finished session's *story* readable, not just its final status.
   ``"agent disconnected"``) — which an audit UI would have had to string-parse.
 * ``client_name`` / ``client_version`` — which tool opened the session, parsed from
   the ``User-Agent`` the connector already sends (``dbt-duckhaven/1.2.0``). The
-  analog of Postgres' ``application_name`` and Databricks'
-  ``system.query.history.client_application``; the 64-char name budget follows
+  analog of Postgres' ``application_name``; the 64-char name budget follows
   ``application_name``'s ``NAMEDATALEN``.
 
 Also indexes ``(workspace_id, created_at)`` for the workspace session list.

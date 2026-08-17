@@ -35,7 +35,7 @@ export function SavedQueriesPage() {
   const [renaming, setRenaming] = useState<SavedQuery | null>(null);
   const [deleting, setDeleting] = useState<SavedQuery | null>(null);
 
-  // Snowsight-style hand-off: stash the SQL (plus the saved agent and id) and
+  // Worksheet hand-off: stash the SQL (plus the saved agent and id) and
   // navigate to the worksheet, which seeds a new tab from the stash on mount.
   function openInWorksheet(q: SavedQuery) {
     stashWorksheetQuery(ws, {

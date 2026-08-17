@@ -1,6 +1,6 @@
-// Helpers for routing a catalog action into a SQL worksheet (Snowsight-style):
-// the catalog UI builds templated SQL, stashes it, and navigates to the
-// worksheet, which seeds a new tab from the stash on mount.
+// Helpers for routing a catalog action into a SQL worksheet: the catalog UI
+// builds templated SQL, stashes it, and navigates to the worksheet, which seeds
+// a new tab from the stash on mount.
 
 const pendingKey = (ws: string) => `dh-pending-sql-${ws}`;
 

@@ -35,3 +35,5 @@ and the `DESCRIBE` path for columns.
 - [Catalogs & Polaris](catalogs.md) — the structure authority.
 - [Tables & Iceberg](tables.md) — what the sidecar describes.
 - [SQL support](../reference/sql-support.md) — querying metadata with `information_schema`.
+- [Semantic layer](semantic-layer.md) — business meaning layered over this structure. Kept per *workspace* rather than
+  per catalog, because what a term means is an organizational decision rather than an intrinsic fact about the data.

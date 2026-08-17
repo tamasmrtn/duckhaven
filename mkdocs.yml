@@ -107,6 +107,7 @@ nav:
       - AI assistant: concepts/assistant.md
       - Metadata: concepts/metadata.md
       - Lineage: concepts/lineage.md
+      - Semantic layer: concepts/semantic-layer.md
       - Lakehouse maintenance: concepts/maintenance.md
   - Deployment:
       - Docker Compose: deployment/install.md
@@ -129,6 +130,7 @@ nav:
       - Schedule queries: guides/schedule-queries.md
       - Read the session audit trail: guides/session-audit.md
       - Import lineage from dbt: guides/import-dbt-lineage.md
+      - Define metrics: guides/define-metrics.md
       - Use the AI assistant: guides/using-the-assistant.md
       - How access works: guides/access-levels.md
       - Manage users & access: guides/users-access.md

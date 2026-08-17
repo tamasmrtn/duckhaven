@@ -265,5 +265,6 @@ Other limits worth knowing:
 
 - [Import lineage from dbt](../guides/import-dbt-lineage.md) — the first importer.
 - [Metadata](metadata.md) — what else DuckHaven records about a table.
+- [Semantic layer](semantic-layer.md) — which business definitions depend on a table, which lineage alone cannot say.
 - [Permissions](permissions.md) — the grant tiers redaction is based on.
 - [Query execution](query-execution.md) — where execution-derived lineage comes from.

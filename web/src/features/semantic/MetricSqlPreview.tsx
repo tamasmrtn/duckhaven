@@ -104,7 +104,11 @@ export function MetricSqlPreview({
             : "This definition could not be compiled."}
         </Banner>
       ) : compile.data ? (
-        <div className="rounded border border-[var(--border-subtle)] bg-[var(--bg-code)] p-2">
+        // `--bg-surface`, matching QueryProfilePage. `SqlPreview` sets
+        // `text-text-primary` on its own `<pre>`, so it belongs on a light
+        // surface: on `--bg-code`, which stays dark in *both* themes, that
+        // renders near-black on near-black at 1.07:1 — invisible.
+        <div className="rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-2">
           <SqlPreview sql={compile.data.sql} />
         </div>
       ) : (

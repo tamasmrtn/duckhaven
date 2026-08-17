@@ -195,3 +195,24 @@ async def test_a_manifest_with_no_semantic_layer_yields_an_empty_model(resolver)
     assert out.models[0].metrics == ()
     # Still declared, so reconciliation does not treat it as never mentioned.
     assert out.model_slugs == {"plain"}
+
+
+async def test_run_id_is_dbts_own_invocation_id(manifest):
+    """Same helper name and meaning as the lineage adapter's.
+
+    A generated id would reconcile just as correctly and tell nobody which dbt
+    run produced the import; sharing dbt's invocation id lets a semantic import
+    and a lineage import from one `dbt parse` be correlated afterwards.
+    """
+    from api.services.lineage.providers.dbt import run_id as lineage_run_id
+    from api.services.semantic.providers.dbt import run_id as semantic_run_id
+
+    assert semantic_run_id(manifest) == manifest["metadata"]["invocation_id"]
+    # The two adapters agree on the batch id for the same artifact.
+    assert semantic_run_id(manifest) == lineage_run_id(manifest)
+
+
+async def test_run_id_is_absent_when_the_manifest_carries_none():
+    from api.services.semantic.providers.dbt import run_id
+
+    assert run_id({"metadata": {}}) is None

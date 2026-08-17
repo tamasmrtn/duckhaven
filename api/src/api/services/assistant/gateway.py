@@ -25,6 +25,55 @@ _TERMINAL = {"done", "failed", "cancelled"}
 _POLL_INTERVAL_S = 0.25
 
 
+def _aggregated_columns(sql: str) -> dict[tuple[str | None, str, str], set[str]]:
+    """Which columns this statement aggregates, grouped by the table they come from.
+
+    Keyed by ``(catalog, schema, table)``; the catalog is ``None`` when the query
+    left it implicit.
+
+    Used only to notice that hand-written SQL is recomputing something the
+    semantic layer already defines authoritatively. Best-effort by design: an
+    unqualified column in a multi-table query is skipped rather than guessed at,
+    because a nudge pointing at the wrong metric is worse than no nudge.
+    """
+    import sqlglot
+    from sqlglot import exp
+
+    try:
+        statements = sqlglot.parse(sql, read="duckdb")
+    except Exception:  # sqlglot.errors.ParseError et al
+        return {}
+
+    found: dict[tuple[str | None, str, str], set[str]] = {}
+    for statement in statements:
+        if statement is None:
+            continue
+        tables = {
+            t.alias_or_name.lower(): (t.catalog or None, t.db, t.name)
+            for t in statement.find_all(exp.Table)
+            if t.name
+        }
+        if not tables:
+            continue
+        sole = next(iter(tables.values())) if len(tables) == 1 else None
+
+        for agg in statement.find_all(exp.AggFunc):
+            for column in agg.find_all(exp.Column):
+                if column.table:
+                    origin = tables.get(column.table.lower())
+                elif sole is not None:
+                    origin = sole
+                else:
+                    # Ambiguous without resolving the whole query. Skip it.
+                    continue
+                # No schema means the reverse index cannot be addressed, since it
+                # is keyed by (catalog, schema, table).
+                if origin is None or not origin[1]:
+                    continue
+                found.setdefault(origin, set()).add(column.name.lower())
+    return found
+
+
 class GatewayError(Exception):
     """A governed REST call failed. The message is safe to surface to the model."""
 
@@ -111,6 +160,183 @@ class Gateway:
             ],
         }
 
+    # ── Semantic layer ────────────────────────────────────────────────────────
+    async def search_semantic(self, query: str, *, limit: int = 10) -> dict:
+        resp = await self._get(
+            f"/workspaces/{self._ws}/semantic/search", params={"q": query, "limit": limit}
+        )
+        return resp.json()
+
+    async def list_semantic_models(self) -> list[dict]:
+        """Published models only, and only the summary — this runs every turn."""
+        resp = await self._get(
+            f"/workspaces/{self._ws}/semantic/models", params={"status": "published"}
+        )
+        return [
+            {
+                "model": m["slug"],
+                "name": m["name"],
+                "description": m.get("description"),
+                "metrics": m.get("metric_count", 0),
+            }
+            for m in resp.json()
+        ]
+
+    async def get_semantic_model(self, model: str) -> dict:
+        """One model, trimmed to what is useful for choosing and querying.
+
+        Trimmed rather than passed through because the raw record carries ids,
+        timestamps and validation detail that cost context and answer no question
+        the assistant is asking.
+        """
+        resp = await self._get(f"/workspaces/{self._ws}/semantic/models/{model}")
+        body = resp.json()
+        payload = {
+            "model": body["slug"],
+            "name": body["name"],
+            "description": body.get("description"),
+            "datasets": [
+                {
+                    "name": d["name"],
+                    "description": d.get("description"),
+                    "table": f"{d.get('catalog')}.{d['schema_name']}.{d['table_name']}",
+                }
+                for d in body.get("datasets", [])
+                if d.get("validation_state") != "broken"
+            ],
+            "dimensions": [
+                {
+                    "name": d["name"],
+                    "dataset": d.get("dataset"),
+                    "kind": d["kind"],
+                    "description": d.get("description"),
+                    "synonyms": d.get("synonyms") or [],
+                    "grains": d.get("time_grains") or [],
+                    "sample_values": (d.get("sample_values") or [])[:5],
+                }
+                for d in body.get("dimensions", [])
+                if d.get("validation_state") != "broken"
+            ],
+            "metrics": [
+                {
+                    "name": m["name"],
+                    "dataset": m.get("dataset"),
+                    "description": m.get("description"),
+                    "synonyms": m.get("synonyms") or [],
+                    "calculation": m.get("expression"),
+                    "measured_on": m.get("time_dimension"),
+                    "caveat": m.get("caveat"),
+                }
+                for m in body.get("metrics", [])
+                if m.get("status") == "published" and m.get("validation_state") != "broken"
+            ],
+            "joins": [
+                f"{r['left_dataset']} -> {r['right_dataset']} ({r['cardinality']})"
+                for r in body.get("relationships", [])
+                if r.get("validation_state") != "broken"
+            ],
+        }
+        return self._cap_payload(payload)
+
+    def _cap_payload(self, payload: dict) -> dict:
+        """Trim the longest collection until the whole thing fits the byte cap.
+
+        A model too big for the context window degrades to a truncated one with a
+        flag saying so, rather than silently blowing the turn's budget.
+        """
+        for _ in range(20):
+            if len(json.dumps(payload, default=str)) <= self._byte_cap:
+                return payload
+            longest = max(
+                ("dimensions", "metrics", "datasets"),
+                key=lambda key: len(payload.get(key, [])),
+            )
+            if not payload.get(longest):
+                break
+            payload[longest] = payload[longest][:-1]
+            payload["truncated"] = (
+                "This model is too large to show in full; some definitions are omitted. "
+                "Use search_semantic to find a specific one."
+            )
+        return payload
+
+    async def compile_metric_query(self, body: dict) -> dict:
+        resp = await self._client.post(f"/workspaces/{self._ws}/semantic/compile", json=body)
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise _translate(exc) from exc
+        return resp.json()
+
+    async def metric_definition(self, model: str, metric: str) -> dict:
+        """One metric's full definition, for explaining rather than querying."""
+        body = (await self._get(f"/workspaces/{self._ws}/semantic/models/{model}")).json()
+        for m in body.get("metrics", []):
+            if m["name"] == metric:
+                dataset = next(
+                    (d for d in body.get("datasets", []) if d["name"] == m.get("dataset")), None
+                )
+                return {
+                    "model": body["slug"],
+                    "metric": m["name"],
+                    "label": m.get("display_name") or m["name"],
+                    "description": m.get("description"),
+                    "calculation": m.get("expression"),
+                    "measured_on": m.get("time_dimension"),
+                    "caveat": m.get("caveat"),
+                    "status": m.get("status"),
+                    "synonyms": m.get("synonyms") or [],
+                    "table": (
+                        f"{dataset.get('catalog')}.{dataset['schema_name']}.{dataset['table_name']}"
+                        if dataset
+                        else None
+                    ),
+                    "validation_state": m.get("validation_state"),
+                    "validation_detail": m.get("validation_detail"),
+                }
+        known = ", ".join(sorted(m["name"] for m in body.get("metrics", [])))
+        raise GatewayError(f"{model!r} has no metric called {metric!r}. Available: {known}.")
+
+    async def semantic_conflicts(self, sql: str) -> list[dict]:
+        """Published metrics that already define what this SQL is aggregating.
+
+        Best-effort and never fatal: this is a nudge attached to a result, not a
+        gate. If anything about it fails the query still ran and the answer still
+        stands, so a failure here must not surface as a query failure.
+        """
+        try:
+            refs = _aggregated_columns(sql)
+            if not refs:
+                return []
+            found: list[dict] = []
+            for (catalog, schema, table), columns in refs.items():
+                # The canonical path when the query named a catalog; the legacy
+                # shim, which resolves the workspace default, when it did not.
+                path = (
+                    f"/workspaces/{self._ws}/catalogs/{catalog}/schemas/{schema}"
+                    f"/tables/{table}/semantic"
+                    if catalog
+                    else f"/workspaces/{self._ws}/schemas/{schema}/tables/{table}/semantic"
+                )
+                resp = await self._client.get(path)
+                if resp.status_code != 200:
+                    continue
+                for dep in resp.json().get("dependents", []):
+                    if dep.get("kind") != "metric" or dep.get("model_status") != "published":
+                        continue
+                    overlap = columns & {c.lower() for c in dep.get("columns", [])}
+                    if overlap:
+                        found.append(
+                            {
+                                "metric": dep["name"],
+                                "model": dep["model"],
+                                "columns": sorted(overlap),
+                            }
+                        )
+            return found
+        except Exception:  # noqa: BLE001 — advisory only; never fail a good answer
+            return []
+
     # ── SQL execution ─────────────────────────────────────────────────────────
     async def _pick_agent(self) -> str:
         resp = await self._get("/agents")
@@ -164,6 +390,25 @@ class Gateway:
         page = await self._fetch_page(query_id, cursor=None, limit=self._row_cap)
         page["query_id"] = query_id
         page["status"] = status
+
+        # Advisory, not a gate. Free SQL is a legitimate use of this assistant, so
+        # hand-written aggregation is never refused — but when the workspace has
+        # already settled what a number means, saying so is the difference between
+        # one authoritative answer and two plausible ones that disagree. Recorded
+        # on the tool-call row too, so how often the layer gets bypassed is a
+        # number somebody can look at rather than a hope.
+        conflicts = await self.semantic_conflicts(sql)
+        if conflicts:
+            named = "; ".join(
+                f"{c['metric']} (model {c['model']}, over {', '.join(c['columns'])})"
+                for c in conflicts
+            )
+            page["semantic_warning"] = (
+                f"This aggregates column(s) already defined by published metric(s): {named}. "
+                "Those definitions may carry filters this query does not. Prefer query_metric "
+                "so the authoritative definition applies, or say explicitly that you are "
+                "computing something different."
+            )
         return page
 
     async def _cancel_query(self, query_id: str) -> None:

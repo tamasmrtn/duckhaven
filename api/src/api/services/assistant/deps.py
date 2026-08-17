@@ -37,6 +37,11 @@ class AssistantDeps:
     # The user's current text selection in the worksheet editor, if non-empty. When
     # set, a proposed edit should be scoped to just this fragment.
     selection_sql: str | None = None
+    # A rendered list of this workspace's published semantic models, resolved once
+    # per turn. None or empty means the workspace has curated nothing, in which
+    # case the instructions omit the semantic section entirely and the assistant
+    # behaves exactly as it did before the semantic layer existed.
+    semantic_summary: str | None = None
     # Tool-call audit records for this run, keyed by the SDK tool_call_id. Populated
     # by the governance hooks; drained by the runner and persisted after the turn.
     records: dict[str, ToolCallRecord] = field(default_factory=dict)

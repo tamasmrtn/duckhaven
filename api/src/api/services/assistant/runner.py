@@ -39,6 +39,7 @@ from api.services.assistant.identity import (
     resolve_service_account,
 )
 from api.services.assistant.persistence import load_history, save_turn
+from api.services.assistant.prompts import format_summary
 
 logger = logging.getLogger(__name__)
 _tracer = trace.get_tracer("duckhaven.api")
@@ -162,6 +163,18 @@ async def _turn_context(
                 byte_cap=settings.assistant_result_byte_cap,
                 service_account_id=str(service_account_id),
             )
+            # One cheap call, so the instructions can name this workspace's
+            # subject areas. Best-effort: if it fails the assistant simply runs
+            # without the semantic section rather than the turn failing, which is
+            # the same state a workspace with no models is in anyway.
+            summary: str | None = None
+            try:
+                published = await gateway.list_semantic_models()
+                if published:
+                    summary = format_summary(published)
+            except Exception:  # noqa: BLE001 — advisory context, never fatal
+                summary = None
+
             yield AssistantDeps(
                 gateway=gateway,
                 catalog=catalog,
@@ -170,6 +183,7 @@ async def _turn_context(
                 service_account_id=service_account_id,
                 editor_sql=editor_sql,
                 selection_sql=selection_sql,
+                semantic_summary=summary,
             )
 
 

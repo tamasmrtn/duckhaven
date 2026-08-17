@@ -10,6 +10,10 @@ the assistant can see and do with the same grants they already use for people.
 
 ## What it can do
 
+- **Use your curated definitions** — when the workspace has published
+  [semantic models](semantic-layer.md), the assistant answers metric questions from those definitions rather than
+  working the calculation out from column names. It looks up what a business term means, compiles the query from the
+  stored definition, and can explain how a metric is calculated and what it excludes.
 - **Browse metadata** — list the catalogs, schemas, and tables visible to it, and describe a table's columns, row count,
   and size.
 - **Run SQL** — write and execute a query, then reason over a capped sample of the results. The full result set is
@@ -32,6 +36,9 @@ It runs one turn at a time in a conversation, and each conversation is private t
   write (INSERT/UPDATE/DELETE/DDL) must be **approved by a human** before it runs (see below).
 - It has no access to DuckHaven's control-plane database, to Polaris directly, or to the compute agents directly. It
   only ever calls DuckHaven's own REST API.
+- It cannot use a draft or broken semantic definition. Only *published* models reach it, and a definition whose column
+  no longer exists is withheld — the assistant will say a metric is defined but currently broken rather than quietly
+  substituting its own calculation.
 
 ## How governance works
 
@@ -83,8 +90,21 @@ supports Anthropic, OpenAI, and Mistral natively, and any OpenAI-compatible endp
 or vLLM server) via a base URL — so a fully self-hosted, keyless deployment is possible. See
 [Configuration](../reference/configuration.md#ai-assistant) for the settings.
 
+## Semantic grounding
+
+Where a published semantic model covers a question, the assistant does not write the aggregation. It chooses *which*
+metric and *which* dimensions; DuckHaven generates the SQL from the stored definition, so the filter, the join path and
+the correct date column come from what the organization agreed rather than from the model's judgement.
+
+Free SQL is still available and still right for anything the semantic models do not cover. It is not blocked when a
+metric exists — but if a query aggregates a column that a published metric already defines, the result comes back with
+a warning naming that metric, and the bypass is recorded on the tool-call audit row. How often the agreed definitions
+get worked around is therefore a number you can look at rather than a hope.
+
 !!! note "Scope"
     The assistant is a focused v1: single-agent, one conversation turn at a time, no chart generation and no retrieval
-    over table *contents*, and no scheduled/unattended runs. Conversation memory is also bounded — only the most recent
-    turns are replayed to the model, so a very long conversation gradually forgets its oldest messages; start a new
-    conversation for an unrelated topic. The panel shows a small notice once a conversation has crossed that point.
+    over table *contents*, and no scheduled/unattended runs. Retrieval over semantic *definitions* — matching a
+    question to a metric by name or synonym — does exist; see [Semantic layer](semantic-layer.md).
+    Conversation memory is also bounded — only the most recent turns are replayed to the model, so a very long
+    conversation gradually forgets its oldest messages; start a new conversation for an unrelated topic. The panel
+    shows a small notice once a conversation has crossed that point.

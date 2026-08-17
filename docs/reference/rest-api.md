@@ -44,6 +44,7 @@ A server old enough to lack this endpoint returns **404**; treat that as the old
 | `catalog` | Catalogs (create/attach/detach/drop), [storage migrations](#catalog-storage-migrations), schemas, tables, table detail, sample rows, snapshot history |
 | `queries` | Submit queries, page result rows, profiles, saved queries, history |
 | `lineage` | Read a table's [lineage](../concepts/lineage.md) graph; import and retire external lineage |
+| `semantic` | Define, validate, publish and query [semantic models](../concepts/semantic-layer.md) |
 | `agents` | List the agents you may use, with their capabilities |
 | `admin` | Agents (detail, monitoring, lifecycle, bootstrap/revoke, [access](#per-agent-access)), storage backends, users, service accounts & PATs, maintenance |
 
@@ -84,6 +85,39 @@ The field is **additive** — `columns` still carries the names-only list it alw
 - the statement produced no result grid (DDL and DML), and
 - the query ran on an agent older than this feature. The control plane reports nothing rather than deriving types from
   the result Parquet, whose writer is lossy.
+
+## Semantic layer
+
+Define what business terms mean, and compile questions into SQL from those definitions. See
+[Semantic layer](../concepts/semantic-layer.md).
+
+| Method & path | Purpose |
+|---|---|
+| `GET /api/workspaces/{ws}/semantic/models` | List models. Optional `status` filter. A model binding any table the caller cannot read is absent, not forbidden. |
+| `POST /api/workspaces/{ws}/semantic/models` | Create a model. Requires workspace **writer**. |
+| `GET /api/workspaces/{ws}/semantic/models/{slug}` | One model with its datasets, dimensions, metrics and relationships. |
+| `PATCH /api/workspaces/{ws}/semantic/models/{slug}` | Rename or re-describe. **409** on an imported model — a model has one owner. |
+| `DELETE /api/workspaces/{ws}/semantic/models/{slug}` | Delete. Requires workspace **owner**. |
+| `POST /api/workspaces/{ws}/semantic/models/{slug}/publish` | Make the model authoritative to the assistant. Validates first; **422** if anything is broken. Requires workspace **owner**. |
+| `POST /api/workspaces/{ws}/semantic/models/{slug}/deprecate` | Retire it: still readable, excluded from new answers. Requires **owner**. |
+| `POST /api/workspaces/{ws}/semantic/models/{slug}/validate` | Resolve every binding against the live catalog and record the outcome. |
+| `POST /api/workspaces/{ws}/semantic/models/{slug}/{datasets,dimensions,metrics,relationships}` | Add a definition. Requires **writer**, plus `metadata` tier on any table a dataset binds. |
+| `PATCH /api/workspaces/{ws}/semantic/models/{slug}/metrics/{name}` | Edit a metric. Resets its validation state to `unchecked`. |
+| `GET /api/workspaces/{ws}/semantic/models/{slug}/metrics/{name}/dimensions` | The dimensions this metric can legally be sliced by. |
+| `GET /api/workspaces/{ws}/semantic/search?q=` | Rank metrics and dimensions against a question. Returns `hits` plus an `ambiguous` list of equally-matching metrics. |
+| `POST /api/workspaces/{ws}/semantic/compile` | Compile a metric request to SQL. **Does not execute** — submit the SQL through `POST /queries` like any other statement. |
+| `POST /api/workspaces/{ws}/semantic/imports/{provider}` | Publish definitions from a producer. `duckhaven` takes a YAML document as `text/plain`. `?reconcile=provider_run` (default) retires models the payload no longer declares. Requires **writer**. |
+| `DELETE /api/workspaces/{ws}/semantic/imports?provider=<name>` | Remove everything a provider published. Requires workspace **owner**. |
+| `GET /api/workspaces/{ws}/catalogs/{catalog}/schemas/{schema}/tables/{table}/semantic` | Which definitions depend on this table. Optional `column` narrows it. Requires `metadata` tier. |
+
+`POST /semantic/compile` takes structured input only — metric and dimension names, an operator from a fixed set, values
+as JSON, and a time window as a kind plus a count. There is no field into which SQL can be passed. Refusals come back
+as **422** naming the legal alternatives: an unknown metric lists the real ones, an ambiguous join path names both
+candidates, and a grain a dimension does not support lists the ones it does.
+
+Time windows must be stated explicitly: `last_complete` (the last N complete periods), `trailing` (a rolling window
+ending today), `to_date` (period start through today), or `absolute` (explicit dates, end exclusive). There is no
+default, because "last month" means a different window to different people.
 
 ## Lineage
 

@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -56,8 +57,15 @@ async def reconcile_table_identity(
     schema: str,
     table: str,
     table_uuid: str | None,
+    on_rename: Callable[[str, str], Awaitable[None]] | None = None,
 ) -> str | None:
     """Record a table's Iceberg id, repairing lineage if the id has moved.
+
+    ``on_rename`` is awaited with the table's *old* ``(schema, table)`` when a
+    rename is detected. The old address is only knowable here, and anything else
+    that keys on the address needs it too — but this module has no business
+    knowing what else exists, so the caller supplies the repair rather than this
+    one growing an import per subsystem.
 
     Returns what it concluded — ``"unchanged"``, ``"recorded"``, ``"renamed"``,
     ``"recreated"`` — or ``None`` when there was no id to work with. Writes
@@ -154,6 +162,8 @@ async def reconcile_table_identity(
         return "recorded"
 
     old_schema, old_table = elsewhere.schema_name, elsewhere.table_name
+    if on_rename is not None:
+        await on_rename(old_schema, old_table)
     await rekey_table_lineage(
         db,
         catalog_id,

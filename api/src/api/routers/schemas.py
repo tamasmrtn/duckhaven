@@ -51,6 +51,7 @@ from api.services.polaris import (
     PolarisSnapshot,
     PolarisTable,
 )
+from api.services.semantic import impact as semantic_impact
 from api.services.workspace import (
     assert_workspace_member,
     ensure_polaris_catalog,
@@ -461,6 +462,12 @@ async def drop_schema(
     # Drop dangling grants for the schema and every table that was under it.
     await grant_service.delete_schema_grants(db, cat.id, schema)
     await lineage_ingest.delete_schema_lineage(db, cat.id, schema)
+    await semantic_impact.mark_bindings_broken(
+        db,
+        catalog_id=cat.id,
+        schema_name=schema,
+        detail=f"Schema '{schema}' was dropped.",
+    )
     await db.commit()
 
 
@@ -518,10 +525,35 @@ async def _reconcile_identity(
     """
     from api.services.lineage.identity import reconcile_table_identity
 
+    async def _follow_rename(old_schema: str, old_table: str) -> None:
+        # Semantic bindings follow the table for the same reason lineage does:
+        # the definition still describes this data, it just lives under a new
+        # name now.
+        await semantic_impact.rekey_bindings(
+            db,
+            catalog_id=catalog_id,
+            old_schema=old_schema,
+            old_table=old_table,
+            new_schema=schema,
+            new_table=table,
+        )
+
     try:
         outcome = await reconcile_table_identity(
-            db, catalog_id=catalog_id, schema=schema, table=table, table_uuid=table_uuid
+            db,
+            catalog_id=catalog_id,
+            schema=schema,
+            table=table,
+            table_uuid=table_uuid,
+            on_rename=_follow_rename,
         )
+        if outcome == "recreated":
+            # Same name, different table. The columns an expression names may or
+            # may not still be there, and assuming they are is how a definition
+            # starts quietly reading something else.
+            await semantic_impact.mark_bindings_unchecked(
+                db, catalog_id=catalog_id, schema_name=schema, table_name=table
+            )
         if outcome not in (None, "unchanged"):
             await db.commit()
     except Exception:
@@ -664,6 +696,19 @@ async def drop_table(
     await _delete_table_meta(db, cat.id, schema, table)
     await grant_service.delete_table_grants(db, cat.id, schema, table)
     await lineage_ingest.delete_table_lineage(db, cat.id, schema, table)
+    # Deliberately *not* deleted, unlike the grants and lineage above. Those
+    # describe the table and stop meaning anything once it is gone; a semantic
+    # definition describes the business and outlives the table it happened to be
+    # bound to. Deleting it would discard somebody's work and quietly return the
+    # assistant to inventing its own revenue calculation, so it is marked broken
+    # instead: visible, withheld from the assistant, and repairable by rebinding.
+    await semantic_impact.mark_bindings_broken(
+        db,
+        catalog_id=cat.id,
+        schema_name=schema,
+        table_name=table,
+        detail=f"{schema}.{table} was dropped.",
+    )
     await db.commit()
 
 

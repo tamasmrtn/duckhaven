@@ -39,11 +39,11 @@ from api.models.semantic import (
 from api.services.polaris import PolarisError
 from api.services.semantic.model import AGGREGATIONS, TIME_GRAINS
 
-# Thresholds, not limits. Both researched platforms bound a model far below what
-# is technically storable — Snowflake recommends ten tables per semantic view,
-# Databricks five per Genie space — because a small model is itself the accuracy
-# mechanism. The right fix is to split the model, which only an author can do, so
-# this warns rather than refuses.
+# Thresholds, not limits, and set far below what is technically storable: a small
+# model is itself the accuracy mechanism, because the fewer plausible-but-wrong
+# definitions are in scope the less there is to choose wrongly between. The right
+# fix is to split the model, which only an author can do, so this warns rather
+# than refuses.
 MAX_DATASETS_ADVISED = 10
 MAX_FIELDS_ADVISED = 60
 

@@ -463,10 +463,11 @@ def compile_metric_query(
 def legal_dimensions(model: LoadedModel, metric_name: str) -> list[str]:
     """The dimensions a given metric can actually be sliced by.
 
-    DuckHaven's answer to "which combinations are valid?" — the question Snowflake
-    answers with ``SHOW SEMANTIC DIMENSIONS FOR METRIC``. Turning the assistant's
-    dimension choice into a lookup rather than a gamble is most of the value of
-    declaring relationships at all.
+    The answer to "which combinations are valid?", which turns the assistant's
+    dimension choice into a lookup rather than a gamble. That is most of the
+    value of declaring relationships at all — and it is what lets a UI offer only
+    the combinations that will compile, instead of letting somebody build a query
+    the compiler then refuses.
     """
     metric = model.metrics.get(metric_name)
     if metric is None:

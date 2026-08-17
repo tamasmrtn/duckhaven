@@ -73,12 +73,13 @@ NATIVE_PROVIDER = "native"
 class SemanticModel(Base):
     """One subject area: the unit of retrieval, publishing and provenance.
 
-    Kept deliberately small. Both researched platforms converged on bounding the
-    model rather than retrieving inside it — Snowflake caps a semantic view at
-    2 MB and recommends no more than ten tables, Databricks recommends five per
-    Genie space — because a small, well-scoped model is *itself* the accuracy
-    mechanism. Validation warns past those thresholds rather than enforcing them,
-    since the right response is to split the model, which only an author can do.
+    Kept deliberately small, and bounded rather than searched inside. A model
+    that fits in front of the assistant whole needs no retrieval within it, and a
+    narrow, well-scoped subject area is *itself* the accuracy mechanism: the
+    fewer plausible-but-wrong definitions are in scope, the less there is to
+    choose wrongly between. Validation warns past the size thresholds rather than
+    enforcing them, since the right response is to split the model, which only an
+    author can do.
     """
 
     __tablename__ = "semantic_models"
@@ -94,9 +95,9 @@ class SemanticModel(Base):
     )
     # A stable, human-typeable handle used in URLs and in the assistant's tool
     # arguments. Renameable: `id` is the identity, so changing the slug does not
-    # orphan bindings, imports or anything that points here. Snowflake's own agent
-    # objects key their API URL on the name and warn that renaming breaks the
-    # link — that is the defect this avoids.
+    # orphan bindings, imports or anything that points here. Keying identity on a
+    # display name is what forces a system to warn that renaming breaks links —
+    # that is the defect this avoids.
     slug: Mapped[str] = mapped_column(String(255), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -143,9 +144,9 @@ class SemanticModel(Base):
 class SemanticDataset(Base):
     """A logical table, named in business terms, bound to one physical table.
 
-    This is also the model's *entity* concept. dbt keeps entities separate from
-    semantic models because MetricFlow *derives* join paths from them; DuckHaven
-    *declares* its joins, so a separate entity would be a second name for the same
+    This is also the model's *entity* concept. A separate entity would only earn
+    its keep if join paths were *derived* from entities rather than declared;
+    DuckHaven declares its joins, so an entity would be a second name for the same
     thing and one more choice for an author to get wrong.
 
     ``primary_key`` is not decoration: it is what makes a ``many_to_one``
@@ -210,8 +211,9 @@ class SemanticDimension(Base):
 
     ``sample_values`` exists for one specific failure: a user asks for customers
     "in the US", the stored value is ``'United States'``, and the query returns
-    zero rows with no error anywhere. Both researched platforms solve this — one
-    calls it prompt matching, the other an enum hint — and it costs a short list.
+    zero rows with no error anywhere. A short list of real values is enough to
+    resolve what somebody said to what is actually stored, which is why it is
+    worth carrying even though it is only a hint.
     """
 
     __tablename__ = "semantic_dimensions"
@@ -283,13 +285,12 @@ class SemanticMetric(Base):
     the kind nobody notices. Binding the metric to its measurement axis removes
     the choice.
 
-    There is deliberately **no separate measure concept**. Snowflake distinguishes
-    row-level facts from aggregate metrics and dbt distinguished measures from
-    metrics, but dbt is folding measures into simple metrics and Databricks never
-    had the split. The distinction only earns its keep once derived and ratio
-    metrics compose from measures, which V1 does not have — and until then it is
-    two concepts where both an author and the assistant must pick the right one,
-    which is exactly the ambiguity this table exists to remove.
+    There is deliberately **no separate measure concept** — no row-level "fact"
+    sitting underneath the metric as a second thing to define. That split only
+    earns its keep once derived and ratio metrics compose out of measures, which
+    V1 does not have. Until then it is two concepts where both an author and the
+    assistant must pick the right one, which is exactly the ambiguity this table
+    exists to remove. Reinstate it when composition arrives.
     """
 
     __tablename__ = "semantic_metrics"
@@ -359,9 +360,9 @@ class SemanticMetric(Base):
 class SemanticRelationship(Base):
     """A declared join between two datasets, in the direction that is safe.
 
-    Joins are *declared*, not inferred. MetricFlow derives them from entity types
-    and then has to enforce a matrix of legal combinations; declaring them means
-    the illegal combination is simply never written down. The ``cardinality``
+    Joins are *declared*, not inferred. Inferring them from key types means
+    policing a matrix of which combinations are legal; declaring them means the
+    illegal combination is simply never written down. The ``cardinality``
     vocabulary carries the rule: only ``many_to_one`` and ``one_to_one`` exist, so
     traversal always moves from a fact toward something unique and the fact table's
     grain survives the join.

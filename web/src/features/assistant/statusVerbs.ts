@@ -26,6 +26,14 @@ const VERB_POOLS: Record<string, string[]> = {
   get_worksheet_sql: ["Dabbling in the data…"],
   get_worksheet_selection: ["Dabbling in the data…"],
   propose_sql_edit: ["Drafting a nest…", "Nesting the answer…"],
+  search_semantic: ["Consulting the flock…", "Looking up what that means…"],
+  get_semantic_model: ["Reading the definitions…", "Consulting the flock…"],
+  query_metric: [
+    "Measuring by the book…",
+    "Quacking the agreed numbers…",
+    "Diving for rows…",
+  ],
+  explain_metric: ["Reading the definitions…", "Checking what counts…"],
 };
 
 // Shown before the first tool call arrives, or for a tool with no dedicated pool.

@@ -19,6 +19,8 @@ import { CatalogPage } from "@/features/catalog/CatalogPage";
 import { SavedQueriesPage } from "@/features/saved-queries/SavedQueriesPage";
 import { SchedulesPage } from "@/features/schedules/SchedulesPage";
 import { SessionsPage } from "@/features/sessions/SessionsPage";
+import { SemanticPage } from "@/features/semantic/SemanticPage";
+import { SemanticModelDetail } from "@/features/semantic/SemanticModelDetail";
 import { SessionDetailPage } from "@/features/sessions/SessionDetailPage";
 import { HistoryPage } from "@/features/history/HistoryPage";
 import { QueryProfilePage } from "@/features/query-profile/QueryProfilePage";
@@ -161,6 +163,18 @@ const sessionDetailRoute = createRoute({
   component: SessionDetailPage,
 });
 
+const semanticRoute = createRoute({
+  getParentRoute: () => wsRoute,
+  path: "/semantic",
+  component: SemanticPage,
+});
+
+const semanticModelRoute = createRoute({
+  getParentRoute: () => wsRoute,
+  path: "/semantic/$model",
+  component: SemanticModelDetail,
+});
+
 const historyRoute = createRoute({
   getParentRoute: () => wsRoute,
   path: "/history",
@@ -264,6 +278,8 @@ export const routeTree = rootRoute.addChildren([
     schedulesRoute,
     sessionsRoute,
     sessionDetailRoute,
+    semanticRoute,
+    semanticModelRoute,
     historyRoute,
     queryProfileRoute,
     healthRoute,

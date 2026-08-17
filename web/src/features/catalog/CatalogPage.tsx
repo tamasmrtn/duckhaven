@@ -20,6 +20,7 @@ import { SnapshotHistoryPanel } from "@/features/catalog/SnapshotHistoryPanel";
 import { PermissionsPanel } from "@/features/catalog/PermissionsPanel";
 import { TableHealthPanel } from "@/features/health/TableHealthPanel";
 import { LineagePanel } from "@/features/lineage/LineagePanel";
+import { SemanticPanel } from "@/features/semantic/SemanticPanel";
 import {
   alterTemplate,
   selectTemplate,
@@ -246,6 +247,9 @@ function TableDetail({
             <TabsTrigger value="lineage" className="text-xs">
               Lineage
             </TabsTrigger>
+            <TabsTrigger value="semantics" className="text-xs">
+              Semantics
+            </TabsTrigger>
             <TabsTrigger value="permissions" className="text-xs">
               Permissions
             </TabsTrigger>
@@ -303,6 +307,17 @@ function TableDetail({
             className="mt-0 flex flex-1 flex-col overflow-hidden border-t border-[var(--border-subtle)]"
           >
             <LineagePanel
+              ws={ws}
+              catalog={catalog}
+              schema={schema}
+              table={table}
+            />
+          </TabsContent>
+          <TabsContent
+            value="semantics"
+            className="mt-0 flex flex-1 flex-col overflow-auto border-t border-[var(--border-subtle)]"
+          >
+            <SemanticPanel
               ws={ws}
               catalog={catalog}
               schema={schema}

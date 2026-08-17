@@ -64,8 +64,18 @@ async def _audit(
         record.latency_ms = int((time.monotonic() - record.started) * 1000)
         raise
     record.status = "ok"
-    if isinstance(result, dict) and result.get("query_id"):
-        record.query_id = str(result["query_id"])
+    if isinstance(result, dict):
+        if result.get("query_id"):
+            record.query_id = str(result["query_id"])
+        # A successful call can still carry a finding worth keeping. The one that
+        # matters is hand-written SQL recomputing something a published metric
+        # already defines: the query ran and the answer stands, so this is not an
+        # error — but "how often are the agreed definitions worked around?" is
+        # only answerable later if the warning is on the row, not just in the
+        # reply the model saw and then forgot.
+        warning = result.get("semantic_warning")
+        if warning:
+            record.detail = str(warning)
     record.latency_ms = int((time.monotonic() - record.started) * 1000)
     return result
 

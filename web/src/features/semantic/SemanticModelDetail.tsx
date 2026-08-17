@@ -239,7 +239,7 @@ export function SemanticModelDetail() {
                     <span className="font-medium">
                       {metric.display_name ?? metric.name}
                     </span>
-                    <code className="rounded bg-[var(--bg-code)] px-1 text-2xs">
+                    <code className="rounded bg-[var(--bg-code)] px-1 text-2xs text-[var(--text-code)]">
                       {metric.name}
                     </code>
                     <StatusPill status={metric.status} />
@@ -316,7 +316,7 @@ export function SemanticModelDetail() {
                   <span className="font-medium">
                     {dim.display_name ?? dim.name}
                   </span>
-                  <code className="rounded bg-[var(--bg-code)] px-1 text-2xs">
+                  <code className="rounded bg-[var(--bg-code)] px-1 text-2xs text-[var(--text-code)]">
                     {dim.name}
                   </code>
                   <span className="text-2xs text-text-tertiary">

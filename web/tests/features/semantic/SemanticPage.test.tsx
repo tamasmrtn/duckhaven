@@ -55,13 +55,23 @@ describe("SemanticPage", () => {
   it("creates a model and opens it", async () => {
     renderWithProviders({ initialRoute: ROUTE });
 
-    await userEvent.click(await screen.findByRole("button", { name: /new model/i }));
-    await userEvent.type(await screen.findByLabelText(/identifier/i), "support");
-    await userEvent.type(await screen.findByLabelText(/display name/i), "Support");
+    await userEvent.click(
+      await screen.findByRole("button", { name: /new model/i }),
+    );
+    await userEvent.type(
+      await screen.findByLabelText(/identifier/i),
+      "support",
+    );
+    await userEvent.type(
+      await screen.findByLabelText(/display name/i),
+      "Support",
+    );
     await userEvent.click(screen.getByRole("button", { name: "Create" }));
 
     await waitFor(async () =>
-      expect(await screen.findByRole("tab", { name: /metrics/i })).toBeVisible(),
+      expect(
+        await screen.findByRole("tab", { name: /metrics/i }),
+      ).toBeVisible(),
     );
   });
 
@@ -71,7 +81,9 @@ describe("SemanticPage", () => {
     // silently look like it worked.
     renderWithProviders({ initialRoute: ROUTE });
 
-    await userEvent.click(await screen.findByRole("button", { name: /new model/i }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: /new model/i }),
+    );
     await userEvent.type(await screen.findByLabelText(/identifier/i), "sales");
     await userEvent.click(screen.getByRole("button", { name: "Create" }));
 

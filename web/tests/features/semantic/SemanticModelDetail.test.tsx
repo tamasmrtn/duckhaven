@@ -10,7 +10,9 @@ describe("SemanticModelDetail", () => {
     renderWithProviders({ initialRoute: SALES });
 
     expect(
-      await screen.findByText("SUM(amount) FILTER (WHERE event_type = 'purchase')"),
+      await screen.findByText(
+        "SUM(amount) FILTER (WHERE event_type = 'purchase')",
+      ),
     ).toBeVisible();
   });
 
@@ -49,16 +51,16 @@ describe("SemanticModelDetail", () => {
   it("explains why a broken definition is broken", async () => {
     renderWithProviders({ initialRoute: MARKETING });
 
-    expect(
-      await screen.findByText(/no longer exist: cost_usd/i),
-    ).toBeVisible();
+    expect(await screen.findByText(/no longer exist: cost_usd/i)).toBeVisible();
   });
 
   it("warns that a draft is not used by the assistant", async () => {
     renderWithProviders({ initialRoute: MARKETING });
 
     expect(
-      await screen.findByText(/will not use its\s+definitions until an owner publishes it/i),
+      await screen.findByText(
+        /will not use its\s+definitions until an owner publishes it/i,
+      ),
     ).toBeVisible();
   });
 
@@ -80,20 +82,28 @@ describe("SemanticModelDetail", () => {
   it("refuses to publish a model whose definitions do not resolve", async () => {
     renderWithProviders({ initialRoute: MARKETING });
 
-    await userEvent.click(await screen.findByRole("button", { name: /publish/i }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: /publish/i }),
+    );
 
     // Inline, not a toast: this is a list somebody has to read and act on.
     expect(
-      await screen.findByText(/cannot be published until its definitions resolve/i),
+      await screen.findByText(
+        /cannot be published until its definitions resolve/i,
+      ),
     ).toBeVisible();
   });
 
   it("reports validation failures with the reason", async () => {
     renderWithProviders({ initialRoute: MARKETING });
 
-    await userEvent.click(await screen.findByRole("button", { name: /validate/i }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: /validate/i }),
+    );
 
-    expect(await screen.findByText(/Validation found 1 problem/i)).toBeVisible();
+    expect(
+      await screen.findByText(/Validation found 1 problem/i),
+    ).toBeVisible();
     expect(
       await screen.findAllByText(/no longer exist: cost_usd/i),
     ).not.toHaveLength(0);
@@ -111,17 +121,19 @@ describe("SemanticModelDetail", () => {
   it("shows a dimension's sample values", async () => {
     // So a filter is written against what is stored rather than what was said.
     renderWithProviders({ initialRoute: SALES });
-    await userEvent.click(await screen.findByRole("tab", { name: /dimensions/i }));
+    await userEvent.click(
+      await screen.findByRole("tab", { name: /dimensions/i }),
+    );
 
     expect(await screen.findByText(/free, pro, enterprise/)).toBeVisible();
   });
 
   it("shows which physical table a dataset binds to", async () => {
     renderWithProviders({ initialRoute: SALES });
-    await userEvent.click(await screen.findByRole("tab", { name: /datasets/i }));
+    await userEvent.click(
+      await screen.findByRole("tab", { name: /datasets/i }),
+    );
 
-    expect(
-      await screen.findByText("acme_analytics.raw.events"),
-    ).toBeVisible();
+    expect(await screen.findByText("acme_analytics.raw.events")).toBeVisible();
   });
 });

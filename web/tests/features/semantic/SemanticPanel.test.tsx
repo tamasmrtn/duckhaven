@@ -16,7 +16,9 @@ describe("SemanticPanel", () => {
   it("appears as a tab on the table detail view", async () => {
     renderWithProviders({ initialRoute: TABLE_ROUTE });
 
-    expect(await screen.findByRole("tab", { name: /semantics/i })).toBeVisible();
+    expect(
+      await screen.findByRole("tab", { name: /semantics/i }),
+    ).toBeVisible();
   });
 
   it("lists the definitions that depend on this table", async () => {

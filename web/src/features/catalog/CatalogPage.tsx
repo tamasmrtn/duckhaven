@@ -21,6 +21,7 @@ import { PermissionsPanel } from "@/features/catalog/PermissionsPanel";
 import { TableHealthPanel } from "@/features/health/TableHealthPanel";
 import { LineagePanel } from "@/features/lineage/LineagePanel";
 import { SemanticPanel } from "@/features/semantic/SemanticPanel";
+import { BrokenByDropWarning } from "@/features/semantic/BrokenByDropWarning";
 import {
   alterTemplate,
   selectTemplate,
@@ -344,6 +345,14 @@ function TableDetail({
         kind="table"
         name={table}
         pending={deleteTable.isPending}
+        warning={
+          <BrokenByDropWarning
+            ws={ws}
+            catalog={catalog}
+            schema={schema}
+            table={table}
+          />
+        }
         onConfirm={async () => {
           await deleteTable.mutateAsync(table);
           toast.success(`Dropped ${schema}.${table}`);

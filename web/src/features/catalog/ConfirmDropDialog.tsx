@@ -23,6 +23,7 @@ export function ConfirmDropDialog({
   name,
   onConfirm,
   pending,
+  warning,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -30,6 +31,12 @@ export function ConfirmDropDialog({
   name: string;
   onConfirm: (cascade: boolean) => Promise<void>;
   pending: boolean;
+  /**
+   * Extra consequence to show before the confirm. Used for the blast radius
+   * this dialog cannot work out for itself — which published business
+   * definitions this drop will break.
+   */
+  warning?: React.ReactNode;
 }) {
   const [typed, setTyped] = useState("");
   const [cascade, setCascade] = useState(false);
@@ -85,6 +92,7 @@ export function ConfirmDropDialog({
             This permanently removes <span className="font-mono">{name}</span>{" "}
             from the catalog. This cannot be undone.
           </p>
+          {warning}
           {needsCascade && (
             <label className="flex items-center gap-2 text-text-secondary">
               <Checkbox

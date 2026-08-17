@@ -191,6 +191,134 @@ export const semanticHandlers = [
   }),
 
   http.post(
+    "/api/workspaces/:ws/semantic/models/:slug/datasets",
+    async ({ params, request }) => {
+      const model = find(params.slug as string);
+      if (!model) return HttpResponse.json({}, { status: 404 });
+      const body = (await request.json()) as Record<string, never>;
+      const dataset = {
+        id: nextId("sem-ds"),
+        name: body.name as unknown as string,
+        description: (body.description as unknown as string) ?? null,
+        synonyms: (body.synonyms as unknown as string[]) ?? [],
+        catalog: body.catalog as unknown as string,
+        schema_name: body.schema_name as unknown as string,
+        table_name: body.table_name as unknown as string,
+        primary_key: (body.primary_key as unknown as string[]) ?? [],
+        validation_state: "unchecked" as const,
+        validation_detail: null,
+      };
+      model.datasets.push(dataset);
+      model.dataset_count = model.datasets.length;
+      return HttpResponse.json(dataset, { status: 201 });
+    },
+  ),
+
+  http.post(
+    "/api/workspaces/:ws/semantic/models/:slug/dimensions",
+    async ({ params, request }) => {
+      const model = find(params.slug as string);
+      if (!model) return HttpResponse.json({}, { status: 404 });
+      const body = (await request.json()) as Record<string, never>;
+      const kind = ((body.kind as unknown as string) ?? "categorical") as
+        "categorical" | "time";
+      const dimension = {
+        id: nextId("sem-dim"),
+        name: body.name as unknown as string,
+        dataset: body.dataset as unknown as string,
+        display_name: (body.display_name as unknown as string) ?? null,
+        description: (body.description as unknown as string) ?? null,
+        synonyms: (body.synonyms as unknown as string[]) ?? [],
+        kind,
+        expr:
+          (body.expr as unknown as string) ?? (body.name as unknown as string),
+        data_type: null,
+        time_grains:
+          kind === "time" ? ["day", "week", "month", "quarter", "year"] : [],
+        is_default_time: Boolean(body.is_default_time),
+        sample_values: (body.sample_values as unknown as string[]) ?? [],
+        validation_state: "unchecked" as const,
+        validation_detail: null,
+      };
+      model.dimensions.push(dimension);
+      model.dimension_count = model.dimensions.length;
+      return HttpResponse.json(dimension, { status: 201 });
+    },
+  ),
+
+  http.post(
+    "/api/workspaces/:ws/semantic/models/:slug/metrics",
+    async ({ params, request }) => {
+      const model = find(params.slug as string);
+      if (!model) return HttpResponse.json({}, { status: 404 });
+      const body = (await request.json()) as Record<string, never>;
+      const agg = body.agg as unknown as
+        "sum" | "count" | "count_distinct" | "avg" | "min" | "max";
+      const expr = (body.expr as unknown as string) ?? null;
+      // Mirrors the API: only count may omit an expression to aggregate.
+      if (agg !== "count" && !expr) {
+        return HttpResponse.json(
+          {
+            detail: `${agg} needs an expression to aggregate; only count may omit one.`,
+          },
+          { status: 422 },
+        );
+      }
+      const filter = (body.filter as unknown as string) ?? null;
+      const inner = expr ?? "*";
+      const call =
+        agg === "count_distinct"
+          ? `COUNT(DISTINCT ${inner})`
+          : `${agg.toUpperCase()}(${inner})`;
+      const metric = {
+        id: nextId("sem-met"),
+        name: body.name as unknown as string,
+        dataset: body.dataset as unknown as string,
+        display_name: (body.display_name as unknown as string) ?? null,
+        description: (body.description as unknown as string) ?? null,
+        synonyms: (body.synonyms as unknown as string[]) ?? [],
+        agg,
+        expr,
+        filter,
+        time_dimension: (body.time_dimension as unknown as string) ?? null,
+        caveat: (body.caveat as unknown as string) ?? null,
+        // Mirrors the API: a new metric is a draft until somebody publishes it.
+        status: "draft" as const,
+        expression: filter ? `${call} FILTER (WHERE ${filter})` : call,
+        validation_state: "unchecked" as const,
+        validation_detail: null,
+      };
+      model.metrics.push(metric);
+      model.metric_count = model.metrics.length;
+      return HttpResponse.json(metric, { status: 201 });
+    },
+  ),
+
+  http.post(
+    "/api/workspaces/:ws/semantic/models/:slug/relationships",
+    async ({ params, request }) => {
+      const model = find(params.slug as string);
+      if (!model) return HttpResponse.json({}, { status: 404 });
+      const body = (await request.json()) as Record<string, never>;
+      const relationship = {
+        id: nextId("sem-rel"),
+        name: body.name as unknown as string,
+        left_dataset: body.left_dataset as unknown as string,
+        right_dataset: body.right_dataset as unknown as string,
+        join_columns:
+          (body.join_columns as unknown as { left: string; right: string }[]) ??
+          [],
+        cardinality: ((body.cardinality as unknown as string) ??
+          "many_to_one") as "many_to_one" | "one_to_one",
+        validation_state: "unchecked" as const,
+        validation_detail: null,
+      };
+      model.relationships.push(relationship);
+      return HttpResponse.json(relationship, { status: 201 });
+    },
+  ),
+
+  http.post(
     "/api/workspaces/:ws/semantic/models/:slug/publish",
     ({ params }) => {
       const model = find(params.slug as string);

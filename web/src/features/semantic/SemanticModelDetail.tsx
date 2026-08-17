@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useParams } from "@tanstack/react-router";
-import { CheckCircle2, Ruler, ShieldCheck } from "lucide-react";
+import { CheckCircle2, Plus, Ruler, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Banner } from "@/components/ui/banner";
@@ -14,6 +14,12 @@ import {
   usePublishSemanticModel,
   useValidateSemanticModel,
 } from "@/queries/semantic.mutations";
+import {
+  AddDatasetDialog,
+  AddDimensionDialog,
+  AddMetricDialog,
+  AddRelationshipDialog,
+} from "./DefinitionDialogs";
 import { MetricSqlPreview } from "./MetricSqlPreview";
 import { StatusPill, ValidationPill } from "./SemanticStatusPill";
 import type { ValidationReport } from "@/types/semantic";
@@ -33,6 +39,7 @@ export function SemanticModelDetail() {
   const publish = usePublishSemanticModel(ws, slug);
   const [report, setReport] = useState<ValidationReport | null>(null);
   const [publishError, setPublishError] = useState<string | null>(null);
+  const [adding, setAdding] = useState<string | null>(null);
 
   if (isLoading) {
     return (
@@ -150,13 +157,65 @@ export function SemanticModelDetail() {
       {publishError && <Banner className="mx-6 mt-3">{publishError}</Banner>}
 
       <Tabs defaultValue="metrics" className="flex min-h-0 flex-1 flex-col">
-        <div className="px-6 pt-3">
+        <div className="flex items-center justify-between px-6 pt-3">
           <TabsList>
             <TabsTrigger value="metrics">Metrics</TabsTrigger>
             <TabsTrigger value="dimensions">Dimensions</TabsTrigger>
             <TabsTrigger value="datasets">Datasets</TabsTrigger>
             <TabsTrigger value="relationships">Joins</TabsTrigger>
           </TabsList>
+          {!imported && (
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 text-xs"
+                onClick={() => setAdding("dataset")}
+              >
+                <Plus className="size-3" />
+                Dataset
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 text-xs"
+                disabled={model.datasets.length < 2}
+                title={
+                  model.datasets.length < 2
+                    ? "A join needs two datasets."
+                    : undefined
+                }
+                onClick={() => setAdding("relationship")}
+              >
+                <Plus className="size-3" />
+                Join
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 text-xs"
+                disabled={model.datasets.length === 0}
+                onClick={() => setAdding("dimension")}
+              >
+                <Plus className="size-3" />
+                Dimension
+              </Button>
+              <Button
+                size="sm"
+                className="h-7 gap-1.5 text-xs"
+                disabled={model.datasets.length === 0}
+                title={
+                  model.datasets.length === 0
+                    ? "Bind a dataset first."
+                    : undefined
+                }
+                onClick={() => setAdding("metric")}
+              >
+                <Plus className="size-3" />
+                Metric
+              </Button>
+            </div>
+          )}
         </div>
 
         <TabsContent
@@ -365,6 +424,31 @@ export function SemanticModelDetail() {
           )}
         </TabsContent>
       </Tabs>
+
+      <AddDatasetDialog
+        ws={ws}
+        model={model}
+        open={adding === "dataset"}
+        onOpenChange={(o) => setAdding(o ? "dataset" : null)}
+      />
+      <AddDimensionDialog
+        ws={ws}
+        model={model}
+        open={adding === "dimension"}
+        onOpenChange={(o) => setAdding(o ? "dimension" : null)}
+      />
+      <AddMetricDialog
+        ws={ws}
+        model={model}
+        open={adding === "metric"}
+        onOpenChange={(o) => setAdding(o ? "metric" : null)}
+      />
+      <AddRelationshipDialog
+        ws={ws}
+        model={model}
+        open={adding === "relationship"}
+        onOpenChange={(o) => setAdding(o ? "relationship" : null)}
+      />
 
       {report && !report.ok && (
         <div className="border-t border-[var(--border-subtle)] px-6 py-3">

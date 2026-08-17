@@ -35,6 +35,11 @@ dependencies = [
     "prometheus-client>=0.20",
     "croniter>=3.0",
     "sqlglot>=25",
+    # Semantic definitions are authored and imported as YAML — that is the format
+    # every comparable platform uses and the one people will hand-write. Present
+    # transitively today via other tooling; declared explicitly because the import
+    # path is a runtime feature, not a dev convenience.
+    "pyyaml>=6.0",
     "pydantic-ai-slim[anthropic,mistral,openai]>=2.28.0",
     "opentelemetry-sdk>=1.36",
     "opentelemetry-exporter-otlp-proto-http>=1.36",

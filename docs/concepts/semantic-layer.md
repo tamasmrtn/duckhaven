@@ -123,7 +123,13 @@ models stay readable — old links keep working — but are excluded from new
 answers.
 
 Imported models arrive as drafts. An import is a pipeline publishing, not a
-person deciding.
+person deciding — so the model is the gate, and the definitions inside it become
+usable on that one decision rather than needing promoting one by one.
+
+Definitions can be written here or imported from
+[dbt's semantic layer](../guides/import-dbt-semantics.md). A model belongs to
+exactly one of those: an imported model is read-only in DuckHaven, so the two
+copies cannot disagree.
 
 ## When a definition stops being true
 

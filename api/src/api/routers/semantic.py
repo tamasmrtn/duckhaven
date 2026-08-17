@@ -947,6 +947,10 @@ _RECONCILE_MODES = ("none", "provider_run")
 @router.post("/workspaces/{ws}/semantic/imports/{provider}", response_model=SemanticImportOut)
 async def import_semantics(
     provider: str,
+    # Raw text, whatever the producer's format: a YAML document or a dbt
+    # manifest. Taken as text rather than a typed body so a JSON manifest is
+    # handed to the adapter exactly as published, and so a YAML parse error
+    # reports the line the author wrote rather than one FastAPI re-encoded.
     body: str = Body(media_type="text/plain"),
     reconcile: str = Query(default="provider_run"),
     ctx: _Context = Depends(_context("writer")),

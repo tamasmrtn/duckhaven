@@ -106,7 +106,7 @@ Define what business terms mean, and compile questions into SQL from those defin
 | `GET /api/workspaces/{ws}/semantic/models/{slug}/metrics/{name}/dimensions` | The dimensions this metric can legally be sliced by. |
 | `GET /api/workspaces/{ws}/semantic/search?q=` | Rank metrics and dimensions against a question. Returns `hits`, an `ambiguous` list of equally-matching metrics, and a `broken` list of matching definitions that exist but no longer resolve. |
 | `POST /api/workspaces/{ws}/semantic/compile` | Compile a metric request to SQL. **Does not execute** — submit the SQL through `POST /queries` like any other statement. |
-| `POST /api/workspaces/{ws}/semantic/imports/{provider}` | Publish definitions from a producer. `duckhaven` takes a YAML document as `text/plain`. `?reconcile=provider_run` (default) retires models the payload no longer declares. Requires **writer**. |
+| `POST /api/workspaces/{ws}/semantic/imports/{provider}` | Publish definitions from a producer, as `text/plain`. `duckhaven` takes a YAML document; `dbt` takes a `manifest.json`. `?reconcile=provider_run` (default) retires models the payload no longer declares. Requires **writer**. |
 | `DELETE /api/workspaces/{ws}/semantic/imports?provider=<name>` | Remove everything a provider published. Requires workspace **owner**. |
 | `GET /api/workspaces/{ws}/catalogs/{catalog}/schemas/{schema}/tables/{table}/semantic` | Which definitions depend on this table. Optional `column` narrows it. Requires `metadata` tier. |
 

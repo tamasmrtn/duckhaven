@@ -65,6 +65,10 @@ def get_adapter(provider: str) -> Callable:
             from api.services.semantic.providers.native import models_from_yaml
 
             adapter = models_from_yaml
+        elif provider == "dbt":
+            from api.services.semantic.providers.dbt import models_from_manifest
+
+            adapter = models_from_manifest
         else:
             raise KeyError(provider)
         _ADAPTERS[provider] = adapter

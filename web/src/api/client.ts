@@ -63,6 +63,21 @@ export function post<T>(path: string, body?: unknown) {
   });
 }
 
+/**
+ * POST a body that is already text rather than a value to serialize.
+ *
+ * Used for document uploads — a semantic YAML file — where JSON-encoding the
+ * text would make the server parse a JSON string and then parse YAML out of it,
+ * and would mangle the line numbers in any parse error the user is shown.
+ */
+export function postText<T>(path: string, body: string) {
+  return request<T>(path, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain" },
+    body,
+  });
+}
+
 export function put<T>(path: string, body?: unknown) {
   return request<T>(path, {
     method: "PUT",

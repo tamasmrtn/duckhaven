@@ -17,6 +17,7 @@ import { serviceAccountHandlers } from "./handlers/service-accounts";
 import { grantHandlers } from "./handlers/grants";
 import { maintenanceHandlers } from "./handlers/maintenance";
 import { lineageHandlers } from "./handlers/lineage";
+import { semanticHandlers } from "./handlers/semantic";
 
 export const worker = setupWorker(
   ...authHandlers,
@@ -37,4 +38,5 @@ export const worker = setupWorker(
   ...grantHandlers,
   ...maintenanceHandlers,
   ...lineageHandlers,
+  ...semanticHandlers,
 );

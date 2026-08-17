@@ -9,6 +9,7 @@ import {
   Plug,
   Settings,
   HeartPulse,
+  Ruler,
 } from "lucide-react";
 import {
   Tooltip,
@@ -53,6 +54,12 @@ const navItems: NavItem[] = [
     icon: CalendarClock,
     label: "Schedules",
     matchSegment: "schedules",
+  },
+  {
+    segment: "semantic",
+    icon: Ruler,
+    label: "Semantic models",
+    matchSegment: "semantic",
   },
   {
     segment: "sessions",

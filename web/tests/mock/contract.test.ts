@@ -6,6 +6,7 @@ import { workspacesApi } from '@/api/workspaces'
 import { queriesApi } from '@/api/queries'
 import { storageBackendsApi } from '@/api/storage-backends'
 import { agentsApi } from '@/api/agents'
+import { semanticApi } from '@/api/semantic'
 
 // Each mocked endpoint must mirror the authoritative backend *Out schema. These
 // assert the realigned shapes; error paths use the built-in triggers + overrides.
@@ -186,6 +187,93 @@ describe('agents contract', () => {
   it('rejects an unknown window with a 422, like the API', async () => {
     await expect(
       agentsApi.monitoring('ag-5', '7d' as '8h'),
+    ).rejects.toMatchObject({ name: 'ApiError', status: 422 })
+  })
+})
+
+describe('semantic contract', () => {
+  it('model summaries are ModelSummaryOut-shaped', async () => {
+    const models = await semanticApi.listModels('acme-analytics')
+    expect(models.length).toBeGreaterThan(0)
+    for (const m of models) {
+      expect(Object.keys(m).sort()).toEqual([
+        'broken_count',
+        'created_at',
+        'dataset_count',
+        'description',
+        'dimension_count',
+        'id',
+        'metric_count',
+        'name',
+        'owner_id',
+        'provider',
+        'slug',
+        'status',
+        'updated_at',
+      ])
+    }
+  })
+
+  it('a metric carries its calculation, its time axis and its trust state', async () => {
+    const model = await semanticApi.getModel('acme-analytics', 'sales')
+    const revenue = model.metrics.find((m) => m.name === 'revenue')!
+    expect(Object.keys(revenue).sort()).toEqual([
+      'agg',
+      'caveat',
+      'dataset',
+      'description',
+      'display_name',
+      'expr',
+      'expression',
+      'filter',
+      'id',
+      'name',
+      'status',
+      'synonyms',
+      'time_dimension',
+      'validation_detail',
+      'validation_state',
+    ])
+    expect(revenue.time_dimension).toBe('event_time')
+  })
+
+  it('search returns hits plus an explicit ambiguity list', async () => {
+    const result = await semanticApi.search('acme-analytics', 'turnover')
+    expect(Object.keys(result).sort()).toEqual(['ambiguous', 'hits'])
+    expect(result.hits[0]?.name).toBe('revenue')
+  })
+
+  it('compile returns SQL without a query id — it does not execute', async () => {
+    const compiled = await semanticApi.compile('acme-analytics', {
+      model: 'sales',
+      metrics: ['revenue'],
+    })
+    expect(Object.keys(compiled).sort()).toEqual([
+      'definitions_used',
+      'sql',
+      'warnings',
+    ])
+    expect(compiled).not.toHaveProperty('query_id')
+  })
+
+  it('an unknown metric is a 422 naming the ones that exist', async () => {
+    await expect(
+      semanticApi.compile('acme-analytics', {
+        model: 'sales',
+        metrics: ['profit'],
+      }),
+    ).rejects.toMatchObject({ name: 'ApiError', status: 422 })
+  })
+
+  it('editing an imported model conflicts rather than silently winning', async () => {
+    await expect(
+      semanticApi.updateModel('acme-analytics', 'marketing', { name: 'Mine' }),
+    ).rejects.toMatchObject({ name: 'ApiError', status: 409 })
+  })
+
+  it("'native' is reserved and cannot be imported", async () => {
+    await expect(
+      semanticApi.importDocument('acme-analytics', 'native', 'models: []'),
     ).rejects.toMatchObject({ name: 'ApiError', status: 422 })
   })
 })

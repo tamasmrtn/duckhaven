@@ -1,0 +1,393 @@
+import { http, HttpResponse } from "msw";
+import { SEMANTIC_MODELS, reportFor, summarize } from "../fixtures/semantic";
+import { nextId } from "../lib/seed";
+import type { SemanticHit, SemanticModel } from "@/types/semantic";
+
+function find(slug: string): SemanticModel | undefined {
+  return SEMANTIC_MODELS.find((m) => m.slug === slug);
+}
+
+/**
+ * Mirrors the server's ranking closely enough for the UI to be exercised: exact
+ * name and exact synonym dominate, everything else is token overlap, metrics
+ * outrank dimensions at equal score, and ties among metrics are reported as
+ * ambiguous rather than silently ordered.
+ */
+function search(
+  q: string,
+  publishedOnly: boolean,
+): { hit: SemanticHit; score: number }[] {
+  const words = q.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+  if (words.length === 0) return [];
+  const phrase = words.join(" ");
+  const scored: { hit: SemanticHit; score: number }[] = [];
+
+  for (const model of SEMANTIC_MODELS) {
+    if (publishedOnly && model.status !== "published") continue;
+    for (const metric of model.metrics) {
+      if (publishedOnly && metric.status !== "published") continue;
+      if (metric.validation_state === "broken") continue;
+      let score = 0;
+      const name = metric.name.replace(/_/g, " ");
+      if (phrase.includes(name)) score += 100;
+      if (metric.synonyms.some((s) => phrase.includes(s.toLowerCase())))
+        score += 90;
+      score += 12 * words.filter((w) => name.includes(w)).length;
+      if (score <= 0) continue;
+      scored.push({
+        score,
+        hit: {
+          kind: "metric",
+          model: model.slug,
+          name: metric.name,
+          label: metric.display_name ?? metric.name,
+          description: metric.description,
+          synonyms: metric.synonyms,
+          status: metric.status,
+          expression: metric.expression,
+          time_dimension: metric.time_dimension,
+          caveat: metric.caveat,
+        },
+      });
+    }
+    for (const dim of model.dimensions) {
+      if (publishedOnly && model.status !== "published") continue;
+      let score = 0;
+      const name = dim.name.replace(/_/g, " ");
+      if (phrase.includes(name)) score += 100;
+      if (dim.synonyms.some((s) => phrase.includes(s.toLowerCase())))
+        score += 90;
+      score += 12 * words.filter((w) => name.includes(w)).length;
+      if (score <= 0) continue;
+      scored.push({
+        score,
+        hit: {
+          kind: "dimension",
+          model: model.slug,
+          name: dim.name,
+          label: dim.display_name ?? dim.name,
+          description: dim.description,
+          synonyms: dim.synonyms,
+          status: "published",
+          dimension_kind: dim.kind,
+          sample_values: dim.sample_values.slice(0, 5),
+        },
+      });
+    }
+  }
+
+  scored.sort(
+    (a, b) =>
+      b.score - a.score ||
+      Number(a.hit.kind !== "metric") - Number(b.hit.kind !== "metric") ||
+      a.hit.model.localeCompare(b.hit.model) ||
+      a.hit.name.localeCompare(b.hit.name),
+  );
+  return scored;
+}
+
+/**
+ * Mirrors the API: metrics tied at the top of the ranking are a question, not an
+ * ordering. Returning the tie is what lets a caller ask instead of picking.
+ */
+function ambiguous(
+  scored: { hit: SemanticHit; score: number }[],
+): SemanticHit[] {
+  const metrics = scored.filter((s) => s.hit.kind === "metric");
+  if (metrics.length < 2) return [];
+  const top = metrics[0].score;
+  const tied = metrics.filter((s) => s.score === top);
+  return tied.length > 1 ? tied.map((s) => s.hit) : [];
+}
+
+export const semanticHandlers = [
+  http.get("/api/workspaces/:ws/semantic/models", ({ request }) => {
+    const status = new URL(request.url).searchParams.get("status");
+    const models = status
+      ? SEMANTIC_MODELS.filter((m) => m.status === status)
+      : SEMANTIC_MODELS;
+    return HttpResponse.json(models.map(summarize));
+  }),
+
+  http.post("/api/workspaces/:ws/semantic/models", async ({ request }) => {
+    const body = (await request.json()) as {
+      slug: string;
+      name: string;
+      description?: string;
+    };
+    if (find(body.slug)) {
+      return HttpResponse.json(
+        { detail: `A semantic model called '${body.slug}' already exists.` },
+        { status: 409 },
+      );
+    }
+    const model: SemanticModel = {
+      id: nextId("sem-model"),
+      slug: body.slug,
+      name: body.name,
+      description: body.description ?? null,
+      status: "draft",
+      provider: "native",
+      owner_id: "user-1",
+      metric_count: 0,
+      dimension_count: 0,
+      dataset_count: 0,
+      broken_count: 0,
+      created_at: "2026-08-17T09:00:00Z",
+      updated_at: "2026-08-17T09:00:00Z",
+      datasets: [],
+      dimensions: [],
+      metrics: [],
+      relationships: [],
+    };
+    SEMANTIC_MODELS.push(model);
+    return HttpResponse.json(model, { status: 201 });
+  }),
+
+  http.get("/api/workspaces/:ws/semantic/models/:slug", ({ params }) => {
+    const model = find(params.slug as string);
+    if (!model) {
+      return HttpResponse.json(
+        { detail: `No semantic model '${params.slug as string}'.` },
+        { status: 404 },
+      );
+    }
+    return HttpResponse.json(model);
+  }),
+
+  http.patch(
+    "/api/workspaces/:ws/semantic/models/:slug",
+    async ({ params, request }) => {
+      const model = find(params.slug as string);
+      if (!model) return HttpResponse.json({}, { status: 404 });
+      // Mirrors the API: a model has one owner, so an import is edited at its
+      // source and never here.
+      if (model.provider !== "native") {
+        return HttpResponse.json(
+          {
+            detail: {
+              error: "imported_model",
+              detail: `'${model.slug}' was imported from '${model.provider}' and is edited there, not here.`,
+            },
+          },
+          { status: 409 },
+        );
+      }
+      const body = (await request.json()) as {
+        name?: string;
+        description?: string;
+      };
+      if (body.name != null) model.name = body.name;
+      if (body.description != null) model.description = body.description;
+      return HttpResponse.json(model);
+    },
+  ),
+
+  http.delete("/api/workspaces/:ws/semantic/models/:slug", ({ params }) => {
+    const index = SEMANTIC_MODELS.findIndex((m) => m.slug === params.slug);
+    if (index < 0) return HttpResponse.json({}, { status: 404 });
+    SEMANTIC_MODELS.splice(index, 1);
+    return new HttpResponse(null, { status: 204 });
+  }),
+
+  http.post(
+    "/api/workspaces/:ws/semantic/models/:slug/publish",
+    ({ params }) => {
+      const model = find(params.slug as string);
+      if (!model) return HttpResponse.json({}, { status: 404 });
+      const report = reportFor(model);
+      if (!report.ok) {
+        return HttpResponse.json(
+          {
+            detail: {
+              error: "validation_failed",
+              detail:
+                "This model cannot be published until its definitions resolve.",
+              errors: report.errors,
+            },
+          },
+          { status: 422 },
+        );
+      }
+      model.status = "published";
+      return HttpResponse.json(model);
+    },
+  ),
+
+  http.post(
+    "/api/workspaces/:ws/semantic/models/:slug/deprecate",
+    ({ params }) => {
+      const model = find(params.slug as string);
+      if (!model) return HttpResponse.json({}, { status: 404 });
+      model.status = "deprecated";
+      return HttpResponse.json(model);
+    },
+  ),
+
+  http.post(
+    "/api/workspaces/:ws/semantic/models/:slug/validate",
+    ({ params }) => {
+      const model = find(params.slug as string);
+      if (!model) return HttpResponse.json({}, { status: 404 });
+      return HttpResponse.json(reportFor(model));
+    },
+  ),
+
+  http.get(
+    "/api/workspaces/:ws/semantic/models/:slug/metrics/:metric/dimensions",
+    ({ params }) => {
+      const model = find(params.slug as string);
+      if (!model) return HttpResponse.json({}, { status: 404 });
+      const metric = model.metrics.find((m) => m.name === params.metric);
+      if (!metric) return HttpResponse.json({}, { status: 404 });
+      // Mirrors the API: only datasets reachable from the metric's own dataset,
+      // following relationships in the many -> one direction.
+      const reachable = new Set([metric.dataset]);
+      for (const rel of model.relationships) {
+        if (reachable.has(rel.left_dataset)) reachable.add(rel.right_dataset);
+      }
+      return HttpResponse.json(
+        model.dimensions
+          .filter((d) => reachable.has(d.dataset))
+          .map((d) => d.name)
+          .sort(),
+      );
+    },
+  ),
+
+  http.get("/api/workspaces/:ws/semantic/search", ({ request }) => {
+    const url = new URL(request.url);
+    const q = url.searchParams.get("q") ?? "";
+    const publishedOnly = url.searchParams.get("published_only") !== "false";
+    const scored = search(q, publishedOnly);
+    return HttpResponse.json({
+      hits: scored.map((s) => s.hit),
+      ambiguous: ambiguous(scored),
+    });
+  }),
+
+  http.post("/api/workspaces/:ws/semantic/compile", async ({ request }) => {
+    const body = (await request.json()) as {
+      model: string;
+      metrics: string[];
+      dimensions?: string[];
+      grain?: string;
+    };
+    const model = find(body.model);
+    if (!model) return HttpResponse.json({}, { status: 404 });
+
+    const unknown = body.metrics.filter(
+      (name) => !model.metrics.some((m) => m.name === name),
+    );
+    if (unknown.length > 0) {
+      return HttpResponse.json(
+        {
+          detail: {
+            error: "semantic_error",
+            detail: `'${model.slug}' has no metric called '${unknown[0]}'. Available: ${model.metrics
+              .map((m) => m.name)
+              .sort()
+              .join(", ")}.`,
+          },
+        },
+        { status: 422 },
+      );
+    }
+
+    const chosen = model.metrics.filter((m) => body.metrics.includes(m.name));
+    const dims = (body.dimensions ?? []).map((name) => {
+      const dim = model.dimensions.find((d) => d.name === name);
+      return `  ${dim?.dataset ?? "orders"}.${name} AS ${name}`;
+    });
+    const grainLine = body.grain
+      ? [
+          `  DATE_TRUNC('${body.grain.toUpperCase()}', orders.order_date) AS ${body.grain}`,
+        ]
+      : [];
+    const selects = [
+      ...dims,
+      ...grainLine,
+      ...chosen.map(
+        (m) =>
+          `  ${(m.expression ?? "").replace(/\(/, "(orders.")} AS ${m.name}`,
+      ),
+    ];
+    const sql = [
+      "SELECT",
+      selects.join(",\n"),
+      `FROM ${model.datasets[0]?.catalog}.${model.datasets[0]?.schema_name}.${model.datasets[0]?.table_name} AS orders`,
+      "LIMIT 500",
+    ].join("\n");
+
+    return HttpResponse.json({
+      sql,
+      definitions_used: chosen.map((m) => ({
+        kind: "metric",
+        model: model.slug,
+        name: m.name,
+        description: m.description,
+        expression: m.expression,
+        caveat: m.caveat,
+      })),
+      warnings: chosen
+        .filter((m) => m.caveat)
+        .map((m) => `${m.display_name ?? m.name}: ${m.caveat}`),
+    });
+  }),
+
+  http.get(
+    "/api/workspaces/:ws/catalogs/:catalog/schemas/:schema/tables/:table/semantic",
+    ({ params }) => {
+      const dependents = [];
+      for (const model of SEMANTIC_MODELS) {
+        for (const dataset of model.datasets) {
+          if (
+            dataset.schema_name !== params.schema ||
+            dataset.table_name !== params.table
+          )
+            continue;
+          for (const metric of model.metrics) {
+            if (metric.dataset !== dataset.name) continue;
+            dependents.push({
+              kind: "metric" as const,
+              model: model.slug,
+              model_name: model.name,
+              model_status: model.status,
+              name: metric.name,
+              label: metric.display_name ?? metric.name,
+              status: metric.status,
+              dataset: dataset.name,
+              columns: [metric.expr, metric.filter]
+                .filter(Boolean)
+                .flatMap((e) => (e as string).match(/[a-z_]+/g) ?? []),
+            });
+          }
+        }
+      }
+      return HttpResponse.json({ dependents });
+    },
+  ),
+
+  http.post(
+    "/api/workspaces/:ws/semantic/imports/:provider",
+    async ({ params }) => {
+      if (params.provider === "native") {
+        return HttpResponse.json(
+          {
+            detail:
+              "'native' is reserved for definitions authored in DuckHaven and cannot be imported.",
+          },
+          { status: 422 },
+        );
+      }
+      return HttpResponse.json({
+        provider: params.provider as string,
+        run_id: nextId("run"),
+        created: 1,
+        updated: 0,
+        removed: 0,
+        skipped: [],
+      });
+    },
+  ),
+];

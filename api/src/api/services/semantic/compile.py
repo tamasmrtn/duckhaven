@@ -267,6 +267,9 @@ def compile_metric_query(
     for name in query.metrics:
         metric = model.metrics.get(name)
         if metric is None:
+            broken = model.why_missing("metric", name)
+            if broken:
+                raise SemanticError(broken)
             raise SemanticError(
                 f"{model.slug!r} has no metric called {name!r}.",
                 alternatives=sorted(model.metrics),
@@ -298,6 +301,9 @@ def compile_metric_query(
     for name in query.dimensions:
         dim = model.dimensions.get(name)
         if dim is None:
+            broken = model.why_missing("dimension", name)
+            if broken:
+                raise SemanticError(broken)
             raise SemanticError(
                 f"{model.slug!r} has no dimension called {name!r}.",
                 alternatives=sorted(model.dimensions),
@@ -398,6 +404,9 @@ def compile_metric_query(
     for filt in query.filters:
         dim = model.dimensions.get(filt.dimension)
         if dim is None:
+            broken = model.why_missing("dimension", filt.dimension)
+            if broken:
+                raise SemanticError(broken)
             raise SemanticError(
                 f"{model.slug!r} has no dimension called {filt.dimension!r} to filter on.",
                 alternatives=sorted(model.dimensions),
@@ -471,6 +480,9 @@ def legal_dimensions(model: LoadedModel, metric_name: str) -> list[str]:
     """
     metric = model.metrics.get(metric_name)
     if metric is None:
+        broken = model.why_missing("metric", metric_name)
+        if broken:
+            raise SemanticError(broken)
         raise SemanticError(
             f"{model.slug!r} has no metric called {metric_name!r}.",
             alternatives=sorted(model.metrics),

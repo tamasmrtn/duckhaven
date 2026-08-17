@@ -8,7 +8,9 @@ different ways on two runs cannot be debugged.
 
 from __future__ import annotations
 
-from api.services.semantic.retrieve import ambiguous, search
+from dataclasses import replace
+
+from api.services.semantic.retrieve import ambiguous, search, search_broken
 from tests.unit.services.semantic.conftest import (
     make_dataset,
     make_dimension,
@@ -157,3 +159,43 @@ def test_dimension_hits_carry_sample_values(star):
     hit = next(h for h in search([star], "country") if h.kind == "dimension")
 
     assert "United States" in hit.as_dict()["sample_values"]
+
+
+def test_a_broken_definition_is_reported_rather_than_hidden():
+    """Silently filtering it out makes the assistant say "there is no such metric".
+
+    That is worse than unhelpful: it sends somebody off to build a definition the
+    organization already has. So it is reported — separately from `hits`, so
+    nothing tries to query it.
+    """
+    model = make_model(
+        datasets=[make_dataset("orders")],
+        metrics=[make_metric("revenue", "orders", time_dimension=None)],
+    )
+    model = replace(model, broken_metrics={"refunds": "Column refund_amount no longer exists."})
+
+    found = search_broken([model], "what were our refunds last month?")
+
+    assert [b["name"] for b in found] == ["refunds"]
+    assert "refund_amount" in found[0]["detail"]
+    assert found[0]["kind"] == "metric"
+
+
+def test_broken_definitions_do_not_appear_among_usable_hits():
+    model = make_model(
+        datasets=[make_dataset("orders")],
+        metrics=[make_metric("revenue", "orders", time_dimension=None)],
+    )
+    model = replace(model, broken_metrics={"refunds": "gone"})
+
+    assert [h.name for h in search([model], "refunds")] == []
+
+
+def test_an_unrelated_question_reports_no_broken_definitions():
+    model = make_model(
+        datasets=[make_dataset("orders")],
+        metrics=[make_metric("revenue", "orders", time_dimension=None)],
+    )
+    model = replace(model, broken_metrics={"refunds": "gone"})
+
+    assert search_broken([model], "what is the weather like") == []

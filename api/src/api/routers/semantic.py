@@ -78,7 +78,7 @@ from api.services.semantic.ingest import (
 from api.services.semantic.model import load_model
 from api.services.semantic.providers import get_adapter
 from api.services.semantic.providers.native import SemanticDocumentError
-from api.services.semantic.retrieve import ambiguous, search
+from api.services.semantic.retrieve import ambiguous, search, search_broken
 from api.services.semantic.timespec import TimeRange
 from api.services.semantic.validate import validate_model
 from api.services.workspace import (
@@ -872,6 +872,7 @@ async def semantic_search(
     return SemanticSearchOut(
         hits=[h.as_dict() for h in hits],
         ambiguous=[h.as_dict() for h in ambiguous(hits)],
+        broken=search_broken(loaded, q),
     )
 
 

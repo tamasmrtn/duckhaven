@@ -149,6 +149,24 @@ class LoadedModel:
     dimensions: dict[str, Dimension] = field(default_factory=dict)
     metrics: dict[str, Metric] = field(default_factory=dict)
     relationships: tuple[Relationship, ...] = ()
+    # Names that exist but were filtered out because their bindings no longer
+    # resolve. Kept so a refusal can say "that is broken" rather than "there is
+    # no such thing" — the two call for opposite responses, and telling somebody
+    # a metric does not exist when it does is how they end up re-deriving it by
+    # hand, which is exactly what this subsystem exists to prevent.
+    broken_metrics: dict[str, str] = field(default_factory=dict)
+    broken_dimensions: dict[str, str] = field(default_factory=dict)
+
+    def why_missing(self, kind: str, name: str) -> str | None:
+        """A better explanation than "unknown", when there is one."""
+        broken = self.broken_metrics if kind == "metric" else self.broken_dimensions
+        if name in broken:
+            return (
+                f"{kind.capitalize()} {name!r} is defined in {self.slug!r} but is "
+                f"currently broken: {broken[name]} It cannot be used until it is "
+                "repaired. Do not substitute your own calculation for it."
+            )
+        return None
 
     def dimensions_for(self, dataset: str) -> list[Dimension]:
         return [d for d in self.dimensions.values() if d.dataset == dataset]
@@ -221,9 +239,13 @@ def to_loaded(
 
     dim_out: dict[str, Dimension] = {}
     dim_names: dict[uuid.UUID, str] = {}
+    broken_dimensions: dict[str, str] = {}
     for dim in dimensions:
         parent = by_id.get(dim.dataset_id)
-        if parent is None or parent.name not in ds_out or dim.validation_state == "broken":
+        if dim.validation_state == "broken":
+            broken_dimensions[dim.name] = dim.validation_detail or "Its bindings no longer resolve."
+            continue
+        if parent is None or parent.name not in ds_out:
             continue
         dim_out[dim.name] = Dimension(
             id=dim.id,
@@ -243,9 +265,13 @@ def to_loaded(
         dim_names[dim.id] = dim.name
 
     metric_out: dict[str, Metric] = {}
+    broken_metrics: dict[str, str] = {}
     for m in metrics:
         parent = by_id.get(m.dataset_id)
-        if parent is None or parent.name not in ds_out or m.validation_state == "broken":
+        if m.validation_state == "broken":
+            broken_metrics[m.name] = m.validation_detail or "Its bindings no longer resolve."
+            continue
+        if parent is None or parent.name not in ds_out:
             continue
         if not include_unpublished and m.status != "published":
             continue
@@ -297,6 +323,8 @@ def to_loaded(
         dimensions=dim_out,
         metrics=metric_out,
         relationships=tuple(rel_out),
+        broken_metrics=broken_metrics,
+        broken_dimensions=broken_dimensions,
     )
 
 

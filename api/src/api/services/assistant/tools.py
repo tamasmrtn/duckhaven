@@ -122,6 +122,11 @@ async def search_semantic(ctx: RunContext[AssistantDeps], query: str) -> dict:
     words used equally well and they mean different things — ask the user which
     they meant instead of picking one.
 
+    When ``broken`` is non-empty, a definition matching the question exists but
+    cannot currently be used. Say so, and say why. Do not report it as missing
+    and do not compute a replacement — the organization already has that
+    definition and it needs repairing, not reinventing.
+
     Args:
         query: The user's question, or the business term to look up.
     """

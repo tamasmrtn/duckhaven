@@ -468,3 +468,44 @@ async def test_compiled_sql_does_not_warn_about_itself():
 )
 def test_aggregated_columns(sql, expected):
     assert _aggregated_columns(sql) == expected
+
+
+async def test_the_bypass_warning_lands_on_the_audit_row():
+    """Otherwise "how often is the semantic layer worked around?" is unanswerable.
+
+    The warning reaching the model is what lets it correct itself; the warning
+    reaching the audit row is what lets somebody count it afterwards. Those are
+    different requirements and only the first is satisfied by the tool result.
+    """
+    from pydantic_ai.messages import ToolCallPart
+
+    from api.services.assistant.governance import _audit
+
+    gateway = StubGateway(
+        run_result={
+            "query_id": "q1",
+            "status": "done",
+            "columns": ["s"],
+            "rows": [{"s": 5}],
+            "total": 1,
+            "truncated": False,
+            "semantic_warning": "revenue (model sales, over total_amount)",
+        }
+    )
+    ctx = SimpleNamespace(deps=deps(gateway))
+
+    async def handler(_args):
+        return await gateway.run_sql("SELECT SUM(total_amount) FROM s.t", catalog=None, timeout_s=1)
+
+    await _audit(
+        ctx,
+        call=ToolCallPart("run_sql", {}, tool_call_id="c1"),
+        tool_def=None,
+        args={},
+        handler=handler,
+    )
+
+    record = ctx.deps.records["c1"]
+    assert record.status == "ok"  # the query ran; this is not a failure
+    assert record.query_id == "q1"
+    assert "revenue" in (record.detail or "")

@@ -20,6 +20,13 @@ from api.models.maintenance import (
 )
 from api.models.query import Query, SavedQuery
 from api.models.rbac import Role, RolePermission
+from api.models.semantic import (
+    SemanticDataset,
+    SemanticDimension,
+    SemanticMetric,
+    SemanticModel,
+    SemanticRelationship,
+)
 from api.models.sql_session import SqlSession
 from api.models.storage_backend import StorageBackend
 from api.models.table_metadata import TableMetadata
@@ -48,6 +55,11 @@ __all__ = [
     "Role",
     "RolePermission",
     "SavedQuery",
+    "SemanticDataset",
+    "SemanticDimension",
+    "SemanticMetric",
+    "SemanticModel",
+    "SemanticRelationship",
     "SqlSession",
     "StorageBackend",
     "TableHealthSample",

@@ -1,19 +1,19 @@
 """Which datasets are reachable from which, and by exactly what path.
 
-Joins here are *declared*, not inferred. MetricFlow derives them from entity
-types and then has to police a matrix of which combinations are legal; declaring
-them means the illegal combination is never written down in the first place. What
-is left for this module is the part declaration cannot settle on its own — which
-of several declared joins to use, and how far to walk.
+Joins here are *declared*, not inferred. Deriving them from key types means
+policing a matrix of which combinations are legal; declaring them means the
+illegal combination is never written down in the first place. What is left for
+this module is the part declaration cannot settle on its own — which of several
+declared joins to use, and how far to walk.
 
 Three rules, all of them about refusing to guess:
 
 * **Direction.** Traversal only ever follows a relationship from its ``left``
   (many) side to its ``right`` (unique) side. Walking the other way multiplies
   fact rows, so the graph is directed and the reverse edge simply does not exist.
-* **Depth.** Two hops, matching MetricFlow's documented limit. Three tables in one
-  query is where the paths stop being obvious to the person reading the answer,
-  and an answer nobody can check is worth less than a refusal.
+* **Depth.** Two hops. Three tables in one query is where the paths stop being
+  obvious to the person reading the answer, and an answer nobody can check is
+  worth less than a refusal.
 * **Ambiguity is an error.** If two distinct paths reach the same dataset, both
   are returned in the failure rather than one being chosen. Picking one would be
   right about half the time and silent about the other half.

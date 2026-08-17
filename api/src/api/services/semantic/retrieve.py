@@ -2,13 +2,11 @@
 
 Deliberately lexical, and deliberately not embeddings.
 
-The evidence for that is fairly direct. Neither researched platform retrieves
-*within* a semantic model: Snowflake ships the whole model to the language model
-under a 2 MB cap and recommends keeping it to about ten tables, and Databricks
-has a person scope a Genie space to about five tables. Both then route *between*
-models. Bounding the model turned out to be the accuracy mechanism, and once the
-model is bounded there is very little left for a vector index to do — the
-candidate set is dozens of named concepts, not millions of documents.
+The reasoning is about where the boundary sits. A semantic model is bounded
+small enough to put in front of the assistant whole, so retrieval happens
+*between* models rather than *within* one — and once the model is bounded there
+is very little left for a vector index to do. The candidate set is dozens of
+named concepts, not millions of documents.
 
 So the job here is routing plus vocabulary: match what somebody said ("turnover",
 "GMV", "clients") to what a definition is called, and rank. That is what synonyms

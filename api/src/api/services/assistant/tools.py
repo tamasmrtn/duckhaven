@@ -109,6 +109,142 @@ async def get_query_result(
         raise ModelRetry(str(exc)) from exc
 
 
+async def search_semantic(ctx: RunContext[AssistantDeps], query: str) -> dict:
+    """Find the curated metrics and dimensions a question is about.
+
+    Call this FIRST for any question about a business measure — revenue, orders,
+    customers, conversion, churn — before browsing the catalog. Curated
+    definitions are authoritative: when one exists you must use it rather than
+    working the calculation out yourself from column names.
+
+    Returns ranked matches, each naming the model it belongs to. When
+    ``ambiguous`` is non-empty, more than one authoritative metric matches the
+    words used equally well and they mean different things — ask the user which
+    they meant instead of picking one.
+
+    Args:
+        query: The user's question, or the business term to look up.
+    """
+    try:
+        return await ctx.deps.gateway.search_semantic(query)
+    except GatewayError as exc:
+        raise ModelRetry(str(exc)) from exc
+
+
+async def get_semantic_model(ctx: RunContext[AssistantDeps], model: str) -> dict:
+    """Read one semantic model: its metrics, dimensions, datasets and joins.
+
+    Use after ``search_semantic`` tells you which model is relevant, to see what
+    else can be asked of it — which dimensions exist, which time grains a date
+    supports, and what each metric actually computes.
+
+    Args:
+        model: The model slug, from ``search_semantic``.
+    """
+    try:
+        return await ctx.deps.gateway.get_semantic_model(model)
+    except GatewayError as exc:
+        raise ModelRetry(str(exc)) from exc
+
+
+async def query_metric(
+    ctx: RunContext[AssistantDeps],
+    model: str,
+    metrics: list[str],
+    dimensions: list[str] | None = None,
+    grain: str | None = None,
+    time_window: dict | None = None,
+    filters: list[dict] | None = None,
+    order_by: list[dict] | None = None,
+    limit: int | None = None,
+) -> dict:
+    """Answer a question using curated metric definitions, and run it.
+
+    Prefer this over ``run_sql`` whenever a curated metric covers the question.
+    The SQL is generated from the stored definitions — the aggregation, its
+    filters, the join path and the correct date column — so the answer matches
+    what the organization has agreed these words mean. You do not write the
+    aggregation; you choose the concepts.
+
+    Args:
+        model: Model slug from ``search_semantic``.
+        metrics: Metric names to compute. All must belong to the same dataset.
+        dimensions: Dimension names to group by.
+        grain: Time grain to group by — one of day, week, month, quarter, year.
+        time_window: The period to restrict to. State it explicitly, because
+            "last month" is ambiguous. One of:
+            ``{"kind": "last_complete", "grain": "month", "n": 1}`` — the last N
+            *complete* periods, excluding the one in progress (this is what
+            "last month" usually means);
+            ``{"kind": "trailing", "grain": "day", "n": 30}`` — a rolling window
+            of N periods ending today, including today ("the last 30 days");
+            ``{"kind": "to_date", "grain": "year"}`` — period start through today;
+            ``{"kind": "absolute", "start": "2026-01-01", "end": "2026-02-01"}`` —
+            explicit dates, end exclusive.
+        filters: Predicates on dimensions, e.g.
+            ``[{"dimension": "country", "op": "in", "values": ["United States"]}]``.
+            Operators: eq, ne, in, not_in, gt, gte, lt, lte, contains, is_null,
+            is_not_null. Match values against the dimension's sample values.
+        order_by: e.g. ``[{"field": "revenue", "descending": true}]``. Fields must
+            be metrics or dimensions in the result.
+        limit: Maximum rows.
+    """
+    body: dict = {"model": model, "metrics": metrics}
+    if dimensions:
+        body["dimensions"] = dimensions
+    if grain:
+        body["grain"] = grain
+    if time_window:
+        body["time_range"] = time_window
+    if filters:
+        body["filters"] = filters
+    if order_by:
+        body["order_by"] = order_by
+    if limit is not None:
+        body["limit"] = limit
+
+    try:
+        compiled = await ctx.deps.gateway.compile_metric_query(body)
+    except GatewayError as exc:
+        # The compiler refuses rather than approximating, and its messages name
+        # the legal alternatives — so handing this straight back lets the model
+        # correct itself or ask, instead of falling back to inventing SQL.
+        raise ModelRetry(str(exc)) from exc
+
+    try:
+        result = await ctx.deps.gateway.run_sql(
+            compiled["sql"], catalog=ctx.deps.catalog, timeout_s=ctx.deps.query_timeout_s
+        )
+    except GatewayError as exc:
+        raise ModelRetry(str(exc)) from exc
+
+    # Compiled SQL never re-triggers the "you should have used a metric" nudge.
+    result.pop("semantic_warning", None)
+    result["sql"] = compiled["sql"]
+    result["definitions_used"] = compiled.get("definitions_used", [])
+    if compiled.get("warnings"):
+        result["notes"] = compiled["warnings"]
+    return result
+
+
+async def explain_metric(ctx: RunContext[AssistantDeps], model: str, metric: str) -> dict:
+    """Explain what a curated metric means and how it is calculated.
+
+    Use for "how is X calculated?", "what does X include?", "which metric should I
+    use for X?". Answer from what this returns rather than inferring from column
+    names — the stored definition is what the organization agreed, and a
+    plausible-sounding guess is exactly what it exists to replace.
+
+    Args:
+        model: The model slug.
+        metric: The metric name.
+    """
+    try:
+        return await ctx.deps.gateway.metric_definition(model, metric)
+    except GatewayError as exc:
+        raise ModelRetry(str(exc)) from exc
+
+
 async def get_worksheet_sql(ctx: RunContext[AssistantDeps]) -> str:
     """Return the SQL currently in the user's worksheet editor.
 
@@ -149,6 +285,10 @@ async def propose_sql_edit(ctx: RunContext[AssistantDeps], sql: str, explanation
 
 
 ALL_TOOLS = [
+    search_semantic,
+    get_semantic_model,
+    query_metric,
+    explain_metric,
     list_catalogs,
     list_schemas,
     list_tables,

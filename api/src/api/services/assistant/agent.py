@@ -17,7 +17,7 @@ from pydantic_ai.models import Model
 from api.config import settings
 from api.services.assistant.deps import AssistantDeps
 from api.services.assistant.governance import build_governance
-from api.services.assistant.prompts import SYSTEM_PROMPT
+from api.services.assistant.prompts import build_instructions
 from api.services.assistant.tools import ALL_TOOLS
 
 
@@ -70,7 +70,7 @@ def get_agent() -> Agent[AssistantDeps, str]:
         # str for a normal answer; DeferredToolRequests when a write awaits approval.
         output_type=[str, DeferredToolRequests],
         deps_type=AssistantDeps,
-        instructions=SYSTEM_PROMPT,
+        instructions=build_instructions,
         tools=ALL_TOOLS,
         capabilities=[build_governance(), _instrumentation()],
         model_settings={"max_tokens": settings.assistant_max_output_tokens},

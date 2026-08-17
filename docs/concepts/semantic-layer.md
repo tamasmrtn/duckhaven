@@ -140,10 +140,15 @@ definition carries one of three states:
 was dropped and recreated, and it means the next read should revalidate rather
 than trust the old verdict.
 
-A **broken** definition is withheld from the assistant and refused by the
-compiler. The assistant will say that revenue is defined but currently broken —
-it will not quietly substitute its own calculation. That is the point: a wrong
-number presented confidently is worse than a refusal.
+A **broken** definition is withheld from the compiler, which refuses to build
+SQL from it. But it is *not* hidden: `search_semantic` reports it separately from
+the usable results, with the reason. That distinction matters more than it
+looks. Filtering it out silently would have the assistant answer "there is no
+revenue metric", which is not merely unhelpful — it sends somebody off to build a
+definition the organization already has. Instead the assistant says revenue is
+defined but currently broken and why, and does not substitute its own
+calculation. A wrong number presented confidently is worse than a refusal, and a
+misleading refusal is worse than an accurate one.
 
 Dropping a table marks the definitions bound to it broken rather than deleting
 them. Grants and lineage describe the table and stop meaning anything once it is

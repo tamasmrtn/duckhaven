@@ -258,6 +258,44 @@ def search(models: list[LoadedModel], question: str, *, limit: int = 10) -> list
     return hits[:limit]
 
 
+def search_broken(models: list[LoadedModel], question: str, *, limit: int = 5) -> list[dict]:
+    """Definitions the question matches that exist but cannot currently be used.
+
+    Reported separately from ``hits`` so nothing tries to query them, and
+    reported *at all* because the alternative is worse than it looks: a broken
+    metric filtered silently out of search makes the assistant answer "there is
+    no such metric", which is not just unhelpful but actively misleading — it
+    sends somebody off to build a definition the organization already has.
+    """
+    question_tokens = tokens(question)
+    question_phrases = _phrases(question)
+    if not question_tokens:
+        return []
+
+    found: list[dict] = []
+    for model in models:
+        for kind, broken in (
+            ("metric", model.broken_metrics),
+            ("dimension", model.broken_dimensions),
+        ):
+            for name, detail in broken.items():
+                matched = _normalise(name) in question_phrases or bool(
+                    question_tokens & tokens(name)
+                )
+                if not matched:
+                    continue
+                found.append(
+                    {
+                        "kind": kind,
+                        "model": model.slug,
+                        "name": name,
+                        "detail": detail,
+                    }
+                )
+    found.sort(key=lambda b: (b["model"], b["name"]))
+    return found[:limit]
+
+
 def ambiguous(hits: list[Hit]) -> list[Hit]:
     """Metric hits that are tied at the top — the ones a person must choose between.
 

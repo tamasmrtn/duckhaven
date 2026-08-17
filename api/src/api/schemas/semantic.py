@@ -309,6 +309,15 @@ class SemanticHitOut(BaseModel):
     sample_values: list[str] = Field(default_factory=list)
 
 
+class BrokenDefinitionOut(BaseModel):
+    """A definition the question matches that cannot currently be used."""
+
+    kind: Literal["metric", "dimension"]
+    model: str
+    name: str
+    detail: str
+
+
 class SemanticSearchOut(BaseModel):
     hits: list[SemanticHitOut] = Field(default_factory=list)
     # Metrics tied at the top of the ranking. Populated when a term matches more
@@ -316,6 +325,11 @@ class SemanticSearchOut(BaseModel):
     # against both `total_customers` and `active_customers`. The caller is meant
     # to ask rather than pick.
     ambiguous: list[SemanticHitOut] = Field(default_factory=list)
+    # Definitions that exist but whose bindings no longer resolve. Kept out of
+    # `hits` so nothing queries them, and reported so the caller can say "that is
+    # defined but broken" instead of "there is no such thing" — which would send
+    # somebody off to rebuild a definition the organization already has.
+    broken: list[BrokenDefinitionOut] = Field(default_factory=list)
 
 
 # ── Query ─────────────────────────────────────────────────────────────────────

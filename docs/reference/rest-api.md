@@ -104,7 +104,7 @@ Define what business terms mean, and compile questions into SQL from those defin
 | `POST /api/workspaces/{ws}/semantic/models/{slug}/{datasets,dimensions,metrics,relationships}` | Add a definition. Requires **writer**, plus `metadata` tier on any table a dataset binds. |
 | `PATCH /api/workspaces/{ws}/semantic/models/{slug}/metrics/{name}` | Edit a metric. Resets its validation state to `unchecked`. |
 | `GET /api/workspaces/{ws}/semantic/models/{slug}/metrics/{name}/dimensions` | The dimensions this metric can legally be sliced by. |
-| `GET /api/workspaces/{ws}/semantic/search?q=` | Rank metrics and dimensions against a question. Returns `hits` plus an `ambiguous` list of equally-matching metrics. |
+| `GET /api/workspaces/{ws}/semantic/search?q=` | Rank metrics and dimensions against a question. Returns `hits`, an `ambiguous` list of equally-matching metrics, and a `broken` list of matching definitions that exist but no longer resolve. |
 | `POST /api/workspaces/{ws}/semantic/compile` | Compile a metric request to SQL. **Does not execute** — submit the SQL through `POST /queries` like any other statement. |
 | `POST /api/workspaces/{ws}/semantic/imports/{provider}` | Publish definitions from a producer. `duckhaven` takes a YAML document as `text/plain`. `?reconcile=provider_run` (default) retires models the payload no longer declares. Requires **writer**. |
 | `DELETE /api/workspaces/{ws}/semantic/imports?provider=<name>` | Remove everything a provider published. Requires workspace **owner**. |

@@ -8,6 +8,7 @@ is looking for one specific token — ``FILTER``, ``LEFT JOIN`` — because that
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date
 
 import pytest
@@ -387,3 +388,51 @@ def test_a_time_window_bounds_the_bound_column(star):
 
     assert "orders.order_date >= CAST('2026-07-01' AS DATE)" in sql
     assert "orders.order_date < CAST('2026-08-01' AS DATE)" in sql
+
+
+def test_a_broken_metric_says_it_is_broken_rather_than_missing():
+    """The two are not the same, and they call for opposite responses.
+
+    "There is no revenue metric" invites the assistant to work one out. "Revenue
+    exists but is broken" tells it to stop and say so — which is the whole point
+    of withholding a definition whose bindings no longer resolve.
+    """
+    model = make_model(
+        datasets=[make_dataset("orders")],
+        metrics=[make_metric("revenue", "orders", time_dimension=None)],
+    )
+    # As the loader leaves it once validation has failed: absent from `metrics`,
+    # remembered in `broken_metrics`.
+    broken = replace(
+        model,
+        metrics={},
+        broken_metrics={"revenue": "Column total_amount no longer exists."},
+    )
+
+    with pytest.raises(SemanticError) as excinfo:
+        compile_metric_query(broken, MetricQuery(metrics=("revenue",)), today=TODAY)
+
+    message = str(excinfo.value)
+    assert "currently broken" in message
+    assert "has no metric" not in message
+    assert "Do not substitute your own calculation" in message
+
+
+def test_a_genuinely_unknown_metric_still_reports_as_unknown(star):
+    with pytest.raises(SemanticError) as excinfo:
+        compiled(star, metrics=("profit",))
+
+    assert "has no metric" in str(excinfo.value)
+
+
+def test_a_broken_dimension_says_so_too():
+    model = make_model(
+        datasets=[make_dataset("orders")],
+        metrics=[make_metric("revenue", "orders", time_dimension=None)],
+    )
+    broken = replace(model, broken_dimensions={"country": "Column country no longer exists."})
+
+    with pytest.raises(SemanticError, match="currently broken"):
+        compile_metric_query(
+            broken, MetricQuery(metrics=("revenue",), dimensions=("country",)), today=TODAY
+        )

@@ -80,8 +80,10 @@ business terms mean:
 - run_sql is still right for anything the semantic models do not cover, and for
   exploring raw tables. If a result comes back with a `semantic_warning`, tell the
   user a curated definition exists and what it would change.
-- If a definition is reported broken, say so and say why. Do not substitute your
-  own calculation for a metric that exists but is unusable."""
+- If search_semantic reports anything under `broken`, that definition exists but
+  its bindings no longer resolve. Tell the user it is defined but currently
+  broken and why. Never report it as missing, and never compute a replacement
+  for it — a metric that exists and is broken needs repairing, not reinventing."""
 
 
 # The static prompt, kept as the exact text used when a workspace has no semantic

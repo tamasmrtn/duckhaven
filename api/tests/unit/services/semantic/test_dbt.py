@@ -216,3 +216,62 @@ async def test_run_id_is_absent_when_the_manifest_carries_none():
     from api.services.semantic.providers.dbt import run_id
 
     assert run_id({"metadata": {}}) is None
+
+
+async def test_a_name_two_semantic_models_both_use_is_qualified(manifest, resolver):
+    """dbt scopes dimension names per semantic model; DuckHaven does not.
+
+    `status` on orders and `status` on customers is ordinary in a real project.
+    Emitting both bare collides on `uq_semantic_dimensions_name` and fails the
+    entire import with an integrity error — no models, no `skipped` entry, a 500.
+    """
+    doctored = deepcopy(manifest)
+    doctored["semantic_models"]["semantic_model.semdemo.customers"]["dimensions"].append(
+        {"name": "status", "type": "categorical"}
+    )
+
+    out = await models_from_manifest(doctored, resolve=resolver)
+
+    names = [d.name for d in out.models[0].dimensions]
+    assert len(names) == len(set(names))
+    # Both are qualified, so which one you get never depends on manifest order.
+    assert "orders_status" in names
+    assert "customers_status" in names
+    assert "status" not in names
+
+
+async def test_an_unambiguous_name_keeps_its_bare_form(manifest, resolver):
+    """Qualifying everything would make the common case worse to query."""
+    _, model = await only_model(manifest, resolver)
+
+    assert any(d.name == "order_date" for d in model.dimensions)
+
+
+async def test_a_qualified_time_axis_still_binds_its_metric(manifest, resolver):
+    """The rename has to follow through to `agg_time_dimension`.
+
+    A metric left pointing at the old bare name would arrive with no time axis —
+    which is exactly the unbound-metric hazard the binding exists to prevent.
+    """
+    doctored = deepcopy(manifest)
+    doctored["semantic_models"]["semantic_model.semdemo.customers"]["dimensions"].append(
+        {"name": "order_date", "type": "time", "type_params": {"time_granularity": "day"}}
+    )
+
+    out = await models_from_manifest(doctored, resolve=resolver)
+    revenue = next(m for m in out.models[0].metrics if m.name == "revenue")
+
+    assert revenue.time_dimension == "orders_order_date"
+    assert any(d.name == "orders_order_date" for d in out.models[0].dimensions)
+
+
+async def test_two_foreign_entities_to_one_dataset_do_not_collide(manifest, resolver):
+    """A shipping and a billing address both point at the same table."""
+    doctored = deepcopy(manifest)
+    orders = doctored["semantic_models"]["semantic_model.semdemo.orders"]
+    orders["entities"].append({"name": "customer", "type": "foreign", "expr": "billing_id"})
+
+    out = await models_from_manifest(doctored, resolve=resolver)
+
+    names = [r.name for r in out.models[0].relationships]
+    assert len(names) == len(set(names))

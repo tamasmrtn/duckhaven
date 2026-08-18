@@ -51,13 +51,20 @@ a project *is* the subject area, and dbt expresses no finer grouping.
 | `semantic_models[]` | Dataset | Bound to the relation the model built, from `node_relation` |
 | Entity, `type: primary` | Dataset `primary_key` | What makes the dataset safe to join *to* |
 | Entity, `type: foreign` / `unique` | Relationship (`many_to_one`) | Joined to whichever dataset declares the matching primary entity |
-| Dimension, `type: categorical` | Categorical dimension | |
+| Dimension, `type: categorical` | Categorical dimension | Prefixed with the dataset name if two semantic models declare it — see below |
 | Dimension, `type: time` | Time dimension | `time_granularity` becomes the supported grains, from that grain upward |
 | `defaults.agg_time_dimension` | The dataset's default time axis | |
 | Measure `agg` + `expr` | Metric aggregation and expression | dbt splits these across measure and metric; DuckHaven keeps them together |
 | Measure `agg_time_dimension` | Metric's bound time axis | The field that decides whether "last month" is right |
 | Metric `filter` | Metric filter | dbt's Jinja is translated to SQL — see below |
 | Metric `label` / `description` | Display name / description | |
+
+!!! note "A name two semantic models both use gets qualified"
+    dbt scopes dimension names per semantic model; DuckHaven scopes them per
+    model, and a dbt project becomes one model. So if both `orders` and
+    `customers` declare `status`, they arrive as `orders_status` and
+    `customers_status`. A name only one semantic model declares keeps its bare
+    form, and metrics keep pointing at the right axis either way.
 
 ## What is skipped, and why
 

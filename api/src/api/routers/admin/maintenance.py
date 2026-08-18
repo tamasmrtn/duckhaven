@@ -10,7 +10,7 @@ from api.models.maintenance import MaintenancePolicy
 from api.models.user import User
 from api.schemas.maintenance import PolicyOut, PolicyUpdate, ScanResult
 from api.services.maintenance.policy import get_or_create_policy
-from api.services.maintenance.presets import PRESET_NAMES, resolve_thresholds
+from api.services.maintenance.presets import PRESET_FREQUENCIES, PRESET_NAMES, resolve_thresholds
 from api.services.maintenance.scanner import run_cycle
 from api.services.permissions import Permission
 from api.services.polaris import PolarisClient
@@ -62,6 +62,10 @@ async def update_policy(
                 detail=f"preset must be one of {sorted(PRESET_NAMES)}",
             )
         policy.preset = body.preset
+        # A preset change implies a cadence unless the caller supplied one
+        # explicitly (aggressive scans hourly; the others daily).
+        if body.scan_frequency is None:
+            policy.scan_frequency = PRESET_FREQUENCIES[body.preset]
     if body.scan_enabled is not None:
         policy.scan_enabled = body.scan_enabled
     if body.max_tables_per_cycle is not None:

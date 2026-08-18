@@ -43,11 +43,12 @@ export function SemanticModelDetail() {
   const [adding, setAdding] = useState<string | null>(null);
 
   /**
-   * What removing a dimension costs, when it costs anything.
+   * Why removing a dimension will be refused, when it will be.
    *
-   * A metric measured on it is not deleted with it — it survives unbound, which
-   * is deliberate — but that leaves a metric no time filter can use, so it is
-   * worth saying before the click rather than discovering it in validation.
+   * The server rejects this while a metric is measured on the dimension — an
+   * absent time axis is indistinguishable from one that was never set, and the
+   * compiler answers that kind on the dataset's default date. Saying so before
+   * the click turns a rejection into an instruction.
    */
   const measuredOn = (name: string): string | undefined => {
     const affected = (model?.metrics ?? []).filter(
@@ -56,7 +57,9 @@ export function SemanticModelDetail() {
     if (affected.length === 0) return undefined;
     return `${affected.map((m) => m.name).join(", ")} ${
       affected.length === 1 ? "is" : "are"
-    } measured on it and will be left without a time axis`;
+    } measured on it, so this is refused until ${
+      affected.length === 1 ? "it is" : "they are"
+    } rebound or removed`;
   };
 
   if (isLoading) {

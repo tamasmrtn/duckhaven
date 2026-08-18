@@ -9,6 +9,7 @@ answer because nothing about it looks wrong.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date
 
 import pytest
@@ -152,3 +153,66 @@ def test_no_time_request_needs_no_time_dimension():
     sql = compiled(two_axis_model(bound_to=None), metrics=("revenue",))
 
     assert "DATE_TRUNC" not in sql
+
+
+def test_a_metric_that_lost_its_time_axis_is_refused_not_re_measured():
+    """The regression that motivates `time_axis_lost`.
+
+    A metric bound to `order_date` whose dimension is deleted or goes broken
+    arrives with `time_dimension is None`, which is indistinguishable from never
+    having been bound — so it fell through to the dataset's *default* axis and
+    answered "revenue last month" on `created_at`. Same question, different
+    number, no error. Refusing is the only honest option: the binding recorded a
+    decision, and the decision is now unsatisfiable.
+    """
+    orders = make_dataset("orders", table="orders", primary_key=("id",))
+    created_at = make_dimension("created_at", "orders", kind="time", is_default_time=True)
+    lost = replace(make_metric("revenue", "orders"), time_dimension=None, time_axis_lost=True)
+    model = make_model(datasets=[orders], dimensions=[created_at], metrics=[lost])
+
+    with pytest.raises(SemanticError) as exc:
+        compile_metric_query(
+            model,
+            MetricQuery(
+                metrics=("revenue",),
+                time_range=TimeRange(kind="last_complete", grain="month", n=1),
+            ),
+            today=date(2026, 8, 18),
+        )
+
+    assert "revenue" in str(exc.value)
+    assert "no longer exists" in str(exc.value)
+
+
+def test_a_metric_that_was_never_bound_still_uses_the_default_axis():
+    """The other half: only a *lost* binding refuses.
+
+    A metric nobody bound has no decision to contradict, so the dataset's
+    default axis is the best available answer rather than a substitution.
+    """
+    orders = make_dataset("orders", table="orders", primary_key=("id",))
+    created_at = make_dimension("created_at", "orders", kind="time", is_default_time=True)
+    unbound = replace(make_metric("revenue", "orders"), time_dimension=None)
+    model = make_model(datasets=[orders], dimensions=[created_at], metrics=[unbound])
+
+    sql = compile_metric_query(
+        model,
+        MetricQuery(
+            metrics=("revenue",),
+            time_range=TimeRange(kind="last_complete", grain="month", n=1),
+        ),
+        today=date(2026, 8, 18),
+    ).sql
+
+    assert "created_at" in sql
+
+
+def test_a_plain_total_still_works_without_a_time_axis():
+    """Losing the axis costs time queries, not the metric itself."""
+    orders = make_dataset("orders", table="orders", primary_key=("id",))
+    lost = replace(make_metric("revenue", "orders"), time_dimension=None, time_axis_lost=True)
+    model = make_model(datasets=[orders], dimensions=[], metrics=[lost])
+
+    sql = compile_metric_query(model, MetricQuery(metrics=("revenue",))).sql
+
+    assert "SUM(orders.total_amount)" in sql

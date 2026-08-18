@@ -105,6 +105,25 @@ export function useUpdateMetric(ws: string, slug: string) {
   });
 }
 
+export type DefinitionKind =
+  "datasets" | "dimensions" | "metrics" | "relationships";
+
+/**
+ * Remove one definition from a model.
+ *
+ * Deleting a dataset can be refused (409) while dimensions, metrics or
+ * relationships still bind it. That refusal is the API's, not a guard here —
+ * the server is the only place that can see the whole dependency set.
+ */
+export function useDeleteDefinition(ws: string, slug: string) {
+  const invalidate = useInvalidate(ws, slug);
+  return useMutation({
+    mutationFn: ({ kind, name }: { kind: DefinitionKind; name: string }) =>
+      semanticApi.deleteChild(ws, slug, kind, name),
+    onSuccess: invalidate,
+  });
+}
+
 export function useAddRelationship(ws: string, slug: string) {
   const invalidate = useInvalidate(ws, slug);
   return useMutation({

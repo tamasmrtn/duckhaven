@@ -230,6 +230,44 @@ Notes on importing:
   edit it at the source and import again.
 - Imports arrive as drafts. Publishing stays a person's decision.
 
+## Removing a definition
+
+Definitions are meant to be corrected, so removing one needs no more ceremony
+than adding it — workspace **writer**, and the table underneath is never touched:
+
+```bash
+curl -X DELETE "$DH/api/workspaces/$WS/semantic/models/sales/metrics/revenue"
+```
+
+Two removals have consequences worth knowing before you make them.
+
+**Deleting a dimension does not delete the metrics measured on it.** Those
+metrics survive with no time axis and a validation state of `unchecked`, which is
+deliberate: a metric nobody can filter by time is a problem you can see in the
+next validation report, whereas a metric that vanished with its dimension is one
+nobody notices until an answer is missing.
+
+**Deleting a dataset is refused while anything still binds it**, and the error
+names every dimension, metric and relationship in the way:
+
+```json
+{
+  "detail": {
+    "error": "dataset_in_use",
+    "detail": "'orders' still has dimension 'order_date', metric 'revenue'.",
+    "dependents": ["dimension 'order_date'", "metric 'revenue'"]
+  }
+}
+```
+
+The bindings cascade in the database, so allowing this would quietly destroy
+every definition on the dataset. Refusing costs one extra step and makes the
+blast radius something you chose rather than discovered.
+
+!!! note "Imported models are removed at their source"
+    `DELETE` on a definition in an imported model returns **409**, like every
+    other edit. Deleting it here would only last until the next import.
+
 ## Testing that it works
 
 Ask the assistant a question the model covers:

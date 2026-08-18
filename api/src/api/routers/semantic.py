@@ -822,6 +822,162 @@ async def add_relationship(
     )
 
 
+# ── Removing children ─────────────────────────────────────────────────────────
+#
+# Deleting a definition is the ordinary way to fix a mistake, so it needs no more
+# ceremony than adding one: `writer`, and refused on an imported model like every
+# other edit. The one asymmetry is the dataset, below.
+
+
+async def _child(db: AsyncSession, model_id: uuid.UUID, table, name: str, kind: str):
+    obj = (
+        await db.execute(select(table).where(table.model_id == model_id, table.name == name))
+    ).scalar_one_or_none()
+    if obj is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"No {kind} {name!r} in this model."
+        )
+    return obj
+
+
+@router.delete(
+    "/workspaces/{ws}/semantic/models/{slug}/datasets/{name}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_dataset(
+    slug: str,
+    name: str,
+    ctx: _Context = Depends(_context("writer")),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Remove a dataset, refusing while anything still binds it.
+
+    The foreign keys are ``ON DELETE CASCADE``, so letting this through would
+    take every dimension and metric on the dataset with it — a click that
+    silently destroys definitions other people rely on. Naming the dependents
+    and refusing costs the caller one extra step and makes the blast radius
+    something they chose rather than discovered.
+    """
+    model = await _editable(db, ctx, slug)
+    dataset = await _child(db, model.id, SemanticDataset, name, "dataset")
+
+    dependents: list[str] = []
+    for table, kind in (
+        (SemanticDimension, "dimension"),
+        (SemanticMetric, "metric"),
+    ):
+        rows = (
+            await db.execute(select(table.name).where(table.dataset_id == dataset.id))
+        ).scalars()
+        dependents += [f"{kind} {row!r}" for row in rows]
+    rows = (
+        await db.execute(
+            select(SemanticRelationship.name).where(
+                (SemanticRelationship.left_dataset_id == dataset.id)
+                | (SemanticRelationship.right_dataset_id == dataset.id)
+            )
+        )
+    ).scalars()
+    dependents += [f"relationship {row!r}" for row in rows]
+
+    if dependents:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "dataset_in_use",
+                "detail": (
+                    f"{name!r} still has {', '.join(dependents)}. "
+                    "Remove them first — deleting the dataset would delete them too."
+                ),
+                "dependents": dependents,
+            },
+        )
+
+    await db.delete(dataset)
+    await db.commit()
+
+
+@router.delete(
+    "/workspaces/{ws}/semantic/models/{slug}/dimensions/{name}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_dimension(
+    slug: str,
+    name: str,
+    ctx: _Context = Depends(_context("writer")),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Remove a dimension; metrics measured on it survive, visibly incomplete.
+
+    A metric that loses its time axis must not be deleted along with it — the
+    whole point of binding the axis is that a metric without one is a hazard you
+    can see, rather than a time filter quietly landing on the wrong column. So
+    the binding is cleared and the metric is marked ``unchecked``, which is what
+    surfaces it in the next validation report.
+    """
+    model = await _editable(db, ctx, slug)
+    dimension = await _child(db, model.id, SemanticDimension, name, "dimension")
+
+    measured_on = (
+        (
+            await db.execute(
+                select(SemanticMetric).where(SemanticMetric.time_dimension_id == dimension.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for metric in measured_on:
+        # Explicit rather than leaning on ON DELETE SET NULL: the intent is part
+        # of the behaviour, and SQLite does not enforce the clause by default.
+        metric.time_dimension_id = None
+        metric.validation_state = "unchecked"
+        metric.validation_detail = None
+        metric.updated_at = datetime.now(UTC)
+
+    await db.delete(dimension)
+    await db.commit()
+
+
+@router.delete(
+    "/workspaces/{ws}/semantic/models/{slug}/metrics/{name}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_metric(
+    slug: str,
+    name: str,
+    ctx: _Context = Depends(_context("writer")),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Remove a metric. Nothing else in a model is defined in terms of one."""
+    model = await _editable(db, ctx, slug)
+    metric = await _child(db, model.id, SemanticMetric, name, "metric")
+    await db.delete(metric)
+    await db.commit()
+
+
+@router.delete(
+    "/workspaces/{ws}/semantic/models/{slug}/relationships/{name}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_relationship(
+    slug: str,
+    name: str,
+    ctx: _Context = Depends(_context("writer")),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Remove a relationship.
+
+    Nothing is deleted with it, but dimensions that were only reachable through
+    this join stop being legal for metrics on the other side — which the compiler
+    reports as an unreachable dimension at the next query, not silently.
+    """
+    model = await _editable(db, ctx, slug)
+    relationship = await _child(db, model.id, SemanticRelationship, name, "relationship")
+    await db.delete(relationship)
+    await db.commit()
+
+
 @router.get("/workspaces/{ws}/semantic/models/{slug}/metrics/{metric_name}/dimensions")
 async def metric_dimensions(
     slug: str,

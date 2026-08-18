@@ -190,6 +190,93 @@ export const semanticHandlers = [
     return new HttpResponse(null, { status: 204 });
   }),
 
+  // Removing a definition. The dataset case mirrors the server's refusal: the
+  // real foreign keys cascade, so a permitted delete would take dependents with
+  // it, and the UI needs to be exercised against the 409 rather than a success.
+  http.delete(
+    "/api/workspaces/:ws/semantic/models/:slug/datasets/:name",
+    ({ params }) => {
+      const model = find(params.slug as string);
+      if (!model) return HttpResponse.json({}, { status: 404 });
+      const name = params.name as string;
+      if (!model.datasets.some((d) => d.name === name))
+        return HttpResponse.json({}, { status: 404 });
+
+      const dependents = [
+        ...model.dimensions
+          .filter((d) => d.dataset === name)
+          .map((d) => `dimension '${d.name}'`),
+        ...model.metrics
+          .filter((m) => m.dataset === name)
+          .map((m) => `metric '${m.name}'`),
+        ...model.relationships
+          .filter((r) => r.left_dataset === name || r.right_dataset === name)
+          .map((r) => `relationship '${r.name}'`),
+      ];
+      if (dependents.length > 0) {
+        return HttpResponse.json(
+          {
+            detail: {
+              error: "dataset_in_use",
+              detail: `'${name}' still has ${dependents.join(", ")}. Remove them first — deleting the dataset would delete them too.`,
+              dependents,
+            },
+          },
+          { status: 409 },
+        );
+      }
+      model.datasets = model.datasets.filter((d) => d.name !== name);
+      return new HttpResponse(null, { status: 204 });
+    },
+  ),
+
+  http.delete(
+    "/api/workspaces/:ws/semantic/models/:slug/dimensions/:name",
+    ({ params }) => {
+      const model = find(params.slug as string);
+      if (!model) return HttpResponse.json({}, { status: 404 });
+      const name = params.name as string;
+      if (!model.dimensions.some((d) => d.name === name))
+        return HttpResponse.json({}, { status: 404 });
+      model.dimensions = model.dimensions.filter((d) => d.name !== name);
+      // A metric measured on it survives, unbound and needing revalidation.
+      for (const metric of model.metrics) {
+        if (metric.time_dimension === name) {
+          metric.time_dimension = null;
+          metric.validation_state = "unchecked";
+          metric.validation_detail = null;
+        }
+      }
+      return new HttpResponse(null, { status: 204 });
+    },
+  ),
+
+  http.delete(
+    "/api/workspaces/:ws/semantic/models/:slug/metrics/:name",
+    ({ params }) => {
+      const model = find(params.slug as string);
+      if (!model) return HttpResponse.json({}, { status: 404 });
+      const name = params.name as string;
+      if (!model.metrics.some((m) => m.name === name))
+        return HttpResponse.json({}, { status: 404 });
+      model.metrics = model.metrics.filter((m) => m.name !== name);
+      return new HttpResponse(null, { status: 204 });
+    },
+  ),
+
+  http.delete(
+    "/api/workspaces/:ws/semantic/models/:slug/relationships/:name",
+    ({ params }) => {
+      const model = find(params.slug as string);
+      if (!model) return HttpResponse.json({}, { status: 404 });
+      const name = params.name as string;
+      if (!model.relationships.some((r) => r.name === name))
+        return HttpResponse.json({}, { status: 404 });
+      model.relationships = model.relationships.filter((r) => r.name !== name);
+      return new HttpResponse(null, { status: 204 });
+    },
+  ),
+
   http.post(
     "/api/workspaces/:ws/semantic/models/:slug/datasets",
     async ({ params, request }) => {

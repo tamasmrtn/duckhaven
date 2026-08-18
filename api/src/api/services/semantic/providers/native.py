@@ -90,10 +90,22 @@ def parse_document(payload: str | bytes | dict) -> dict:
 
 
 def _strings(value: Any, *, limit: int = 20) -> tuple[str, ...]:
+    """A list of strings from whatever the document actually said.
+
+    Hand-written YAML gets hand-written mistakes: ``synonyms: 5`` or a mapping
+    where a list belongs. Slicing those raises ``TypeError``, which nothing
+    upstream catches, so one typo returned 500 and imported nothing — the
+    opposite of this module's contract that a mistake in one definition costs
+    that definition, not the whole publish.
+    """
     if not value:
         return ()
     if isinstance(value, str):
         value = [value]
+    if not isinstance(value, (list, tuple)):
+        raise SemanticDocumentError(
+            f"Expected a list of values or a single string, got {type(value).__name__}."
+        )
     return tuple(str(v) for v in value[:limit])
 
 

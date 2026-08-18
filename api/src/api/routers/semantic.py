@@ -507,6 +507,24 @@ async def validate(
 # ── Children ──────────────────────────────────────────────────────────────────
 
 
+async def _assert_free(db: AsyncSession, model_id: uuid.UUID, table, name: str, kind: str) -> None:
+    """Refuse a duplicate name before the database does.
+
+    Every child table is unique on ``(model_id, name)``. Letting the insert fail
+    surfaces as a 500, because nothing in the app converts an ``IntegrityError``
+    into a response — and a name already being taken is an ordinary thing for
+    somebody filling in a form to do, not a server fault.
+    """
+    taken = (
+        await db.execute(select(table.id).where(table.model_id == model_id, table.name == name))
+    ).scalar_one_or_none()
+    if taken is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"This model already has a {kind} called {name!r}.",
+        )
+
+
 async def _dataset_id(db: AsyncSession, model_id: uuid.UUID, name: str) -> uuid.UUID:
     """Resolve a logical dataset name within a model, or 422 naming the problem."""
     dataset = (
@@ -536,6 +554,7 @@ async def add_dataset(
     db: AsyncSession = Depends(get_db),
 ) -> DatasetOut:
     model = await _editable(db, ctx, slug)
+    await _assert_free(db, model.id, SemanticDataset, body.name, "dataset")
     catalog = await resolve_catalog(db, ctx.workspace.id, body.catalog)
     # Binding a dataset names a table, so it needs the same tier reading that
     # table's metadata needs. Otherwise a writer could learn a schema by binding
@@ -588,6 +607,7 @@ async def add_dimension(
     db: AsyncSession = Depends(get_db),
 ) -> DimensionOut:
     model = await _editable(db, ctx, slug)
+    await _assert_free(db, model.id, SemanticDimension, body.name, "dimension")
     dataset_id = await _dataset_id(db, model.id, body.dataset)
     dimension = SemanticDimension(
         model_id=model.id,
@@ -636,6 +656,7 @@ async def add_metric(
     db: AsyncSession = Depends(get_db),
 ) -> MetricOut:
     model = await _editable(db, ctx, slug)
+    await _assert_free(db, model.id, SemanticMetric, body.name, "metric")
     dataset_id = await _dataset_id(db, model.id, body.dataset)
 
     time_dimension_id = None
@@ -792,6 +813,7 @@ async def add_relationship(
     db: AsyncSession = Depends(get_db),
 ) -> RelationshipOut:
     model = await _editable(db, ctx, slug)
+    await _assert_free(db, model.id, SemanticRelationship, body.name, "relationship")
     left = await _dataset_id(db, model.id, body.left_dataset)
     right = await _dataset_id(db, model.id, body.right_dataset)
     if left == right:

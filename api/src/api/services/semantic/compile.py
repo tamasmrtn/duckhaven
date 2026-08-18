@@ -203,8 +203,16 @@ def _predicate(dim_expr: exp.Expression, filt: DimensionFilter) -> exp.Expressio
     if op == "contains":
         # LIKE with the wildcards added here rather than by the caller, so a value
         # containing % or _ cannot silently widen its own match.
+        #
+        # The ESCAPE clause is not optional. DuckDB has no default escape
+        # character, so escaping `_` without declaring `\` leaves a pattern that
+        # matches *nothing* — "contains new_york" would return zero rows and
+        # report no error, which is worse than the widening this guards against.
         escaped = str(filt.values[0]).replace("%", r"\%").replace("_", r"\_")
-        return exp.Like(this=dim_expr, expression=exp.Literal.string(f"%{escaped}%"))
+        return exp.Escape(
+            this=exp.Like(this=dim_expr, expression=exp.Literal.string(f"%{escaped}%")),
+            expression=exp.Literal.string("\\"),
+        )
 
     mapping = {
         "eq": exp.EQ,
@@ -246,6 +254,23 @@ def _time_dimension(model: LoadedModel, metrics: list[Metric], base: str):
         )
     if named:
         return model.dimensions.get(next(iter(named)))
+
+    # A metric that *lost* its axis must not quietly inherit the dataset's
+    # default one. Somebody decided this metric is counted by `order_date`; if
+    # that dimension is gone, answering on `created_at` produces a different
+    # number and reports nothing, which is the single failure this whole
+    # subsystem exists to prevent. Never bound is a different situation, and
+    # falls through to the default below.
+    orphaned = sorted(m.name for m in metrics if m.time_axis_lost)
+    if orphaned:
+        raise SemanticError(
+            "The time axis for "
+            + ", ".join(orphaned)
+            + " no longer exists, so this cannot be filtered or grouped by time "
+            "without measuring it on a column it was not meant to be measured on. "
+            "Rebind the metric to a time dimension, or ask without a time window."
+        )
+
     return model.default_time_dimension(base)
 
 

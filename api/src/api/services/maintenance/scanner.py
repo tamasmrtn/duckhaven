@@ -42,6 +42,19 @@ _FREQUENCY_WINDOW = {
     "daily": timedelta(days=1),
 }
 
+# Safety net for change-based skipping: a table whose snapshot id never changes
+# is still re-probed at least this often, so a silently-broken table doesn't go
+# unobserved forever.
+_MAX_SAMPLE_AGE = timedelta(days=7)
+
+# Health samples older than this are pruned each cycle; the growth trend only
+# reads the recent window, so older rows accumulate forever otherwise.
+_SAMPLE_RETENTION_DAYS = 90
+
+# TTL for the Polaris table-enumeration cache (see _enumerate_catalog).
+_ENUMERATION_TTL = timedelta(hours=1)
+_enumeration_cache: dict[str, tuple[datetime, list[tuple[str, str]]]] = {}
+
 
 def _due(policy: MaintenancePolicy, now: datetime) -> bool:
     if not policy.scan_enabled or policy.scan_frequency == "off":
@@ -69,12 +82,12 @@ async def run_cycle(
         if not force and not _due(policy, now):
             return {"status": "skipped", "reason": "not_due"}
 
+        await _prune_old_samples(db, now)
         include_orphans = _deep_scan_due(policy, now)
         target_file_bytes = int(policy.thresholds.get("target_file_bytes", 128 * 1024**2))
-        window = _FREQUENCY_WINDOW.get(policy.scan_frequency, timedelta(days=1))
 
         candidates = await _candidate_tables(db, polaris)
-        stale = await _filter_stale(db, candidates, now - window)
+        stale = await _filter_changed(db, polaris, candidates, _MAX_SAMPLE_AGE)
         ordered = _rotate(stale, policy.scan_cursor)
         budget = ordered[: policy.max_tables_per_cycle]
 
@@ -115,6 +128,43 @@ def _deep_scan_due(policy: MaintenancePolicy, now: datetime) -> bool:
     return (now - last).total_seconds() >= settings.maintenance_deep_scan_interval_s
 
 
+async def _prune_old_samples(db: AsyncSession, now: datetime) -> None:
+    """Delete health samples older than ``_SAMPLE_RETENTION_DAYS``.
+
+    Runs once per scan cycle (the scanner already runs periodically, so no
+    separate loop or lock). The growth trend only reads the recent window, so
+    older rows are dead weight.
+    """
+    cutoff = now - timedelta(days=_SAMPLE_RETENTION_DAYS)
+    await db.execute(sa.delete(TableHealthSample).where(TableHealthSample.scanned_at < cutoff))
+
+
+async def _enumerate_catalog(polaris: PolarisClient, catalog: Catalog) -> list[tuple[str, str]]:
+    """(schema, table) pairs for one catalog, cached for ``_ENUMERATION_TTL``.
+
+    Enumeration is a per-catalog ``list_schemas`` + ``list_tables`` round-trip;
+    caching it keeps the scan cycle cheap on large deployments. New tables appear
+    within the TTL; a Polaris error invalidates the entry so a transient failure
+    doesn't pin a stale list.
+    """
+    now = datetime.now(tz=UTC)
+    cached = _enumeration_cache.get(catalog.slug)
+    if cached is not None and now - cached[0] < _ENUMERATION_TTL:
+        return cached[1]
+    try:
+        out: list[tuple[str, str]] = []
+        schemas = await polaris.list_schemas(catalog.polaris_name)
+        for schema in schemas:
+            tables = await polaris.list_tables(catalog.polaris_name, schema.name)
+            out.extend((schema.name, t.name) for t in tables)
+    except PolarisError as exc:
+        _enumeration_cache.pop(catalog.slug, None)
+        logger.warning("Maintenance scan: enumerate failed for %s: %s", catalog.slug, exc)
+        return []
+    _enumeration_cache[catalog.slug] = (now, out)
+    return out
+
+
 async def _candidate_tables(
     db: AsyncSession, polaris: PolarisClient
 ) -> list[tuple[Catalog, Workspace, str, str]]:
@@ -138,35 +188,101 @@ async def _candidate_tables(
 
     out: list[tuple[Catalog, Workspace, str, str]] = []
     for catalog, ws in representative.values():
-        try:
-            schemas = await polaris.list_schemas(catalog.polaris_name)
-            for schema in schemas:
-                tables = await polaris.list_tables(catalog.polaris_name, schema.name)
-                out.extend((catalog, ws, schema.name, t.name) for t in tables)
-        except PolarisError as exc:
-            logger.warning("Maintenance scan: enumerate failed for %s: %s", catalog.slug, exc)
+        for schema, table in await _enumerate_catalog(polaris, catalog):
+            out.append((catalog, ws, schema, table))
     return out
 
 
-async def _filter_stale(
+async def _latest_snapshot_ids(
     db: AsyncSession,
-    candidates: list[tuple[Catalog, Workspace, str, str]],
-    cutoff: datetime,
-) -> list[tuple[Catalog, Workspace, str, str]]:
-    """Drop tables already sampled since ``cutoff`` (prioritize the stale ones)."""
-    recent = {
-        (row[0], row[1], row[2])
-        for row in (
-            await db.execute(
-                sa.select(
-                    TableHealthSample.catalog_id,
-                    TableHealthSample.schema_name,
-                    TableHealthSample.table_name,
-                ).where(TableHealthSample.scanned_at >= cutoff)
+) -> dict[tuple[Any, str, str], tuple[int | None, datetime]]:
+    """Latest sample's (snapshot_id, scanned_at) per (catalog, schema, table)."""
+    latest = (
+        sa.select(
+            TableHealthSample.catalog_id.label("cid"),
+            TableHealthSample.schema_name.label("sn"),
+            TableHealthSample.table_name.label("tn"),
+            sa.func.max(TableHealthSample.scanned_at).label("mx"),
+        )
+        .group_by(
+            TableHealthSample.catalog_id,
+            TableHealthSample.schema_name,
+            TableHealthSample.table_name,
+        )
+        .subquery()
+    )
+    rows = (
+        await db.execute(
+            sa.select(
+                TableHealthSample.catalog_id,
+                TableHealthSample.schema_name,
+                TableHealthSample.table_name,
+                TableHealthSample.snapshot_id,
+                TableHealthSample.scanned_at,
+            ).join(
+                latest,
+                sa.and_(
+                    TableHealthSample.catalog_id == latest.c.cid,
+                    TableHealthSample.schema_name == latest.c.sn,
+                    TableHealthSample.table_name == latest.c.tn,
+                    TableHealthSample.scanned_at == latest.c.mx,
+                ),
             )
-        ).all()
-    }
-    return [c for c in candidates if (c[0].id, c[2], c[3]) not in recent]
+        )
+    ).all()
+    return {(r[0], r[1], r[2]): (r[3], r[4]) for r in rows}
+
+
+async def _filter_changed(
+    db: AsyncSession,
+    polaris: PolarisClient,
+    candidates: list[tuple[Catalog, Workspace, str, str]],
+    max_sample_age: timedelta,
+) -> list[tuple[Catalog, Workspace, str, str]]:
+    """Drop tables whose latest snapshot id is unchanged since the last sample.
+
+    A table is re-probed only when its snapshot id changed (or it was never
+    sampled), with a max-age safety net so a table that never changes still gets
+    re-checked periodically. The snapshot id is read from Polaris (a metadata
+    read, no table scan); on a Polaris error we keep the table rather than skip.
+    """
+    prior = await _latest_snapshot_ids(db)
+    now = datetime.now(tz=UTC)
+
+    keep: list[tuple[Catalog, Workspace, str, str]] = []
+    to_check: list[tuple[Catalog, Workspace, str, str, int]] = []
+    for catalog, ws, schema, table in candidates:
+        key = (catalog.id, schema, table)
+        if key not in prior:
+            keep.append((catalog, ws, schema, table))  # never sampled
+            continue
+        prior_snapshot_id, scanned_at = prior[key]
+        if prior_snapshot_id is None or scanned_at is None:
+            keep.append((catalog, ws, schema, table))  # no usable prior sample
+            continue
+        if scanned_at.tzinfo is None:
+            scanned_at = scanned_at.replace(tzinfo=UTC)
+        if now - scanned_at >= max_sample_age:
+            keep.append((catalog, ws, schema, table))  # safety net: too old
+            continue
+        to_check.append((catalog, ws, schema, table, prior_snapshot_id))
+
+    async def _unchanged(item: tuple[Catalog, Workspace, str, str, int]) -> bool:
+        catalog, _ws, schema, table, prior_snapshot_id = item
+        try:
+            snapshots = await polaris.list_snapshots(catalog.polaris_name, schema, table)
+        except PolarisError as exc:
+            logger.warning(
+                "Maintenance scan: snapshot check failed for %s.%s: %s", schema, table, exc
+            )
+            return False  # keep (re-probe rather than skip)
+        return bool(snapshots) and snapshots[0].snapshot_id == prior_snapshot_id
+
+    results = await asyncio.gather(*(_unchanged(item) for item in to_check))
+    for item, unchanged in zip(to_check, results):
+        if not unchanged:
+            keep.append(item[:4])
+    return keep
 
 
 def _cursor_key(candidate: tuple[Catalog, Workspace, str, str]) -> str:

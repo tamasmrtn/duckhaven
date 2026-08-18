@@ -257,11 +257,14 @@ curl -X DELETE "$DH/api/workspaces/$WS/semantic/models/sales/metrics/revenue"
 
 Two removals have consequences worth knowing before you make them.
 
-**Deleting a dimension does not delete the metrics measured on it.** Those
-metrics survive with no time axis and a validation state of `unchecked`, which is
-deliberate: a metric nobody can filter by time is a problem you can see in the
-next validation report, whereas a metric that vanished with its dimension is one
-nobody notices until an answer is missing.
+**Deleting a dimension is refused while a metric is measured on it.** Rebind the
+metric to another time dimension, or remove it, and the delete succeeds. The
+reason is worth stating: a metric whose time axis is merely *absent* looks
+exactly like one that never had an axis, and the compiler answers that kind
+using the dataset's default date. Clearing the binding would therefore start
+measuring revenue on `created_at` instead of `order_date` — the same question,
+a different number, and no error anywhere. The metric is never deleted as a side
+effect either way.
 
 **Deleting a dataset is refused while anything still binds it**, and the error
 names every dimension, metric and relationship in the way:

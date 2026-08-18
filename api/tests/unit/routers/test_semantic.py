@@ -587,26 +587,52 @@ async def test_a_relationship_can_be_deleted(auth_client, ws):
     assert body["relationships"] == []
 
 
-async def test_deleting_a_time_axis_leaves_the_metric_visibly_incomplete(auth_client, ws):
-    """The metric must survive, unbound and unchecked — not disappear with it.
+async def test_deleting_a_time_axis_is_refused_while_a_metric_is_measured_on_it(auth_client, ws):
+    """Clearing the binding would be a silent re-measurement, not a clean break.
 
-    Binding a metric to its time axis exists so that a metric without one is a
-    hazard somebody can see. Deleting the metric along with the dimension would
-    turn a visible problem into a silent absence, which is the failure this
-    subsystem is built to prevent.
+    A metric whose axis is merely absent looks exactly like one that never had an
+    axis, and the compiler answers that kind using the dataset's default date —
+    so allowing this would start measuring revenue on `created_at` and report
+    nothing. Refusing keeps the ambiguous state unreachable, and the metric is
+    never deleted as a side effect either way.
     """
     await build_model(auth_client, ws)
 
     resp = await auth_client.delete(f"/workspaces/{ws}/semantic/models/sales/dimensions/order_date")
 
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert detail["error"] == "dimension_in_use"
+    assert detail["dependents"] == ["metric 'revenue'"]
+    body = (await auth_client.get(f"/workspaces/{ws}/semantic/models/sales")).json()
+    assert {d["name"] for d in body["dimensions"]} == {"order_date", "country"}
+
+
+async def test_a_time_axis_can_be_deleted_once_the_metric_is_rebound(auth_client, ws):
+    """The refusal names the way out, so the way out has to work."""
+    await build_model(auth_client, ws)
+    base = f"/workspaces/{ws}/semantic/models/sales"
+    await auth_client.post(
+        f"{base}/dimensions",
+        json={"name": "shipped_at", "dataset": "orders", "kind": "time"},
+    )
+    await auth_client.patch(f"{base}/metrics/revenue", json={"time_dimension": "shipped_at"})
+
+    resp = await auth_client.delete(f"{base}/dimensions/order_date")
+
+    assert resp.status_code == 204
+    body = (await auth_client.get(base)).json()
+    assert body["metrics"][0]["time_dimension"] == "shipped_at"
+
+
+async def test_a_dimension_nothing_measures_on_deletes_cleanly(auth_client, ws):
+    await build_model(auth_client, ws)
+
+    resp = await auth_client.delete(f"/workspaces/{ws}/semantic/models/sales/dimensions/country")
+
     assert resp.status_code == 204
     body = (await auth_client.get(f"/workspaces/{ws}/semantic/models/sales")).json()
-    assert {d["name"] for d in body["dimensions"]} == {"country"}
-    (metric,) = body["metrics"]
-    assert metric["name"] == "revenue"
-    assert metric["time_dimension"] is None
-    # The previous verdict was reached with an axis that no longer exists.
-    assert metric["validation_state"] == "unchecked"
+    assert {d["name"] for d in body["dimensions"]} == {"order_date"}
 
 
 async def test_deleting_a_dataset_is_refused_while_anything_binds_it(auth_client, ws):

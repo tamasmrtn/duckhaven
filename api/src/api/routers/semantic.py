@@ -907,13 +907,18 @@ async def delete_dimension(
     ctx: _Context = Depends(_context("writer")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """Remove a dimension; metrics measured on it survive, visibly incomplete.
+    """Remove a dimension, refusing while a metric is measured on it.
 
-    A metric that loses its time axis must not be deleted along with it — the
-    whole point of binding the axis is that a metric without one is a hazard you
-    can see, rather than a time filter quietly landing on the wrong column. So
-    the binding is cleared and the metric is marked ``unchecked``, which is what
-    surfaces it in the next validation report.
+    Clearing the binding instead would be worse than it looks. A metric whose
+    time axis is merely absent is indistinguishable from one that never had an
+    axis, and the compiler answers the second kind using the dataset's default
+    date — so deleting ``order_date`` would silently start measuring revenue on
+    ``created_at``. Same question, different number, no error.
+
+    Refusing keeps that state unreachable rather than modelling it: rebind the
+    metric to another time dimension, or remove the metric, and then this
+    succeeds. The metric is never deleted as a side effect of removing a
+    dimension.
     """
     model = await _editable(db, ctx, slug)
     dimension = await _child(db, model.id, SemanticDimension, name, "dimension")
@@ -921,19 +926,29 @@ async def delete_dimension(
     measured_on = (
         (
             await db.execute(
-                select(SemanticMetric).where(SemanticMetric.time_dimension_id == dimension.id)
+                select(SemanticMetric.name).where(SemanticMetric.time_dimension_id == dimension.id)
             )
         )
         .scalars()
         .all()
     )
-    for metric in measured_on:
-        # Explicit rather than leaning on ON DELETE SET NULL: the intent is part
-        # of the behaviour, and SQLite does not enforce the clause by default.
-        metric.time_dimension_id = None
-        metric.validation_state = "unchecked"
-        metric.validation_detail = None
-        metric.updated_at = datetime.now(UTC)
+    if measured_on:
+        metrics = sorted(str(m) for m in measured_on)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "dimension_in_use",
+                "detail": (
+                    f"{', '.join(metrics)} "
+                    + ("is" if len(metrics) == 1 else "are")
+                    + f" measured on {name!r}. Rebind or remove "
+                    + ("it" if len(metrics) == 1 else "them")
+                    + " first — without a time axis they would be measured on "
+                    "whichever date the dataset defaults to."
+                ),
+                "dependents": [f"metric {m!r}" for m in metrics],
+            },
+        )
 
     await db.delete(dimension)
     await db.commit()

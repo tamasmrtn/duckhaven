@@ -238,15 +238,25 @@ export const semanticHandlers = [
       const name = params.name as string;
       if (!model.dimensions.some((d) => d.name === name))
         return HttpResponse.json({}, { status: 404 });
-      model.dimensions = model.dimensions.filter((d) => d.name !== name);
-      // A metric measured on it survives, unbound and needing revalidation.
-      for (const metric of model.metrics) {
-        if (metric.time_dimension === name) {
-          metric.time_dimension = null;
-          metric.validation_state = "unchecked";
-          metric.validation_detail = null;
-        }
+
+      // Refused while a metric is measured on it: an absent axis is
+      // indistinguishable from one never set, and the compiler answers that
+      // kind on the dataset's default date.
+      const measuredOn = model.metrics.filter((m) => m.time_dimension === name);
+      if (measuredOn.length > 0) {
+        const names = measuredOn.map((m) => m.name).sort();
+        return HttpResponse.json(
+          {
+            detail: {
+              error: "dimension_in_use",
+              detail: `${names.join(", ")} ${names.length === 1 ? "is" : "are"} measured on '${name}'. Rebind or remove ${names.length === 1 ? "it" : "them"} first.`,
+              dependents: names.map((n) => `metric '${n}'`),
+            },
+          },
+          { status: 409 },
+        );
       }
+      model.dimensions = model.dimensions.filter((d) => d.name !== name);
       return new HttpResponse(null, { status: 204 });
     },
   ),

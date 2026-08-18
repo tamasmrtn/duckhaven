@@ -13,7 +13,9 @@ describe("removing a definition", () => {
   it("removes a metric once the removal is confirmed", async () => {
     const user = userEvent.setup();
     renderWithProviders({ initialRoute: SALES });
-    await user.click(await screen.findByRole("button", { name: /remove metric revenue/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /remove metric revenue/i }),
+    );
 
     await user.click(await screen.findByRole("button", { name: "Remove" }));
 
@@ -27,7 +29,9 @@ describe("removing a definition", () => {
   it("does not remove anything until it is confirmed", async () => {
     const user = userEvent.setup();
     renderWithProviders({ initialRoute: SALES });
-    await user.click(await screen.findByRole("button", { name: /remove metric revenue/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /remove metric revenue/i }),
+    );
 
     await user.click(await screen.findByRole("button", { name: "Cancel" }));
 
@@ -36,20 +40,37 @@ describe("removing a definition", () => {
     ).toBeVisible();
   });
 
-  it("warns which metrics lose their time axis before a dimension goes", async () => {
-    // The metric survives unbound rather than being deleted, which is the point
-    // — but a metric no time filter can use is worth saying before the click.
+  it("says a time axis in use will be refused, before the click", async () => {
+    // Allowing it would leave a metric that looks merely unbound, which the
+    // compiler answers on the dataset's default date instead.
     const user = userEvent.setup();
     renderWithProviders({ initialRoute: SALES });
     await user.click(await screen.findByRole("tab", { name: /dimensions/i }));
 
     await user.click(
-      await screen.findByRole("button", { name: /remove dimension event_time/i }),
+      await screen.findByRole("button", {
+        name: /remove dimension event_time/i,
+      }),
     );
 
     expect(
-      await screen.findByText(/measured on it and will be left without a time axis/i),
+      await screen.findByText(/refused until .* rebound or removed/i),
     ).toBeVisible();
+  });
+
+  it("surfaces the server's refusal for a time axis still in use", async () => {
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: SALES });
+    await user.click(await screen.findByRole("tab", { name: /dimensions/i }));
+    await user.click(
+      await screen.findByRole("button", {
+        name: /remove dimension event_time/i,
+      }),
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Remove" }));
+
+    expect(await screen.findByText(/measured on 'event_time'/i)).toBeVisible();
   });
 
   it("surfaces the server's refusal naming what still binds a dataset", async () => {

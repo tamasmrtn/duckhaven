@@ -100,6 +100,13 @@ class Metric:
     status: str
     dataset: str
     validation_state: str
+    #: The metric was bound to a time axis that no longer resolves — the
+    #: dimension was deleted, or dropped from the model as broken. Distinct from
+    #: ``time_dimension is None``, which means it was never bound at all. The
+    #: two must not be confused: falling back to the dataset's default axis for
+    #: a metric that *had* a binding measures it on a column somebody explicitly
+    #: decided it should not be measured on.
+    time_axis_lost: bool = False
 
     @property
     def label(self) -> str:
@@ -275,6 +282,7 @@ def to_loaded(
             continue
         if not include_unpublished and m.status != "published":
             continue
+        resolved_axis = dim_names.get(m.time_dimension_id) if m.time_dimension_id else None
         metric_out[m.name] = Metric(
             id=m.id,
             name=m.name,
@@ -284,11 +292,12 @@ def to_loaded(
             agg=m.agg,
             expr=m.expr,
             filter=m.filter,
-            time_dimension=dim_names.get(m.time_dimension_id) if m.time_dimension_id else None,
+            time_dimension=resolved_axis,
             caveat=m.caveat,
             status=m.status,
             dataset=parent.name,
             validation_state=m.validation_state,
+            time_axis_lost=bool(m.time_dimension_id) and resolved_axis is None,
         )
 
     rel_out: list[Relationship] = []

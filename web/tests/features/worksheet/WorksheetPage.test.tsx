@@ -8,7 +8,7 @@ import { server } from '@tests/mock/server'
 
 // The test harness never mounts sonner's <Toaster>, so assert on the toast API.
 vi.mock('sonner', () => ({
-  toast: { error: vi.fn(), success: vi.fn() },
+  toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() },
 }))
 
 const WS_ROUTE = '/acme-analytics/worksheets'
@@ -553,5 +553,22 @@ describe('WorksheetPage save modal', () => {
     await router.navigate({ to: '/acme-analytics/saved-queries' })
     await screen.findByText('Funnel overview')
     expect(screen.getAllByText('Daily events')).toHaveLength(1)
+  })
+})
+
+describe('save as metric', () => {
+  it('says what to select rather than opening an empty form', async () => {
+    // Monaco is stubbed in jsdom, so there is never a selection here — which is
+    // exactly the case worth pinning: the button has to explain what it needs
+    // instead of opening a dialog with nothing in it.
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: WS_ROUTE })
+
+    await user.click(await screen.findByRole('button', { name: /save as metric/i }))
+
+    expect(toast.info).toHaveBeenCalledWith(
+      expect.stringMatching(/select the expression first/i),
+    )
+    expect(screen.queryByText('Save as metric')).not.toBeInTheDocument()
   })
 })

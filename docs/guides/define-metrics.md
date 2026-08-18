@@ -126,6 +126,22 @@ Two fields do the most work here:
 `caveat` is surfaced with every answer the metric produces, so a reader sees it
 at the moment they see the number.
 
+### The shortcut: save one from a worksheet
+
+Most metrics are first written as SQL in a worksheet. Rather than retyping the
+calculation here, highlight the expression and choose **Save as metric…** from
+the worksheet toolbar.
+
+DuckHaven splits what it can prove: `SUM(total_amount) AS revenue` arrives as
+`agg: sum`, `expr: total_amount`, named `revenue`. Anything it cannot split
+faithfully — an arithmetic expression, two aggregates added together — arrives
+whole in the expression field with `sum` as a starting point, for you to correct.
+Both fields are on the form, so a wrong reading is visible before you save.
+
+You still choose the model and the dataset, because a worksheet cannot know which
+subject area a calculation belongs to. The metric is created as a **draft**, like
+any other.
+
 ## 6. Validate
 
 ```bash

@@ -201,6 +201,39 @@ def test_contains_escapes_wildcards_in_the_value(star):
     )
 
     assert r"%100\%%" in sql
+    # Escaping without declaring the escape character is what makes the pattern
+    # match nothing, so the clause is part of the contract.
+    assert r"ESCAPE '\'" in sql
+
+
+@pytest.mark.parametrize(
+    ("value", "matches", "misses"),
+    [
+        ("new_york", "new_york", "newXyork"),
+        ("100%", "a 100% b", "100 of them"),
+        ("plain", "a plain word", "nothing here"),
+    ],
+)
+def test_contains_matches_the_literal_value_in_duckdb(star, value, matches, misses):
+    """The escaping has to work in the engine, not merely look right.
+
+    Asserting on the generated string is what let this ship broken: the pattern
+    read correctly and matched nothing, because DuckDB has no default escape
+    character. This runs the predicate.
+    """
+    duckdb = pytest.importorskip("duckdb")
+    sql = compiled(
+        star,
+        metrics=("revenue",),
+        filters=(DimensionFilter(dimension="country", op="contains", values=(value,)),),
+    )
+    predicate = sqlglot.parse_one(sql, read="duckdb").find(sqlglot.exp.Where).this
+    # Re-target the column at a literal so the predicate can be evaluated alone.
+    rendered = predicate.sql(dialect="duckdb").replace("customers.country", "?", 1)
+
+    conn = duckdb.connect()
+    assert conn.execute(f"SELECT {rendered}", [matches]).fetchone()[0] is True
+    assert conn.execute(f"SELECT {rendered}", [misses]).fetchone()[0] is False
 
 
 def test_in_and_not_in(star):

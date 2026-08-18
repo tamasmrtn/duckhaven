@@ -70,14 +70,35 @@ def _compact(metrics: dict[str, Any], t: dict[str, float]) -> dict[str, Any] | N
 
 
 def _expire(metrics: dict[str, Any], t: dict[str, float]) -> dict[str, Any] | None:
+    keep = int(t["snapshot_min_keep"])
+    days = int(t["snapshot_retention_days"])
+    age_days = metrics.get("oldest_snapshot_age_days")
+    if age_days is not None:
+        # Expiration is age-based, so score on the oldest snapshot's age rather
+        # than the raw count (100 snapshots all created today don't need expiring).
+        severity = _severity(age_days, t["snapshot_retention_days"], t["snapshot_age_bad_days"])
+        if severity is None:
+            return None
+        return _rec(
+            "expire_snapshots",
+            severity,
+            "high",
+            f"the oldest snapshot is {age_days:.0f} days old. Expiring snapshots older "
+            f"than {days} days trims metadata and lets old data files be cleaned up.",
+            {"oldest_snapshot_age_days": round(age_days, 4), "retention_days": days},
+            {
+                "summary": f"Expire snapshots older than {days} days (keep at least {keep}).",
+                "command": "CALL <catalog>.system.expire_snapshots('<schema>.<table>', "
+                f"TIMESTAMP 'now - {days} days')",
+                "tool": "Spark / external Iceberg engine",
+            },
+        )
     count = metrics.get("snapshot_count")
     if count is None:
         return None
     severity = _severity(count, t["snapshot_count_warn"], t["snapshot_count_bad"])
     if severity is None:
         return None
-    keep = int(t["snapshot_min_keep"])
-    days = int(t["snapshot_retention_days"])
     removable = max(0, count - keep)
     return _rec(
         "expire_snapshots",

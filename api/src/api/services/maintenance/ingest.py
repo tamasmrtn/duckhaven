@@ -28,6 +28,8 @@ _SEVERITY_RANK = {"info": 0, "warning": 1, "critical": 2}
 
 _METRIC_FIELDS = (
     "snapshot_count",
+    "snapshot_id",
+    "oldest_snapshot_age_days",
     "data_file_count",
     "manifest_count",
     "total_data_bytes",

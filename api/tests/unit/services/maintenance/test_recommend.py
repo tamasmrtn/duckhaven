@@ -40,7 +40,22 @@ def test_expire_snapshots_estimates_removable():
     recs = recommend.generate({"snapshot_count": 150}, T)
     expire = next(r for r in recs if r["kind"] == "expire_snapshots")
     assert expire["severity"] == "warning"
-    assert expire["estimated_impact"]["removable_estimate"] == 149
+    assert expire["estimated_impact"]["removable_estimate"] == 145
+
+
+def test_expire_fires_on_age():
+    # Age is the honest signal: at the retention target it warns, at the bad bound
+    # it is critical; below retention it stays quiet.
+    recs = recommend.generate({"oldest_snapshot_age_days": 7.0}, T)
+    expire = next(r for r in recs if r["kind"] == "expire_snapshots")
+    assert expire["severity"] == "warning"
+    assert expire["estimated_impact"]["oldest_snapshot_age_days"] == 7.0
+
+    recs = recommend.generate({"oldest_snapshot_age_days": 21.0}, T)
+    expire = next(r for r in recs if r["kind"] == "expire_snapshots")
+    assert expire["severity"] == "critical"
+
+    assert recommend.generate({"oldest_snapshot_age_days": 3.0}, T) == []
 
 
 def test_orphan_recommendation_is_low_confidence():

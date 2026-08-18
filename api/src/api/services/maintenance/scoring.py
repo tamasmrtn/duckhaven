@@ -68,13 +68,23 @@ def score_fragmentation(metrics: dict[str, Any], t: dict[str, float]) -> dict[st
     ratio = metrics.get("small_file_ratio")
     if ratio is None:
         return None
-    score = _linear_score(ratio, 0.0, t["small_file_ratio_bad"])
+    score = _linear_score(ratio, t["small_file_ratio_good"], t["small_file_ratio_bad"])
     target = _human_bytes(t["target_file_bytes"])
     detail = f"{ratio * 100:.0f}% of data files are below the {target} target size"
     return _factor(score, round(ratio, 4), detail, WEIGHTS["fragmentation"])
 
 
 def score_snapshots(metrics: dict[str, Any], t: dict[str, float]) -> dict[str, Any] | None:
+    age_days = metrics.get("oldest_snapshot_age_days")
+    if age_days is not None:
+        score = _linear_score(age_days, t["snapshot_retention_days"], t["snapshot_age_bad_days"])
+        detail = (
+            f"oldest snapshot is {age_days:.0f} days old "
+            f"(target keeps ~{t['snapshot_retention_days']:.0f} days)"
+        )
+        return _factor(score, round(age_days, 4), detail, WEIGHTS["snapshots"])
+    # Age is the honest signal (expiration is age-based); fall back to count when
+    # the probe couldn't measure it.
     count = metrics.get("snapshot_count")
     if count is None:
         return None
@@ -84,33 +94,20 @@ def score_snapshots(metrics: dict[str, Any], t: dict[str, float]) -> dict[str, A
 
 
 def score_metadata(metrics: dict[str, Any], t: dict[str, float]) -> dict[str, Any] | None:
-    """Worse of two signals: manifest count vs data files, and metadata bloat."""
+    """Manifest count relative to data files — the one cheap metadata-health signal.
+
+    ``metadata_bytes`` is intentionally not measured: DuckDB's ``glob`` exposes no
+    file sizes, so there is no cheap way to compute it, and the manifest ratio
+    already captures metadata bloat.
+    """
     data_files = metrics.get("data_file_count")
     manifests = metrics.get("manifest_count")
-    total_bytes = metrics.get("total_data_bytes")
-    metadata_bytes = metrics.get("metadata_bytes")
-
-    candidates: list[tuple[float, str, Any]] = []
-    if manifests is not None and data_files:
-        ratio = manifests / data_files
-        s = _linear_score(ratio, 0.0, t["manifest_per_datafile_bad"])
-        candidates.append(
-            (s, f"{manifests} manifests for {data_files} data files", round(ratio, 4))
-        )
-    if metadata_bytes is not None and total_bytes:
-        ratio = metadata_bytes / total_bytes
-        s = _linear_score(ratio, 0.0, t["metadata_ratio_bad"])
-        candidates.append(
-            (
-                s,
-                f"metadata is {_human_bytes(metadata_bytes)} ({ratio * 100:.0f}% of data)",
-                round(ratio, 4),
-            )
-        )
-    if not candidates:
+    if manifests is None or not data_files:
         return None
-    worst = min(candidates, key=lambda c: c[0])
-    return _factor(worst[0], worst[2], worst[1], WEIGHTS["metadata"])
+    ratio = manifests / data_files
+    s = _linear_score(ratio, 0.0, t["manifest_per_datafile_bad"])
+    detail = f"{manifests} manifests for {data_files} data files"
+    return _factor(s, round(ratio, 4), detail, WEIGHTS["metadata"])
 
 
 def score_storage(metrics: dict[str, Any], t: dict[str, float]) -> dict[str, Any] | None:
@@ -134,12 +131,14 @@ _DIMENSIONS = {
 
 def score_table(
     metrics: dict[str, Any], thresholds: dict[str, float]
-) -> tuple[int, dict[str, Any]]:
+) -> tuple[int | None, dict[str, Any]]:
     """Return ``(score, factors)`` for one table.
 
     Dimensions whose metric is missing are dropped and the remaining weights are
     renormalized, so a partial probe still yields a meaningful score over what it
-    measured (rather than penalizing the table for missing data).
+    measured (rather than penalizing the table for missing data). When nothing is
+    measurable the score is ``None`` (``band("unknown")``) — a fully-failed probe
+    must not read as a perfect 100.
     """
     factors: dict[str, Any] = {}
     for name, fn in _DIMENSIONS.items():
@@ -149,7 +148,7 @@ def score_table(
 
     total_weight = sum(f["weight"] for f in factors.values())
     if not factors or total_weight == 0:
-        return 100, factors
+        return None, factors
     weighted = sum(f["score"] * f["weight"] for f in factors.values())
     return round(weighted / total_weight), factors
 

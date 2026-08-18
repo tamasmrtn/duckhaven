@@ -89,6 +89,8 @@ class TableHealthSample(Base):
     )
 
     snapshot_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    snapshot_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    oldest_snapshot_age_days: Mapped[float | None] = mapped_column(Float, nullable=True)
     data_file_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     manifest_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_data_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)

@@ -369,3 +369,17 @@ async def test_publishing_an_imported_model_is_still_a_deliberate_act(auth_clien
         await auth_client.get(f"/workspaces/{ws}/semantic/search", params={"q": "turnover"})
     ).json()
     assert hits["hits"] == []
+
+
+async def test_an_imported_definition_cannot_be_deleted_here(auth_client, ws):
+    """Deleting is an edit, and edits to an imported model belong at the source.
+
+    Allowing it would make the next import silently resurrect the definition,
+    which looks like the delete failed rather than like the model has one owner.
+    """
+    await _import(auth_client, ws)
+
+    resp = await auth_client.delete(f"/workspaces/{ws}/semantic/models/sales/metrics/revenue")
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["error"] == "imported_model"

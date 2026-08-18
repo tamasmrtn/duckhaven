@@ -66,6 +66,20 @@ export const semanticApi = {
       body,
     ),
 
+  /**
+   * Remove one definition from a model.
+   *
+   * A dataset is refused with 409 while any dimension, metric or relationship
+   * still binds it — the foreign keys cascade, so a permitted delete would take
+   * those with it rather than merely removing what was asked for.
+   */
+  deleteChild: (
+    ws: string,
+    slug: string,
+    kind: "datasets" | "dimensions" | "metrics" | "relationships",
+    name: string,
+  ) => del(`${base(ws)}/models/${slug}/${kind}/${encodeURIComponent(name)}`),
+
   /** Which dimensions a metric can legally be sliced by — a lookup, not a guess. */
   metricDimensions: (ws: string, slug: string, name: string) =>
     get<string[]>(`${base(ws)}/models/${slug}/metrics/${name}/dimensions`),

@@ -103,6 +103,8 @@ Define what business terms mean, and compile questions into SQL from those defin
 | `POST /api/workspaces/{ws}/semantic/models/{slug}/validate` | Resolve every binding against the live catalog and record the outcome. |
 | `POST /api/workspaces/{ws}/semantic/models/{slug}/{datasets,dimensions,metrics,relationships}` | Add a definition. Requires **writer**, plus `metadata` tier on any table a dataset binds. |
 | `PATCH /api/workspaces/{ws}/semantic/models/{slug}/metrics/{name}` | Edit a metric. Resets its validation state to `unchecked`. |
+| `DELETE /api/workspaces/{ws}/semantic/models/{slug}/{metrics,dimensions,relationships}/{name}` | Remove one definition. Requires **writer**; **409** on an imported model. Deleting a dimension that a metric is measured on leaves that metric in place, unbound and `unchecked`. |
+| `DELETE /api/workspaces/{ws}/semantic/models/{slug}/datasets/{name}` | Remove a dataset. **409** naming the dependents while any dimension, metric or relationship still binds it — the delete would otherwise cascade to them. |
 | `GET /api/workspaces/{ws}/semantic/models/{slug}/metrics/{name}/dimensions` | The dimensions this metric can legally be sliced by. |
 | `GET /api/workspaces/{ws}/semantic/search?q=` | Rank metrics and dimensions against a question. Returns `hits`, an `ambiguous` list of equally-matching metrics, and a `broken` list of matching definitions that exist but no longer resolve. |
 | `POST /api/workspaces/{ws}/semantic/compile` | Compile a metric request to SQL. **Does not execute** — submit the SQL through `POST /queries` like any other statement. |

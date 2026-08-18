@@ -20,6 +20,7 @@ import {
   AddMetricDialog,
   AddRelationshipDialog,
 } from "./DefinitionDialogs";
+import { DeleteDefinitionButton } from "./DeleteDefinitionButton";
 import { MetricSqlPreview } from "./MetricSqlPreview";
 import { StatusPill, ValidationPill } from "./SemanticStatusPill";
 import type { ValidationReport } from "@/types/semantic";
@@ -40,6 +41,23 @@ export function SemanticModelDetail() {
   const [report, setReport] = useState<ValidationReport | null>(null);
   const [publishError, setPublishError] = useState<string | null>(null);
   const [adding, setAdding] = useState<string | null>(null);
+
+  /**
+   * What removing a dimension costs, when it costs anything.
+   *
+   * A metric measured on it is not deleted with it — it survives unbound, which
+   * is deliberate — but that leaves a metric no time filter can use, so it is
+   * worth saying before the click rather than discovering it in validation.
+   */
+  const measuredOn = (name: string): string | undefined => {
+    const affected = (model?.metrics ?? []).filter(
+      (m) => m.time_dimension === name,
+    );
+    if (affected.length === 0) return undefined;
+    return `${affected.map((m) => m.name).join(", ")} ${
+      affected.length === 1 ? "is" : "are"
+    } measured on it and will be left without a time axis`;
+  };
 
   if (isLoading) {
     return (
@@ -244,6 +262,15 @@ export function SemanticModelDetail() {
                     </code>
                     <StatusPill status={metric.status} />
                     <ValidationPill state={metric.validation_state} />
+                    <div className="ml-auto">
+                      <DeleteDefinitionButton
+                        ws={ws}
+                        slug={slug}
+                        kind="metrics"
+                        name={metric.name}
+                        consequence="questions it answers today fall back to hand-written SQL"
+                      />
+                    </div>
                   </div>
 
                   {metric.description && (
@@ -328,6 +355,15 @@ export function SemanticModelDetail() {
                     </span>
                   )}
                   <ValidationPill state={dim.validation_state} />
+                  <div className="ml-auto">
+                    <DeleteDefinitionButton
+                      ws={ws}
+                      slug={slug}
+                      kind="dimensions"
+                      name={dim.name}
+                      consequence={measuredOn(dim.name)}
+                    />
+                  </div>
                 </div>
                 {dim.description && (
                   <p className="mt-1 text-text-secondary">{dim.description}</p>
@@ -365,6 +401,14 @@ export function SemanticModelDetail() {
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium">{ds.name}</span>
                   <ValidationPill state={ds.validation_state} />
+                  <div className="ml-auto">
+                    <DeleteDefinitionButton
+                      ws={ws}
+                      slug={slug}
+                      kind="datasets"
+                      name={ds.name}
+                    />
+                  </div>
                 </div>
                 <div className="mt-1 font-mono text-text-tertiary">
                   {ds.catalog}.{ds.schema_name}.{ds.table_name}
@@ -402,6 +446,15 @@ export function SemanticModelDetail() {
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium">{rel.name}</span>
                     <ValidationPill state={rel.validation_state} />
+                    <div className="ml-auto">
+                      <DeleteDefinitionButton
+                        ws={ws}
+                        slug={slug}
+                        kind="relationships"
+                        name={rel.name}
+                        consequence="dimensions only reachable through it stop being available to metrics on the other side"
+                      />
+                    </div>
                   </div>
                   <div className="mt-1 font-mono text-text-tertiary">
                     {rel.left_dataset} → {rel.right_dataset} ({rel.cardinality})

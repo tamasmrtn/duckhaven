@@ -556,3 +556,102 @@ async def test_an_unknown_model_is_a_404(auth_client, ws):
     resp = await auth_client.get(f"/workspaces/{ws}/semantic/models/nope")
 
     assert resp.status_code == 404
+
+
+# ── Removing children ─────────────────────────────────────────────────────────
+#
+# Deleting a definition is how a mistake gets fixed, so it carries no more
+# ceremony than adding one. The interesting cases are the two where a naive
+# delete would destroy something the caller did not ask to destroy.
+
+
+async def test_a_metric_can_be_deleted(auth_client, ws):
+    await build_model(auth_client, ws)
+
+    resp = await auth_client.delete(f"/workspaces/{ws}/semantic/models/sales/metrics/revenue")
+
+    assert resp.status_code == 204
+    body = (await auth_client.get(f"/workspaces/{ws}/semantic/models/sales")).json()
+    assert body["metrics"] == []
+
+
+async def test_a_relationship_can_be_deleted(auth_client, ws):
+    await build_model(auth_client, ws)
+
+    resp = await auth_client.delete(
+        f"/workspaces/{ws}/semantic/models/sales/relationships/orders_to_customers"
+    )
+
+    assert resp.status_code == 204
+    body = (await auth_client.get(f"/workspaces/{ws}/semantic/models/sales")).json()
+    assert body["relationships"] == []
+
+
+async def test_deleting_a_time_axis_leaves_the_metric_visibly_incomplete(auth_client, ws):
+    """The metric must survive, unbound and unchecked — not disappear with it.
+
+    Binding a metric to its time axis exists so that a metric without one is a
+    hazard somebody can see. Deleting the metric along with the dimension would
+    turn a visible problem into a silent absence, which is the failure this
+    subsystem is built to prevent.
+    """
+    await build_model(auth_client, ws)
+
+    resp = await auth_client.delete(f"/workspaces/{ws}/semantic/models/sales/dimensions/order_date")
+
+    assert resp.status_code == 204
+    body = (await auth_client.get(f"/workspaces/{ws}/semantic/models/sales")).json()
+    assert {d["name"] for d in body["dimensions"]} == {"country"}
+    (metric,) = body["metrics"]
+    assert metric["name"] == "revenue"
+    assert metric["time_dimension"] is None
+    # The previous verdict was reached with an axis that no longer exists.
+    assert metric["validation_state"] == "unchecked"
+
+
+async def test_deleting_a_dataset_is_refused_while_anything_binds_it(auth_client, ws):
+    """The FKs cascade, so an allowed delete here would take metrics with it."""
+    await build_model(auth_client, ws)
+
+    resp = await auth_client.delete(f"/workspaces/{ws}/semantic/models/sales/datasets/orders")
+
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert detail["error"] == "dataset_in_use"
+    # Naming them is what makes the refusal actionable rather than annoying.
+    assert "metric 'revenue'" in detail["dependents"]
+    assert "dimension 'order_date'" in detail["dependents"]
+    assert "relationship 'orders_to_customers'" in detail["dependents"]
+    # Nothing was removed on the way to refusing.
+    body = (await auth_client.get(f"/workspaces/{ws}/semantic/models/sales")).json()
+    assert len(body["metrics"]) == 1
+
+
+async def test_a_dataset_can_be_deleted_once_nothing_binds_it(auth_client, ws):
+    await build_model(auth_client, ws)
+    base = f"/workspaces/{ws}/semantic/models/sales"
+    await auth_client.delete(f"{base}/relationships/orders_to_customers")
+    await auth_client.delete(f"{base}/dimensions/country")
+
+    resp = await auth_client.delete(f"{base}/datasets/customers")
+
+    assert resp.status_code == 204
+    body = (await auth_client.get(base)).json()
+    assert {d["name"] for d in body["datasets"]} == {"orders"}
+
+
+async def test_deleting_something_that_is_not_there_is_a_404(auth_client, ws):
+    await build_model(auth_client, ws)
+
+    resp = await auth_client.delete(f"/workspaces/{ws}/semantic/models/sales/metrics/nope")
+
+    assert resp.status_code == 404
+
+
+async def test_a_reader_cannot_delete_a_definition(client, auth_client, ws, reader):
+    await build_model(auth_client, ws)
+    await client.post("/auth/login", json={"email": "reader@s.local", "password": "pw"})
+
+    resp = await client.delete(f"/workspaces/{ws}/semantic/models/sales/metrics/revenue")
+
+    assert resp.status_code == 403

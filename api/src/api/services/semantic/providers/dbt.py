@@ -161,6 +161,26 @@ async def models_from_manifest(payload, *, resolve: Resolver) -> ProviderModels:
     slug = re.sub(r"[^a-z0-9_]+", "_", str(project).lower()).strip("_") or "dbt"
     out.model_slugs.add(slug)
 
+    # dbt scopes dimension names *per semantic model*; DuckHaven scopes them per
+    # model, and a dbt project becomes one model. So `status` on orders and
+    # `status` on customers — ordinary in any real project — would collide on
+    # `uq_semantic_dimensions_name` and fail the whole import with an integrity
+    # error rather than importing either.
+    #
+    # Names used by exactly one semantic model keep their bare form, because
+    # that is what people write in queries and it is unambiguous. A name used by
+    # several is qualified with its dataset for *all* of them, so which one you
+    # get never depends on manifest ordering.
+    declared_by: dict[str, set[str]] = {}
+    for sm in semantic_models.values():
+        for dim in sm.get("dimensions") or []:
+            if dim_name := str(dim.get("name") or ""):
+                declared_by.setdefault(dim_name, set()).add(str(sm.get("name") or ""))
+    ambiguous = {name for name, owners in declared_by.items() if len(owners) > 1}
+
+    def dimension_name(dataset: str, dim_name: str) -> str:
+        return f"{dataset}_{dim_name}" if dim_name in ambiguous else dim_name
+
     datasets: list[CanonicalDataset] = []
     dimensions: list[CanonicalDimension] = []
     relationships: list[CanonicalRelationship] = []
@@ -233,7 +253,7 @@ async def models_from_manifest(payload, *, resolve: Resolver) -> ProviderModels:
                 grains = _grains_from((dim.get("type_params") or {}).get("time_granularity"))
             dimensions.append(
                 CanonicalDimension(
-                    name=dim_name,
+                    name=dimension_name(name, dim_name),
                     dataset=name,
                     expr=column,
                     kind=kind,
@@ -245,12 +265,15 @@ async def models_from_manifest(payload, *, resolve: Resolver) -> ProviderModels:
             )
 
         for measure in sm.get("measures") or []:
+            axis = measure.get("agg_time_dimension") or default_axis[name]
             measures[str(measure.get("name"))] = (
                 name,
                 str(measure.get("agg") or ""),
                 measure.get("expr"),
-                measure.get("agg_time_dimension") or default_axis[name],
+                dimension_name(name, str(axis)) if axis else None,
             )
+
+    relationship_names: set[str] = set()
 
     # Foreign entities become joins toward whoever declares the primary one.
     for unique_id, sm in semantic_models.items():
@@ -266,12 +289,24 @@ async def models_from_manifest(payload, *, resolve: Resolver) -> ProviderModels:
                 out.skipped.append(Skipped(ref=f"{left}.{entity_name}", reason="no_primary_entity"))
                 continue
             right, right_column = target
+            left_column = _column_of(entity)
+            # Two foreign entities pointing at the same dataset (a shipping and
+            # a billing address, say) would otherwise produce the same name.
+            rel_name = f"{left}_to_{right}"
+            if rel_name in relationship_names:
+                rel_name = f"{left}_to_{right}_via_{left_column}"
+            if rel_name in relationship_names:
+                out.skipped.append(
+                    Skipped(ref=f"{left}.{entity_name}", reason="duplicate_relationship_name")
+                )
+                continue
+            relationship_names.add(rel_name)
             relationships.append(
                 CanonicalRelationship(
-                    name=f"{left}_to_{right}",
+                    name=rel_name,
                     left=left,
                     right=right,
-                    join_columns=((_column_of(entity), right_column),),
+                    join_columns=((left_column, right_column),),
                     cardinality="many_to_one",
                 )
             )

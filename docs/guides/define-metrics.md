@@ -283,6 +283,10 @@ The bindings cascade in the database, so allowing this would quietly destroy
 every definition on the dataset. Refusing costs one extra step and makes the
 blast radius something you chose rather than discovered.
 
+Reusing a name is refused the same way: each of `datasets`, `dimensions`,
+`metrics` and `relationships` is unique within a model, and a repeat comes back
+as **409** naming the clash.
+
 !!! note "Imported models are removed at their source"
     `DELETE` on a definition in an imported model returns **409**, like every
     other edit. Deleting it here would only last until the next import.

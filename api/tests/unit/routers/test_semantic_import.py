@@ -383,3 +383,19 @@ async def test_an_imported_definition_cannot_be_deleted_here(auth_client, ws):
 
     assert resp.status_code == 409
     assert resp.json()["detail"]["error"] == "imported_model"
+
+
+async def test_a_scalar_where_a_list_belongs_is_a_422_not_a_500(auth_client, ws):
+    """Hand-written YAML gets hand-written mistakes.
+
+    `synonyms: 5` used to reach a slice on an int and raise TypeError, which
+    nothing upstream catches — so one typo returned 500 and imported nothing,
+    with no indication of which line was wrong.
+    """
+    doctored = DOCUMENT.replace("synonyms: [turnover]", "synonyms: 5")
+    assert doctored != DOCUMENT, "fixture no longer contains the synonyms list"
+
+    resp = await _import(auth_client, ws, doctored)
+
+    assert resp.status_code == 422
+    assert "list" in str(resp.json()["detail"]).lower()

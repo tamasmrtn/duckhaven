@@ -681,3 +681,42 @@ async def test_a_reader_cannot_delete_a_definition(client, auth_client, ws, read
     resp = await client.delete(f"/workspaces/{ws}/semantic/models/sales/metrics/revenue")
 
     assert resp.status_code == 403
+
+
+@pytest.mark.parametrize(
+    ("kind", "body"),
+    [
+        (
+            "datasets",
+            {
+                "name": "orders",
+                "catalog": "warehouse",
+                "schema_name": "analytics",
+                "table_name": "orders",
+            },
+        ),
+        ("dimensions", {"name": "country", "dataset": "customers"}),
+        ("metrics", {"name": "revenue", "dataset": "orders", "agg": "sum", "expr": "x"}),
+        (
+            "relationships",
+            {
+                "name": "orders_to_customers",
+                "left_dataset": "orders",
+                "right_dataset": "customers",
+                "join_columns": [{"left": "customer_id", "right": "id"}],
+            },
+        ),
+    ],
+)
+async def test_a_duplicate_name_is_a_conflict_not_a_server_error(auth_client, ws, kind, body):
+    """Reusing a name is an ordinary thing to do in a form, not a server fault.
+
+    Each child table is unique on `(model_id, name)`, and nothing converts an
+    IntegrityError into a response — so without a check these all came back 500.
+    """
+    await build_model(auth_client, ws)
+
+    resp = await auth_client.post(f"/workspaces/{ws}/semantic/models/sales/{kind}", json=body)
+
+    assert resp.status_code == 409
+    assert body["name"] in str(resp.json()["detail"])

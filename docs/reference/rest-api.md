@@ -101,7 +101,7 @@ Define what business terms mean, and compile questions into SQL from those defin
 | `POST /api/workspaces/{ws}/semantic/models/{slug}/publish` | Make the model authoritative to the assistant. Validates first; **422** if anything is broken. Requires workspace **owner**. |
 | `POST /api/workspaces/{ws}/semantic/models/{slug}/deprecate` | Retire it: still readable, excluded from new answers. Requires **owner**. |
 | `POST /api/workspaces/{ws}/semantic/models/{slug}/validate` | Resolve every binding against the live catalog and record the outcome. |
-| `POST /api/workspaces/{ws}/semantic/models/{slug}/{datasets,dimensions,metrics,relationships}` | Add a definition. Requires **writer**, plus `metadata` tier on any table a dataset binds. |
+| `POST /api/workspaces/{ws}/semantic/models/{slug}/{datasets,dimensions,metrics,relationships}` | Add a definition. Requires **writer**, plus `metadata` tier on any table a dataset binds. **409** if the name is already used in this model. |
 | `PATCH /api/workspaces/{ws}/semantic/models/{slug}/metrics/{name}` | Edit a metric. Resets its validation state to `unchecked`. |
 | `DELETE /api/workspaces/{ws}/semantic/models/{slug}/{metrics,dimensions,relationships}/{name}` | Remove one definition. Requires **writer**; **409** on an imported model. A dimension is refused with **409** while a metric is measured on it — an absent time axis is indistinguishable from one never set, and would be answered on the dataset's default date. |
 | `DELETE /api/workspaces/{ws}/semantic/models/{slug}/datasets/{name}` | Remove a dataset. **409** naming the dependents while any dimension, metric or relationship still binds it — the delete would otherwise cascade to them. |

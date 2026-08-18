@@ -24,7 +24,8 @@ def test_linear_score_direction_and_clamp():
 
 
 def test_fragmentation_factor_explains_itself():
-    f = scoring.score_fragmentation({"small_file_ratio": 0.4}, T)
+    # 0.45 is the midpoint between the good (0.10) and bad (0.80) bounds.
+    f = scoring.score_fragmentation({"small_file_ratio": 0.45}, T)
     assert f is not None
     assert f["score"] == 50
     assert f["weight"] == 35
@@ -35,17 +36,39 @@ def test_fragmentation_missing_metric_returns_none():
     assert scoring.score_fragmentation({}, T) is None
 
 
-def test_metadata_picks_worst_of_two_signals():
+def test_snapshots_scores_on_age():
+    # Age is the honest signal (expiration is age-based): at the retention target
+    # it scores 100, at the bad bound it scores 0.
+    f = scoring.score_snapshots({"oldest_snapshot_age_days": 7.0}, T)
+    assert f is not None
+    assert f["score"] == 100
+    f = scoring.score_snapshots({"oldest_snapshot_age_days": 21.0}, T)
+    assert f is not None
+    assert f["score"] == 0
+
+
+def test_snapshots_falls_back_to_count():
+    # When age is missing, count is the fallback: 100 snapshots vs good 5 / bad
+    # 500 is ~81.
+    f = scoring.score_snapshots({"snapshot_count": 100}, T)
+    assert f is not None
+    assert f["score"] == 81
+    assert scoring.score_snapshots({}, T) is None
+
+
+def test_metadata_uses_manifest_ratio_only():
+    # metadata_bytes is never populated (no cheap way to measure it), so the score
+    # must ignore it and rely solely on the manifest-to-datafile ratio.
     metrics = {
         "manifest_count": 5,
-        "data_file_count": 100,  # ratio 0.05 -> decent score
+        "data_file_count": 100,  # ratio 0.05 -> 90 against bad bound 0.50
         "metadata_bytes": 50 * MIB,
-        "total_data_bytes": 100 * MIB,  # ratio 0.5 -> very bad
+        "total_data_bytes": 100 * MIB,
     }
     f = scoring.score_metadata(metrics, T)
     assert f is not None
-    # 0.5 metadata ratio is past the bad bound (0.20) -> score 0, the worst signal.
-    assert f["score"] == 0
+    assert f["score"] == 90
+    assert "manifest" in f["detail"].lower()
 
 
 def test_score_table_renormalizes_when_dimensions_missing():
@@ -62,7 +85,6 @@ def test_score_table_perfect_when_all_healthy():
         "snapshot_count": 1,
         "manifest_count": 1,
         "data_file_count": 1000,
-        "metadata_bytes": 0,
         "total_data_bytes": 100 * MIB,
         "orphan_bytes": 0,
     }
@@ -71,10 +93,11 @@ def test_score_table_perfect_when_all_healthy():
     assert set(factors) == {"fragmentation", "snapshots", "metadata", "storage"}
 
 
-def test_score_table_no_metrics_is_optimistic():
-    # Nothing measurable -> we don't punish the table; it reads as healthy.
+def test_score_table_no_metrics_is_unknown():
+    # Nothing measurable -> unknown, not a perfect 100 (a failed probe must not
+    # read as "Healthy").
     score, factors = scoring.score_table({}, T)
-    assert score == 100
+    assert score is None
     assert factors == {}
 
 

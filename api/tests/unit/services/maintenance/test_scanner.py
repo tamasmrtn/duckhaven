@@ -11,14 +11,22 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from api.models.agent import Agent
-from api.models.maintenance import MaintenancePolicy
+from api.models.catalog import Catalog
+from api.models.maintenance import MaintenancePolicy, TableHealthSample
 from api.models.query import Query
 from api.models.user import User
 from api.models.workspace import Workspace
 from api.services.agent_registry import registry
 from api.services.auth import hash_password
 from api.services.maintenance import scanner as scanner_mod
-from api.services.maintenance.scanner import _due, run_cycle, run_tick, scan_leadership
+from api.services.maintenance.scanner import (
+    _due,
+    _prune_old_samples,
+    run_cycle,
+    run_tick,
+    scan_leadership,
+)
+from api.services.polaris import PolarisSnapshot
 
 
 class FakeWS:
@@ -39,6 +47,15 @@ def _clear_registry():
     yield
     for cid in list(registry.connected_ids()):
         registry.unregister(uuid.UUID(cid))
+
+
+@pytest.fixture(autouse=True)
+def _clear_enumeration_cache():
+    # The scanner's TTL enumeration cache is module-level; a stale entry from a
+    # previous test would leak across the (fresh per test) fake_polaris.
+    scanner_mod._enumeration_cache.clear()
+    yield
+    scanner_mod._enumeration_cache.clear()
 
 
 async def _seed(db, fake_polaris, *, connect_agent: bool = True) -> tuple[Workspace, FakeWS | None]:
@@ -169,3 +186,93 @@ async def test_run_tick_standby_skips_cycle(session_factory, fake_polaris, monke
     result = await run_tick(session_factory, fake_polaris)
     assert result == {"status": "standby"}
     assert called is False
+
+
+async def _seed_prior_sample(db, fake_polaris, *, snapshot_id, scanned_at) -> Catalog:
+    """Seed the workspace/table plus one prior health sample with a snapshot id."""
+    ws, _ = await _seed(db, fake_polaris)
+    catalog = (await db.execute(select(Catalog))).scalar_one()
+    db.add(
+        TableHealthSample(
+            workspace_id=ws.id,
+            catalog_id=catalog.id,
+            schema_name="analytics",
+            table_name="events",
+            snapshot_id=snapshot_id,
+            scanned_at=scanned_at,
+        )
+    )
+    await db.commit()
+    return catalog
+
+
+def _set_snapshots(fake_polaris, catalog, snapshot_id: int) -> None:
+    fake_polaris.snapshots[(catalog.polaris_name, "analytics", "events")] = [
+        PolarisSnapshot(snapshot_id=snapshot_id, timestamp_ms=0, is_current=True)
+    ]
+
+
+async def test_filter_changed_skips_unchanged_table(session_factory, fake_polaris):
+    async with session_factory() as db:
+        catalog = await _seed_prior_sample(
+            db, fake_polaris, snapshot_id=42, scanned_at=datetime.now(tz=UTC)
+        )
+    _set_snapshots(fake_polaris, catalog, 42)
+
+    result = await run_cycle(session_factory, fake_polaris, force=True)
+    assert result["status"] == "ran"
+    assert result["dispatched"] == 0  # snapshot unchanged -> skipped
+
+
+async def test_filter_changed_reprobes_changed_table(session_factory, fake_polaris):
+    async with session_factory() as db:
+        catalog = await _seed_prior_sample(
+            db, fake_polaris, snapshot_id=42, scanned_at=datetime.now(tz=UTC)
+        )
+    _set_snapshots(fake_polaris, catalog, 43)
+
+    result = await run_cycle(session_factory, fake_polaris, force=True)
+    assert result["dispatched"] == 1  # snapshot changed -> re-probed
+
+
+async def test_filter_changed_reprobes_stale_sample(session_factory, fake_polaris):
+    # Even an unchanged snapshot is re-probed once the last sample is too old
+    # (safety net so a silently-broken table doesn't go unobserved forever).
+    async with session_factory() as db:
+        catalog = await _seed_prior_sample(
+            db,
+            fake_polaris,
+            snapshot_id=42,
+            scanned_at=datetime.now(tz=UTC) - timedelta(days=8),
+        )
+    _set_snapshots(fake_polaris, catalog, 42)
+
+    result = await run_cycle(session_factory, fake_polaris, force=True)
+    assert result["dispatched"] == 1
+
+
+async def test_prune_old_samples(session_factory, fake_polaris):
+    async with session_factory() as db:
+        ws, _ = await _seed(db, fake_polaris)
+        catalog = (await db.execute(select(Catalog))).scalar_one()
+        old = TableHealthSample(
+            workspace_id=ws.id,
+            catalog_id=catalog.id,
+            schema_name="analytics",
+            table_name="events",
+            scanned_at=datetime.now(tz=UTC) - timedelta(days=91),
+        )
+        recent = TableHealthSample(
+            workspace_id=ws.id,
+            catalog_id=catalog.id,
+            schema_name="analytics",
+            table_name="events",
+            scanned_at=datetime.now(tz=UTC) - timedelta(days=1),
+        )
+        db.add_all([old, recent])
+        await db.commit()
+
+        await _prune_old_samples(db, datetime.now(tz=UTC))
+        remaining = (await db.execute(select(TableHealthSample))).scalars().all()
+        assert len(remaining) == 1
+        assert remaining[0].scanned_at == recent.scanned_at

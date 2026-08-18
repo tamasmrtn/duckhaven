@@ -6,6 +6,7 @@ import {
   Play,
   Square,
   Save,
+  Ruler,
   Settings2,
   AlertCircle,
   PanelLeft,
@@ -54,6 +55,7 @@ import { CatalogTree } from "@/features/catalog/CatalogTree";
 import { useCatalogs } from "@/queries/catalogs";
 import { takePendingQuery } from "@/features/catalog/worksheetSql";
 import { ProfilePanel } from "@/features/worksheet/profile/ProfilePanel";
+import { SaveAsMetricDialog } from "@/features/semantic/SaveAsMetricDialog";
 import { SqlEditor, type SqlEditorHandle } from "./SqlEditor";
 import { applyScopedEdit } from "./scopedEdit";
 import { useSqlCompletion } from "./completion/useSqlCompletion";
@@ -289,6 +291,11 @@ export function WorksheetPage() {
   const runLock = useRef(false);
   // Imperative handle to read the editor's current selection / cursor statement.
   const editorRef = useRef<SqlEditorHandle>(null);
+
+  // The selection being promoted to a metric. Read at click time rather than
+  // tracked live: the editor exposes the selection imperatively, and a metric is
+  // saved rarely enough that subscribing to every cursor move earns nothing.
+  const [metricSql, setMetricSql] = useState<string | null>(null);
 
   // Assistant ↔ editor bridge: lets the AI panel read the current SQL and propose
   // edits that the user accepts or rejects, with the changed lines highlighted.
@@ -812,6 +819,27 @@ export function WorksheetPage() {
                 variant="ghost"
                 size="sm"
                 className="h-8 text-xs"
+                title="Save the selected expression as a metric"
+                onClick={() => {
+                  const selected = editorRef.current
+                    ?.getSelectionRange()
+                    ?.text.trim();
+                  if (!selected) {
+                    toast.info(
+                      "Select the expression first, for example SUM(total_amount).",
+                    );
+                    return;
+                  }
+                  setMetricSql(selected);
+                }}
+              >
+                <Ruler className="size-3.5 mr-1" />
+                Save as metric…
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 text-xs"
                 onClick={openSaveDialog}
               >
                 <Save className="size-3.5 mr-1" />
@@ -1065,6 +1093,18 @@ export function WorksheetPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {metricSql !== null && (
+        // Keyed on the selection so reopening with different SQL reseeds the
+        // form rather than showing the previous expression.
+        <SaveAsMetricDialog
+          key={metricSql}
+          ws={ws}
+          sql={metricSql}
+          open
+          onOpenChange={(next) => !next && setMetricSql(null)}
+        />
+      )}
     </div>
   );
 }

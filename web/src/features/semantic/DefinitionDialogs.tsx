@@ -39,7 +39,7 @@ import type { Aggregation, SemanticModel } from "@/types/semantic";
  * the input rather than in documentation somebody would have to go and find.
  */
 
-function useSubmitError() {
+export function useSubmitError() {
   const [error, setError] = useState<string | null>(null);
   const report = (err: unknown) =>
     setError(err instanceof ApiError ? err.message : "Something went wrong.");
@@ -54,7 +54,7 @@ function useSubmitError() {
  * a sighted user reads it. Selects are Radix triggers rather than form
  * controls, so those carry their own ``aria-label`` at the call site.
  */
-function Field({
+export function Field({
   label,
   hint,
   htmlFor,
@@ -79,7 +79,7 @@ function Field({
   );
 }
 
-function Shell({
+export function Shell({
   open,
   onOpenChange,
   title,
@@ -88,6 +88,7 @@ function Shell({
   pending,
   onSubmit,
   disabled,
+  submitLabel = "Add",
   children,
 }: {
   open: boolean;
@@ -98,6 +99,7 @@ function Shell({
   pending: boolean;
   onSubmit: () => void;
   disabled: boolean;
+  submitLabel?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -122,7 +124,7 @@ function Shell({
             Cancel
           </Button>
           <Button size="sm" disabled={disabled || pending} onClick={onSubmit}>
-            Add
+            {submitLabel}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -130,7 +132,7 @@ function Shell({
   );
 }
 
-function toList(value: string): string[] {
+export function toList(value: string): string[] {
   return value
     .split(",")
     .map((v) => v.trim())

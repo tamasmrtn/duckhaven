@@ -30,8 +30,8 @@ partial scan still scores over what it measured.
 | Dimension | Weight | Metric |
 |---|---|---|
 | Fragmentation | 35% | Share of data files below the target file size. |
-| Snapshot hygiene | 25% | Snapshot count against the retention target. |
-| Metadata health | 20% | Manifest count relative to data files, and metadata size relative to data. |
+| Snapshot hygiene | 25% | Oldest snapshot age against the retention target. |
+| Metadata health | 20% | Manifest count relative to data files. |
 | Storage efficiency | 20% | Estimated orphaned bytes relative to total data bytes. |
 
 Every score is returned with its per-dimension breakdown — raw value, sub-score, and a one-line explanation — so the UI
@@ -50,7 +50,7 @@ and a `remediation` command for an external engine.
 | Kind | Fires when | Confidence | Remediation |
 |---|---|---|---|
 | `compact_small_files` | Small-file ratio above threshold | high | `rewrite_data_files` |
-| `expire_snapshots` | Snapshot count past the retention target | high | `expire_snapshots` |
+| `expire_snapshots` | Oldest snapshot age past the retention target | high | `expire_snapshots` |
 | `rewrite_manifests` | Manifest count high relative to data files | high | `rewrite_manifests` |
 | `cleanup_orphans` | Orphaned bytes above threshold | low | `remove_orphan_files` |
 | `investigate_growth` | Storage grew abnormally over the trend window | medium | Review writers / partitioning |
@@ -85,7 +85,7 @@ Maintenance exposes two controls in **Admin → Maintenance**:
 
 An **Advanced** section (collapsed by default) exposes the resolved threshold values for individual override.
 
-Balanced defaults: 128 MB target file size, small-file ratio warns above 30%, 7-day snapshot retention, orphan share
+Balanced defaults: 256 MB target file size, small-file ratio warns above 30%, 7-day snapshot retention, orphan share
 warns above 5% of data, daily scan with the orphan/storage tier weekly.
 
 See the [configuration reference](../reference/configuration.md#maintenance-advisor) for the scanner environment
@@ -95,9 +95,13 @@ variables.
 
 - **No in-app apply.** Recommendations are advisory; run the remediation command in an external Iceberg engine. See the
   recommend-only note above.
-- **Orphan detection is an estimate.** It compares files listed under a table's location against files referenced by
-  current metadata. In-flight writes and files shared across snapshots can appear orphaned, so these recommendations
-  are flagged low confidence and are an estimate to investigate — DuckHaven never deletes a file.
+- **Orphan detection is an estimate.** It compares files listed under a table's data and metadata directories against
+  files referenced by the *current* snapshot's metadata. Files referenced only by older snapshots (still valid for
+  time travel) can appear orphaned, and there is no age window — DuckDB exposes no file modification time — so these
+  recommendations are flagged low confidence and are an estimate to investigate, never an instruction to delete.
+- **File sizes are estimated on the deep tier.** DuckDB's `iceberg` extension does not expose a data-file size column,
+  so the deep scan reads Parquet footers to size files; on very wide tables it samples a bounded subset and scales the
+  total, so the small-file ratio and average are estimates.
 - **Single scanner per cluster.** Only one scan cycle runs at a time across the whole deployment. With multiple API
   replicas the loop coordinates through a Postgres advisory lock (leader election), so it is safe to leave
   `MAINTENANCE_SCANNER_ENABLED` on every replica — exactly one wins each tick. See

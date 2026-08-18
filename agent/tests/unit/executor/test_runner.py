@@ -384,7 +384,9 @@ class _HealthConn:
     """Routes the health probe's queries by inspecting the SQL text.
 
     ``iceberg_metadata`` has both a ``LIMIT 0`` column-introspection call and an
-    aggregate call; ``glob`` lists the data directory for orphan detection.
+    aggregate call; ``iceberg_snapshots`` is queried three ways (count, latest
+    snapshot id, oldest timestamp); ``glob`` lists the data and metadata
+    directories for orphan detection.
     """
 
     def __init__(
@@ -392,13 +394,21 @@ class _HealthConn:
         *,
         files,
         listed=None,
+        metadata_listed=None,
         columns=("manifest_content", "file_path", "manifest_path", "file_size_in_bytes"),
         parquet_sizes=None,
+        snapshot_count=7,
+        latest_snapshot_id=123456789,
+        oldest_timestamp_ms=None,
     ):
         self.files = files  # list of (file_path, manifest_path, size) for DATA files
         self.listed = listed or []
+        self.metadata_listed = metadata_listed or []
         self._columns = columns
         self.parquet_sizes = parquet_sizes or []  # (file_name, size) from the footers
+        self.snapshot_count = snapshot_count
+        self.latest_snapshot_id = latest_snapshot_id
+        self.oldest_timestamp_ms = oldest_timestamp_ms
         self._last = ""
 
     def execute(self, sql, *args):
@@ -408,12 +418,18 @@ class _HealthConn:
         return self
 
     def fetchone(self):
+        if "min(timestamp_ms)" in self._last:
+            return (self.oldest_timestamp_ms,)
+        if "ORDER BY sequence_number DESC" in self._last:
+            return (self.latest_snapshot_id,)
         if "iceberg_snapshots" in self._last:
-            return (7,)
+            return (self.snapshot_count,)
         return None
 
     def fetchall(self):
         if "glob" in self._last:
+            if "/metadata/" in self._last:
+                return [(f,) for f in self.metadata_listed]
             return [(f,) for f in self.listed]
         if "parquet_metadata" in self._last:
             return self.parquet_sizes
@@ -515,6 +531,40 @@ def test_collect_table_health_orphan_estimate():
     assert health["orphan_file_count"] == 2
     # estimated from the live average file size (100 bytes each).
     assert health["orphan_bytes"] == 200
+
+
+def test_collect_table_health_reports_snapshot_id_and_age():
+    from agent.executor.runner import collect_table_health
+
+    files = [("s3://b/t/data/a.parquet", "m1", 10)]
+    oldest_ms = int(time.time() * 1000) - 3 * 86_400_000  # 3 days old
+    conn = _HealthConn(files=files, latest_snapshot_id=123456789, oldest_timestamp_ms=oldest_ms)
+    health = collect_table_health(
+        conn, "cat", "analytics", "events", target_file_bytes=128 * 1024**2
+    )
+    assert health["snapshot_id"] == 123456789
+    assert health["oldest_snapshot_age_days"] == pytest.approx(3.0, abs=0.01)
+
+
+def test_collect_table_health_orphan_estimate_includes_metadata():
+    from agent.executor.runner import collect_table_health
+
+    # The live manifest path is referenced, so only the stray metadata file is
+    # orphaned; the data directory has no orphans.
+    files = [("s3://b/t/data/a.parquet", "s3://b/t/metadata/v1.metadata.json", 100)]
+    conn = _HealthConn(
+        files=files,
+        listed=["s3://b/t/data/a.parquet"],
+        metadata_listed=[
+            "s3://b/t/metadata/v1.metadata.json",
+            "s3://b/t/metadata/orphan.metadata.json",
+        ],
+    )
+    health = collect_table_health(
+        conn, "cat", "analytics", "events", target_file_bytes=128 * 1024**2, include_orphans=True
+    )
+    assert health["orphan_file_count"] == 1
+    assert health["orphan_bytes"] == 100
 
 
 def test_collect_table_health_best_effort_on_failure():

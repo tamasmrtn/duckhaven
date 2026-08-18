@@ -74,6 +74,10 @@ async def test_collect_table_health_on_written_table(
     assert health["schema"] == ns
     assert health["table"] == "events"
     assert health["snapshot_count"] is not None and health["snapshot_count"] >= 1
+    assert health["snapshot_id"] is not None
+    assert (
+        health["oldest_snapshot_age_days"] is not None and health["oldest_snapshot_age_days"] >= 0
+    )
     assert health["data_file_count"] is not None and health["data_file_count"] >= 1
     assert health["manifest_count"] is not None and health["manifest_count"] >= 1
     # File sizes are only available when the iceberg extension exposes a size
@@ -92,9 +96,9 @@ async def test_collect_table_health_on_written_table(
 async def test_collect_table_health_deep_tier_estimates_orphans(
     polaris_base_url: str, polaris_creds, polaris_s3_catalog: tuple[str, str]
 ) -> None:
-    """The deep tier (``include_orphans``) lists the data directory for a
-    non-negative orphan estimate, and derives file sizes from the Parquet footers
-    when the iceberg extension exposes no size column."""
+    """The deep tier (``include_orphans``) lists the data and metadata directories
+    for a non-negative orphan estimate, and derives file sizes from the Parquet
+    footers when the iceberg extension exposes no size column."""
     catalog, ns = polaris_s3_catalog
     conn = duckdb.connect()
     try:

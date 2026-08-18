@@ -282,6 +282,8 @@ def collect_table_health(
         "schema": schema,
         "table": table,
         "snapshot_count": None,
+        "snapshot_id": None,
+        "oldest_snapshot_age_days": None,
         "data_file_count": None,
         "manifest_count": None,
         "total_data_bytes": None,
@@ -298,7 +300,24 @@ def collect_table_health(
     except Exception as exc:  # noqa: BLE001 - metadata is best-effort
         logger.warning("iceberg_snapshots count failed for %s.%s: %s", schema, table, exc)
 
+    try:
+        latest = conn.execute(
+            f"SELECT snapshot_id FROM iceberg_snapshots({ident}) "
+            "ORDER BY sequence_number DESC LIMIT 1"
+        ).fetchone()
+        if latest:
+            health["snapshot_id"] = latest[0]
+        oldest = conn.execute(
+            f"SELECT min(timestamp_ms) FROM iceberg_snapshots({ident})"
+        ).fetchone()
+        if oldest and oldest[0] is not None:
+            age_ms = int(time.time() * 1000) - int(oldest[0])
+            health["oldest_snapshot_age_days"] = round(age_ms / 86_400_000, 4)
+    except Exception as exc:  # noqa: BLE001 - metadata is best-effort
+        logger.warning("iceberg_snapshots age failed for %s.%s: %s", schema, table, exc)
+
     live_paths: list[str] = []
+    manifests: set[str] = set()
     try:
         columns = _iceberg_columns(conn, ident)
         classify = "manifest_content" if "manifest_content" in columns else "content"
@@ -317,32 +336,51 @@ def collect_table_health(
         live_paths = [r[0] for r in rows if r[0] is not None]
         health["data_file_count"] = len(rows)
         health["manifest_count"] = len(manifests) or None
-        # DuckDB's iceberg extension (through 1.5.3) does not expose a data-file
-        # size column, so when it is absent fall back to the Parquet footers. This
-        # reads one footer per file, so it runs only on the deep tier alongside the
-        # orphan scan to keep the cheap cadence free of per-file object reads.
+        # DuckDB's iceberg extension does not expose a data-file size column, so
+        # when it is absent fall back to the Parquet footers. This reads one
+        # footer per file, so it runs only on the deep tier alongside the orphan
+        # scan to keep the cheap cadence free of per-file object reads; on very
+        # wide tables the footer probe samples a bounded subset (see
+        # _parquet_file_sizes) and the total is scaled to the full file count.
+        sampled = False
         if not sizes and include_orphans and live_paths:
-            sizes = _parquet_file_sizes(conn, live_paths)
+            sizes, sampled = _parquet_file_sizes(conn, live_paths)
         if sizes:
             total = sum(sizes)
-            health["total_data_bytes"] = total
             health["avg_file_bytes"] = total // len(sizes)
+            health["total_data_bytes"] = (total // len(sizes)) * len(rows) if sampled else total
             small = sum(1 for s in sizes if s < target_file_bytes)
             health["small_file_ratio"] = round(small / len(sizes), 4)
     except Exception as exc:  # noqa: BLE001 - metadata is best-effort
         logger.warning("iceberg_metadata aggregate failed for %s.%s: %s", schema, table, exc)
 
     if include_orphans and live_paths:
-        health.update(_orphan_estimate(conn, live_paths, health.get("avg_file_bytes")))
+        health.update(_orphan_estimate(conn, live_paths, manifests, health.get("avg_file_bytes")))
     return health
 
 
-def _parquet_file_sizes(conn: duckdb.DuckDBPyConnection, paths: list[str]) -> list[int]:
+# Bound the per-file footer reads on the deep tier: a very wide table (100k+
+# files) would otherwise issue one ranged read per file. The size distribution
+# (small-file ratio, average) is well estimated from a bounded sample.
+_MAX_FOOTER_READS = 1000
+
+
+def _parquet_file_sizes(
+    conn: duckdb.DuckDBPyConnection, paths: list[str]
+) -> tuple[list[int], bool]:
     """Per-file sizes read from the Parquet footers, for iceberg-extension versions
     that don't surface a size column in ``iceberg_metadata``. One ranged read per
     file (hence deep-tier only); ``total_compressed_size`` omits the footer/header
     but is well within tolerance for small-file detection against the target size.
+
+    Returns ``(sizes, sampled)``: when there are more files than
+    ``_MAX_FOOTER_READS``, a deterministic, evenly-spaced subset is read and
+    ``sampled`` is True so the caller can scale the total to the full file count.
     """
+    sampled = len(paths) > _MAX_FOOTER_READS
+    if sampled:
+        step = len(paths) / _MAX_FOOTER_READS
+        paths = [paths[int(i * step)] for i in range(_MAX_FOOTER_READS)]
     try:
         rows = conn.execute(
             "SELECT file_name, sum(total_compressed_size) AS sz "
@@ -351,18 +389,22 @@ def _parquet_file_sizes(conn: duckdb.DuckDBPyConnection, paths: list[str]) -> li
         ).fetchall()
     except Exception as exc:  # noqa: BLE001 - the size probe is best-effort
         logger.warning("parquet_metadata size probe failed: %s", exc)
-        return []
-    return [int(sz) for _, sz in rows if sz is not None]
+        return [], False
+    return [int(sz) for _, sz in rows if sz is not None], sampled
 
 
 def _orphan_estimate(
-    conn: duckdb.DuckDBPyConnection, live_paths: list[str], avg_file_bytes: int | None
+    conn: duckdb.DuckDBPyConnection,
+    live_paths: list[str],
+    manifest_paths: set[str],
+    avg_file_bytes: int | None,
 ) -> dict[str, Any]:
-    """Count files under the data directory not referenced by current metadata.
+    """Count files under the table location not referenced by current metadata.
 
     Derives the data prefix from a live file path (no need to resolve the table
-    location separately), lists it with ``glob``, and subtracts the live set.
-    ``glob`` yields no sizes, so orphan bytes are estimated from the live average.
+    location separately), lists both the data and metadata directories with
+    ``glob``, and subtracts the live data-file and manifest sets. ``glob`` yields
+    no sizes, so orphan bytes are estimated from the live average file size.
     """
     out: dict[str, Any] = {"orphan_file_count": None, "orphan_bytes": None}
     sample = live_paths[0]
@@ -370,13 +412,17 @@ def _orphan_estimate(
     if marker not in sample:
         return out
     data_dir = sample[: sample.index(marker) + len(marker)]
-    pattern = f"{data_dir}**".replace("'", "''")
-    try:
-        listed = {r[0] for r in conn.execute(f"SELECT file FROM glob('{pattern}')").fetchall()}
-    except Exception as exc:  # noqa: BLE001 - listing is best-effort
-        logger.warning("glob orphan scan failed for %s: %s", data_dir, exc)
-        return out
-    orphans = listed - set(live_paths)
+    metadata_dir = data_dir.replace("/data/", "/metadata/")
+    live = set(live_paths) | manifest_paths
+    orphans: set[str] = set()
+    for directory in (data_dir, metadata_dir):
+        pattern = f"{directory}**".replace("'", "''")
+        try:
+            listed = {r[0] for r in conn.execute(f"SELECT file FROM glob('{pattern}')").fetchall()}
+        except Exception as exc:  # noqa: BLE001 - listing is best-effort
+            logger.warning("glob orphan scan failed for %s: %s", directory, exc)
+            continue
+        orphans |= listed - live
     out["orphan_file_count"] = len(orphans)
     if avg_file_bytes:
         out["orphan_bytes"] = len(orphans) * avg_file_bytes

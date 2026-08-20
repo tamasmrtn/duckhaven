@@ -27,6 +27,7 @@ import { useMe } from "@/queries/auth";
 import { useWorkspaceSearch } from "@/queries/search";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { getRecentlyViewed } from "@/utils/recentlyViewed";
+import { objectPath } from "@/utils/objectPath";
 import { stashWorksheetQuery } from "@/features/catalog/worksheetSql";
 import { navItems } from "./navItems";
 import { StorageIcon } from "./StorageIcon";
@@ -36,14 +37,6 @@ interface CommandPaletteProps {
   open: boolean;
   onClose: () => void;
   currentWs?: string;
-}
-
-// A table/schema search result carries enough to build its route on its own
-// (no separate id — see the search endpoint's docstring), so navigation is
-// just interpolating these three parts into the existing catalog route.
-function objectPath(ws: string, r: SearchResult): string {
-  if (r.type === "schema") return `/${ws}/catalog/${r.catalog}/${r.name}`;
-  return `/${ws}/catalog/${r.catalog}/${r.schema_name}/${r.name}`;
 }
 
 export function CommandPalette({

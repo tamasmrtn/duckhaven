@@ -1,9 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { screen, waitFor, within, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@tests/mock/server";
 import { renderWithProviders } from "@tests/utils";
+import { recordRecentlyViewed } from "@/utils/recentlyViewed";
 
 const CATALOG_ROUTE = "/acme-analytics/catalog";
 
@@ -138,7 +139,11 @@ describe("CatalogPage", () => {
       within(dialog).getByRole("button", { name: /drop table/i }),
     );
 
-    expect(await screen.findByText(/to view its details/i)).toBeInTheDocument();
+    // Visiting the table detail page recorded it as recently viewed, so the
+    // landing state we return to surfaces that entry instead of the bare
+    // placeholder.
+    expect(await screen.findByText("Recently viewed")).toBeInTheDocument();
+    expect(screen.getByText("events")).toBeInTheDocument();
   });
 
   it("shows a read-access message when the row sample is denied (metadata tier)", async () => {
@@ -267,5 +272,55 @@ describe("CatalogPage tab deep-linking", () => {
         tab: "permissions",
       }),
     );
+  });
+});
+
+describe("CatalogPage recently-viewed", () => {
+  afterEach(() => {
+    localStorage.clear();
+  });
+
+  it("shows the recently-viewed list on the bare landing state", async () => {
+    recordRecentlyViewed("acme-analytics", {
+      type: "table",
+      catalog: "acme_analytics",
+      schema: "raw",
+      name: "events",
+    });
+    renderWithProviders({ initialRoute: "/acme-analytics/catalog" });
+
+    expect(await screen.findByText("Recently viewed")).toBeInTheDocument();
+    expect(screen.getByText("events")).toBeInTheDocument();
+    expect(screen.getByText("acme_analytics.raw")).toBeInTheDocument();
+  });
+
+  it("navigates to the object detail page when a recently-viewed row is clicked", async () => {
+    const user = userEvent.setup();
+    recordRecentlyViewed("acme-analytics", {
+      type: "table",
+      catalog: "acme_analytics",
+      schema: "raw",
+      name: "events",
+    });
+    const { router } = renderWithProviders({
+      initialRoute: "/acme-analytics/catalog",
+    });
+
+    await user.click(await screen.findByText("events"));
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(
+        "/acme-analytics/catalog/acme_analytics/raw/events",
+      ),
+    );
+  });
+
+  it("falls back to the selection placeholder when there is no history", async () => {
+    renderWithProviders({ initialRoute: "/acme-analytics/catalog" });
+
+    expect(
+      await screen.findByText(/to view its details/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Recently viewed")).not.toBeInTheDocument();
   });
 });

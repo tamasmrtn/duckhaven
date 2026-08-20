@@ -507,6 +507,16 @@ describe('WorksheetPage responsive', () => {
       screen.queryByRole('button', { name: /show tables/i }),
     ).not.toBeInTheDocument()
   })
+
+  it('wraps the results header row instead of clipping at narrow widths', async () => {
+    // jsdom does not compute real flex layout, so this only guards the class
+    // that makes the row wrap rather than asserting actual pixel clipping —
+    // that still needs a manual/browser check at 834/900/960px.
+    renderWithProviders({ initialRoute: WS_ROUTE })
+    const resultsTabBtn = await screen.findByRole('tab', { name: /^results$/i })
+    const header = resultsTabBtn.parentElement?.parentElement
+    expect(header?.className).toContain('flex-wrap')
+  })
 })
 
 describe('WorksheetPage save modal', () => {

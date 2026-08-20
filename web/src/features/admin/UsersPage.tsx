@@ -3,6 +3,7 @@ import { MoreHorizontal, UserPlus, Users } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import {
   Dialog,
   DialogContent,
@@ -330,12 +331,7 @@ export function UsersPage() {
             ))}
           </div>
         ) : users.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-            <Users className="size-8 text-text-tertiary" />
-            <p className="text-md font-medium text-text-secondary">
-              No users yet.
-            </p>
-          </div>
+          <EmptyState icon={Users} title="No users yet." />
         ) : (
           <div className="space-y-2">
             {users.map((u) => (

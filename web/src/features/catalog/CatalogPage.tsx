@@ -3,6 +3,7 @@ import { useParams, useNavigate, useSearch } from "@tanstack/react-router";
 import { Pencil, ExternalLink, Trash2, Clock } from "lucide-react";
 import { toast } from "sonner";
 import { Breadcrumb } from "@/components/ui/breadcrumb";
+import { PageHeader } from "@/components/ui/page-header";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -398,9 +399,7 @@ export function CatalogPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-4 shrink-0">
-        <h1 className="text-md font-semibold">Catalog</h1>
-      </div>
+      <PageHeader title="Catalog" />
       <div className="flex flex-1 overflow-hidden">
         {/* Catalog tree — the same component the worksheet sidebar uses */}
         <div className="w-64 shrink-0 overflow-hidden border-r border-[var(--border-subtle)] bg-[var(--bg-surface)]">

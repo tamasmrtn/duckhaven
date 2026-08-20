@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Sun, Moon, Monitor } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { PageHeader } from "@/components/ui/page-header";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -22,9 +23,7 @@ export function SettingsPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-4 shrink-0">
-        <h1 className="text-md font-semibold">Settings</h1>
-      </div>
+      <PageHeader title="Settings" />
       <div className="flex-1 overflow-auto">
         <Tabs defaultValue="workspace" className="p-6">
           <TabsList>

@@ -1,6 +1,7 @@
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/ui/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -51,19 +52,21 @@ export function SessionDetailPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-3 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-4 shrink-0">
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-7 gap-1.5 px-2"
-          onClick={() => navigate({ to: "/$ws/sessions", params: { ws } })}
-        >
-          <ArrowLeft className="size-3.5" />
-          Connections
-        </Button>
-        <h1 className="text-md font-semibold">Connection</h1>
-        {session && <SessionStatusPill status={session.status} />}
-      </div>
+      <PageHeader
+        title="Connection"
+        leading={
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 gap-1.5 px-2"
+            onClick={() => navigate({ to: "/$ws/sessions", params: { ws } })}
+          >
+            <ArrowLeft className="size-3.5" />
+            Connections
+          </Button>
+        }
+        badge={session && <SessionStatusPill status={session.status} />}
+      />
 
       <div className="flex-1 overflow-auto">
         {isLoading || !session ? (

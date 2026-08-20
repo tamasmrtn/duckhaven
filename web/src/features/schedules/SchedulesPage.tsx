@@ -3,6 +3,7 @@ import { useParams } from "@tanstack/react-router";
 import { CalendarClock, Plus } from "lucide-react";
 import { ApiError } from "@/api/client";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/ui/page-header";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -82,9 +83,7 @@ export function SchedulesPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-4 shrink-0">
-        <h1 className="text-md font-semibold">Schedules</h1>
-      </div>
+      <PageHeader title="Schedules" />
 
       <Tabs defaultValue="schedules" className="flex min-h-0 flex-1 flex-col">
         <div className="flex items-center justify-between px-6 pt-3">

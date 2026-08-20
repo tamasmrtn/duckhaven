@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import { Ruler, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/ui/page-header";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -71,23 +72,20 @@ export function SemanticPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-4 shrink-0">
-        <div>
-          <h1 className="text-md font-semibold">Semantic models</h1>
-          <p className="mt-0.5 text-xs text-text-tertiary">
-            What this workspace&apos;s business terms mean, and how they are
-            calculated. Published models are what the assistant answers from.
-          </p>
-        </div>
-        <Button
-          size="sm"
-          className="h-7 gap-1.5 text-xs"
-          onClick={() => setOpen(true)}
-        >
-          <Plus className="size-3" />
-          New model
-        </Button>
-      </div>
+      <PageHeader
+        title="Semantic models"
+        description="What this workspace's business terms mean, and how they are calculated. Published models are what the assistant answers from."
+        actions={
+          <Button
+            size="sm"
+            className="h-7 gap-1.5 text-xs"
+            onClick={() => setOpen(true)}
+          >
+            <Plus className="size-3" />
+            New model
+          </Button>
+        }
+      />
 
       <div className="min-h-0 flex-1 overflow-auto px-6 py-4">
         {isLoading ? (

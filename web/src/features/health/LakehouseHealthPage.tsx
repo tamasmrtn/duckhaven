@@ -1,6 +1,6 @@
 import { Link, useParams } from "@tanstack/react-router";
 import { HeartPulse } from "lucide-react";
-import { EmptyState } from "@/components/app/EmptyState";
+import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatBytes, plural } from "@/utils";

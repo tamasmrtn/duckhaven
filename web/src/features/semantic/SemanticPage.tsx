@@ -22,7 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { EmptyState } from "@/components/app/EmptyState";
+import { EmptyState } from "@/components/ui/empty-state";
 import { ApiError } from "@/api/client";
 import { useSemanticModels } from "@/queries/semantic";
 import { useCreateSemanticModel } from "@/queries/semantic.mutations";

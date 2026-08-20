@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { EyeOff, GitBranch, TriangleAlert } from "lucide-react";
 import { Banner } from "@/components/ui/banner";
-import { EmptyState } from "@/components/app/EmptyState";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTableLineage } from "@/queries/lineage";
 import type {

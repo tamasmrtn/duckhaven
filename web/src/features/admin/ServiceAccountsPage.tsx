@@ -3,6 +3,7 @@ import { Bot, Copy, KeyRound, MoreHorizontal, RefreshCw } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import {
   Dialog,
   DialogContent,
@@ -427,12 +428,7 @@ export function ServiceAccountsPage() {
             ))}
           </div>
         ) : accounts.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-            <Bot className="size-8 text-text-tertiary" />
-            <p className="text-md font-medium text-text-secondary">
-              No service accounts yet.
-            </p>
-          </div>
+          <EmptyState icon={Bot} title="No service accounts yet." />
         ) : (
           <div className="space-y-2">
             {accounts.map((a) => (

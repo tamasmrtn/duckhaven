@@ -29,6 +29,42 @@ from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import RunContext, ToolDefinition
 
 from api.services.assistant.deps import AssistantDeps, ToolCallRecord
+from api.services.grants import GrantDenied, extract_table_refs
+
+# Discoverability aid, not an exhaustive lineage list — cap the chips a response
+# can surface.
+_MAX_LINKED_TABLES = 3
+
+
+def _linked_tables(sql: str, default_catalog: str | None) -> list[dict] | None:
+    """Tables a ``run_sql`` call touched, for the response's deep-link chips.
+
+    Best-effort: an unparseable statement or one with nothing resolvable simply
+    yields no chips, it never breaks the turn.
+    """
+    try:
+        refs = extract_table_refs(sql)
+    except GrantDenied:
+        return None
+    seen: set[tuple[str, str, str]] = set()
+    tables: list[dict] = []
+    for ref in refs:
+        if ref.is_metadata_only:
+            continue
+        catalog = ref.catalog or default_catalog
+        # DuckDB's search_path resolution isn't statically knowable — an
+        # unqualified schema means no confidence, so no chip rather than a
+        # possibly-wrong link.
+        if not catalog or not ref.schema:
+            continue
+        key = (catalog, ref.schema, ref.table)
+        if key in seen:
+            continue
+        seen.add(key)
+        tables.append({"catalog": catalog, "schema_name": ref.schema, "table": ref.table})
+        if len(tables) >= _MAX_LINKED_TABLES:
+            break
+    return tables or None
 
 
 async def _audit(
@@ -67,6 +103,8 @@ async def _audit(
     if isinstance(result, dict):
         if result.get("query_id"):
             record.query_id = str(result["query_id"])
+        if call.tool_name == "run_sql" and isinstance(args, dict) and args.get("sql"):
+            record.tables = _linked_tables(args["sql"], ctx.deps.catalog)
         # A successful call can still carry a finding worth keeping. The one that
         # matters is hand-written SQL recomputing something a published metric
         # already defines: the query ran and the answer stands, so this is not an

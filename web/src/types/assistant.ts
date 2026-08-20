@@ -19,6 +19,12 @@ export interface TranscriptItem {
   sql: string | null;
 }
 
+export interface AssistantToolCallTableRef {
+  catalog: string;
+  schema_name: string;
+  table: string;
+}
+
 export interface AssistantToolCall {
   id: string;
   tool: string;
@@ -27,6 +33,7 @@ export interface AssistantToolCall {
   detail: string | null;
   query_id: string | null;
   latency_ms: number | null;
+  tables: AssistantToolCallTableRef[] | null;
   created_at: string;
 }
 

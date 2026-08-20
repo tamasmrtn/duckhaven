@@ -414,6 +414,26 @@ export function AssistantPanel({ ws }: { ws: string }) {
                       )
                     );
                   })()}
+                  {(() => {
+                    const lastWithTables = [...detail.tool_calls]
+                      .reverse()
+                      .find((c) => c.tool === "run_sql" && c.tables?.length);
+                    return lastWithTables?.tables?.map((t) => (
+                      <Link
+                        key={`${t.catalog}.${t.schema_name}.${t.table}`}
+                        to="/$ws/catalog/$catalog/$schema/$table"
+                        params={{
+                          ws,
+                          catalog: t.catalog,
+                          schema: t.schema_name,
+                          table: t.table,
+                        }}
+                        className={chipClass}
+                      >
+                        Open {t.table} in Catalog
+                      </Link>
+                    ));
+                  })()}
                   <button
                     type="button"
                     onClick={() => composerRef.current?.focus()}

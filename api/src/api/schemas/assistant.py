@@ -33,6 +33,12 @@ class ConversationOut(BaseModel):
     updated_at: datetime
 
 
+class TableRefOut(BaseModel):
+    catalog: str
+    schema_name: str
+    table: str
+
+
 class ToolCallOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -43,6 +49,7 @@ class ToolCallOut(BaseModel):
     detail: str | None
     query_id: uuid.UUID | None
     latency_ms: int | None
+    tables: list[TableRefOut] | None
     created_at: datetime
 
 

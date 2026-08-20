@@ -21,7 +21,8 @@ and what it can and cannot do, see the [AI data assistant](../concepts/assistant
    it opened your worksheet's active catalog, unqualified table names resolve against that catalog automatically. When
    it runs a query, the SQL is shown right under the answer, and a preview of the result; open the full result in the
    query grid — or click the **View full result** link that appears after the answer — just as you would for a query
-   you ran yourself.
+   you ran yourself. When the tables it queried can be resolved, an **Open _table_ in Catalog** chip appears alongside
+   it for each one, taking you straight to that table's detail page.
 4. While a turn is running, the Send button becomes a **Stop** button. Clicking it cancels the turn: the assistant
    stops generating, any query still running is cancelled, and the partial answer is discarded (nothing is saved). Your
    question stays in the composer's place with a **Retry** to run it again.

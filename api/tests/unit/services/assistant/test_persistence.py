@@ -69,6 +69,26 @@ async def test_save_and_load_roundtrip(db_session, conversation):
     assert tool_calls[0].status == "ok"
 
 
+async def test_save_turn_persists_tool_call_tables(db_session, conversation):
+    await save_turn(
+        db_session,
+        conversation,
+        new_messages_json=_turn_json("query", "done"),
+        usage=RunUsage(input_tokens=1, output_tokens=1),
+        records={
+            "c1": ToolCallRecord(
+                tool="run_sql",
+                args={"sql": "SELECT * FROM raw.events"},
+                status="ok",
+                tables=[{"catalog": "acme", "schema_name": "raw", "table": "events"}],
+            )
+        },
+    )
+    tool_calls = (await db_session.execute(select(AssistantToolCall))).scalars().all()
+    assert len(tool_calls) == 1
+    assert tool_calls[0].tables == [{"catalog": "acme", "schema_name": "raw", "table": "events"}]
+
+
 def _has_tool_call(messages, tool_call_id: str) -> bool:
     return any(
         isinstance(m, ModelResponse)

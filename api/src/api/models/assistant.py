@@ -114,6 +114,9 @@ class AssistantToolCall(Base):
         ForeignKey("queries.id", ondelete="SET NULL"), nullable=True
     )
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Distinct tables a run_sql call touched (catalog/schema/table dicts), for the
+    # response's "open in Catalog" deep links.
+    tables: Mapped[list[dict] | None] = mapped_column(_Json, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

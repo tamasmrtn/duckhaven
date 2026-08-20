@@ -229,6 +229,7 @@ async def save_turn(
                 detail=record.detail,
                 query_id=uuid.UUID(record.query_id) if record.query_id else None,
                 latency_ms=record.latency_ms,
+                tables=record.tables,
             )
         )
     await db.commit()

@@ -16,6 +16,9 @@ class ToolCallRecord:
     detail: str | None = None
     query_id: str | None = None
     latency_ms: int | None = None
+    # Distinct tables a `run_sql` call touched (catalog/schema/table dicts), for
+    # the response's "open in Catalog" chips. None when not applicable/resolvable.
+    tables: list[dict] | None = None
     # Monotonic start time, set by the before-hook; not persisted.
     started: float | None = None
 

@@ -142,6 +142,7 @@ export const assistantHandlers = [
           detail: null,
           query_id: null,
           latency_ms: 3,
+          tables: null,
           created_at: new Date().toISOString(),
         });
         return sse([

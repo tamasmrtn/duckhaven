@@ -11,6 +11,7 @@ from pydantic_ai.usage import RunUsage
 from api.config import settings
 from api.models.assistant import AssistantConversation
 from api.models.user import User
+from api.services.assistant.deps import ToolCallRecord
 from api.services.assistant.persistence import save_turn
 from api.services.auth import hash_password
 
@@ -171,6 +172,33 @@ async def test_history_truncated_false_under_cap(authed, workspace, db_session):
 
     detail = await authed.get(f"/workspaces/{workspace.slug}/assistant/conversations/{conv_id}")
     assert detail.json()["history_truncated"] is False
+
+
+async def test_tool_call_tables_are_returned_for_deep_links(authed, workspace, db_session):
+    created = await authed.post(
+        f"/workspaces/{workspace.slug}/assistant/conversations", json={"title": "Explore"}
+    )
+    conv_id = created.json()["id"]
+    conversation = await db_session.get(AssistantConversation, uuid.UUID(conv_id))
+    await save_turn(
+        db_session,
+        conversation,
+        new_messages_json=_turn_json("query", "done"),
+        usage=RunUsage(input_tokens=1, output_tokens=1),
+        records={
+            "c1": ToolCallRecord(
+                tool="run_sql",
+                args={"sql": "SELECT * FROM raw.events"},
+                status="ok",
+                tables=[{"catalog": "acme", "schema_name": "raw", "table": "events"}],
+            )
+        },
+    )
+
+    detail = await authed.get(f"/workspaces/{workspace.slug}/assistant/conversations/{conv_id}")
+    tool_calls = detail.json()["tool_calls"]
+    assert len(tool_calls) == 1
+    assert tool_calls[0]["tables"] == [{"catalog": "acme", "schema_name": "raw", "table": "events"}]
 
 
 async def test_history_truncated_true_over_cap(authed, workspace, db_session, monkeypatch):

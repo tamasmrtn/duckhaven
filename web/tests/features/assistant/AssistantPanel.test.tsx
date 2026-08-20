@@ -169,6 +169,51 @@ describe("AssistantPanel", () => {
     expect(screen.getByLabelText("Message")).toHaveFocus();
   });
 
+  it("shows an 'open in Catalog' chip for a table the last query touched", async () => {
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    const link = screen.getByRole("link", { name: "Open events in Catalog" });
+    expect(link).toHaveAttribute(
+      "href",
+      "/acme-analytics/catalog/acme_analytics/raw/events",
+    );
+  });
+
+  it("shows no catalog chip when the last query touched no resolvable table", async () => {
+    const conv = CONVERSATIONS.find((c) => c.id === "conv-1")!;
+    conv.tool_calls[0].tables = null;
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    expect(
+      screen.queryByRole("link", { name: /open .* in catalog/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows one chip per distinct table when a query touches several", async () => {
+    const conv = CONVERSATIONS.find((c) => c.id === "conv-1")!;
+    conv.tool_calls[0].tables = [
+      { catalog: "acme_analytics", schema_name: "raw", table: "events" },
+      { catalog: "acme_analytics", schema_name: "raw", table: "users" },
+    ];
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    expect(
+      screen.getByRole("link", { name: "Open events in Catalog" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Open users in Catalog" }),
+    ).toBeInTheDocument();
+  });
+
   it("suggests catalog-scoped starter prompts on a fresh conversation", async () => {
     const user = userEvent.setup();
     renderWithProviders({ initialRoute: "/acme-research/worksheets" });

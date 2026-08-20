@@ -38,6 +38,9 @@ function seed(): MockConversation[] {
           detail: null,
           query_id: "q-1",
           latency_ms: 85,
+          tables: [
+            { catalog: "acme_analytics", schema_name: "raw", table: "events" },
+          ],
           created_at: "2026-07-01T10:04:30Z",
         },
       ],

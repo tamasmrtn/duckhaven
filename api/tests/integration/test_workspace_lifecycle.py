@@ -60,3 +60,45 @@ async def test_workspace_endpoints_require_auth(app_client) -> None:
 async def test_get_unknown_workspace_is_404(admin_client) -> None:
     resp = await admin_client.get(f"/workspaces/missing-{uuid4().hex[:8]}")
     assert resp.status_code == 404
+
+
+async def test_rename_and_describe_workspace(admin_client, workspace_factory) -> None:
+    slug = f"dh-it-{uuid4().hex[:8]}"
+    await workspace_factory(slug=slug, name="Before")
+
+    resp = await admin_client.patch(
+        f"/workspaces/{slug}", json={"name": "After", "description": "Renamed in an IT test."}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["name"] == "After"
+    assert resp.json()["description"] == "Renamed in an IT test."
+
+
+async def test_delete_workspace_removes_dependents_but_not_the_catalog(
+    admin_client, workspace_factory
+) -> None:
+    """The multi-table FK interaction unit tests (FakePolaris) can't fully
+    validate: deleting a workspace must not FK-violate against its own
+    schedules/queries/saved-queries/sessions/assistant-conversation rows, and
+    must leave the M:N-attached catalog and its real Polaris namespace alone."""
+    slug = f"dh-it-{uuid4().hex[:8]}"
+    await workspace_factory(slug=slug, name="Doomed")
+
+    cat = f"c_{slug.replace('-', '_')}"
+    created = await admin_client.post(f"/workspaces/{slug}/catalogs", json={"name": cat})
+    assert created.status_code == 201, created.text
+
+    saved = await admin_client.post(
+        f"/workspaces/{slug}/saved-queries", json={"name": "doomed query", "sql": "SELECT 1"}
+    )
+    assert saved.status_code == 201, saved.text
+
+    resp = await admin_client.delete(f"/workspaces/{slug}")
+    assert resp.status_code == 204, resp.text
+    assert (await admin_client.get(f"/workspaces/{slug}")).status_code == 404
+
+    # The catalog is decoupled M:N — deleting its former workspace must not
+    # touch it. It still shows up in the deployment-wide catalog list.
+    listed = await admin_client.get("/catalogs")
+    assert listed.status_code == 200, listed.text
+    assert cat in {c["slug"] for c in listed.json()}

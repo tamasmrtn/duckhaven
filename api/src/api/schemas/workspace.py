@@ -15,12 +15,18 @@ class WorkspaceOut(BaseModel):
     id: uuid.UUID
     slug: str
     name: str
+    description: str | None = None
     created_at: datetime
     # Storage is catalog-scoped now; these summarize the workspace's *default*
     # catalog so existing UI (the switcher's backend badge) keeps rendering.
     default_catalog: str | None = None
     storage_backend_id: uuid.UUID | None = None
     storage_backend_kind: str | None = None
+
+
+class WorkspaceUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
 
 
 class MemberOut(BaseModel):

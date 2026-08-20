@@ -7,13 +7,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.deps import get_current_user, get_db, get_polaris_client
 from api.models.user import User
 from api.models.workspace import Workspace, WorkspaceMember
-from api.schemas.workspace import AddMemberRequest, MemberOut, WorkspaceCreate, WorkspaceOut
+from api.schemas.workspace import (
+    AddMemberRequest,
+    MemberOut,
+    WorkspaceCreate,
+    WorkspaceOut,
+    WorkspaceUpdate,
+)
 from api.services.polaris import PolarisClient
 from api.services.workspace import (
     assert_workspace_member,
+    delete_workspace,
     get_default_catalog,
     get_workspace,
     mirror_member_grant,
+    update_workspace,
 )
 
 logger = logging.getLogger(__name__)
@@ -29,6 +37,7 @@ async def _workspace_out(db: AsyncSession, workspace: Workspace) -> WorkspaceOut
         id=workspace.id,
         slug=workspace.slug,
         name=workspace.name,
+        description=workspace.description,
         created_at=workspace.created_at,
         default_catalog=default.slug if default is not None else None,
         storage_backend_id=default.storage_backend_id if default is not None else None,
@@ -82,6 +91,35 @@ async def get_workspace_detail(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     await assert_workspace_member(db, workspace.id, user.id)
     return await _workspace_out(db, workspace)
+
+
+@router.patch("/{ws}", response_model=WorkspaceOut)
+async def update_workspace_detail(
+    ws: str,
+    body: WorkspaceUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> WorkspaceOut:
+    workspace = await get_workspace(db, ws)
+    if workspace is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    # Identity edits are gated at the same tier as membership management.
+    await assert_workspace_member(db, workspace.id, user.id, min_role="owner")
+    workspace = await update_workspace(db, workspace, name=body.name, description=body.description)
+    return await _workspace_out(db, workspace)
+
+
+@router.delete("/{ws}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_workspace_detail(
+    ws: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    workspace = await get_workspace(db, ws)
+    if workspace is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    await assert_workspace_member(db, workspace.id, user.id, min_role="owner")
+    await delete_workspace(db, workspace)
 
 
 @router.get("/{ws}/members", response_model=list[MemberOut])

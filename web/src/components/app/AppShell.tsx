@@ -6,6 +6,7 @@ import {
   useAssistant,
 } from "@/features/assistant/AssistantContext";
 import { AssistantPanel } from "@/features/assistant/AssistantPanel";
+import { ThemeProvider } from "@/hooks/useTheme";
 import { TopBar } from "./TopBar";
 import { LeftRail } from "./LeftRail";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
@@ -13,9 +14,11 @@ import { CommandPalette } from "./CommandPalette";
 
 export function AppShell() {
   return (
-    <AssistantProvider>
-      <AppShellInner />
-    </AssistantProvider>
+    <ThemeProvider>
+      <AssistantProvider>
+        <AppShellInner />
+      </AssistantProvider>
+    </ThemeProvider>
   );
 }
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate, useSearch } from "@tanstack/react-router";
-import { Pencil, ExternalLink, Trash2 } from "lucide-react";
+import { Pencil, ExternalLink, Trash2, Clock } from "lucide-react";
 import { toast } from "sonner";
 import { Breadcrumb } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
@@ -28,7 +28,11 @@ import {
   stashWorksheetSql,
 } from "@/features/catalog/worksheetSql";
 import { formatBytes } from "@/utils";
-import { recordRecentlyViewed } from "@/utils/recentlyViewed";
+import {
+  recordRecentlyViewed,
+  getRecentlyViewed,
+} from "@/utils/recentlyViewed";
+import { objectPath } from "@/utils/objectPath";
 import type { CatalogTable } from "@/types/catalog";
 
 function formatNumber(n: number | null) {
@@ -388,6 +392,9 @@ export function CatalogPage() {
   const tab = typeof search.tab === "string" ? search.tab : undefined;
   const navigate = useNavigate();
   const { data: workspace } = useWorkspace(ws);
+  // Only relevant on the bare landing state (nothing selected yet) — no need
+  // to read localStorage on every render once a catalog/schema/table is picked.
+  const recentlyViewed = !catalog ? getRecentlyViewed(ws) : [];
 
   return (
     <div className="flex h-full flex-col">
@@ -434,6 +441,37 @@ export function CatalogPage() {
             <SchemaDetail ws={ws} catalog={catalog} schema={schema} />
           ) : catalog ? (
             <CatalogDetail ws={ws} catalog={catalog} />
+          ) : recentlyViewed.length > 0 ? (
+            <div className="flex h-full flex-col gap-2 overflow-auto p-6">
+              <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
+                Recently viewed
+              </p>
+              <div className="max-w-sm space-y-0.5">
+                {recentlyViewed.map((r) => (
+                  <button
+                    key={`recent-${r.type}-${r.catalog}-${r.schema}-${r.name}`}
+                    type="button"
+                    onClick={() =>
+                      navigate({
+                        to: objectPath(ws, {
+                          type: r.type,
+                          catalog: r.catalog,
+                          schema_name: r.schema,
+                          name: r.name,
+                        }),
+                      } as Parameters<typeof navigate>[0])
+                    }
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-text-primary hover:bg-accent"
+                  >
+                    <Clock className="size-4 shrink-0 text-text-secondary" />
+                    <span className="truncate">{r.name}</span>
+                    <span className="ml-auto truncate text-2xs text-text-tertiary">
+                      {r.catalog}.{r.schema}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-text-tertiary">
               Select a catalog, schema, or table to view its details.

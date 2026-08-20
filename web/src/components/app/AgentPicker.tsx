@@ -155,9 +155,7 @@ export function AgentPicker({
         <Command>
           <CommandInput placeholder="Search agents…" className="h-9" />
           <CommandList>
-            <CommandEmpty>
-              No agents found. Add one from Admin → Agents.
-            </CommandEmpty>
+            <CommandEmpty>No agents found. Add one from Compute.</CommandEmpty>
             <CommandGroup>
               {agents.map((agent) => (
                 <CommandItem

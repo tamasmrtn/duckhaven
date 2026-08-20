@@ -175,7 +175,7 @@ describe('HistoryPage', () => {
     await screen.findByText('SELECT plain_marker')
 
     expect(
-      screen.queryByRole('columnheader', { name: 'Session' }),
+      screen.queryByRole('columnheader', { name: 'Connection' }),
     ).not.toBeInTheDocument()
   })
 
@@ -184,7 +184,7 @@ describe('HistoryPage', () => {
     // The seeded workspace mixes interactive runs with a session's statements.
     await screen.findByText(/raw\.users/)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Session' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Connection' }))
 
     expect(
       await screen.findByText(/analytics\.stg_orders AS SELECT/),
@@ -204,11 +204,11 @@ describe('HistoryPage', () => {
     })
     await screen.findByText(/raw\.users/)
 
-    // The Session column only appears once something in view has a session.
+    // The Connection column only appears once something in view has a session.
     expect(
-      screen.getByRole('columnheader', { name: 'Session' }),
+      screen.getByRole('columnheader', { name: 'Connection' }),
     ).toBeInTheDocument()
-    fireEvent.click(screen.getAllByRole('button', { name: /^session / })[0])
+    fireEvent.click(screen.getAllByRole('button', { name: /^connection / })[0])
 
     expect(router.state.location.pathname).toBe(
       '/acme-analytics/sessions/sess-live',

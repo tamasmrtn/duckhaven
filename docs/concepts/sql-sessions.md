@@ -284,7 +284,7 @@ backstop only fires when a normal close was dropped. See [Monitoring](../operati
 Metrics tell you *how many* sessions ended badly; the audit trail tells you *which one*. Every session is a row in
 Postgres and every statement it runs is an ordinary query row tagged `origin="session"` with its `session_id`, so a
 whole `dbt run` is one workload you can read top to bottom instead of a few hundred unattributed history entries. The
-**Sessions** screen in the UI renders both — see
+**Connections** screen in the UI renders both — see
 [Read the session audit trail](../guides/session-audit.md) for the walkthrough.
 
 Two things the row records that are worth knowing about:

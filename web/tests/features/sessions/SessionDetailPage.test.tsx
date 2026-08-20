@@ -72,7 +72,7 @@ describe("SessionDetailPage", () => {
     });
 
     expect(
-      await screen.findByText("This session has not run any statements."),
+      await screen.findByText("This connection has not run any statements."),
     ).toBeInTheDocument();
   });
 });

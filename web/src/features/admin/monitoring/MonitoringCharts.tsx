@@ -146,7 +146,7 @@ const ACTIVITY_LABEL: Record<ActivityState, string> = {
 
 const ACTIVITY_HELP: Record<ActivityState, string> = {
   query: "Queries were running or queued.",
-  other: "Up with no queries — held SQL sessions or result fetching.",
+  other: "Up with no queries — held SQL connections or result fetching.",
   ready: "Up and idle. This is the time an idle timeout reclaims.",
   starting: "Provisioning; not yet accepting work.",
   down: "No agent running.",

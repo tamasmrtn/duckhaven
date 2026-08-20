@@ -59,7 +59,7 @@ export const navItems: NavItem[] = [
   {
     segment: "sessions",
     icon: Plug,
-    label: "Sessions",
+    label: "Connections",
     matchSegment: "sessions",
   },
   // Not admin-gated: a per-agent grant entitles its holder to that agent's

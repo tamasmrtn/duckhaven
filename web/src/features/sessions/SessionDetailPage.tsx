@@ -59,9 +59,9 @@ export function SessionDetailPage() {
           onClick={() => navigate({ to: "/$ws/sessions", params: { ws } })}
         >
           <ArrowLeft className="size-3.5" />
-          Sessions
+          Connections
         </Button>
-        <h1 className="text-md font-semibold">Session</h1>
+        <h1 className="text-md font-semibold">Connection</h1>
         {session && <SessionStatusPill status={session.status} />}
       </div>
 
@@ -126,7 +126,7 @@ export function SessionDetailPage() {
               </div>
             ) : statements.length === 0 ? (
               <p className="px-6 py-10 text-center text-sm text-text-tertiary">
-                This session has not run any statements.
+                This connection has not run any statements.
               </p>
             ) : (
               <Table containerClassName="overflow-visible" className="text-sm">

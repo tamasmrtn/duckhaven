@@ -47,7 +47,7 @@ export function SessionsPage() {
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-4 shrink-0">
-        <h1 className="text-md font-semibold">Sessions</h1>
+        <h1 className="text-md font-semibold">Connections</h1>
       </div>
 
       <Tabs defaultValue="live" className="flex min-h-0 flex-1 flex-col">
@@ -95,8 +95,8 @@ function SessionsTable({ ws, live = false }: { ws: string; live?: boolean }) {
   if (error instanceof ApiError && error.status === 404) {
     return (
       <EmptyState
-        title="SQL sessions are not enabled."
-        subtitle="Set SQL_SESSIONS_ENABLED=true on the API to let dbt and dlt open sessions."
+        title="SQL connections are not enabled."
+        subtitle="Set SQL_SESSIONS_ENABLED=true on the API to let dbt and dlt open connections."
       />
     );
   }
@@ -114,13 +114,13 @@ function SessionsTable({ ws, live = false }: { ws: string; live?: boolean }) {
   if (sessions.length === 0) {
     return live ? (
       <EmptyState
-        title="No live sessions."
-        subtitle="An open session holds an agent slot for its whole life; none are held right now."
+        title="No live connections."
+        subtitle="An open connection holds an agent slot for its whole life; none are held right now."
       />
     ) : (
       <EmptyState
-        title="No sessions yet."
-        subtitle="Sessions opened by dbt, dlt, or the SQL connector appear here, newest first."
+        title="No connections yet."
+        subtitle="Connections opened by dbt, dlt, or the SQL connector appear here, newest first."
       />
     );
   }
@@ -247,11 +247,11 @@ function ForceCloseDialog({
     <Dialog open={session !== null} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Force close this session?</DialogTitle>
+          <DialogTitle>Force close this connection?</DialogTitle>
           <DialogDescription>
             The agent drops its held connection and frees the admission slot.
             Anything the client still has in flight fails, and it must open a
-            new session to continue.
+            new connection to continue.
           </DialogDescription>
         </DialogHeader>
         {session && (

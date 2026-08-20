@@ -19,6 +19,16 @@ describe('SavedQueriesPage', () => {
     expect(screen.getAllByText(/Saved by Marton/).length).toBeGreaterThan(0)
   })
 
+  it('shows an empty state when the workspace has no saved queries', async () => {
+    server.use(
+      http.get('/api/workspaces/:ws/saved-queries', () => HttpResponse.json([])),
+    )
+    renderWithProviders({ initialRoute: ROUTE })
+    expect(
+      await screen.findByText('Save a worksheet to keep it here.'),
+    ).toBeInTheDocument()
+  })
+
   it('"Open" seeds a worksheet tab and pre-selects the saved agent', async () => {
     // A saved query whose default agent (ag-2 / agent-b) differs from the
     // worksheet default (ag-1 / agent-a), so a pre-selection is observable.

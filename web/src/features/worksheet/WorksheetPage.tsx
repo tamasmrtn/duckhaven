@@ -631,44 +631,53 @@ export function WorksheetPage() {
               <TabsTrigger
                 key={tab.id}
                 value={tab.id}
+                asChild
                 onDoubleClick={() => startRename(tab)}
                 className={cn(
                   "group h-7 gap-1.5 rounded-t-sm rounded-b-none border-b-2 px-3 text-xs data-[state=active]:border-[var(--brand-yellow)] data-[state=active]:bg-[var(--bg-canvas)] data-[state=inactive]:border-transparent",
                 )}
               >
-                {tab.dirty && editingTabId !== tab.id && (
-                  <span
-                    className="size-1.5 rounded-full bg-[var(--brand-orange)]"
-                    aria-label="unsaved"
-                  />
-                )}
-                {editingTabId === tab.id ? (
-                  <input
-                    value={editingTitle}
-                    onChange={(e) => setEditingTitle(e.target.value)}
-                    onBlur={commitRename}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") commitRename();
-                      else if (e.key === "Escape") setEditingTabId(null);
-                      e.stopPropagation();
-                    }}
-                    // Don't let clicks bubble to the tab trigger while editing.
-                    onClick={(e) => e.stopPropagation()}
-                    autoFocus
-                    aria-label="Rename worksheet"
-                    className="w-24 bg-transparent text-xs outline-none border-b border-[var(--brand-yellow)]"
-                  />
-                ) : (
-                  tab.title
-                )}
-                <button
-                  type="button"
-                  onClick={(e) => closeTab(tab.id, e)}
-                  className="ml-0.5 hidden rounded opacity-60 hover:opacity-100 group-hover:inline-flex"
-                  aria-label={`Close ${tab.title}`}
-                >
-                  ×
-                </button>
+                {/* A <div> here (not a <button>) because the close control
+                    below is itself interactive — nesting a <button> inside a
+                    <button role="tab"> is invalid HTML and breaks keyboard/AT
+                    semantics. Radix's asChild merges role="tab", aria-selected,
+                    data-state, and roving-tabindex/keyboard handling onto this
+                    div exactly as it would a native trigger button. */}
+                <div className="cursor-pointer">
+                  {tab.dirty && editingTabId !== tab.id && (
+                    <span
+                      className="size-1.5 rounded-full bg-[var(--brand-orange)]"
+                      aria-label="unsaved"
+                    />
+                  )}
+                  {editingTabId === tab.id ? (
+                    <input
+                      value={editingTitle}
+                      onChange={(e) => setEditingTitle(e.target.value)}
+                      onBlur={commitRename}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") commitRename();
+                        else if (e.key === "Escape") setEditingTabId(null);
+                        e.stopPropagation();
+                      }}
+                      // Don't let clicks bubble to the tab trigger while editing.
+                      onClick={(e) => e.stopPropagation()}
+                      autoFocus
+                      aria-label="Rename worksheet"
+                      className="w-24 bg-transparent text-xs outline-none border-b border-[var(--brand-yellow)]"
+                    />
+                  ) : (
+                    tab.title
+                  )}
+                  <button
+                    type="button"
+                    onClick={(e) => closeTab(tab.id, e)}
+                    className="ml-0.5 hidden rounded opacity-60 hover:opacity-100 group-hover:inline-flex"
+                    aria-label={`Close ${tab.title}`}
+                  >
+                    ×
+                  </button>
+                </div>
               </TabsTrigger>
             ))}
           </TabsList>

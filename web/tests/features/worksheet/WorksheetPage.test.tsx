@@ -110,6 +110,47 @@ describe('WorksheetPage tabs', () => {
   })
 })
 
+describe('WorksheetPage tab accessibility', () => {
+  it('does not nest a button inside the tab element', async () => {
+    // Regression test: the close control used to be a real <button> nested
+    // inside the tab's own <button role="tab">, which is invalid HTML (a
+    // <button> cannot contain interactive content) and breaks keyboard/AT
+    // semantics. The tab element itself is now a <div role="tab"> — which
+    // may validly contain the close <button> as a sibling-in-DOM-terms
+    // child — so the regression check is specifically for button-in-button.
+    const { container } = renderWithProviders({ initialRoute: WS_ROUTE })
+    await screen.findByText('events.sql')
+    expect(container.querySelector('button[role="tab"] button')).toBeNull()
+    const tabEl = screen.getByRole('tab', { name: /events\.sql/ })
+    expect(tabEl.tagName).not.toBe('BUTTON')
+  })
+
+  it('supports independent keyboard navigation, activation, and close', async () => {
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: WS_ROUTE })
+    const eventsTab = await screen.findByRole('tab', { name: /events\.sql/ })
+    const funnelTab = screen.getByRole('tab', { name: /funnel-draft/ })
+
+    eventsTab.focus()
+    expect(eventsTab).toHaveFocus()
+
+    // Roving-tabindex arrow-key navigation moves focus and activates the tab.
+    await user.keyboard('{ArrowRight}')
+    expect(funnelTab).toHaveFocus()
+    await waitFor(() =>
+      expect(funnelTab).toHaveAttribute('data-state', 'active'),
+    )
+
+    // The close control is independently focusable and activatable via the
+    // keyboard, separate from the tab's own activation.
+    const closeBtn = screen.getByLabelText('Close funnel-draft')
+    closeBtn.focus()
+    expect(closeBtn).toHaveFocus()
+    await user.keyboard('{Enter}')
+    expect(screen.queryByText('funnel-draft')).not.toBeInTheDocument()
+  })
+})
+
 describe('WorksheetPage run', () => {
   it('dispatches a query when Run is clicked and shows a status pill', async () => {
     const user = userEvent.setup()

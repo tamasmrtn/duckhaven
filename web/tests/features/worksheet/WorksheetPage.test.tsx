@@ -295,6 +295,9 @@ describe('WorksheetPage run', () => {
     })
     const composer = within(panel).getByLabelText('Message') as HTMLTextAreaElement
     expect(composer.value).toContain('Fix this query error')
+    // The failed SQL is included, not just the engine error — matches
+    // docs/guides/using-the-assistant.md's description of the drafted message.
+    expect(composer.value).toContain('FROM raw.events')
     expect(composer.value).toContain('Disallowed statement type(s): SET')
     // Prefilled and focused for review, not auto-sent — a send clears the
     // composer, so a non-empty value after the click proves it wasn't sent.

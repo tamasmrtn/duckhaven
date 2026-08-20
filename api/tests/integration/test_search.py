@@ -55,5 +55,8 @@ async def test_search_matches_table_schema_and_saved_query(admin_client, workspa
 
 
 async def test_search_endpoint_requires_auth(app_client, workspace_slug) -> None:
+    # The workspace_slug fixture authenticated the shared client; drop the
+    # session cookie to assert the unauthenticated path is rejected.
+    app_client.cookies.clear()
     resp = await app_client.get(f"/workspaces/{workspace_slug}/search", params={"q": "x"})
     assert resp.status_code == 401

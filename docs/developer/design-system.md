@@ -486,7 +486,7 @@ DuckHaven-specific wrappers. Built on Radix primitives.
 | Button | `button` | Adds `intent="run"` (yellow) + loading-spinner-while-async |
 | Tabs (worksheet) | `tabs` | Closable, dirty-dot, drag-to-reorder |
 | Tree (catalog) | custom (Radix `collapsible` + virtualized) | Lazy-load children per click; row count badges |
-| Command palette | `command` | Static groups: Workspaces, Saved queries, Tables, Actions |
+| Command palette | `command` | Static groups: Workspaces, Navigate; dynamic (debounced, ≥2 chars): Recent, Schemas, Tables, Saved queries |
 | Combobox (agent picker) | `command` + `popover` | Per-row capability tags |
 | Data table (results) | TanStack Table + custom virtualization | Tabular nums; cell click = "copy"; right-click → "Filter by", "Group by" inserts SQL |
 | Toast | `sonner` | Stack max 3, 4 s default, errors require dismiss |

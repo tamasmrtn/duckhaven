@@ -18,6 +18,7 @@ import { grantHandlers } from "./handlers/grants";
 import { maintenanceHandlers } from "./handlers/maintenance";
 import { lineageHandlers } from "./handlers/lineage";
 import { semanticHandlers } from "./handlers/semantic";
+import { searchHandlers } from "./handlers/search";
 
 export const worker = setupWorker(
   ...authHandlers,
@@ -39,4 +40,5 @@ export const worker = setupWorker(
   ...maintenanceHandlers,
   ...lineageHandlers,
   ...semanticHandlers,
+  ...searchHandlers,
 );

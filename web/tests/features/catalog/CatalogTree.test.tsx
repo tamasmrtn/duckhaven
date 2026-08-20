@@ -2,21 +2,43 @@ import { describe, it, expect, vi } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { QueryClientProvider } from '@tanstack/react-query'
+import {
+  createRootRoute,
+  createRouter,
+  createMemoryHistory,
+  RouterProvider,
+} from '@tanstack/react-router'
 import { CatalogTree } from '@/features/catalog/CatalogTree'
-import { createWrapper } from '@tests/utils'
+import { createTestQueryClient, createWrapper } from '@tests/utils'
 import { server } from '@tests/mock/server'
 
+// The hover-card's "View details"/"Lineage"/"Permissions" links use
+// TanStack's <Link>, which needs a real router context — a single-route
+// router standing in for the app shell is enough for that, without pulling
+// in the full app route tree these are otherwise isolated component tests.
 function renderTree(
   onTableClick: (catalog: string, schema: string, table: string) => void,
 ) {
-  const { wrapper: Wrapper } = createWrapper()
+  const queryClient = createTestQueryClient()
+  const rootRoute = createRootRoute({
+    component: () => (
+      <CatalogTree
+        ws="acme-analytics"
+        workspaceName="acme-analytics"
+        onTableClick={onTableClick}
+      />
+    ),
+  })
+  const router = createRouter({
+    routeTree: rootRoute,
+    history: createMemoryHistory({ initialEntries: ['/'] }),
+    defaultPendingMinMs: 0,
+  })
   return render(
-    <CatalogTree
-      ws="acme-analytics"
-      workspaceName="acme-analytics"
-      onTableClick={onTableClick}
-    />,
-    { wrapper: Wrapper },
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
   )
 }
 
@@ -202,7 +224,9 @@ describe('CatalogTree', () => {
   it('opens the new-catalog dialog from the create dropdown', async () => {
     renderTree(() => {})
 
-    await userEvent.click(screen.getByRole('button', { name: /^create$/i }))
+    await userEvent.click(
+      await screen.findByRole('button', { name: /^create$/i }),
+    )
     await userEvent.click(
       await screen.findByRole('menuitem', { name: /create catalog/i }),
     )
@@ -272,6 +296,30 @@ describe('CatalogTree', () => {
     ).toBeInTheDocument()
     expect(screen.getByText('312.0 MB')).toBeInTheDocument()
     expect(screen.getByText('acme_analytics.raw')).toBeInTheDocument()
+  })
+
+  it('links the hover card to the table\'s details, lineage, and permissions', async () => {
+    renderTree(() => {})
+    const eventsName = await screen.findByRole('button', { name: /events/i })
+    const row = eventsName.closest('div') as HTMLElement
+
+    await userEvent.hover(row)
+
+    const details = await screen.findByRole('link', { name: /view details/i })
+    expect(details).toHaveAttribute(
+      'href',
+      '/acme-analytics/catalog/acme_analytics/raw/events',
+    )
+    const lineage = screen.getByRole('link', { name: /^lineage$/i })
+    expect(lineage).toHaveAttribute(
+      'href',
+      '/acme-analytics/catalog/acme_analytics/raw/events?tab=lineage',
+    )
+    const permissions = screen.getByRole('link', { name: /^permissions$/i })
+    expect(permissions).toHaveAttribute(
+      'href',
+      '/acme-analytics/catalog/acme_analytics/raw/events?tab=permissions',
+    )
   })
 
   it('shares the table-detail fetch between expand and hover (no duplicate request)', async () => {

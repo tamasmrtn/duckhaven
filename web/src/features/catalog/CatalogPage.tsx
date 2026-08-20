@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useParams, useNavigate } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
+import { useParams, useNavigate, useSearch } from "@tanstack/react-router";
 import { Pencil, ExternalLink, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Breadcrumb } from "@/components/ui/breadcrumb";
@@ -28,6 +28,7 @@ import {
   stashWorksheetSql,
 } from "@/features/catalog/worksheetSql";
 import { formatBytes } from "@/utils";
+import { recordRecentlyViewed } from "@/utils/recentlyViewed";
 import type { CatalogTable } from "@/types/catalog";
 
 function formatNumber(n: number | null) {
@@ -65,11 +66,13 @@ function TableDetail({
   catalog,
   schema,
   table,
+  tab,
 }: {
   ws: string;
   catalog: string;
   schema: string;
   table: string;
+  tab?: string;
 }) {
   const { data: tableData, isLoading } = useTable(ws, catalog, schema, table);
   const {
@@ -88,6 +91,10 @@ function TableDetail({
   const navigate = useNavigate();
   const deleteTable = useDeleteTable(ws, catalog, schema);
   const [dropOpen, setDropOpen] = useState(false);
+
+  useEffect(() => {
+    recordRecentlyViewed(ws, { type: "table", catalog, schema, name: table });
+  }, [ws, catalog, schema, table]);
 
   function openInWorksheet(sql: string) {
     stashWorksheetSql(ws, sql);
@@ -232,7 +239,15 @@ function TableDetail({
 
         {/* Sample / History tabs */}
         <Tabs
-          defaultValue="sample"
+          value={tab ?? "sample"}
+          onValueChange={(v) =>
+            navigate({
+              to: "/$ws/catalog/$catalog/$schema/$table",
+              params: { ws, catalog, schema, table },
+              search: (prev) => ({ ...prev, tab: v }),
+              replace: true,
+            })
+          }
           className="flex flex-1 flex-col overflow-hidden gap-0"
         >
           <TabsList className="m-2 h-8 w-fit shrink-0">
@@ -369,6 +384,8 @@ export function CatalogPage() {
   const catalog = params.catalog as string | undefined;
   const schema = params.schema as string | undefined;
   const table = params.table as string | undefined;
+  const search = useSearch({ strict: false });
+  const tab = typeof search.tab === "string" ? search.tab : undefined;
   const navigate = useNavigate();
   const { data: workspace } = useWorkspace(ws);
 
@@ -411,6 +428,7 @@ export function CatalogPage() {
               catalog={catalog}
               schema={schema}
               table={table}
+              tab={tab}
             />
           ) : catalog && schema ? (
             <SchemaDetail ws={ws} catalog={catalog} schema={schema} />

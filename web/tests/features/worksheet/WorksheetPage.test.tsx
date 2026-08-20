@@ -88,6 +88,37 @@ describe('WorksheetPage tabs', () => {
     expect(funnelTab).toHaveAttribute('data-state', 'active')
   })
 
+  it('preserves unsaved SQL when navigating to a table detail page and back', async () => {
+    // Regression test for the worksheet hover-card's "View details"/"Lineage"/
+    // "Permissions" links: following one out of the worksheet must not lose
+    // whatever the user was mid-typing.
+    localStorage.setItem(
+      'dh-worksheets-acme-analytics',
+      JSON.stringify([
+        { id: 'tab-1', title: 'my work', sql: 'SELECT 1 -- keep me', dirty: true },
+      ]),
+    )
+    const { router } = renderWithProviders({ initialRoute: WS_ROUTE })
+    await screen.findByText('my work')
+
+    await router.navigate({
+      to: '/acme-analytics/catalog/acme_analytics/raw/events',
+    })
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(
+        '/acme-analytics/catalog/acme_analytics/raw/events',
+      ),
+    )
+
+    await router.navigate({ to: '/acme-analytics/worksheets' })
+    await screen.findByText('my work')
+
+    const stored = JSON.parse(
+      localStorage.getItem('dh-worksheets-acme-analytics') ?? '[]',
+    )
+    expect(stored[0].sql).toBe('SELECT 1 -- keep me')
+  })
+
   it('opens a freshly created workspace with a single empty tab', async () => {
     // The route guard requires the workspace to exist.
     server.use(

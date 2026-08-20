@@ -299,7 +299,8 @@ export function WorksheetPage() {
 
   // Assistant ↔ editor bridge: lets the AI panel read the current SQL and propose
   // edits that the user accepts or rejects, with the changed lines highlighted.
-  const { editorRef: assistantEditorRef } = useAssistant();
+  const { editorRef: assistantEditorRef, openPanel: openAssistantPanel } =
+    useAssistant();
   const [proposal, setProposal] = useState<{
     tabId: string;
     oldSql: string;
@@ -328,6 +329,9 @@ export function WorksheetPage() {
   const saveQuery = useSaveQuery(ws);
   const { data: queryData } = useQuery_(activeQueryId);
   const queryRows = useQueryRows(activeQueryId, queryData?.status === "done");
+  // Shared by the results error banner and its "Fix with Assistant" seed.
+  const resultError =
+    dispatchError ?? (queryData?.status === "failed" ? queryData.error : null);
 
   // The final statement of a run streams to "done" here (not awaited in
   // runPayload); refresh the catalog when that statement was DDL.
@@ -1012,9 +1016,14 @@ export function WorksheetPage() {
                   columnSchema={queryRows.columnSchema}
                   rows={queryRows.rows}
                   total={queryRows.total}
-                  error={
-                    dispatchError ??
-                    (queryData?.status === "failed" ? queryData.error : null)
+                  error={resultError}
+                  onFixWithAssistant={
+                    resultError
+                      ? () =>
+                          openAssistantPanel(
+                            `Fix this query error:\n\n${resultError}`,
+                          )
+                      : undefined
                   }
                   isLoading={
                     queryRows.isLoading && queryData?.status === "running"

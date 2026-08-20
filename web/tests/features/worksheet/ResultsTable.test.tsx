@@ -113,6 +113,59 @@ describe('ResultsTable error state', () => {
   })
 })
 
+describe('ResultsTable — Fix with Assistant', () => {
+  it('shows the button when a handler is passed', () => {
+    render(
+      <ResultsTable
+        columns={[]}
+        rows={[]}
+        total={0}
+        error="boom"
+        onFixWithAssistant={() => {}}
+      />,
+    )
+    expect(
+      screen.getByRole('button', { name: /fix with assistant/i }),
+    ).toBeInTheDocument()
+  })
+
+  it('does not render when no handler is passed (e.g. the catalog sample preview reusing this component)', () => {
+    render(<ResultsTable columns={[]} rows={[]} total={0} error="boom" />)
+    expect(
+      screen.queryByRole('button', { name: /fix with assistant/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('does not render when there is no error, even if a handler is passed', () => {
+    render(
+      <ResultsTable
+        columns={['n']}
+        rows={[{ n: 1 }]}
+        total={1}
+        onFixWithAssistant={() => {}}
+      />,
+    )
+    expect(
+      screen.queryByRole('button', { name: /fix with assistant/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('calls the handler when clicked', () => {
+    const onFix = vi.fn()
+    render(
+      <ResultsTable
+        columns={[]}
+        rows={[]}
+        total={0}
+        error="boom"
+        onFixWithAssistant={onFix}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /fix with assistant/i }))
+    expect(onFix).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('ResultsTable column types', () => {
   it('shows each column type next to its header when columnSchema is passed', () => {
     render(

@@ -273,6 +273,51 @@ describe('WorksheetPage run', () => {
     expect(screen.queryByText('[object Object]')).not.toBeInTheDocument()
   })
 
+  it('opens the assistant with the failed query prefilled, without sending it', async () => {
+    server.use(
+      http.post('/api/workspaces/:ws/queries', () =>
+        HttpResponse.json(
+          { detail: { error: 'sql_not_allowed', detail: 'Disallowed statement type(s): SET' } },
+          { status: 422 },
+        ),
+      ),
+    )
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: WS_ROUTE })
+    const runBtn = await screen.findByRole('button', { name: /run query/i })
+    await user.click(runBtn)
+    await screen.findByRole('alert')
+
+    await user.click(screen.getByRole('button', { name: /fix with assistant/i }))
+
+    const panel = await screen.findByRole('complementary', {
+      name: 'AI assistant',
+    })
+    const composer = within(panel).getByLabelText('Message') as HTMLTextAreaElement
+    expect(composer.value).toContain('Fix this query error')
+    expect(composer.value).toContain('Disallowed statement type(s): SET')
+    // Prefilled and focused for review, not auto-sent — a send clears the
+    // composer, so a non-empty value after the click proves it wasn't sent.
+    expect(composer).toHaveFocus()
+
+    // Closing and reopening the panel plainly (no new seed) must not
+    // re-apply the stale error text — the panel unmounts on close, so a
+    // fresh mount with an unconsumed seed would otherwise reseed forever.
+    await user.click(within(panel).getByRole('button', { name: 'Close assistant' }))
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('complementary', { name: 'AI assistant' }),
+      ).not.toBeInTheDocument(),
+    )
+    await user.click(screen.getByRole('button', { name: 'Toggle AI assistant' }))
+    const reopened = await screen.findByRole('complementary', {
+      name: 'AI assistant',
+    })
+    expect(
+      (within(reopened).getByLabelText('Message') as HTMLTextAreaElement).value,
+    ).toBe('')
+  })
+
   it('shows the running progress stage in the results header', async () => {
     server.use(
       http.post('/api/workspaces/:ws/queries', () =>

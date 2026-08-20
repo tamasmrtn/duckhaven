@@ -50,6 +50,15 @@ your editor**:
 - Nothing runs automatically — you review, accept, then run it with the usual **Run** button, which goes through the
   same permission checks as any query.
 
+## Recovering from a failed query
+
+When a query fails, the results pane's error banner has a **Fix with Assistant** button. Clicking it opens the
+assistant panel with a message already drafted — the failed SQL and the exact engine error — so you don't have to
+retype or re-explain what went wrong. The message is only pre-filled, not sent automatically: review it (the error
+text can echo values from your data) and send it when you're ready, or edit it first. Any fix the assistant proposes
+follows the same paths as everywhere else in the assistant — a SQL edit lands as a reviewable diff in your editor, and
+anything that would write data still requires your approval.
+
 ## Approving a write
 
 If your assistant is configured with write access and it proposes a change to data (an INSERT, UPDATE, DELETE, or a DDL

@@ -77,7 +77,7 @@ function starterPrompts(catalogSlugs: string[]): string[] {
 }
 
 export function AssistantPanel({ ws }: { ws: string }) {
-  const { closePanel, editorRef } = useAssistant();
+  const { closePanel, editorRef, seedPrompt } = useAssistant();
   const { data: status } = useAssistantStatus(ws);
   const enabled = status?.enabled === true;
   const disabled = status?.enabled === false;
@@ -131,7 +131,11 @@ export function AssistantPanel({ ws }: { ws: string }) {
   });
   const throttledStreamingText = useThrottledText(chat.streamingText, 750);
 
-  const [draft, setDraft] = useState("");
+  // The panel unmounts while closed (see AppShell), so a seed from
+  // openPanel(seed) — e.g. "Fix with Assistant" on a failed query — is only
+  // ever this component's *initial* draft, never re-applied over an
+  // in-progress edit.
+  const [draft, setDraft] = useState(() => seedPrompt ?? "");
   // Activity (tool-call trace) is collapsed by default — it can get long.
   const [activityOpen, setActivityOpen] = useState(false);
   // Keyed by conversation id so switching to another long conversation
@@ -144,6 +148,14 @@ export function AssistantPanel({ ws }: { ws: string }) {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [detail?.transcript.length, chat.streamingText, chat.liveTools.length]);
+  useEffect(() => {
+    // Focus (not send) so the user can review or redact before it goes to
+    // the model — the seed text is a raw engine error, which can echo data.
+    if (seedPrompt) composerRef.current?.focus();
+    // Mount-only: this mirrors the draft initializer above, which only ever
+    // looks at seedPrompt on this same initial render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const submit = async (overrideText?: string) => {
     const prompt = (overrideText ?? draft).trim();

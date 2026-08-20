@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { http, HttpResponse } from 'msw'
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within, configure } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClientProvider } from '@tanstack/react-query'
 import {
@@ -12,6 +12,13 @@ import {
 import { CatalogTree } from '@/features/catalog/CatalogTree'
 import { createTestQueryClient, createWrapper } from '@tests/utils'
 import { server } from '@tests/mock/server'
+
+// This file wraps CatalogTree in a real RouterProvider (for the hover-card's
+// <Link>s), which resolves its initial route match asynchronously — under a
+// full parallel test run that adds enough latency to occasionally miss
+// find*'s default 1000ms window. Give it more headroom rather than chase a
+// CI-load flake with no logic behind it.
+configure({ asyncUtilTimeout: 3000 })
 
 // The hover-card's "View details"/"Lineage"/"Permissions" links use
 // TanStack's <Link>, which needs a real router context — a single-route

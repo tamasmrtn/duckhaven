@@ -27,7 +27,7 @@ export function ConfirmDropDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  kind: "table" | "schema";
+  kind: "table" | "schema" | "workspace";
   name: string;
   onConfirm: (cascade: boolean) => Promise<void>;
   pending: boolean;
@@ -68,6 +68,10 @@ export function ConfirmDropDialog({
 
   const confirmDisabled =
     pending || typed !== name || (needsCascade && !cascade);
+  // "Drop" is DuckHaven's SQL-object vocabulary (drop table/schema); a
+  // workspace isn't a SQL object, so this dialog says "Delete" for that kind.
+  const verb = kind === "workspace" ? "Delete" : "Drop";
+  const pendingLabel = kind === "workspace" ? "Deleting…" : "Dropping…";
 
   return (
     <Dialog
@@ -80,17 +84,31 @@ export function ConfirmDropDialog({
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>
-            Drop {kind} {name}
+            {verb} {kind} {name}
           </DialogTitle>
           <DialogDescription>
-            Permanently remove this {kind} from the catalog. This cannot be
-            undone.
+            {kind === "workspace"
+              ? "Permanently delete this workspace. This cannot be undone."
+              : `Permanently remove this ${kind} from the catalog. This cannot be undone.`}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3 py-2 text-sm">
           <p className="text-text-secondary">
-            This permanently removes <span className="font-mono">{name}</span>{" "}
-            from the catalog. This cannot be undone.
+            {kind === "workspace" ? (
+              <>
+                This permanently deletes{" "}
+                <span className="font-mono">{name}</span> — its queries, saved
+                queries, schedules, and assistant history all go with it. This
+                cannot be undone. Attached catalogs are not affected and remain
+                available to any other workspace they're attached to.
+              </>
+            ) : (
+              <>
+                This permanently removes{" "}
+                <span className="font-mono">{name}</span> from the catalog. This
+                cannot be undone.
+              </>
+            )}
           </p>
           {warning}
           {needsCascade && (
@@ -125,7 +143,7 @@ export function ConfirmDropDialog({
             onClick={handleConfirm}
             disabled={confirmDisabled}
           >
-            {pending ? "Dropping…" : `Drop ${kind}`}
+            {pending ? pendingLabel : `${verb} ${kind}`}
           </Button>
         </DialogFooter>
       </DialogContent>

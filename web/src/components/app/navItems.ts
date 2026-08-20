@@ -7,6 +7,7 @@ import {
   Microchip,
   Plug,
   Settings,
+  SlidersHorizontal,
   HeartPulse,
   Ruler,
 } from "lucide-react";
@@ -89,5 +90,15 @@ export const navItems: NavItem[] = [
     label: "Admin",
     matchSegment: "admin",
     requiresAdmin: true,
+  },
+  // Lives in the user menu (TopBar), not the rail — workspace identity and
+  // personal preferences aren't a destination someone browses to repeatedly
+  // the way Worksheets or Catalog are.
+  {
+    segment: "settings",
+    icon: SlidersHorizontal,
+    label: "Settings",
+    matchSegment: "settings",
+    hiddenFromRail: true,
   },
 ];

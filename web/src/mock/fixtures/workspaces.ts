@@ -6,6 +6,7 @@ function makeWorkspaces(): Workspace[] {
       id: "ws-1",
       slug: "acme-analytics",
       name: "acme-analytics",
+      description: "Core product analytics — events, funnels, and reporting.",
       default_catalog: "acme_analytics",
       storage_backend_id: "sb-1",
       storage_backend_kind: "s3",
@@ -15,6 +16,7 @@ function makeWorkspaces(): Workspace[] {
       id: "ws-2",
       slug: "acme-research",
       name: "acme-research",
+      description: null,
       default_catalog: "acme_research",
       storage_backend_id: "sb-2",
       storage_backend_kind: "adls_gen2",
@@ -24,6 +26,7 @@ function makeWorkspaces(): Workspace[] {
       id: "ws-3",
       slug: "public",
       name: "public",
+      description: null,
       default_catalog: "public",
       storage_backend_id: "sb-4",
       storage_backend_kind: "object_store",
@@ -33,6 +36,7 @@ function makeWorkspaces(): Workspace[] {
       id: "ws-4",
       slug: "home-lab",
       name: "home-lab",
+      description: null,
       default_catalog: "home_lab",
       storage_backend_id: "sb-3",
       storage_backend_kind: "object_store",
@@ -73,6 +77,11 @@ export function resetWorkspaces(): void {
 
 export function findWorkspace(slugOrId: string): Workspace | undefined {
   return WORKSPACES.find((w) => w.slug === slugOrId || w.id === slugOrId);
+}
+
+export function removeWorkspace(id: string): void {
+  WORKSPACES = WORKSPACES.filter((w) => w.id !== id);
+  delete WORKSPACE_MEMBERS[id];
 }
 
 export function userRoleInWorkspace(wsId: string, userId: string) {

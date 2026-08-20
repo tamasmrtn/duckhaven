@@ -235,3 +235,37 @@ describe("CatalogPage", () => {
     expect(await screen.findByText(/from catalog/i)).toBeInTheDocument();
   });
 });
+
+describe("CatalogPage tab deep-linking", () => {
+  it("opens directly on the Lineage tab when linked with ?tab=lineage", async () => {
+    // daily_active_users is the fixture table the lineage graph is seeded
+    // for (see LineagePanel.test.tsx's TABLE_ROUTE).
+    renderWithProviders({
+      initialRoute:
+        "/acme-analytics/catalog/acme_analytics/analytics/daily_active_users?tab=lineage",
+    });
+
+    const lineageTab = await screen.findByRole("tab", { name: /lineage/i });
+    await waitFor(() =>
+      expect(lineageTab).toHaveAttribute("data-state", "active"),
+    );
+    expect(await screen.findByTestId("lineage-graph-scroll")).toBeVisible();
+  });
+
+  it("updates the URL search param when the user switches tabs", async () => {
+    const user = userEvent.setup();
+    const { router } = renderWithProviders({
+      initialRoute: "/acme-analytics/catalog/acme_analytics/raw/events",
+    });
+
+    await user.click(
+      await screen.findByRole("tab", { name: /permissions/i }),
+    );
+
+    await waitFor(() =>
+      expect(router.state.location.search).toMatchObject({
+        tab: "permissions",
+      }),
+    );
+  });
+});

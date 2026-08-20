@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { toast } from "sonner";
 import {
   ChevronRight,
@@ -68,6 +69,7 @@ function displayRowCount(table: CatalogTable): string | null {
 }
 
 interface TableHoverCardProps {
+  ws: string;
   catalog: string;
   schemaName: string;
   table: CatalogTable;
@@ -76,6 +78,7 @@ interface TableHoverCardProps {
 }
 
 function TableHoverCard({
+  ws,
   catalog,
   schemaName,
   table,
@@ -131,6 +134,34 @@ function TableHoverCard({
             </dd>
           </dl>
         )}
+        {/* Reach the rest of the object-detail experience without abandoning
+            whatever's in progress here — worksheet tabs/SQL persist to
+            storage independently of this navigation, so nothing is lost. */}
+        <div className="flex items-center gap-3 border-t border-[var(--border-subtle)] pt-2 text-2xs">
+          <Link
+            to="/$ws/catalog/$catalog/$schema/$table"
+            params={{ ws, catalog, schema: schemaName, table: table.name }}
+            className="text-[var(--brand-slate-blue)] hover:underline"
+          >
+            View details ↗
+          </Link>
+          <Link
+            to="/$ws/catalog/$catalog/$schema/$table"
+            params={{ ws, catalog, schema: schemaName, table: table.name }}
+            search={{ tab: "lineage" }}
+            className="text-[var(--brand-slate-blue)] hover:underline"
+          >
+            Lineage
+          </Link>
+          <Link
+            to="/$ws/catalog/$catalog/$schema/$table"
+            params={{ ws, catalog, schema: schemaName, table: table.name }}
+            search={{ tab: "permissions" }}
+            className="text-[var(--brand-slate-blue)] hover:underline"
+          >
+            Permissions
+          </Link>
+        </div>
       </div>
     </HoverCardContent>
   );
@@ -221,6 +252,7 @@ function TableNode({
           </HoverCardTrigger>
         </CatalogNodeMenu>
         <TableHoverCard
+          ws={ws}
           catalog={catalog}
           schemaName={schemaName}
           table={table}

@@ -137,6 +137,12 @@ const catalogTableRoute = createRoute({
   getParentRoute: () => wsRoute,
   path: "/catalog/$catalog/$schema/$table",
   component: CatalogPage,
+  // Optional tab deep-link (e.g. from the worksheet's table hover-card, or a
+  // command-palette result) so a caller can land straight on Lineage instead
+  // of always defaulting to Sample.
+  validateSearch: (search: Record<string, unknown>): { tab?: string } => ({
+    tab: typeof search.tab === "string" ? search.tab : undefined,
+  }),
 });
 
 const savedQueriesRoute = createRoute({

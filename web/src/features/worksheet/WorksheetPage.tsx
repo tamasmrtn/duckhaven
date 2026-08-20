@@ -1069,7 +1069,7 @@ export function WorksheetPage() {
                     resultError
                       ? () =>
                           openAssistantPanel(
-                            `Fix this query error:\n\n${resultError}`,
+                            `Fix this query error:\n\nSQL:\n${currentTab?.sql ?? ""}\n\nError:\n${resultError}`,
                           )
                       : undefined
                   }

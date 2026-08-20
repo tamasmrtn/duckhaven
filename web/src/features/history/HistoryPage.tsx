@@ -28,7 +28,7 @@ const ORIGIN_FILTERS: { value: OriginFilter; label: string }[] = [
   { value: "all", label: "All" },
   { value: "interactive", label: "Interactive" },
   { value: "scheduled", label: "Scheduled" },
-  { value: "session", label: "Session" },
+  { value: "session", label: "Connection" },
 ];
 
 export function HistoryPage() {
@@ -90,7 +90,7 @@ export function HistoryPage() {
         "SQL",
         "Agent",
         "User",
-        ...(anySession ? ["Session"] : []),
+        ...(anySession ? ["Connection"] : []),
         "Rows",
         "Duration",
         "Started",
@@ -244,7 +244,7 @@ export function HistoryPage() {
                       {q.session_id ? (
                         <button
                           type="button"
-                          aria-label={`session ${shortId(q.session_id)}`}
+                          aria-label={`connection ${shortId(q.session_id)}`}
                           onClick={(e) => {
                             // The row itself opens the query profile.
                             e.stopPropagation();

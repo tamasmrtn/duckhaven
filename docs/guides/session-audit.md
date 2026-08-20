@@ -4,11 +4,11 @@ When dbt or dlt runs against DuckHaven it opens a [SQL session](../concepts/sql-
 statements through it. A single `dbt run` can be hundreds of statements. Read one at a time in the query history they
 are noise; read as one session they are a build you can follow, blame, and time.
 
-The **Sessions** screen is where you do that. Open it from the left nav.
+The **Connections** screen is where you do that. Open it from the left nav.
 
-!!! note "Sessions must be enabled"
+!!! note "Connections must be enabled"
     The whole session surface is off unless the operator sets `SQL_SESSIONS_ENABLED=true` on the API. If it is off,
-    Sessions says so instead of showing an empty list.
+    Connections says so instead of showing an empty list.
 
 ## Which sessions are running right now
 
@@ -73,9 +73,9 @@ question you actually have. In particular, "expired" covers two different storie
 The [query history](../concepts/query-execution.md) still lists every statement individually — sessions do not hide
 anything from it. Two additions connect the two views:
 
-- The **origin filter** at the top of History narrows to **Interactive**, **Scheduled**, or **Session** runs. Picking
-  **Session** leaves only statements that ran inside a session.
-- Once session statements are in view, a **Session** column appears. Clicking a statement's session id jumps to that
+- The **origin filter** at the top of History narrows to **Interactive**, **Scheduled**, or **Connection** runs. Picking
+  **Connection** leaves only statements that ran inside a session.
+- Once session statements are in view, a **Connection** column appears. Clicking a statement's session id jumps to that
   session, so you can go from "this one query looks wrong" to the whole build it came from in one click.
 
 ## What this does not tell you yet

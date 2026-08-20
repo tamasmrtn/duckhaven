@@ -54,7 +54,7 @@ describe("SessionsPage", () => {
     await user.click(screen.getByRole("button", { name: "Force close" }));
     const dialog = await screen.findByRole("dialog");
     expect(
-      within(dialog).getByText("Force close this session?"),
+      within(dialog).getByText("Force close this connection?"),
     ).toBeInTheDocument();
     await user.click(
       within(dialog).getByRole("button", { name: "Force close" }),
@@ -96,7 +96,7 @@ describe("SessionsPage", () => {
     renderWithProviders({ initialRoute: ROUTE });
 
     expect(
-      await screen.findByText("SQL sessions are not enabled."),
+      await screen.findByText("SQL connections are not enabled."),
     ).toBeInTheDocument();
   });
 
@@ -106,6 +106,6 @@ describe("SessionsPage", () => {
     );
     renderWithProviders({ initialRoute: ROUTE });
 
-    expect(await screen.findByText("No live sessions.")).toBeInTheDocument();
+    expect(await screen.findByText("No live connections.")).toBeInTheDocument();
   });
 });

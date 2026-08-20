@@ -3,12 +3,16 @@ import re
 import uuid
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from api.config import settings
+from api.models.assistant import AssistantConversation
 from api.models.catalog import Catalog, WorkspaceCatalog
+from api.models.maintenance import MaintenanceRecommendation, TableHealthSample
+from api.models.query import Query, SavedQuery, Schedule
+from api.models.sql_session import SqlSession
 from api.models.storage_backend import StorageBackend
 from api.models.workspace import Workspace, WorkspaceMember
 from api.services.polaris import PolarisClient, PolarisConflictError
@@ -137,6 +141,50 @@ async def assert_workspace_member(
     if ROLE_ORDER.get(member.role, -1) < ROLE_ORDER.get(min_role, 0):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
     return member
+
+
+async def update_workspace(
+    db: AsyncSession, workspace: Workspace, *, name: str | None, description: str | None
+) -> Workspace:
+    """Rename and/or re-describe a workspace. Slug is not renameable here — it
+    is the routable `/$ws/...` segment, and rescoping it risks breaking
+    bookmarks and shared links."""
+    if name is not None:
+        workspace.name = name
+    if description is not None:
+        workspace.description = description
+    await db.commit()
+    await db.refresh(workspace)
+    return workspace
+
+
+async def delete_workspace(db: AsyncSession, workspace: Workspace) -> None:
+    """Permanently delete a workspace and its intrinsic control-plane rows
+    (membership, schedules, query/session history, saved queries, assistant
+    conversations, maintenance sidecars).
+
+    Never touches Polaris or `Catalog` rows: catalogs are decoupled M:N and are
+    explicitly designed to survive their owning workspace being removed, same
+    as `detach_workspace_catalog` already does for a single detach. Every one
+    of these tables has no `ondelete` on its `workspace_id` FK, so each needs
+    an explicit pre-delete — `workspace_catalogs` is the only exception
+    (already `cascade="all, delete-orphan"` on `Workspace.catalog_links`), and
+    `agent_grants`/`semantic_models`/`lineage_edges` already cascade/null at
+    the DB level.
+    """
+    for model in (
+        WorkspaceMember,
+        Schedule,
+        Query,
+        SavedQuery,
+        SqlSession,
+        AssistantConversation,
+        TableHealthSample,
+        MaintenanceRecommendation,
+    ):
+        await db.execute(delete(model).where(model.workspace_id == workspace.id))
+    await db.delete(workspace)
+    await db.commit()
 
 
 async def get_workspace(db: AsyncSession, slug_or_id: str) -> Workspace | None:

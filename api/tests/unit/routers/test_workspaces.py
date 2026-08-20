@@ -197,3 +197,144 @@ async def test_add_member_succeeds(
     )
     assert resp.status_code == 201
     assert resp.json()["role"] == "writer"
+
+
+# --- update/delete (Settings > Workspace) ---
+
+
+async def _login(client: AsyncClient, email: str) -> None:
+    await client.post("/auth/login", json={"email": email, "password": "pw"})
+
+
+async def test_owner_can_rename_and_describe_workspace(
+    auth_client: AsyncClient, backend: StorageBackend
+):
+    create = await auth_client.post(
+        "/workspaces",
+        json={"slug": "rename-ws", "name": "Old Name", "storage_backend_id": str(backend.id)},
+    )
+    slug = create.json()["slug"]
+
+    resp = await auth_client.patch(
+        f"/workspaces/{slug}",
+        json={"name": "New Name", "description": "What this workspace is for."},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["name"] == "New Name"
+    assert resp.json()["description"] == "What this workspace is for."
+    assert resp.json()["slug"] == "rename-ws"  # slug is not renameable here
+
+    detail = await auth_client.get(f"/workspaces/{slug}")
+    assert detail.json()["name"] == "New Name"
+
+
+async def test_writer_cannot_rename_workspace(
+    auth_client: AsyncClient, backend: StorageBackend, db_session
+):
+    from api.models.user import User
+    from api.services.auth import hash_password
+
+    writer = User(
+        email="writer@test.local", password_hash=hash_password("pw"), name="Writer", role="user"
+    )
+    db_session.add(writer)
+    await db_session.commit()
+    await db_session.refresh(writer)
+
+    create = await auth_client.post(
+        "/workspaces",
+        json={"slug": "gate-ws", "name": "Gate WS", "storage_backend_id": str(backend.id)},
+    )
+    slug = create.json()["slug"]
+    await auth_client.post(
+        f"/workspaces/{slug}/members", json={"user_id": str(writer.id), "role": "writer"}
+    )
+
+    await _login(auth_client, writer.email)
+    resp = await auth_client.patch(f"/workspaces/{slug}", json={"name": "Hijacked"})
+    assert resp.status_code == 403
+
+
+async def test_owner_can_delete_workspace_and_dependents_are_gone(
+    auth_client: AsyncClient, backend: StorageBackend, db_session, fake_polaris
+):
+    from sqlalchemy import select
+
+    from api.models.catalog import Catalog, WorkspaceCatalog
+    from api.models.query import SavedQuery
+    from api.models.workspace import Workspace
+
+    create = await auth_client.post(
+        "/workspaces",
+        json={"slug": "delete-ws", "name": "Delete WS", "storage_backend_id": str(backend.id)},
+    )
+    slug = create.json()["slug"]
+    cat_resp = await auth_client.post(
+        f"/workspaces/{slug}/catalogs",
+        json={"name": "delete_ws_cat", "storage_backend_id": str(backend.id)},
+    )
+    assert cat_resp.status_code == 201, cat_resp.text
+    saved = await auth_client.post(
+        f"/workspaces/{slug}/saved-queries", json={"name": "keep-me-gone", "sql": "SELECT 1"}
+    )
+    assert saved.status_code == 201, saved.text
+
+    ws_row = (
+        await db_session.execute(select(Workspace).where(Workspace.slug == slug))
+    ).scalar_one()
+    catalog_id = (
+        (
+            await db_session.execute(
+                select(WorkspaceCatalog.catalog_id).where(
+                    WorkspaceCatalog.workspace_id == ws_row.id
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert catalog_id is not None
+
+    resp = await auth_client.delete(f"/workspaces/{slug}")
+    assert resp.status_code == 204
+
+    assert (await auth_client.get(f"/workspaces/{slug}")).status_code == 404
+    assert (
+        await db_session.execute(select(SavedQuery).where(SavedQuery.workspace_id == ws_row.id))
+    ).first() is None
+    # The attached catalog survives — it's decoupled M:N, not owned by the workspace.
+    survives = (
+        await db_session.execute(select(Catalog).where(Catalog.id == catalog_id))
+    ).scalar_one_or_none()
+    assert survives is not None
+
+
+async def test_non_owner_cannot_delete_workspace(
+    auth_client: AsyncClient, backend: StorageBackend, db_session
+):
+    from api.models.user import User
+    from api.services.auth import hash_password
+
+    reader = User(
+        email="reader@test.local", password_hash=hash_password("pw"), name="Reader", role="user"
+    )
+    db_session.add(reader)
+    await db_session.commit()
+    await db_session.refresh(reader)
+
+    create = await auth_client.post(
+        "/workspaces",
+        json={
+            "slug": "protected-ws",
+            "name": "Protected WS",
+            "storage_backend_id": str(backend.id),
+        },
+    )
+    slug = create.json()["slug"]
+    await auth_client.post(
+        f"/workspaces/{slug}/members", json={"user_id": str(reader.id), "role": "reader"}
+    )
+
+    await _login(auth_client, reader.email)
+    resp = await auth_client.delete(f"/workspaces/{slug}")
+    assert resp.status_code == 403

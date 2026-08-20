@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { Clock, RefreshCw } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PageHeader } from "@/components/ui/page-header";
 import {
   Table,
   TableBody,
@@ -98,88 +99,95 @@ export function HistoryPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-4 shrink-0">
-        <h1 className="text-md font-semibold">History</h1>
-        <div className="ml-auto flex items-center gap-3">
-          <AgentFilterCombobox
-            value={agentFilter ?? null}
-            onChange={(id) =>
-              navigate({
-                to: "/$ws/history",
-                params: { ws },
-                search: id ? { agent: id } : {},
-              })
-            }
-          />
-          <div
-            className="flex rounded-md border border-[var(--border-subtle)] p-0.5 text-xs"
-            role="group"
-            aria-label="filter by origin"
-          >
-            {ORIGIN_FILTERS.map(({ value, label }) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => setOrigin(value)}
-                aria-pressed={origin === value}
-                className={cn(
-                  "rounded px-2 py-1 transition-colors",
-                  origin === value
-                    ? "bg-accent text-text-primary font-medium"
-                    : "text-text-secondary hover:text-text-primary",
-                )}
+      <PageHeader
+        title="History"
+        actions={
+          <>
+            <div className="ml-auto flex items-center gap-3">
+              <AgentFilterCombobox
+                value={agentFilter ?? null}
+                onChange={(id) =>
+                  navigate({
+                    to: "/$ws/history",
+                    params: { ws },
+                    search: id ? { agent: id } : {},
+                  })
+                }
+              />
+              <div
+                className="flex rounded-md border border-[var(--border-subtle)] p-0.5 text-xs"
+                role="group"
+                aria-label="filter by origin"
               >
-                {label}
-              </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            onClick={() => void refetch()}
-            disabled={isFetching}
-            title="Refresh"
-            aria-label="Refresh history"
-            className="rounded p-1.5 text-text-secondary hover:bg-accent hover:text-text-primary"
-          >
-            <RefreshCw
-              className={cn("size-3.5", isFetching && "animate-spin")}
-            />
-          </button>
-        </div>
-        {isAdmin && (
-          <div className="flex items-center gap-3">
-            <UserFilterCombobox value={userFilter} onChange={setUserFilter} />
-            <div className="flex rounded-md border border-[var(--border-subtle)] p-0.5 text-xs">
+                {ORIGIN_FILTERS.map(({ value, label }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setOrigin(value)}
+                    aria-pressed={origin === value}
+                    className={cn(
+                      "rounded px-2 py-1 transition-colors",
+                      origin === value
+                        ? "bg-accent text-text-primary font-medium"
+                        : "text-text-secondary hover:text-text-primary",
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
               <button
                 type="button"
-                onClick={() => setAllWorkspaces(false)}
-                aria-pressed={!allWorkspaces}
-                className={cn(
-                  "rounded px-2 py-1 transition-colors",
-                  !allWorkspaces
-                    ? "bg-accent text-text-primary font-medium"
-                    : "text-text-secondary hover:text-text-primary",
-                )}
+                onClick={() => void refetch()}
+                disabled={isFetching}
+                title="Refresh"
+                aria-label="Refresh history"
+                className="rounded p-1.5 text-text-secondary hover:bg-accent hover:text-text-primary"
               >
-                This workspace
-              </button>
-              <button
-                type="button"
-                onClick={() => setAllWorkspaces(true)}
-                aria-pressed={allWorkspaces}
-                className={cn(
-                  "rounded px-2 py-1 transition-colors",
-                  allWorkspaces
-                    ? "bg-accent text-text-primary font-medium"
-                    : "text-text-secondary hover:text-text-primary",
-                )}
-              >
-                All workspaces
+                <RefreshCw
+                  className={cn("size-3.5", isFetching && "animate-spin")}
+                />
               </button>
             </div>
-          </div>
-        )}
-      </div>
+            {isAdmin && (
+              <div className="flex items-center gap-3">
+                <UserFilterCombobox
+                  value={userFilter}
+                  onChange={setUserFilter}
+                />
+                <div className="flex rounded-md border border-[var(--border-subtle)] p-0.5 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setAllWorkspaces(false)}
+                    aria-pressed={!allWorkspaces}
+                    className={cn(
+                      "rounded px-2 py-1 transition-colors",
+                      !allWorkspaces
+                        ? "bg-accent text-text-primary font-medium"
+                        : "text-text-secondary hover:text-text-primary",
+                    )}
+                  >
+                    This workspace
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAllWorkspaces(true)}
+                    aria-pressed={allWorkspaces}
+                    className={cn(
+                      "rounded px-2 py-1 transition-colors",
+                      allWorkspaces
+                        ? "bg-accent text-text-primary font-medium"
+                        : "text-text-secondary hover:text-text-primary",
+                    )}
+                  >
+                    All workspaces
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
+        }
+      />
 
       <div className="flex-1 overflow-auto">
         {isLoading ? (

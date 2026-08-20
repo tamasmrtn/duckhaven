@@ -9,6 +9,7 @@ import {
   User,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/ui/page-header";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -48,9 +49,7 @@ export function SavedQueriesPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-4 shrink-0">
-        <h1 className="text-md font-semibold">Saved queries</h1>
-      </div>
+      <PageHeader title="Saved queries" />
 
       <div className="flex-1 overflow-auto p-6">
         {isLoading ? (

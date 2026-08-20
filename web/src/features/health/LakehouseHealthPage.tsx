@@ -1,6 +1,7 @@
 import { Link, useParams } from "@tanstack/react-router";
 import { HeartPulse } from "lucide-react";
 import { EmptyState } from "@/components/app/EmptyState";
+import { PageHeader } from "@/components/ui/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatBytes, plural } from "@/utils";
 import {
@@ -63,13 +64,10 @@ export function LakehouseHealthPage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-4 shrink-0">
-        <h1 className="text-md font-semibold">Lakehouse health</h1>
-        <p className="mt-0.5 text-xs text-text-secondary">
-          Continuous, explainable health scoring and maintenance
-          recommendations.
-        </p>
-      </div>
+      <PageHeader
+        title="Lakehouse health"
+        description="Continuous, explainable health scoring and maintenance recommendations."
+      />
 
       <div className="flex-1 overflow-auto p-4">
         {isLoading ? (

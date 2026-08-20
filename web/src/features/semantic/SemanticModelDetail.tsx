@@ -3,6 +3,7 @@ import { useParams } from "@tanstack/react-router";
 import { CheckCircle2, Plus, Ruler, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/ui/page-header";
 import { Banner } from "@/components/ui/banner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -116,8 +117,8 @@ export function SemanticModelDetail() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-start justify-between gap-3 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-4 shrink-0">
-        <div className="min-w-0">
+      <PageHeader
+        breadcrumb={
           <Breadcrumb
             items={[
               { label: ws },
@@ -125,40 +126,36 @@ export function SemanticModelDetail() {
               { label: model.name, emphasis: true },
             ]}
           />
-          <div className="mt-1 flex items-center gap-2">
-            <h1 className="text-md font-semibold">{model.name}</h1>
-            <StatusPill status={model.status} />
-          </div>
-          {model.description && (
-            <p className="mt-0.5 text-xs text-text-tertiary">
-              {model.description}
-            </p>
-          )}
-        </div>
-        <div className="flex shrink-0 gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 gap-1.5 text-xs"
-            disabled={validate.isPending}
-            onClick={runValidate}
-          >
-            <ShieldCheck className="size-3" />
-            Validate
-          </Button>
-          {model.status !== "published" && (
+        }
+        title={model.name}
+        badge={<StatusPill status={model.status} />}
+        description={model.description}
+        actions={
+          <div className="flex shrink-0 gap-2">
             <Button
+              variant="outline"
               size="sm"
               className="h-7 gap-1.5 text-xs"
-              disabled={publish.isPending}
-              onClick={runPublish}
+              disabled={validate.isPending}
+              onClick={runValidate}
             >
-              <CheckCircle2 className="size-3" />
-              Publish
+              <ShieldCheck className="size-3" />
+              Validate
             </Button>
-          )}
-        </div>
-      </div>
+            {model.status !== "published" && (
+              <Button
+                size="sm"
+                className="h-7 gap-1.5 text-xs"
+                disabled={publish.isPending}
+                onClick={runPublish}
+              >
+                <CheckCircle2 className="size-3" />
+                Publish
+              </Button>
+            )}
+          </div>
+        }
+      />
 
       {imported && (
         <Banner className="mx-6 mt-3">

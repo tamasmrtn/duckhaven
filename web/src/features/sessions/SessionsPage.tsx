@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { Plug } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/ui/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -46,9 +47,7 @@ export function SessionsPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-4 shrink-0">
-        <h1 className="text-md font-semibold">Connections</h1>
-      </div>
+      <PageHeader title="Connections" />
 
       <Tabs defaultValue="live" className="flex min-h-0 flex-1 flex-col">
         <div className="flex items-center justify-between px-6 pt-3">

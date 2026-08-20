@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { Plug } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -68,16 +69,6 @@ export function SessionsPage() {
   );
 }
 
-function EmptyState({ title, subtitle }: { title: string; subtitle: string }) {
-  return (
-    <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-      <Plug className="size-8 text-text-tertiary" />
-      <p className="text-md font-medium text-text-secondary">{title}</p>
-      <p className="text-sm text-text-tertiary">{subtitle}</p>
-    </div>
-  );
-}
-
 function SessionsTable({ ws, live = false }: { ws: string; live?: boolean }) {
   const navigate = useNavigate();
   const { data: me } = useMe();
@@ -94,8 +85,9 @@ function SessionsTable({ ws, live = false }: { ws: string; live?: boolean }) {
   if (error instanceof ApiError && error.status === 404) {
     return (
       <EmptyState
+        icon={Plug}
         title="SQL connections are not enabled."
-        subtitle="Set SQL_SESSIONS_ENABLED=true on the API to let dbt and dlt open connections."
+        description="Set SQL_SESSIONS_ENABLED=true on the API to let dbt and dlt open connections."
       />
     );
   }
@@ -113,13 +105,15 @@ function SessionsTable({ ws, live = false }: { ws: string; live?: boolean }) {
   if (sessions.length === 0) {
     return live ? (
       <EmptyState
+        icon={Plug}
         title="No live connections."
-        subtitle="An open connection holds an agent slot for its whole life; none are held right now."
+        description="An open connection holds an agent slot for its whole life; none are held right now."
       />
     ) : (
       <EmptyState
+        icon={Plug}
         title="No connections yet."
-        subtitle="Connections opened by dbt, dlt, or the SQL connector appear here, newest first."
+        description="Connections opened by dbt, dlt, or the SQL connector appear here, newest first."
       />
     );
   }

@@ -12,6 +12,7 @@ from api.models.storage_backend import StorageBackend
 from api.models.user import User
 from api.models.workspace import Workspace, WorkspaceMember
 from api.services.auth import hash_password
+from api.services.polaris import PolarisNotFoundError
 
 _COLS = [{"name": "id", "type": "INTEGER", "nullable": True}]
 
@@ -203,3 +204,47 @@ async def test_search_respects_scoped_catalog_grants(
     assert "ledger" not in names
     schema_names = {r["name"] for r in results if r["type"] == "schema"}
     assert "finance" not in schema_names
+
+
+async def test_one_broken_catalog_does_not_abort_the_whole_search(
+    auth_client: AsyncClient, backend: StorageBackend, fake_polaris
+):
+    slug = await _make_workspace(auth_client, backend)
+    await auth_client.post(f"/workspaces/{slug}/schemas", json={"name": "marketing"})
+    await auth_client.post(
+        f"/workspaces/{slug}/schemas/marketing/tables",
+        json={"name": "leads", "columns": _COLS},
+    )
+    # A second catalog attached to the same workspace whose Polaris namespace
+    # is stale/missing — list_schemas raises for it, but not for "alpha".
+    broken = await auth_client.post(
+        f"/workspaces/{slug}/catalogs",
+        json={"name": "broken_cat", "storage_backend_id": str(backend.id)},
+    )
+    assert broken.status_code == 201, broken.text
+    fake_polaris.raise_on_list_schemas["broken_cat"] = PolarisNotFoundError("missing namespace")
+
+    resp = await auth_client.get(f"/workspaces/{slug}/search", params={"q": "lead"})
+    assert resp.status_code == 200
+    results = resp.json()
+    assert any(r["type"] == "table" and r["name"] == "leads" for r in results)
+
+
+async def test_underscore_in_query_does_not_wildcard_match_saved_queries(
+    auth_client: AsyncClient, backend: StorageBackend, fake_polaris
+):
+    slug = await _make_workspace(auth_client, backend)
+    await auth_client.post(
+        f"/workspaces/{slug}/saved-queries",
+        json={"name": "daily_report", "sql": "SELECT 1"},
+    )
+    await auth_client.post(
+        f"/workspaces/{slug}/saved-queries",
+        json={"name": "dailyXreport", "sql": "SELECT 2"},
+    )
+
+    results = (
+        await auth_client.get(f"/workspaces/{slug}/search", params={"q": "daily_report"})
+    ).json()
+    names = {r["name"] for r in results if r["type"] == "saved_query"}
+    assert names == {"daily_report"}

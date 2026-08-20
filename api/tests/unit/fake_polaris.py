@@ -37,6 +37,9 @@ class FakePolaris:
         # When set, list_tables raises it — used to exercise the router-level
         # PolarisError exception handler.
         self.raise_on_list_tables: PolarisError | None = None
+        # Catalog name -> error, so a single catalog's list_schemas can be made
+        # to fail (e.g. a stale/missing namespace) without affecting others.
+        self.raise_on_list_schemas: dict[str, PolarisError] = {}
         self.created_table_bodies: list[dict[str, Any]] = []
         self.created_catalog_args: list[dict[str, Any]] = []
         self.granted_catalogs: list[str] = []
@@ -113,6 +116,8 @@ class FakePolaris:
         self.schemas.pop((catalog, name), None)
 
     async def list_schemas(self, catalog: str) -> list[PolarisSchema]:
+        if catalog in self.raise_on_list_schemas:
+            raise self.raise_on_list_schemas[catalog]
         return [s for (c, _), s in self.schemas.items() if c == catalog]
 
     # --- Tables ---

@@ -10,6 +10,9 @@ this is the palette's data source, not a general-purpose search framework.
 
 from __future__ import annotations
 
+import asyncio
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,17 +22,25 @@ from api.models.query import SavedQuery
 from api.models.user import User
 from api.schemas.search import SearchResultOut
 from api.services import grants as grant_service
-from api.services.polaris import PolarisClient
+from api.services.polaris import PolarisClient, PolarisError
 from api.services.workspace import (
     assert_workspace_member,
     get_workspace,
     resolve_workspace_catalogs,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/workspaces")
 
 DEFAULT_LIMIT = 20
 MAX_LIMIT = 50
+
+
+def _escape_like(s: str) -> str:
+    """Escape LIKE/ILIKE metacharacters so a literal name search (e.g. a saved
+    query named "daily_report") can't act as an accidental wildcard."""
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 @router.get("/{ws}/search", response_model=list[SearchResultOut])
@@ -50,13 +61,46 @@ async def search_workspace(
     if not needle:
         return []
 
-    results: list[SearchResultOut] = []
+    catalogs = await resolve_workspace_catalogs(db, workspace.id)
 
-    for cat in await resolve_workspace_catalogs(db, workspace.id):
-        if len(results) >= limit:
-            break
+    # The Polaris calls below touch only the HTTP client, so they can run
+    # concurrently; the grant checks further down share `db`, a single
+    # AsyncSession that is not safe for concurrent use, so those stay
+    # sequential. return_exceptions=True also isolates a catalog whose Polaris
+    # namespace is stale/missing from the rest of the search, instead of one
+    # PolarisError aborting the whole request.
+    schemas_per_catalog = await asyncio.gather(
+        *(polaris.list_schemas(cat.polaris_name) for cat in catalogs),
+        return_exceptions=True,
+    )
+
+    live = []
+    for cat, schemas in zip(catalogs, schemas_per_catalog):
+        if isinstance(schemas, PolarisError):
+            logger.warning("Search skipped catalog=%s: %s", cat.slug, schemas)
+            continue
+        if isinstance(schemas, BaseException):
+            raise schemas
+        live.append((cat, schemas))
+
+    schema_lookup = [(cat, s) for cat, schemas in live for s in schemas]
+    tables_per_schema = await asyncio.gather(
+        *(polaris.list_tables(cat.polaris_name, s.name) for cat, s in schema_lookup),
+        return_exceptions=True,
+    )
+    tables_by_schema = {}
+    for (cat, s), tables in zip(schema_lookup, tables_per_schema):
+        if isinstance(tables, PolarisError):
+            logger.warning("Search skipped schema=%s.%s: %s", cat.slug, s.name, tables)
+            tables_by_schema[(cat.slug, s.name)] = []
+            continue
+        if isinstance(tables, BaseException):
+            raise tables
+        tables_by_schema[(cat.slug, s.name)] = tables
+
+    results: list[SearchResultOut] = []
+    for cat, schemas in live:
         scoped = await grant_service.is_scoped(db, workspace.id, cat)
-        schemas = await polaris.list_schemas(cat.polaris_name)
 
         matched_schemas = [s for s in schemas if needle in s.name.lower()]
         if scoped and matched_schemas:
@@ -65,14 +109,10 @@ async def search_workspace(
             )
             matched_schemas = [s for s in matched_schemas if s.name in visible]
         for s in matched_schemas:
-            if len(results) >= limit:
-                break
             results.append(SearchResultOut(type="schema", catalog=cat.slug, name=s.name))
 
         for s in schemas:
-            if len(results) >= limit:
-                break
-            tables = await polaris.list_tables(cat.polaris_name, s.name)
+            tables = tables_by_schema[(cat.slug, s.name)]
             matched_tables = [t for t in tables if needle in t.name.lower()]
             if not matched_tables:
                 continue
@@ -82,8 +122,6 @@ async def search_workspace(
                 )
                 matched_tables = [t for t in matched_tables if t.name in visible]
             for t in matched_tables:
-                if len(results) >= limit:
-                    break
                 results.append(
                     SearchResultOut(type="table", catalog=cat.slug, schema_name=s.name, name=t.name)
                 )
@@ -93,7 +131,7 @@ async def search_workspace(
             select(SavedQuery)
             .where(
                 SavedQuery.workspace_id == workspace.id,
-                SavedQuery.name.ilike(f"%{q.strip()}%"),
+                SavedQuery.name.ilike(f"%{_escape_like(q.strip())}%", escape="\\"),
             )
             .limit(limit - len(results))
         )
@@ -108,4 +146,4 @@ async def search_workspace(
                 )
             )
 
-    return results
+    return results[:limit]

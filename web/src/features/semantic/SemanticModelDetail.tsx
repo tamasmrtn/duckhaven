@@ -8,7 +8,7 @@ import { Banner } from "@/components/ui/banner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Breadcrumb } from "@/components/ui/breadcrumb";
-import { EmptyState } from "@/components/app/EmptyState";
+import { EmptyState } from "@/components/ui/empty-state";
 import { ApiError } from "@/api/client";
 import { useSemanticModel } from "@/queries/semantic";
 import {

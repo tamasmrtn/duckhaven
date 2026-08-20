@@ -8,7 +8,7 @@ import {
   YAxis,
 } from "recharts";
 import { HeartPulse } from "lucide-react";
-import { EmptyState } from "@/components/app/EmptyState";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   useDismissRecommendation,

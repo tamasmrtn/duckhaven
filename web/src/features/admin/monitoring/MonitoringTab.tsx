@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { Activity } from "lucide-react";
-import { EmptyState } from "@/components/app/EmptyState";
+import { EmptyState } from "@/components/ui/empty-state";
 import { StatusPill } from "@/components/app/StatusPill";
 import { DurationCell, SqlCell } from "@/components/app/queryTableCells";
 import { Skeleton } from "@/components/ui/skeleton";

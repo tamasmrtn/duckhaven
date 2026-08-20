@@ -20,7 +20,7 @@ import {
   useCreateConversation,
 } from "@/queries/assistant";
 import { useCatalogs } from "@/queries/catalogs";
-import { EmptyState } from "@/components/app/EmptyState";
+import { EmptyState } from "@/components/ui/empty-state";
 import { cn } from "@/utils";
 import { useAssistant } from "./AssistantContext";
 import { ConversationList } from "./ConversationList";

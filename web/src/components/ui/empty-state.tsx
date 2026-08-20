@@ -8,8 +8,7 @@ interface EmptyStateProps {
   action?: ReactNode;
 }
 
-/** Shared empty-state placeholder: centered icon + message (+ optional action).
- * Matches the pattern used by Saved queries, History, and Audit. */
+/** Shared empty-state placeholder: centered icon + message (+ optional action). */
 export function EmptyState({
   icon: Icon,
   title,

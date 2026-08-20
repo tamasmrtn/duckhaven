@@ -25,6 +25,19 @@ existing one**. The first catalog attached becomes the workspace's default. See
     Because a catalog can be attached to multiple workspaces, members of any attaching workspace can reach it. This is
     the intended sharing semantic; a catalog cannot be dropped while any workspace still has it attached.
 
+## Settings: rename, describe, and delete
+
+An owner manages a workspace's identity from **Settings → Workspace**, reachable from the user menu in the top bar.
+
+- **Rename** and **description** are plain identity edits — the workspace's routable slug (the `/$ws/...` segment in
+  every URL) does not change, so existing links and bookmarks keep working.
+- **Delete** is permanent and requires typing the workspace's name to confirm. It removes the workspace's queries,
+  saved queries, schedules, and assistant conversation history — none of that is recoverable. **Attached catalogs are
+  not affected**: because a catalog is a decoupled, potentially shared entity (see the note above), deleting a
+  workspace only detaches it — the catalog and its data remain intact for any other workspace it is attached to.
+
+Both actions require the `owner` role — the same tier that already gates adding and removing members.
+
 ## Related
 
 - [Catalogs & Polaris](catalogs.md) — how catalogs are governed and shared.

@@ -3,6 +3,7 @@ import {
   WORKSPACES,
   WORKSPACE_MEMBERS,
   findWorkspace,
+  removeWorkspace,
 } from "../fixtures/workspaces";
 import { nextId } from "../lib/seed";
 import { httpError } from "../lib/errors";
@@ -20,6 +21,7 @@ export const workspaceHandlers = [
       id: nextId("ws"),
       slug: body.slug,
       name: body.name,
+      description: null,
       default_catalog: null,
       storage_backend_id: null,
       storage_backend_kind: null,
@@ -33,6 +35,25 @@ export const workspaceHandlers = [
     const ws = findWorkspace(params.ws as string);
     if (!ws) return httpError(404, "Workspace not found");
     return HttpResponse.json(ws);
+  }),
+
+  http.patch("/api/workspaces/:ws", async ({ params, request }) => {
+    const ws = findWorkspace(params.ws as string);
+    if (!ws) return httpError(404, "Workspace not found");
+    const body = (await request.json()) as {
+      name?: string;
+      description?: string;
+    };
+    if (body.name != null) ws.name = body.name;
+    if (body.description != null) ws.description = body.description;
+    return HttpResponse.json(ws);
+  }),
+
+  http.delete("/api/workspaces/:ws", ({ params }) => {
+    const ws = findWorkspace(params.ws as string);
+    if (!ws) return httpError(404, "Workspace not found");
+    removeWorkspace(ws.id);
+    return new HttpResponse(null, { status: 204 });
   }),
 
   http.get("/api/workspaces/:ws/members", ({ params }) => {

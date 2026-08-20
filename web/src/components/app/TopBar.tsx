@@ -7,6 +7,7 @@ import {
   Monitor,
   LogOut,
   User,
+  SlidersHorizontal,
 } from "lucide-react";
 import logoLight from "@/assets/logo-light.svg";
 import logoDark from "@/assets/logo-dark.svg";
@@ -162,6 +163,20 @@ export function TopBar({
               {me?.email}
             </div>
             <DropdownMenuSeparator />
+            {workspace && (
+              <DropdownMenuItem
+                className="gap-2"
+                onClick={() =>
+                  void navigate({
+                    to: "/$ws/settings",
+                    params: { ws: workspace.slug },
+                  })
+                }
+              >
+                <SlidersHorizontal className="size-4" />
+                Settings
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem
               className="gap-2 text-[var(--status-failed)]"
               onClick={async () => {

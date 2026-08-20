@@ -34,6 +34,7 @@ import { ServiceAccountsPage } from "@/features/admin/ServiceAccountsPage";
 import { CatalogAccessPage } from "@/features/admin/CatalogAccessPage";
 import { MaintenancePage } from "@/features/admin/MaintenancePage";
 import { LakehouseHealthPage } from "@/features/health/LakehouseHealthPage";
+import { SettingsPage } from "@/features/settings/SettingsPage";
 
 const rootRoute = createRootRoute();
 
@@ -219,6 +220,12 @@ const computeDetailRoute = createRoute({
   component: AgentDetailPage,
 });
 
+const settingsRoute = createRoute({
+  getParentRoute: () => wsRoute,
+  path: "/settings",
+  component: SettingsPage,
+});
+
 const adminRoute = createRoute({
   getParentRoute: () => wsRoute,
   path: "/admin",
@@ -291,6 +298,7 @@ export const routeTree = rootRoute.addChildren([
     healthRoute,
     computeRoute,
     computeDetailRoute,
+    settingsRoute,
     adminRoute.addChildren([
       adminIndexRoute,
       storageRoute,

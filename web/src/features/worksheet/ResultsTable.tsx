@@ -15,8 +15,10 @@ import {
   ArrowDown,
   ArrowUpDown,
   Sparkles,
+  Table2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { ColumnSchema, QueryRow } from "@/types/query";
 import { cn } from "@/utils";
@@ -170,8 +172,8 @@ export function ResultsTable({
 
   if (columns.length === 0) {
     return (
-      <div className="flex h-full items-center justify-center text-sm text-text-tertiary">
-        No results yet.
+      <div className="flex h-full items-center justify-center">
+        <EmptyState icon={Table2} title="No results yet." />
       </div>
     );
   }

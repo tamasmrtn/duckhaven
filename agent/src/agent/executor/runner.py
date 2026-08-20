@@ -310,8 +310,16 @@ def collect_table_health(
         oldest = conn.execute(
             f"SELECT min(timestamp_ms) FROM iceberg_snapshots({ident})"
         ).fetchone()
-        if oldest and oldest[0] is not None:
-            age_ms = int(time.time() * 1000) - int(oldest[0])
+        # timestamp_ms comes back as epoch-millis int on older iceberg
+        # extensions, a TIMESTAMP on newer ones (same split _snapshot_meta
+        # above already handles for the per-snapshot timestamp).
+        oldest_ts = oldest[0] if oldest else None
+        if isinstance(oldest_ts, datetime):
+            oldest_dt = oldest_ts if oldest_ts.tzinfo else oldest_ts.replace(tzinfo=UTC)
+            age_days = (datetime.now(UTC) - oldest_dt).total_seconds() / 86_400
+            health["oldest_snapshot_age_days"] = round(age_days, 4)
+        elif isinstance(oldest_ts, (int, float)):
+            age_ms = int(time.time() * 1000) - int(oldest_ts)
             health["oldest_snapshot_age_days"] = round(age_ms / 86_400_000, 4)
     except Exception as exc:  # noqa: BLE001 - metadata is best-effort
         logger.warning("iceberg_snapshots age failed for %s.%s: %s", schema, table, exc)

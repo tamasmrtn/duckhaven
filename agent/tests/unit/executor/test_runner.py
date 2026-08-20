@@ -546,6 +546,22 @@ def test_collect_table_health_reports_snapshot_id_and_age():
     assert health["oldest_snapshot_age_days"] == pytest.approx(3.0, abs=0.01)
 
 
+def test_collect_table_health_snapshot_age_from_datetime_timestamp():
+    from datetime import UTC, datetime, timedelta
+
+    from agent.executor.runner import collect_table_health
+
+    # Newer iceberg extensions return timestamp_ms as a TIMESTAMP, not an
+    # epoch-millis int (same split _snapshot_meta already handles above).
+    files = [("s3://b/t/data/a.parquet", "m1", 10)]
+    oldest_dt = datetime.now(UTC) - timedelta(days=3)
+    conn = _HealthConn(files=files, oldest_timestamp_ms=oldest_dt)
+    health = collect_table_health(
+        conn, "cat", "analytics", "events", target_file_bytes=128 * 1024**2
+    )
+    assert health["oldest_snapshot_age_days"] == pytest.approx(3.0, abs=0.01)
+
+
 def test_collect_table_health_orphan_estimate_includes_metadata():
     from agent.executor.runner import collect_table_health
 

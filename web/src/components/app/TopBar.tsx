@@ -7,7 +7,6 @@ import {
   Monitor,
   LogOut,
   User,
-  SlidersHorizontal,
 } from "lucide-react";
 import logoLight from "@/assets/logo-light.svg";
 import logoDark from "@/assets/logo-dark.svg";
@@ -24,8 +23,14 @@ import { useNavigate } from "@tanstack/react-router";
 import { useTheme } from "@/hooks/useTheme";
 import { useAssistant } from "@/features/assistant/AssistantContext";
 import { cn } from "@/utils";
+import { navItems } from "./navItems";
 import { StorageIcon } from "./StorageIcon";
 import type { Workspace } from "@/types/workspace";
+
+// The Settings item's icon/label come from navItems.ts (its single source of
+// truth), even though it renders here in the user menu rather than the rail —
+// see navItems.ts's hiddenFromRail comment.
+const settingsItem = navItems.find((item) => item.segment === "settings")!;
 
 interface TopBarProps {
   workspace?: Workspace;
@@ -173,8 +178,8 @@ export function TopBar({
                   })
                 }
               >
-                <SlidersHorizontal className="size-4" />
-                Settings
+                <settingsItem.icon className="size-4" />
+                {settingsItem.label}
               </DropdownMenuItem>
             )}
             <DropdownMenuItem

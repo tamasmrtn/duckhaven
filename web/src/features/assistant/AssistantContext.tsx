@@ -27,27 +27,49 @@ export interface EditorBridge {
 
 interface AssistantContextValue {
   open: boolean;
-  openPanel: () => void;
+  // `seed`, when given, pre-fills the composer the next time AssistantPanel
+  // mounts (e.g. from a "Fix with Assistant" entry point) — see seedPrompt.
+  openPanel: (seed?: string) => void;
   closePanel: () => void;
   toggle: () => void;
   editorRef: RefObject<EditorBridge | null>;
+  // AssistantPanel is unmounted while closed (see AppShell), so it reads this
+  // once as its composer's initial state on mount rather than needing a
+  // separate "consumed" flag. Cleared on every close (below) so reopening
+  // plainly — no fresh seed — never re-applies stale error text.
+  seedPrompt: string | null;
 }
 
 const AssistantContext = createContext<AssistantContextValue | null>(null);
 
 export function AssistantProvider({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
+  const [seedPrompt, setSeedPrompt] = useState<string | null>(null);
   const editorRef = useRef<EditorBridge | null>(null);
 
   const value = useMemo<AssistantContextValue>(
     () => ({
       open,
-      openPanel: () => setOpen(true),
-      closePanel: () => setOpen(false),
-      toggle: () => setOpen((o) => !o),
+      openPanel: (seed) => {
+        setOpen(true);
+        setSeedPrompt(seed ?? null);
+      },
+      closePanel: () => {
+        setOpen(false);
+        setSeedPrompt(null);
+      },
+      toggle: () => {
+        if (open) {
+          setOpen(false);
+          setSeedPrompt(null);
+        } else {
+          setOpen(true);
+        }
+      },
       editorRef,
+      seedPrompt,
     }),
-    [open],
+    [open, seedPrompt],
   );
 
   return (

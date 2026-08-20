@@ -14,6 +14,7 @@ import {
   ArrowUp,
   ArrowDown,
   ArrowUpDown,
+  Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -30,6 +31,9 @@ interface ResultsTableProps {
   hasMore?: boolean;
   isLoadingMore?: boolean;
   columnSchema?: ColumnSchema[] | null;
+  // Undefined outside the worksheet (e.g. CatalogPage's read-only sample
+  // preview reuses this component too) — the button only renders when set.
+  onFixWithAssistant?: () => void;
 }
 
 function cellDisplay(value: unknown): string {
@@ -67,6 +71,7 @@ export function ResultsTable({
   hasMore,
   isLoadingMore,
   columnSchema,
+  onFixWithAssistant,
 }: ResultsTableProps) {
   const [sorting, setSorting] = useState<SortingState>([]);
 
@@ -121,9 +126,22 @@ export function ResultsTable({
   if (error) {
     return (
       <div className="flex h-full flex-col gap-2 overflow-auto p-4">
-        <div className="flex items-center gap-2 text-[var(--status-failed)]">
-          <AlertCircle className="size-5 shrink-0" />
-          <p className="text-sm font-medium">Query failed</p>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-[var(--status-failed)]">
+            <AlertCircle className="size-5 shrink-0" />
+            <p className="text-sm font-medium">Query failed</p>
+          </div>
+          {onFixWithAssistant && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1.5 text-xs"
+              onClick={onFixWithAssistant}
+            >
+              <Sparkles className="size-3.5" />
+              Fix with Assistant
+            </Button>
+          )}
         </div>
         <pre
           role="alert"

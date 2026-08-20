@@ -19,6 +19,14 @@ from api.services.polaris import PolarisClient, PolarisConflictError
 
 logger = logging.getLogger(__name__)
 
+
+class _Unset:
+    """Sentinel distinguishing a PATCH field the caller omitted from one
+    explicitly set to null (which should clear it)."""
+
+
+UNSET = _Unset()
+
 ROLE_ORDER = {"reader": 0, "writer": 1, "owner": 2}
 
 # Backend kind → Polaris storage type. Every backend is object storage:
@@ -144,14 +152,23 @@ async def assert_workspace_member(
 
 
 async def update_workspace(
-    db: AsyncSession, workspace: Workspace, *, name: str | None, description: str | None
+    db: AsyncSession,
+    workspace: Workspace,
+    *,
+    name: str | None,
+    description: str | None | _Unset = UNSET,
 ) -> Workspace:
     """Rename and/or re-describe a workspace. Slug is not renameable here — it
     is the routable `/$ws/...` segment, and rescoping it risks breaking
-    bookmarks and shared links."""
+    bookmarks and shared links.
+
+    ``description`` defaults to ``UNSET`` (leave unchanged) rather than
+    ``None``, so an explicit null in the request can still clear a
+    previously-set description instead of being indistinguishable from
+    "field omitted"."""
     if name is not None:
         workspace.name = name
-    if description is not None:
+    if description is not UNSET:
         workspace.description = description
     await db.commit()
     await db.refresh(workspace)

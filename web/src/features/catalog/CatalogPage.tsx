@@ -420,8 +420,10 @@ export function CatalogPage() {
     <div className="flex h-full flex-col">
       <PageHeader title="Catalog" />
       <div className="flex flex-1 overflow-hidden">
-        {/* Catalog tree — the same component the worksheet sidebar uses */}
-        <div className="w-64 shrink-0 overflow-hidden border-r border-[var(--border-subtle)] bg-[var(--bg-surface)]">
+        {/* Catalog tree — the same component the worksheet sidebar uses.
+            Fixed at 280px to match the worksheet's resizable sidebar's
+            default width, so the two don't visibly jump between pages. */}
+        <div className="w-[280px] shrink-0 overflow-hidden border-r border-[var(--border-subtle)] bg-[var(--bg-surface)]">
           <CatalogTree
             ws={ws}
             workspaceName={workspace?.name ?? ws}

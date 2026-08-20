@@ -26,7 +26,7 @@ import { useWorkspaces } from "@/queries/workspaces";
 import { useMe } from "@/queries/auth";
 import { useWorkspaceSearch } from "@/queries/search";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
-import { getRecentlyViewed } from "@/utils/recentlyViewed";
+import { getRecentlyViewed, isRoutableEntry } from "@/utils/recentlyViewed";
 import { objectPath } from "@/utils/objectPath";
 import { stashWorksheetQuery } from "@/features/catalog/worksheetSql";
 import { navItems } from "./navItems";
@@ -78,7 +78,7 @@ export function CommandPalette({
       agentId: r.default_agent_id ?? undefined,
       savedQueryId: r.id,
     });
-    go(`/${currentWs}/worksheets`);
+    go(`/${encodeURIComponent(currentWs)}/worksheets`);
   }
 
   const needle = query.trim().toLowerCase();
@@ -91,10 +91,17 @@ export function CommandPalette({
       (!needle || item.label.toLowerCase().includes(needle)),
   );
 
-  const schemaResults = results.filter((r) => r.type === "schema");
-  const tableResults = results.filter((r) => r.type === "table");
+  const schemaResults = results.filter(
+    (r): r is SearchResult & { type: "schema" } => r.type === "schema",
+  );
+  const tableResults = results.filter(
+    (r): r is SearchResult & { type: "table" } => r.type === "table",
+  );
   const savedQueryResults = results.filter((r) => r.type === "saved_query");
-  const recent = currentWs && !searching ? getRecentlyViewed(currentWs) : [];
+  const recent =
+    currentWs && !searching
+      ? getRecentlyViewed(currentWs).filter(isRoutableEntry)
+      : [];
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && close()}>
@@ -207,7 +214,9 @@ export function CommandPalette({
                   <CommandItem
                     key={ws.id}
                     value={`workspace ${ws.name}`}
-                    onSelect={() => go(`/${ws.slug}/worksheets`)}
+                    onSelect={() =>
+                      go(`/${encodeURIComponent(ws.slug)}/worksheets`)
+                    }
                     className="gap-2"
                   >
                     <StorageIcon
@@ -228,7 +237,9 @@ export function CommandPalette({
                     <CommandItem
                       key={item.segment}
                       value={item.label.toLowerCase()}
-                      onSelect={() => go(`/${currentWs}/${item.segment}`)}
+                      onSelect={() =>
+                        go(`/${encodeURIComponent(currentWs)}/${item.segment}`)
+                      }
                       className="gap-2"
                     >
                       <item.icon className="size-4 text-text-secondary" />

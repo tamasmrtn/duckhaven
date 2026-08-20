@@ -273,6 +273,18 @@ describe("CatalogPage tab deep-linking", () => {
       }),
     );
   });
+
+  it("falls back to the Sample tab for an unrecognized ?tab= value", async () => {
+    renderWithProviders({
+      initialRoute:
+        "/acme-analytics/catalog/acme_analytics/raw/events?tab=notreal",
+    });
+
+    const sampleTab = await screen.findByRole("tab", { name: /sample/i });
+    await waitFor(() =>
+      expect(sampleTab).toHaveAttribute("data-state", "active"),
+    );
+  });
 });
 
 describe("CatalogPage recently-viewed", () => {

@@ -6,6 +6,16 @@ export interface RecentlyViewedEntry {
   viewedAt: number;
 }
 
+// A saved query isn't routable via objectPath() (it has no object-detail
+// route — opening one stashes its SQL and navigates to the worksheet
+// instead), so callers that turn a recent entry into a route need to filter
+// to this narrower shape first.
+export function isRoutableEntry(
+  entry: RecentlyViewedEntry,
+): entry is RecentlyViewedEntry & { type: "table" | "schema" } {
+  return entry.type !== "saved_query";
+}
+
 const MAX_ENTRIES = 8;
 
 function storageKey(ws: string) {

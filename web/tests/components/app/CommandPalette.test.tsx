@@ -3,6 +3,7 @@ import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { renderWithProviders } from '@tests/utils'
 import { recordRecentlyViewed } from '@/utils/recentlyViewed'
+import { WORKSPACES } from '@/mock/fixtures/workspaces'
 
 const WS_ROUTE = '/acme-analytics/worksheets'
 
@@ -108,5 +109,33 @@ describe('CommandPalette', () => {
     await waitFor(() =>
       expect(router.state.location.pathname).toBe('/acme-analytics/worksheets'),
     )
+  })
+
+  it('percent-encodes an unusual workspace slug when switching to it', async () => {
+    // Pushed onto the live fixture (like the POST handler does) so it
+    // participates in both the list and single-workspace endpoints, matching
+    // real behavior more closely than a one-off handler override.
+    WORKSPACES.push({
+      id: 'ws-odd',
+      slug: 'odd slug',
+      name: 'Odd Workspace',
+      description: null,
+      default_catalog: null,
+      storage_backend_id: null,
+      storage_backend_kind: 'object_store',
+      created_at: new Date().toISOString(),
+    })
+    const { router } = renderWithProviders({ initialRoute: WS_ROUTE })
+    const dialog = await openPalette()
+
+    await userEvent.click(await within(dialog).findByText('Odd Workspace'))
+
+    // The router exposes a decoded pathname (like window.location.pathname);
+    // the regression this guards is the request actually resolving instead of
+    // 404ing on a malformed, un-encoded path.
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe('/odd slug/worksheets'),
+    )
+    expect(screen.queryByText('Page not found')).not.toBeInTheDocument()
   })
 })

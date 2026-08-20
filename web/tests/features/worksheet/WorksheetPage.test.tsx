@@ -699,3 +699,83 @@ describe('save as metric', () => {
     expect(screen.queryByText('Save as metric')).not.toBeInTheDocument()
   })
 })
+
+describe('WorksheetPage tab deep-linking', () => {
+  afterEach(() => {
+    // The active tab persists to sessionStorage (not cleared by the global
+    // localStorage-only afterEach), and would otherwise leak into later
+    // tests' initial-tab resolution.
+    sessionStorage.clear()
+  })
+
+  it('activates the tab named by ?tab= on load', async () => {
+    localStorage.setItem(
+      'dh-worksheets-acme-analytics',
+      JSON.stringify([
+        { id: 'tab-1', title: 'events.sql', sql: 'SELECT 1', dirty: false },
+        { id: 'tab-2', title: 'funnel-draft', sql: 'SELECT 2', dirty: false },
+      ]),
+    )
+    renderWithProviders({ initialRoute: `${WS_ROUTE}?tab=tab-2` })
+
+    const funnelTab = await screen.findByRole('tab', { name: /funnel-draft/ })
+    await waitFor(() =>
+      expect(funnelTab).toHaveAttribute('data-state', 'active'),
+    )
+  })
+
+  it('updates the URL search param when the user switches tabs', async () => {
+    const user = userEvent.setup()
+    const { router } = renderWithProviders({ initialRoute: WS_ROUTE })
+    await screen.findByText('events.sql')
+
+    await user.click(screen.getByRole('tab', { name: /funnel-draft/ }))
+
+    await waitFor(() =>
+      expect(router.state.location.search).toMatchObject({ tab: 'tab-2' }),
+    )
+  })
+
+  it('falls back to the default tab when ?tab= names an unknown tab', async () => {
+    renderWithProviders({ initialRoute: `${WS_ROUTE}?tab=does-not-exist` })
+
+    const eventsTab = await screen.findByRole('tab', { name: /events\.sql/ })
+    await waitFor(() =>
+      expect(eventsTab).toHaveAttribute('data-state', 'active'),
+    )
+  })
+
+  it('focuses an already-open saved-query tab instead of duplicating it', async () => {
+    localStorage.setItem(
+      'dh-worksheets-acme-analytics',
+      JSON.stringify([
+        { id: 'tab-1', title: 'untitled', sql: '', dirty: false },
+        {
+          id: 'tab-2',
+          title: 'saved query',
+          sql: 'SELECT * FROM raw.events',
+          dirty: false,
+          savedQueryId: 'sq-1',
+        },
+      ]),
+    )
+    localStorage.setItem(
+      'dh-pending-sql-acme-analytics',
+      JSON.stringify({
+        sql: 'SELECT * FROM raw.events',
+        savedQueryId: 'sq-1',
+      }),
+    )
+    const { router } = renderWithProviders({ initialRoute: WS_ROUTE })
+
+    const savedTab = await screen.findByRole('tab', { name: /saved query/ })
+    await waitFor(() =>
+      expect(savedTab).toHaveAttribute('data-state', 'active'),
+    )
+    // No duplicate "saved query" tab was minted.
+    expect(screen.getAllByText('saved query')).toHaveLength(1)
+    await waitFor(() =>
+      expect(router.state.location.search).toMatchObject({ tab: 'tab-2' }),
+    )
+  })
+})

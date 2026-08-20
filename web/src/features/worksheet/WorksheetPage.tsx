@@ -1,6 +1,11 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useParams, Link } from "@tanstack/react-router";
+import {
+  useParams,
+  useSearch,
+  useNavigate,
+  Link,
+} from "@tanstack/react-router";
 import { toast } from "sonner";
 import {
   Play,
@@ -146,6 +151,8 @@ function loadTabs(ws: string): Tab[] {
 
 export function WorksheetPage() {
   const { ws } = useParams({ from: "/$ws/worksheets" });
+  const search = useSearch({ from: "/$ws/worksheets" });
+  const navigate = useNavigate();
   const { data: workspace } = useWorkspace(ws);
   const { data: agents = [] } = useAgents();
   const qc = useQueryClient();
@@ -173,9 +180,13 @@ export function WorksheetPage() {
   // hooks rather than being awaited in runPayload, so remember whether it was
   // DDL and refresh once it completes (handled in an effect below).
   const lastRunWasDdl = useRef(false);
+  // Set by the workspace-sync block below when it focuses an already-open
+  // saved-query tab, and consumed by the effect right after it.
+  const reopenedTabIdRef = useRef<string | null>(null);
 
   const [tabs, setTabs] = useState<Tab[]>(() => loadTabs(ws));
   const [activeTab, setActiveTab] = useState(() => {
+    if (search.tab && tabs.some((t) => t.id === search.tab)) return search.tab;
     const stored = loadActiveTab(ws);
     if (stored && tabs.some((t) => t.id === stored)) return stored;
     return tabs[0]?.id ?? "tab-1";
@@ -202,18 +213,25 @@ export function WorksheetPage() {
   if (loadedWs !== ws) {
     const base = loadedWs === null ? tabs : loadTabs(ws);
     const pending = takePendingQuery(ws);
-    const next = pending
-      ? [
-          ...base,
-          {
-            id: `tab-seed-${ws}-${base.length}`,
-            title: pending.savedQueryId ? "saved query" : "from catalog",
-            sql: pending.sql,
-            dirty: true,
-            savedQueryId: pending.savedQueryId,
-          },
-        ]
-      : base;
+    // Reopening a saved query that's already open in a tab should focus that
+    // tab rather than mint a duplicate.
+    const existingSavedTab =
+      pending?.savedQueryId != null
+        ? base.find((t) => t.savedQueryId === pending.savedQueryId)
+        : undefined;
+    const next =
+      pending && !existingSavedTab
+        ? [
+            ...base,
+            {
+              id: `tab-seed-${ws}-${base.length}`,
+              title: pending.savedQueryId ? "saved query" : "from catalog",
+              sql: pending.sql,
+              dirty: true,
+              savedQueryId: pending.savedQueryId,
+            },
+          ]
+        : base;
     setLoadedWs(ws);
     // On an actual workspace switch (not the initial mount, where the useState
     // initializer already loaded it), rehydrate the active query for the new
@@ -227,7 +245,10 @@ export function WorksheetPage() {
     }
     if (loadedWs !== null || pending) {
       setTabs(next);
-      if (pending) {
+      if (existingSavedTab) {
+        setActiveTab(existingSavedTab.id);
+        reopenedTabIdRef.current = existingSavedTab.id;
+      } else if (pending) {
         setActiveTab(next[next.length - 1].id);
       } else {
         const stored = loadActiveTab(ws);
@@ -237,6 +258,22 @@ export function WorksheetPage() {
       }
     }
   }
+
+  // When the sync block above focuses an already-open saved-query tab instead
+  // of minting a duplicate, reflect that tab's id in the URL — mirroring what
+  // the tab-switch handler below does for a user-driven switch.
+  useEffect(() => {
+    if (reopenedTabIdRef.current) {
+      const id = reopenedTabIdRef.current;
+      reopenedTabIdRef.current = null;
+      void navigate({
+        to: "/$ws/worksheets",
+        params: { ws },
+        search: (prev) => ({ ...prev, tab: id }),
+        replace: true,
+      });
+    }
+  });
 
   // Persist tabs per workspace so they survive reloads and stay isolated.
   useEffect(() => {
@@ -629,7 +666,18 @@ export function WorksheetPage() {
     <div className="flex h-full flex-col overflow-hidden">
       {/* Tab strip */}
       <div className="flex h-9 items-center gap-1 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 overflow-x-auto shrink-0">
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <Tabs
+          value={activeTab}
+          onValueChange={(v) => {
+            setActiveTab(v);
+            void navigate({
+              to: "/$ws/worksheets",
+              params: { ws },
+              search: (prev) => ({ ...prev, tab: v }),
+              replace: true,
+            });
+          }}
+        >
           <TabsList className="h-7 bg-transparent gap-0.5 p-0">
             {tabs.map((tab) => (
               <TabsTrigger

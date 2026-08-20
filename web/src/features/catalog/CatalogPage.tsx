@@ -32,6 +32,7 @@ import { formatBytes } from "@/utils";
 import {
   recordRecentlyViewed,
   getRecentlyViewed,
+  isRoutableEntry,
 } from "@/utils/recentlyViewed";
 import { objectPath } from "@/utils/objectPath";
 import type { CatalogTable } from "@/types/catalog";
@@ -40,6 +41,18 @@ function formatNumber(n: number | null) {
   if (n == null) return "—";
   return n.toLocaleString();
 }
+
+// Table-detail tab ids, so an unrecognized ?tab= (a stale link, a hand-edited
+// URL) falls back to Sample instead of leaving Radix's controlled Tabs with no
+// matching trigger — which renders a blank content pane.
+const TABLE_DETAIL_TABS = [
+  "sample",
+  "history",
+  "health",
+  "lineage",
+  "semantics",
+  "permissions",
+] as const;
 
 /** Iceberg-native facts for the table-detail header: format version, current
  * snapshot, data-file count, and a has-deletes badge. Renders nothing when no
@@ -244,7 +257,11 @@ function TableDetail({
 
         {/* Sample / History tabs */}
         <Tabs
-          value={tab ?? "sample"}
+          value={
+            tab && (TABLE_DETAIL_TABS as readonly string[]).includes(tab)
+              ? tab
+              : "sample"
+          }
           onValueChange={(v) =>
             navigate({
               to: "/$ws/catalog/$catalog/$schema/$table",
@@ -395,7 +412,9 @@ export function CatalogPage() {
   const { data: workspace } = useWorkspace(ws);
   // Only relevant on the bare landing state (nothing selected yet) — no need
   // to read localStorage on every render once a catalog/schema/table is picked.
-  const recentlyViewed = !catalog ? getRecentlyViewed(ws) : [];
+  const recentlyViewed = !catalog
+    ? getRecentlyViewed(ws).filter(isRoutableEntry)
+    : [];
 
   return (
     <div className="flex h-full flex-col">

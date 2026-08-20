@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import {
   recordRecentlyViewed,
   getRecentlyViewed,
+  isRoutableEntry,
 } from '@/utils/recentlyViewed'
 
 describe('recentlyViewed', () => {
@@ -80,5 +81,22 @@ describe('recentlyViewed', () => {
       name: 'orders',
     })
     expect(getRecentlyViewed('other')).toEqual([])
+  })
+})
+
+describe('isRoutableEntry', () => {
+  it('accepts table and schema entries', () => {
+    expect(isRoutableEntry({ type: 'table', catalog: 'main', name: 'orders', viewedAt: 0 })).toBe(
+      true,
+    )
+    expect(isRoutableEntry({ type: 'schema', catalog: 'main', name: 'raw', viewedAt: 0 })).toBe(
+      true,
+    )
+  })
+
+  it('rejects saved_query entries, which have no object-detail route', () => {
+    expect(
+      isRoutableEntry({ type: 'saved_query', catalog: 'main', name: 'report', viewedAt: 0 }),
+    ).toBe(false)
   })
 })

@@ -3,6 +3,7 @@ import { useParams } from "@tanstack/react-router";
 import { CalendarClock, Plus } from "lucide-react";
 import { ApiError } from "@/api/client";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -116,8 +117,9 @@ export function SchedulesPage() {
             </div>
           ) : schedules.length === 0 ? (
             <EmptyState
+              icon={CalendarClock}
               title="No schedules yet."
-              subtitle="Create a schedule to run a saved query on a cron cadence."
+              description="Create a schedule to run a saved query on a cron cadence."
             />
           ) : (
             <Table containerClassName="overflow-visible" className="text-sm">
@@ -209,16 +211,6 @@ export function SchedulesPage() {
   );
 }
 
-function EmptyState({ title, subtitle }: { title: string; subtitle: string }) {
-  return (
-    <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-      <CalendarClock className="size-8 text-text-tertiary" />
-      <p className="text-md font-medium text-text-secondary">{title}</p>
-      <p className="text-sm text-text-tertiary">{subtitle}</p>
-    </div>
-  );
-}
-
 function RunsTab({
   ws,
   labelByScheduleId,
@@ -242,8 +234,9 @@ function RunsTab({
   if (runs.length === 0) {
     return (
       <EmptyState
+        icon={CalendarClock}
         title="No scheduled runs yet."
-        subtitle="Runs from your schedules will appear here, newest first."
+        description="Runs from your schedules will appear here, newest first."
       />
     );
   }

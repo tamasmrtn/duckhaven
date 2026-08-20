@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { http } from "msw";
+import { http, HttpResponse } from "msw";
 import { server } from "@tests/mock/server";
 import { renderWithProviders } from "@tests/utils";
 import { httpError } from "@/mock/lib/errors";
@@ -88,6 +88,30 @@ describe("SchedulesPage", () => {
     expect(
       within(dialog).getByRole("button", { name: "Create" }),
     ).toBeDisabled();
+  });
+
+  it("shows an empty state when there are no schedules", async () => {
+    server.use(
+      http.get("/api/workspaces/:ws/schedules", () => HttpResponse.json([])),
+    );
+    renderWithProviders({ initialRoute: ROUTE });
+    expect(await screen.findByText("No schedules yet.")).toBeInTheDocument();
+  });
+
+  it("shows an empty state on the Runs tab when there are no runs", async () => {
+    server.use(
+      http.get("/api/workspaces/:ws/schedule-runs", () =>
+        HttpResponse.json([]),
+      ),
+    );
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await screen.findByText("Daily events");
+
+    await user.click(screen.getByRole("tab", { name: "Runs" }));
+    expect(
+      await screen.findByText("No scheduled runs yet."),
+    ).toBeInTheDocument();
   });
 });
 

@@ -9,6 +9,7 @@ import {
   User,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -59,15 +60,11 @@ export function SavedQueriesPage() {
             ))}
           </div>
         ) : queries.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-            <BookMarked className="size-8 text-text-tertiary" />
-            <p className="text-md font-medium text-text-secondary">
-              Save a worksheet to keep it here.
-            </p>
-            <p className="text-sm text-text-tertiary">
-              Click "Save…" in the worksheet editor to name and save your query.
-            </p>
-          </div>
+          <EmptyState
+            icon={BookMarked}
+            title="Save a worksheet to keep it here."
+            description='Click "Save…" in the worksheet editor to name and save your query.'
+          />
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {queries.map((q) => (

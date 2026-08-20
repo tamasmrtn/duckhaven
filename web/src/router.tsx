@@ -114,6 +114,11 @@ const worksheetsRoute = createRoute({
   getParentRoute: () => wsRoute,
   path: "/worksheets",
   component: WorksheetPage,
+  // Optional deep-link to a specific open tab (e.g. from a saved query or a
+  // command-palette result), mirroring catalogTableRoute's ?tab= pattern.
+  validateSearch: (search: Record<string, unknown>): { tab?: string } => ({
+    tab: typeof search.tab === "string" ? search.tab : undefined,
+  }),
 });
 
 const catalogRoute = createRoute({

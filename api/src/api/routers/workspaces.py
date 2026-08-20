@@ -16,6 +16,7 @@ from api.schemas.workspace import (
 )
 from api.services.polaris import PolarisClient
 from api.services.workspace import (
+    UNSET,
     assert_workspace_member,
     delete_workspace,
     get_default_catalog,
@@ -105,7 +106,8 @@ async def update_workspace_detail(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     # Identity edits are gated at the same tier as membership management.
     await assert_workspace_member(db, workspace.id, user.id, min_role="owner")
-    workspace = await update_workspace(db, workspace, name=body.name, description=body.description)
+    description = body.description if "description" in body.model_fields_set else UNSET
+    workspace = await update_workspace(db, workspace, name=body.name, description=description)
     return await _workspace_out(db, workspace)
 
 

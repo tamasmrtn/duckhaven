@@ -228,6 +228,36 @@ async def test_owner_can_rename_and_describe_workspace(
     assert detail.json()["name"] == "New Name"
 
 
+async def test_explicit_null_clears_the_description(
+    auth_client: AsyncClient, backend: StorageBackend
+):
+    create = await auth_client.post(
+        "/workspaces",
+        json={"slug": "clear-desc-ws", "name": "Ws", "storage_backend_id": str(backend.id)},
+    )
+    slug = create.json()["slug"]
+    await auth_client.patch(f"/workspaces/{slug}", json={"description": "Something."})
+
+    resp = await auth_client.patch(f"/workspaces/{slug}", json={"description": None})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["description"] is None
+
+
+async def test_omitting_description_leaves_it_unchanged(
+    auth_client: AsyncClient, backend: StorageBackend
+):
+    create = await auth_client.post(
+        "/workspaces",
+        json={"slug": "keep-desc-ws", "name": "Ws", "storage_backend_id": str(backend.id)},
+    )
+    slug = create.json()["slug"]
+    await auth_client.patch(f"/workspaces/{slug}", json={"description": "Keep me."})
+
+    resp = await auth_client.patch(f"/workspaces/{slug}", json={"name": "Renamed"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["description"] == "Keep me."
+
+
 async def test_writer_cannot_rename_workspace(
     auth_client: AsyncClient, backend: StorageBackend, db_session
 ):

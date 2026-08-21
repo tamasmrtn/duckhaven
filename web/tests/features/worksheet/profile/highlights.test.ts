@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import {
   isBadEstimate,
+  isRowsReadCorrected,
   isScanBlowUp,
   isSpilled,
   isTimeHotspot,
   nodeBadges,
+  rowsReadByScan,
 } from '@/features/worksheet/profile/highlights'
 import type { QueryProfileNode, QueryProfileSummary } from '@/types/query'
 
@@ -36,6 +38,39 @@ function summary(over: Partial<QueryProfileSummary> = {}): QueryProfileSummary {
     ...over,
   }
 }
+
+describe('rowsReadByScan', () => {
+  it('divides out the per-thread double count', () => {
+    // DuckDB counts the whole relation once per participating thread, so a
+    // 200k-row file read on 8 threads is reported as 1.6M.
+    const n = node({ rows_scanned: 1_600_000 })
+    expect(rowsReadByScan(n, summary({ reserved_threads: 8 }))).toBe(200_000)
+    expect(rowsReadByScan(n, summary({ reserved_threads: 1 }))).toBe(1_600_000)
+  })
+
+  it('leaves the figure alone when there is no thread count to divide by', () => {
+    // Profiles captured before reserved_threads was recorded.
+    const n = node({ rows_scanned: 1_600_000 })
+    expect(rowsReadByScan(n, summary())).toBe(1_600_000)
+  })
+
+  it('rounds rather than showing a fractional row count', () => {
+    const n = node({ rows_scanned: 1_000_000 })
+    expect(Number.isInteger(rowsReadByScan(n, summary({ reserved_threads: 3 })))).toBe(
+      true,
+    )
+  })
+
+  it('is zero for an operator that reports no scan', () => {
+    expect(rowsReadByScan(node(), summary({ reserved_threads: 4 }))).toBe(0)
+  })
+
+  it('reports whether the figure was corrected, so the UI can explain it', () => {
+    expect(isRowsReadCorrected(summary({ reserved_threads: 4 }))).toBe(true)
+    expect(isRowsReadCorrected(summary({ reserved_threads: 1 }))).toBe(false)
+    expect(isRowsReadCorrected(summary())).toBe(false)
+  })
+})
 
 describe('isScanBlowUp', () => {
   it('flags a scan that read far more rows than it emitted', () => {

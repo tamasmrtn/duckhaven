@@ -34,7 +34,7 @@ describe("ProfilePanel", () => {
 
     // Query-level spill banner.
     expect(await screen.findByText(/Spilled to disk/i)).toBeInTheDocument();
-    // Per-node scan blow-up badge (events scans 2M rows for 30 returned).
+    // Per-node scan blow-up badge: the scan reads 1M rows to emit 1,000.
     expect(screen.getByText(/Scan blow-up/i)).toBeInTheDocument();
   });
 
@@ -66,5 +66,17 @@ describe("ProfilePanel", () => {
     expect(
       screen.getByText(/profile appears once the query finishes/i),
     ).toBeInTheDocument();
+  });
+  it("shows rows read with DuckDB's per-thread double count divided out", async () => {
+    // The fixture scan reports 2,000,000 on a 2-thread reservation: the same
+    // 1,000,000 rows counted once per participating thread. Showing the raw
+    // figure tells the reader the scan read twice what it actually did.
+    server.use(
+      http.get("/api/queries/:id/profile", () => HttpResponse.json(SAMPLE_PROFILE)),
+    );
+    renderPanel();
+
+    expect(await screen.findByText(/1,000,000 → 1,000/)).toBeInTheDocument();
+    expect(screen.queryByText(/2,000,000/)).not.toBeInTheDocument();
   });
 });

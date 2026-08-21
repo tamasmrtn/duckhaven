@@ -1,11 +1,14 @@
 import { useRef, useState } from "react";
 import { Minus, Plus } from "lucide-react";
-import type { QueryProfileSummary } from "@/types/query";
+import type { QueryProfileNode, QueryProfileSummary } from "@/types/query";
 import { cn } from "@/utils";
 import {
   BADGE_LABELS,
   type NodeBadge,
+  ROWS_READ_HINT,
+  isRowsReadCorrected,
   nodeBadges,
+  rowsReadByScan,
 } from "@/features/worksheet/profile/highlights";
 import { NODE_HEIGHT, NODE_WIDTH, type GraphLayout } from "./layout";
 
@@ -25,10 +28,17 @@ function fmtMs(ms: number | null): string {
   return `${(ms / 1000).toFixed(2)}s`;
 }
 
-function rowsLabel(scanned: number | null, produced: number | null): string {
+function rowsLabel(
+  node: QueryProfileNode,
+  summary: QueryProfileSummary,
+): string {
   const fmt = (n: number | null) => (n == null ? "—" : n.toLocaleString());
-  if (scanned && scanned > 0) return `${fmt(scanned)} → ${fmt(produced)}`;
-  return `${fmt(produced)} rows`;
+  // Rows read, corrected for DuckDB's per-thread double count — the raw figure
+  // counts the whole relation once per participating thread.
+  if (node.rows_scanned && node.rows_scanned > 0) {
+    return `${rowsReadByScan(node, summary).toLocaleString()} → ${fmt(node.rows_produced)}`;
+  }
+  return `${fmt(node.rows_produced)} rows`;
 }
 
 /**
@@ -202,8 +212,15 @@ export function ProfileGraph({
                       {fmtMs(gn.node.time_ms)}
                     </span>
                   </div>
-                  <span className="truncate font-mono text-2xs text-text-tertiary font-tabular">
-                    {rowsLabel(gn.node.rows_scanned, gn.node.rows_produced)}
+                  <span
+                    className="truncate font-mono text-2xs text-text-tertiary font-tabular"
+                    title={
+                      gn.node.rows_scanned && isRowsReadCorrected(summary)
+                        ? ROWS_READ_HINT
+                        : undefined
+                    }
+                  >
+                    {rowsLabel(gn.node, summary)}
                   </span>
                 </button>
               );

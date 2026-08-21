@@ -193,6 +193,23 @@ describe("QueryProfilePage", () => {
     expect(screen.queryByText(/pruned/i)).not.toBeInTheDocument();
   });
 
+  it("shows rows read corrected for the per-thread double count", async () => {
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await screen.findByText("Most expensive operators");
+
+    await user.click(
+      (await screen.findAllByText("Scan analytics.events (3 files)"))[0],
+    );
+
+    // Reported 2,000,000 over a 2-thread reservation is 1,000,000 rows read.
+    expect(await screen.findByText("Rows read")).toBeInTheDocument();
+    expect(screen.getByText("1,000,000")).toBeInTheDocument();
+    expect(screen.queryByText("2,000,000")).not.toBeInTheDocument();
+    // The old label promised something DuckDB does not report.
+    expect(screen.queryByText("Rows scanned")).not.toBeInTheDocument();
+  });
+
   it("surfaces admission wait and blocked time in the stats header", async () => {
     renderWithProviders({ initialRoute: ROUTE });
     // Collected on every run and, until now, shown nowhere.

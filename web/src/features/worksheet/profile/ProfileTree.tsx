@@ -2,7 +2,14 @@ import { useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import type { QueryProfileNode, QueryProfileSummary } from "@/types/query";
 import { cn, formatBytes } from "@/utils";
-import { BADGE_LABELS, type NodeBadge, nodeBadges } from "./highlights";
+import {
+  BADGE_LABELS,
+  type NodeBadge,
+  ROWS_READ_HINT,
+  isRowsReadCorrected,
+  nodeBadges,
+  rowsReadByScan,
+} from "./highlights";
 
 const BADGE_CLASS: Record<NodeBadge, string> = {
   scan: "bg-[var(--status-failed)]/15 text-[var(--status-failed)]",
@@ -16,12 +23,16 @@ function formatMs(ms: number | null): string {
   return `${(ms / 1000).toFixed(2)}s`;
 }
 
-function rowsLabel(node: QueryProfileNode): string {
-  const scanned = node.rows_scanned;
-  const produced = node.rows_produced;
+function rowsLabel(
+  node: QueryProfileNode,
+  summary: QueryProfileSummary,
+): string {
   const fmt = (n: number | null) => (n == null ? "—" : n.toLocaleString());
-  if (scanned && scanned > 0) return `${fmt(scanned)} → ${fmt(produced)}`;
-  return `${fmt(produced)} rows`;
+  // Rows read, corrected for DuckDB's per-thread double count.
+  if (node.rows_scanned && node.rows_scanned > 0) {
+    return `${rowsReadByScan(node, summary).toLocaleString()} → ${fmt(node.rows_produced)}`;
+  }
+  return `${fmt(node.rows_produced)} rows`;
 }
 
 function ProfileNodeRow({
@@ -79,8 +90,15 @@ function ProfileNodeRow({
             {BADGE_LABELS[b]}
           </span>
         ))}
-        <span className="w-40 shrink-0 text-right font-mono text-2xs text-text-secondary font-tabular">
-          {rowsLabel(node)}
+        <span
+          className="w-40 shrink-0 text-right font-mono text-2xs text-text-secondary font-tabular"
+          title={
+            node.rows_scanned && isRowsReadCorrected(summary)
+              ? ROWS_READ_HINT
+              : undefined
+          }
+        >
+          {rowsLabel(node, summary)}
         </span>
         <span className="w-16 shrink-0 text-right font-mono text-2xs text-text-tertiary font-tabular">
           {formatBytes(node.result_bytes)}

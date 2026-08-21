@@ -3,8 +3,11 @@ import { cn, formatBytes } from "@/utils";
 import {
   BADGE_LABELS,
   type NodeBadge,
+  ROWS_READ_HINT,
+  isRowsReadCorrected,
   isSpilled,
   nodeBadges,
+  rowsReadByScan,
 } from "@/features/worksheet/profile/highlights";
 import type { GraphLayout } from "./layout";
 import {
@@ -37,9 +40,17 @@ function Section({
   );
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function Row({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+}) {
   return (
-    <div className="flex items-baseline justify-between gap-3">
+    <div className="flex items-baseline justify-between gap-3" title={hint}>
       <span className="text-xs text-text-secondary">{label}</span>
       <span className="font-mono text-xs text-text-primary font-tabular">
         {value}
@@ -70,8 +81,9 @@ function NodeDetail({
       <div className="flex flex-col gap-1">
         {node.rows_scanned ? (
           <Row
-            label="Rows scanned"
-            value={node.rows_scanned.toLocaleString()}
+            label="Rows read"
+            value={rowsReadByScan(node, summary).toLocaleString()}
+            hint={isRowsReadCorrected(summary) ? ROWS_READ_HINT : undefined}
           />
         ) : null}
         <Row

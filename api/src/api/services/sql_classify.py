@@ -63,6 +63,30 @@ _NODE_TYPES: tuple[tuple[type[exp.Expression], str], ...] = (
 STATEMENT_TYPES: frozenset[str] = frozenset(kind for _, kind in _NODE_TYPES) | {"other"}
 
 
+def classify_parsed(statements: list) -> str | None:
+    """Classify statements sqlglot has already parsed.
+
+    Lets a caller that parsed for another reason — the session path's statement
+    policy, say — reuse that work instead of paying for a second parse of the
+    same text. :func:`classify_statement` is this plus the parse.
+    """
+    first = next((s for s in statements if s is not None), None)
+    if first is None:
+        return None
+    # sqlglot does not raise on syntax it cannot model: it falls back to lexing
+    # the statement as a raw Command. That is the parser saying "I do not know",
+    # which is `None`, not `other` — EXPLAIN, CALL and VACUUM land here too, and
+    # calling them "other" would be a guess dressed up as a classification.
+    if isinstance(first, exp.Command):
+        return None
+    for node_type, kind in _NODE_TYPES:
+        if isinstance(first, node_type):
+            return kind
+    # Parsed into a known node, but nothing more specific fits: USE, SET,
+    # transaction control, ATTACH, ANALYZE.
+    return "other"
+
+
 def classify_statement(sql: str) -> str | None:
     """The kind of statement ``sql`` is, or ``None`` when it cannot be parsed.
 
@@ -75,21 +99,4 @@ def classify_statement(sql: str) -> str | None:
         statements = sqlglot.parse(sql, read="duckdb")
     except Exception:  # noqa: BLE001 - fail open: unknown beats a wrong guess
         return None
-
-    first = next((s for s in statements if s is not None), None)
-    if first is None:
-        return None
-
-    # sqlglot does not raise on syntax it cannot handle: it falls back to lexing
-    # the statement as a raw Command. That is the parser saying "I do not know",
-    # which is `None`, not `other` — EXPLAIN, CALL and VACUUM land here too, and
-    # calling them "other" would be a guess dressed up as a classification.
-    if isinstance(first, exp.Command):
-        return None
-
-    for node_type, kind in _NODE_TYPES:
-        if isinstance(first, node_type):
-            return kind
-    # Parsed into a known node, but nothing more specific fits: USE, SET,
-    # transaction control, ATTACH, ANALYZE.
-    return "other"
+    return classify_parsed(statements)

@@ -47,10 +47,6 @@ WINDOWS: dict[str, tuple[timedelta, timedelta]] = {
 }
 DEFAULT_WINDOW = "8h"
 
-# Origins that are machinery rather than someone's work. Imported rather than
-# repeated so the count under the chart and the rows in the history table can
-# never disagree — they were two literals with a comment asking them to match.
-_HIDDEN_ORIGINS = HIDDEN_ORIGINS
 
 _TERMINAL = ("done", "failed", "cancelled")
 _FAILED = ("failed", "cancelled")
@@ -152,7 +148,7 @@ async def _load_queries(db: AsyncSession, agent_id: uuid.UUID, grid: Grid) -> li
                     Query.finished_at >= grid.start,
                     Query.finished_at < grid.end,
                     Query.status.in_(_TERMINAL),
-                    sa.or_(Query.origin.is_(None), Query.origin.not_in(_HIDDEN_ORIGINS)),
+                    sa.or_(Query.origin.is_(None), Query.origin.not_in(HIDDEN_ORIGINS)),
                 )
                 .order_by(Query.finished_at)
             )

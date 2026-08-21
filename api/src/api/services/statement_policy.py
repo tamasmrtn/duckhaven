@@ -309,8 +309,12 @@ def _check_statement(
 
 def assert_statement_allowed(
     sql: str, *, staging_prefixes: list[str], managed_catalogs: set[str]
-) -> None:
+) -> list[exp.Expression]:
     """Raise ``StatementNotAllowed`` if any statement in ``sql`` violates policy.
+
+    Returns the statements it parsed, so a caller needing the same AST — the
+    session path classifies each statement for History — can reuse it rather
+    than parsing the text a second time.
 
     ``staging_prefixes`` are the object-storage URI prefixes a ``COPY``/``read_*``
     may touch (the session's ``staging_uri`` + its catalog roots); ``managed_catalogs``
@@ -327,3 +331,4 @@ def assert_statement_allowed(
 
     for stmt in parsed:
         _check_statement(stmt, staging_prefixes, managed_catalogs)
+    return parsed

@@ -197,6 +197,15 @@ export function useWorkspaceQueries(
     // Hold the previous filter's rows while the next load lands, so changing a
     // filter dims the table instead of collapsing it to skeletons.
     placeholderData: (prev) => prev,
+    // Refetching an infinite query re-requests *every* loaded page. With the
+    // app-wide 30s staleTime, tabbing away and back after reading ten pages
+    // would fire ten keyset queries nobody asked for. History is not a live
+    // dashboard and has an explicit Refresh; that button still refreshes all
+    // loaded pages, which is what someone pressing it is asking for.
+    //
+    // `maxPages` would also bound it, but by dropping pages out of the cache —
+    // rows the reader had already loaded would vanish from under them.
+    refetchOnWindowFocus: false,
   });
 
   const pages = query.data?.pages ?? [];

@@ -93,7 +93,7 @@ function ProfileNodeRow({
         <span
           className="w-40 shrink-0 text-right font-mono text-2xs text-text-secondary font-tabular"
           title={
-            node.rows_scanned && isRowsReadCorrected(summary)
+            node.rows_scanned && isRowsReadCorrected(node, summary)
               ? ROWS_READ_HINT
               : undefined
           }

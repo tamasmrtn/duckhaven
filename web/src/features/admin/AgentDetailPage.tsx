@@ -237,7 +237,10 @@ function OverviewTab({ agent }: { agent: Agent }) {
             navigate({
               to: "/$ws/history",
               params: { ws },
-              search: { agent: agent.id },
+              // `user: "all"` is not optional here. History defaults to the
+              // caller's own runs, so an audit link without it shows an admin
+              // only the queries they personally ran on this agent.
+              search: { agent: agent.id, user: "all" },
             })
           }
         >

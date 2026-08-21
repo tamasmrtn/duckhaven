@@ -13,12 +13,14 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    event,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from api.db.base import Base
+from api.services.sql_classify import classify_statement
 
 
 class Query(Base):
@@ -35,6 +37,12 @@ class Query(Base):
     )
     user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     sql: Mapped[str] = mapped_column(Text, nullable=False)
+    # Coarse kind of statement, classified from `sql` at insert time by the
+    # `before_insert` listener at the bottom of this module. Persisted rather
+    # than derived so History can filter on it in SQL. Null means "unknown" —
+    # either the statement could not be parsed, or the row predates the column.
+    # Distinct from "other", which means "parsed, nothing more specific fits".
+    statement_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="queued")
     # Distinguishes user-initiated queries (null) from internal ones (e.g. "sample"),
     # so synthetic preview queries can be excluded from history/audit.
@@ -151,3 +159,19 @@ class Schedule(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+@event.listens_for(Query, "before_insert")
+def _classify_statement_type(_mapper, _connection, target: Query) -> None:
+    """Stamp ``statement_type`` from the SQL as the row is written.
+
+    A listener rather than a call at each construction site: ``Query`` rows are
+    created in eight places across the routers, the scheduler, the maintenance
+    scanner and the sync-preview helper, and three of them bypass
+    ``dispatch_query``. Classifying here is the only placement that cannot be
+    forgotten by the ninth.
+
+    Skipped when the caller already set a value, so a test can pin one.
+    """
+    if target.statement_type is None and target.sql:
+        target.statement_type = classify_statement(target.sql)

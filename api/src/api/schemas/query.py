@@ -52,6 +52,11 @@ class QueryOut(BaseModel):
     status: str
     # Tags non-interactive runs (e.g. "scheduled") so the UI can label them.
     origin: str | None = None
+    # Coarse kind of statement ("select", "insert", …), classified when the row
+    # was written. Null means unknown — the statement did not parse, or the run
+    # predates the column. Not the same as "other", which means "parsed, nothing
+    # more specific fits".
+    statement_type: str | None = None
     # Set when the run was produced by a schedule; lets the runs feed map a run
     # back to its schedule. Null for interactive runs.
     schedule_id: uuid.UUID | None = None
@@ -90,6 +95,24 @@ class RowsPageOut(BaseModel):
     # and for runs by an agent older than this field. Values are still JSON-encoded,
     # so DECIMAL and HUGEINT arrive as floats regardless of what this says.
     column_schema: list[ColumnSchemaOut] | None = None
+
+
+class QueriesPageOut(BaseModel):
+    """One page of query history.
+
+    Deliberately carries no total. Counting the rows behind a page means a
+    second aggregate over the same predicates — including the ILIKE search,
+    which no index covers — on every request, to render a number that is stale
+    the moment a query is submitted. ``has_more`` costs nothing (the endpoint
+    asks for one row more than it returns) and lets the UI say what it actually
+    knows: how many rows it is showing, and whether there are others.
+    """
+
+    items: list[QueryOut]
+    # Opaque; feed back as `cursor` for the next page. Null when this is the
+    # last page. Named to match RowsPageOut, the API's only other envelope.
+    cursor: str | None = None
+    has_more: bool = False
 
 
 class SqlFunctionOut(BaseModel):

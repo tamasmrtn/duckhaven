@@ -92,3 +92,30 @@ def test_taxonomy_is_the_eleven_values_the_api_validates_against():
         "describe",
         "other",
     }
+
+
+def test_classify_parsed_reuses_an_existing_parse():
+    """The session path validates with sqlglot and then classifies the result.
+
+    Parsing the same text twice on every statement is wasted work on a path
+    that inserts one row per dbt/dlt statement, and the parse is synchronous
+    inside an async flush.
+    """
+    import sqlglot
+
+    from api.services.sql_classify import classify_parsed
+
+    parsed = sqlglot.parse("INSERT INTO t VALUES (1)", read="duckdb")
+    assert classify_parsed(parsed) == "insert"
+    assert classify_parsed(parsed) == classify_statement("INSERT INTO t VALUES (1)")
+
+
+def test_classify_parsed_handles_empty_and_unmodelled_input():
+    import sqlglot
+
+    from api.services.sql_classify import classify_parsed
+
+    assert classify_parsed([]) is None
+    assert classify_parsed([None]) is None
+    # sqlglot lexes syntax it cannot model as a raw Command: unknown, not "other".
+    assert classify_parsed(sqlglot.parse("VACUUM", read="duckdb")) is None

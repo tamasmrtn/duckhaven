@@ -18,12 +18,21 @@ misclassifies CTEs, leading comments and whitespace. A wrong type is worse than
 no type.
 
 ``ix_queries_workspace_started_id`` supports the keyset pagination History now
-uses: the default ordering is ``started_at DESC, id DESC`` within one workspace,
-and ``id`` is in the index because it is the tiebreaker that makes a cursor
-deterministic when two runs share a timestamp. Note this is *not* a revert of
-revision 0034, which dropped ``ix_queries_workspace_started``: that index was
-``(workspace_id, started_at)`` and served the old unpaged "most recent hundred"
-scan. This one is its deliberately differently-shaped successor.
+uses **within one workspace**: the default ordering is ``started_at DESC, id
+DESC``, and ``id`` is in the index because it is the tiebreaker that makes a
+cursor deterministic when two runs share a timestamp. It does *not* help the
+admin ``all_workspaces`` scope, which drops the leading column and so still
+sorts the table; that path is admin-only and rare, and an index sized for it
+would be paid for on every insert into the busiest table in the schema.
+
+Note this is not a revert of revision 0034, which dropped
+``ix_queries_workspace_started``: that index was ``(workspace_id, started_at)``
+and served the old unpaged "most recent hundred" scan. This one is its
+deliberately differently-shaped successor.
+
+``ix_queries_workspace_id`` (revision 0001) is dropped because the new index
+begins with the same column and answers everything the single-column one did.
+Keeping both would mean maintaining two indexes per insert for one lookup.
 """
 
 from collections.abc import Sequence
@@ -44,8 +53,11 @@ def upgrade() -> None:
         "queries",
         ["workspace_id", sa.text("started_at DESC"), sa.text("id DESC")],
     )
+    # Fully covered by the composite above, which shares its leading column.
+    op.drop_index("ix_queries_workspace_id", table_name="queries")
 
 
 def downgrade() -> None:
+    op.create_index("ix_queries_workspace_id", "queries", ["workspace_id"])
     op.drop_index("ix_queries_workspace_started_id", table_name="queries")
     op.drop_column("queries", "statement_type")

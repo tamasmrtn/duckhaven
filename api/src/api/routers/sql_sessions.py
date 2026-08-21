@@ -49,6 +49,7 @@ from api.services.migration.service import workspace_has_active_migration
 from api.services.permissions import Permission
 from api.services.query import pick_agent_for
 from api.services.rbac import has_permission
+from api.services.sql_classify import classify_parsed
 from api.services.sql_guard import is_read_only
 from api.services.sql_sessions import service as session_service
 from api.services.sql_sessions.client_info import parse_user_agent
@@ -464,7 +465,10 @@ async def run_statement(
 
     # Capability-scoped statement policy (the session path's relaxed I8).
     try:
-        policy.assert_statement_allowed(
+        # The parsed statements come back so the classification below can reuse
+        # them: the before_insert listener would otherwise parse the same text
+        # again, and dbt/dlt submit big generated statements.
+        parsed_statements = policy.assert_statement_allowed(
             body.sql, staging_prefixes=prefixes, managed_catalogs=managed
         )
     except policy.StatementNotAllowed as exc:
@@ -501,6 +505,7 @@ async def run_statement(
         sql=body.sql,
         status="queued",
         origin="session",
+        statement_type=classify_parsed(parsed_statements),
         session_id=session.id,
         # Persisted so the reaper can bound this statement server-side; the agent
         # enforces the same budget around execution.

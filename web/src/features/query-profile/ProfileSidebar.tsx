@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import type { QueryProfileNode, QueryProfileSummary } from "@/types/query";
 import { cn, formatBytes } from "@/utils";
 import {
@@ -83,7 +84,9 @@ function NodeDetail({
           <Row
             label="Rows read"
             value={rowsReadByScan(node, summary).toLocaleString()}
-            hint={isRowsReadCorrected(summary) ? ROWS_READ_HINT : undefined}
+            hint={
+              isRowsReadCorrected(node, summary) ? ROWS_READ_HINT : undefined
+            }
           />
         ) : null}
         <Row
@@ -169,10 +172,15 @@ function ScanEffectiveness({ node }: { node: QueryProfileNode }) {
  * these deliberately do not claim to add up to latency.
  */
 function TimeByOperator({ layout }: { layout: GraphLayout }) {
-  // layoutTree pushes children before parents, so nodes[0] is the deepest leaf.
-  // The root is the one it placed with id "0".
-  const root = layout.nodes.find((n) => n.id === "0")?.node;
-  const shares: ClassShare[] = operatorClassBreakdown(root);
+  // A full DFS over the plan plus a regex per node. The sidebar re-renders on
+  // every node selection, and this depends only on the tree, so it is memoized
+  // rather than recomputed each time someone clicks an operator.
+  const shares: ClassShare[] = useMemo(() => {
+    // layoutTree pushes children before parents, so nodes[0] is the deepest
+    // leaf. The root is the one it placed with id "0".
+    const root = layout.nodes.find((n) => n.id === "0")?.node;
+    return operatorClassBreakdown(root);
+  }, [layout]);
   if (shares.length === 0) return null;
   return (
     <Section title="Share of operator time">

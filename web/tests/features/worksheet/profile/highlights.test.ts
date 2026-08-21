@@ -40,9 +40,24 @@ function summary(over: Partial<QueryProfileSummary> = {}): QueryProfileSummary {
 }
 
 describe('rowsReadByScan', () => {
+  it('leaves a native scan alone — only file readers double count', () => {
+    // Measured on 1.5.5: a native SEQ_SCAN reports 200,000 at 1, 2, 4 and 8
+    // threads, while a PARQUET_SCAN of the same relation reports rows x
+    // threads. Dividing the native figure would understate it eightfold and
+    // present that as a correction.
+    const native = node({
+      name: 'SEQ_SCAN',
+      rows_scanned: 200_000,
+      extra_info: { Table: 'memory.main.orders', Type: 'Sequential Scan' },
+    })
+    expect(rowsReadByScan(native, summary({ reserved_threads: 8 }))).toBe(200_000)
+    expect(isRowsReadCorrected(native, summary({ reserved_threads: 8 }))).toBe(false)
+  })
+
   it('divides out the per-thread double count', () => {
     // DuckDB counts the whole relation once per participating thread, so a
     // 200k-row file read on 8 threads is reported as 1.6M.
+    // A file reader: no Table key, so the figure is rows x threads.
     const n = node({ rows_scanned: 1_600_000 })
     expect(rowsReadByScan(n, summary({ reserved_threads: 8 }))).toBe(200_000)
     expect(rowsReadByScan(n, summary({ reserved_threads: 1 }))).toBe(1_600_000)
@@ -66,9 +81,10 @@ describe('rowsReadByScan', () => {
   })
 
   it('reports whether the figure was corrected, so the UI can explain it', () => {
-    expect(isRowsReadCorrected(summary({ reserved_threads: 4 }))).toBe(true)
-    expect(isRowsReadCorrected(summary({ reserved_threads: 1 }))).toBe(false)
-    expect(isRowsReadCorrected(summary())).toBe(false)
+    const fileScan = node({ rows_scanned: 1_000 })
+    expect(isRowsReadCorrected(fileScan, summary({ reserved_threads: 4 }))).toBe(true)
+    expect(isRowsReadCorrected(fileScan, summary({ reserved_threads: 1 }))).toBe(false)
+    expect(isRowsReadCorrected(fileScan, summary())).toBe(false)
   })
 })
 
@@ -106,6 +122,18 @@ describe('isScanBlowUp', () => {
     // figure is taken at face value and the false positive stands. Profiles
     // captured before reserved_threads was recorded behave the old way.
     expect(isScanBlowUp(n, summary())).toBe(true)
+  })
+
+  it('does not shift the threshold for a native scan', () => {
+    // 1M read to emit 1M: no waste. Dividing by 8 would make it look like
+    // 125k -> 1M, and the badge must not fire either way.
+    const native = node({
+      name: 'SEQ_SCAN',
+      rows_scanned: 1_000_000,
+      rows_produced: 1_000_000,
+      extra_info: { Table: 'memory.main.orders' },
+    })
+    expect(isScanBlowUp(native, summary({ reserved_threads: 8 }))).toBe(false)
   })
 
   it('still flags a real blow-up on a many-threaded reservation', () => {

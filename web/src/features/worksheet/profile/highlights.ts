@@ -44,13 +44,35 @@ export function rowsReadByScan(
   summary: QueryProfileSummary,
 ): number {
   const reported = node.rows_scanned ?? 0;
+  if (!isThreadInflated(node)) return reported;
   const threads = summary.reserved_threads ?? 1;
   return threads > 1 ? Math.round(reported / threads) : reported;
 }
 
+/**
+ * Whether this node's `rows_scanned` carries the per-thread double count.
+ *
+ * Only file readers do. Measured on 1.5.5 over the same 200,000-row relation:
+ * a `PARQUET_SCAN` reported 200k/400k/800k/1.6M on 1/2/4/8 threads, while a
+ * native `SEQ_SCAN` reported 200,000 at every thread count. Dividing a native
+ * scan would understate it by up to the thread count — a worse error than the
+ * one being corrected, and presented as a corrected fact.
+ *
+ * A scan of a catalog relation names it in `extra_info.Table`; a file reader
+ * has no such key (verified across 16,278 real ICEBERG_SCAN nodes, none of
+ * which carried one).
+ */
+function isThreadInflated(node: QueryProfileNode): boolean {
+  const extra = (node?.extra_info ?? {}) as Record<string, unknown>;
+  return extra.Table == null;
+}
+
 /** True when the displayed figure has been corrected and so needs explaining. */
-export function isRowsReadCorrected(summary: QueryProfileSummary): boolean {
-  return (summary.reserved_threads ?? 1) > 1;
+export function isRowsReadCorrected(
+  node: QueryProfileNode,
+  summary: QueryProfileSummary,
+): boolean {
+  return isThreadInflated(node) && (summary.reserved_threads ?? 1) > 1;
 }
 
 /** Wording for the tooltip on any corrected rows-read figure. */

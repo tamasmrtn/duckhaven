@@ -437,4 +437,20 @@ describe('AgentDetailPage per-agent tiers', () => {
     await user.click(await screen.findByRole('button', { name: /force disconnect/i }))
     await waitFor(() => expect(disconnected).toBe(true))
   })
+  it('opens the agent audit across all users, not just the viewer', async () => {
+    // History defaults to the caller's own runs, so a bare `?agent=` link shows
+    // an admin only the queries they personally ran on this agent — usually
+    // none. The audit link has to opt out of that default explicitly.
+    const user = userEvent.setup()
+    const { router } = renderWithProviders({ initialRoute: ELASTIC })
+    // The audit link lives on Overview; the page opens on Monitoring.
+    await user.click(await screen.findByRole('tab', { name: /overview/i }))
+
+    await user.click(
+      await screen.findByRole('button', { name: /view audit/i }),
+    )
+
+    expect(router.state.location.pathname).toContain('/history')
+    expect(router.state.location.search).toEqual({ agent: 'ag-5', user: 'all' })
+  })
 })

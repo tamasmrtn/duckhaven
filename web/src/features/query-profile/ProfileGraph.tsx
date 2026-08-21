@@ -215,7 +215,8 @@ export function ProfileGraph({
                   <span
                     className="truncate font-mono text-2xs text-text-tertiary font-tabular"
                     title={
-                      gn.node.rows_scanned && isRowsReadCorrected(summary)
+                      gn.node.rows_scanned &&
+                      isRowsReadCorrected(gn.node, summary)
                         ? ROWS_READ_HINT
                         : undefined
                     }

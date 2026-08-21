@@ -667,6 +667,56 @@ describe('HistoryPage scope, filters and paging', () => {
     expect(router.state.location.search).toEqual({})
   })
 
+  it('does not send a request until it knows whose runs to ask for', async () => {
+    // A disabled TanStack query reports isLoading false, so the page used to
+    // fall through to the empty state and flash "No queries match" before the
+    // skeletons appeared.
+    recordRequests()
+    renderWithProviders({ initialRoute: '/acme-analytics/history' })
+    expect(screen.queryByText('No queries match.')).not.toBeInTheDocument()
+  })
+
+  it('debounces the duration filter instead of firing per keystroke', async () => {
+    const user = userEvent.setup()
+    const seen = recordRequests()
+    renderWithProviders({ initialRoute: '/acme-analytics/history?user=all' })
+    await waitFor(() => expect(seen.length).toBeGreaterThan(0))
+    const before = seen.length
+
+    await user.type(
+      await screen.findByRole('spinbutton', { name: /slower than/i }),
+      '1500',
+    )
+
+    await waitFor(() =>
+      expect(seen[seen.length - 1].get('slower_than_ms')).toBe('1500000'),
+    )
+    // Four keystrokes must not mean four round trips for 1, 15, 150, 1500.
+    expect(seen.length - before).toBeLessThan(4)
+  })
+
+  it('round-trips a custom range through local time without drifting', async () => {
+    const user = userEvent.setup()
+    const seen = recordRequests()
+    const { router } = renderWithProviders({
+      initialRoute: '/acme-analytics/history?user=all&range=custom',
+    })
+
+    const from = await screen.findByLabelText('from')
+    await user.type(from, '2026-08-01T10:00')
+
+    // Stored as UTC...
+    await waitFor(() => {
+      const since = (router.state.location.search as { since?: string }).since
+      expect(since).toBeTruthy()
+      expect(Date.parse(since!)).toBe(new Date('2026-08-01T10:00').getTime())
+    })
+    // ...and redisplayed as the same local wall clock, not shifted by the
+    // offset. Slicing the ISO string put the UTC hour in a local-time field.
+    await waitFor(() => expect(from).toHaveValue('2026-08-01T10:00'))
+    expect(seen.length).toBeGreaterThan(0)
+  })
+
   it('never shows maintenance probe rows', async () => {
     // The Lakehouse-health scanner writes a `SELECT 1` per scanned table per
     // cycle. A "my queries" default hides them by accident because they carry no

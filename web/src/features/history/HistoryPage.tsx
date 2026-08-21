@@ -64,6 +64,23 @@ const ORIGIN_OPTIONS = [
 
 const PAGE_SIZE = 50;
 
+/**
+ * A UTC instant as the local wall-clock string `datetime-local` expects.
+ *
+ * The input reads and writes local time while the URL holds UTC, so the offset
+ * has to be applied on the way out — slicing the ISO string instead shows the
+ * UTC hour in a local-time field, and re-editing shifts the value by the offset
+ * again each time.
+ */
+function toLocalInputValue(iso: string | undefined): string {
+  if (!iso) return "";
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return "";
+  return new Date(ms - new Date(ms).getTimezoneOffset() * 60_000)
+    .toISOString()
+    .slice(0, 16);
+}
+
 export function HistoryPage() {
   const { ws } = useParams({ from: "/$ws/history" });
   const search = useSearch({ from: "/$ws/history" });
@@ -139,10 +156,30 @@ export function HistoryPage() {
     setIdDraft(search.id ?? "");
   }
 
+  // Debounced for the same reason as the two above: typing "1500" would
+  // otherwise navigate four times and issue four requests, one per prefix.
+  const [slowerDraft, setSlowerDraft] = useState(
+    search.slower != null ? String(search.slower) : "",
+  );
+  const debouncedSlower = useDebouncedValue(slowerDraft, 300);
+  useEffect(() => {
+    const next = debouncedSlower ? Number(debouncedSlower) : undefined;
+    if (next !== search.slower) setFilter({ slower: next });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedSlower]);
+  const [lastSlower, setLastSlower] = useState(search.slower);
+  if (search.slower !== lastSlower) {
+    setLastSlower(search.slower);
+    setSlowerDraft(search.slower != null ? String(search.slower) : "");
+  }
+
   // Cross-workspace is an admin affordance; a non-admin never sends it. An
   // agent filter spans workspaces (agents are global), so an admin viewing one
   // needs the cross-workspace scope to see all of its runs.
   const all = isAdmin && (search.scope === "all" || !!search.agent);
+  // The default scope is "my runs", which cannot be requested until useMe
+  // resolves. An explicit `user` in the URL needs no such wait.
+  const queryEnabled = search.user != null || !!me;
 
   const {
     items: rows,
@@ -176,7 +213,7 @@ export function HistoryPage() {
     dir: f.dir,
     limit: PAGE_SIZE,
     // The default scope needs the caller's own id, so wait for it.
-    enabled: search.user != null || !!me,
+    enabled: queryEnabled,
   });
 
   const { data: agents = [] } = useAgents();
@@ -309,6 +346,8 @@ export function HistoryPage() {
         setQDraft={setQDraft}
         idDraft={idDraft}
         setIdDraft={setIdDraft}
+        slowerDraft={slowerDraft}
+        setSlowerDraft={setSlowerDraft}
         statuses={statuses}
         types={types}
         unit={f.unit}
@@ -338,7 +377,10 @@ export function HistoryPage() {
       />
 
       <div className="flex-1 overflow-auto">
-        {isLoading ? (
+        {/* A disabled TanStack query reports isLoading false, so waiting for
+            `me` would otherwise fall through to the empty state and flash
+            "No queries match" before the skeletons appear. */}
+        {isLoading || !queryEnabled ? (
           <div className="space-y-1 p-4">
             {Array.from({ length: 5 }).map((_, i) => (
               <Skeleton
@@ -559,6 +601,8 @@ function FilterBar({
   setQDraft,
   idDraft,
   setIdDraft,
+  slowerDraft,
+  setSlowerDraft,
   statuses,
   types,
   unit,
@@ -572,6 +616,8 @@ function FilterBar({
   setQDraft: (v: string) => void;
   idDraft: string;
   setIdDraft: (v: string) => void;
+  slowerDraft: string;
+  setSlowerDraft: (v: string) => void;
   statuses: string[];
   types: string[];
   unit: DurationUnit;
@@ -653,7 +699,7 @@ function FilterBar({
           <input
             type="datetime-local"
             aria-label="from"
-            value={search.since?.slice(0, 16) ?? ""}
+            value={toLocalInputValue(search.since)}
             onChange={(e) =>
               setFilter({
                 since: e.target.value
@@ -666,7 +712,7 @@ function FilterBar({
           <input
             type="datetime-local"
             aria-label="to"
-            value={search.until?.slice(0, 16) ?? ""}
+            value={toLocalInputValue(search.until)}
             onChange={(e) =>
               setFilter({
                 until: e.target.value
@@ -696,12 +742,8 @@ function FilterBar({
         <Input
           type="number"
           min={0}
-          value={search.slower ?? ""}
-          onChange={(e) =>
-            setFilter({
-              slower: e.target.value ? Number(e.target.value) : undefined,
-            })
-          }
+          value={slowerDraft}
+          onChange={(e) => setSlowerDraft(e.target.value)}
           placeholder="Slower than"
           aria-label="slower than"
           className="h-7 w-28 text-xs"

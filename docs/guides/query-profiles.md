@@ -15,7 +15,7 @@ and ships it to the control plane. There are two ways to view it.
 
 - A **summary strip** — latency, CPU time, rows returned, result size, peak memory, the reserved memory and CPU the
   query ran under, spill-to-disk, bytes read/written, and the two waiting measures below.
-- **Per-operator metrics** — rows scanned to produced, bytes, a time-share bar, and the operator's join conditions,
+- **Per-operator metrics** — rows read to rows produced, bytes, a time-share bar, and the operator's join conditions,
   filters, and group keys.
 - **Named operators** — each entry in the ranked list and the diagnostics identifies itself: *Scan analytics.events*,
   *Inner join on o_custkey = c_custkey*, *Group by c_name*. You can see which table is slow without opening it.
@@ -55,6 +55,13 @@ For a selected scan the profile reports what DuckDB actually measured:
     row count marks every `GROUP BY` as a defect. The badge compares a scan's input to its own output instead, and
     divides out the per-thread double count described below, so it fires on scans that genuinely read more than they
     needed rather than on ordinary aggregation.
+
+!!! note "Rows read is corrected before it is shown"
+    DuckDB reports a scan's row count *per thread*, counting the whole relation once for every thread that took part,
+    so the raw figure grows with the size of the agent the query happened to run on — the same scan of a 200,000-row
+    file reports 200,000 on one thread and 1,600,000 on eight. DuckHaven divides by the reservation's thread count
+    before showing it, so **Rows read** is what the scan actually read. Profiles captured before that thread count was
+    recorded are shown uncorrected.
 
 !!! warning "What these do not tell you"
     DuckDB 1.5.5 reports **no byte-pruning figure and no row-group counters**, so DuckHaven shows none and never

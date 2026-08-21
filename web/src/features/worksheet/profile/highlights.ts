@@ -39,14 +39,25 @@ export function isSpilled(summary: QueryProfileSummary): boolean {
  * was really read. `reserved_threads` is absent on profiles captured before it
  * was recorded, and those are simply left uncorrected.
  */
-function rowsReadByScan(
+export function rowsReadByScan(
   node: QueryProfileNode,
   summary: QueryProfileSummary,
 ): number {
   const reported = node.rows_scanned ?? 0;
   const threads = summary.reserved_threads ?? 1;
-  return threads > 1 ? reported / threads : reported;
+  return threads > 1 ? Math.round(reported / threads) : reported;
 }
+
+/** True when the displayed figure has been corrected and so needs explaining. */
+export function isRowsReadCorrected(summary: QueryProfileSummary): boolean {
+  return (summary.reserved_threads ?? 1) > 1;
+}
+
+/** Wording for the tooltip on any corrected rows-read figure. */
+export const ROWS_READ_HINT =
+  "Rows read by this operator. DuckDB reports this per thread, counting the " +
+  "whole relation once per thread that took part, so the raw figure is " +
+  "divided by the reservation's thread count.";
 
 /**
  * A scan that read far more rows than *it* emitted — a filter that never made

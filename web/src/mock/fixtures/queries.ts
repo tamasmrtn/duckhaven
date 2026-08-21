@@ -365,9 +365,12 @@ function makeSavedQueries(): SavedQuery[] {
   ];
 }
 
-// A representative post-execution profile: a spilling sort over a scan that
-// reads far more rows than the query returns (exercises the inefficiency
-// badges in dev + tests).
+// A representative post-execution profile: a spilling sort over a scan whose
+// filter never reached the reader — it reads 2M rows (reported across 2
+// threads, so 1M really read) to emit 1,000. That is what a scan blow-up
+// actually looks like. It deliberately is *not* "a scan feeding an aggregate
+// that returns few rows": that is a healthy plan, and treating it as a defect
+// is what made the badge fire on 84% of real queries.
 export const SAMPLE_PROFILE = {
   summary: {
     latency_ms: 1420,
@@ -408,7 +411,7 @@ export const SAMPLE_PROFILE = {
             name: "ICEBERG_SCAN",
             estimated_cardinality: 2000,
             rows_scanned: 2000000,
-            rows_produced: 2000000,
+            rows_produced: 1000,
             time_ms: 300,
             result_bytes: 0,
             // The shape a real ICEBERG_SCAN emits: no Table, no pruning

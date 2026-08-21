@@ -22,8 +22,9 @@ and ships it to the control plane. There are two ways to view it.
 - **Share of operator time** — a rollup by kind of operator (scans, joins, aggregates, sorts) answering "where did the
   time go" in one line.
 - **Inefficiency highlights** computed from the profile — spills (worth a larger reservation), scan blow-ups (a scan
-  reading far more rows than returned), bad cardinality estimates (actual far from the optimizer's estimate), and time
-  hotspots. The dedicated page also ranks the most expensive operators.
+  reading far more rows than **it** emitted, the mark of a filter that never reached the reader), bad cardinality
+  estimates (actual far from the optimizer's estimate), and time hotspots. The dedicated page also ranks the most
+  expensive operators.
 
 ## Waiting versus working
 
@@ -48,6 +49,12 @@ For a selected scan the profile reports what DuckDB actually measured:
   shows files read of files considered.
 - **Rows produced** — rows the scan emitted.
 - **Filters pushed down** — the predicates the reader applied itself rather than leaving to a later operator.
+
+!!! note "Why a scan blow-up is judged against the scan, not the query"
+    An aggregate is *supposed* to reduce a lot of rows to a few, so comparing a scan's input against the query's final
+    row count marks every `GROUP BY` as a defect. The badge compares a scan's input to its own output instead, and
+    divides out the per-thread double count described below, so it fires on scans that genuinely read more than they
+    needed rather than on ordinary aggregation.
 
 !!! warning "What these do not tell you"
     DuckDB 1.5.5 reports **no byte-pruning figure and no row-group counters**, so DuckHaven shows none and never

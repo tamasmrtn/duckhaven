@@ -483,9 +483,6 @@ describe('HistoryPage scope, filters and paging', () => {
     recordRequests()
     renderWithProviders({ initialRoute: '/acme-analytics/history' })
 
-    await waitFor(() =>
-      expect(screen.getByText('My queries · Last 7 days')).toBeInTheDocument(),
-    )
     // The commonest reason for no rows is the default scope, so the empty state
     // names it instead of implying there is no history at all.
     await waitFor(() =>
@@ -493,20 +490,31 @@ describe('HistoryPage scope, filters and paging', () => {
     )
   })
 
-  it('keeps all users and all time one visible click away', async () => {
+  it('shows the signed-in user in the picker, matching the default scope', async () => {
+    // The picker used to render its "All users" placeholder while the list was
+    // in fact scoped to one user, so the control contradicted the rows below it.
+    recordRequests()
+    renderWithProviders({ initialRoute: '/acme-analytics/history' })
+
+    const picker = await screen.findByRole('combobox', { name: /filter by user/i })
+    await waitFor(() => expect(picker).toHaveTextContent(CURRENT_USER.name))
+    expect(picker).not.toHaveTextContent('All users')
+  })
+
+  it('widens to all users through the picker', async () => {
     const user = userEvent.setup()
     const seen = recordRequests()
     const { router } = renderWithProviders({
       initialRoute: '/acme-analytics/history',
     })
 
-    await user.click(await screen.findByRole('button', { name: 'All users' }))
+    await user.click(
+      await screen.findByRole('combobox', { name: /filter by user/i }),
+    )
+    await user.click(await screen.findByRole('option', { name: 'All users' }))
+
     expect(router.state.location.search).toEqual({ user: 'all' })
     await waitFor(() => expect(seen[seen.length - 1].get('user_id')).toBeNull())
-
-    await user.click(await screen.findByRole('button', { name: 'All time' }))
-    await waitFor(() => expect(seen[seen.length - 1].get('since')).toBeNull())
-    expect(screen.getByText('All users · All time')).toBeInTheDocument()
   })
 
   it('restores every filter from the URL', async () => {
@@ -541,7 +549,7 @@ describe('HistoryPage scope, filters and paging', () => {
     // page. The server still rejects a bad value outright.
     expect(p.get('sort')).toBe('started_at')
     expect(p.get('dir')).toBe('desc')
-    expect(screen.getByText('My queries · Last 7 days')).toBeInTheDocument()
+    expect(p.get('user_id')).toBe(CURRENT_USER.id)
   })
 
   it('sends a typed search to the server and puts it in the URL', async () => {

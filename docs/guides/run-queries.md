@@ -96,9 +96,10 @@ name and save the current worksheet. See [Saved queries](saved-queries.md). Ever
 ## Find an earlier run
 
 **History** lists the runs in your workspace. It opens on **your queries from the last 7 days** — where your attention
-usually is — and says so above the table, with **All users** and **All time** beside it so widening the view is one
-click rather than a hunt through a filter panel. If nothing matches, the empty state names the scope that is active,
-so an empty table is never ambiguous between "no history" and "narrow filter".
+usually is. The filter row says so rather than leaving you to infer it: the user picker shows your own name and the
+time control reads *Last 7 days*, and changing either widens the view. **Clear filters** returns everything to that
+default. If nothing matches, the empty state names the scope that is active, so an empty table is never ambiguous
+between "no history" and "narrow filter".
 
 The list is paged. **Load more** appends the next page and the count tells you how many rows you are looking at —
 DuckHaven does not claim a total it has not counted, because counting every row behind a filtered page is a second

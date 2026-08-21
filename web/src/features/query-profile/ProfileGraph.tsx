@@ -178,7 +178,7 @@ export function ProfileGraph({
                 >
                   <div className="flex items-center gap-1.5">
                     <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-text-primary">
-                      {gn.node.type}
+                      {gn.node.name || gn.node.type}
                     </span>
                     {badges.map((b) => (
                       <span

@@ -87,6 +87,12 @@ class QuerySummary:
     reserved_memory_bytes: int = 0
     reserved_threads: int = 0
     admission_wait_ms: float = 0.0
+    # DuckDB's BLOCKED_THREAD_TIME: how long threads sat parked waiting on I/O
+    # or on another operator rather than doing work. Requested on every profiled
+    # run and, until now, parsed by nothing. Against cpu_time and latency it is
+    # the honest waiting-versus-working split. Not a phase breakdown: these
+    # three overlap and do not partition latency.
+    blocked_thread_time_ms: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -102,6 +108,7 @@ class QuerySummary:
             "reserved_memory_bytes": self.reserved_memory_bytes,
             "reserved_threads": self.reserved_threads,
             "admission_wait_ms": self.admission_wait_ms,
+            "blocked_thread_time_ms": self.blocked_thread_time_ms,
         }
 
 
@@ -178,6 +185,7 @@ def parse_profile(profile: dict[str, Any]) -> tuple[QuerySummary, NormalizedNode
         memory_allocated_bytes=int(_num("total_memory_allocated")),
         bytes_read=int(_num("total_bytes_read")),
         bytes_written=int(_num("total_bytes_written")),
+        blocked_thread_time_ms=_num("blocked_thread_time") * 1000.0,
     )
     children = profile.get("children", []) or []
     # The real plan root is the QUERY_ROOT's single child; fall back to the root

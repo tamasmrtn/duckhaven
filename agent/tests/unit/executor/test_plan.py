@@ -113,3 +113,28 @@ def test_real_duckdb_explain_and_profile_round_trip(tmp_path: Path):
             produced.append(node["rows_produced"])
         stack.extend(node["children"])
     assert 100 in produced
+
+    # Present on a real capture, not just in the canned fixture: this is the
+    # assertion that breaks if DuckDB stops reporting the metric or renames it.
+    assert "blocked_thread_time_ms" in profile["summary"]
+    assert profile["summary"]["blocked_thread_time_ms"] >= 0.0
+    # Injected by the runner rather than parsed, and likewise absent from
+    # QueryProfileSummary until now.
+    assert "admission_wait_ms" in profile["summary"]
+
+
+def test_blocked_thread_time_is_carried_into_the_summary():
+    """DuckDB reports it on every profiled run; nothing used to read it.
+
+    Seconds on the wire like ``latency`` and ``cpu_time``, so it gets the same
+    conversion.
+    """
+    summary, _ = parse_profile({**CANNED_PROFILE, "blocked_thread_time": 0.25})
+    assert summary.blocked_thread_time_ms == 250.0
+    assert summary.to_dict()["blocked_thread_time_ms"] == 250.0
+
+
+def test_blocked_thread_time_defaults_to_zero_when_absent():
+    """A profile captured before the metric was requested still parses."""
+    summary, _ = parse_profile(CANNED_PROFILE)
+    assert summary.blocked_thread_time_ms == 0.0

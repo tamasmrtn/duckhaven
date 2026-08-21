@@ -25,6 +25,21 @@ export function ProfileSummary({ summary }: { summary: QueryProfileSummary }) {
     <div className="flex flex-wrap items-start gap-x-6 gap-y-3 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-3">
       <Stat label="Latency" value={formatMs(summary.latency_ms)} />
       <Stat label="CPU time" value={formatMs(summary.cpu_time_ms)} />
+      {/* Waiting versus working. These three overlap and do not partition
+          latency — CPU time sums across threads and can exceed wall clock —
+          so they are shown as three measurements, not a phase breakdown. */}
+      {summary.admission_wait_ms != null && summary.admission_wait_ms > 0 && (
+        <Stat
+          label="Admission wait"
+          value={formatMs(summary.admission_wait_ms)}
+        />
+      )}
+      {summary.blocked_thread_time_ms != null && (
+        <Stat
+          label="Blocked"
+          value={formatMs(summary.blocked_thread_time_ms)}
+        />
+      )}
       <Stat label="Rows" value={summary.rows_returned.toLocaleString()} />
       <Stat label="Result" value={formatBytes(summary.result_bytes)} />
       <Stat

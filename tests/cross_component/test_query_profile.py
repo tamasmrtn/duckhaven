@@ -44,6 +44,14 @@ async def test_select_profile_persisted_and_served(api_client, workspace, health
     assert summary["latency_ms"] > 0
     assert {"peak_memory_bytes", "spill_bytes", "rows_returned"} <= summary.keys()
 
+    # The waiting-versus-working metrics survive the agent -> API -> client trip.
+    # blocked_thread_time_ms is parsed from DuckDB's profile; admission_wait_ms
+    # is DuckHaven's own and is injected by the runner. Both were being
+    # collected and dropped before reaching anything that could show them.
+    assert {"blocked_thread_time_ms", "admission_wait_ms"} <= summary.keys()
+    assert summary["blocked_thread_time_ms"] >= 0
+    assert summary["admission_wait_ms"] >= 0
+
     # The operator tree includes a blocking GROUP BY with actual cardinalities.
     types, produced = [], []
     stack = [profile["tree"]]

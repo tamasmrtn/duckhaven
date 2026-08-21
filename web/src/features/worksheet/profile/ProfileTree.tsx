@@ -65,7 +65,7 @@ function ProfileNodeRow({
           )}
         </button>
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-text-primary">
-          {node.type}
+          {node.name || node.type}
         </span>
         {badges.map((b) => (
           <span

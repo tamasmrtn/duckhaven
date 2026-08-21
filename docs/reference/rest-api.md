@@ -86,6 +86,66 @@ The field is **additive** — `columns` still carries the names-only list it alw
 - the query ran on an agent older than this feature. The control plane reports nothing rather than deriving types from
   the result Parquet, whose writer is lossy.
 
+## Query history
+
+`GET /api/workspaces/{ws}/queries` returns a page, not a bare array:
+
+```json
+{
+  "items": [ /* QueryOut */ ],
+  "cursor": "eyJ...",
+  "has_more": true
+}
+```
+
+Pass `cursor` back to fetch the next page; it is `null` on the last one. The cursor is opaque and is tied to the
+`sort` it was produced under — reusing one after changing `sort` is a `422`, not a silently different page.
+
+There is **no total**. Counting the rows behind a filtered page means a second pass over the same predicates on every
+request, for a number that is stale as soon as another query is submitted. `has_more` costs nothing and is what the
+UI reports.
+
+### Parameters
+
+| Parameter | Type | Notes |
+|---|---|---|
+| `q` | string | Case-insensitive substring of the statement. `%` and `_` are matched literally |
+| `query_id` | string | A full query id or its leading characters |
+| `since`, `until` | ISO 8601 | Bound `started_at` |
+| `status` | string, repeatable | `queued`, `running`, `done`, `failed`, `cancelled` |
+| `statement_type` | string, repeatable | `select`, `insert`, `update`, `delete`, `merge`, `copy`, `create`, `alter`, `drop`, `describe`, `other` |
+| `slower_than_ms` | integer | See duration below |
+| `sort` | `started_at` \| `duration` | Default `started_at` |
+| `dir` | `asc` \| `desc` | Default `desc` |
+| `cursor` | string | From the previous page |
+| `limit` | integer 1-1000 | Page size, default 100 |
+| `origin`, `session_id`, `agent_id` | | Narrow to a kind of run, one session, or one agent |
+| `user_id`, `all_workspaces` | | Cross-principal; see below |
+
+An unrecognized value for an enumerated parameter is rejected with `422` rather than ignored. Sorting and filtering
+are applied to the whole result set before the page is cut.
+
+### Duration
+
+`slower_than_ms` and `sort=duration` use the agent's execution time when it reported one, and otherwise
+`finished_at - started_at`. Without that fallback every failed run would be excluded, which is backwards: a statement
+that hung and then died is what a slow-query search is for. Runs that have not finished have no duration — they are
+excluded from `slower_than_ms` and sort last under `sort=duration` in **both** directions.
+
+### Statement type
+
+Classified when the row is written. `null` means unknown — the statement did not parse, or it predates the field — and
+is distinct from `other`, which means it parsed and nothing more specific fit. Rows with `null` are returned normally
+and are excluded only when `statement_type` is supplied.
+
+### Permissions
+
+Any workspace member may use every filter above against their own workspace, including `since`/`until` and their own
+`user_id`. A `user_id` other than the caller's own, and `all_workspaces`, require the query-admin permission and are
+otherwise `403`.
+
+Runs whose `origin` is `sample`, `metadata` or `maintenance` are never returned.
+
 ## Semantic layer
 
 Define what business terms mean, and compile questions into SQL from those definitions. See

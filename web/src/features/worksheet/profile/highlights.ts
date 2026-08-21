@@ -24,17 +24,49 @@ export function isSpilled(summary: QueryProfileSummary): boolean {
   return summary.spill_bytes > 0;
 }
 
-/** Far more rows read than the query ultimately returned (missing pushdown). */
+/**
+ * Rows DuckDB reported for a scan, corrected for its per-thread double count.
+ *
+ * `operator_rows_scanned` is not the number of rows read: every thread that
+ * takes part in a scan reports the *whole* relation's row count and DuckDB sums
+ * them, so the figure is `rows × min(threads, row groups)`. Measured on 1.5.5
+ * against one 200,000-row Parquet file, varying only the thread count: 1 thread
+ * reported 200,000, two reported 400,000, eight reported 1,600,000.
+ *
+ * Dividing by the reservation's thread count undoes most of it. It under-
+ * corrects when a file has fewer row groups than threads (fewer threads then
+ * take part), which is the safe direction: the result is never larger than what
+ * was really read. `reserved_threads` is absent on profiles captured before it
+ * was recorded, and those are simply left uncorrected.
+ */
+function rowsReadByScan(
+  node: QueryProfileNode,
+  summary: QueryProfileSummary,
+): number {
+  const reported = node.rows_scanned ?? 0;
+  const threads = summary.reserved_threads ?? 1;
+  return threads > 1 ? reported / threads : reported;
+}
+
+/**
+ * A scan that read far more rows than *it* emitted — a filter that never made
+ * it down into the reader.
+ *
+ * Compared against the scan's own output, not the query's final row count.
+ * Against the latter every aggregate looks pathological: a `GROUP BY` over 600M
+ * rows returning 5 is the query working, not a scan misbehaving, and on real
+ * data that spelling fired on 84% of queries.
+ */
 export function isScanBlowUp(
   node: QueryProfileNode,
   summary: QueryProfileSummary,
 ): boolean {
-  const scanned = node.rows_scanned ?? 0;
-  return (
-    scanned > SCAN_MIN_ROWS &&
-    summary.rows_returned > 0 &&
-    scanned > SCAN_BLOWUP_RATIO * summary.rows_returned
-  );
+  const produced = node.rows_produced;
+  if (produced == null) return false;
+  const read = rowsReadByScan(node, summary);
+  // produced === 0 is deliberately not excluded: reading rows to emit none is
+  // the strongest form of the thing this looks for.
+  return read > SCAN_MIN_ROWS && read > SCAN_BLOWUP_RATIO * produced;
 }
 
 /** Actual cardinality diverges sharply from the optimizer's estimate. */

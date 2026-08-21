@@ -160,20 +160,49 @@ describe('useWorkspaceQueries()', () => {
     const { result } = renderHook(() => useWorkspaceQueries('acme-analytics'), {
       wrapper,
     })
-    await waitFor(() => expect(result.current.data).toBeDefined())
-    const rows = result.current.data ?? []
-    expect(rows.length).toBeGreaterThan(0)
-    const workspaceIds = new Set(rows.map((r) => r.workspace_id))
+    await waitFor(() => expect(result.current.items.length).toBeGreaterThan(0))
+    const workspaceIds = new Set(result.current.items.map((r) => r.workspace_id))
     expect(workspaceIds.size).toBe(1)
   })
 
   it('returns the full cross-workspace log with all_workspaces', async () => {
     const { wrapper } = createWrapper()
     const { result } = renderHook(
-      () => useWorkspaceQueries('acme-analytics', { all_workspaces: true }),
+      () =>
+        useWorkspaceQueries('acme-analytics', {
+          all_workspaces: true,
+          limit: 500,
+        }),
       { wrapper },
     )
-    await waitFor(() => expect(result.current.data).toBeDefined())
-    expect(result.current.data).toHaveLength(QUERY_HISTORY.length)
+    await waitFor(() => expect(result.current.items.length).toBeGreaterThan(0))
+    // Maintenance probes are machinery and never appear in history.
+    const visible = QUERY_HISTORY.filter((q) => q.origin !== 'maintenance')
+    expect(result.current.items).toHaveLength(visible.length)
+  })
+
+  it('pages with a cursor and appends rather than replacing', async () => {
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(
+      () =>
+        useWorkspaceQueries('acme-analytics', {
+          all_workspaces: true,
+          limit: 3,
+        }),
+      { wrapper },
+    )
+    await waitFor(() => expect(result.current.items).toHaveLength(3))
+    expect(result.current.hasMore).toBe(true)
+
+    const firstPage = result.current.items.map((r) => r.id)
+    await act(async () => {
+      await result.current.fetchNextPage()
+    })
+    await waitFor(() => expect(result.current.items.length).toBeGreaterThan(3))
+
+    const ids = result.current.items.map((r) => r.id)
+    // Appended, in order, with nothing repeated across the boundary.
+    expect(ids.slice(0, 3)).toEqual(firstPage)
+    expect(new Set(ids).size).toBe(ids.length)
   })
 })

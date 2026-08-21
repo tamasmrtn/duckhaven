@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { EyeOff, GitBranch, TriangleAlert } from "lucide-react";
 import { Banner } from "@/components/ui/banner";
+import { Segmented } from "@/components/ui/segmented";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTableLineage } from "@/queries/lineage";
@@ -49,47 +50,6 @@ function edgeLabel(operation: string | null, isIncoming: boolean): string {
   const map = isIncoming ? INCOMING_LABEL : OUTGOING_LABEL;
   if (!operation) return isIncoming ? "Built using" : "Used to build";
   return map[operation] ?? operation;
-}
-
-function Segmented<T extends string | number>({
-  label,
-  options,
-  value,
-  onChange,
-}: {
-  label: string;
-  options: { value: T; label: string }[];
-  value: T;
-  onChange: (v: T) => void;
-}) {
-  return (
-    <div className="flex items-center gap-1.5">
-      <span className="text-2xs uppercase tracking-wide text-text-tertiary">
-        {label}
-      </span>
-      <div
-        role="group"
-        aria-label={label}
-        className="flex rounded-md border border-[var(--border-subtle)] p-0.5"
-      >
-        {options.map((option) => (
-          <button
-            key={String(option.value)}
-            type="button"
-            aria-pressed={option.value === value}
-            onClick={() => onChange(option.value)}
-            className={
-              option.value === value
-                ? "rounded px-2 py-0.5 text-2xs bg-accent text-text-primary"
-                : "rounded px-2 py-0.5 text-2xs text-text-secondary hover:text-text-primary"
-            }
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
 }
 
 function nodeName(node: LineageNode | undefined): string {

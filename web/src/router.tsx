@@ -23,6 +23,10 @@ import { SemanticPage } from "@/features/semantic/SemanticPage";
 import { SemanticModelDetail } from "@/features/semantic/SemanticModelDetail";
 import { SessionDetailPage } from "@/features/sessions/SessionDetailPage";
 import { HistoryPage } from "@/features/history/HistoryPage";
+import {
+  type HistorySearch,
+  parseHistorySearch,
+} from "@/features/history/filters";
 import { QueryProfilePage } from "@/features/query-profile/QueryProfilePage";
 import { AdminLayout } from "@/features/admin/AdminLayout";
 import { AgentsPage } from "@/features/admin/AgentsPage";
@@ -191,10 +195,11 @@ const historyRoute = createRoute({
   getParentRoute: () => wsRoute,
   path: "/history",
   component: HistoryPage,
-  // Optional agent filter (deep-linked from Admin → Agents → View audit).
-  validateSearch: (search: Record<string, unknown>): { agent?: string } => ({
-    agent: typeof search.agent === "string" ? search.agent : undefined,
-  }),
+  // The whole filter/sort state, so a narrowed view can be bookmarked and
+  // shared. Unrecognized values fall back to the default rather than erroring —
+  // a stale link should still render something. See features/history/filters.
+  validateSearch: (search: Record<string, unknown>): HistorySearch =>
+    parseHistorySearch(search),
 });
 
 const queryProfileRoute = createRoute({

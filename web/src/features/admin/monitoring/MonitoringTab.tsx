@@ -127,7 +127,9 @@ function WindowedHistory({
   const navigate = useNavigate();
   // Agents are global, so an agent-scoped list has to span workspaces; the server
   // gates that on the admin permission this whole page already requires.
-  const { data: queries = [], isLoading } = useWorkspaceQueries(ws, {
+  // A bounded window on one agent, so it takes the first page and stops: no
+  // Load more here. It still has to read `items` off the envelope.
+  const { items: queries, isLoading } = useWorkspaceQueries(ws, {
     all_workspaces: true,
     agent_id: agentId,
     since,

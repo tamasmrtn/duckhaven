@@ -12,6 +12,11 @@ export interface Query {
   status: QueryStatus;
   // Tags non-interactive runs (e.g. "scheduled"); null/absent for user runs.
   origin?: string | null;
+  // Coarse kind of statement ("select", "insert", …), classified when the run
+  // was recorded. Null/absent means unknown — the statement did not parse, or
+  // the row predates classification. Not the same as "other", which means the
+  // statement parsed and nothing more specific fit.
+  statement_type?: string | null;
   // Set when the run was produced by a schedule; maps a run to its schedule.
   schedule_id?: string | null;
   // Set when the run is a statement inside a SQL session (origin="session");
@@ -48,6 +53,16 @@ export interface QueryProfileSummary {
   // before this was recorded omit them.
   reserved_memory_bytes?: number;
   reserved_threads?: number;
+  // How long the statement waited for that reservation before it could start.
+  // DuckHaven's own measurement, not DuckDB's.
+  admission_wait_ms?: number;
+  // DuckDB's BLOCKED_THREAD_TIME: time threads spent parked waiting on I/O or
+  // on another operator rather than working. Optional: older profiles omit it.
+  //
+  // These three do not partition latency and must not be presented as if they
+  // did — cpu_time sums across threads and can exceed wall clock, and blocked
+  // time overlaps with it.
+  blocked_thread_time_ms?: number;
 }
 
 export interface QueryProfileNode {
@@ -65,6 +80,20 @@ export interface QueryProfileNode {
 export interface QueryProfile {
   summary: QueryProfileSummary;
   tree: QueryProfileNode;
+}
+
+/** One page of query history.
+ *
+ * Carries no total on purpose: counting the rows behind a page costs a second
+ * aggregate over the same predicates on every request, to show a number that is
+ * stale as soon as anyone runs a query. `has_more` is free and lets the UI say
+ * what it actually knows.
+ */
+export interface QueriesPage {
+  items: Query[];
+  // Opaque; feed back as `cursor` for the next page. Null on the last page.
+  cursor: string | null;
+  has_more: boolean;
 }
 
 export interface QueryRow {

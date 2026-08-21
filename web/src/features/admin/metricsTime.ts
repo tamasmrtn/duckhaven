@@ -47,6 +47,17 @@ export function formatClockTick(ms: number): string {
   });
 }
 
+// Calendar day without a year or a time, for labelling the boundary a relative
+// window resolves to ("Last 7 days · from Aug 14"). Naming the concrete date
+// removes the ambiguity about whether a window is calendar days or rolling
+// hours, which no amount of wording on the preset itself can.
+export function formatBoundaryDay(ms: number): string {
+  return new Date(ms).toLocaleDateString([], {
+    month: "short",
+    day: "numeric",
+  });
+}
+
 // One tick per round interval, chosen so a window carries 6-12 labels — enough to
 // locate a bar in time, few enough not to collide at narrow widths.
 export function windowTicks(startMs: number, endMs: number): number[] {

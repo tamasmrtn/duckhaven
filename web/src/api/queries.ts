@@ -1,5 +1,10 @@
 import { get, post, patch, del } from "./client";
-import type { Query, QueryProfile, QueryRowsPage } from "@/types/query";
+import type {
+  QueriesPage,
+  Query,
+  QueryProfile,
+  QueryRowsPage,
+} from "@/types/query";
 import type { SavedQuery } from "@/types/saved-query";
 
 export const queriesApi = {
@@ -28,10 +33,23 @@ export const queriesApi = {
       origin?: string;
       session_id?: string;
       agent_id?: string;
-      // ISO timestamps bounding started_at. Admin-only server-side, like
-      // user_id/agent_id.
+      // ISO timestamps bounding started_at. Open to any member for their own
+      // workspace; still admin-gated together with all_workspaces.
       since?: string;
       until?: string;
+      // Case-insensitive substring of the statement text.
+      q?: string;
+      // A full query id, or the leading part of one.
+      query_id?: string;
+      status?: string[];
+      statement_type?: string[];
+      // Reported execution time, falling back to wall clock for a run that
+      // failed before reporting one.
+      slower_than_ms?: number;
+      sort?: "started_at" | "duration";
+      dir?: "asc" | "desc";
+      cursor?: string;
+      limit?: number;
     },
   ) => {
     const qs = new URLSearchParams();
@@ -42,8 +60,21 @@ export const queriesApi = {
     if (params?.agent_id) qs.set("agent_id", params.agent_id);
     if (params?.since) qs.set("since", params.since);
     if (params?.until) qs.set("until", params.until);
+    if (params?.q) qs.set("q", params.q);
+    if (params?.query_id) qs.set("query_id", params.query_id);
+    // Repeated keys, which is what FastAPI parses into a list. The URL bar
+    // spells these comma-joined; the split happens before we get here.
+    for (const s of params?.status ?? []) qs.append("status", s);
+    for (const t of params?.statement_type ?? [])
+      qs.append("statement_type", t);
+    if (params?.slower_than_ms != null)
+      qs.set("slower_than_ms", String(params.slower_than_ms));
+    if (params?.sort) qs.set("sort", params.sort);
+    if (params?.dir) qs.set("dir", params.dir);
+    if (params?.cursor) qs.set("cursor", params.cursor);
+    if (params?.limit != null) qs.set("limit", String(params.limit));
     const suffix = qs.toString();
-    return get<Query[]>(
+    return get<QueriesPage>(
       `/workspaces/${ws}/queries${suffix ? `?${suffix}` : ""}`,
     );
   },

@@ -171,7 +171,8 @@ describe('AgentDetailPage', () => {
     server.use(
       http.get('/api/workspaces/:ws/queries', ({ request }) => {
         params = new URL(request.url).searchParams
-        return HttpResponse.json([
+        return HttpResponse.json({
+          items: [
           {
             id: 'q-1',
             workspace_id: 'ws-1',
@@ -187,7 +188,10 @@ describe('AgentDetailPage', () => {
             running_at: '2026-07-28T10:00:03Z',
             finished_at: '2026-07-28T10:00:05Z',
           },
-        ])
+        ],
+          cursor: null,
+          has_more: false,
+        })
       }),
     )
     renderWithProviders({ initialRoute: ELASTIC })
@@ -202,7 +206,8 @@ describe('AgentDetailPage', () => {
   it('splits a run’s duration into queue wait and execution', async () => {
     server.use(
       http.get('/api/workspaces/:ws/queries', () =>
-        HttpResponse.json([
+        HttpResponse.json({
+          items: [
           {
             id: 'q-slow',
             workspace_id: 'ws-1',
@@ -218,7 +223,10 @@ describe('AgentDetailPage', () => {
             running_at: '2026-07-28T10:00:03Z',
             finished_at: '2026-07-28T10:00:05Z',
           },
-        ]),
+        ],
+          cursor: null,
+          has_more: false,
+        }),
       ),
     )
     renderWithProviders({ initialRoute: ELASTIC })

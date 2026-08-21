@@ -92,3 +92,61 @@ See [Inspecting metadata](../reference/sql-support.md#inspecting-metadata-inform
 Save a frequently used query with a name and an optional default agent — press **Ctrl+S** (or the **Save…** button) to
 name and save the current worksheet. See [Saved queries](saved-queries.md). Every run is recorded in the workspace
 [history and audit log](../operations/monitoring.md).
+
+## Find an earlier run
+
+**History** lists the runs in your workspace. It opens on **your queries from the last 7 days** — where your attention
+usually is — and says so above the table, with **All users** and **All time** beside it so widening the view is one
+click rather than a hunt through a filter panel. If nothing matches, the empty state names the scope that is active,
+so an empty table is never ambiguous between "no history" and "narrow filter".
+
+The list is paged. **Load more** appends the next page and the count tells you how many rows you are looking at —
+DuckHaven does not claim a total it has not counted, because counting every row behind a filtered page is a second
+pass over the whole table for a number that goes stale the moment somebody runs a query.
+
+### Narrowing the list
+
+- **Search** matches text anywhere in the statement, ignoring case. `%` and `_` match themselves; they are not
+  wildcards.
+- **Query ID** accepts a full id or just the start of one, so you can paste the shortened id the tables show. It only
+  ever finds runs you could already see — knowing an id is not a way into another workspace.
+- **Time** offers the last hour, 24 hours, 7 days, 30 days, all time, or a range you pick. Each preset names the date
+  it resolves to, so there is no guessing whether "last 7 days" means seven calendar days or a rolling week: it is
+  rolling, from the moment you opened the page.
+- **Status** and **Statement type** both take several values at once.
+- **Slower than** takes a number and a unit.
+- **Sorting** by *Started* or *Duration* runs on the server, over the whole result set — not just the page in front of
+  you.
+
+Every one of these lives in the URL, so a narrowed view can be bookmarked or pasted to a colleague and will come back
+the same. Your position within the list does not: a shared link opens on the first page.
+
+### What "duration" means here
+
+For a run that finished normally it is the time the agent spent executing the statement.
+
+For a run that **failed before the agent could report one**, it is the wall-clock time between submission and failure.
+This matters for the **Slower than** filter: a query that hung for two minutes and then died is exactly what you are
+looking for when you hunt slow queries, and filtering on execution time alone would hide every failure.
+
+A run that has not finished is excluded from the duration filter and sorts last under **Duration**. Its duration is
+not yet known, which is not the same as zero.
+
+### Statement types, and rows that have none
+
+Each run is classified when it is recorded — `select`, `insert`, `create`, and so on, plus `other` for statements like
+`USE` and `SET` that fit nothing more specific.
+
+Runs recorded before DuckHaven classified statements, and statements its parser could not read, have **no type at
+all**. That is deliberately different from `other`: `other` means "we understood it and nothing fits", no type means
+"we do not know". Such runs stay visible in the list and disappear only when you filter by type — a filter never
+claims a run is something it was never shown to be.
+
+### Who can see what
+
+Anyone in a workspace can narrow that workspace's history however they like, including to their own runs and to a time
+window. Reading **another user's** runs, or **across workspaces**, needs the query-admin permission.
+
+Internal machinery is never listed: table-preview queries, metadata lookups, and the
+[Lakehouse-health](../concepts/maintenance.md) scanner's per-table probes. Statements run inside a
+[SQL session](../concepts/sql-sessions.md) — dbt and dlt work — are real user work and do appear.

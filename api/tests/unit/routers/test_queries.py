@@ -304,7 +304,7 @@ async def test_list_workspace_queries_scoped_and_ordered(
 
     resp = await authed_client.get(f"/workspaces/{workspace.slug}/queries")
     assert resp.status_code == 200
-    rows = resp.json()
+    rows = resp.json()["items"]
     sqls = [r["sql"] for r in rows]
     assert sqls == ["SELECT 'newer'", "SELECT 'older'"]  # newest first, sample excluded
 
@@ -343,7 +343,7 @@ async def test_list_workspace_queries_resolves_user_name(
 
     resp = await authed_client.get(f"/workspaces/{workspace.slug}/queries")
     assert resp.status_code == 200
-    by_sql = {r["sql"]: r for r in resp.json()}
+    by_sql = {r["sql"]: r for r in resp.json()["items"]}
     assert by_sql["SELECT 'by user'"]["user_name"] == "Querier"
     assert by_sql["SELECT 'no user'"]["user_name"] is None
 
@@ -399,14 +399,14 @@ async def test_list_workspace_queries_filters_by_origin_and_session(
 
     resp = await authed_client.get(base, params={"origin": "session"})
     assert resp.status_code == 200, resp.text
-    assert sorted(r["sql"] for r in resp.json()) == ["SELECT 'mine'", "SELECT 'theirs'"]
+    assert sorted(r["sql"] for r in resp.json()["items"]) == ["SELECT 'mine'", "SELECT 'theirs'"]
 
     # Interactive runs carry a null origin; the filter spells that case out.
     resp = await authed_client.get(base, params={"origin": "interactive"})
-    assert [r["sql"] for r in resp.json()] == ["SELECT 'interactive'"]
+    assert [r["sql"] for r in resp.json()["items"]] == ["SELECT 'interactive'"]
 
     resp = await authed_client.get(base, params={"session_id": str(session.id)})
-    rows = resp.json()
+    rows = resp.json()["items"]
     assert [r["sql"] for r in rows] == ["SELECT 'mine'"]
     # History needs the id on the wire to link a statement to its session.
     assert rows[0]["session_id"] == str(session.id)
@@ -438,11 +438,33 @@ async def test_list_queries_all_workspaces_forbidden_for_non_admin(
     assert resp.status_code == 403
 
 
-async def test_list_queries_user_filter_forbidden_for_non_admin(
+async def test_list_queries_self_filter_allowed_for_non_admin(
     authed_client: AsyncClient, workspace: Workspace, user: User
 ):
-    """The audit filters are admin-only, even within one's own workspace."""
+    """Narrowing History to *yourself* is not a cross-principal filter.
+
+    It shows a subset of what the unfiltered list already showed this caller, so
+    it is open to any member — and it has to be, because it is how the default
+    "my queries" view scopes itself.
+    """
     resp = await authed_client.get(f"/workspaces/{workspace.slug}/queries?user_id={user.id}")
+    assert resp.status_code == 200, resp.text
+
+
+async def test_list_queries_other_user_filter_forbidden_for_non_admin(
+    authed_client: AsyncClient, workspace: Workspace, db_session
+):
+    """Filtering to someone *else* stays admin-only, own workspace or not."""
+    other = User(
+        email="someone-else@queries.local",
+        password_hash=hash_password("pw"),
+        name="Someone Else",
+        role="user",
+    )
+    db_session.add(other)
+    await db_session.commit()
+
+    resp = await authed_client.get(f"/workspaces/{workspace.slug}/queries?user_id={other.id}")
     assert resp.status_code == 403
 
 
@@ -491,14 +513,14 @@ async def test_admin_can_list_all_workspaces_and_filter_by_user(
     # Cross-workspace: both queries are visible.
     resp = await client.get(f"/workspaces/{workspace.slug}/queries?all_workspaces=true")
     assert resp.status_code == 200
-    assert {r["sql"] for r in resp.json()} == {"SELECT 'in_ws'", "SELECT 'in_other'"}
+    assert {r["sql"] for r in resp.json()["items"]} == {"SELECT 'in_ws'", "SELECT 'in_other'"}
 
     # Filtered by user: only that user's query, regardless of workspace.
     resp = await client.get(
         f"/workspaces/{workspace.slug}/queries?all_workspaces=true&user_id={user.id}"
     )
     assert resp.status_code == 200
-    assert [r["sql"] for r in resp.json()] == ["SELECT 'in_ws'"]
+    assert [r["sql"] for r in resp.json()["items"]] == ["SELECT 'in_ws'"]
 
 
 async def test_list_queries_agent_filter_allowed_for_non_admin_scoped_to_own_workspace(
@@ -523,7 +545,7 @@ async def test_list_queries_agent_filter_allowed_for_non_admin_scoped_to_own_wor
 
     resp = await authed_client.get(f"/workspaces/{workspace.slug}/queries?agent_id={agent.id}")
     assert resp.status_code == 200
-    assert [r["sql"] for r in resp.json()] == ["SELECT 'mine'"]
+    assert [r["sql"] for r in resp.json()["items"]] == ["SELECT 'mine'"]
 
 
 async def test_list_queries_agent_filter_with_all_workspaces_forbidden_for_non_admin(
@@ -581,7 +603,7 @@ async def test_admin_can_filter_by_agent_across_workspaces(
         f"/workspaces/{workspace.slug}/queries?all_workspaces=true&agent_id={agent.id}"
     )
     assert resp.status_code == 200
-    assert [r["sql"] for r in resp.json()] == ["SELECT 'target'"]
+    assert [r["sql"] for r in resp.json()["items"]] == ["SELECT 'target'"]
 
 
 # --- query status ---
@@ -1735,3 +1757,487 @@ async def test_targeted_offline_static_agent_still_503s(
         json={"sql": "SELECT 1", "agent_id": str(agent.id)},
     )
     assert resp.status_code == 503
+
+
+# --------------------------------------------------------------------------
+# History: paging, filtering, sorting
+# --------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def history(db_session, workspace: Workspace, agent: Agent, user: User):
+    """A workspace of runs shaped to exercise every History filter at once.
+
+    Three of the twelve share a `started_at`, which is what a session
+    dispatching a burst of statements actually looks like and is the case a
+    cursor without a tiebreaker gets wrong.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from api.models.query import Query
+
+    base = datetime(2026, 8, 20, 12, 0, 0, tzinfo=UTC)
+    rows: list[Query] = []
+
+    def add(sql, *, minutes, status="done", duration_ms=0, finished=True, **kw):
+        started = base + timedelta(minutes=minutes)
+        rows.append(
+            Query(
+                workspace_id=workspace.id,
+                agent_id=agent.id,
+                user_id=user.id,
+                sql=sql,
+                status=status,
+                started_at=started,
+                finished_at=(started + timedelta(milliseconds=duration_ms)) if finished else None,
+                duration_ms=duration_ms if finished else None,
+                **kw,
+            )
+        )
+
+    # Three runs sharing one timestamp.
+    add("SELECT 'burst_a'", minutes=0, duration_ms=10)
+    add("SELECT 'burst_b'", minutes=0, duration_ms=20)
+    add("SELECT 'burst_c'", minutes=0, duration_ms=30)
+    add("SELECT 'plain'", minutes=1, duration_ms=40)
+    add("SELECT 100 * 2 AS pct", minutes=2, duration_ms=50)
+    add("SELECT user_name FROM t", minutes=3, duration_ms=60)
+    add("INSERT INTO t VALUES (1)", minutes=4, duration_ms=70)
+    add("CREATE TABLE made (a int)", minutes=5, duration_ms=80)
+    add("SELECT 'slow'", minutes=6, duration_ms=45_000)
+    add("SELECT 'cancelled'", minutes=7, status="cancelled", duration_ms=15)
+    # Failed with no agent-reported duration, but two minutes of wall clock.
+    # This is the row a naive `duration_ms > N` filter would wrongly drop.
+    started = base + timedelta(minutes=8)
+    rows.append(
+        Query(
+            workspace_id=workspace.id,
+            agent_id=agent.id,
+            user_id=user.id,
+            sql="SELECT 'hung_then_failed'",
+            status="failed",
+            started_at=started,
+            finished_at=started + timedelta(minutes=2),
+            duration_ms=None,
+        )
+    )
+    # Failed fast, also with no reported duration.
+    started = base + timedelta(minutes=9)
+    rows.append(
+        Query(
+            workspace_id=workspace.id,
+            agent_id=agent.id,
+            user_id=user.id,
+            sql="SELECT 'failed_fast'",
+            status="failed",
+            started_at=started,
+            finished_at=started + timedelta(milliseconds=5),
+            duration_ms=None,
+        )
+    )
+    # Still running: duration unknown, not zero.
+    add("SELECT 'still_running'", minutes=10, status="running", finished=False)
+    # A row written before statement_type existed.
+    add("SELECT 'unclassified'", minutes=11, duration_ms=5, statement_type=None)
+
+    db_session.add_all(rows)
+    await db_session.commit()
+    # The listener classifies on insert; blank one out to stand for a legacy row.
+    from sqlalchemy import update
+
+    await db_session.execute(
+        update(Query).where(Query.sql == "SELECT 'unclassified'").values(statement_type=None)
+    )
+    await db_session.commit()
+    return rows
+
+
+async def _sqls(client, workspace, **params):
+    resp = await client.get(f"/workspaces/{workspace.slug}/queries", params=params)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    return [r["sql"] for r in body["items"]], body
+
+
+async def test_history_returns_a_page_envelope(authed_client, workspace, history):
+    sqls, body = await _sqls(authed_client, workspace)
+    assert set(body) == {"items", "cursor", "has_more"}
+    assert body["has_more"] is False
+    assert body["cursor"] is None
+    assert len(sqls) == len(history)
+
+
+async def test_history_pages_through_every_row_exactly_once(authed_client, workspace, history):
+    """The whole point: reaching past the first page, with nothing lost or doubled."""
+    seen: list[str] = []
+    cursor = None
+    for _ in range(20):
+        params = {"limit": 3}
+        if cursor:
+            params["cursor"] = cursor
+        page, body = await _sqls(authed_client, workspace, **params)
+        assert len(page) <= 3
+        seen += page
+        if not body["has_more"]:
+            assert body["cursor"] is None
+            break
+        cursor = body["cursor"]
+    else:
+        raise AssertionError("paging did not terminate")
+
+    assert len(seen) == len(history)
+    assert len(set(seen)) == len(history), "a row was returned on two pages"
+    unpaged, _ = await _sqls(authed_client, workspace)
+    assert seen == unpaged, "paged order diverged from unpaged order"
+
+
+async def test_history_paging_is_stable_when_rows_share_a_timestamp(
+    authed_client, workspace, history
+):
+    """Without the id tiebreaker these three could reorder between pages."""
+    first, _ = await _sqls(authed_client, workspace, limit=3)
+    again, _ = await _sqls(authed_client, workspace, limit=3)
+    assert first == again
+
+
+async def test_history_paging_does_not_repeat_rows_when_a_run_is_inserted_midway(
+    authed_client, workspace, agent, user, db_session, history
+):
+    """The reason this is keyset paging and not offset paging.
+
+    Under OFFSET, a row inserted at the head between two requests shifts every
+    later page down by one and the reader sees a row twice.
+    """
+    from datetime import UTC, datetime
+
+    from api.models.query import Query
+
+    page1, body = await _sqls(authed_client, workspace, limit=4)
+    assert body["has_more"]
+
+    db_session.add(
+        Query(
+            workspace_id=workspace.id,
+            agent_id=agent.id,
+            user_id=user.id,
+            sql="SELECT 'arrived_mid_page'",
+            status="done",
+            started_at=datetime.now(UTC),
+        )
+    )
+    await db_session.commit()
+
+    page2, _ = await _sqls(authed_client, workspace, limit=4, cursor=body["cursor"])
+    assert not set(page1) & set(page2)
+
+
+async def test_history_rejects_a_malformed_cursor(authed_client, workspace, history):
+    """Told, rather than silently handed page one and appearing to loop."""
+    resp = await authed_client.get(
+        f"/workspaces/{workspace.slug}/queries", params={"cursor": "not-a-cursor"}
+    )
+    assert resp.status_code == 422
+
+
+async def test_history_rejects_a_cursor_from_a_different_sort(authed_client, workspace, history):
+    _, body = await _sqls(authed_client, workspace, limit=2, sort="started_at")
+    resp = await authed_client.get(
+        f"/workspaces/{workspace.slug}/queries",
+        params={"cursor": body["cursor"], "sort": "duration"},
+    )
+    assert resp.status_code == 422
+
+
+async def test_history_searches_statement_text_case_insensitively(
+    authed_client, workspace, history
+):
+    sqls, _ = await _sqls(authed_client, workspace, q="burst")
+    assert sorted(sqls) == ["SELECT 'burst_a'", "SELECT 'burst_b'", "SELECT 'burst_c'"]
+    upper, _ = await _sqls(authed_client, workspace, q="BURST")
+    assert sorted(upper) == sorted(sqls)
+
+
+async def test_history_search_treats_like_metacharacters_literally(
+    authed_client, workspace, history
+):
+    """`%` and `_` are characters in SQL, not wildcards the user gets to inject."""
+    # `%` would otherwise match everything.
+    pct, _ = await _sqls(authed_client, workspace, q="100 % 2")
+    assert pct == []
+    pct, _ = await _sqls(authed_client, workspace, q="100 * 2")
+    assert pct == ["SELECT 100 * 2 AS pct"]
+
+    # `_` would otherwise match any single character, so this would also hit
+    # "user_name" spelled with any separator.
+    under, _ = await _sqls(authed_client, workspace, q="user_name")
+    assert under == ["SELECT user_name FROM t"]
+    # An underscore left unescaped would make both of these match that row.
+    wildcarded, _ = await _sqls(authed_client, workspace, q="userxname")
+    assert wildcarded == []
+    nomatch, _ = await _sqls(authed_client, workspace, q="user%name")
+    assert nomatch == []
+
+    # A lone backslash must not break the escaping of what follows it.
+    resp = await authed_client.get(f"/workspaces/{workspace.slug}/queries", params={"q": "\\"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["items"] == []
+
+
+async def test_history_finds_a_run_by_full_id_and_by_prefix(authed_client, workspace, history):
+    target = history[4]
+    full, _ = await _sqls(authed_client, workspace, query_id=str(target.id))
+    assert full == [target.sql]
+
+    # The UI truncates ids to eight characters through `shortId`, so that is
+    # what people paste.
+    prefix, _ = await _sqls(authed_client, workspace, query_id=str(target.id)[:8])
+    assert prefix == [target.sql]
+
+
+async def test_history_id_lookup_cannot_reach_another_workspace(
+    client, db_session, user, agent, workspace, history
+):
+    """Knowing an id must not be a way around the workspace scoping."""
+    from api.models.query import Query
+
+    other_ws, _ = await seed_workspace(
+        db_session, user_id=user.id, slug="id-other-ws", name="Other", role=None
+    )
+    foreign = Query(
+        workspace_id=other_ws.id, agent_id=agent.id, sql="SELECT 'foreign'", status="done"
+    )
+    db_session.add(foreign)
+    await db_session.commit()
+
+    await client.post("/auth/login", json={"email": "q@queries.local", "password": "pw"})
+    resp = await client.get(
+        f"/workspaces/{workspace.slug}/queries", params={"query_id": str(foreign.id)}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["items"] == []
+
+
+async def test_history_rejects_an_id_that_is_not_a_uuid_or_prefix(
+    authed_client, workspace, history
+):
+    resp = await authed_client.get(
+        f"/workspaces/{workspace.slug}/queries", params={"query_id": "'; DROP TABLE queries--"}
+    )
+    assert resp.status_code == 422
+
+
+async def test_history_filters_by_status_and_accepts_several(authed_client, workspace, history):
+    failed, _ = await _sqls(authed_client, workspace, status=["failed"])
+    assert sorted(failed) == ["SELECT 'failed_fast'", "SELECT 'hung_then_failed'"]
+
+    multi, _ = await _sqls(authed_client, workspace, status=["failed", "cancelled"])
+    assert "SELECT 'cancelled'" in multi
+    assert len(multi) == 3
+
+
+async def test_history_rejects_an_unknown_status(authed_client, workspace, history):
+    """An unknown filter value is an error, not a silently unfiltered page."""
+    resp = await authed_client.get(
+        f"/workspaces/{workspace.slug}/queries", params={"status": "exploded"}
+    )
+    assert resp.status_code == 422
+
+
+async def test_history_slow_filter_uses_wall_clock_when_the_agent_reported_none(
+    authed_client, workspace, history
+):
+    """The trap this filter exists to avoid.
+
+    `duration_ms` is the agent's execution time and is null for a run that died
+    before reporting one. Filtering on it alone drops every failure — precisely
+    backwards, because a query that hung for two minutes and then failed is the
+    thing someone hunting slow queries is looking for.
+    """
+    slow, _ = await _sqls(authed_client, workspace, slower_than_ms=30_000)
+    assert sorted(slow) == ["SELECT 'hung_then_failed'", "SELECT 'slow'"]
+
+    # ...and the failure that was genuinely quick stays out.
+    assert "SELECT 'failed_fast'" not in slow
+    # ...as does the run whose duration is not yet known.
+    assert "SELECT 'still_running'" not in slow
+
+
+async def test_history_slow_filter_excludes_runs_that_have_not_finished(
+    authed_client, workspace, history
+):
+    """A running query's duration is unknown, not zero."""
+    everything, _ = await _sqls(authed_client, workspace, slower_than_ms=0)
+    assert "SELECT 'still_running'" not in everything
+
+
+async def test_history_filters_by_statement_type(authed_client, workspace, history):
+    inserts, _ = await _sqls(authed_client, workspace, statement_type=["insert"])
+    assert inserts == ["INSERT INTO t VALUES (1)"]
+
+    ddl, _ = await _sqls(authed_client, workspace, statement_type=["insert", "create"])
+    assert sorted(ddl) == ["CREATE TABLE made (a int)", "INSERT INTO t VALUES (1)"]
+
+
+async def test_history_unclassified_rows_survive_until_the_type_filter_is_used(
+    authed_client, workspace, history
+):
+    """Null means "we do not know", so it must not be swept into any type.
+
+    Rows written before the column existed have no classification. They stay
+    visible while the filter is off, and claim no type once it is on.
+    """
+    everything, _ = await _sqls(authed_client, workspace)
+    assert "SELECT 'unclassified'" in everything
+
+    selects, _ = await _sqls(authed_client, workspace, statement_type=["select"])
+    assert "SELECT 'unclassified'" not in selects
+
+
+async def test_history_rejects_an_unknown_statement_type(authed_client, workspace, history):
+    resp = await authed_client.get(
+        f"/workspaces/{workspace.slug}/queries", params={"statement_type": "banana"}
+    )
+    assert resp.status_code == 422
+
+
+async def test_history_sorts_by_duration_in_both_directions_with_unknowns_last(
+    authed_client, workspace, history
+):
+    """Sorting happens server-side over the whole set, before the page is cut."""
+    desc, _ = await _sqls(authed_client, workspace, sort="duration", dir="desc")
+    assert desc[0] == "SELECT 'hung_then_failed'"  # 2 minutes of wall clock
+    assert desc[1] == "SELECT 'slow'"  # 45s reported
+    # Unknown duration sorts last whichever way the list runs, so a run that has
+    # not finished never heads a "slowest first" list.
+    assert desc[-1] == "SELECT 'still_running'"
+
+    asc, _ = await _sqls(authed_client, workspace, sort="duration", dir="asc")
+    assert asc[0] == "SELECT 'failed_fast'"
+    assert asc[-1] == "SELECT 'still_running'"
+
+
+async def test_history_sorting_applies_across_pages_not_within_one(
+    authed_client, workspace, history
+):
+    """The slowest run must lead page one even though it is not the newest."""
+    page, body = await _sqls(authed_client, workspace, sort="duration", dir="desc", limit=2)
+    assert page == ["SELECT 'hung_then_failed'", "SELECT 'slow'"]
+    assert body["has_more"]
+
+
+async def test_history_pages_correctly_under_every_supported_sort(
+    authed_client, workspace, history
+):
+    for sort in ("started_at", "duration"):
+        for direction in ("asc", "desc"):
+            unpaged, _ = await _sqls(authed_client, workspace, sort=sort, dir=direction)
+            seen, cursor = [], None
+            for _ in range(20):
+                params = {"limit": 3, "sort": sort, "dir": direction}
+                if cursor:
+                    params["cursor"] = cursor
+                page, body = await _sqls(authed_client, workspace, **params)
+                seen += page
+                if not body["has_more"]:
+                    break
+                cursor = body["cursor"]
+            else:
+                raise AssertionError(f"paging did not terminate for {sort}/{direction}")
+            assert seen == unpaged, f"paged order wrong for sort={sort} dir={direction}"
+
+
+async def test_history_sorts_by_started_at_ascending(authed_client, workspace, history):
+    asc, _ = await _sqls(authed_client, workspace, sort="started_at", dir="asc")
+    desc, _ = await _sqls(authed_client, workspace, sort="started_at", dir="desc")
+    assert asc == list(reversed(desc))
+
+
+async def test_history_excludes_maintenance_probe_rows(authed_client, workspace, agent, db_session):
+    """The Lakehouse-health scanner's `SELECT 1` is machinery, not someone's work.
+
+    It writes one row per scanned table per cycle with a null user_id, so it
+    floods History the moment the scope widens past a single user's runs.
+    """
+    from api.models.query import Query
+
+    db_session.add_all(
+        [
+            Query(
+                workspace_id=workspace.id,
+                agent_id=agent.id,
+                user_id=None,
+                sql="SELECT 1",
+                status="done",
+                origin="maintenance",
+            ),
+            # Session statements are dbt/dlt work and must keep showing up.
+            Query(
+                workspace_id=workspace.id,
+                agent_id=agent.id,
+                sql="SELECT 'dbt_ran_this'",
+                status="done",
+                origin="session",
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    sqls, _ = await _sqls(authed_client, workspace)
+    assert "SELECT 1" not in sqls
+    assert "SELECT 'dbt_ran_this'" in sqls
+
+
+async def test_history_time_filters_are_open_to_a_plain_member(authed_client, workspace, history):
+    """Narrowing your own workspace to a window shows nothing new.
+
+    It was admin-gated only because it arrived alongside the cross-principal
+    filters; a member could already reach these rows by scrolling.
+    """
+    sqls, _ = await _sqls(authed_client, workspace, since="2026-08-20T12:07:00Z")
+    assert sqls
+    assert "SELECT 'burst_a'" not in sqls
+
+    bounded, _ = await _sqls(
+        authed_client, workspace, since="2026-08-20T12:00:00Z", until="2026-08-20T12:01:00Z"
+    )
+    assert sorted(bounded) == [
+        "SELECT 'burst_a'",
+        "SELECT 'burst_b'",
+        "SELECT 'burst_c'",
+        "SELECT 'plain'",
+    ]
+
+
+async def test_history_time_filter_does_not_unlock_cross_workspace_reads(
+    authed_client, workspace, history
+):
+    """Relaxing since/until must not have widened the gate beside it."""
+    resp = await authed_client.get(
+        f"/workspaces/{workspace.slug}/queries",
+        params={"all_workspaces": "true", "since": "2026-08-20T12:00:00Z"},
+    )
+    assert resp.status_code == 403
+
+
+async def test_history_stamps_statement_type_on_newly_created_runs(
+    authed_client, workspace, agent, db_session
+):
+    """Classification happens as the row is written, for every creation path."""
+    from sqlalchemy import select
+
+    from api.models.query import Query
+
+    db_session.add(
+        Query(
+            workspace_id=workspace.id,
+            agent_id=agent.id,
+            sql="CREATE TABLE fresh (a int)",
+            status="done",
+        )
+    )
+    await db_session.commit()
+
+    row = (
+        await db_session.execute(select(Query).where(Query.sql == "CREATE TABLE fresh (a int)"))
+    ).scalar_one()
+    assert row.statement_type == "create"

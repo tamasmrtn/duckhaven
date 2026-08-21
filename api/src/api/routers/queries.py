@@ -17,6 +17,7 @@ from api.models.agent import Agent
 from api.models.query import Query, SavedQuery
 from api.models.user import User
 from api.schemas.query import (
+    QueriesPageOut,
     QueryCreate,
     QueryOut,
     RowsPageOut,
@@ -26,6 +27,7 @@ from api.schemas.query import (
     SqlMetadataOut,
 )
 from api.services import query as query_service
+from api.services import query_history
 from api.services import sql_metadata as sql_metadata_service
 from api.services.agent_access import assert_agent_tier, assert_can_assign_agent
 from api.services.agent_capabilities import agent_supports_backend, required_extension
@@ -35,6 +37,7 @@ from api.services.grants import GrantDenied
 from api.services.migration.service import workspace_has_active_migration
 from api.services.permissions import Permission
 from api.services.rbac import has_permission
+from api.services.sql_classify import STATEMENT_TYPES
 from api.services.sql_guard import SQLNotAllowed, assert_allowed, is_read_only
 from api.services.workspace import (
     assert_workspace_member,
@@ -365,7 +368,7 @@ async def get_sql_metadata(
         ) from exc
 
 
-@router.get("/workspaces/{ws}/queries", response_model=list[QueryOut])
+@router.get("/workspaces/{ws}/queries", response_model=QueriesPageOut)
 async def list_workspace_queries(
     ws: str,
     all_workspaces: bool = QueryParam(default=False),
@@ -375,44 +378,87 @@ async def list_workspace_queries(
     until: datetime | None = QueryParam(default=None),
     origin: str | None = QueryParam(default=None),
     session_id: uuid.UUID | None = QueryParam(default=None),
-    limit: int = QueryParam(default=100, le=1000),
+    q: str | None = QueryParam(default=None),
+    query_id: str | None = QueryParam(default=None),
+    status_in: list[str] | None = QueryParam(default=None, alias="status"),
+    statement_type: list[str] | None = QueryParam(default=None),
+    slower_than_ms: int | None = QueryParam(default=None, ge=0),
+    sort: query_history.SortKey = QueryParam(default="started_at"),
+    dir: query_history.SortDir = QueryParam(default="desc"),
+    cursor: str | None = QueryParam(default=None),
+    limit: int = QueryParam(default=100, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> list[Query]:
+) -> QueriesPageOut:
     """Query log, newest first. Doubles as the admin audit trail.
 
-    A member sees their workspace (gated on membership) and may narrow it with
-    ``agent_id``. An admin can additionally pass ``all_workspaces`` to see every
-    workspace, and the ``user_id``/``since``/``until`` filters; those affordances
-    are admin-only and rejected with 403 for non-admins. Internal queries (e.g.
-    table-sample previews) are excluded.
+    Paged with a keyset cursor rather than an offset, because history is written
+    to continuously and an offset page would duplicate and skip rows under load
+    (see :mod:`api.services.query_history`). Sorting and filtering happen here,
+    over the whole result set, before the page is cut — a client that sorted the
+    page it was handed would be sorting a hundred rows out of thousands.
 
-    ``origin`` and ``session_id`` narrow to a kind of run (``"session"``,
-    ``"scheduled"``) or to one session's statements. They reveal nothing a member
-    could not already see in this list, so they are open to any member — like
-    ``agent_id`` and unlike the ``user_id``/``since``/``until``/``all_workspaces``
-    cross-principal filters above.
+    A member sees their own workspace, gated on membership, and may narrow it
+    however they like: by agent, kind of run, session, statement text, id,
+    status, duration, statement type, and time. None of those reveal a row the
+    list would not already have shown them.
+
+    The cross-principal filters stay admin-only: ``all_workspaces``, and a
+    ``user_id`` other than the caller's own. Filtering to *yourself* is not
+    cross-principal, so it is open to anyone — it is how the default History
+    view scopes itself.
     """
     is_admin = await has_permission(db, user, Permission.QUERIES_ADMIN)
 
-    # Left-join the user so History can show who ran each query (the name is
-    # attached to each Query row below for QueryOut serialization).
-    stmt = (
-        select(Query, User.name)
-        .outerjoin(User, Query.user_id == User.id)
-        .where(or_(Query.origin.is_(None), Query.origin.notin_(("sample", "metadata"))))
-        .order_by(Query.started_at.desc())
-        .limit(limit)
-    )
-
+    # Cross-workspace first: this branch skips the membership check below, so
+    # nothing that follows may run before it has been refused.
     if all_workspaces:
         if not is_admin:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+        workspace = None
     else:
         workspace = await get_workspace(db, ws)
         if workspace is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
         await assert_workspace_member(db, workspace.id, user.id)
+
+    if user_id is not None and user_id != user.id and not is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+
+    if status_in is not None:
+        unknown = sorted(set(status_in) - query_history.QUERY_STATUSES)
+        if unknown:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Unknown status: {', '.join(unknown)}",
+            )
+    if statement_type is not None:
+        unknown = sorted(set(statement_type) - STATEMENT_TYPES)
+        if unknown:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Unknown statement type: {', '.join(unknown)}",
+            )
+
+    # The sort key is selected alongside the row so the cursor is built from the
+    # value the database computed, not one recomputed in Python.
+    sort_value = query_history.duration_expr() if sort == "duration" else Query.started_at
+
+    # Left-join the user so History can show who ran each query (the name is
+    # attached to each Query row below for QueryOut serialization).
+    stmt = (
+        select(Query, User.name, sort_value)
+        .outerjoin(User, Query.user_id == User.id)
+        .where(
+            or_(
+                Query.origin.is_(None),
+                Query.origin.notin_(query_history.HIDDEN_ORIGINS),
+            )
+        )
+        .order_by(*query_history.order_by(sort, dir))
+    )
+
+    if workspace is not None:
         stmt = stmt.where(Query.workspace_id == workspace.id)
 
     if origin is not None:
@@ -424,29 +470,62 @@ async def list_workspace_queries(
         )
     if session_id is not None:
         stmt = stmt.where(Query.session_id == session_id)
-
     if agent_id is not None:
         # Open to any workspace member. By this point the statement is already
         # scoped to their own workspace (all_workspaces is admin-only and 403s
         # above), so this reveals nothing a member could not already see.
         stmt = stmt.where(Query.agent_id == agent_id)
+    if user_id is not None:
+        stmt = stmt.where(Query.user_id == user_id)
+    if since is not None:
+        stmt = stmt.where(Query.started_at >= since)
+    if until is not None:
+        stmt = stmt.where(Query.started_at <= until)
+    if q:
+        stmt = stmt.where(query_history.search_predicate(q))
+    if query_id:
+        try:
+            # Composed as one more predicate, never as a short-circuit: knowing
+            # an id must not be a way around the workspace scoping above.
+            stmt = stmt.where(query_history.id_predicate(query_id))
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+            ) from exc
+    if status_in:
+        stmt = stmt.where(Query.status.in_(status_in))
+    if statement_type:
+        # Rows classified as unknown (null) drop out here, and only here: with
+        # the filter off they stay visible, because "we never classified this"
+        # is not the same as "this is not a SELECT".
+        stmt = stmt.where(Query.statement_type.in_(statement_type))
+    if slower_than_ms is not None:
+        stmt = stmt.where(query_history.duration_expr() >= slower_than_ms)
 
-    if any(f is not None for f in (user_id, since, until)):
-        if not is_admin:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
-        if user_id:
-            stmt = stmt.where(Query.user_id == user_id)
-        if since:
-            stmt = stmt.where(Query.started_at >= since)
-        if until:
-            stmt = stmt.where(Query.started_at <= until)
+    if cursor:
+        try:
+            anchor_value, anchor_id = query_history.decode_cursor(cursor, sort)
+        except query_history.InvalidCursor as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+            ) from exc
+        stmt = stmt.where(query_history.keyset_predicate(sort, dir, anchor_value, anchor_id))
 
-    result = await db.execute(stmt)
+    # One more than asked for: its presence is what `has_more` reports, and it
+    # costs a row rather than the COUNT(*) a total would.
+    result = await db.execute(stmt.limit(limit + 1))
+    rows = result.all()
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+
     queries: list[Query] = []
-    for query, user_name in result.all():
+    for query, user_name, _value in rows:
         query.user_name = user_name
         queries.append(query)
-    return queries
+    next_cursor = (
+        query_history.encode_cursor(rows[-1][0].id, rows[-1][2]) if has_more and rows else None
+    )
+    return QueriesPageOut(items=queries, cursor=next_cursor, has_more=has_more)
 
 
 @router.get("/queries/{query_id}", response_model=QueryOut)

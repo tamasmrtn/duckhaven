@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.models.agent import Agent, AgentLifecycleEvent, AgentMetricsMinute
 from api.models.query import Query
 from api.services.query_failure import classify_failure
+from api.services.query_history import HIDDEN_ORIGINS
 
 # window -> (span, bucket). Bucket sizes keep every chart between 60 and 144 points:
 # enough to show shape, few enough to stay legible and to render without thinning.
@@ -46,10 +47,10 @@ WINDOWS: dict[str, tuple[timedelta, timedelta]] = {
 }
 DEFAULT_WINDOW = "8h"
 
-# Origins that are machinery rather than someone's work. Excluded to match the
-# history list (routers.queries.list_workspace_queries), so the count under the
-# chart and the rows in the table can never disagree.
-_HIDDEN_ORIGINS = ("sample", "metadata")
+# Origins that are machinery rather than someone's work. Imported rather than
+# repeated so the count under the chart and the rows in the history table can
+# never disagree — they were two literals with a comment asking them to match.
+_HIDDEN_ORIGINS = HIDDEN_ORIGINS
 
 _TERMINAL = ("done", "failed", "cancelled")
 _FAILED = ("failed", "cancelled")

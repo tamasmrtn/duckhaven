@@ -130,19 +130,45 @@ export function useDeleteSavedQuery(ws: string) {
   });
 }
 
+export interface WorkspaceQueriesOptions {
+  all_workspaces?: boolean;
+  user_id?: string;
+  origin?: string;
+  session_id?: string;
+  agent_id?: string;
+  since?: string;
+  until?: string;
+  q?: string;
+  query_id?: string;
+  status?: string[];
+  statement_type?: string[];
+  slower_than_ms?: number;
+  sort?: "started_at" | "duration";
+  dir?: "asc" | "desc";
+  limit?: number;
+  /**
+   * Hold the request until the caller has what it needs to scope it.
+   *
+   * History defaults to the signed-in user's runs, which it cannot ask for
+   * until `useMe` resolves. Without this it would fire once unscoped — a wasted
+   * round trip that briefly shows other people's queries.
+   */
+  enabled?: boolean;
+}
+
+/**
+ * Query history, paged from the server.
+ *
+ * Infinite rather than a plain query because the list is genuinely paged now:
+ * "Load more" appends the next page instead of refetching a bigger one. Every
+ * filter is in the key, so changing one resets to page one rather than
+ * appending the new filter's first page onto the old filter's rows.
+ */
 export function useWorkspaceQueries(
   ws: string,
-  opts?: {
-    all_workspaces?: boolean;
-    user_id?: string;
-    origin?: string;
-    session_id?: string;
-    agent_id?: string;
-    since?: string;
-    until?: string;
-  },
+  opts?: WorkspaceQueriesOptions,
 ) {
-  return useQuery({
+  const query = useInfiniteQuery({
     queryKey: [
       "workspace",
       ws,
@@ -154,8 +180,35 @@ export function useWorkspaceQueries(
       opts?.agent_id ?? "",
       opts?.since ?? "",
       opts?.until ?? "",
+      opts?.q ?? "",
+      opts?.query_id ?? "",
+      (opts?.status ?? []).join(","),
+      (opts?.statement_type ?? []).join(","),
+      opts?.slower_than_ms ?? "",
+      opts?.sort ?? "",
+      opts?.dir ?? "",
+      opts?.limit ?? "",
     ],
-    queryFn: () => queriesApi.listForWorkspace(ws, opts),
-    enabled: !!ws,
+    queryFn: ({ pageParam }) =>
+      queriesApi.listForWorkspace(ws, { ...opts, cursor: pageParam }),
+    enabled: !!ws && (opts?.enabled ?? true),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.cursor ?? undefined,
+    // Hold the previous filter's rows while the next load lands, so changing a
+    // filter dims the table instead of collapsing it to skeletons.
+    placeholderData: (prev) => prev,
   });
+
+  const pages = query.data?.pages ?? [];
+  return {
+    items: pages.flatMap((p) => p.items),
+    hasMore: pages[pages.length - 1]?.has_more ?? false,
+    isLoading: query.isLoading,
+    isFetching: query.isFetching,
+    isError: query.isError,
+    error: query.error,
+    refetch: query.refetch,
+    fetchNextPage: query.fetchNextPage,
+    isFetchingNextPage: query.isFetchingNextPage,
+  };
 }

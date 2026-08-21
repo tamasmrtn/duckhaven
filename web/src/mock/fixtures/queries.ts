@@ -3,8 +3,26 @@ import type { SavedQuery } from "@/types/saved-query";
 
 // Terminal queries surfaced by History + Audit. Each carries user_id + progress
 // to mirror QueryOut (api/schemas/query.py).
+// The rows below are written against a fixed wall clock so they stay readable
+// and their relative spacing is obvious. They are then shifted so the newest
+// sits at "now": History defaults to the last 7 days, and a fixture frozen in
+// the past would make both the dev server and every test see an empty page.
+const FIXTURE_NOW = Date.parse("2026-05-15T12:00:00Z");
+
+function shiftToNow(rows: Query[]): Query[] {
+  const delta = Date.now() - FIXTURE_NOW;
+  const shift = (iso: string) =>
+    new Date(Date.parse(iso) + delta).toISOString();
+  return rows.map((r) => ({
+    ...r,
+    started_at: shift(r.started_at),
+    running_at: r.running_at ? shift(r.running_at) : r.running_at,
+    finished_at: r.finished_at ? shift(r.finished_at) : r.finished_at,
+  }));
+}
+
 function makeQueryHistory(): Query[] {
-  return [
+  return shiftToNow([
     {
       id: "q-1",
       workspace_id: "ws-1",
@@ -12,6 +30,7 @@ function makeQueryHistory(): Query[] {
       user_id: "u-1",
       user_name: "Marton",
       sql: "SELECT date_trunc('day', event_time) d, count(*) n FROM raw.events WHERE event_time >= '2026-05-01' GROUP BY 1 ORDER BY 1",
+      statement_type: "select",
       status: "done",
       row_count: 30,
       duration_ms: 1400,
@@ -28,6 +47,7 @@ function makeQueryHistory(): Query[] {
       user_id: "u-2",
       user_name: "Jess",
       sql: "SELECT * FROM raw.users LIMIT 100",
+      statement_type: "select",
       status: "done",
       row_count: 100,
       duration_ms: 320,
@@ -44,6 +64,7 @@ function makeQueryHistory(): Query[] {
       user_id: "u-1",
       user_name: "Marton",
       sql: "SELECT * FROM raw.events CROSS JOIN raw.page_views LIMIT 1000000",
+      statement_type: "select",
       status: "failed",
       row_count: null,
       duration_ms: 5200,
@@ -60,6 +81,7 @@ function makeQueryHistory(): Query[] {
       user_id: "u-3",
       user_name: "Alex",
       sql: "SELECT step, users, pct FROM analytics.funnel ORDER BY users DESC",
+      statement_type: "select",
       status: "done",
       row_count: 12,
       duration_ms: 88,
@@ -76,6 +98,7 @@ function makeQueryHistory(): Query[] {
       user_id: "u-2",
       user_name: "Jess",
       sql: "SELECT variant, count(*) FROM experiments.ab_assignments WHERE assigned_at >= '2026-05-01' GROUP BY 1",
+      statement_type: "select",
       status: "cancelled",
       row_count: null,
       duration_ms: 2100,
@@ -96,6 +119,7 @@ function makeQueryHistory(): Query[] {
       user_name: "Marton",
       session_id: "sess-live",
       sql: "CREATE OR REPLACE TABLE analytics.stg_orders AS SELECT * FROM raw.orders",
+      statement_type: "create",
       status: "done",
       origin: "session",
       row_count: 0,
@@ -114,6 +138,7 @@ function makeQueryHistory(): Query[] {
       user_name: "Marton",
       session_id: "sess-live",
       sql: "SELECT count(*) FROM analytics.stg_orders",
+      statement_type: "select",
       status: "done",
       origin: "session",
       row_count: 1,
@@ -124,7 +149,184 @@ function makeQueryHistory(): Query[] {
       started_at: "2026-05-15T11:01:00Z",
       finished_at: "2026-05-15T11:01:00.09Z",
     },
-  ];
+    // A run that hung and then died: the agent never reported a duration, but
+    // two minutes of wall clock elapsed. The slow-query filter has to find it.
+    {
+      id: "q-hung",
+      workspace_id: "ws-1",
+      agent_id: "ag-1",
+      user_id: "u-1",
+      user_name: "Marton",
+      sql: "SELECT * FROM raw.events e JOIN raw.page_views p ON e.id = p.event_id",
+      status: "failed",
+      statement_type: "select",
+      row_count: null,
+      duration_ms: null,
+      result_bytes: null,
+      error: "Connection to agent lost",
+      progress: null,
+      started_at: "2026-05-15T08:00:00Z",
+      finished_at: "2026-05-15T08:02:00Z",
+    },
+    // Still running: its duration is unknown, not zero.
+    {
+      id: "q-running",
+      workspace_id: "ws-1",
+      agent_id: "ag-1",
+      user_id: "u-1",
+      user_name: "Marton",
+      sql: "SELECT count(*) FROM raw.page_views",
+      status: "running",
+      statement_type: "select",
+      row_count: null,
+      duration_ms: null,
+      result_bytes: null,
+      error: null,
+      progress: null,
+      started_at: "2026-05-15T12:00:00Z",
+      finished_at: null,
+    },
+    // Written before statement_type existed: unknown, and must not be swept
+    // into any type filter.
+    {
+      id: "q-legacy",
+      workspace_id: "ws-1",
+      agent_id: "ag-1",
+      user_id: "u-1",
+      user_name: "Marton",
+      sql: "SELECT 'written before classification existed'",
+      status: "done",
+      row_count: 1,
+      duration_ms: 12,
+      result_bytes: 64,
+      error: null,
+      progress: null,
+      started_at: "2026-05-12T09:00:00Z",
+      finished_at: "2026-05-12T09:00:00.012Z",
+    },
+    // The Lakehouse-health scanner's per-table probe. Machinery, not work: it
+    // must never appear in History however the scope is widened.
+    {
+      id: "q-probe",
+      workspace_id: "ws-1",
+      agent_id: "ag-1",
+      user_id: null,
+      user_name: null,
+      sql: "SELECT 1",
+      status: "done",
+      origin: "maintenance",
+      statement_type: "select",
+      row_count: 1,
+      duration_ms: 3,
+      result_bytes: null,
+      error: null,
+      progress: null,
+      started_at: "2026-05-15T11:30:00Z",
+      finished_at: "2026-05-15T11:30:00.003Z",
+    },
+    {
+      id: "q-bulk-0",
+      workspace_id: "ws-1",
+      agent_id: "ag-1",
+      user_id: "u-1",
+      user_name: "Marton",
+      sql: "SELECT 0 AS bulk_marker",
+      status: "done",
+      statement_type: "select",
+      row_count: 1,
+      duration_ms: 100,
+      result_bytes: 128,
+      error: null,
+      progress: null,
+      started_at: "2026-05-11T00:00:00Z",
+      finished_at: "2026-05-11T00:00:00Z",
+    },
+    {
+      id: "q-bulk-1",
+      workspace_id: "ws-1",
+      agent_id: "ag-1",
+      user_id: "u-1",
+      user_name: "Marton",
+      sql: "SELECT 1 AS bulk_marker",
+      status: "done",
+      statement_type: "select",
+      row_count: 1,
+      duration_ms: 110,
+      result_bytes: 128,
+      error: null,
+      progress: null,
+      started_at: "2026-05-11T01:00:00Z",
+      finished_at: "2026-05-11T01:00:01Z",
+    },
+    {
+      id: "q-bulk-2",
+      workspace_id: "ws-1",
+      agent_id: "ag-1",
+      user_id: "u-1",
+      user_name: "Marton",
+      sql: "SELECT 2 AS bulk_marker",
+      status: "done",
+      statement_type: "select",
+      row_count: 1,
+      duration_ms: 120,
+      result_bytes: 128,
+      error: null,
+      progress: null,
+      started_at: "2026-05-11T02:00:00Z",
+      finished_at: "2026-05-11T02:00:02Z",
+    },
+    {
+      id: "q-bulk-3",
+      workspace_id: "ws-1",
+      agent_id: "ag-1",
+      user_id: "u-1",
+      user_name: "Marton",
+      sql: "SELECT 3 AS bulk_marker",
+      status: "done",
+      statement_type: "select",
+      row_count: 1,
+      duration_ms: 130,
+      result_bytes: 128,
+      error: null,
+      progress: null,
+      started_at: "2026-05-11T03:00:00Z",
+      finished_at: "2026-05-11T03:00:03Z",
+    },
+    {
+      id: "q-bulk-4",
+      workspace_id: "ws-1",
+      agent_id: "ag-1",
+      user_id: "u-1",
+      user_name: "Marton",
+      sql: "SELECT 4 AS bulk_marker",
+      status: "done",
+      statement_type: "select",
+      row_count: 1,
+      duration_ms: 140,
+      result_bytes: 128,
+      error: null,
+      progress: null,
+      started_at: "2026-05-11T04:00:00Z",
+      finished_at: "2026-05-11T04:00:04Z",
+    },
+    {
+      id: "q-bulk-5",
+      workspace_id: "ws-1",
+      agent_id: "ag-1",
+      user_id: "u-1",
+      user_name: "Marton",
+      sql: "SELECT 5 AS bulk_marker",
+      status: "done",
+      statement_type: "select",
+      row_count: 1,
+      duration_ms: 150,
+      result_bytes: 128,
+      error: null,
+      progress: null,
+      started_at: "2026-05-10T05:00:00Z",
+      finished_at: "2026-05-10T05:00:05Z",
+    },
+  ]);
 }
 
 // created_by is a user id (SavedQueryOut.created_by: uuid), not an email.
@@ -178,6 +380,8 @@ export const SAMPLE_PROFILE = {
     bytes_written: 0,
     reserved_memory_bytes: 357913941,
     reserved_threads: 2,
+    admission_wait_ms: 340,
+    blocked_thread_time_ms: 210,
   },
   tree: {
     type: "ORDER_BY",
@@ -200,16 +404,21 @@ export const SAMPLE_PROFILE = {
         extra_info: { Groups: "#0", Aggregates: "count_star()" },
         children: [
           {
-            type: "SEQ_SCAN",
-            name: "events",
+            type: "TABLE_SCAN",
+            name: "ICEBERG_SCAN",
             estimated_cardinality: 2000,
             rows_scanned: 2000000,
             rows_produced: 2000000,
             time_ms: 300,
             result_bytes: 0,
+            // The shape a real ICEBERG_SCAN emits: no Table, no pruning
+            // ratio, a UUID file name under <schema>/<table>/data/.
             extra_info: {
-              Table: "analytics.events",
+              Function: "ICEBERG_SCAN",
               Filters: "ts > '2026-01-01'",
+              "Total Files Read": "3",
+              "Filename(s)":
+                "s3://warehouse/demo/analytics/events/data/019fdcf1-8747-74ba-a656-8f87c04a1580.parquet",
             },
             children: [],
           },

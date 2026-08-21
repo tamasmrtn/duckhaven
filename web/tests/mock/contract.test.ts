@@ -91,10 +91,14 @@ describe("queries contract", () => {
   });
 
   it("cross-workspace log filters by user_id and orders started_at DESC", async () => {
-    const rows = await queriesApi.listForWorkspace("acme-analytics", {
+    const page = await queriesApi.listForWorkspace("acme-analytics", {
       all_workspaces: true,
       user_id: "u-1",
     });
+    // A page envelope, not a bare array: `items` plus the cursor contract.
+    expect(Array.isArray(page.items)).toBe(true);
+    expect(page).toHaveProperty("has_more");
+    const rows = page.items;
     expect(rows.every((r) => r.user_id === "u-1")).toBe(true);
     const times = rows.map((r) => r.started_at);
     expect(times).toEqual([...times].sort((a, b) => b.localeCompare(a)));

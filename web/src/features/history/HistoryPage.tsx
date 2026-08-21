@@ -1,8 +1,26 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { Clock, RefreshCw } from "lucide-react";
+import { ArrowDown, ArrowUp, Clock, RefreshCw, Search, X } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/ui/page-header";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Segmented } from "@/components/ui/segmented";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Table,
   TableBody,
@@ -18,50 +36,149 @@ import { useWorkspaceQueries } from "@/queries/queries";
 import { useAgents } from "@/queries/agents";
 import { useMe } from "@/queries/auth";
 import { useWorkspaces } from "@/queries/workspaces";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { formatBoundaryDay } from "@/features/admin/metricsTime";
 import { DurationCell, SqlCell } from "@/components/app/queryTableCells";
 import { cn, shortId } from "@/utils";
+import {
+  DURATION_UNITS,
+  type DurationUnit,
+  type HistorySearch,
+  RANGE_LABELS,
+  STATEMENT_TYPES,
+  STATUSES,
+  type SortKey,
+  TIME_RANGES,
+  type TimeRange,
+  durationToMs,
+  rangeBoundary,
+  resolveFilters,
+} from "./filters";
 
-// Interactive runs are stored with a null origin, so "interactive" is the
-// server's spelling for that case rather than a real column value.
-type OriginFilter = "all" | "interactive" | "scheduled" | "session";
-
-const ORIGIN_FILTERS: { value: OriginFilter; label: string }[] = [
-  { value: "all", label: "All" },
-  { value: "interactive", label: "Interactive" },
-  { value: "scheduled", label: "Scheduled" },
-  { value: "session", label: "Connection" },
+const ORIGIN_OPTIONS = [
+  { value: "all" as const, label: "All" },
+  { value: "interactive" as const, label: "Interactive" },
+  { value: "scheduled" as const, label: "Scheduled" },
+  { value: "session" as const, label: "Connection" },
 ];
+
+const PAGE_SIZE = 50;
 
 export function HistoryPage() {
   const { ws } = useParams({ from: "/$ws/history" });
-  const { agent: agentFilter } = useSearch({ from: "/$ws/history" });
+  const search = useSearch({ from: "/$ws/history" });
   const navigate = useNavigate();
   const { data: me } = useMe();
   const isAdmin = me?.role === "admin";
 
-  const [allWorkspaces, setAllWorkspaces] = useState(false);
-  const [userFilter, setUserFilter] = useState<string | null>(null);
-  const [origin, setOrigin] = useState<OriginFilter>("all");
-  // Cross-workspace + user filtering are admin-only affordances; a non-admin
-  // never sends them, so the endpoint only ever returns their workspace.
-  // Filtering by agent spans workspaces (an agent is global), so fetch all when
-  // an agent filter is active and an admin is viewing.
-  const all = isAdmin && (allWorkspaces || !!agentFilter);
-  // The agent filter goes to the server rather than being applied to the page it
-  // returns: that page is capped, so filtering it here showed nothing at all for an
-  // agent whose runs were older than the most recent hundred queries cluster-wide.
-  // Unlike user_id, agent_id is open to any member — it is not gated on `all`.
+  // One clock for the whole view, fixed when it mounts. Two reasons: reading
+  // the clock every render would hand the query a new `since` each time, which
+  // changes the key, which refetches, which renders; and a window that slid
+  // while you paged through it would quietly drop rows off the far end. It also
+  // guarantees the boundary the preset menu advertises is the one the request
+  // is actually scoped to.
+  const [now] = useState(() => Date.now());
+  const f = useMemo(() => resolveFilters(search, now), [search, now]);
+  const statuses = f.statuses;
+  const types = f.types;
+
+  /**
+   * Merge one key into the URL rather than replacing the search object.
+   *
+   * The clobbering form (`search: { agent: id }`) was what this page used for
+   * its agent filter, and with more than one parameter in play it would wipe
+   * every sibling filter on each change.
+   */
+  function setFilter(patch: Partial<HistorySearch>) {
+    void navigate({
+      to: "/$ws/history",
+      params: { ws },
+      search: (prev) => {
+        const next: Record<string, unknown> = { ...prev, ...patch };
+        // Defaults and cleared values leave the URL entirely.
+        for (const [k, v] of Object.entries(next)) {
+          if (v == null || v === "" || (Array.isArray(v) && v.length === 0)) {
+            delete next[k];
+          }
+        }
+        return next as HistorySearch;
+      },
+      replace: true,
+    });
+  }
+
+  // The search box is local until it settles, so typing does not push a history
+  // entry per keystroke.
+  const [qDraft, setQDraft] = useState(search.q ?? "");
+  const debouncedQ = useDebouncedValue(qDraft, 300);
+  useEffect(() => {
+    if (debouncedQ !== (search.q ?? ""))
+      setFilter({ q: debouncedQ || undefined });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedQ]);
+  // Pull the box back in step when the URL changes underneath it (Clear
+  // filters, or a back navigation). Adjusted during render rather than in an
+  // effect, which would render once with the stale value and again with the
+  // fresh one.
+  const [lastQ, setLastQ] = useState(search.q);
+  if (search.q !== lastQ) {
+    setLastQ(search.q);
+    setQDraft(search.q ?? "");
+  }
+
+  const [idDraft, setIdDraft] = useState(search.id ?? "");
+  const debouncedId = useDebouncedValue(idDraft, 300);
+  useEffect(() => {
+    if (debouncedId !== (search.id ?? ""))
+      setFilter({ id: debouncedId || undefined });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedId]);
+  const [lastId, setLastId] = useState(search.id);
+  if (search.id !== lastId) {
+    setLastId(search.id);
+    setIdDraft(search.id ?? "");
+  }
+
+  // Cross-workspace is an admin affordance; a non-admin never sends it. An
+  // agent filter spans workspaces (agents are global), so an admin viewing one
+  // needs the cross-workspace scope to see all of its runs.
+  const all = isAdmin && (search.scope === "all" || !!search.agent);
+
   const {
-    data: wsQueries = [],
+    items: rows,
+    hasMore,
     isLoading,
     isFetching,
+    isError,
     refetch,
+    fetchNextPage,
+    isFetchingNextPage,
   } = useWorkspaceQueries(ws, {
     all_workspaces: all,
-    user_id: isAdmin && userFilter ? userFilter : undefined,
-    origin: origin === "all" ? undefined : origin,
-    agent_id: agentFilter ? agentFilter : undefined,
+    // Absent `user` means "mine": the default scope. "all" drops the filter.
+    user_id:
+      search.user == null
+        ? me?.id
+        : search.user === "all"
+          ? undefined
+          : search.user,
+    origin: search.origin,
+    agent_id: search.agent,
+    since: f.since,
+    until: f.until,
+    q: search.q,
+    query_id: search.id,
+    status: statuses.length ? statuses : undefined,
+    statement_type: types.length ? types : undefined,
+    slower_than_ms:
+      search.slower != null ? durationToMs(search.slower, f.unit) : undefined,
+    sort: f.sort,
+    dir: f.dir,
+    limit: PAGE_SIZE,
+    // The default scope needs the caller's own id, so wait for it.
+    enabled: search.user != null || !!me,
   });
+
   const { data: agents = [] } = useAgents();
   const { data: workspaces = [] } = useWorkspaces();
   const agentName = new Map(agents.map((a) => [a.id, a.name]));
@@ -71,30 +188,60 @@ export function HistoryPage() {
     navigate({ to: "/$ws/queries/$queryId", params: { ws, queryId } });
   }
 
+  function toggleSort(key: SortKey) {
+    if (f.sort === key) {
+      setFilter({ sort: key, dir: f.dir === "desc" ? "asc" : "desc" });
+    } else {
+      setFilter({ sort: key, dir: "desc" });
+    }
+  }
+
+  function toggleMulti(
+    current: string[],
+    value: string,
+    key: "status" | "type",
+  ) {
+    const next = current.includes(value)
+      ? current.filter((v) => v !== value)
+      : [...current, value];
+    setFilter({ [key]: next.length ? next.join(",") : undefined });
+  }
+
+  const hasFilters =
+    !!search.q ||
+    !!search.id ||
+    statuses.length > 0 ||
+    types.length > 0 ||
+    search.slower != null ||
+    !!search.origin ||
+    !!search.agent ||
+    search.range != null ||
+    search.user != null;
+
   // Only worth a column when something in view actually belongs to a session,
   // so the ordinary history table keeps its existing shape.
-  const anySession = wsQueries.some((q) => q.session_id);
+  const anySession = rows.some((q) => q.session_id);
 
-  const columns = all
+  const columns: { label: string; sort?: SortKey }[] = all
     ? [
-        "Status",
-        "Workspace",
-        "Agent",
-        "User",
-        "SQL",
-        "Rows",
-        "Duration",
-        "Started",
+        { label: "Status" },
+        { label: "Workspace" },
+        { label: "Agent" },
+        { label: "User" },
+        { label: "SQL" },
+        { label: "Rows" },
+        { label: "Duration", sort: "duration" },
+        { label: "Started", sort: "started_at" },
       ]
     : [
-        "Status",
-        "SQL",
-        "Agent",
-        "User",
-        ...(anySession ? ["Connection"] : []),
-        "Rows",
-        "Duration",
-        "Started",
+        { label: "Status" },
+        { label: "SQL" },
+        { label: "Agent" },
+        { label: "User" },
+        ...(anySession ? [{ label: "Connection" }] : []),
+        { label: "Rows" },
+        { label: "Duration", sort: "duration" as SortKey },
+        { label: "Started", sort: "started_at" as SortKey },
       ];
 
   return (
@@ -105,37 +252,18 @@ export function HistoryPage() {
           <>
             <div className="ml-auto flex items-center gap-3">
               <AgentFilterCombobox
-                value={agentFilter ?? null}
-                onChange={(id) =>
-                  navigate({
-                    to: "/$ws/history",
-                    params: { ws },
-                    search: id ? { agent: id } : {},
-                  })
+                value={search.agent ?? null}
+                onChange={(id) => setFilter({ agent: id ?? undefined })}
+              />
+              <Segmented
+                label="filter by origin"
+                hideLabel
+                options={ORIGIN_OPTIONS}
+                value={search.origin ?? "all"}
+                onChange={(v) =>
+                  setFilter({ origin: v === "all" ? undefined : v })
                 }
               />
-              <div
-                className="flex rounded-md border border-[var(--border-subtle)] p-0.5 text-xs"
-                role="group"
-                aria-label="filter by origin"
-              >
-                {ORIGIN_FILTERS.map(({ value, label }) => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => setOrigin(value)}
-                    aria-pressed={origin === value}
-                    className={cn(
-                      "rounded px-2 py-1 transition-colors",
-                      origin === value
-                        ? "bg-accent text-text-primary font-medium"
-                        : "text-text-secondary hover:text-text-primary",
-                    )}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
               <button
                 type="button"
                 onClick={() => void refetch()}
@@ -152,40 +280,60 @@ export function HistoryPage() {
             {isAdmin && (
               <div className="flex items-center gap-3">
                 <UserFilterCombobox
-                  value={userFilter}
-                  onChange={setUserFilter}
+                  value={
+                    search.user && search.user !== "all" ? search.user : null
+                  }
+                  onChange={(id) => setFilter({ user: id ?? "all" })}
                 />
-                <div className="flex rounded-md border border-[var(--border-subtle)] p-0.5 text-xs">
-                  <button
-                    type="button"
-                    onClick={() => setAllWorkspaces(false)}
-                    aria-pressed={!allWorkspaces}
-                    className={cn(
-                      "rounded px-2 py-1 transition-colors",
-                      !allWorkspaces
-                        ? "bg-accent text-text-primary font-medium"
-                        : "text-text-secondary hover:text-text-primary",
-                    )}
-                  >
-                    This workspace
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAllWorkspaces(true)}
-                    aria-pressed={allWorkspaces}
-                    className={cn(
-                      "rounded px-2 py-1 transition-colors",
-                      allWorkspaces
-                        ? "bg-accent text-text-primary font-medium"
-                        : "text-text-secondary hover:text-text-primary",
-                    )}
-                  >
-                    All workspaces
-                  </button>
-                </div>
+                <Segmented
+                  label="workspace scope"
+                  hideLabel
+                  options={[
+                    { value: "ws" as const, label: "This workspace" },
+                    { value: "all" as const, label: "All workspaces" },
+                  ]}
+                  value={search.scope === "all" ? "all" : "ws"}
+                  onChange={(v) =>
+                    setFilter({ scope: v === "all" ? "all" : undefined })
+                  }
+                />
               </div>
             )}
           </>
+        }
+      />
+
+      <FilterBar
+        search={search}
+        qDraft={qDraft}
+        setQDraft={setQDraft}
+        idDraft={idDraft}
+        setIdDraft={setIdDraft}
+        statuses={statuses}
+        types={types}
+        unit={f.unit}
+        range={f.range}
+        setFilter={setFilter}
+        toggleMulti={toggleMulti}
+        now={now}
+      />
+
+      <ScopeLine
+        label={f.scopeLabel}
+        isMine={f.isMine}
+        isAllTime={f.range === "all"}
+        hasFilters={hasFilters}
+        onAllUsers={() => setFilter({ user: "all" })}
+        onAllTime={() =>
+          setFilter({ range: "all", since: undefined, until: undefined })
+        }
+        onClear={() =>
+          void navigate({
+            to: "/$ws/history",
+            params: { ws },
+            search: {},
+            replace: true,
+          })
         }
       />
 
@@ -199,91 +347,429 @@ export function HistoryPage() {
               />
             ))}
           </div>
-        ) : wsQueries.length === 0 ? (
+        ) : isError ? (
+          <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+            <p className="text-md font-medium text-text-secondary">
+              Could not load history.
+            </p>
+            <Button variant="outline" size="sm" onClick={() => void refetch()}>
+              Try again
+            </Button>
+          </div>
+        ) : rows.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
             <Clock className="size-8 text-text-tertiary" />
             <p className="text-md font-medium text-text-secondary">
-              No queries yet.
+              No queries match.
+            </p>
+            {/* Name the scope rather than leaving an empty table to be
+                interpreted — the commonest reason for no rows is the default
+                scope, not an absence of history. */}
+            <p className="text-sm text-text-tertiary">
+              Showing {f.scopeLabel.toLowerCase()}.
             </p>
           </div>
         ) : (
-          <Table containerClassName="overflow-visible" className="text-sm">
-            <TableHeader className="sticky top-0 bg-[var(--bg-surface)] z-10">
-              <TableRow className="border-b border-[var(--border-subtle)] hover:bg-transparent">
-                {columns.map((h) => (
-                  <TableHead
-                    key={h}
-                    className="h-auto px-4 py-2 text-left text-xs font-medium text-text-secondary"
-                  >
-                    {h}
-                  </TableHead>
-                ))}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {wsQueries.map((q, i) => (
-                <TableRow
-                  key={q.id}
-                  onClick={all ? undefined : () => openProfile(q.id)}
-                  className={cn(
-                    "border-b border-[var(--border-subtle)] hover:bg-accent/50",
-                    all ? "" : "cursor-pointer",
-                    i % 2 === 0 ? "" : "bg-[var(--bg-surface)]/40",
-                  )}
-                >
-                  <TableCell className="px-4 py-2">
-                    <StatusPill status={q.status} durationMs={q.duration_ms} />
-                  </TableCell>
-                  {all && (
-                    <TableCell className="px-4 py-2 font-mono text-xs text-text-secondary">
-                      {workspaceSlug.get(q.workspace_id) ??
-                        shortId(q.workspace_id)}
-                    </TableCell>
-                  )}
-                  {!all && <SqlCell query={q} />}
-                  <TableCell className="px-4 py-2 font-mono text-xs text-text-secondary">
-                    {agentName.get(q.agent_id) ?? shortId(q.agent_id)}
-                  </TableCell>
-                  <TableCell className="px-4 py-2 text-xs text-text-secondary">
-                    {q.user_name ?? "—"}
-                  </TableCell>
-                  {!all && anySession && (
-                    <TableCell className="px-4 py-2 text-xs">
-                      {q.session_id ? (
+          <>
+            <Table containerClassName="overflow-visible" className="text-sm">
+              <TableHeader className="sticky top-0 bg-[var(--bg-surface)] z-10">
+                <TableRow className="border-b border-[var(--border-subtle)] hover:bg-transparent">
+                  {columns.map((c) => (
+                    <TableHead
+                      key={c.label}
+                      className="h-auto px-4 py-2 text-left text-xs font-medium text-text-secondary"
+                    >
+                      {c.sort ? (
                         <button
                           type="button"
-                          aria-label={`connection ${shortId(q.session_id)}`}
-                          onClick={(e) => {
-                            // The row itself opens the query profile.
-                            e.stopPropagation();
-                            navigate({
-                              to: "/$ws/sessions/$sessionId",
-                              params: { ws, sessionId: q.session_id! },
-                            });
-                          }}
-                          className="font-mono text-xs text-text-secondary underline-offset-2 hover:text-text-primary hover:underline"
+                          onClick={() => toggleSort(c.sort!)}
+                          aria-label={`sort by ${c.label.toLowerCase()}`}
+                          className="inline-flex items-center gap-1 hover:text-text-primary"
                         >
-                          {shortId(q.session_id)}
+                          {c.label}
+                          {f.sort === c.sort &&
+                            (f.dir === "desc" ? (
+                              <ArrowDown className="size-3" />
+                            ) : (
+                              <ArrowUp className="size-3" />
+                            ))}
                         </button>
                       ) : (
-                        <span className="text-text-tertiary">—</span>
+                        c.label
                       )}
-                    </TableCell>
-                  )}
-                  {all && <SqlCell query={q} />}
-                  <TableCell className="px-4 py-2 font-mono text-xs text-text-secondary font-tabular">
-                    {q.row_count != null ? q.row_count.toLocaleString() : "—"}
-                  </TableCell>
-                  <DurationCell query={q} />
-                  <TableCell className="px-4 py-2 font-mono text-2xs text-text-tertiary">
-                    {new Date(q.started_at).toLocaleString()}
-                  </TableCell>
+                    </TableHead>
+                  ))}
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {rows.map((q, i) => (
+                  <TableRow
+                    key={q.id}
+                    onClick={all ? undefined : () => openProfile(q.id)}
+                    className={cn(
+                      "border-b border-[var(--border-subtle)] hover:bg-accent/50",
+                      all ? "" : "cursor-pointer",
+                      i % 2 === 0 ? "" : "bg-[var(--bg-surface)]/40",
+                    )}
+                  >
+                    <TableCell className="px-4 py-2">
+                      <StatusPill
+                        status={q.status}
+                        durationMs={q.duration_ms}
+                      />
+                    </TableCell>
+                    {all && (
+                      <TableCell className="px-4 py-2 font-mono text-xs text-text-secondary">
+                        {workspaceSlug.get(q.workspace_id) ??
+                          shortId(q.workspace_id)}
+                      </TableCell>
+                    )}
+                    {!all && <SqlCell query={q} />}
+                    <TableCell className="px-4 py-2 font-mono text-xs text-text-secondary">
+                      {agentName.get(q.agent_id) ?? shortId(q.agent_id)}
+                    </TableCell>
+                    <TableCell className="px-4 py-2 text-xs text-text-secondary">
+                      {q.user_name ?? "—"}
+                    </TableCell>
+                    {!all && anySession && (
+                      <TableCell className="px-4 py-2 text-xs">
+                        {q.session_id ? (
+                          <button
+                            type="button"
+                            aria-label={`connection ${shortId(q.session_id)}`}
+                            onClick={(e) => {
+                              // The row itself opens the query profile.
+                              e.stopPropagation();
+                              navigate({
+                                to: "/$ws/sessions/$sessionId",
+                                params: { ws, sessionId: q.session_id! },
+                              });
+                            }}
+                            className="font-mono text-xs text-text-secondary underline-offset-2 hover:text-text-primary hover:underline"
+                          >
+                            {shortId(q.session_id)}
+                          </button>
+                        ) : (
+                          <span className="text-text-tertiary">—</span>
+                        )}
+                      </TableCell>
+                    )}
+                    {all && <SqlCell query={q} />}
+                    <TableCell className="px-4 py-2 font-mono text-xs text-text-secondary font-tabular">
+                      {q.row_count != null ? q.row_count.toLocaleString() : "—"}
+                    </TableCell>
+                    <DurationCell query={q} />
+                    <TableCell className="px-4 py-2 font-mono text-2xs text-text-tertiary">
+                      {new Date(q.started_at).toLocaleString()}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+
+            <div className="flex flex-col items-center gap-2 py-4">
+              {/* What the page actually knows: how many rows it is showing, and
+                  whether there are more. Not a total — counting the rows behind
+                  a filtered page costs a second aggregate per request. */}
+              <span className="text-xs text-text-tertiary font-tabular">
+                {`${hasMore ? "Showing" : "All"} ${rows.length} ${
+                  rows.length === 1 ? "query" : "queries"
+                }`}
+              </span>
+              {hasMore && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={isFetchingNextPage}
+                  onClick={() => void fetchNextPage()}
+                >
+                  {isFetchingNextPage ? "Loading…" : "Load more"}
+                </Button>
+              )}
+            </div>
+          </>
         )}
       </div>
     </div>
+  );
+}
+
+/** The always-visible statement of what is being shown, and the way out. */
+function ScopeLine({
+  label,
+  isMine,
+  isAllTime,
+  hasFilters,
+  onAllUsers,
+  onAllTime,
+  onClear,
+}: {
+  label: string;
+  isMine: boolean;
+  isAllTime: boolean;
+  hasFilters: boolean;
+  onAllUsers: () => void;
+  onAllTime: () => void;
+  onClear: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-3 border-b border-[var(--border-subtle)] px-4 py-2">
+      <span className="text-xs font-medium text-text-secondary">{label}</span>
+      <div className="flex items-center gap-2">
+        {/* A tight default is only a good default if widening it is one
+            visible click away, so these are never hidden behind a panel. */}
+        {isMine && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 text-2xs"
+            onClick={onAllUsers}
+          >
+            All users
+          </Button>
+        )}
+        {!isAllTime && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 text-2xs"
+            onClick={onAllTime}
+          >
+            All time
+          </Button>
+        )}
+      </div>
+      {hasFilters && (
+        <button
+          type="button"
+          onClick={onClear}
+          className="ml-auto inline-flex items-center gap-1 text-2xs text-text-tertiary hover:text-text-primary"
+        >
+          <X className="size-3" />
+          Clear filters
+        </button>
+      )}
+    </div>
+  );
+}
+
+function FilterBar({
+  search,
+  qDraft,
+  setQDraft,
+  idDraft,
+  setIdDraft,
+  statuses,
+  types,
+  unit,
+  range,
+  setFilter,
+  toggleMulti,
+  now,
+}: {
+  search: HistorySearch;
+  qDraft: string;
+  setQDraft: (v: string) => void;
+  idDraft: string;
+  setIdDraft: (v: string) => void;
+  statuses: string[];
+  types: string[];
+  unit: DurationUnit;
+  range: TimeRange;
+  setFilter: (patch: Partial<HistorySearch>) => void;
+  toggleMulti: (
+    current: string[],
+    value: string,
+    key: "status" | "type",
+  ) => void;
+  now: number;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border-subtle)] px-4 py-2">
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-text-tertiary" />
+        <Input
+          value={qDraft}
+          onChange={(e) => setQDraft(e.target.value)}
+          placeholder="Search SQL…"
+          aria-label="search SQL"
+          className="h-7 w-56 pl-7 text-xs"
+        />
+      </div>
+
+      <Input
+        value={idDraft}
+        onChange={(e) => setIdDraft(e.target.value)}
+        placeholder="Query ID…"
+        aria-label="query ID"
+        className="h-7 w-36 text-xs"
+      />
+
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            aria-label="time range"
+            className="h-7 text-xs"
+          >
+            {RANGE_LABELS[range]}
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
+          <DropdownMenuRadioGroup
+            value={range}
+            onValueChange={(v) =>
+              setFilter({
+                range: v as TimeRange,
+                ...(v === "custom"
+                  ? {}
+                  : { since: undefined, until: undefined }),
+              })
+            }
+          >
+            {TIME_RANGES.map((r) => {
+              const boundary = rangeBoundary(r, now);
+              return (
+                <DropdownMenuRadioItem key={r} value={r} className="text-xs">
+                  {RANGE_LABELS[r]}
+                  {/* Naming the concrete boundary removes the ambiguity about
+                      whether a relative window is calendar days or rolling
+                      hours. */}
+                  {boundary && (
+                    <span className="ml-2 text-text-tertiary">
+                      · from {formatBoundaryDay(Date.parse(boundary))}
+                    </span>
+                  )}
+                </DropdownMenuRadioItem>
+              );
+            })}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      {range === "custom" && (
+        <>
+          <input
+            type="datetime-local"
+            aria-label="from"
+            value={search.since?.slice(0, 16) ?? ""}
+            onChange={(e) =>
+              setFilter({
+                since: e.target.value
+                  ? new Date(e.target.value).toISOString()
+                  : undefined,
+              })
+            }
+            className="h-7 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 text-xs text-text-primary"
+          />
+          <input
+            type="datetime-local"
+            aria-label="to"
+            value={search.until?.slice(0, 16) ?? ""}
+            onChange={(e) =>
+              setFilter({
+                until: e.target.value
+                  ? new Date(e.target.value).toISOString()
+                  : undefined,
+              })
+            }
+            className="h-7 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 text-xs text-text-primary"
+          />
+        </>
+      )}
+
+      <MultiSelect
+        label="status"
+        selected={statuses}
+        options={STATUSES}
+        onToggle={(v) => toggleMulti(statuses, v, "status")}
+      />
+      <MultiSelect
+        label="statement type"
+        selected={types}
+        options={STATEMENT_TYPES}
+        onToggle={(v) => toggleMulti(types, v, "type")}
+      />
+
+      <div className="flex items-center gap-1">
+        <Input
+          type="number"
+          min={0}
+          value={search.slower ?? ""}
+          onChange={(e) =>
+            setFilter({
+              slower: e.target.value ? Number(e.target.value) : undefined,
+            })
+          }
+          placeholder="Slower than"
+          aria-label="slower than"
+          className="h-7 w-28 text-xs"
+        />
+        <Select
+          value={unit}
+          onValueChange={(v) => setFilter({ unit: v as DurationUnit })}
+        >
+          <SelectTrigger
+            aria-label="duration unit"
+            className="h-7 w-16 text-xs"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {DURATION_UNITS.map((u) => (
+              <SelectItem key={u} value={u} className="text-xs">
+                {u}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    </div>
+  );
+}
+
+/** Multi-select over a fixed set, built on the existing checkbox menu item. */
+function MultiSelect({
+  label,
+  selected,
+  options,
+  onToggle,
+}: {
+  label: string;
+  selected: string[];
+  options: readonly string[];
+  onToggle: (value: string) => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          aria-label={label}
+          className="h-7 text-xs capitalize"
+        >
+          {selected.length === 0
+            ? `Any ${label}`
+            : selected.length === 1
+              ? selected[0]
+              : `${selected.length} ${label}s`}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start">
+        {options.map((o) => (
+          <DropdownMenuCheckboxItem
+            key={o}
+            checked={selected.includes(o)}
+            onCheckedChange={() => onToggle(o)}
+            onSelect={(e) => e.preventDefault()}
+            className="text-xs capitalize"
+          >
+            {o}
+          </DropdownMenuCheckboxItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

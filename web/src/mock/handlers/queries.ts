@@ -9,6 +9,21 @@ import { SQL_METADATA } from "../fixtures/sqlMetadata";
 import { CURRENT_USER, ALL_USERS } from "../fixtures/users";
 import { nextId } from "../lib/seed";
 import { httpError, validationError } from "../lib/errors";
+
+/** Duration the History filters use: reported time, else wall clock.
+ *
+ * Mirrors `duration_expr()` server-side — a run that failed before the agent
+ * reported a duration still has one, and a run that has not finished has none.
+ */
+function durationOf(r: {
+  duration_ms: number | null;
+  started_at: string;
+  finished_at: string | null;
+}): number | null {
+  if (r.duration_ms != null) return r.duration_ms;
+  if (!r.finished_at) return null;
+  return Date.parse(r.finished_at) - Date.parse(r.started_at);
+}
 import type { Query, QueryStatus } from "@/types/query";
 
 // In-memory store for in-flight queries (rebuilt per test via resetLiveQueries).
@@ -169,38 +184,97 @@ export const queryHandlers = [
     return new HttpResponse(null, { status: 204 });
   }),
 
-  // Query log, newest first. Doubles as the admin audit trail: an admin may
-  // pass `all_workspaces` (cross-workspace) and a `user_id` filter. `agent_id`
-  // is open to any member, scoped to their own workspace.
+  // Query log. Mirrors the server closely enough that the History page's
+  // filters, sorting and cursor paging are exercised for real in tests rather
+  // than being asserted against a handler that ignores them.
   http.get("/api/workspaces/:ws/queries", ({ params, request }) => {
     const url = new URL(request.url);
-    const allWorkspaces = url.searchParams.get("all_workspaces") === "true";
-    const userId = url.searchParams.get("user_id");
-    const agentId = url.searchParams.get("agent_id");
-    const origin = url.searchParams.get("origin");
-    const sessionId = url.searchParams.get("session_id");
+    const p = url.searchParams;
+    const allWorkspaces = p.get("all_workspaces") === "true";
+    const userId = p.get("user_id");
+    const agentId = p.get("agent_id");
+    const origin = p.get("origin");
+    const sessionId = p.get("session_id");
+    const since = p.get("since");
+    const until = p.get("until");
+    const q = p.get("q");
+    const queryId = p.get("query_id");
+    const statuses = p.getAll("status");
+    const statementTypes = p.getAll("statement_type");
+    const slowerThan = p.get("slower_than_ms");
+    const sort = p.get("sort") ?? "started_at";
+    const dir = p.get("dir") ?? "desc";
+    const limit = Number(p.get("limit") ?? 100);
+    const cursor = p.get("cursor");
 
     let pool = QUERY_HISTORY;
     if (!allWorkspaces) {
       const ws = findWorkspace(params.ws as string);
       if (!ws) return httpError(404, "Workspace not found");
-      pool = pool.filter((q) => q.workspace_id === ws.id);
+      pool = pool.filter((qr) => qr.workspace_id === ws.id);
     }
+
+    // Machinery rather than someone's work; matches HIDDEN_ORIGINS server-side.
+    const hidden = ["sample", "metadata", "maintenance"];
     const rows = pool
-      .filter((q) => !userId || q.user_id === userId)
-      .filter((q) => !agentId || q.agent_id === agentId)
+      .filter((r) => !r.origin || !hidden.includes(r.origin))
+      .filter((r) => !userId || r.user_id === userId)
+      .filter((r) => !agentId || r.agent_id === agentId)
       // Interactive runs carry a null origin; mirror the server's alias for it.
-      .filter((q) =>
+      .filter((r) =>
         !origin
           ? true
           : origin === "interactive"
-            ? !q.origin
-            : q.origin === origin,
+            ? !r.origin
+            : r.origin === origin,
       )
-      .filter((q) => !sessionId || q.session_id === sessionId)
+      .filter((r) => !sessionId || r.session_id === sessionId)
+      .filter((r) => !since || r.started_at >= since)
+      .filter((r) => !until || r.started_at <= until)
+      .filter((r) => !q || r.sql.toLowerCase().includes(q.toLowerCase()))
+      .filter((r) => !queryId || r.id.startsWith(queryId.toLowerCase()))
+      .filter((r) => statuses.length === 0 || statuses.includes(r.status))
+      .filter(
+        (r) =>
+          statementTypes.length === 0 ||
+          (r.statement_type != null &&
+            statementTypes.includes(r.statement_type)),
+      )
+      .filter((r) => {
+        if (slowerThan == null) return true;
+        const d = durationOf(r);
+        return d != null && d >= Number(slowerThan);
+      })
       .slice()
-      .sort((a, b) => b.started_at.localeCompare(a.started_at));
-    return HttpResponse.json(rows);
+      .sort((a, b) => {
+        const mul = dir === "asc" ? 1 : -1;
+        if (sort === "duration") {
+          const da = durationOf(a);
+          const db = durationOf(b);
+          // Unknown duration sorts last whichever way the list runs.
+          if (da == null && db == null) return a.id < b.id ? -mul : mul;
+          if (da == null) return 1;
+          if (db == null) return -1;
+          if (da !== db) return (da - db) * mul;
+          return a.id < b.id ? -mul : mul;
+        }
+        if (a.started_at !== b.started_at)
+          return a.started_at.localeCompare(b.started_at) * mul;
+        return a.id < b.id ? -mul : mul;
+      });
+
+    // Opaque cursor over the sorted array, matching the server's contract
+    // (a cursor names the last row of the previous page).
+    const start = cursor
+      ? rows.findIndex((r) => r.id === atob(cursor).split("|").pop()) + 1
+      : 0;
+    const page = rows.slice(start, start + limit);
+    const hasMore = start + limit < rows.length;
+    return HttpResponse.json({
+      items: page,
+      cursor: hasMore ? btoa(`x|${page[page.length - 1]?.id}`) : null,
+      has_more: hasMore,
+    });
   }),
 
   // Saved queries

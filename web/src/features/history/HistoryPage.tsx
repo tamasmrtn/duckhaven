@@ -316,9 +316,15 @@ export function HistoryPage() {
             </div>
             {isAdmin && (
               <div className="flex items-center gap-3">
+                {/* Defaults to the signed-in user, because that is the
+                    default scope. Rendering null here showed "All users" while
+                    the list was in fact scoped to one — the control and the
+                    rows it described disagreed. */}
                 <UserFilterCombobox
                   value={
-                    search.user && search.user !== "all" ? search.user : null
+                    search.user === "all"
+                      ? null
+                      : (search.user ?? me?.id ?? null)
                   }
                   onChange={(id) => setFilter({ user: id ?? "all" })}
                 />
@@ -355,17 +361,7 @@ export function HistoryPage() {
         setFilter={setFilter}
         toggleMulti={toggleMulti}
         now={now}
-      />
-
-      <ScopeLine
-        label={f.scopeLabel}
-        isMine={f.isMine}
-        isAllTime={f.range === "all"}
         hasFilters={hasFilters}
-        onAllUsers={() => setFilter({ user: "all" })}
-        onAllTime={() =>
-          setFilter({ range: "all", since: undefined, until: undefined })
-        }
         onClear={() =>
           void navigate({
             to: "/$ws/history",
@@ -536,65 +532,6 @@ export function HistoryPage() {
   );
 }
 
-/** The always-visible statement of what is being shown, and the way out. */
-function ScopeLine({
-  label,
-  isMine,
-  isAllTime,
-  hasFilters,
-  onAllUsers,
-  onAllTime,
-  onClear,
-}: {
-  label: string;
-  isMine: boolean;
-  isAllTime: boolean;
-  hasFilters: boolean;
-  onAllUsers: () => void;
-  onAllTime: () => void;
-  onClear: () => void;
-}) {
-  return (
-    <div className="flex items-center gap-3 border-b border-[var(--border-subtle)] px-4 py-2">
-      <span className="text-xs font-medium text-text-secondary">{label}</span>
-      <div className="flex items-center gap-2">
-        {/* A tight default is only a good default if widening it is one
-            visible click away, so these are never hidden behind a panel. */}
-        {isMine && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 text-2xs"
-            onClick={onAllUsers}
-          >
-            All users
-          </Button>
-        )}
-        {!isAllTime && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 text-2xs"
-            onClick={onAllTime}
-          >
-            All time
-          </Button>
-        )}
-      </div>
-      {hasFilters && (
-        <button
-          type="button"
-          onClick={onClear}
-          className="ml-auto inline-flex items-center gap-1 text-2xs text-text-tertiary hover:text-text-primary"
-        >
-          <X className="size-3" />
-          Clear filters
-        </button>
-      )}
-    </div>
-  );
-}
-
 function FilterBar({
   search,
   qDraft,
@@ -610,6 +547,8 @@ function FilterBar({
   setFilter,
   toggleMulti,
   now,
+  hasFilters,
+  onClear,
 }: {
   search: HistorySearch;
   qDraft: string;
@@ -629,6 +568,8 @@ function FilterBar({
     key: "status" | "type",
   ) => void;
   now: number;
+  hasFilters: boolean;
+  onClear: () => void;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border-subtle)] px-4 py-2">
@@ -767,6 +708,20 @@ function FilterBar({
           </SelectContent>
         </Select>
       </div>
+
+      {/* Back to the default view — the signed-in user's last 7 days — rather
+          than to an unfiltered one. Hidden when nothing is set, so it never
+          offers to undo nothing. */}
+      {hasFilters && (
+        <button
+          type="button"
+          onClick={onClear}
+          className="ml-auto inline-flex items-center gap-1 text-2xs text-text-tertiary hover:text-text-primary"
+        >
+          <X className="size-3" />
+          Clear filters
+        </button>
+      )}
     </div>
   );
 }

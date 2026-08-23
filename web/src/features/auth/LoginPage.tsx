@@ -147,10 +147,6 @@ export function LoginPage() {
             </div>
           </>
         )}
-
-        <p className="text-center text-2xs text-text-tertiary">
-          Self-hosted · Tailscale only
-        </p>
       </div>
     </div>
   );

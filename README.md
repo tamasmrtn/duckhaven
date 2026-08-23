@@ -140,13 +140,15 @@ trail — with data sovereignty, network privacy, and no SaaS lock-in.
 - **Highly available (opt-in)** — The default deploy is single-node; an opt-in
   topology adds HA Postgres plus multiple API replicas behind a load balancer on
   the same Compose foundation.
-- **AI data assistant (opt-in)** — A governed, model-agnostic chat assistant
+- **AI assistant (opt-in)** — A governed, model-agnostic chat assistant
   (OpenAI / Anthropic / Mistral / Ollama-compatible) that browses catalog
   metadata, authors and runs SQL, and proposes worksheet edits with
   diff-highlighted Accept/Reject — running as an audited service-account
   principal through the same enforcement chokepoints as a human user. Disabled
   by default.
-
+- **Semantic layer for AI assistant** — Curated metric and dimension
+  definitions the assistant grounds its SQL in, instead of inferring intent
+  from raw table/column names alone.
 ### Storage
 
 - **Bring your own storage** — One backend per workspace: bundled object
@@ -266,9 +268,8 @@ cutting a new release see [docs/developer/releasing.md](docs/developer/releasing
 
 The full shipped feature set is above. Here's what's actively being worked on:
 
-- **A semantic layer for the AI assistant** — curated metric and dimension
-  definitions the assistant grounds its SQL in, instead of inferring intent
-  from raw table/column names alone.
+- **Command Line Interface** — let users manage Duckhaven directly from
+  scripts and CI/CD pipelines without needing the web UI.
 - **Performance** — closing the gaps in query planning, per-query memory
   sizing, and result delivery that show up under real, larger-than-toy
   workloads.
@@ -319,8 +320,7 @@ Repository layout:
 
 ## Inspiration
 
-DuckHaven's worksheet experience draws on MotherDuck; it stands on
-[DuckDB](https://duckdb.org/) for compute and
+DuckHaven stands on the giants of [DuckDB](https://duckdb.org/) for compute and
 [Apache Polaris](https://polaris.apache.org/) for governance and credential
 vending.
 

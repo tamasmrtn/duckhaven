@@ -196,6 +196,27 @@ contrast.
 Dark mode prefers **borders over shadows** for hierarchy (shadows mostly
 disappear on `#0B0F19`).
 
+#### Scrollbars
+
+Scrollbars are thin, rounded pills over a transparent track — quiet at rest,
+darkening on hover. The treatment is defined once, at the root: the standard
+`scrollbar-color` / `scrollbar-width: thin` properties on `*` in
+`web/src/index.css`, with a `::-webkit-scrollbar` fallback for legacy
+WebKit/Blink that lack `scrollbar-color` (feature-detected, so nothing
+version-locks). Both paths consume the theme tokens `--scrollbar-thumb`
+(slate-500, ≥ 3:1 against every app surface in both themes) and
+`--scrollbar-thumb-hover`. The assistant chat's Radix ScrollArea thumb uses
+the same tokens (`bg-scrollbar-thumb`, `hover:bg-scrollbar-thumb-hover`), so
+the native and Radix variants stay in sync by construction.
+
+Interaction states are cosmetic. Hover/active strengthening applies in the
+legacy-WebKit fallback and the Radix thumb; the standard `scrollbar-color`
+path has no hover variant, so evergreen browsers keep their own momentary
+state. On macOS the overlay scrollbars appear only while scrolling; the
+treatment applies whenever a scrollbar is visible. One intentional contrast
+edge: light-mode hover (`#475569`) over `--bg-code` blocks reads ~ 2.5:1 —
+momentary and decorative, where resting `#64748b` keeps 4.4:1.
+
 ### 2.5 Iconography
 
 - **Lucide** as the single icon set (matches the rounded-rectangle, 2 px

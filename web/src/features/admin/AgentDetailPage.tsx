@@ -134,12 +134,6 @@ function OverviewTab({ agent }: { agent: Agent }) {
               {agent.capabilities.host && (
                 <Field label="Host" value={agent.capabilities.host} />
               )}
-              {agent.capabilities.tailscale_ip && (
-                <Field
-                  label="Tailscale IP"
-                  value={agent.capabilities.tailscale_ip}
-                />
-              )}
               <Field
                 label="Extensions"
                 value={

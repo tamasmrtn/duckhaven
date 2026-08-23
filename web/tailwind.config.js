@@ -21,6 +21,10 @@ export default {
           subtle: 'var(--border-subtle)',
           strong: 'var(--border-strong)',
         },
+        scrollbar: {
+          thumb: 'var(--scrollbar-thumb)',
+          'thumb-hover': 'var(--scrollbar-thumb-hover)',
+        },
         text: {
           primary: 'var(--text-primary)',
           secondary: 'var(--text-secondary)',

@@ -17,6 +17,10 @@
   --border-subtle: #e2e8f0;
   --border-strong: #cbd5e1;
 
+  /* Scrollbars */
+  --scrollbar-thumb: #64748b;
+  --scrollbar-thumb-hover: #475569;
+
   /* Text */
   --text-primary: #0f172a;
   --text-secondary: #475569;
@@ -77,6 +81,9 @@
 
   --border-subtle: #1f2937;
   --border-strong: #374151;
+
+  --scrollbar-thumb: #64748b;
+  --scrollbar-thumb-hover: #94a3b8;
 
   --text-primary: #f1f5f9;
   --text-secondary: #94a3b8;

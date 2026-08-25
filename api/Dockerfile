@@ -68,12 +68,18 @@ COPY api/alembic /app/alembic
 # former init-secrets one-shot, so the api service prepares its own secrets).
 COPY deploy/api-entrypoint.sh /usr/local/bin/api-entrypoint.sh
 
-# Hardening: drop pip, patch the base image, run as a dedicated non-root user.
+# Hardening: drop pip, purge perl-base, patch the base image, run as a
+# dedicated non-root user.
+# perl-base is marked Essential but nothing in this image depends on it, and
+# it carries 8 of the base image's CRITICAL/HIGH CVEs — all of them unfixable
+# (Debian ships no patch). Purging it takes CRITICAL to zero. The forced flags
+# are required only because of the Essential marker; apt still works after.
 # /var/duckhaven is the api_data mount point; /var/duckhaven/secrets lives
 # within it (holds the generated secret_key). Pre-creating the secrets dir
 # owned by duckhaven lets the empty-volume init copy inherit the correct
 # ownership.
 RUN pip uninstall -y pip 2>/dev/null || true; \
+    dpkg --purge --force-remove-essential --force-depends perl-base; \
     apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*; \
     useradd --system --create-home --home-dir /home/duckhaven duckhaven; \
     mkdir -p /var/duckhaven/secrets && chown -R duckhaven:duckhaven /var/duckhaven; \

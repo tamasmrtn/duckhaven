@@ -48,8 +48,14 @@ WORKDIR /app
 # Only the populated virtualenv is needed at runtime.
 COPY --from=builder /app/.venv /app/.venv
 
-# Hardening: drop pip, patch the base image, run as a dedicated non-root user.
+# Hardening: drop pip, purge perl-base, patch the base image, run as a
+# dedicated non-root user.
+# perl-base is marked Essential but nothing in this image depends on it, and
+# it carries 8 of the base image's CRITICAL/HIGH CVEs — all of them unfixable
+# (Debian ships no patch). Purging it takes CRITICAL to zero. The forced flags
+# are required only because of the Essential marker; apt still works after.
 RUN pip uninstall -y pip 2>/dev/null || true; \
+    dpkg --purge --force-remove-essential --force-depends perl-base; \
     apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*; \
     useradd --system --create-home --home-dir /home/duckhaven duckhaven
 

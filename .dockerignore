@@ -9,3 +9,12 @@ htmlcov
 .ruff_cache
 .coverage
 .coverage.*
+
+# Local-only artifacts. These are gitignored but .dockerignore is a separate
+# list, and buildkit walks the whole tree — benchmarks/ alone is ~10 GB and
+# stalls any build from the repo root.
+benchmarks
+deploy/terraform
+site
+test-results
+node_modules

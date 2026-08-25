@@ -105,6 +105,46 @@ make migrate-down
 
 Migrations live in `api/alembic/versions/`.
 
+## Container images
+
+Both published images (`duckhaven-api`, `duckhaven-agent`) are built from
+`python:3.14-slim` in two stages: a builder that resolves dependencies with `uv`
+into `/app/.venv`, and a runtime stage that copies only that virtualenv. The API
+image adds a third stage that builds the SPA with `node:24-alpine`.
+
+The runtime stage is hardened in one `RUN` layer. It drops `pip`, purges
+`perl-base`, applies any Debian updates published since the base tag, and
+creates the unprivileged `duckhaven` user that the container runs as.
+
+Purging `perl-base` deserves an explanation, because it is unusual. Debian marks
+the package `Essential`, so removing it needs
+`dpkg --purge --force-remove-essential`. Nothing in either image depends on it —
+neither application calls Perl, and no other installed package declares it as a
+dependency — but it carries eight of the base image's CRITICAL and HIGH CVEs,
+none of which have a fix available upstream. Purging it takes the images from
+three CRITICAL and fourteen HIGH findings down to zero CRITICAL and nine HIGH.
+`apt` continues to work normally afterwards. The nine remaining HIGH findings
+are in `openssl`, `ncurses`, `gzip` and `libacl1`; they are likewise unfixable
+today and are tracked by the weekly Trivy scan in `.github/workflows/security.yml`.
+
+If you shell into a running container, expect no `pip` and no `perl`.
+
+### Building locally
+
+```bash
+docker build -f api/Dockerfile -t duckhaven-api:dev .
+docker build -f agent/Dockerfile -t duckhaven-agent:dev .
+```
+
+Both builds must run from the repository root, because the Dockerfiles copy the
+shared workspace manifests. Note that `.dockerignore` is a separate list from
+`.gitignore`: a directory being gitignored does not keep it out of the build
+context. Large local-only directories such as `benchmarks/` and
+`deploy/terraform/` are excluded there explicitly — without those entries
+BuildKit walks the whole tree and the build stalls before it runs a single step.
+If you add a large generated directory to the repository, add it to
+`.dockerignore` too.
+
 ## Project Structure
 
 ```

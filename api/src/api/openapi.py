@@ -144,6 +144,19 @@ def apply_conventions(app) -> None:
                 for code, response in responses.items():
                     if code[0] in "45":
                         response["content"] = _ERROR_CONTENT
+
+                # A route declaring a second success code (a PUT that creates,
+                # a POST that can accept instead) states only its description;
+                # the body is the response_model either way, so say so rather
+                # than leaving the alternative looking empty.
+                primary = next(
+                    (r for c, r in responses.items() if c[0] == "2" and r.get("content")),
+                    None,
+                )
+                if primary is not None:
+                    for code, response in responses.items():
+                        if code[0] == "2" and not response.get("content"):
+                            response["content"] = primary["content"]
         return schema
 
     app.openapi = openapi

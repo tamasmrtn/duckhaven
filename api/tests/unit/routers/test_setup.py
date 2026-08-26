@@ -46,7 +46,7 @@ async def test_create_first_admin_success(client: AsyncClient, setup_token: str)
         headers={"X-Setup-Token": setup_token},
         json={"email": "admin@test.local", "password": "longenough"},
     )
-    assert resp.status_code == 200, resp.text
+    assert resp.status_code == 201, resp.text
     data = resp.json()
     assert data["email"] == "admin@test.local"
     assert data["role"] == "admin"
@@ -123,7 +123,7 @@ async def test_configured_token_is_used_without_a_file(
         headers={"X-Setup-Token": "from-key-vault"},
         json={"email": "admin@test.local", "password": "longenough"},
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 201
 
 
 async def test_configured_token_wins_over_the_file(

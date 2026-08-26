@@ -319,14 +319,16 @@ class BrokenDefinitionOut(BaseModel):
 
 
 class SemanticSearchOut(BaseModel):
-    hits: list[SemanticHitOut] = Field(default_factory=list)
+    # `items` rather than `hits`: search endpoints share a shape, so a client
+    # reads results the same way whichever one it called.
+    items: list[SemanticHitOut] = Field(default_factory=list)
     # Metrics tied at the top of the ranking. Populated when a term matches more
     # than one authoritative definition equally well — "how many customers?"
     # against both `total_customers` and `active_customers`. The caller is meant
     # to ask rather than pick.
     ambiguous: list[SemanticHitOut] = Field(default_factory=list)
     # Definitions that exist but whose bindings no longer resolve. Kept out of
-    # `hits` so nothing queries them, and reported so the caller can say "that is
+    # `items` so nothing queries them, and reported so the caller can say "that is
     # defined but broken" instead of "there is no such thing" — which would send
     # somebody off to rebuild a definition the organization already has.
     broken: list[BrokenDefinitionOut] = Field(default_factory=list)

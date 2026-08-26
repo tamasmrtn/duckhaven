@@ -36,7 +36,7 @@ async def setup_status(db: AsyncSession = Depends(get_db)) -> SetupStatus:
     return SetupStatus(needs_admin=await _user_count(db) == 0)
 
 
-@router.post("/admin", response_model=UserOut)
+@router.post("/admin", response_model=UserOut, status_code=status.HTTP_201_CREATED)
 async def create_first_admin(
     body: FirstAdminRequest,
     response: Response,

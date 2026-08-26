@@ -28,7 +28,6 @@ from api.models.catalog import Catalog
 from api.models.table_metadata import TableMetadata
 from api.models.user import User
 from api.models.workspace import Workspace
-from api.openapi import LEGACY_SUFFIX
 from api.schemas.catalog import (
     AllowedColumnType,
     CatalogSchemaCreate,
@@ -853,13 +852,11 @@ async def recount_table(
 router = APIRouter()
 
 _CANON = "/workspaces/{workspace}/catalogs/{catalog}/schemas"
-_LEGACY = "/workspaces/{workspace}/schemas"
 
 # (suffix, handler, methods, extra kwargs)
 _ROUTES: list[tuple[str, Callable[..., Any], list[str], dict[str, Any]]] = [
     ("", list_schemas, ["GET"], {"response_model": list[CatalogSchemaOut]}),
     ("", create_schema, ["POST"], {"response_model": CatalogSchemaOut, "status_code": 201}),
-    ("/refresh-stats", refresh_table_stats, ["POST"], {}),
     ("/{schema}", drop_schema, ["DELETE"], {"status_code": 204}),
     ("/{schema}/tables", list_tables, ["GET"], {"response_model": list[TableOut]}),
     ("/{schema}/tables", create_table, ["POST"], {"response_model": TableOut, "status_code": 201}),
@@ -883,12 +880,12 @@ _ROUTES: list[tuple[str, Callable[..., Any], list[str], dict[str, Any]]] = [
 
 for _suffix, _fn, _methods, _kw in _ROUTES:
     router.add_api_route(_CANON + _suffix, _fn, methods=_methods, **_kw)
-    # The shim shares the canonical handlers, so its operation ids would collide.
-    router.add_api_route(
-        _LEGACY + _suffix,
-        _fn,
-        methods=_methods,
-        operation_id=_fn.__name__ + LEGACY_SUFFIX,
-        deprecated=True,
-        **_kw,
-    )
+
+# Refreshing stats walks every schema in the catalog, so it is a catalog-level
+# operation. Under `/schemas/` it also sat in the `{schema}` slot, where a
+# namespace actually named `refresh-stats` would have been unreachable.
+router.add_api_route(
+    "/workspaces/{workspace}/catalogs/{catalog}/refresh-stats",
+    refresh_table_stats,
+    methods=["POST"],
+)

@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.deps import get_current_user, get_db, get_polaris_client
 from api.models.query import SavedQuery
 from api.models.user import User
-from api.schemas.search import SearchResultOut
+from api.schemas.search import SearchResultOut, SearchResultsOut
 from api.services import grants as grant_service
 from api.services.polaris import PolarisClient, PolarisError
 from api.services.workspace import (
@@ -44,20 +44,23 @@ def _escape_like(s: str) -> str:
     return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-@router.get("/{workspace}/search", response_model=list[SearchResultOut])
+@router.get("/{workspace}/search", response_model=SearchResultsOut)
 async def search_workspace(
     ws: Annotated[str, Path(alias="workspace")],
-    q: str = Query(""),
+    q: str = Query(min_length=1, max_length=500),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
-) -> list[SearchResultOut]:
+) -> SearchResultsOut:
     """Find catalogs, schemas, tables and saved queries by name across the workspace.
 
     Prefix and substring matching over names only, not contents. Results are
-    filtered by grant, so a caller never sees an object they could not open, and
-    an empty `q` returns nothing rather than everything."""
+    filtered by grant, so a caller never sees an object they could not open.
+
+    A truncated report rather than a page: `limit` caps how many come back and
+    `has_more` says whether it cut, but there is no cursor to walk -- narrow the
+    query instead."""
     workspace = await get_workspace(db, ws)
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
@@ -65,7 +68,7 @@ async def search_workspace(
 
     needle = q.strip().lower()
     if not needle:
-        return []
+        return SearchResultsOut(items=[])
 
     catalogs = await resolve_workspace_catalogs(db, workspace.id)
 
@@ -152,4 +155,4 @@ async def search_workspace(
                 )
             )
 
-    return results[:limit]
+    return SearchResultsOut(items=results[:limit], has_more=len(results) > limit)

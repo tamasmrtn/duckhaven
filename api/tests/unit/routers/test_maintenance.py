@@ -103,7 +103,7 @@ async def test_table_health_detail_includes_history_and_recs(
     await db_session.commit()
 
     resp = await auth_client.get(
-        f"/workspaces/{workspace.slug}/schemas/analytics/tables/events/health"
+        f"/workspaces/{workspace.slug}/catalogs/{catalog.slug}/schemas/analytics/tables/events/health"
     )
     assert resp.status_code == 200
     data = resp.json()
@@ -112,9 +112,9 @@ async def test_table_health_detail_includes_history_and_recs(
     assert data["recommendations"][0]["kind"] == "compact_small_files"
 
 
-async def test_table_health_404_without_data(auth_client, workspace):
+async def test_table_health_404_without_data(auth_client, workspace, catalog):
     resp = await auth_client.get(
-        f"/workspaces/{workspace.slug}/schemas/analytics/tables/ghost/health"
+        f"/workspaces/{workspace.slug}/catalogs/{catalog.slug}/schemas/analytics/tables/ghost/health"
     )
     assert resp.status_code == 404
 

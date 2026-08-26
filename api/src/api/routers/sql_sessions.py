@@ -125,6 +125,10 @@ async def _start_compute(
     "/workspaces/{workspace}/sql/sessions",
     status_code=201,
     response_model=SqlSessionOut,
+    response_description=(
+        "The session. Its global address is in the Location header: a session is "
+        "operated at `/sql/sessions/{session_id}`, not under the workspace."
+    ),
     responses={
         202: {
             "description": (
@@ -236,6 +240,9 @@ async def open_session(
     )
     db.add(session)
     await db.flush()
+    # The session is addressed globally from here on, not under the workspace it
+    # was opened in, so the caller cannot derive its URL from the request path.
+    response.headers["Location"] = f"/api/sql/sessions/{session.id}"
     session.staging_uri = session_credentials.staging_uri_for(active, session.id)
     # Commit so the agent's SESSION_OPENED ack (applied in a separate DB session)
     # can find and update this row. For a pending session the same commit is what
@@ -568,7 +575,11 @@ async def run_statement(
     return query
 
 
-@router.post("/sql/sessions/{session_id}/staging-files", response_model=StagingFilesOut)
+@router.post(
+    "/sql/sessions/{session_id}/staging-files",
+    response_model=StagingFilesOut,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_staging_files(
     session_id: uuid.UUID,
     body: StagingFilesCreate,

@@ -53,9 +53,10 @@ async def _scoped_env(auth_client, owner, db_session, fake_polaris):
     assert cat_resp.status_code == 201, cat_resp.text
 
     for schema, table in [("marketing", "leads"), ("finance", "ledger")]:
-        await auth_client.post(f"/workspaces/{slug}/schemas", json={"name": schema})
+        await auth_client.post(f"/workspaces/{slug}/catalogs/{slug}/schemas", json={"name": schema})
         r = await auth_client.post(
-            f"/workspaces/{slug}/schemas/{schema}/tables", json={"name": table, "columns": _COLS}
+            f"/workspaces/{slug}/catalogs/{slug}/schemas/{schema}/tables",
+            json={"name": table, "columns": _COLS},
         )
         assert r.status_code == 201, r.text
 
@@ -99,10 +100,12 @@ async def test_metadata_tier_browses_but_cannot_sample(
     await _login(auth_client, member.email)
 
     # metadata: describe the table.
-    r = await auth_client.get(f"/workspaces/{slug}/schemas/marketing/tables/leads")
+    r = await auth_client.get(f"/workspaces/{slug}/catalogs/{slug}/schemas/marketing/tables/leads")
     assert r.status_code == 200
     # but not its rows.
-    r = await auth_client.get(f"/workspaces/{slug}/schemas/marketing/tables/leads/sample")
+    r = await auth_client.get(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/marketing/tables/leads/sample"
+    )
     assert r.status_code == 404
 
 
@@ -112,17 +115,22 @@ async def test_lists_are_filtered_to_granted_nodes(auth_client, owner, db_sessio
     await db_session.commit()
     await _login(auth_client, member.email)
 
-    schemas = {s["name"] for s in (await auth_client.get(f"/workspaces/{slug}/schemas")).json()}
+    schemas = {
+        s["name"]
+        for s in (await auth_client.get(f"/workspaces/{slug}/catalogs/{slug}/schemas")).json()
+    }
     assert "marketing" in schemas and "finance" not in schemas
 
     tables = {
         t["name"]
-        for t in (await auth_client.get(f"/workspaces/{slug}/schemas/marketing/tables")).json()
+        for t in (
+            await auth_client.get(f"/workspaces/{slug}/catalogs/{slug}/schemas/marketing/tables")
+        ).json()
     }
     assert tables == {"leads"}
 
     # A table with no grant is a 404, not a 403 — indistinguishable from missing.
-    r = await auth_client.get(f"/workspaces/{slug}/schemas/finance/tables/ledger")
+    r = await auth_client.get(f"/workspaces/{slug}/catalogs/{slug}/schemas/finance/tables/ledger")
     assert r.status_code == 404
 
 
@@ -134,7 +142,9 @@ async def test_reader_grant_passes_the_sample_gate(auth_client, owner, db_sessio
 
     # reader clears the grant gate; it then fails at "no agent connected" (503),
     # not the 404 a metadata-tier principal would get.
-    r = await auth_client.get(f"/workspaces/{slug}/schemas/marketing/tables/leads/sample")
+    r = await auth_client.get(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/marketing/tables/leads/sample"
+    )
     assert r.status_code == 503
 
 
@@ -148,7 +158,9 @@ async def test_schema_grant_covers_future_table(auth_client, owner, db_session, 
     )
     await _login(auth_client, member.email)
 
-    r = await auth_client.get(f"/workspaces/{slug}/schemas/marketing/tables/new_leads")
+    r = await auth_client.get(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/marketing/tables/new_leads"
+    )
     assert r.status_code == 200
 
 
@@ -163,7 +175,8 @@ async def test_reader_role_cannot_be_promoted_by_writer_grant(
     await _login(auth_client, member.email)
 
     r = await auth_client.post(
-        f"/workspaces/{slug}/schemas/marketing/tables", json={"name": "t2", "columns": _COLS}
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/marketing/tables",
+        json={"name": "t2", "columns": _COLS},
     )
     assert r.status_code == 403
 
@@ -182,7 +195,8 @@ async def test_grant_narrows_writer_role_down(auth_client, owner, db_session, fa
     await _login(auth_client, member.email)
 
     r = await auth_client.post(
-        f"/workspaces/{slug}/schemas/marketing/tables", json={"name": "t2", "columns": _COLS}
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/marketing/tables",
+        json={"name": "t2", "columns": _COLS},
     )
     assert r.status_code == 404
 
@@ -198,7 +212,9 @@ async def test_drop_table_cleans_up_grants(auth_client, owner, db_session, fake_
     )
     await db_session.commit()
 
-    r = await auth_client.delete(f"/workspaces/{slug}/schemas/marketing/tables/leads")
+    r = await auth_client.delete(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/marketing/tables/leads"
+    )
     assert r.status_code == 204
     remaining = (
         (

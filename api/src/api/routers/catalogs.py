@@ -11,7 +11,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -220,39 +220,70 @@ async def create_workspace_catalog(
     )
 
 
-@router.post("/workspaces/{workspace}/catalogs/attach", response_model=CatalogOut)
+@router.put(
+    "/workspaces/{workspace}/catalogs/{catalog}",
+    response_model=CatalogOut,
+    responses={
+        200: {"description": "The catalog was already attached; the attachment was updated."},
+        201: {"description": "The catalog was attached to the workspace."},
+    },
+)
 async def attach_workspace_catalog(
     ws: Annotated[str, Path(alias="workspace")],
+    catalog: str,
     body: CatalogAttachRequest,
+    response: Response,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> CatalogOut:
-    """Attach an existing catalog to the workspace (M:N sharing)."""
+    """Attach an existing catalog to the workspace, or update the attachment.
+
+    A membership write, so it is a PUT on the membership's own address -- the
+    same one DELETE detaches -- rather than an action. Idempotent: 201 the first
+    time, 200 when it was already attached. Catalogs are shared M:N, so this
+    binds an existing catalog rather than creating one. Owner only.
+    """
     workspace = await get_workspace(db, ws)
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     await assert_workspace_member(db, workspace.id, user.id, min_role="owner")
-    catalog = (
+    found = (
         await db.execute(
             select(Catalog)
-            .where(Catalog.id == body.catalog_id)
+            .where(Catalog.slug == catalog)
             .options(selectinload(Catalog.storage_backend))
         )
     ).scalar_one_or_none()
-    if catalog is None:
+    if found is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Catalog not found")
-    link = await catalog_service.attach_catalog(
-        db,
-        workspace=workspace,
-        catalog=catalog,
-        attached_by=user.id,
-        make_default=body.make_default,
-    )
+    link = (
+        await db.execute(
+            select(WorkspaceCatalog).where(
+                WorkspaceCatalog.workspace_id == workspace.id,
+                WorkspaceCatalog.catalog_id == found.id,
+            )
+        )
+    ).scalar_one_or_none()
+
+    if link is None:
+        link = await catalog_service.attach_catalog(
+            db,
+            workspace=workspace,
+            catalog=found,
+            attached_by=user.id,
+            make_default=body.make_default,
+        )
+        response.status_code = status.HTTP_201_CREATED
+        response.headers["Location"] = f"/api/workspaces/{ws}/catalogs/{found.slug}"
+    elif body.make_default and not link.is_default:
+        # Already attached: a repeat PUT is a no-op except for the one field the
+        # body carries. Idempotent, so it does not 409 the way the old attach did.
+        await catalog_service.set_default_catalog(db, link=link)
     await db.commit()
     return _catalog_out(
-        catalog,
+        found,
         is_default=link.is_default,
-        attached_workspaces=await _binding_count(db, catalog.id),
+        attached_workspaces=await _binding_count(db, found.id),
     )
 
 

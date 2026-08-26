@@ -27,7 +27,7 @@ async def admin_client(client: AsyncClient, admin: User):
 
 async def test_bootstrap_creates_token(admin_client: AsyncClient):
     resp = await admin_client.post("/admin/agents/bootstrap")
-    assert resp.status_code == 200
+    assert resp.status_code == 201
     data = resp.json()
     assert data["token"].startswith("dh_boot_")
     assert "expires_at" in data
@@ -40,7 +40,7 @@ async def test_bootstrap_derives_wss_from_forwarded_proto(admin_client: AsyncCli
         "/admin/agents/bootstrap",
         headers={"X-Forwarded-Proto": "https", "X-Forwarded-Host": "duckhaven.example.com"},
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 201
     assert resp.json()["control_plane_url"] == "wss://duckhaven.example.com/agents/connect"
 
 

@@ -19,7 +19,6 @@ from api.deps import get_current_user, get_db
 from api.models.maintenance import MaintenanceRecommendation, TableHealthSample
 from api.models.user import User
 from api.models.workspace import Workspace, WorkspaceMember
-from api.openapi import LEGACY_SUFFIX
 from api.schemas.maintenance import (
     DeploymentHealthOut,
     HealthHistoryPoint,
@@ -281,20 +280,9 @@ async def dismiss_recommendation(
     return RecommendationOut.model_validate(rec, from_attributes=True)
 
 
-# The canonical path carries the catalog; the workspace-scoped one resolves
-# without it and is deprecated alongside the rest of the default-catalog shim.
-_HEALTH_SUFFIX = "/{schema}/tables/{table}/health"
 router.add_api_route(
-    "/workspaces/{workspace}/catalogs/{catalog}/schemas" + _HEALTH_SUFFIX,
+    "/workspaces/{workspace}/catalogs/{catalog}/schemas/{schema}/tables/{table}/health",
     table_health,
     methods=["GET"],
     response_model=TableHealthDetailOut,
-)
-router.add_api_route(
-    "/workspaces/{workspace}/schemas" + _HEALTH_SUFFIX,
-    table_health,
-    methods=["GET"],
-    response_model=TableHealthDetailOut,
-    operation_id=table_health.__name__ + LEGACY_SUFFIX,
-    deprecated=True,
 )

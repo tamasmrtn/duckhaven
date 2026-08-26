@@ -21,3 +21,16 @@ class SearchResultOut(BaseModel):
     id: uuid.UUID | None = None
     sql: str | None = None
     default_agent_id: uuid.UUID | None = None
+
+
+class SearchResultsOut(BaseModel):
+    """A search report.
+
+    Deliberately not the collection page envelope: search is truncated by
+    `limit`, not walked with a cursor. `has_more` says the result set was cut, so
+    the palette can tell the user to narrow rather than offering a next page that
+    does not exist.
+    """
+
+    items: list[SearchResultOut]
+    has_more: bool = False

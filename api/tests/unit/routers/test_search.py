@@ -62,15 +62,17 @@ async def test_matches_tables_and_schemas_by_substring(
     auth_client: AsyncClient, backend: StorageBackend, fake_polaris
 ):
     slug = await _make_workspace(auth_client, backend)
-    await auth_client.post(f"/workspaces/{slug}/schemas", json={"name": "marketing"})
     await auth_client.post(
-        f"/workspaces/{slug}/schemas/marketing/tables",
+        f"/workspaces/{slug}/catalogs/{slug}/schemas", json={"name": "marketing"}
+    )
+    await auth_client.post(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/marketing/tables",
         json={"name": "leads", "columns": _COLS},
     )
 
     resp = await auth_client.get(f"/workspaces/{slug}/search", params={"q": "lead"})
     assert resp.status_code == 200
-    results = resp.json()
+    results = resp.json()["items"]
     assert {
         "type": "table",
         "catalog": slug.replace("-", "_"),
@@ -79,7 +81,7 @@ async def test_matches_tables_and_schemas_by_substring(
     }.items() <= next(r for r in results if r["type"] == "table").items()
 
     resp = await auth_client.get(f"/workspaces/{slug}/search", params={"q": "market"})
-    schema_hit = next(r for r in resp.json() if r["type"] == "schema")
+    schema_hit = next(r for r in resp.json()["items"] if r["type"] == "schema")
     assert schema_hit["name"] == "marketing"
 
 
@@ -93,20 +95,23 @@ async def test_matches_saved_queries_by_name(
     )
     assert resp.status_code == 201, resp.text
 
-    results = (await auth_client.get(f"/workspaces/{slug}/search", params={"q": "revenue"})).json()
+    results = (await auth_client.get(f"/workspaces/{slug}/search", params={"q": "revenue"})).json()[
+        "items"
+    ]
     hit = next(r for r in results if r["type"] == "saved_query")
     assert hit["name"] == "Daily revenue report"
     assert hit["sql"] == "SELECT 1"
     assert hit["id"] is not None
 
 
-async def test_empty_query_returns_nothing(
+async def test_empty_query_is_rejected(
     auth_client: AsyncClient, backend: StorageBackend, fake_polaris
 ):
+    """`q` is required on a search endpoint, so an empty one is a bad request
+    rather than a silent empty result."""
     slug = await _make_workspace(auth_client, backend)
     resp = await auth_client.get(f"/workspaces/{slug}/search", params={"q": ""})
-    assert resp.status_code == 200
-    assert resp.json() == []
+    assert resp.status_code == 422
 
 
 async def test_no_match_returns_empty_list(
@@ -115,7 +120,7 @@ async def test_no_match_returns_empty_list(
     slug = await _make_workspace(auth_client, backend)
     resp = await auth_client.get(f"/workspaces/{slug}/search", params={"q": "nonexistent_xyz"})
     assert resp.status_code == 200
-    assert resp.json() == []
+    assert resp.json()["items"] == []
 
 
 async def test_limit_is_capped(auth_client: AsyncClient, backend: StorageBackend, fake_polaris):
@@ -160,9 +165,10 @@ async def test_search_respects_scoped_catalog_grants(
     assert cat_resp.status_code == 201, cat_resp.text
 
     for schema, table in [("marketing", "leads"), ("finance", "ledger")]:
-        await auth_client.post(f"/workspaces/{slug}/schemas", json={"name": schema})
+        await auth_client.post(f"/workspaces/{slug}/catalogs/{slug}/schemas", json={"name": schema})
         r = await auth_client.post(
-            f"/workspaces/{slug}/schemas/{schema}/tables", json={"name": table, "columns": _COLS}
+            f"/workspaces/{slug}/catalogs/{slug}/schemas/{schema}/tables",
+            json={"name": table, "columns": _COLS},
         )
         assert r.status_code == 201, r.text
 
@@ -198,7 +204,9 @@ async def test_search_respects_scoped_catalog_grants(
     await _login(auth_client, member.email)
 
     # "e" matches both leads (granted) and ledger (ungranted, different schema).
-    results = (await auth_client.get(f"/workspaces/{slug}/search", params={"q": "e"})).json()
+    results = (await auth_client.get(f"/workspaces/{slug}/search", params={"q": "e"})).json()[
+        "items"
+    ]
     names = {r["name"] for r in results if r["type"] == "table"}
     assert "leads" in names
     assert "ledger" not in names
@@ -210,9 +218,11 @@ async def test_one_broken_catalog_does_not_abort_the_whole_search(
     auth_client: AsyncClient, backend: StorageBackend, fake_polaris
 ):
     slug = await _make_workspace(auth_client, backend)
-    await auth_client.post(f"/workspaces/{slug}/schemas", json={"name": "marketing"})
     await auth_client.post(
-        f"/workspaces/{slug}/schemas/marketing/tables",
+        f"/workspaces/{slug}/catalogs/{slug}/schemas", json={"name": "marketing"}
+    )
+    await auth_client.post(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/marketing/tables",
         json={"name": "leads", "columns": _COLS},
     )
     # A second catalog attached to the same workspace whose Polaris namespace
@@ -226,7 +236,7 @@ async def test_one_broken_catalog_does_not_abort_the_whole_search(
 
     resp = await auth_client.get(f"/workspaces/{slug}/search", params={"q": "lead"})
     assert resp.status_code == 200
-    results = resp.json()
+    results = resp.json()["items"]
     assert any(r["type"] == "table" and r["name"] == "leads" for r in results)
 
 
@@ -245,6 +255,6 @@ async def test_underscore_in_query_does_not_wildcard_match_saved_queries(
 
     results = (
         await auth_client.get(f"/workspaces/{slug}/search", params={"q": "daily_report"})
-    ).json()
+    ).json()["items"]
     names = {r["name"] for r in results if r["type"] == "saved_query"}
     assert names == {"daily_report"}

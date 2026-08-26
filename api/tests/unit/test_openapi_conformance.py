@@ -234,7 +234,6 @@ def test_every_operation_has_exactly_one_allowed_tag(operations):
     assert not bad, f"tag is missing, duplicated, or not on the allow-list:\n{failures(bad)}"
 
 
-@pytest.mark.xfail(strict=True, reason="plan phase 3: security schemes")
 def test_authentication_is_described_as_a_security_scheme(spec, operations):
     """Credentials belong in `securitySchemes`, not in every operation's
     parameter list. Left as parameters, a generated client makes the caller pass
@@ -259,7 +258,6 @@ def test_authentication_is_described_as_a_security_scheme(spec, operations):
 # --- Documented error responses (plan phase 3) -----------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="plan phase 3: documented 401")
 def test_authenticated_operations_document_401(operations, dependency_names):
     missing = [
         f"{method.upper()} {path}"
@@ -271,7 +269,6 @@ def test_authenticated_operations_document_401(operations, dependency_names):
     assert not missing, f"depends on get_current_user but documents no 401:\n{failures(missing)}"
 
 
-@pytest.mark.xfail(strict=True, reason="plan phase 3: documented 403")
 def test_permission_guarded_operations_document_403(operations, dependency_names):
     guards = {"require_permission", "require_agent_tier"}
     missing = [
@@ -283,7 +280,6 @@ def test_permission_guarded_operations_document_403(operations, dependency_names
     assert not missing, f"permission-guarded but documents no 403:\n{failures(missing)}"
 
 
-@pytest.mark.xfail(strict=True, reason="plan phase 3: documented 404")
 def test_operations_addressing_a_resource_document_404(operations):
     missing = [
         f"{method.upper()} {path}"
@@ -296,7 +292,6 @@ def test_operations_addressing_a_resource_document_404(operations):
 # --- Pagination and query parameters (plan phases 3 and 5) -----------------
 
 
-@pytest.mark.xfail(strict=True, reason="plan phase 3: bounded limit")
 def test_limit_is_always_bounded(operations):
     """An unbounded `limit` lets one request ask for the whole table."""
     unbounded = []

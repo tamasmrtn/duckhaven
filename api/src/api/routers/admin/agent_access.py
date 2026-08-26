@@ -109,7 +109,14 @@ async def set_agent_access_mode(
     return await _payload(db, agent)
 
 
-@router.put("/{agent_id}/grants", response_model=AgentGrantOut)
+@router.put(
+    "/{agent_id}/grants",
+    response_model=AgentGrantOut,
+    responses={
+        200: {"description": "The principal already had a grant here; its tier was replaced."},
+        201: {"description": "A new grant was created for this principal."},
+    },
+)
 async def upsert_agent_grant(
     body: GrantUpsert,
     response: Response,

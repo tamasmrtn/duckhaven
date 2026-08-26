@@ -578,8 +578,10 @@ async def cancel_query(
 @router.get("/queries/{query_id}/rows", response_model=RowsPageOut)
 async def get_query_rows(
     query_id: uuid.UUID,
-    limit: int = 100,
-    cursor: str | None = None,
+    # Capped like every other paged endpoint: uncapped, one request could ask
+    # for the whole result set and defeat the paging this route exists to do.
+    limit: int = QueryParam(default=100, ge=1, le=1000),
+    cursor: str | None = QueryParam(default=None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> RowsPageOut:
@@ -688,6 +690,10 @@ async def list_saved_queries(
 @router.post(
     "/workspaces/{ws}/saved-queries",
     status_code=201,
+    responses={
+        200: {"description": "A saved query with this name existed; its SQL was replaced."},
+        201: {"description": "A new saved query was created."},
+    },
     response_model=SavedQueryOut,
 )
 async def create_saved_query(

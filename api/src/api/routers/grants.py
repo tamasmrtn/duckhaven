@@ -117,7 +117,14 @@ async def set_access_mode(
     return await _payload(db, workspace.id, cat)
 
 
-@router.put("/workspaces/{ws}/catalogs/{catalog}/grants", response_model=GrantOut)
+@router.put(
+    "/workspaces/{ws}/catalogs/{catalog}/grants",
+    response_model=GrantOut,
+    responses={
+        200: {"description": "The principal already had a grant here; its tier was replaced."},
+        201: {"description": "A new grant was created for this principal."},
+    },
+)
 async def upsert_grant(
     ws: str,
     catalog: str,

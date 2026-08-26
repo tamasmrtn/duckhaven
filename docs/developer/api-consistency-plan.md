@@ -38,7 +38,8 @@ the status-code-by-method table, 31 bare arrays vs 4 envelopes, 155×`422` + 6×
 |---|---|---|
 | **A1** | "10 path pairs, **20 of 161** operations" | 10 path pairs, but **26 operations** (13 per side). Counting by path undercounts the multi-method paths (`/schemas` and `/schemas/{schema}/tables` each carry GET+POST; `/schemas/{schema}/tables/{table}` carries GET+DELETE). |
 | **A1** | Framed as an open question | **Already decided in the code.** `api/src/api/routers/schemas.py:821-856` registers the pairs from a `_ROUTES` table against `_CANON = "/workspaces/{ws}/catalogs/{catalog}/schemas"` and `_LEGACY = "/workspaces/{ws}/schemas"`, with the comment *"canonical (catalog-scoped) + legacy (default catalog)"*. `web/src/api/schemas.ts:29-35` says the same thing in its own comment. The plan ratifies this rather than re-deciding it. Consequence: collapsing is a **~3-line server change and one client helper**, not 26 edits. |
-| **A1** | Implies the shim is a pure duplicate | **It is not, in one place.** `GET /workspaces/{ws}/schemas/{schema}/tables/{table}/health` (`routers/maintenance.py:128`) exists **only** on the legacy form and has no catalog-scoped twin. Removing the shim without adding that twin deletes a live route. |
+| **A1** | Implies the shim is a pure duplicate | **It is not, in one place.** `GET /workspaces/{ws}/schemas/{schema}/tables/{table}/health` (`routers/maintenance.py:128`) existed **only** on the legacy form and had no catalog-scoped twin. Removing the shim without adding that twin would have deleted a live route. Phase 4 added the twin. |
+| **A1** (follow-on) | — | **The health route never filtered by catalog, though its data is catalog-scoped.** `TableHealthSample` carries `catalog_id` — its own docstring calls it "the table's true home" — but the handler queried on `workspace_id`/`schema_name`/`table_name` only. Where two attached catalogs hold a table of the same name, it reported whichever was sampled most recently. The new canonical route narrows by catalog; the deprecated one keeps the old behaviour rather than changing under its callers. |
 | **A3** | Lists `.../conversations/{id}/messages` among POSTs that "create or mutate and should not" return 200 | **Not a defect.** Both `messages` and `approvals` return `StreamingResponse(media_type="text/event-stream")` (`routers/assistant.py:214,239`). `200` is correct for an SSE stream. The real defect is that the schema declares no media type for either. |
 | **A4** | "`{catalog}` is a name" | **`{catalog}` is a slug.** `resolve_catalog(db, workspace_id, catalog_slug)` matches `Catalog.slug` (`services/workspace.py:305`). Only `{schema}` and `{table}` are bare names, and correctly so — they are Iceberg identifiers DuckHaven does not own. |
 | **A4** | "`{ws}` is a slug" | **`{ws}` is slug-*or*-UUID.** `get_workspace(db, slug_or_id)` tries `uuid.UUID(...)` first and falls back to slug (`services/workspace.py:207`). The polymorphism is deliberate and useful; it is the *name* `ws` that is the defect, not the type. |
@@ -130,6 +131,15 @@ immediately preceding it**, and carries the `_id` suffix **if and only if** its 
 Consequences: `{ws}`→`{workspace}`, `{sa_id}`→`{service_account_id}`, `{sq_id}`→`{saved_query_id}`,
 `{rec_id}`→`{recommendation_id}`, `{backend_id}`→`{storage_backend_id}`, `{slug}`→`{model}`,
 `{metric_name}`/`{name}`→`{metric}` (fixing B4), `{name}`→`{dataset}`/`{dimension}`/`{relationship}`.
+
+!!! note "Three of these are aliased, not renamed"
+    `{ws}`, `{slug}` and `{metric_name}` name something the handler already has a
+    variable for: 48 of the 50 handlers taking `ws` bind a local `workspace`, and 16 of
+    the 17 taking `slug` bind a local `model`. Renaming the parameter would shadow that
+    local in almost every handler. They use `Annotated[str, Path(alias="workspace")]`
+    instead: the schema and every generated client see the conventional name, the Python
+    parameter keeps the short one, and no handler body changes. The remaining renames have
+    no such collision and are plain renames.
 
 Two documented exceptions:
 

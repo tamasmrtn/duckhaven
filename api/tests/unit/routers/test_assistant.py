@@ -87,7 +87,7 @@ async def test_conversation_crud(authed, workspace):
 
     listed = await authed.get(f"/workspaces/{workspace.slug}/assistant/conversations")
     assert listed.status_code == 200
-    assert [c["id"] for c in listed.json()] == [conv_id]
+    assert [c["id"] for c in listed.json()["items"]] == [conv_id]
 
     detail = await authed.get(f"/workspaces/{workspace.slug}/assistant/conversations/{conv_id}")
     assert detail.status_code == 200

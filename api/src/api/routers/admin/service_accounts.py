@@ -3,6 +3,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import Query as QueryParam  # `Query` here is the model
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +13,7 @@ from api.models.query import Query
 from api.models.rbac import Role
 from api.models.user import Credential, User
 from api.models.workspace import WorkspaceMember
+from api.schemas.page import Page
 from api.schemas.service_account import (
     CreateServiceAccountRequest,
     PatCreateRequest,
@@ -21,6 +23,7 @@ from api.schemas.service_account import (
     UpdateServiceAccountRequest,
 )
 from api.services.auth import generate_pat, get_user_by_email, hash_token
+from api.services.paging import paginate
 from api.services.permissions import Permission
 
 router = APIRouter(prefix="/service-accounts")
@@ -71,33 +74,44 @@ async def _pat_counts(db: AsyncSession, sa_ids: list[uuid.UUID]) -> dict[uuid.UU
     return {user_id: count for user_id, count in result.all()}
 
 
-@router.get("", response_model=list[ServiceAccountOut])
+@router.get("", response_model=Page[ServiceAccountOut])
 async def list_service_accounts(
+    limit: int = QueryParam(default=100, ge=1, le=1000),
+    cursor: str | None = QueryParam(default=None),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_permission(Permission.SERVICE_ACCOUNTS_MANAGE)),
-) -> list[ServiceAccountOut]:
+) -> Page[ServiceAccountOut]:
     """Every service account, oldest first.
 
     A service account is a user with no password, reachable only through the
     tokens issued to it, so it runs through the same permission checks a person
     does."""
-    result = await db.execute(
-        select(User).where(User.auth_provider == SERVICE_ACCOUNT_PROVIDER).order_by(User.created_at)
+    rows, next_cursor, has_more = await paginate(
+        db,
+        select(User).where(User.auth_provider == SERVICE_ACCOUNT_PROVIDER),
+        sort_columns=[User.created_at, User.id],
+        limit=limit,
+        cursor=cursor,
+        descending=False,
     )
-    accounts = list(result.scalars().all())
+    accounts = [r[0] for r in rows]
     counts = await _pat_counts(db, [a.id for a in accounts])
-    return [
-        ServiceAccountOut(
-            id=a.id,
-            name=a.name,
-            email=a.email,
-            role=a.role,
-            is_active=a.is_active,
-            created_at=a.created_at,
-            pat_count=counts.get(a.id, 0),
-        )
-        for a in accounts
-    ]
+    return Page[ServiceAccountOut](
+        items=[
+            ServiceAccountOut(
+                id=a.id,
+                name=a.name,
+                email=a.email,
+                role=a.role,
+                is_active=a.is_active,
+                created_at=a.created_at,
+                pat_count=counts.get(a.id, 0),
+            )
+            for a in accounts
+        ],
+        cursor=next_cursor,
+        has_more=has_more,
+    )
 
 
 @router.post("", response_model=ServiceAccountOut, status_code=status.HTTP_201_CREATED)

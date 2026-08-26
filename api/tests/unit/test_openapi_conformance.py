@@ -428,7 +428,6 @@ def test_literal_segments_only_neighbour_uuid_identifiers(spec):
 # --- Errors and status codes (plan phase 5) --------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="plan phase 5: single error envelope")
 def test_every_error_response_uses_the_error_envelope(spec, operations):
     offenders = []
     for path, method, op in operations:

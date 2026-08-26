@@ -139,7 +139,7 @@ async def test_list_schedule_runs_newest_first(
 
     resp = await authed_client.get(f"/workspaces/{workspace.slug}/schedules/{schedule_id}/runs")
     assert resp.status_code == 200
-    runs = resp.json()
+    runs = resp.json()["items"]
     assert len(runs) == 3
     starts = [r["started_at"] for r in runs]
     assert starts == sorted(starts, reverse=True)  # newest first
@@ -184,7 +184,7 @@ async def test_list_workspace_schedule_runs(
 
     resp = await authed_client.get(f"/workspaces/{workspace.slug}/schedule-runs")
     assert resp.status_code == 200
-    runs = resp.json()
+    runs = resp.json()["items"]
     # Only the two scheduled runs, newest first, each carrying its schedule_id.
     assert len(runs) == 2
     assert all(r["schedule_id"] == schedule_id for r in runs)

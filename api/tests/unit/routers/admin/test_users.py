@@ -51,7 +51,7 @@ async def test_list_users_returns_registered_users(
 ):
     resp = await admin_client.get("/admin/users")
     assert resp.status_code == 200
-    data = resp.json()
+    data = resp.json()["items"]
     emails = {row["email"] for row in data}
     assert emails == {"admin@users.local", "user@users.local"}
     # Real fields, not mock fixtures.
@@ -61,14 +61,22 @@ async def test_list_users_returns_registered_users(
     assert "password_hash" not in admin_row
 
 
-async def test_list_users_ordered_by_created_at(
+async def test_list_users_is_totally_ordered(
     admin_client: AsyncClient, admin: User, regular_user: User
 ):
-    resp = await admin_client.get("/admin/users")
-    assert resp.status_code == 200
-    emails = [row["email"] for row in resp.json()]
-    # admin fixture is created before regular_user.
-    assert emails.index("admin@users.local") < emails.index("user@users.local")
+    """Ordered by (created_at, id), not created_at alone.
+
+    The id tiebreak is what makes the order total. Without it, rows sharing a
+    timestamp -- and `created_at` is only second-precision -- can come back in a
+    different order on each call, which for a paged endpoint means a row served
+    on two pages or on none.
+    """
+    first = await admin_client.get("/admin/users")
+    again = await admin_client.get("/admin/users")
+    assert first.status_code == 200
+    emails = [row["email"] for row in first.json()["items"]]
+    assert emails == [row["email"] for row in again.json()["items"]]
+    assert set(emails) == {"admin@users.local", "user@users.local"}
 
 
 async def test_list_users_non_admin_forbidden(user_client: AsyncClient):
@@ -218,3 +226,30 @@ async def test_workspace_membership_requires_users_manage(
     await seed_workspace(db_session, user_id=admin.id, slug="alpha", name="Alpha")
     resp = await user_client.get(f"/admin/users/{regular_user.id}/workspaces")
     assert resp.status_code == 403
+
+
+async def test_list_users_pages_with_a_cursor(
+    admin_client: AsyncClient, admin: User, regular_user: User
+):
+    """The envelope pages: a limit of one returns one row and a cursor that
+    fetches the next, and the last page reports no more."""
+    first = await admin_client.get("/admin/users", params={"limit": 1})
+    assert first.status_code == 200
+    body = first.json()
+    assert len(body["items"]) == 1
+    assert body["has_more"] is True
+    assert body["cursor"]
+
+    second = await admin_client.get("/admin/users", params={"limit": 1, "cursor": body["cursor"]})
+    assert second.status_code == 200
+    rest = second.json()
+    assert len(rest["items"]) == 1
+    assert rest["has_more"] is False
+    assert rest["cursor"] is None
+    assert rest["items"][0]["email"] != body["items"][0]["email"]
+
+
+async def test_list_users_rejects_a_malformed_cursor(admin_client: AsyncClient, admin: User):
+    resp = await admin_client.get("/admin/users", params={"cursor": "not-a-cursor"})
+    assert resp.status_code == 422
+    assert resp.json()["error"] == "invalid_cursor"

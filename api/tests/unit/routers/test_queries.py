@@ -823,7 +823,7 @@ async def test_rows_done_without_result_returns_empty_page(
 async def test_list_saved_queries_empty(authed_client: AsyncClient, workspace: Workspace):
     resp = await authed_client.get(f"/workspaces/{workspace.slug}/saved-queries")
     assert resp.status_code == 200
-    assert resp.json() == []
+    assert resp.json()["items"] == []
 
 
 async def test_create_saved_query(authed_client: AsyncClient, workspace: Workspace):
@@ -1231,7 +1231,7 @@ async def test_list_saved_queries_includes_creator_name(
     )
     resp = await authed_client.get(f"/workspaces/{workspace.slug}/saved-queries")
     assert resp.status_code == 200
-    data = resp.json()
+    data = resp.json()["items"]
     assert len(data) == 1
     assert data[0]["created_by_name"] == "Querier"
 
@@ -1255,7 +1255,7 @@ async def test_create_saved_query_overwrites_by_name(
     assert second.json()["sql"] == "SELECT 2"
 
     listed = await authed_client.get(f"/workspaces/{workspace.slug}/saved-queries")
-    assert len(listed.json()) == 1
+    assert len(listed.json()["items"]) == 1
 
 
 async def test_saved_query_rename_and_delete_lifecycle(
@@ -1279,7 +1279,7 @@ async def test_saved_query_rename_and_delete_lifecycle(
     assert deleted.status_code == 204
 
     listed = await authed_client.get(f"/workspaces/{workspace.slug}/saved-queries")
-    assert listed.json() == []
+    assert listed.json()["items"] == []
 
     missing = await authed_client.patch(
         f"/workspaces/{workspace.slug}/saved-queries/{sq_id}",
@@ -1341,7 +1341,7 @@ async def test_run_saved_query_stamps_last_run_at(
     assert run.status_code == 202
 
     listed = await authed_client.get(f"/workspaces/{workspace.slug}/saved-queries")
-    stamped = next(q for q in listed.json() if q["id"] == sq_id)
+    stamped = next(q for q in listed.json()["items"] if q["id"] == sq_id)
     assert stamped["last_run_at"] is not None
 
 
@@ -1570,7 +1570,7 @@ async def test_elastic_pool_run_stamps_saved_query_last_run_at(
     assert run.json()["origin"] == "elastic"
 
     listed = await authed_client.get(f"/workspaces/{workspace.slug}/saved-queries")
-    stamped = next(q for q in listed.json() if q["id"] == sq_id)
+    stamped = next(q for q in listed.json()["items"] if q["id"] == sq_id)
     assert stamped["last_run_at"] is not None, "a pool run left the saved query 'never run'"
 
 

@@ -30,8 +30,10 @@ from api.schemas.maintenance import (
     WorkspaceHealthDetailOut,
     WorkspaceHealthOut,
 )
+from api.schemas.page import Page
 from api.services.maintenance import scoring
 from api.services.maintenance.read import latest_samples, sample_for_aggregate
+from api.services.paging import paginate
 from api.services.workspace import assert_workspace_member, get_workspace, resolve_catalog
 
 router = APIRouter()
@@ -207,34 +209,51 @@ async def table_health(
     )
 
 
-@router.get("/maintenance/recommendations", response_model=list[RecommendationOut])
+@router.get("/maintenance/recommendations", response_model=Page[RecommendationOut])
 async def list_recommendations(
-    status_filter: str = Query("open", alias="status"),
-    severity: str | None = None,
+    status_filter: list[str] | None = Query(default=None, alias="status"),
+    severity: list[str] | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=1000),
+    cursor: str | None = Query(default=None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> list[RecommendationOut]:
+) -> Page[RecommendationOut]:
     """Maintenance work the scanner suggests, across every workspace the caller
     is a member of.
 
-    Defaults to `status=open`. Each recommendation names the table, why it was
-    raised, and how severe it is."""
+    Most severe first, then newest. Each recommendation names the table, why it
+    was raised, and how severe it is. Omitting `status` returns every state --
+    pass `status=open` for the ones still outstanding.
+    """
     workspaces = await _member_workspaces(db, user)
     ws_ids = [w.id for w in workspaces]
     if not ws_ids:
-        return []
+        return Page[RecommendationOut](items=[])
     stmt = sa.select(MaintenanceRecommendation).where(
         MaintenanceRecommendation.workspace_id.in_(ws_ids)
     )
-    if status_filter != "all":
-        stmt = stmt.where(MaintenanceRecommendation.status == status_filter)
+    if status_filter:
+        stmt = stmt.where(MaintenanceRecommendation.status.in_(status_filter))
     if severity:
-        stmt = stmt.where(MaintenanceRecommendation.severity == severity)
-    stmt = stmt.order_by(
-        MaintenanceRecommendation.severity, MaintenanceRecommendation.created_at.desc()
+        stmt = stmt.where(MaintenanceRecommendation.severity.in_(severity))
+    rows, next_cursor, has_more = await paginate(
+        db,
+        stmt,
+        # Severity leads the sort, so it leads the cursor too: a page cut on
+        # time alone would reorder rows the moment a more severe one landed.
+        sort_columns=[
+            MaintenanceRecommendation.severity,
+            MaintenanceRecommendation.created_at,
+            MaintenanceRecommendation.id,
+        ],
+        limit=limit,
+        cursor=cursor,
     )
-    rows = (await db.execute(stmt)).scalars().all()
-    return [RecommendationOut.model_validate(r, from_attributes=True) for r in rows]
+    return Page[RecommendationOut](
+        items=[RecommendationOut.model_validate(r[0], from_attributes=True) for r in rows],
+        cursor=next_cursor,
+        has_more=has_more,
+    )
 
 
 @router.post(

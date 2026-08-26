@@ -73,7 +73,7 @@ async def test_create_and_list(client: AsyncClient, admin_user: User):
 
     listing = await client.get(SA_BASE)
     assert listing.status_code == 200
-    assert [a["name"] for a in listing.json()] == ["CI Runner"]
+    assert [a["name"] for a in listing.json()["items"]] == ["CI Runner"]
 
 
 async def test_create_duplicate_name_conflicts(client: AsyncClient, admin_user: User):
@@ -109,7 +109,7 @@ async def test_delete_without_history(client: AsyncClient, admin_user: User):
     await _as_admin(client)
     sa_id = (await client.post(SA_BASE, json={"name": "throwaway"})).json()["id"]
     assert (await client.delete(f"{SA_BASE}/{sa_id}")).status_code == 204
-    assert (await client.get(SA_BASE)).json() == []
+    assert (await client.get(SA_BASE)).json()["items"] == []
 
 
 async def test_delete_with_history_conflicts(client: AsyncClient, admin_user: User, db_session):

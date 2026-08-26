@@ -18,8 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.deps import get_current_user, get_db
 from api.models.query import Query, Schedule
 from api.models.user import User
+from api.schemas.page import Page
 from api.schemas.query import QueryOut, ScheduleCreate, ScheduleOut, ScheduleUpdate
 from api.services.agent_access import assert_can_assign_agent
+from api.services.paging import paginate
 from api.services.scheduler.cron import next_run, validate_cron
 from api.services.workspace import assert_workspace_member, get_workspace
 
@@ -61,26 +63,27 @@ async def list_schedules(
     return list((await db.execute(stmt)).scalars().all())
 
 
-@router.get("/workspaces/{workspace}/schedule-runs", response_model=list[QueryOut])
+@router.get("/workspaces/{workspace}/schedule-runs", response_model=Page[QueryOut])
 async def list_workspace_schedule_runs(
     ws: Annotated[str, Path(alias="workspace")],
-    limit: int = QueryParam(default=100, le=500),
+    limit: int = QueryParam(default=100, ge=1, le=1000),
+    cursor: str | None = QueryParam(default=None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> list[Query]:
+) -> Page[QueryOut]:
     """Every scheduled run in the workspace, newest first — the global runs feed."""
     workspace = await _require_workspace(db, ws, user)
-    return list(
-        (
-            await db.execute(
-                select(Query)
-                .where(Query.workspace_id == workspace.id, Query.schedule_id.isnot(None))
-                .order_by(Query.started_at.desc())
-                .limit(limit)
-            )
-        )
-        .scalars()
-        .all()
+    rows, next_cursor, has_more = await paginate(
+        db,
+        select(Query).where(Query.workspace_id == workspace.id, Query.schedule_id.isnot(None)),
+        sort_columns=[Query.started_at, Query.id],
+        limit=limit,
+        cursor=cursor,
+    )
+    return Page[QueryOut](
+        items=[QueryOut.model_validate(r[0], from_attributes=True) for r in rows],
+        cursor=next_cursor,
+        has_more=has_more,
     )
 
 
@@ -184,28 +187,29 @@ async def delete_schedule(
     await db.commit()
 
 
-@router.get("/workspaces/{workspace}/schedules/{schedule_id}/runs", response_model=list[QueryOut])
+@router.get("/workspaces/{workspace}/schedules/{schedule_id}/runs", response_model=Page[QueryOut])
 async def list_schedule_runs(
     ws: Annotated[str, Path(alias="workspace")],
     schedule_id: uuid.UUID,
-    limit: int = QueryParam(default=50, le=200),
+    limit: int = QueryParam(default=100, ge=1, le=1000),
+    cursor: str | None = QueryParam(default=None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> list[Query]:
+) -> Page[QueryOut]:
     """One schedule's runs, newest first -- did last night's job succeed?
 
     Each run is an ordinary query, so its rows, profile and error are readable
     through the `/queries/{query_id}` routes."""
     workspace = await _require_workspace(db, ws, user)
-    return list(
-        (
-            await db.execute(
-                select(Query)
-                .where(Query.schedule_id == schedule_id, Query.workspace_id == workspace.id)
-                .order_by(Query.started_at.desc())
-                .limit(limit)
-            )
-        )
-        .scalars()
-        .all()
+    rows, next_cursor, has_more = await paginate(
+        db,
+        select(Query).where(Query.schedule_id == schedule_id, Query.workspace_id == workspace.id),
+        sort_columns=[Query.started_at, Query.id],
+        limit=limit,
+        cursor=cursor,
+    )
+    return Page[QueryOut](
+        items=[QueryOut.model_validate(r[0], from_attributes=True) for r in rows],
+        cursor=next_cursor,
+        has_more=has_more,
     )

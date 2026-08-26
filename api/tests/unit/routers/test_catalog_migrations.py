@@ -122,7 +122,7 @@ async def test_status_list_and_logs(auth_client, owner, db_session):
 
     listing = await auth_client.get(f"/catalogs/{catalog.id}/migrations")
     assert listing.status_code == 200
-    assert listing.json()[0]["id"] == str(migration.id)
+    assert listing.json()["items"][0]["id"] == str(migration.id)
 
     detail = await auth_client.get(f"/catalogs/{catalog.id}/migrations/{migration.id}")
     assert detail.status_code == 200

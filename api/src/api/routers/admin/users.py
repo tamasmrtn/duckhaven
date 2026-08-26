@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,8 +10,10 @@ from api.models.rbac import Role
 from api.models.user import Credential, User
 from api.models.workspace import Workspace, WorkspaceMember
 from api.schemas.auth import CreateUserRequest, UpdateUserRequest, UserOut
+from api.schemas.page import Page
 from api.schemas.workspace import AdminUserWorkspace, SetMembershipRequest
 from api.services.auth import get_user_by_email, hash_password
+from api.services.paging import paginate
 from api.services.permissions import Permission
 from api.services.workspace import ROLE_ORDER, get_workspace
 
@@ -40,17 +42,30 @@ async def _active_admin_count(db: AsyncSession) -> int:
     return result.scalar_one()
 
 
-@router.get("/users", response_model=list[UserOut])
+@router.get("/users", response_model=Page[UserOut])
 async def list_users(
+    limit: int = Query(default=100, ge=1, le=1000),
+    cursor: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_permission(Permission.USERS_MANAGE)),
-) -> list[User]:
+) -> Page[UserOut]:
     """Every user account, oldest first, including deactivated ones.
 
     Service accounts are not here -- they are a separate resource under
     `/admin/service-accounts`."""
-    result = await db.execute(select(User).order_by(User.created_at))
-    return list(result.scalars().all())
+    rows, next_cursor, has_more = await paginate(
+        db,
+        select(User),
+        sort_columns=[User.created_at, User.id],
+        limit=limit,
+        cursor=cursor,
+        descending=False,
+    )
+    return Page[UserOut](
+        items=[UserOut.model_validate(r[0], from_attributes=True) for r in rows],
+        cursor=next_cursor,
+        has_more=has_more,
+    )
 
 
 @router.post("/users", response_model=UserOut, status_code=status.HTTP_201_CREATED)

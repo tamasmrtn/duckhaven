@@ -17,6 +17,7 @@ from api.metrics import record_rows_decode
 from api.models.agent import Agent
 from api.models.query import Query, SavedQuery
 from api.models.user import User
+from api.schemas.page import Page
 from api.schemas.query import (
     QueriesPageOut,
     QueryCreate,
@@ -36,6 +37,7 @@ from api.services.agent_dispatch import is_agent_connected, send_to_agent
 from api.services.compute import service as compute_service
 from api.services.grants import GrantDenied
 from api.services.migration.service import workspace_has_active_migration
+from api.services.paging import paginate
 from api.services.permissions import Permission
 from api.services.rbac import has_permission
 from api.services.sql_classify import STATEMENT_TYPES
@@ -686,13 +688,15 @@ async def get_query_rows(
     )
 
 
-@router.get("/workspaces/{workspace}/saved-queries", response_model=list[SavedQueryOut])
+@router.get("/workspaces/{workspace}/saved-queries", response_model=Page[SavedQueryOut])
 async def list_saved_queries(
     ws: Annotated[str, Path(alias="workspace")],
+    limit: int = QueryParam(default=100, ge=1, le=1000),
+    cursor: str | None = QueryParam(default=None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> list[SavedQueryOut]:
-    """The workspace's saved queries, with who saved each one.
+) -> Page[SavedQueryOut]:
+    """The workspace's saved queries, newest first, with who saved each one.
 
     Shared, not per-user: a saved query belongs to the workspace, so any member
     sees all of them."""
@@ -701,15 +705,23 @@ async def list_saved_queries(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     await assert_workspace_member(db, workspace.id, user.id)
     # Join the creator so the list can show who saved each query (attribution).
-    result = await db.execute(
+    rows, next_cursor, has_more = await paginate(
+        db,
         select(SavedQuery, User.name)
         .join(User, SavedQuery.created_by == User.id)
-        .where(SavedQuery.workspace_id == workspace.id)
+        .where(SavedQuery.workspace_id == workspace.id),
+        sort_columns=[SavedQuery.created_at, SavedQuery.id],
+        limit=limit,
+        cursor=cursor,
     )
-    return [
-        SavedQueryOut.model_validate(sq).model_copy(update={"created_by_name": name})
-        for sq, name in result.all()
-    ]
+    return Page[SavedQueryOut](
+        items=[
+            SavedQueryOut.model_validate(sq).model_copy(update={"created_by_name": name})
+            for sq, name in rows
+        ],
+        cursor=next_cursor,
+        has_more=has_more,
+    )
 
 
 @router.post(

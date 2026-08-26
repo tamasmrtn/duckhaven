@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.responses import StreamingResponse
@@ -21,8 +21,10 @@ from api.schemas.assistant import (
     TranscriptItem,
     TurnRequest,
 )
+from api.schemas.page import Page
 from api.services.assistant import resume_turn, stream_turn
 from api.services.assistant.persistence import is_history_truncated, render_transcript_with_sql
+from api.services.paging import paginate
 from api.services.workspace import assert_workspace_member, get_workspace
 
 router = APIRouter()
@@ -74,27 +76,35 @@ async def assistant_status(
     return AssistantStatusOut(enabled=settings.assistant_enabled)
 
 
-@router.get("/workspaces/{workspace}/assistant/conversations", response_model=list[ConversationOut])
+@router.get("/workspaces/{workspace}/assistant/conversations", response_model=Page[ConversationOut])
 async def list_conversations(
     ws: Annotated[str, Path(alias="workspace")],
+    limit: int = Query(default=100, ge=1, le=1000),
+    cursor: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> list[AssistantConversation]:
+) -> Page[ConversationOut]:
     """The caller's own assistant conversations, most recently updated first.
 
     Private, unlike most workspace resources: a conversation is visible only to
     the person who started it."""
     _require_enabled()
     workspace = await _workspace(db, ws, user)
-    result = await db.execute(
-        select(AssistantConversation)
-        .where(
+    rows, next_cursor, has_more = await paginate(
+        db,
+        select(AssistantConversation).where(
             AssistantConversation.workspace_id == workspace.id,
             AssistantConversation.user_id == user.id,
-        )
-        .order_by(AssistantConversation.updated_at.desc())
+        ),
+        sort_columns=[AssistantConversation.updated_at, AssistantConversation.id],
+        limit=limit,
+        cursor=cursor,
     )
-    return list(result.scalars().all())
+    return Page[ConversationOut](
+        items=[ConversationOut.model_validate(r[0], from_attributes=True) for r in rows],
+        cursor=next_cursor,
+        has_more=has_more,
+    )
 
 
 @router.post(

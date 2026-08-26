@@ -21,7 +21,7 @@ list.
 ```json
 {
   "version": "1.4.0",
-  "api_version": 1
+  "api_version": 2
 }
 ```
 

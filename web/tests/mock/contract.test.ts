@@ -249,10 +249,11 @@ describe("semantic contract", () => {
     expect(revenue.time_dimension).toBe("event_time");
   });
 
-  it("search returns hits plus an explicit ambiguity list", async () => {
+  it("search returns items plus an explicit ambiguity list", async () => {
     const result = await semanticApi.search("acme-analytics", "turnover");
-    expect(Object.keys(result).sort()).toEqual(["ambiguous", "hits"]);
-    expect(result.hits[0]?.name).toBe("revenue");
+    // `items`, not `hits`: both search endpoints share the shape.
+    expect(Object.keys(result).sort()).toEqual(["ambiguous", "items"]);
+    expect(result.items[0]?.name).toBe("revenue");
   });
 
   it("compile returns SQL without a query id — it does not execute", async () => {

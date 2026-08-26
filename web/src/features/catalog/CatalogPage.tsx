@@ -338,7 +338,12 @@ function TableDetail({
             value="health"
             className="mt-0 flex flex-1 flex-col overflow-hidden border-t border-[var(--border-subtle)]"
           >
-            <TableHealthPanel ws={ws} schema={schema} table={table} />
+            <TableHealthPanel
+              ws={ws}
+              catalog={catalog}
+              schema={schema}
+              table={table}
+            />
           </TabsContent>
           <TabsContent
             value="lineage"

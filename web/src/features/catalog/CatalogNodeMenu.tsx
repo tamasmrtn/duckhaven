@@ -48,7 +48,7 @@ export function CatalogNodeMenu({
   onDropped,
 }: {
   ws: string;
-  catalog?: string;
+  catalog: string;
   node: CatalogNode;
   children: ReactNode;
   onDropped?: () => void;

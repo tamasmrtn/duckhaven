@@ -1,4 +1,6 @@
 import { http, HttpResponse } from "msw";
+
+import { page } from "../lib/page";
 import { SQL_SESSIONS, SESSION_STATEMENTS } from "../fixtures/sql-sessions";
 import { findWorkspace } from "../fixtures/workspaces";
 import { httpError } from "../lib/errors";
@@ -16,7 +18,7 @@ export const sqlSessionHandlers = [
       return httpError(403, "Forbidden");
     }
     const statuses = url.searchParams.getAll("status");
-    return HttpResponse.json(
+    return page(
       SQL_SESSIONS.filter(
         (s) =>
           s.workspace_id === ws.id &&
@@ -35,7 +37,7 @@ export const sqlSessionHandlers = [
     const session = SQL_SESSIONS.find((s) => s.id === params.id);
     if (!session) return httpError(404, "Session not found");
     // Execution order, ascending — the server orders by started_at.
-    return HttpResponse.json(
+    return page(
       SESSION_STATEMENTS.filter((q) => q.session_id === params.id).sort(
         (a, b) => a.started_at.localeCompare(b.started_at),
       ),

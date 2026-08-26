@@ -1,4 +1,4 @@
-import { del, get, post } from "./client";
+import { del, get, post, put } from "./client";
 import type { Catalog } from "@/types/catalog";
 import type { AccessMode } from "@/types/grant";
 
@@ -19,10 +19,10 @@ export const catalogsApi = {
     },
   ) => post<Catalog>(`/workspaces/${ws}/catalogs`, body),
 
-  // Attach an existing catalog to a workspace (M:N sharing).
-  attach: (ws: string, catalogId: string, makeDefault = false) =>
-    post<Catalog>(`/workspaces/${ws}/catalogs/attach`, {
-      catalog_id: catalogId,
+  // Attach an existing catalog to a workspace (M:N sharing). A PUT on the
+  // attachment's own address — the one detach deletes — so it is idempotent.
+  attach: (ws: string, catalog: string, makeDefault = false) =>
+    put<Catalog>(`/workspaces/${ws}/catalogs/${catalog}`, {
       make_default: makeDefault,
     }),
 

@@ -47,7 +47,7 @@ export function CreateTableDialog({
   onOpenChange,
 }: {
   ws: string;
-  catalog?: string;
+  catalog: string;
   schema: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;

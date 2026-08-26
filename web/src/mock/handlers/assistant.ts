@@ -1,4 +1,6 @@
 import { http, HttpResponse } from "msw";
+
+import { page } from "../lib/page";
 import {
   ASSISTANT_ENABLED,
   CONVERSATIONS,
@@ -47,7 +49,7 @@ export const assistantHandlers = [
   http.get("/api/workspaces/:ws/assistant/conversations", ({ params }) => {
     const ws = findWorkspace(params.ws as string);
     if (!ws) return httpError(404, "Workspace not found");
-    return HttpResponse.json(
+    return page(
       CONVERSATIONS.filter((c) => c.workspace_id === ws.id).map(publicView),
     );
   }),

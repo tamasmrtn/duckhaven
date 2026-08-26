@@ -1,4 +1,5 @@
 import { get, post, patch, del } from "./client";
+import type { Page } from "./client";
 import type { Schedule } from "@/types/schedule";
 import type { Query } from "@/types/query";
 
@@ -32,8 +33,11 @@ export const schedulesApi = {
 
   // Per-job run history (newest first).
   listRuns: (ws: string, id: string) =>
-    get<Query[]>(`/workspaces/${ws}/schedules/${id}/runs`),
+    get<Page<Query>>(`/workspaces/${ws}/schedules/${id}/runs`).then(
+      (p) => p.items,
+    ),
 
   // Every scheduled run in the workspace, newest first — the global runs feed.
-  listAllRuns: (ws: string) => get<Query[]>(`/workspaces/${ws}/schedule-runs`),
+  listAllRuns: (ws: string) =>
+    get<Page<Query>>(`/workspaces/${ws}/schedule-runs`).then((p) => p.items),
 };

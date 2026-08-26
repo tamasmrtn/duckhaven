@@ -25,9 +25,9 @@ function store(
   return { slug, list: CATALOG_SCHEMAS[slug] ?? (CATALOG_SCHEMAS[slug] = []) };
 }
 
-// Build the handler set for a path prefix. Registered twice: the legacy
-// `/api/workspaces/:ws/schemas` and the canonical
-// `/api/workspaces/:ws/catalogs/:catalog/schemas`.
+// Build the handler set for the catalog-scoped path. The default-catalog shim
+// that also served these under `/api/workspaces/:ws/schemas` was removed in
+// api_version 2.
 function makeHandlers(prefix: string) {
   return [
     http.get(prefix, ({ params }) => {
@@ -59,12 +59,6 @@ function makeHandlers(prefix: string) {
       const table = schema.tables.find((t) => t.name === params.table);
       if (!table) return httpError(404, "Table not found");
       return HttpResponse.json({ ...table, catalog: slug });
-    }),
-
-    http.post(`${prefix}/refresh-stats`, ({ params }) => {
-      const ws = findWorkspace(params.ws as string);
-      if (!ws) return httpError(404, "Workspace not found");
-      return HttpResponse.json({ probed: 0 });
     }),
 
     http.post(`${prefix}/:schema/tables/:table/recount`, ({ params }) => {
@@ -204,5 +198,15 @@ function makeHandlers(prefix: string) {
 
 export const schemaHandlers = [
   ...makeHandlers("/api/workspaces/:ws/catalogs/:catalog/schemas"),
-  ...makeHandlers("/api/workspaces/:ws/schemas"),
+
+  // Catalog-level: it walks every schema in the catalog, and under `/schemas/`
+  // it also occupied the `:schema` slot.
+  http.post(
+    "/api/workspaces/:ws/catalogs/:catalog/refresh-stats",
+    ({ params }) => {
+      const ws = findWorkspace(params.ws as string);
+      if (!ws) return httpError(404, "Workspace not found");
+      return HttpResponse.json({ probed: 0 });
+    },
+  ),
 ];

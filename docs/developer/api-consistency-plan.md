@@ -595,6 +595,26 @@ catch SPA/router divergence automatically. Flagged as a Phase 5 stretch, not a r
 
 ---
 
+## 9a. Phase 5 as built
+
+Four things turned out differently from the plan once the code was in front of me.
+Each is a narrowing, and each is recorded here rather than left implicit.
+
+| Planned | Built | Why |
+|---|---|---|
+| `201` + `Location` on every creation | `201` returns the created resource; `Location` only where the resource's address cannot be derived from the request | RFC 9110 makes `Location` a SHOULD. All 21 creating operations already return the resource, which is more useful than a URL to fetch it from, and several create things with no addressable URL of their own (a workspace membership) or one under a different base (`POST /workspaces/{workspace}/sql/sessions` lands at `/sql/sessions/{session_id}`, which does get a `Location`). A derived header would have been wrong in those cases, and a wrong `Location` is worse than none. |
+| Paginate `GET /catalogs/{catalog_id}/migrations/{migration_id}/logs` | Exempt, documented at the route | A tail is not a page. The client holds a position and polls forward; the collection envelope's cursor goes null on the last page, which would lose exactly the position it polls from. `after` stays. |
+| **R2 resolved:** paginate tables and snapshots if Polaris supports it | Exempt, documented in the conformance test | `services.polaris.list_tables` calls Iceberg REST without a `pageToken`, so the whole identifier list arrives in one response. A cursor there would page a list the server already holds entire. Real paging needs `pageToken` support in the Polaris client first — a separate change. |
+| `GET /workspaces/{workspace}/search` returns `{items, cursor, has_more}` | Returns `{items, has_more}` | Search is truncated by `limit`, not walked with a cursor. Offering a cursor that never advances would be a lie; `has_more` tells the palette to say "narrow your search". `SemanticSearchOut` keeps its `ambiguous`/`broken` diagnostics and renames `hits` to `items` so both search endpoints read the same. |
+
+One behaviour change worth naming beyond the route mapping: the paged collections
+now sort on a key ending in the row id. Without that tiebreak the order is not
+total, and rows sharing a second-precision `created_at` could be served on two
+pages or on none. It surfaced as a test that had been asserting undefined
+ordering.
+
+---
+
 ## 10. Risks and open questions
 
 - **R1 — The CLI effort collides with Phase 5.** `CLI_IMPLEMENTATION_PROMPT.md` exists and is

@@ -258,7 +258,7 @@ export function AttachCatalogDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const [catalogId, setCatalogId] = useState("");
+  const [catalogSlug, setCatalogSlug] = useState("");
   const [error, setError] = useState<string | null>(null);
   const { data: all } = useAllCatalogs();
   const attach = useAttachCatalog(ws);
@@ -267,13 +267,13 @@ export function AttachCatalogDialog({
   const attachable = (all ?? []).filter((c) => !attachedSlugs.includes(c.slug));
 
   async function handleAttach() {
-    if (!catalogId) {
+    if (!catalogSlug) {
       setError("Pick a catalog to attach");
       return;
     }
     try {
-      await attach.mutateAsync({ catalogId });
-      setCatalogId("");
+      await attach.mutateAsync({ catalog: catalogSlug });
+      setCatalogSlug("");
       setError(null);
       onOpenChange(false);
     } catch (err) {
@@ -297,13 +297,13 @@ export function AttachCatalogDialog({
               No other catalogs available to attach.
             </p>
           ) : (
-            <Select value={catalogId} onValueChange={setCatalogId}>
+            <Select value={catalogSlug} onValueChange={setCatalogSlug}>
               <SelectTrigger aria-label="catalog">
                 <SelectValue placeholder="Select a catalog…" />
               </SelectTrigger>
               <SelectContent>
                 {attachable.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
+                  <SelectItem key={c.id} value={c.slug}>
                     {c.name} ({c.slug})
                   </SelectItem>
                 ))}

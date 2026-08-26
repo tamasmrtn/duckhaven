@@ -1,4 +1,5 @@
 import { get, post } from "./client";
+import type { Page } from "./client";
 import type {
   CatalogMigration,
   CatalogMigrationEvent,
@@ -11,7 +12,9 @@ export const catalogMigrationsApi = {
     }),
 
   list: (catalogId: string) =>
-    get<CatalogMigration[]>(`/catalogs/${catalogId}/migrations`),
+    get<Page<CatalogMigration>>(`/catalogs/${catalogId}/migrations`).then(
+      (p) => p.items,
+    ),
 
   get: (catalogId: string, id: string) =>
     get<CatalogMigration>(`/catalogs/${catalogId}/migrations/${id}`),

@@ -1,4 +1,6 @@
 import { http, HttpResponse } from "msw";
+
+import { page } from "../lib/page";
 import { SA_PATS, SERVICE_ACCOUNTS } from "../fixtures/service-accounts";
 import { nextId, nextServiceAccountToken } from "../lib/seed";
 import { httpError } from "../lib/errors";
@@ -14,7 +16,7 @@ function slugify(name: string): string {
 
 export const serviceAccountHandlers = [
   http.get("/api/admin/service-accounts", () => {
-    return HttpResponse.json(SERVICE_ACCOUNTS);
+    return page(SERVICE_ACCOUNTS);
   }),
 
   http.post("/api/admin/service-accounts", async ({ request }) => {
@@ -64,7 +66,7 @@ export const serviceAccountHandlers = [
   }),
 
   http.post(
-    "/api/admin/service-accounts/:id/pat",
+    "/api/admin/service-accounts/:id/pats",
     async ({ params, request }) => {
       const sa = SERVICE_ACCOUNTS.find((a) => a.id === params.id);
       if (!sa) return httpError(404, "Service account not found");
@@ -91,7 +93,7 @@ export const serviceAccountHandlers = [
     },
   ),
 
-  http.delete("/api/admin/service-accounts/:id/pat/:patId", ({ params }) => {
+  http.delete("/api/admin/service-accounts/:id/pats/:patId", ({ params }) => {
     const sa = SERVICE_ACCOUNTS.find((a) => a.id === params.id);
     if (!sa) return httpError(404, "Service account not found");
     const list = SA_PATS[params.id as string] ?? [];

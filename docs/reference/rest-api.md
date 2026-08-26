@@ -174,10 +174,23 @@ against the old schema may see one it was not expecting:
 Both search endpoints now return `{"items": [...], …}` — `GET .../semantic/search` renamed `hits` to `items` — and `q`
 is required rather than defaulting to empty.
 
+### Two new error codes to expect
+
+- **`stale_cursor` (422)** on a paged collection, when the row your cursor names has been
+  deleted. Start paging again from the beginning; it is not an error in your request so much
+  as a position that no longer exists.
+- **`bad_request` (4xx)** is now the code derived for any 4xx the API does not name
+  specifically — a `405` from a wrong method, for instance. It previously read
+  `internal_error`, which pointed at the wrong side of the connection.
+
+An unhandled server error also returns the envelope now, as `internal_error`, rather than a
+plain-text body.
+
 ### Filters no longer default
 
 `GET /api/maintenance/recommendations` used to default to `status=open`. It now returns every state unless you ask:
-send `?status=open` for the outstanding ones. `status` is repeatable everywhere it appears.
+send `?status=open` for the outstanding ones. `status` is repeatable everywhere it appears, including on
+`GET /api/workspaces/{workspace}/semantic/models`, where it previously took a single value.
 
 ---
 

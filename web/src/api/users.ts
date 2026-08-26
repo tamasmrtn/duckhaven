@@ -1,5 +1,4 @@
-import { del, get, patch, post, put } from "./client";
-import type { Page } from "./client";
+import { del, get, patch, post, put, getAllPages } from "./client";
 import type { User } from "@/types/auth";
 
 export interface CreateUserInput {
@@ -22,7 +21,7 @@ export interface UserWorkspace {
 }
 
 export const usersApi = {
-  adminList: async () => (await get<Page<User>>("/admin/users")).items,
+  adminList: () => getAllPages<User>("/admin/users"),
 
   create: (input: CreateUserInput) => post<User>("/admin/users", input),
 

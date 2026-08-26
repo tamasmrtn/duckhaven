@@ -154,8 +154,16 @@ under load.
 A cursor names the **last row of the page**, and the predicate reads that row's sort values
 back from the database. It deliberately does not carry the values themselves: doing so means
 comparing a value bound from the client against one stored in the table, and the two can
-disagree on precision — which shows up as a page that silently returns nothing. The sort must
-end in the row id, or the order is not total and a row can be served twice or not at all.
+disagree on precision — which shows up as a page that silently returns nothing.
+
+If the row a cursor names has since been deleted the cursor cannot be resolved, and the
+endpoint answers `422 stale_cursor` rather than an empty page: a page that silently drops the
+rest of a collection is indistinguishable from reaching the end of it.
+
+The sort must end in the row id, or the order is not total and a row can be served twice or
+not at all. Each term carries its own direction (`column.asc()` / `column.desc()`), because an
+ordering like "most severe first, then newest" mixes them — collapsing that to one direction
+for the whole sort silently reverses a key.
 
 **Bounded collections** — bounded by deployment topology or by an already-bounded parent —
 return a bare array and are exempt. The exemption list is exhaustive:
@@ -247,8 +255,15 @@ a plain string detail becomes a `message` with an `error` code derived from the 
 | 409 | `conflict` |
 | 422 | `unprocessable_content` |
 | 5xx | `internal_error` |
+| any other 4xx | `bad_request` |
 
 Prefer raising a specific code over relying on the derived one.
+
+The envelope covers **every** error, including ones no route declares: a 405 from
+a wrong method, and an uncaught exception, both come back in it. An unhandled
+exception is logged with its traceback and reported as `internal_error` with a
+fixed message — a crash is exactly when a caller most needs a parseable body, and
+exactly when it must not be handed a stack trace.
 
 !!! info "Why not RFC 9457?"
     [Problem Details](https://www.rfc-editor.org/rfc/rfc9457) was evaluated and not adopted.

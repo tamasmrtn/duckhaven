@@ -40,6 +40,11 @@ async def methods() -> AuthMethods:
 async def login(
     body: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)
 ) -> UserOut:
+    """Sign in with email and password, setting the `session` cookie.
+
+    Returns the user with their resolved permissions, so the SPA can render the
+    right navigation without a second request. Machine callers should use a
+    service-account token on the `Authorization` header instead."""
     user = await authenticate_password(db, body.email, body.password)
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
@@ -54,6 +59,10 @@ async def logout(
     session: str | None = Cookie(default=None, include_in_schema=False),
     db: AsyncSession = Depends(get_db),
 ) -> None:
+    """Sign out: revoke the session server-side and clear the cookie.
+
+    Succeeds whether or not a session was presented -- signing out of nothing is
+    not an error."""
     if session:
         await delete_session(db, session)
     response.delete_cookie("session")
@@ -61,4 +70,8 @@ async def logout(
 
 @me_router.get("/me", response_model=UserOut)
 async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> UserOut:
+    """The authenticated caller, with their resolved permissions.
+
+    Resolves either credential, so a service account sees the identity its token
+    maps to."""
     return await _user_out_with_permissions(db, user)

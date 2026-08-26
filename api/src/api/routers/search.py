@@ -52,6 +52,11 @@ async def search_workspace(
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> list[SearchResultOut]:
+    """Find catalogs, schemas, tables and saved queries by name across the workspace.
+
+    Prefix and substring matching over names only, not contents. Results are
+    filtered by grant, so a caller never sees an object they could not open, and
+    an empty `q` returns nothing rather than everything."""
     workspace = await get_workspace(db, ws)
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)

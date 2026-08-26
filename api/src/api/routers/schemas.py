@@ -327,6 +327,11 @@ async def list_schemas(
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> list[CatalogSchemaOut]:
+    """The Iceberg namespaces in the catalog, as the caller is allowed to see them.
+
+    When the catalog is in restricted access mode, namespaces the caller holds no
+    grant on are filtered out rather than refused -- a listing should not leak the
+    existence of what it hides."""
     cat = target.catalog
     await _ensure_catalog(db, polaris, cat)
     schemas = await polaris.list_schemas(cat.polaris_name)
@@ -353,6 +358,9 @@ async def create_schema(
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> CatalogSchemaOut:
+    """Create an Iceberg namespace in the catalog. Requires `writer`.
+
+    409 if the namespace already exists."""
     cat = target.catalog
     await grant_service.enforce_leaf(
         db, target.workspace.id, cat, user.id, schema=body.name, table=None, need="writer"
@@ -479,6 +487,11 @@ async def list_tables(
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> list[TableOut]:
+    """The tables in one namespace, filtered by grant the same way schemas are.
+
+    Each row carries the control-plane metadata the browser needs -- owner, last
+    writer, row count -- so rendering a table list costs one request, not one per
+    table."""
     cat = target.catalog
     tables = await polaris.list_tables(cat.polaris_name, schema)
     if await grant_service.is_scoped(db, target.workspace.id, cat):
@@ -498,6 +511,10 @@ async def get_table(
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> TableOut:
+    """One table's schema and control-plane metadata.
+
+    Needs only the `metadata` tier: seeing that a table exists and what its
+    columns are is weaker than reading its rows."""
     cat = target.catalog
     await grant_service.enforce_leaf(
         db, target.workspace.id, cat, user.id, schema=schema, table=table, need="metadata"
@@ -641,6 +658,9 @@ async def create_table(
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> TableOut:
+    """Create an Iceberg table from a column spec. Requires `writer`.
+
+    409 if the table already exists."""
     cat = target.catalog
     await grant_service.enforce_leaf(
         db, target.workspace.id, cat, user.id, schema=schema, table=body.name, need="writer"
@@ -686,6 +706,11 @@ async def drop_table(
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> None:
+    """Drop a table and purge its data. Requires `writer`.
+
+    Irreversible: the Iceberg metadata and the underlying files both go. The
+    table's grants and lineage go with it; its query history does not, because
+    the history is an audit record of what was run, not of what still exists."""
     cat = target.catalog
     await grant_service.enforce_leaf(
         db, target.workspace.id, cat, user.id, schema=schema, table=table, need="writer"
@@ -725,6 +750,10 @@ async def sample_table(
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> RowsPageOut:
+    """A page of rows from the table, for previewing it without writing SQL.
+
+    Runs on an agent like any other query, so it needs one connected and returns
+    503 when none is available."""
     workspace, cat = target.workspace, target.catalog
     await grant_service.enforce_leaf(
         db, workspace.id, cat, user.id, schema=schema, table=table, need="reader"

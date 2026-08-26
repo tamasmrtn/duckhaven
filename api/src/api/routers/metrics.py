@@ -18,6 +18,10 @@ router = APIRouter()
 
 @router.get("/metrics")
 async def metrics_endpoint(db: AsyncSession = Depends(get_db)) -> Response:
+    """Prometheus exposition for this replica. Unauthenticated.
+
+    404 when metrics are disabled, so a scrape against a deployment that does not
+    export them fails cleanly rather than returning an empty body."""
     if not settings.metrics_enabled:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     payload, content_type = await metrics.render(db)

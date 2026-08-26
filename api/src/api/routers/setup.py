@@ -29,6 +29,10 @@ async def _user_count(db: AsyncSession) -> int:
 
 @router.get("/status", response_model=SetupStatus)
 async def setup_status(db: AsyncSession = Depends(get_db)) -> SetupStatus:
+    """Whether this deployment still needs its first admin. Unauthenticated.
+
+    The SPA calls it before rendering the login screen, to decide between showing
+    sign-in and showing first-run setup."""
     return SetupStatus(needs_admin=await _user_count(db) == 0)
 
 
@@ -39,6 +43,11 @@ async def create_first_admin(
     db: AsyncSession = Depends(get_db),
     x_setup_token: str | None = Header(default=None, alias="X-Setup-Token"),
 ) -> User:
+    """Create the first admin from the deployment's setup token, and sign them in.
+
+    Authorized by the `X-Setup-Token` header rather than a session, because no
+    account exists yet. The token is consumed on success and the endpoint returns
+    409 once any user exists, so it cannot be replayed to mint a second admin."""
     if await _user_count(db) > 0:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

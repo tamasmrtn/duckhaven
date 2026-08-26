@@ -11,7 +11,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -19,6 +19,7 @@ from sqlalchemy.orm import selectinload
 from api.deps import get_current_user, get_db, get_polaris_client
 from api.models.catalog import Catalog, WorkspaceCatalog
 from api.models.catalog_grant import CatalogGrant
+from api.models.catalog_migration import CatalogMigration
 from api.models.storage_backend import StorageBackend
 from api.models.user import User
 from api.schemas.catalog_mgmt import CatalogAttachRequest, CatalogCreate, CatalogOut
@@ -29,8 +30,10 @@ from api.schemas.catalog_migration import (
     CatalogMigrationTableOut,
     MigrationStartRequest,
 )
+from api.schemas.page import Page
 from api.services import catalog as catalog_service
 from api.services.migration import service as migration_service
+from api.services.paging import paginate
 from api.services.permissions import Permission
 from api.services.polaris import PolarisClient
 from api.services.rbac import has_permission
@@ -319,16 +322,28 @@ async def start_catalog_migration(
     return _migration_out(migration)
 
 
-@router.get("/catalogs/{catalog_id}/migrations", response_model=list[CatalogMigrationOut])
+@router.get("/catalogs/{catalog_id}/migrations", response_model=Page[CatalogMigrationOut])
 async def list_catalog_migrations(
     catalog_id: uuid.UUID,
+    limit: int = Query(default=100, ge=1, le=1000),
+    cursor: str | None = Query(default=None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> list[CatalogMigrationOut]:
+) -> Page[CatalogMigrationOut]:
     """Migration history for a catalog, newest first."""
     await _catalog_for_admin(db, user, catalog_id)
-    migrations = await migration_service.list_migrations(db, catalog_id)
-    return [_migration_out(m) for m in migrations]
+    rows, next_cursor, has_more = await paginate(
+        db,
+        select(CatalogMigration).where(CatalogMigration.catalog_id == catalog_id),
+        sort_columns=[CatalogMigration.created_at, CatalogMigration.id],
+        limit=limit,
+        cursor=cursor,
+    )
+    return Page[CatalogMigrationOut](
+        items=[_migration_out(r[0]) for r in rows],
+        cursor=next_cursor,
+        has_more=has_more,
+    )
 
 
 @router.get("/catalogs/{catalog_id}/migrations/{migration_id}", response_model=CatalogMigrationOut)
@@ -356,7 +371,13 @@ async def get_catalog_migration_logs(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[CatalogMigrationEventOut]:
-    """User-facing log stream; ``after`` is the last seq the client has seen."""
+    """User-facing log stream; ``after`` is the last seq the client has seen.
+
+    Deliberately not paged in the standard envelope. A tail is not a page: the
+    client holds a position and polls forward, so it needs a stable `after` even
+    when it is caught up -- and a cursor that goes null on the last page, as the
+    collection envelope's does, would lose exactly that.
+    """
     await _catalog_for_admin(db, user, catalog_id)
     await migration_service.get_migration(db, catalog_id, migration_id)
     events = await migration_service.list_events(db, migration_id, after=after)

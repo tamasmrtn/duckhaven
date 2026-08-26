@@ -29,6 +29,7 @@ from api.models.agent import Agent
 from api.models.query import Query
 from api.models.sql_session import SqlSession
 from api.models.user import User
+from api.schemas.page import Page
 from api.schemas.query import QueryOut
 from api.schemas.sql_session import (
     SqlSessionCreate,
@@ -47,6 +48,7 @@ from api.services.agent_dispatch import is_agent_connected
 from api.services.compute import service as compute_service
 from api.services.grants import GrantDenied, assert_query_access
 from api.services.migration.service import workspace_has_active_migration
+from api.services.paging import paginate
 from api.services.permissions import Permission
 from api.services.query import pick_agent_for
 from api.services.rbac import has_permission
@@ -345,17 +347,18 @@ async def open_session(
     )
 
 
-@router.get("/workspaces/{workspace}/sql/sessions", response_model=list[SqlSessionSummaryOut])
+@router.get("/workspaces/{workspace}/sql/sessions", response_model=Page[SqlSessionSummaryOut])
 async def list_sessions(
     ws: Annotated[str, Path(alias="workspace")],
     status_filter: list[str] | None = QueryParam(default=None, alias="status"),
     user_id: uuid.UUID | None = QueryParam(default=None),
     agent_id: uuid.UUID | None = QueryParam(default=None),
     since: datetime | None = QueryParam(default=None),
-    limit: int = QueryParam(default=100, le=500),
+    limit: int = QueryParam(default=100, ge=1, le=1000),
+    cursor: str | None = QueryParam(default=None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> list[SqlSessionSummaryOut]:
+) -> Page[SqlSessionSummaryOut]:
     """The workspace's SQL sessions, newest first — the audit list.
 
     Any workspace member sees every session in the workspace, consistent with
@@ -385,8 +388,6 @@ async def list_sessions(
         .outerjoin(Agent, SqlSession.agent_id == Agent.id)
         .outerjoin(counts, counts.c.session_id == SqlSession.id)
         .where(SqlSession.workspace_id == workspace.id)
-        .order_by(SqlSession.created_at.desc())
-        .limit(limit)
     )
     if status_filter:
         stmt = stmt.where(SqlSession.status.in_(status_filter))
@@ -401,25 +402,37 @@ async def list_sessions(
         if since:
             stmt = stmt.where(SqlSession.created_at >= since)
 
-    return [
-        SqlSessionSummaryOut.model_validate(session).model_copy(
-            update={
-                "user_name": user_name,
-                "agent_name": agent_name,
-                "statement_count": statement_count,
-            }
-        )
-        for session, user_name, agent_name, statement_count in (await db.execute(stmt)).all()
-    ]
+    rows, next_cursor, has_more = await paginate(
+        db,
+        stmt,
+        sort_columns=[SqlSession.created_at, SqlSession.id],
+        limit=limit,
+        cursor=cursor,
+    )
+    return Page[SqlSessionSummaryOut](
+        items=[
+            SqlSessionSummaryOut.model_validate(session).model_copy(
+                update={
+                    "user_name": user_name,
+                    "agent_name": agent_name,
+                    "statement_count": statement_count,
+                }
+            )
+            for session, user_name, agent_name, statement_count in rows
+        ],
+        cursor=next_cursor,
+        has_more=has_more,
+    )
 
 
-@router.get("/sql/sessions/{session_id}/statements", response_model=list[QueryOut])
+@router.get("/sql/sessions/{session_id}/statements", response_model=Page[QueryOut])
 async def list_session_statements(
     session_id: uuid.UUID,
-    limit: int = QueryParam(default=200, le=500),
+    limit: int = QueryParam(default=200, ge=1, le=1000),
+    cursor: str | None = QueryParam(default=None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> list[Query]:
+) -> Page[QueryOut]:
     """A session's statements in execution order — the statement timeline.
 
     Ascending, unlike the newest-first history feeds: a session is one workload
@@ -427,17 +440,18 @@ async def list_session_statements(
     """
     _require_enabled()
     session = await _load_session(db, session_id, user)
-    return list(
-        (
-            await db.execute(
-                sa.select(Query)
-                .where(Query.session_id == session.id)
-                .order_by(Query.started_at.asc())
-                .limit(limit)
-            )
-        )
-        .scalars()
-        .all()
+    rows, next_cursor, has_more = await paginate(
+        db,
+        sa.select(Query).where(Query.session_id == session.id),
+        sort_columns=[Query.started_at, Query.id],
+        limit=limit,
+        cursor=cursor,
+        descending=False,
+    )
+    return Page[QueryOut](
+        items=[QueryOut.model_validate(r[0], from_attributes=True) for r in rows],
+        cursor=next_cursor,
+        has_more=has_more,
     )
 
 

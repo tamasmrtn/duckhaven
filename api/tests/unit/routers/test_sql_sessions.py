@@ -652,7 +652,7 @@ async def test_list_sessions_is_newest_first_with_counts_and_names(
 
     resp = await authed_client.get(f"/workspaces/{workspace.slug}/sql/sessions")
     assert resp.status_code == 200, resp.text
-    rows = resp.json()
+    rows = resp.json()["items"]
     assert [r["id"] for r in rows] == [str(newer.id), str(older.id)]
     assert rows[0]["statement_count"] == 2
     assert rows[1]["statement_count"] == 0
@@ -669,7 +669,7 @@ async def test_list_sessions_filters_by_status(
     resp = await authed_client.get(
         f"/workspaces/{workspace.slug}/sql/sessions", params={"status": "closed"}
     )
-    assert [r["id"] for r in resp.json()] == [str(closed.id)]
+    assert [r["id"] for r in resp.json()["items"]] == [str(closed.id)]
 
 
 async def test_list_sessions_disabled_returns_404(authed_client, workspace):
@@ -717,7 +717,7 @@ async def test_statement_timeline_is_ordered_and_scoped(
 
     resp = await authed_client.get(f"/sql/sessions/{session.id}/statements")
     assert resp.status_code == 200, resp.text
-    rows = resp.json()
+    rows = resp.json()["items"]
     assert [r["sql"] for r in rows] == ["CREATE TABLE t (a INT)", "INSERT INTO t VALUES (1)"]
     assert all(r["session_id"] == str(session.id) for r in rows)
 

@@ -135,17 +135,20 @@ async def test_list_and_dismiss_recommendation(auth_client, workspace, catalog, 
     await db_session.commit()
     await db_session.refresh(rec)
 
-    listing = await auth_client.get("/maintenance/recommendations")
+    listing = await auth_client.get("/maintenance/recommendations", params={"status": "open"})
     assert listing.status_code == 200
-    assert len(listing.json()) == 1
+    assert len(listing.json()["items"]) == 1
 
     dismiss = await auth_client.post(f"/maintenance/recommendations/{rec.id}/dismiss")
     assert dismiss.status_code == 200
     assert dismiss.json()["status"] == "dismissed"
 
-    # No longer in the default (open) feed.
-    again = await auth_client.get("/maintenance/recommendations")
-    assert again.json() == []
+    # Gone from the open feed, but still on record: dismissing is a judgement
+    # about the recommendation, not a deletion of it.
+    again = await auth_client.get("/maintenance/recommendations", params={"status": "open"})
+    assert again.json()["items"] == []
+    everything = await auth_client.get("/maintenance/recommendations")
+    assert [r["status"] for r in everything.json()["items"]] == ["dismissed"]
 
 
 async def test_health_requires_auth(client: AsyncClient):

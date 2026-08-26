@@ -86,20 +86,6 @@ async def start_migration(
     return migration
 
 
-async def list_migrations(db: AsyncSession, catalog_id: uuid.UUID) -> list[CatalogMigration]:
-    return list(
-        (
-            await db.execute(
-                select(CatalogMigration)
-                .where(CatalogMigration.catalog_id == catalog_id)
-                .order_by(CatalogMigration.created_at.desc())
-            )
-        )
-        .scalars()
-        .all()
-    )
-
-
 async def get_migration(
     db: AsyncSession, catalog_id: uuid.UUID, migration_id: uuid.UUID
 ) -> CatalogMigration:

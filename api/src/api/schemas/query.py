@@ -97,24 +97,6 @@ class RowsPageOut(BaseModel):
     column_schema: list[ColumnSchemaOut] | None = None
 
 
-class QueriesPageOut(BaseModel):
-    """One page of query history.
-
-    Deliberately carries no total. Counting the rows behind a page means a
-    second aggregate over the same predicates — including the ILIKE search,
-    which no index covers — on every request, to render a number that is stale
-    the moment a query is submitted. ``has_more`` costs nothing (the endpoint
-    asks for one row more than it returns) and lets the UI say what it actually
-    knows: how many rows it is showing, and whether there are others.
-    """
-
-    items: list[QueryOut]
-    # Opaque; feed back as `cursor` for the next page. Null when this is the
-    # last page. Named to match RowsPageOut, the API's only other envelope.
-    cursor: str | None = None
-    has_more: bool = False
-
-
 class SqlFunctionOut(BaseModel):
     name: str
     type: str

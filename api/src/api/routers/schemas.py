@@ -1,10 +1,7 @@
 """Schemas + tables endpoints (M3, G-D8-b, G-D9-a).
 
-Endpoints are catalog-scoped and gated by `assert_workspace_member`. Each is
-exposed twice: the canonical
-``/workspaces/{workspace}/catalogs/{catalog}/schemas/...`` form, and a legacy
-``/workspaces/{workspace}/schemas/...`` shim that resolves the workspace's *default*
-catalog (backward compatibility for pre-multi-catalog clients). list operations
+Endpoints are catalog-scoped and gated by `assert_workspace_member`, at
+``/workspaces/{workspace}/catalogs/{catalog}/schemas/...``. List operations
 require `reader`; creates/drops require `writer`. Polaris is the authority — we
 never write schema/table state into pg.
 """
@@ -55,7 +52,6 @@ from api.services.semantic import impact as semantic_impact
 from api.services.workspace import (
     assert_workspace_member,
     ensure_polaris_catalog,
-    get_default_catalog,
     get_workspace,
     polaris_storage,
     resolve_catalog,
@@ -269,14 +265,14 @@ def target_catalog(
 ) -> Callable[..., Coroutine[Any, Any, _Target]]:
     """Dependency factory resolving the request's target catalog.
 
-    On the canonical route ``catalog`` is a path param; on the legacy shim it is
-    absent and the workspace's default catalog is used. Membership is enforced at
-    ``min_role``.
+    ``catalog`` is a path parameter on every route this backs. Membership is
+    enforced at ``min_role``, then the catalog is resolved within the workspace,
+    so a catalog that exists but is not attached here is a 404.
     """
 
     async def _dep(
         ws: Annotated[str, Path(alias="workspace")],
-        catalog: str | None = None,
+        catalog: str,
         user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db),
     ) -> _Target:
@@ -284,15 +280,7 @@ def target_catalog(
         if workspace is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
         await assert_workspace_member(db, workspace.id, user.id, min_role=min_role)
-        if catalog is None:
-            resolved = await get_default_catalog(db, workspace.id)
-            if resolved is None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Workspace has no catalogs attached.",
-                )
-        else:
-            resolved = await resolve_catalog(db, workspace.id, catalog)
+        resolved = await resolve_catalog(db, workspace.id, catalog)
         return _Target(workspace=workspace, catalog=resolved)
 
     return _dep
@@ -317,7 +305,7 @@ async def _ensure_catalog(db: AsyncSession, polaris: PolarisClient, catalog: Cat
     )
 
 
-# --- Handlers (registered on both the catalog-scoped and legacy routers) ---
+# --- Handlers (registered against the catalog-scoped router below) ---
 
 
 async def list_schemas(
@@ -847,7 +835,7 @@ async def recount_table(
     return {"row_count": meta.row_count if meta else None}
 
 
-# --- Route registration: canonical (catalog-scoped) + legacy (default catalog) ---
+# --- Route registration ---
 
 router = APIRouter()
 

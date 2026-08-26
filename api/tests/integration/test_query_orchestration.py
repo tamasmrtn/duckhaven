@@ -66,7 +66,7 @@ async def test_disallowed_sql_is_rejected(admin_client, workspace_slug, connecte
         json={"sql": "SET memory_limit='1GB'", "agent_id": str(agent.id)},
     )
     assert resp.status_code == 422
-    assert resp.json()["detail"]["error"] == "sql_not_allowed"
+    assert resp.json()["error"] == "sql_not_allowed"
     assert stub.sent == []  # never dispatched
 
 

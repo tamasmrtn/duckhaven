@@ -1,5 +1,6 @@
 import { get, post, patch, del } from "./client";
 import { ApiError } from "./client";
+import type { ApiErrorBody } from "./client";
 import type {
   AssistantFrame,
   AssistantStatus,
@@ -37,14 +38,19 @@ async function* readSSE(
   signal?: AbortSignal,
 ): AsyncGenerator<AssistantFrame, void, unknown> {
   if (!res.ok || !res.body) {
-    let message = `HTTP ${res.status}`;
+    // The stream never opened, so the body is an ordinary error envelope.
+    let body: Partial<ApiErrorBody> | undefined;
     try {
-      const body = (await res.json()) as { detail?: string };
-      if (typeof body.detail === "string") message = body.detail;
+      body = (await res.json()) as Partial<ApiErrorBody>;
     } catch {
-      // ignore
+      // A body that is absent or not JSON leaves the status as the only signal.
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(
+      res.status,
+      body?.message ?? `HTTP ${res.status}`,
+      body?.error,
+      body?.details,
+    );
   }
   const reader = res.body.getReader();
   // Cancelling the reader unblocks a pending read() so Stop takes effect

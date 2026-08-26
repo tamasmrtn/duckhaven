@@ -1,4 +1,6 @@
 import { http, HttpResponse } from "msw";
+
+import { httpError } from "../lib/errors";
 import { nextId } from "../lib/seed";
 import {
   addMigration,
@@ -31,9 +33,7 @@ export const catalogMigrationHandlers = [
 
   http.get("/api/catalogs/:catalogId/migrations/:id", ({ params }) => {
     const m = findMigration(params.id as string);
-    return m
-      ? HttpResponse.json(m)
-      : HttpResponse.json({ detail: "Migration not found" }, { status: 404 });
+    return m ? HttpResponse.json(m) : httpError(404, "Migration not found");
   }),
 
   http.get(
@@ -49,10 +49,7 @@ export const catalogMigrationHandlers = [
   http.post("/api/catalogs/:catalogId/migrations/:id/cancel", ({ params }) => {
     const m = findMigration(params.id as string);
     if (!m) {
-      return HttpResponse.json(
-        { detail: "Migration not found" },
-        { status: 404 },
-      );
+      return httpError(404, "Migration not found");
     }
     return HttpResponse.json({ ...m });
   }),

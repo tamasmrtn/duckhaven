@@ -58,8 +58,8 @@ export function DeleteDefinitionButton({
           toast.success(`Removed ${name}.`);
         },
         onError: (err) => {
-          // `ApiError.message` is already the unwrapped `detail.detail`, which
-          // for the dataset refusal is the list of dependents.
+          // `ApiError.message` is the envelope's `message`, which for the
+          // dataset refusal names the dependents blocking the delete.
           setError(
             err instanceof ApiError || err instanceof Error
               ? err.message

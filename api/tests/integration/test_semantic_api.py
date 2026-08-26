@@ -194,7 +194,7 @@ async def test_publishing_is_refused_while_anything_is_broken(admin_client, work
     refused = await admin_client.post(f"/workspaces/{ws}/semantic/models/sales/publish")
 
     assert refused.status_code == 422
-    assert refused.json()["detail"]["error"] == "validation_failed"
+    assert refused.json()["error"] == "validation_failed"
 
 
 async def test_compiled_sql_names_the_real_catalog(admin_client, workspace_factory):

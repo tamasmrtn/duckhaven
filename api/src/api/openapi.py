@@ -8,6 +8,8 @@ asserts the result.
 
 from fastapi.routing import APIRoute
 
+from api.schemas.error import ErrorOut
+
 #: Suffix for the deprecated default-catalog shim's operation ids. The shim
 #: registers the same handlers as the canonical catalog-scoped routes, so their
 #: names collide; the suffix disappears with the shim.
@@ -45,14 +47,19 @@ SECURITY_SCHEMES = {
 #: sent. A list of single-key objects is OpenAPI's "any of these".
 _EITHER_CREDENTIAL = [{"cookieAuth": []}, {"bearerAuth": []}]
 
+_ERROR_CONTENT = {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorOut"}}}
+
 _UNAUTHORIZED = {
     "description": "No valid session cookie or bearer token was supplied.",
+    "content": _ERROR_CONTENT,
 }
 _FORBIDDEN = {
     "description": "Authenticated, but not permitted to perform this operation.",
+    "content": _ERROR_CONTENT,
 }
 _NOT_FOUND = {
     "description": "No such resource, or the caller may not know it exists.",
+    "content": _ERROR_CONTENT,
 }
 
 
@@ -111,7 +118,9 @@ def apply_conventions(app) -> None:
         if app.openapi_schema:
             return app.openapi_schema
         schema = generate()
-        schema.setdefault("components", {})["securitySchemes"] = SECURITY_SCHEMES
+        components = schema.setdefault("components", {})
+        components["securitySchemes"] = SECURITY_SCHEMES
+        components.setdefault("schemas", {})["ErrorOut"] = ErrorOut.model_json_schema()
 
         by_operation = {
             (route.path, method): route for route in _routes(app.routes) for method in route.methods
@@ -130,6 +139,57 @@ def apply_conventions(app) -> None:
                     responses.setdefault("403", dict(_FORBIDDEN))
                 if addressable:
                     responses.setdefault("404", dict(_NOT_FOUND))
+                # Every error body is ErrorOut, including the 422 FastAPI writes
+                # from the request model and any a router declared by hand.
+                for code, response in responses.items():
+                    if code[0] in "45":
+                        response["content"] = _ERROR_CONTENT
         return schema
 
     app.openapi = openapi
+
+
+#: Status codes that carry a well-known machine code when a handler raises them
+#: with a plain string detail. A handler that wants a more specific code raises a
+#: dict detail carrying ``error``.
+_DERIVED_ERROR_CODES = {
+    400: "bad_request",
+    401: "unauthorized",
+    403: "forbidden",
+    404: "not_found",
+    409: "conflict",
+    410: "gone",
+    422: "unprocessable_content",
+    502: "upstream_error",
+    503: "unavailable",
+    504: "upstream_timeout",
+}
+
+
+def error_body(status_code: int, detail: object) -> dict[str, object]:
+    """Normalise any raised detail into the single error envelope.
+
+    Handlers keep raising ``HTTPException`` as they always have. A dict detail
+    carrying ``error`` maps straight through -- that is the shape the SQL guard
+    and the semantic and session routers already use -- and a plain string
+    becomes the message under a code derived from the status.
+    """
+    fallback = _DERIVED_ERROR_CODES.get(status_code, "internal_error")
+
+    if isinstance(detail, dict):
+        # The established shape is {"error": code, "detail": message}; anything
+        # else in the dict is structured context worth keeping.
+        code = detail.get("error") or fallback
+        message = detail.get("detail") or detail.get("message") or fallback
+        extra = {k: v for k, v in detail.items() if k not in ("error", "detail", "message")}
+        return {"error": str(code), "message": str(message), "details": extra or None}
+
+    if isinstance(detail, list):
+        # FastAPI's request-validation errors: a list of per-field problems.
+        return {
+            "error": "validation_error",
+            "message": "The request body or parameters did not validate.",
+            "details": {"errors": detail},
+        }
+
+    return {"error": fallback, "message": str(detail) if detail else fallback, "details": None}

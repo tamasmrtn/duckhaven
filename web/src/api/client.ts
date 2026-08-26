@@ -2,6 +2,9 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    /** Stable machine code from the response body, for branching on. */
+    public code?: string,
+    public details?: Record<string, unknown> | null,
   ) {
     super(message);
     this.name = "ApiError";
@@ -9,25 +12,22 @@ export class ApiError extends Error {
 }
 
 /**
- * Extract a human-readable message from a parsed error body.
- *
- * FastAPI wraps errors in `detail`. The SQL guard and a few other 422s return a
- * structured object (`{"detail": {"error", "detail"}}`); simpler errors return a
- * string (`{"detail": "..."}`). Unwrap the structured form so we never surface
- * "[object Object]", and fall back through the available fields.
+ * Every 4xx and 5xx body is `{error, message, details}` -- see the API
+ * conventions reference. `error` is the stable machine code to branch on;
+ * `message` is what a person should read.
  */
-function errorMessage(body: unknown): string | undefined {
+export interface ApiErrorBody {
+  error: string;
+  message: string;
+  details?: Record<string, unknown> | null;
+}
+
+function parseError(body: unknown): ApiErrorBody | undefined {
   if (body == null || typeof body !== "object") return undefined;
-  const { detail, error } = body as { detail?: unknown; error?: unknown };
-  if (typeof detail === "string") return detail;
-  if (detail != null && typeof detail === "object") {
-    const d = detail as { detail?: unknown; error?: unknown };
-    if (typeof d.detail === "string") return d.detail;
-    if (typeof d.error === "string") return d.error;
-    return JSON.stringify(detail);
-  }
-  if (typeof error === "string") return error;
-  return undefined;
+  const { error, message, details } = body as Partial<ApiErrorBody>;
+  if (typeof error !== "string" || typeof message !== "string")
+    return undefined;
+  return { error, message, details: details ?? null };
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -38,14 +38,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (!res.ok) {
-    let message = `HTTP ${res.status}`;
+    let parsed: ApiErrorBody | undefined;
     try {
-      const body = await res.json();
-      message = errorMessage(body) ?? message;
+      parsed = parseError(await res.json());
     } catch {
-      // ignore parse error
+      // A body that is absent or not JSON leaves the status as the only signal.
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(
+      res.status,
+      parsed?.message ?? `HTTP ${res.status}`,
+      parsed?.error,
+      parsed?.details,
+    );
   }
 
   if (res.status === 204) return undefined as T;

@@ -401,7 +401,7 @@ async def test_drop_schema_non_empty_requires_cascade(
 
     resp = await auth_client.delete(f"/workspaces/{slug}/schemas/staging")
     assert resp.status_code == 409
-    assert "events" in resp.json()["detail"]
+    assert "events" in resp.json()["message"]
     assert (slug, "staging") in fake_polaris.schemas  # not dropped
 
 
@@ -453,7 +453,7 @@ async def test_polaris_error_maps_to_http_response(
 
     resp = await auth_client.get(f"/workspaces/{slug}/schemas/main/tables")
     assert resp.status_code == expected_status
-    assert resp.json()["detail"] == str(exc)
+    assert resp.json()["message"] == str(exc)
 
 
 async def test_drop_schema_requires_writer(

@@ -150,7 +150,7 @@ async def test_compute_options_returns_ranges_and_rates(admin_client: AsyncClien
 async def test_create_elastic_agent_disabled_returns_409(admin_client: AsyncClient):
     resp = await admin_client.post("/admin/agents/elastic", json={"cpu": 1, "memory_gb": 4})
     assert resp.status_code == 409
-    assert resp.json()["detail"]["error"] == "elastic_disabled"
+    assert resp.json()["error"] == "elastic_disabled"
 
 
 async def test_create_elastic_agent_out_of_range_returns_422(
@@ -158,7 +158,7 @@ async def test_create_elastic_agent_out_of_range_returns_422(
 ):
     resp = await admin_client.post("/admin/agents/elastic", json={"cpu": 8, "memory_gb": 4})
     assert resp.status_code == 422
-    assert resp.json()["detail"]["error"] == "invalid_size"
+    assert resp.json()["error"] == "invalid_size"
 
 
 async def test_create_elastic_agent_provisions_with_size_cost_and_idle(
@@ -309,7 +309,7 @@ async def test_restart_running_agent_rejected(
     await db_session.commit()
     resp = await admin_client.post(f"/admin/agents/{agent.id}/restart")
     assert resp.status_code == 409
-    assert resp.json()["detail"]["error"] == "not_restartable"
+    assert resp.json()["error"] == "not_restartable"
 
 
 async def test_terminate_running_agent(admin_client: AsyncClient, db_session, elastic_enabled):
@@ -355,7 +355,7 @@ async def test_terminate_terminated_agent_rejected(
     await db_session.commit()
     resp = await admin_client.post(f"/admin/agents/{agent.id}/terminate")
     assert resp.status_code == 409
-    assert resp.json()["detail"]["error"] == "not_terminable"
+    assert resp.json()["error"] == "not_terminable"
 
 
 async def test_delete_agent_removes_row_and_nulls_query_link(

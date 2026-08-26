@@ -194,7 +194,7 @@ async def test_a_metric_cannot_be_measured_on_a_categorical_dimension(auth_clien
     )
 
     assert resp.status_code == 422
-    assert "not a time dimension" in str(resp.json()["detail"])
+    assert "not a time dimension" in str(resp.json()["message"])
 
 
 async def test_a_sum_without_an_expression_is_rejected(auth_client, ws):
@@ -286,7 +286,7 @@ async def test_publishing_requires_a_model_that_validates(auth_client, ws):
     resp = await auth_client.post(f"/workspaces/{ws}/semantic/models/sales/publish")
 
     assert resp.status_code == 422
-    assert resp.json()["detail"]["error"] == "validation_failed"
+    assert resp.json()["error"] == "validation_failed"
 
 
 async def test_publishing_a_sound_model_works(auth_client, ws):
@@ -372,7 +372,7 @@ async def test_compile_refuses_an_unknown_metric_and_names_the_real_ones(auth_cl
     )
 
     assert resp.status_code == 422
-    assert "revenue" in resp.json()["detail"]["detail"]
+    assert "revenue" in resp.json()["message"]
 
 
 async def test_compile_refuses_an_unpublished_model(auth_client, ws):
@@ -601,9 +601,9 @@ async def test_deleting_a_time_axis_is_refused_while_a_metric_is_measured_on_it(
     resp = await auth_client.delete(f"/workspaces/{ws}/semantic/models/sales/dimensions/order_date")
 
     assert resp.status_code == 409
-    detail = resp.json()["detail"]
-    assert detail["error"] == "dimension_in_use"
-    assert detail["dependents"] == ["metric 'revenue'"]
+    body = resp.json()
+    assert body["error"] == "dimension_in_use"
+    assert body["details"]["dependents"] == ["metric 'revenue'"]
     body = (await auth_client.get(f"/workspaces/{ws}/semantic/models/sales")).json()
     assert {d["name"] for d in body["dimensions"]} == {"order_date", "country"}
 
@@ -642,12 +642,13 @@ async def test_deleting_a_dataset_is_refused_while_anything_binds_it(auth_client
     resp = await auth_client.delete(f"/workspaces/{ws}/semantic/models/sales/datasets/orders")
 
     assert resp.status_code == 409
-    detail = resp.json()["detail"]
-    assert detail["error"] == "dataset_in_use"
+    body = resp.json()
+    assert body["error"] == "dataset_in_use"
     # Naming them is what makes the refusal actionable rather than annoying.
-    assert "metric 'revenue'" in detail["dependents"]
-    assert "dimension 'order_date'" in detail["dependents"]
-    assert "relationship 'orders_to_customers'" in detail["dependents"]
+    dependents = body["details"]["dependents"]
+    assert "metric 'revenue'" in dependents
+    assert "dimension 'order_date'" in dependents
+    assert "relationship 'orders_to_customers'" in dependents
     # Nothing was removed on the way to refusing.
     body = (await auth_client.get(f"/workspaces/{ws}/semantic/models/sales")).json()
     assert len(body["metrics"]) == 1
@@ -719,4 +720,4 @@ async def test_a_duplicate_name_is_a_conflict_not_a_server_error(auth_client, ws
     resp = await auth_client.post(f"/workspaces/{ws}/semantic/models/sales/{kind}", json=body)
 
     assert resp.status_code == 409
-    assert body["name"] in str(resp.json()["detail"])
+    assert body["name"] in str(resp.json()["message"])

@@ -87,6 +87,10 @@ async def get_agent_access(
     resolved: ResolvedAgent = Depends(require_agent_tier("admin")),
     db: AsyncSession = Depends(get_db),
 ) -> AgentAccessOut:
+    """An agent's access policy: its mode, its grants, and the principals named.
+
+    Needs the `admin` tier on the agent -- who may use a machine is itself
+    sensitive."""
     return await _payload(db, resolved.agent)
 
 
@@ -183,6 +187,11 @@ async def delete_agent_grant(
     resolved: ResolvedAgent = Depends(require_agent_tier("admin")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
+    """Revoke a principal's grant on this agent.
+
+    In `open` mode the principal keeps the `use` tier, which needs no grant; in
+    `restricted` mode this removes their access. Queries already running are not
+    cancelled."""
     grant = (
         await db.execute(
             select(AgentGrant).where(

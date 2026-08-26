@@ -49,6 +49,10 @@ async def list_schedules(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[Schedule]:
+    """The workspace's schedules. Filter by `saved_query_id` for one query's.
+
+    A schedule is a generic job with a `job_type`; running a saved query is the
+    only type today."""
     workspace = await _require_workspace(db, ws, user)
     stmt = select(Schedule).where(Schedule.workspace_id == workspace.id)
     if saved_query_id is not None:
@@ -86,6 +90,11 @@ async def create_schedule(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> Schedule:
+    """Schedule a job on a cron expression. Requires `writer`.
+
+    422 for an unparseable cron. You may only point a schedule at an agent you
+    could run on yourself, and that check runs again at dispatch against the
+    creator -- so revoking their access stops the runs too."""
     workspace = await _require_workspace(db, ws, user, min_role="writer")
     _validate_cron_or_422(body.cron)
     # You may only point a schedule at an agent you could run on yourself. This is
@@ -117,6 +126,10 @@ async def update_schedule(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> Schedule:
+    """Change a schedule's cron, agent, or enabled state. Requires `writer`.
+
+    A partial update: omitted fields are left alone. Disabling with
+    `enabled=false` stops future runs without discarding the run history."""
     workspace = await _require_workspace(db, ws, user, min_role="writer")
     schedule = (
         await db.execute(
@@ -153,6 +166,9 @@ async def delete_schedule(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> None:
+    """Delete a schedule. Requires `writer`.
+
+    Runs it already produced stay in the query history."""
     workspace = await _require_workspace(db, ws, user, min_role="writer")
     schedule = (
         await db.execute(
@@ -175,6 +191,10 @@ async def list_schedule_runs(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[Query]:
+    """One schedule's runs, newest first -- did last night's job succeed?
+
+    Each run is an ordinary query, so its rows, profile and error are readable
+    through the `/queries/{query_id}` routes."""
     workspace = await _require_workspace(db, ws, user)
     return list(
         (

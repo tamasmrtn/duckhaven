@@ -27,6 +27,9 @@ async def list_backends(
     admin: User = Depends(require_permission(Permission.STORAGE_MANAGE)),
     db: AsyncSession = Depends(get_db),
 ) -> list[StorageBackendOut]:
+    """Every storage backend, with how many catalogs use each.
+
+    The count is what makes a backend safe or unsafe to delete."""
     result = await db.execute(select(StorageBackend))
     backends = result.scalars().all()
     out = []
@@ -56,6 +59,10 @@ async def create_backend(
     admin: User = Depends(require_permission(Permission.STORAGE_MANAGE)),
     db: AsyncSession = Depends(get_db),
 ) -> StorageBackendOut:
+    """Register a storage backend catalogs can be created on.
+
+    Credentials in `config` are stored for vending to agents and are never read
+    back out through the API."""
     if body.kind not in VALID_KINDS:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -104,6 +111,10 @@ async def delete_backend(
     admin: User = Depends(require_permission(Permission.STORAGE_MANAGE)),
     db: AsyncSession = Depends(get_db),
 ) -> None:
+    """Delete a storage backend. Refused while any catalog still uses it.
+
+    Removes only DuckHaven's registration -- nothing in the object store is
+    touched."""
     result = await db.execute(select(StorageBackend).where(StorageBackend.id == backend_id))
     sb = result.scalar_one_or_none()
     if sb is None:

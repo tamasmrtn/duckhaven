@@ -63,6 +63,10 @@ async def assistant_status(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> AssistantStatusOut:
+    """Whether the AI assistant is enabled for this deployment.
+
+    Deliberately readable even when the assistant is off, so the UI can render a
+    clear disabled state instead of a failure."""
     # Deliberately not gated by `_require_enabled`: the UI needs to learn the
     # assistant is off in order to show a clear disabled state.
     await _workspace(db, ws, user)
@@ -75,6 +79,10 @@ async def list_conversations(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[AssistantConversation]:
+    """The caller's own assistant conversations, most recently updated first.
+
+    Private, unlike most workspace resources: a conversation is visible only to
+    the person who started it."""
     _require_enabled()
     workspace = await _workspace(db, ws, user)
     result = await db.execute(
@@ -99,6 +107,9 @@ async def create_conversation(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> AssistantConversation:
+    """Start a conversation. Empty until the first message is sent.
+
+    Owned by the caller: only they can read, rename or delete it."""
     _require_enabled()
     workspace = await _workspace(db, ws, user)
     conversation = AssistantConversation(
@@ -122,6 +133,11 @@ async def get_conversation(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> ConversationDetailOut:
+    """One conversation with its full transcript and any pending tool calls.
+
+    Reports whether the history was truncated, so the UI can say that earlier
+    turns are no longer in the model's context rather than silently dropping
+    them."""
     _require_enabled()
     workspace = await _workspace(db, ws, user)
     conversation = await _load_conversation(db, workspace.id, conversation_id, user.id)
@@ -163,6 +179,7 @@ async def rename_conversation(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> AssistantConversation:
+    """Rename a conversation. The title is the only editable field."""
     _require_enabled()
     workspace = await _workspace(db, ws, user)
     conversation = await _load_conversation(db, workspace.id, conversation_id, user.id)
@@ -182,6 +199,10 @@ async def delete_conversation(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> None:
+    """Delete a conversation and its transcript.
+
+    Queries the assistant ran during it survive in the query history, which is an
+    audit record of what was executed."""
     _require_enabled()
     workspace = await _workspace(db, ws, user)
     conversation = await _load_conversation(db, workspace.id, conversation_id, user.id)
@@ -210,6 +231,11 @@ async def send_message(
     user: User = Depends(get_current_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),
 ) -> StreamingResponse:
+    """Send a prompt and stream the assistant's turn back as server-sent events.
+
+    The response is `text/event-stream`, not JSON: token deltas, tool calls and
+    results arrive as they happen. A turn that wants to write pauses and emits an
+    approval request; answer it at `.../approvals` to resume."""
     _require_enabled()
     workspace = await _workspace(db, ws, user)
     conversation = await _load_conversation(db, workspace.id, conversation_id, user.id)
@@ -247,6 +273,11 @@ async def approve_write(
     user: User = Depends(get_current_user),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),
 ) -> StreamingResponse:
+    """Approve or reject a write the assistant paused on, resuming the turn.
+
+    Streams the rest of the turn as server-sent events, the same shape sending a
+    message does. Rejecting resumes the turn with the refusal rather than
+    aborting it, so the assistant can explain or take another route."""
     _require_enabled()
     workspace = await _workspace(db, ws, user)
     conversation = await _load_conversation(db, workspace.id, conversation_id, user.id)

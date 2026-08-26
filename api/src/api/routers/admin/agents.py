@@ -114,6 +114,11 @@ async def bootstrap(
     admin: User = Depends(require_permission(Permission.AGENTS_MANAGE)),
     db: AsyncSession = Depends(get_db),
 ) -> BootstrapTokenOut:
+    """Mint a short-lived token an agent uses to register itself.
+
+    Returns the token with the WebSocket URL to dial and the agent image to run,
+    so the response is everything needed to start an agent. Single-use and
+    expiring; it is shown once and cannot be listed again."""
     token = f"dh_boot_{secrets.token_urlsafe(16)}"
     expires_at = datetime.now(tz=UTC) + BOOTSTRAP_TTL
     cred = Credential(
@@ -327,6 +332,11 @@ async def revoke_agent(
     resolved: ResolvedAgent = Depends(require_agent_tier("operate")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
+    """Revoke an agent's credential and disconnect it.
+
+    The agent row survives, marked unavailable: this locks a compromised agent
+    out without losing the history of what it ran. Re-registering needs a fresh
+    bootstrap token."""
     agent_id = resolved.agent.id
     await db.execute(
         sa.delete(Credential).where(

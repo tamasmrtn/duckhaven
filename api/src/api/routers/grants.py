@@ -82,6 +82,10 @@ async def list_catalog_grants(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> CatalogGrantsOut:
+    """The catalog's access mode and every grant on it. Owner only.
+
+    Returns the grants together with the principals they name, so the access
+    screen renders from one request."""
     workspace = await get_workspace(db, ws)
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
@@ -202,6 +206,11 @@ async def delete_grant(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> None:
+    """Revoke one grant. Owner only.
+
+    What the principal can still reach depends on the catalog's access mode: in
+    `open` mode they keep workspace-level access, in `restricted` mode removing
+    their last grant removes their access."""
     workspace = await get_workspace(db, ws)
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)

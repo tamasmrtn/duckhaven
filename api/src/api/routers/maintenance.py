@@ -100,6 +100,10 @@ async def workspace_health(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> WorkspaceHealthDetailOut:
+    """Table health across the workspace, grouped by namespace.
+
+    Reports the small-file and snapshot-bloat signals the maintenance scanner
+    samples, so a workspace can be triaged without opening each table."""
     workspace = await get_workspace(db, ws)
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
@@ -136,6 +140,11 @@ async def table_health(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> TableHealthDetailOut:
+    """One table's health, with the history behind it.
+
+    Resolves against the workspace's default catalog. The history is what makes
+    the numbers actionable: a file count that is climbing needs compaction, one
+    that is flat does not."""
     workspace = await get_workspace(db, ws)
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
@@ -197,6 +206,11 @@ async def list_recommendations(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[RecommendationOut]:
+    """Maintenance work the scanner suggests, across every workspace the caller
+    is a member of.
+
+    Defaults to `status=open`. Each recommendation names the table, why it was
+    raised, and how severe it is."""
     workspaces = await _member_workspaces(db, user)
     ws_ids = [w.id for w in workspaces]
     if not ws_ids:
@@ -224,6 +238,11 @@ async def dismiss_recommendation(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> RecommendationOut:
+    """Dismiss a recommendation, so the scanner stops surfacing it. Requires
+    `writer` on the workspace it belongs to.
+
+    A judgement, not a fix: the underlying condition is unchanged and the
+    recommendation is kept as a dismissed record rather than deleted."""
     rec = await db.get(MaintenanceRecommendation, rec_id)
     if rec is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)

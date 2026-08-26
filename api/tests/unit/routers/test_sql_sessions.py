@@ -442,7 +442,7 @@ async def test_staging_files_success(
         f"/sql/sessions/{session.id}/staging-files",
         json={"files": ["orders.parquet", "items.parquet"]},
     )
-    assert resp.status_code == 200, resp.text
+    assert resp.status_code == 201, resp.text
     body = resp.json()
     assert [f["name"] for f in body["files"]] == ["orders.parquet", "items.parquet"]
     first = body["files"][0]

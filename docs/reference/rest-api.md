@@ -46,7 +46,11 @@ A server old enough to lack this endpoint returns **404**; treat that as the old
 | `lineage` | Read a table's [lineage](../concepts/lineage.md) graph; import and retire external lineage |
 | `semantic` | Define, validate, publish and query [semantic models](../concepts/semantic-layer.md) |
 | `agents` | List the agents you may use, with their capabilities |
-| `admin` | Agents (detail, monitoring, lifecycle, bootstrap/revoke, [access](#per-agent-access)), storage backends, users, service accounts & PATs, maintenance |
+| `admin-agents` | Agent detail, monitoring, lifecycle, bootstrap/revoke, [access](#per-agent-access) |
+| `admin-users` | User accounts and their workspace roles |
+| `admin-service-accounts` | Service accounts and their tokens |
+| `admin-storage` | Storage backends |
+| `admin-maintenance` | Maintenance policy and scans |
 
 ## Authentication
 
@@ -57,7 +61,53 @@ The API accepts two credentials, both resolving to the same authorization checks
 - **Bearer token** — for machine clients. Send a [service-account PAT](../guides/service-accounts.md) on the
   `Authorization: Bearer <token>` header. This is the supported path for unattended callers (CI, schedulers, tooling).
 
-See [Permissions](../concepts/permissions.md) for the underlying model.
+See [Permissions](../concepts/permissions.md) for the underlying model. Both are declared in the OpenAPI schema as
+security schemes (`cookieAuth`, `bearerAuth`), so a generated client configures credentials once rather than passing
+them on every call.
+
+## Errors
+
+Every `4xx` and `5xx` response has the same body:
+
+```json
+{
+  "error": "sql_not_allowed",
+  "message": "DDL is not permitted in this session.",
+  "details": {}
+}
+```
+
+- **`error`** — a stable machine-readable code. Branch on this, never on `message`.
+- **`message`** — human-readable and safe to display.
+- **`details`** — optional structured context; present only where an endpoint documents it (for example the list of
+  dependents blocking a semantic dataset delete).
+
+Codes are specific where the endpoint has something specific to say (`sql_not_allowed`, `agent_required`,
+`catalog_read_only`, `invalid_cursor`) and derived from the status otherwise (`unauthorized`, `forbidden`, `not_found`,
+`conflict`, `unprocessable_content`).
+
+## Pagination
+
+Collections that grow with usage return a page:
+
+```json
+{ "items": [], "cursor": null, "has_more": false }
+```
+
+Pass `cursor` to fetch the next page and `limit` to size it (default 100, max 1000). The cursor is opaque — feed back
+exactly what you were given. It is keyset-based, not an offset, so a page stays correct while rows are being written
+ahead of it. `has_more` tells you whether another page exists; `cursor` is `null` on the last one.
+
+Collections bounded by your deployment's topology — workspaces, members, catalogs, agents, storage backends, schedules,
+semantic models — return a plain array and take no cursor. Two endpoints are deliberately different:
+
+- **Search** (`/search`, `/semantic/search`) returns `{"items": [...], "has_more": …}` with no cursor. Search is
+  truncated by `limit`, not walked; narrow the query instead.
+- **Migration logs** returns a plain array and takes `after`, the last sequence number you saw. It is a tail you poll
+  forward, not a page you walk.
+
+Query result rows (`/queries/{query_id}/rows`) use a different envelope again — `rows`, `columns`, `column_schema` —
+because a result grid is not a resource collection.
 
 !!! note "Private by design"
     DuckHaven has no public ingress; the API is reachable only on your private network (Tailscale recommended). The

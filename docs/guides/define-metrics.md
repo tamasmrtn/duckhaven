@@ -271,9 +271,9 @@ names every dimension, metric and relationship in the way:
 
 ```json
 {
-  "detail": {
-    "error": "dataset_in_use",
-    "detail": "'orders' still has dimension 'order_date', metric 'revenue'.",
+  "error": "dataset_in_use",
+  "message": "'orders' still has dimension 'order_date', metric 'revenue'.",
+  "details": {
     "dependents": ["dimension 'order_date'", "metric 'revenue'"]
   }
 }

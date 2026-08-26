@@ -158,7 +158,7 @@ rather than claiming nothing flows.
 ## Notes
 
 - Very large projects: a single import is capped at 5,000 edges. Beyond that, use the generic
-  `POST /workspaces/<ws>/lineage/imports` endpoint and send edges in batches.
+  `POST /workspaces/{workspace}/lineage/imports` endpoint and send edges in batches.
 - If your dbt project runs *against* DuckHaven through a [SQL session](../concepts/sql-sessions.md), you will also get
   execution-derived lineage for free — no import needed for the models that actually ran. Publishing the manifest is
   still worth it: it covers models a given run did not build, and it is what makes "declared" and "observed"

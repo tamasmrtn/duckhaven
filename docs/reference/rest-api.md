@@ -113,9 +113,78 @@ because a result grid is not a resource collection.
     DuckHaven has no public ingress; the API is reachable only on your private network (Tailscale recommended). The
     agent control channel is a separate WebSocket at `/agents/connect`, not part of this REST surface.
 
+## Migrating to `api_version` 2
+
+`api_version` moved from `1` to `2`. Check it at `GET /api/version` before assuming any of the below. Everything here
+changes on the wire; nothing else about the API did.
+
+### Every error body changed shape
+
+Errors were `{"detail": "..."}`, or `{"detail": {"error": ..., "detail": ...}}` for the ones carrying a machine code.
+Both are now the single [error envelope](#errors). Read `message` for display and `error` for branching; the codes that
+existed under the old nested shape kept their names.
+
+### Nine collections became pages
+
+These returned a bare JSON array and now return `{"items": [...], "cursor": ..., "has_more": ...}` — see
+[Pagination](#pagination). Read `.items` where you read the array before, and page with `cursor` if you need more than
+the first 100.
+
+`GET /api/admin/users` · `GET /api/admin/service-accounts` · `GET /api/maintenance/recommendations` ·
+`GET /api/workspaces/{workspace}/saved-queries` · `GET /api/workspaces/{workspace}/sql/sessions` ·
+`GET /api/sql/sessions/{session_id}/statements` · `GET /api/workspaces/{workspace}/schedule-runs` ·
+`GET /api/workspaces/{workspace}/schedules/{schedule_id}/runs` ·
+`GET /api/workspaces/{workspace}/assistant/conversations` · `GET /api/catalogs/{catalog_id}/migrations`
+
+### Routes that moved
+
+| Was | Is | Why |
+|---|---|---|
+| `POST /api/workspaces/{workspace}/catalogs/attach` with `{"catalog_id": …}` | `PUT /api/workspaces/{workspace}/catalogs/{catalog}` with `{"make_default": …}` | Attaching is a membership write, so it lives at the membership's own address — the one `DELETE` already used. Idempotent: `201` the first time, `200` after. The catalog is named by slug in the path. |
+| `POST /api/admin/service-accounts/{id}/pat` | `POST /api/admin/service-accounts/{service_account_id}/pats` | The sub-resource was singular on two of its three routes. |
+| `DELETE /api/admin/service-accounts/{id}/pat/{pat_id}` | `DELETE /api/admin/service-accounts/{service_account_id}/pats/{pat_id}` | As above. |
+| `POST /api/workspaces/{workspace}/schemas/refresh-stats` | `POST /api/workspaces/{workspace}/catalogs/{catalog}/refresh-stats` | It walks every schema in the catalog, so it was never a schema-level operation — and under `/schemas/` it occupied the slot a namespace of that name would need. |
+
+### The default-catalog shim is gone
+
+Fourteen operations served schemas and tables without naming a catalog, resolving to the workspace's default. They were
+duplicates of the catalog-scoped family and are removed. Add the catalog segment:
+
+```text
+/api/workspaces/{workspace}/schemas/...
+→ /api/workspaces/{workspace}/catalogs/{catalog}/schemas/...
+```
+
+`GET /api/workspaces/{workspace}/catalogs` lists the attached catalogs and marks the default with `is_default`, if you
+need to reproduce the old behaviour explicitly.
+
+### Status codes that became honest
+
+`POST /api/setup/admin`, `POST /api/admin/agents/bootstrap` and `POST /api/sql/sessions/{session_id}/staging-files`
+return **201**; they create. Four more operations already returned a code they did not declare, so a client written
+against the old schema may see one it was not expecting:
+
+- `PUT .../catalogs/{catalog}/grants` and `PUT /api/admin/agents/{agent_id}/grants` return **201** on create, **200** on
+  replace.
+- `POST .../saved-queries` returns **200** when it overwrites a query of the same name, **201** when it creates one.
+- `POST .../sql/sessions` returns **202** when `on_wait_timeout=continue` and compute is still starting.
+
+### Search
+
+Both search endpoints now return `{"items": [...], …}` — `GET .../semantic/search` renamed `hits` to `items` — and `q`
+is required rather than defaulting to empty.
+
+### Filters no longer default
+
+`GET /api/maintenance/recommendations` used to default to `status=open`. It now returns every state unless you ask:
+send `?status=open` for the outstanding ones. `status` is repeatable everywhere it appears.
+
+---
+
 ## Result column types
 
-`GET /api/queries/{id}` and `GET /api/queries/{id}/rows` both return a **`column_schema`** field describing the
+`GET /api/queries/{query_id}` and `GET /api/queries/{query_id}/rows` both return a **`column_schema`** field
+describing the
 result's columns:
 
 ```json
@@ -138,7 +207,9 @@ The field is **additive** — `columns` still carries the names-only list it alw
 
 ## Query history
 
-`GET /api/workspaces/{ws}/queries` returns a page, not a bare array:
+`GET /api/workspaces/{workspace}/queries` is the reference implementation of the
+[collection page](#pagination), and carries the richest filter set on the API — the vocabulary every other filtered
+list follows:
 
 ```json
 {
@@ -151,9 +222,9 @@ The field is **additive** — `columns` still carries the names-only list it alw
 Pass `cursor` back to fetch the next page; it is `null` on the last one. The cursor is opaque and is tied to the
 `sort` it was produced under — reusing one after changing `sort` is a `422`, not a silently different page.
 
-There is **no total**. Counting the rows behind a filtered page means a second pass over the same predicates on every
-request, for a number that is stale as soon as another query is submitted. `has_more` costs nothing and is what the
-UI reports.
+There is **no total**, here or on any paged collection. Counting the rows behind a filtered page means a second pass
+over the same predicates on every request, for a number that is stale as soon as another query is submitted.
+`has_more` costs nothing and is what the UI reports.
 
 ### Parameters
 
@@ -203,26 +274,27 @@ Define what business terms mean, and compile questions into SQL from those defin
 
 | Method & path | Purpose |
 |---|---|
-| `GET /api/workspaces/{ws}/semantic/models` | List models. Optional `status` filter. A model binding any table the caller cannot read is absent, not forbidden. |
-| `POST /api/workspaces/{ws}/semantic/models` | Create a model. Requires workspace **writer**. |
-| `GET /api/workspaces/{ws}/semantic/models/{slug}` | One model with its datasets, dimensions, metrics and relationships. |
-| `PATCH /api/workspaces/{ws}/semantic/models/{slug}` | Rename or re-describe. **409** on an imported model — a model has one owner. |
-| `DELETE /api/workspaces/{ws}/semantic/models/{slug}` | Delete. Requires workspace **owner**. |
-| `POST /api/workspaces/{ws}/semantic/models/{slug}/publish` | Make the model authoritative to the assistant. Validates first; **422** if anything is broken. Requires workspace **owner**. |
-| `POST /api/workspaces/{ws}/semantic/models/{slug}/deprecate` | Retire it: still readable, excluded from new answers. Requires **owner**. |
-| `POST /api/workspaces/{ws}/semantic/models/{slug}/validate` | Resolve every binding against the live catalog and record the outcome. |
-| `POST /api/workspaces/{ws}/semantic/models/{slug}/{datasets,dimensions,metrics,relationships}` | Add a definition. Requires **writer**, plus `metadata` tier on any table a dataset binds. **409** if the name is already used in this model. |
-| `PATCH /api/workspaces/{ws}/semantic/models/{slug}/metrics/{name}` | Edit a metric. Resets its validation state to `unchecked`. |
-| `DELETE /api/workspaces/{ws}/semantic/models/{slug}/{metrics,dimensions,relationships}/{name}` | Remove one definition. Requires **writer**; **409** on an imported model. A dimension is refused with **409** while a metric is measured on it — an absent time axis is indistinguishable from one never set, and would be answered on the dataset's default date. |
-| `DELETE /api/workspaces/{ws}/semantic/models/{slug}/datasets/{name}` | Remove a dataset. **409** naming the dependents while any dimension, metric or relationship still binds it — the delete would otherwise cascade to them. |
-| `GET /api/workspaces/{ws}/semantic/models/{slug}/metrics/{name}/dimensions` | The dimensions this metric can legally be sliced by. |
-| `GET /api/workspaces/{ws}/semantic/search?q=` | Rank metrics and dimensions against a question. Returns `hits`, an `ambiguous` list of equally-matching metrics, and a `broken` list of matching definitions that exist but no longer resolve. |
-| `POST /api/workspaces/{ws}/semantic/compile` | Compile a metric request to SQL. **Does not execute** — submit the SQL through `POST /queries` like any other statement. |
-| `POST /api/workspaces/{ws}/semantic/imports/{provider}` | Publish definitions from a producer, as `text/plain`. `duckhaven` takes a YAML document; `dbt` takes a `manifest.json`. `?reconcile=provider_run` (default) retires models the payload no longer declares. Requires **writer**. |
-| `DELETE /api/workspaces/{ws}/semantic/imports?provider=<name>` | Remove everything a provider published. Requires workspace **owner**. |
-| `GET /api/workspaces/{ws}/catalogs/{catalog}/schemas/{schema}/tables/{table}/semantic` | Which definitions depend on this table. Optional `column` narrows it. Requires `metadata` tier. |
+| `GET /api/workspaces/{workspace}/semantic/models` | List models. Optional `status` filter. A model binding any table the caller cannot read is absent, not forbidden. |
+| `POST /api/workspaces/{workspace}/semantic/models` | Create a model. Requires workspace **writer**. |
+| `GET /api/workspaces/{workspace}/semantic/models/{model}` | One model with its datasets, dimensions, metrics and relationships. |
+| `PATCH /api/workspaces/{workspace}/semantic/models/{model}` | Rename or re-describe. **409** on an imported model — a model has one owner. |
+| `DELETE /api/workspaces/{workspace}/semantic/models/{model}` | Delete. Requires workspace **owner**. |
+| `POST /api/workspaces/{workspace}/semantic/models/{model}/publish` | Make the model authoritative to the assistant. Validates first; **422** if anything is broken. Requires workspace **owner**. |
+| `POST /api/workspaces/{workspace}/semantic/models/{model}/deprecate` | Retire it: still readable, excluded from new answers. Requires **owner**. |
+| `POST /api/workspaces/{workspace}/semantic/models/{model}/validate` | Resolve every binding against the live catalog and record the outcome. |
+| `POST /api/workspaces/{workspace}/semantic/models/{model}/{datasets,dimensions,metrics,relationships}` | Add a definition. Requires **writer**, plus `metadata` tier on any table a dataset binds. **409** if the name is already used in this model. |
+| `PATCH /api/workspaces/{workspace}/semantic/models/{model}/metrics/{metric}` | Edit a metric. Resets its validation state to `unchecked`. |
+| `DELETE /api/workspaces/{workspace}/semantic/models/{model}/{metrics,dimensions,relationships}/{metric,dimension,relationship}` | Remove one definition. Requires **writer**; **409** on an imported model. A dimension is refused with **409** while a metric is measured on it — an absent time axis is indistinguishable from one never set, and would be answered on the dataset's default date. |
+| `DELETE /api/workspaces/{workspace}/semantic/models/{model}/datasets/{dataset}` | Remove a dataset. **409** naming the dependents while any dimension, metric or relationship still binds it — the delete would otherwise cascade to them. |
+| `GET /api/workspaces/{workspace}/semantic/models/{model}/metrics/{metric}/dimensions` | The dimensions this metric can legally be sliced by. |
+| `GET /api/workspaces/{workspace}/semantic/search?q=` | Rank metrics and dimensions against a question. Returns `items`, an `ambiguous` list of equally-matching metrics, and a `broken` list of matching definitions that exist but no longer resolve. |
+| `POST /api/workspaces/{workspace}/semantic/compile` | Compile a metric request to SQL. **Does not execute** — submit the SQL through `POST /api/workspaces/{workspace}/queries` like any other statement. |
+| `POST /api/workspaces/{workspace}/semantic/imports/{provider}` | Publish definitions from a producer, as `text/plain`. `duckhaven` takes a YAML document; `dbt` takes a `manifest.json`. `?reconcile=provider_run` (default) retires models the payload no longer declares. Requires **writer**. |
+| `DELETE /api/workspaces/{workspace}/semantic/imports?provider=<name>` | Remove everything a provider published. Requires workspace **owner**. |
+| `GET /api/workspaces/{workspace}/catalogs/{catalog}/schemas/{schema}/tables/{table}/semantic` | Which definitions depend on this table. Optional `column` narrows it. Requires `metadata` tier. |
 
-`POST /semantic/compile` takes structured input only — metric and dimension names, an operator from a fixed set, values
+`POST /api/workspaces/{workspace}/semantic/compile` takes structured input only — metric and dimension names, an
+operator from a fixed set, values
 as JSON, and a time window as a kind plus a count. There is no field into which SQL can be passed. Refusals come back
 as **422** naming the legal alternatives: an unknown metric lists the real ones, an ambiguous join path names both
 candidates, and a grain a dimension does not support lists the ones it does.
@@ -237,10 +309,10 @@ Read the [lineage](../concepts/lineage.md) graph around a table, and import line
 
 | Method & path | Purpose |
 |---|---|
-| `GET /api/workspaces/{ws}/catalogs/{catalog}/schemas/{schema}/tables/{table}/lineage` | The bounded graph around a table. Requires `metadata` tier on the table. |
-| `POST /api/workspaces/{ws}/lineage/imports` | Import canonical edges from any producer. Requires workspace **writer**, plus `writer` on each target's catalog. |
-| `POST /api/workspaces/{ws}/lineage/imports/{provider}` | Import a producer's own artifact — `dbt` takes a `manifest.json` body, or `{"manifest": …, "catalog": …}` to include column detail. Same authorization. |
-| `DELETE /api/workspaces/{ws}/lineage/imports?provider=<name>` | Remove every edge a retired producer asserted. Requires workspace **owner**. |
+| `GET /api/workspaces/{workspace}/catalogs/{catalog}/schemas/{schema}/tables/{table}/lineage` | The bounded graph around a table. Requires `metadata` tier on the table. |
+| `POST /api/workspaces/{workspace}/lineage/imports` | Import canonical edges from any producer. Requires workspace **writer**, plus `writer` on each target's catalog. |
+| `POST /api/workspaces/{workspace}/lineage/imports/{provider}` | Import a producer's own artifact — `dbt` takes a `manifest.json` body, or `{"manifest": …, "catalog": …}` to include column detail. Same authorization. |
+| `DELETE /api/workspaces/{workspace}/lineage/imports?provider=<name>` | Remove every edge a retired producer asserted. Requires workspace **owner**. |
 
 Read parameters: `direction` (`upstream` \| `downstream` \| `both`, default `both`), `depth` (1–5, default 2), a
 repeatable `provider` filter, and a repeatable `columns_for` taking node keys. The response carries `nodes`, `edges`,
@@ -296,9 +368,9 @@ creator or an admin with the catalogs permission. See
 |---|---|
 | `POST /api/catalogs/{catalog_id}/migrations` | Start a migration. Body: `{"target_storage_backend_id": "<uuid>"}`. Returns **202** with the migration record (`pending`). |
 | `GET /api/catalogs/{catalog_id}/migrations` | List the catalog's migrations, newest first. |
-| `GET /api/catalogs/{catalog_id}/migrations/{id}` | Status and progress (phase, table counts, bytes, per-table state). |
-| `GET /api/catalogs/{catalog_id}/migrations/{id}/logs` | User-facing log stream. `?after=<seq>` returns only events newer than `seq` (incremental polling). |
-| `POST /api/catalogs/{catalog_id}/migrations/{id}/cancel` | Request cancellation (only before cutover). |
+| `GET /api/catalogs/{catalog_id}/migrations/{migration_id}` | Status and progress (phase, table counts, bytes, per-table state). |
+| `GET /api/catalogs/{catalog_id}/migrations/{migration_id}/logs` | User-facing log stream. `?after=<seq>` returns only events newer than `seq` (incremental polling). |
+| `POST /api/catalogs/{catalog_id}/migrations/{migration_id}/cancel` | Request cancellation (only before cutover). |
 
 While a migration is active the catalog is read-only: write queries against a workspace with the migrating catalog
 attached are rejected with **409** (`{"error": "catalog_read_only"}`); reads are unaffected.
@@ -312,9 +384,9 @@ agent — `use` < `operate` < `admin` — rather than by the global `agents:mana
 
 | Tier required | Endpoints |
 |---|---|
-| `use` | `GET /api/admin/agents/{id}`, `GET /api/admin/agents/{id}/monitoring` |
+| `use` | `GET /api/admin/agents/{agent_id}`, `GET /api/admin/agents/{agent_id}/monitoring` |
 | `operate` | `POST …/{id}/restart`, `POST …/{id}/terminate`, `POST …/{id}/disconnect`, `DELETE …/{id}/credential` |
-| `admin` | `DELETE /api/admin/agents/{id}`, and the access endpoints below |
+| `admin` | `DELETE /api/admin/agents/{agent_id}`, and the access endpoints below |
 
 `POST /api/admin/agents/elastic`, `POST /api/admin/agents/bootstrap` and `GET /api/admin/agents/compute-options`
 remain on the global `agents:manage` permission: they are fleet-level, not about one agent. `POST .../elastic` accepts
@@ -331,20 +403,20 @@ Every agent object carries `access_tier` (the requesting caller's tier) and `acc
 
 | Method & path | Purpose |
 |---|---|
-| `GET /api/admin/agents/{id}/access` | The agent's access mode, its grants, and the candidate principals to grant to. |
-| `PATCH /api/admin/agents/{id}/access-mode` | Body: `{"access_mode": "open" \| "restricted"}`. Returns the full access payload. |
-| `PUT /api/admin/agents/{id}/grants` | Upsert a grant. Body: `{"user_id"` **or** `"workspace_id", "tier"}`. **201** on insert, **200** on update. **422** if neither or both principals are given, or if a workspace is granted `admin`. |
-| `DELETE /api/admin/agents/{id}/grants/{grant_id}` | Revoke a grant. **204**. |
+| `GET /api/admin/agents/{agent_id}/access` | The agent's access mode, its grants, and the candidate principals to grant to. |
+| `PATCH /api/admin/agents/{agent_id}/access-mode` | Body: `{"access_mode": "open" \| "restricted"}`. Returns the full access payload. |
+| `PUT /api/admin/agents/{agent_id}/grants` | Upsert a grant. Body: `{"user_id"` **or** `"workspace_id", "tier"}`. **201** on insert, **200** on update. **422** if neither or both principals are given, or if a workspace is granted `admin`. |
+| `DELETE /api/admin/agents/{agent_id}/grants/{grant_id}` | Revoke a grant. **204**. |
 
 ## Waiting for compute
 
 When [elastic compute](../concepts/elastic-compute.md) is enabled, a request can arrive with the pool
 scaled to zero. Submitting a **query** is unaffected: it is already asynchronous, so the run is
 recorded `queued` with a null `agent_id` and dispatches once compute registers — you poll
-`GET /api/queries/{id}` exactly as you would for a busy agent. That now also covers a query naming an
+`GET /api/queries/{query_id}` exactly as you would for a busy agent. That now also covers a query naming an
 idle-terminated elastic agent, which used to be **503**.
 
-Opening a **SQL session** is synchronous, so it cannot simply park. `POST /api/workspaces/{ws}/sql/sessions`
+Opening a **SQL session** is synchronous, so it cannot simply park. `POST /api/workspaces/{workspace}/sql/sessions`
 accepts two optional fields for it:
 
 | Field | Default | Meaning |
@@ -352,7 +424,7 @@ accepts two optional fields for it:
 | `wait_timeout_s` | server default (`SQL_SESSION_WAIT_TIMEOUT_S`, 45s) | How long to block while compute starts. `0` never blocks. Above `SQL_SESSION_MAX_WAIT_TIMEOUT_S` is **422**. |
 | `on_wait_timeout` | `cancel` | `cancel` → **503** with `Retry-After` and `{"error": "compute_starting"}`; `continue` → **202** with the session still `pending`. `0` with `cancel` is **422**. |
 
-A **202** means the session exists but is not usable yet: poll `GET /api/sql/sessions/{id}` until its
+A **202** means the session exists but is not usable yet: poll `GET /api/sql/sessions/{session_id}` until its
 status reads `open` (a statement sent before then is **409** `session_not_open`). A **503** here means
 the compute is still coming up, not that it failed — retry, and the retry lands on the agent that is
 already starting.

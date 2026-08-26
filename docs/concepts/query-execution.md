@@ -117,7 +117,7 @@ enforced agent-side.
 A finished query reports its **column types** alongside its rows, so a client never has to guess them from the values.
 The agent reads the types off the DuckDB result before writing the Parquet file, and reports them with the completion —
 which means they are available from the query's status as soon as it is done, without fetching a page. Both
-`GET /api/queries/{id}` and `GET /api/queries/{id}/rows` carry them as `column_schema`, a list of
+`GET /api/queries/{query_id}` and `GET /api/queries/{query_id}/rows` carry them as `column_schema`, a list of
 `{"name": …, "type": …}` entries.
 
 The `type` is spelled exactly the way DuckDB itself prints a logical type — the same string

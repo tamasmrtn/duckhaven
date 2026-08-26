@@ -11,6 +11,9 @@ cannot quietly land work belonging to a later one. Clearing a phase means
 deleting its marker, never editing the assertion to match the code.
 """
 
+import re
+from pathlib import Path
+
 import pytest
 from fastapi.routing import _IncludedRouter
 
@@ -464,4 +467,21 @@ def test_creation_responses_let_the_caller_reach_what_was_made(spec, operations)
             unreachable.append(f"{method.upper()} {path}")
     assert not unreachable, (
         f"201 returns neither the resource nor a Location:\n{failures(unreachable)}"
+    )
+
+
+def test_every_pagination_exemption_is_documented():
+    """The exemption list above and the one in the conventions page must agree.
+
+    Both are normative and they are edited in different places, so without this
+    a route quietly added to the code list never reaches the page a consumer
+    reads -- and an exemption is exactly the kind of decision that has to be
+    written down to stay a decision rather than an accident.
+    """
+    page = Path(__file__).parents[3] / "docs" / "reference" / "api-conventions.md"
+    cited = set(re.findall(r"`(/[a-z0-9{}_/-]+)`", page.read_text()))
+    undocumented = sorted(BOUNDED_COLLECTIONS - cited)
+    assert not undocumented, (
+        "exempt from pagination but not named in docs/reference/api-conventions.md:\n"
+        f"{failures(undocumented)}"
     )

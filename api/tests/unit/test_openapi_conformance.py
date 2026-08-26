@@ -4,11 +4,9 @@ Every rule in that page that can be checked against the generated schema is
 checked here, so an endpoint that drifts fails CI instead of shipping. Prose
 conventions are advisory; these are not.
 
-Rules that the surface does not satisfy yet are marked ``xfail(strict=True)``
-and carry the phase of docs/developer/api-consistency-plan.md that clears them.
-``strict=True`` matters: a rule that starts passing early also fails, so a phase
-cannot quietly land work belonging to a later one. Clearing a phase means
-deleting its marker, never editing the assertion to match the code.
+A rule the surface cannot satisfy is a rule to argue with on the page, not one
+to weaken here: an assertion edited to match the code it was meant to constrain
+stops being a check at all.
 """
 
 import re
@@ -213,7 +211,7 @@ def failures(items) -> str:
     return "\n".join(f"  {item}" for item in sorted(items))
 
 
-# --- OpenAPI metadata (plan phase 3) ---------------------------------------
+# --- OpenAPI metadata ------------------------------------------------------
 
 
 def test_every_operation_sets_an_explicit_operation_id(operations):
@@ -348,7 +346,7 @@ def test_an_undeclared_error_still_uses_the_envelope(client):
     assert body["error"] == "bad_request", "an unmapped 4xx must not read as a server fault"
 
 
-# --- Pagination and query parameters (plan phases 3 and 5) -----------------
+# --- Pagination and query parameters ---------------------------------------
 
 
 def test_limit_is_always_bounded(operations):
@@ -390,7 +388,7 @@ def test_unbounded_collections_return_the_standard_envelope(operations):
     assert not offenders, f"unbounded collection returning a bare array:\n{failures(offenders)}"
 
 
-# --- Identifiers (plan phase 4) --------------------------------------------
+# --- Identifiers -----------------------------------------------------------
 
 
 def test_no_abbreviated_or_kind_naming_path_parameters(spec):
@@ -426,7 +424,7 @@ def test_path_parameters_are_named_for_their_collection(spec):
 
 def test_no_route_is_served_at_two_paths(spec):
     """The default-catalog shim duplicates the catalog-scoped family. Two routes
-    for one resource is the defect the plan exists to remove.
+    for one resource is the drift these conventions exist to prevent.
     """
     duplicated = []
     for workspace in ("{workspace}", "{ws}"):  # before and after the phase 4 rename
@@ -473,7 +471,7 @@ def test_literal_segments_only_neighbour_uuid_identifiers(spec):
     assert not hazards, f"literal segment beside a non-UUID identifier:\n{failures(hazards)}"
 
 
-# --- Errors and status codes (plan phase 5) --------------------------------
+# --- Errors and status codes -----------------------------------------------
 
 
 def test_every_error_response_uses_the_error_envelope(spec, operations):

@@ -160,5 +160,4 @@ nav:
       - Testing: developer/testing.md
       - Releasing: developer/releasing.md
       - Design system: developer/design-system.md
-      - API consistency plan: developer/api-consistency-plan.md
   - Release notes: release-notes/index.md

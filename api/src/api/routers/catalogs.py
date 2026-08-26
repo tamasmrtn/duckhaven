@@ -13,6 +13,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -220,6 +221,20 @@ async def create_workspace_catalog(
     )
 
 
+async def _attachment(
+    db: AsyncSession, workspace_id: uuid.UUID, catalog_id: uuid.UUID
+) -> WorkspaceCatalog | None:
+    """This workspace's attachment of one catalog, if it has one."""
+    return (
+        await db.execute(
+            select(WorkspaceCatalog).where(
+                WorkspaceCatalog.workspace_id == workspace_id,
+                WorkspaceCatalog.catalog_id == catalog_id,
+            )
+        )
+    ).scalar_one_or_none()
+
+
 @router.put(
     "/workspaces/{workspace}/catalogs/{catalog}",
     response_model=CatalogOut,
@@ -256,29 +271,34 @@ async def attach_workspace_catalog(
     ).scalar_one_or_none()
     if found is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Catalog not found")
-    link = (
-        await db.execute(
-            select(WorkspaceCatalog).where(
-                WorkspaceCatalog.workspace_id == workspace.id,
-                WorkspaceCatalog.catalog_id == found.id,
-            )
-        )
-    ).scalar_one_or_none()
+    link = await _attachment(db, workspace.id, found.id)
 
     if link is None:
-        link = await catalog_service.attach_catalog(
-            db,
-            workspace=workspace,
-            catalog=found,
-            attached_by=user.id,
-            make_default=body.make_default,
+        try:
+            link = await catalog_service.attach_catalog(
+                db,
+                workspace=workspace,
+                catalog=found,
+                attached_by=user.id,
+                make_default=body.make_default,
+            )
+        except IntegrityError:
+            # Two concurrent first attaches: the loser lost the race to the
+            # composite primary key, not to a client error. A PUT is idempotent,
+            # so it reports what the winner created rather than failing.
+            await db.rollback()
+            link = await _attachment(db, workspace.id, found.id)
+        else:
+            response.status_code = status.HTTP_201_CREATED
+            response.headers["Location"] = f"/api/workspaces/{ws}/catalogs/{found.slug}"
+
+    if link is not None and body.make_default != link.is_default:
+        # A PUT replaces state, so the body decides -- including turning the
+        # default off. Clearing it promotes another attachment, because a
+        # workspace with catalogs always has a default.
+        await catalog_service.set_default_catalog(
+            db, workspace_id=workspace.id, link=link, is_default=body.make_default
         )
-        response.status_code = status.HTTP_201_CREATED
-        response.headers["Location"] = f"/api/workspaces/{ws}/catalogs/{found.slug}"
-    elif body.make_default and not link.is_default:
-        # Already attached: a repeat PUT is a no-op except for the one field the
-        # body carries. Idempotent, so it does not 409 the way the old attach did.
-        await catalog_service.set_default_catalog(db, link=link)
     await db.commit()
     return _catalog_out(
         found,
@@ -366,7 +386,7 @@ async def list_catalog_migrations(
     rows, next_cursor, has_more = await paginate(
         db,
         select(CatalogMigration).where(CatalogMigration.catalog_id == catalog_id),
-        sort_columns=[CatalogMigration.created_at, CatalogMigration.id],
+        sort=[CatalogMigration.created_at.desc(), CatalogMigration.id.desc()],
         limit=limit,
         cursor=cursor,
     )

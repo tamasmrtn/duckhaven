@@ -163,3 +163,72 @@ async def test_workspace_health_non_member_forbidden(client, workspace, db_sessi
     await client.post("/auth/login", json={"email": "o@test.local", "password": "pw"})
     resp = await client.get(f"/workspaces/{workspace.slug}/health")
     assert resp.status_code == 403
+
+
+async def test_recommendations_are_most_severe_first(auth_client, workspace, catalog, db_session):
+    """Severity is ranked, not compared as a string.
+
+    `critical` sorts *after* `info` alphabetically, so sorting on the column
+    directly buries exactly the rows this list exists to surface — and with a
+    page size it buries them off the first page entirely.
+    """
+    for i, severity in enumerate(("info", "critical", "warning", "critical")):
+        db_session.add(
+            MaintenanceRecommendation(
+                workspace_id=workspace.id,
+                catalog_id=catalog.id,
+                schema_name="analytics",
+                table_name=f"t{i}",
+                kind=f"kind_{i}",
+                severity=severity,
+                confidence="high",
+                rationale="r",
+                status="open",
+            )
+        )
+    await db_session.commit()
+
+    resp = await auth_client.get("/maintenance/recommendations", params={"status": "open"})
+    assert resp.status_code == 200
+    assert [r["severity"] for r in resp.json()["items"]] == [
+        "critical",
+        "critical",
+        "warning",
+        "info",
+    ]
+
+
+async def test_recommendations_page_in_severity_order(auth_client, workspace, catalog, db_session):
+    """Paging a mixed ordering (severity up, time down) must still cover the
+    collection exactly once — the cursor has to follow the same sort the page
+    was cut on, not a simplified one."""
+    for i, severity in enumerate(("info", "critical", "warning", "critical", "info")):
+        db_session.add(
+            MaintenanceRecommendation(
+                workspace_id=workspace.id,
+                catalog_id=catalog.id,
+                schema_name="analytics",
+                table_name=f"p{i}",
+                kind=f"paged_{i}",
+                severity=severity,
+                confidence="high",
+                rationale="r",
+                status="open",
+            )
+        )
+    await db_session.commit()
+
+    expected = [
+        r["id"] for r in (await auth_client.get("/maintenance/recommendations")).json()["items"]
+    ]
+    walked: list[str] = []
+    cursor: str | None = None
+    for _ in range(len(expected) + 2):
+        params = {"limit": 2} | ({"cursor": cursor} if cursor else {})
+        body = (await auth_client.get("/maintenance/recommendations", params=params)).json()
+        walked += [r["id"] for r in body["items"]]
+        cursor = body["cursor"]
+        if not body["has_more"]:
+            break
+
+    assert walked == expected

@@ -19,7 +19,6 @@ from api.models.query import Query, SavedQuery
 from api.models.user import User
 from api.schemas.page import Page
 from api.schemas.query import (
-    QueriesPageOut,
     QueryCreate,
     QueryOut,
     RowsPageOut,
@@ -377,7 +376,7 @@ async def get_sql_metadata(
         ) from exc
 
 
-@router.get("/workspaces/{workspace}/queries", response_model=QueriesPageOut)
+@router.get("/workspaces/{workspace}/queries", response_model=Page[QueryOut])
 async def list_workspace_queries(
     ws: Annotated[str, Path(alias="workspace")],
     all_workspaces: bool = QueryParam(default=False),
@@ -398,7 +397,7 @@ async def list_workspace_queries(
     limit: int = QueryParam(default=100, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> QueriesPageOut:
+) -> Page[QueryOut]:
     """Query log, newest first. Doubles as the admin audit trail.
 
     Paged with a keyset cursor rather than an offset, because history is written
@@ -534,7 +533,7 @@ async def list_workspace_queries(
     next_cursor = (
         query_history.encode_cursor(rows[-1][0].id, rows[-1][2]) if has_more and rows else None
     )
-    return QueriesPageOut(items=queries, cursor=next_cursor, has_more=has_more)
+    return Page[QueryOut](items=queries, cursor=next_cursor, has_more=has_more)
 
 
 @router.get("/queries/{query_id}", response_model=QueryOut)
@@ -710,7 +709,7 @@ async def list_saved_queries(
         select(SavedQuery, User.name)
         .join(User, SavedQuery.created_by == User.id)
         .where(SavedQuery.workspace_id == workspace.id),
-        sort_columns=[SavedQuery.created_at, SavedQuery.id],
+        sort=[SavedQuery.created_at.desc(), SavedQuery.id.desc()],
         limit=limit,
         cursor=cursor,
     )

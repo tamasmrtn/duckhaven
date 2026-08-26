@@ -96,7 +96,7 @@ async def list_conversations(
             AssistantConversation.workspace_id == workspace.id,
             AssistantConversation.user_id == user.id,
         ),
-        sort_columns=[AssistantConversation.updated_at, AssistantConversation.id],
+        sort=[AssistantConversation.updated_at.desc(), AssistantConversation.id.desc()],
         limit=limit,
         cursor=cursor,
     )

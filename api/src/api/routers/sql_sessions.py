@@ -130,6 +130,17 @@ async def _start_compute(
         "operated at `/sql/sessions/{session_id}`, not under the workspace."
     ),
     responses={
+        201: {
+            "description": "The session was opened.",
+            "headers": {
+                "Location": {
+                    "schema": {"type": "string"},
+                    "description": (
+                        "Where the session is operated: `/api/sql/sessions/{session_id}`."
+                    ),
+                }
+            },
+        },
         202: {
             "description": (
                 "Compute is still starting and `on_wait_timeout=continue` was set. "
@@ -412,7 +423,7 @@ async def list_sessions(
     rows, next_cursor, has_more = await paginate(
         db,
         stmt,
-        sort_columns=[SqlSession.created_at, SqlSession.id],
+        sort=[SqlSession.created_at.desc(), SqlSession.id.desc()],
         limit=limit,
         cursor=cursor,
     )
@@ -450,10 +461,9 @@ async def list_session_statements(
     rows, next_cursor, has_more = await paginate(
         db,
         sa.select(Query).where(Query.session_id == session.id),
-        sort_columns=[Query.started_at, Query.id],
+        sort=[Query.started_at.asc(), Query.id.asc()],
         limit=limit,
         cursor=cursor,
-        descending=False,
     )
     return Page[QueryOut](
         items=[QueryOut.model_validate(r[0], from_attributes=True) for r in rows],

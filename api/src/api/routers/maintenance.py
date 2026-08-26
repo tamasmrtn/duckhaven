@@ -32,6 +32,7 @@ from api.schemas.maintenance import (
 from api.schemas.page import Page
 from api.services.maintenance import scoring
 from api.services.maintenance.read import latest_samples, sample_for_aggregate
+from api.services.maintenance.recommend import SEVERITY_RANK
 from api.services.paging import paginate
 from api.services.workspace import assert_workspace_member, get_workspace, resolve_catalog
 
@@ -143,12 +144,9 @@ async def table_health(
     """One table's health, with the history behind it.
 
     The history is what makes the numbers actionable: a file count that is
-    climbing needs compaction, one that is flat does not.
-
-    On the canonical catalog-scoped path the samples are narrowed to that
-    catalog. The deprecated workspace-scoped path has no catalog to narrow by,
-    so where two attached catalogs hold a table of the same name it reports
-    whichever was sampled most recently."""
+    climbing needs compaction, one that is flat does not. Samples are narrowed to
+    the catalog in the path, so two attached catalogs holding a table of the same
+    name report separately."""
     workspace = await get_workspace(db, ws)
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
@@ -208,6 +206,12 @@ async def table_health(
     )
 
 
+#: `severity` in rank order, for sorting. Shares SEVERITY_RANK with the scanner
+#: so the list and the thing that produced it cannot disagree about "most
+#: severe". Unknown values sort last rather than first.
+_SEVERITY_RANK = sa.case(SEVERITY_RANK, value=MaintenanceRecommendation.severity, else_=99)
+
+
 @router.get("/maintenance/recommendations", response_model=Page[RecommendationOut])
 async def list_recommendations(
     status_filter: list[str] | None = Query(default=None, alias="status"),
@@ -240,10 +244,13 @@ async def list_recommendations(
         stmt,
         # Severity leads the sort, so it leads the cursor too: a page cut on
         # time alone would reorder rows the moment a more severe one landed.
-        sort_columns=[
-            MaintenanceRecommendation.severity,
-            MaintenanceRecommendation.created_at,
-            MaintenanceRecommendation.id,
+        # Ranked, not compared as a string -- `critical` sorts after `info`
+        # alphabetically, which would bury exactly the rows this list exists to
+        # surface.
+        sort=[
+            _SEVERITY_RANK.asc(),
+            MaintenanceRecommendation.created_at.desc(),
+            MaintenanceRecommendation.id.desc(),
         ],
         limit=limit,
         cursor=cursor,

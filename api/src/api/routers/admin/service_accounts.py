@@ -89,10 +89,9 @@ async def list_service_accounts(
     rows, next_cursor, has_more = await paginate(
         db,
         select(User).where(User.auth_provider == SERVICE_ACCOUNT_PROVIDER),
-        sort_columns=[User.created_at, User.id],
+        sort=[User.created_at.asc(), User.id.asc()],
         limit=limit,
         cursor=cursor,
-        descending=False,
     )
     accounts = [r[0] for r in rows]
     counts = await _pat_counts(db, [a.id for a in accounts])

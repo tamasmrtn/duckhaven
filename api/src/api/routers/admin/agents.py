@@ -108,7 +108,7 @@ def _agent_dial_url(request: Request) -> str:
     return f"{ws_scheme}://{host}/agents/connect"
 
 
-@router.post("/bootstrap", response_model=BootstrapTokenOut)
+@router.post("/bootstrap", response_model=BootstrapTokenOut, status_code=status.HTTP_201_CREATED)
 async def bootstrap(
     request: Request,
     admin: User = Depends(require_permission(Permission.AGENTS_MANAGE)),

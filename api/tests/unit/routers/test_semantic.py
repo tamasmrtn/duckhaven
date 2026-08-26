@@ -308,7 +308,7 @@ async def test_search_finds_a_metric_by_synonym(auth_client, ws):
         await auth_client.get(f"/workspaces/{ws}/semantic/search", params={"q": "our turnover"})
     ).json()
 
-    assert body["hits"][0]["name"] == "revenue"
+    assert body["items"][0]["name"] == "revenue"
 
 
 async def test_search_ignores_unpublished_models_by_default(auth_client, ws):
@@ -319,7 +319,7 @@ async def test_search_ignores_unpublished_models_by_default(auth_client, ws):
         await auth_client.get(f"/workspaces/{ws}/semantic/search", params={"q": "revenue"})
     ).json()
 
-    assert body["hits"] == []
+    assert body["items"] == []
 
 
 # ── Compile ───────────────────────────────────────────────────────────────────

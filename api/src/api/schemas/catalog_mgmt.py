@@ -26,7 +26,8 @@ class CatalogCreate(BaseModel):
 
 
 class CatalogAttachRequest(BaseModel):
-    catalog_id: uuid.UUID
+    """Body of the attach PUT. The catalog itself is named in the path."""
+
     make_default: bool = False
 
 

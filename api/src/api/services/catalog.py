@@ -213,6 +213,18 @@ async def list_attachable(db: AsyncSession) -> list[Catalog]:
     return list(rows.scalars().all())
 
 
+async def set_default_catalog(db: AsyncSession, *, link: WorkspaceCatalog) -> None:
+    """Point the workspace's default at ``link``, clearing whichever held it.
+
+    Split out of :func:`attach_catalog` so re-attaching an already-attached
+    catalog can move the default without the duplicate check refusing it: the
+    attach route is a PUT, and a PUT has to be idempotent.
+    """
+    await _clear_default(db, link.workspace_id)
+    link.is_default = True
+    await db.flush()
+
+
 async def _clear_default(db: AsyncSession, workspace_id: uuid.UUID) -> None:
     rows = await db.execute(
         select(WorkspaceCatalog).where(

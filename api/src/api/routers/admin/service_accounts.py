@@ -225,7 +225,7 @@ async def delete_service_account(
 
 
 @router.post(
-    "/{service_account_id}/pat", response_model=PatTokenOut, status_code=status.HTTP_201_CREATED
+    "/{service_account_id}/pats", response_model=PatTokenOut, status_code=status.HTTP_201_CREATED
 )
 async def issue_pat(
     service_account_id: uuid.UUID,
@@ -274,7 +274,7 @@ async def list_pats(
     return list(result.scalars().all())
 
 
-@router.delete("/{service_account_id}/pat/{pat_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{service_account_id}/pats/{pat_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_pat(
     service_account_id: uuid.UUID,
     pat_id: uuid.UUID,

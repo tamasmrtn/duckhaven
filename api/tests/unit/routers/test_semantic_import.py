@@ -368,7 +368,7 @@ async def test_publishing_an_imported_model_is_still_a_deliberate_act(auth_clien
     hits = (
         await auth_client.get(f"/workspaces/{ws}/semantic/search", params={"q": "turnover"})
     ).json()
-    assert hits["hits"] == []
+    assert hits["items"] == []
 
 
 async def test_an_imported_definition_cannot_be_deleted_here(auth_client, ws):

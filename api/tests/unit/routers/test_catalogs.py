@@ -82,13 +82,16 @@ async def test_attach_same_catalog_to_two_workspaces(auth_client, owner, db_sess
     await seed_workspace(db_session, user_id=owner.id, slug="prod", name="Prod")
 
     created = await auth_client.post("/workspaces/dev/catalogs", json={"name": "shared"})
-    catalog_id = created.json()["id"]
+    catalog = created.json()["slug"]
 
-    attach = await auth_client.post(
-        "/workspaces/prod/catalogs/attach", json={"catalog_id": catalog_id}
-    )
-    assert attach.status_code == 200, attach.text
+    # A PUT on the attachment's own address: 201 the first time it is created.
+    attach = await auth_client.put(f"/workspaces/prod/catalogs/{catalog}", json={})
+    assert attach.status_code == 201, attach.text
     assert attach.json()["attached_workspaces"] == 2
+
+    # Idempotent: attaching again updates rather than conflicting.
+    again = await auth_client.put(f"/workspaces/prod/catalogs/{catalog}", json={})
+    assert again.status_code == 200, again.text
 
     prod_catalogs = {c["slug"] for c in (await auth_client.get("/workspaces/prod/catalogs")).json()}
     assert "shared" in prod_catalogs
@@ -207,3 +210,34 @@ async def test_create_catalog_rejects_unknown_access_mode(
         "/workspaces/bad/catalogs", json={"name": "nope", "access_mode": "restricted"}
     )
     assert resp.status_code == 422
+
+
+async def test_attach_is_idempotent_and_can_move_the_default(
+    auth_client, owner, db_session, fake_polaris
+):
+    """The attach route is a PUT, so repeating it is a no-op rather than the 409
+    the old POST raised — and the one field the body carries still takes effect
+    on the repeat."""
+    await seed_workspace(db_session, user_id=owner.id, slug="ws1", name="WS1")
+    await seed_workspace(db_session, user_id=owner.id, slug="ws2", name="WS2")
+    catalog = (await auth_client.post("/workspaces/ws1/catalogs", json={"name": "shared"})).json()[
+        "slug"
+    ]
+
+    created = await auth_client.put(f"/workspaces/ws2/catalogs/{catalog}", json={})
+    assert created.status_code == 201, created.text
+
+    repeated = await auth_client.put(f"/workspaces/ws2/catalogs/{catalog}", json={})
+    assert repeated.status_code == 200, repeated.text
+
+    # The repeat still applies the body: `shared` was not ws2's default before.
+    moved = await auth_client.put(
+        f"/workspaces/ws2/catalogs/{catalog}", json={"make_default": True}
+    )
+    assert moved.status_code == 200, moved.text
+    listing = {
+        c["slug"]: c["is_default"]
+        for c in (await auth_client.get("/workspaces/ws2/catalogs")).json()
+    }
+    assert listing[catalog] is True
+    assert sum(1 for v in listing.values() if v) == 1

@@ -68,9 +68,8 @@ async def _make_workspace(
 ) -> str:
     resp = await auth_client.post("/workspaces", json={"slug": slug, "name": slug.title()})
     assert resp.status_code == 201, resp.text
-    # Workspaces no longer auto-create a catalog; attach a default one (its
-    # polaris_name defaults to the catalog slug == the workspace slug) so the
-    # legacy default-catalog schema routes these tests exercise resolve.
+    # Workspaces no longer auto-create a catalog; attach one whose slug matches
+    # the workspace slug, so the catalog-scoped paths below read cleanly.
     cat = await auth_client.post(
         f"/workspaces/{slug}/catalogs",
         json={"name": slug.replace("-", "_"), "storage_backend_id": str(backend.id)},
@@ -88,7 +87,7 @@ async def test_list_schemas_self_heals_catalog(
     slug = await _make_workspace(auth_client, backend, "alpha")
     # The eager workspace-create path already provisioned the catalog +
     # main schema. Sanity-check that list returns the default schema.
-    resp = await auth_client.get(f"/workspaces/{slug}/schemas")
+    resp = await auth_client.get(f"/workspaces/{slug}/catalogs/{slug}/schemas")
     assert resp.status_code == 200
     names = {row["name"] for row in resp.json()}
     assert "analytics" in names
@@ -108,7 +107,7 @@ async def test_list_schemas_self_heals_pre_m3_workspace(
     await seed_workspace(db_session, user_id=user_id, slug=slug, name="Pre", role="reader")
 
     assert slug not in fake_polaris.catalogs  # not provisioned in Polaris yet
-    resp = await auth_client.get(f"/workspaces/{slug}/schemas")
+    resp = await auth_client.get(f"/workspaces/{slug}/catalogs/{slug}/schemas")
     assert resp.status_code == 200
     assert slug in fake_polaris.catalogs  # self-healed (polaris_name == slug)
     assert (slug, "analytics") in fake_polaris.schemas
@@ -131,7 +130,9 @@ async def test_create_schema_requires_writer(
     db_session.add(WorkspaceMember(workspace_id=ws.id, user_id=user.id, role="reader"))
     await db_session.commit()
 
-    resp = await auth_client.post(f"/workspaces/{slug}/schemas", json={"name": "staging"})
+    resp = await auth_client.post(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas", json={"name": "staging"}
+    )
     assert resp.status_code == 403
 
 
@@ -139,7 +140,9 @@ async def test_create_schema_happy(
     auth_client: AsyncClient, backend: StorageBackend, fake_polaris: FakePolaris
 ):
     slug = await _make_workspace(auth_client, backend, "alpha")
-    resp = await auth_client.post(f"/workspaces/{slug}/schemas", json={"name": "staging"})
+    resp = await auth_client.post(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas", json={"name": "staging"}
+    )
     assert resp.status_code == 201, resp.text
     body = resp.json()
     assert body["name"] == "staging"
@@ -150,8 +153,12 @@ async def test_create_schema_happy(
 
 async def test_create_schema_duplicate_is_409(auth_client: AsyncClient, backend: StorageBackend):
     slug = await _make_workspace(auth_client, backend, "alpha")
-    await auth_client.post(f"/workspaces/{slug}/schemas", json={"name": "analytics"})
-    resp = await auth_client.post(f"/workspaces/{slug}/schemas", json={"name": "analytics"})
+    await auth_client.post(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas", json={"name": "analytics"}
+    )
+    resp = await auth_client.post(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas", json={"name": "analytics"}
+    )
     assert resp.status_code == 409
 
 
@@ -163,7 +170,7 @@ async def test_non_member_cannot_list(
     db_session.add(ws)
     await db_session.commit()
 
-    resp = await auth_client.get("/workspaces/other/schemas")
+    resp = await auth_client.get("/workspaces/other/catalogs/other/schemas")
     assert resp.status_code == 403
 
 
@@ -175,7 +182,7 @@ async def test_create_table_is_iceberg_with_mapped_columns(
 ):
     slug = await _make_workspace(auth_client, backend, "alpha")
     resp = await auth_client.post(
-        f"/workspaces/{slug}/schemas/main/tables",
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables",
         json={
             "name": "events",
             "columns": [
@@ -203,7 +210,7 @@ async def test_create_table_is_iceberg_with_mapped_columns(
 async def test_create_table_rejects_unknown_type(auth_client: AsyncClient, backend: StorageBackend):
     slug = await _make_workspace(auth_client, backend, "alpha")
     resp = await auth_client.post(
-        f"/workspaces/{slug}/schemas/main/tables",
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables",
         json={
             "name": "weird",
             "columns": [{"name": "blob", "type": "BLOB"}],
@@ -215,10 +222,10 @@ async def test_create_table_rejects_unknown_type(auth_client: AsyncClient, backe
 async def test_list_tables_returns_created_one(auth_client: AsyncClient, backend: StorageBackend):
     slug = await _make_workspace(auth_client, backend, "alpha")
     await auth_client.post(
-        f"/workspaces/{slug}/schemas/main/tables",
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables",
         json={"name": "events", "columns": [{"name": "id", "type": "BIGINT"}]},
     )
-    resp = await auth_client.get(f"/workspaces/{slug}/schemas/main/tables")
+    resp = await auth_client.get(f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables")
     assert resp.status_code == 200
     names = [t["name"] for t in resp.json()]
     assert names == ["events"]
@@ -226,7 +233,7 @@ async def test_list_tables_returns_created_one(auth_client: AsyncClient, backend
 
 async def test_get_table_404(auth_client: AsyncClient, backend: StorageBackend):
     slug = await _make_workspace(auth_client, backend, "alpha")
-    resp = await auth_client.get(f"/workspaces/{slug}/schemas/main/tables/ghost")
+    resp = await auth_client.get(f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables/ghost")
     assert resp.status_code == 404
 
 
@@ -235,7 +242,7 @@ async def test_get_table_404(auth_client: AsyncClient, backend: StorageBackend):
 
 async def _make_table(auth_client: AsyncClient, slug: str, name: str = "events") -> None:
     resp = await auth_client.post(
-        f"/workspaces/{slug}/schemas/main/tables",
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables",
         json={"name": name, "columns": [{"name": "id", "type": "BIGINT"}]},
     )
     assert resp.status_code == 201, resp.text
@@ -264,7 +271,9 @@ async def test_list_snapshots_returns_history(
             summary={"operation": "append", "added-records": "5"},
         ),
     ]
-    resp = await auth_client.get(f"/workspaces/{slug}/schemas/main/tables/events/snapshots")
+    resp = await auth_client.get(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables/events/snapshots"
+    )
     assert resp.status_code == 200, resp.text
     rows = resp.json()
     assert [r["snapshot_id"] for r in rows] == ["9223372036854775807", "11"]
@@ -282,7 +291,9 @@ async def test_list_snapshots_empty_for_table_without_history(
 ):
     slug = await _make_workspace(auth_client, backend, "alpha")
     await _make_table(auth_client, slug)
-    resp = await auth_client.get(f"/workspaces/{slug}/schemas/main/tables/events/snapshots")
+    resp = await auth_client.get(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables/events/snapshots"
+    )
     assert resp.status_code == 200
     assert resp.json() == []
 
@@ -291,7 +302,9 @@ async def test_list_snapshots_404_for_unknown_table(
     auth_client: AsyncClient, backend: StorageBackend
 ):
     slug = await _make_workspace(auth_client, backend, "alpha")
-    resp = await auth_client.get(f"/workspaces/{slug}/schemas/main/tables/ghost/snapshots")
+    resp = await auth_client.get(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables/ghost/snapshots"
+    )
     assert resp.status_code == 404
 
 
@@ -301,7 +314,9 @@ async def test_list_snapshots_non_member_denied(
     ws = Workspace(slug="other", name="Other")
     db_session.add(ws)
     await db_session.commit()
-    resp = await auth_client.get("/workspaces/other/schemas/main/tables/events/snapshots")
+    resp = await auth_client.get(
+        "/workspaces/other/catalogs/other/schemas/main/tables/events/snapshots"
+    )
     assert resp.status_code == 403
 
 
@@ -322,7 +337,7 @@ async def test_create_table_requires_writer(
     await db_session.commit()
 
     resp = await auth_client.post(
-        f"/workspaces/{slug}/schemas/main/tables",
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables",
         json={"name": "events", "columns": [{"name": "id", "type": "BIGINT"}]},
     )
     assert resp.status_code == 403
@@ -336,19 +351,21 @@ async def test_drop_table_writer(
 ):
     slug = await _make_workspace(auth_client, backend, "alpha")
     await auth_client.post(
-        f"/workspaces/{slug}/schemas/main/tables",
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables",
         json={"name": "events", "columns": [{"name": "id", "type": "BIGINT"}]},
     )
     assert (slug, "main", "events") in fake_polaris.tables
 
-    resp = await auth_client.delete(f"/workspaces/{slug}/schemas/main/tables/events")
+    resp = await auth_client.delete(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables/events"
+    )
     assert resp.status_code == 204
     assert (slug, "main", "events") not in fake_polaris.tables
 
 
 async def test_drop_table_missing_is_404(auth_client: AsyncClient, backend: StorageBackend):
     slug = await _make_workspace(auth_client, backend, "alpha")
-    resp = await auth_client.delete(f"/workspaces/{slug}/schemas/main/tables/ghost")
+    resp = await auth_client.delete(f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables/ghost")
     assert resp.status_code == 404
 
 
@@ -362,13 +379,15 @@ async def test_drop_table_removes_sidecar(
 
     slug = await _make_workspace(auth_client, backend, "alpha")
     await auth_client.post(
-        f"/workspaces/{slug}/schemas/main/tables",
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables",
         json={"name": "events", "columns": [{"name": "id", "type": "BIGINT"}]},
     )
     rows = (await db_session.execute(select(TableMetadata))).scalars().all()
     assert any(r.table_name == "events" for r in rows)
 
-    resp = await auth_client.delete(f"/workspaces/{slug}/schemas/main/tables/events")
+    resp = await auth_client.delete(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables/events"
+    )
     assert resp.status_code == 204
     rows = (await db_session.execute(select(TableMetadata))).scalars().all()
     assert not any(r.table_name == "events" for r in rows)
@@ -381,10 +400,10 @@ async def test_drop_schema_empty(
     auth_client: AsyncClient, backend: StorageBackend, fake_polaris: FakePolaris
 ):
     slug = await _make_workspace(auth_client, backend, "alpha")
-    await auth_client.post(f"/workspaces/{slug}/schemas", json={"name": "staging"})
+    await auth_client.post(f"/workspaces/{slug}/catalogs/{slug}/schemas", json={"name": "staging"})
     assert (slug, "staging") in fake_polaris.schemas
 
-    resp = await auth_client.delete(f"/workspaces/{slug}/schemas/staging")
+    resp = await auth_client.delete(f"/workspaces/{slug}/catalogs/{slug}/schemas/staging")
     assert resp.status_code == 204
     assert (slug, "staging") not in fake_polaris.schemas
 
@@ -393,13 +412,13 @@ async def test_drop_schema_non_empty_requires_cascade(
     auth_client: AsyncClient, backend: StorageBackend, fake_polaris: FakePolaris
 ):
     slug = await _make_workspace(auth_client, backend, "alpha")
-    await auth_client.post(f"/workspaces/{slug}/schemas", json={"name": "staging"})
+    await auth_client.post(f"/workspaces/{slug}/catalogs/{slug}/schemas", json={"name": "staging"})
     await auth_client.post(
-        f"/workspaces/{slug}/schemas/staging/tables",
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/staging/tables",
         json={"name": "events", "columns": [{"name": "id", "type": "BIGINT"}]},
     )
 
-    resp = await auth_client.delete(f"/workspaces/{slug}/schemas/staging")
+    resp = await auth_client.delete(f"/workspaces/{slug}/catalogs/{slug}/schemas/staging")
     assert resp.status_code == 409
     assert "events" in resp.json()["message"]
     assert (slug, "staging") in fake_polaris.schemas  # not dropped
@@ -413,13 +432,15 @@ async def test_drop_schema_cascade_drops_tables(
     from api.models.table_metadata import TableMetadata
 
     slug = await _make_workspace(auth_client, backend, "alpha")
-    await auth_client.post(f"/workspaces/{slug}/schemas", json={"name": "staging"})
+    await auth_client.post(f"/workspaces/{slug}/catalogs/{slug}/schemas", json={"name": "staging"})
     await auth_client.post(
-        f"/workspaces/{slug}/schemas/staging/tables",
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/staging/tables",
         json={"name": "events", "columns": [{"name": "id", "type": "BIGINT"}]},
     )
 
-    resp = await auth_client.delete(f"/workspaces/{slug}/schemas/staging?cascade=true")
+    resp = await auth_client.delete(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/staging?cascade=true"
+    )
     assert resp.status_code == 204
     assert (slug, "staging") not in fake_polaris.schemas
     assert (slug, "staging", "events") not in fake_polaris.tables
@@ -451,7 +472,7 @@ async def test_polaris_error_maps_to_http_response(
     slug = await _make_workspace(auth_client, backend, "alpha")
     fake_polaris.raise_on_list_tables = exc
 
-    resp = await auth_client.get(f"/workspaces/{slug}/schemas/main/tables")
+    resp = await auth_client.get(f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables")
     assert resp.status_code == expected_status
     assert resp.json()["message"] == str(exc)
 
@@ -472,7 +493,7 @@ async def test_drop_schema_requires_writer(
     db_session.add(WorkspaceMember(workspace_id=ws.id, user_id=user.id, role="reader"))
     await db_session.commit()
 
-    resp = await auth_client.delete(f"/workspaces/{slug}/schemas/analytics")
+    resp = await auth_client.delete(f"/workspaces/{slug}/catalogs/{slug}/schemas/analytics")
     assert resp.status_code == 403
 
 
@@ -482,7 +503,7 @@ async def test_drop_schema_requires_writer(
 async def test_create_table_enriches_metadata(auth_client: AsyncClient, backend: StorageBackend):
     slug = await _make_workspace(auth_client, backend, "alpha")
     resp = await auth_client.post(
-        f"/workspaces/{slug}/schemas/main/tables",
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables",
         json={"name": "events", "columns": [{"name": "id", "type": "BIGINT"}]},
     )
     assert resp.status_code == 201, resp.text
@@ -505,7 +526,7 @@ async def test_table_detail_surfaces_row_count_estimate_without_refresh(
     the exact (agent-probed) `row_count`."""
     slug = await _make_workspace(auth_client, backend, "alpha")
     await auth_client.post(
-        f"/workspaces/{slug}/schemas/main/tables",
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables",
         json={"name": "events", "columns": [{"name": "id", "type": "BIGINT"}]},
     )
     fake_polaris.tables[(slug, "main", "events")].current_snapshot_summary = {
@@ -513,7 +534,9 @@ async def test_table_detail_surfaces_row_count_estimate_without_refresh(
         "total-records": "42",
     }
 
-    body = (await auth_client.get(f"/workspaces/{slug}/schemas/main/tables/events")).json()
+    body = (
+        await auth_client.get(f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables/events")
+    ).json()
     assert body["row_count_estimate"] == 42
 
 
@@ -522,10 +545,12 @@ async def test_table_detail_row_count_estimate_null_without_snapshots(
 ):
     slug = await _make_workspace(auth_client, backend, "alpha")
     await auth_client.post(
-        f"/workspaces/{slug}/schemas/main/tables",
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables",
         json={"name": "events", "columns": [{"name": "id", "type": "BIGINT"}]},
     )
-    body = (await auth_client.get(f"/workspaces/{slug}/schemas/main/tables/events")).json()
+    body = (
+        await auth_client.get(f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables/events")
+    ).json()
     assert body["row_count_estimate"] is None
 
 
@@ -544,7 +569,7 @@ async def test_table_detail_surfaces_iceberg_metadata(
 
     slug = await _make_workspace(auth_client, backend, "alpha")
     await auth_client.post(
-        f"/workspaces/{slug}/schemas/main/tables",
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables",
         json={"name": "events", "columns": [{"name": "id", "type": "BIGINT"}]},
     )
     # Polaris reports the Iceberg format version on load.
@@ -580,7 +605,9 @@ async def test_table_detail_surfaces_iceberg_metadata(
         ),
     )
 
-    body = (await auth_client.get(f"/workspaces/{slug}/schemas/main/tables/events")).json()
+    body = (
+        await auth_client.get(f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables/events")
+    ).json()
     assert body["format_version"] == 2
     # 64-bit snapshot ids are serialized as strings to dodge JS precision loss.
     assert body["snapshot_id"] == "7264354987654321234"
@@ -593,8 +620,10 @@ async def test_list_schemas_includes_workspace_id(
     auth_client: AsyncClient, backend: StorageBackend
 ):
     slug = await _make_workspace(auth_client, backend, "alpha")
-    await auth_client.post(f"/workspaces/{slug}/schemas", json={"name": "analytics"})
-    resp = await auth_client.get(f"/workspaces/{slug}/schemas")
+    await auth_client.post(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas", json={"name": "analytics"}
+    )
+    resp = await auth_client.get(f"/workspaces/{slug}/catalogs/{slug}/schemas")
     assert resp.status_code == 200
     assert all(isinstance(s["workspace_id"], str) for s in resp.json())
 
@@ -605,10 +634,12 @@ async def test_list_schemas_includes_workspace_id(
 async def test_sample_503_when_no_agent(auth_client: AsyncClient, backend: StorageBackend):
     slug = await _make_workspace(auth_client, backend, "alpha")
     await auth_client.post(
-        f"/workspaces/{slug}/schemas/main/tables",
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables",
         json={"name": "events", "columns": [{"name": "id", "type": "BIGINT"}]},
     )
-    resp = await auth_client.get(f"/workspaces/{slug}/schemas/main/tables/events/sample")
+    resp = await auth_client.get(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables/events/sample"
+    )
     assert resp.status_code == 503
 
 
@@ -626,7 +657,7 @@ async def test_sample_returns_rows(auth_client: AsyncClient, backend: StorageBac
 
     slug = await _make_workspace(auth_client, backend, "alpha")
     await auth_client.post(
-        f"/workspaces/{slug}/schemas/main/tables",
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables",
         json={"name": "events", "columns": [{"name": "id", "type": "BIGINT"}]},
     )
 
@@ -666,7 +697,9 @@ async def test_sample_returns_rows(auth_client: AsyncClient, backend: StorageBac
     monkeypatch.setattr(query_service, "agent_session_token", fake_token)
     monkeypatch.setattr(query_service, "proxy_rows", fake_proxy)
 
-    resp = await auth_client.get(f"/workspaces/{slug}/schemas/main/tables/events/sample")
+    resp = await auth_client.get(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables/events/sample"
+    )
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["columns"] == ["id"]
@@ -691,7 +724,9 @@ async def test_drop_table_requires_writer(
     db_session.add(WorkspaceMember(workspace_id=ws.id, user_id=user.id, role="reader"))
     await db_session.commit()
 
-    resp = await auth_client.delete(f"/workspaces/{slug}/schemas/main/tables/events")
+    resp = await auth_client.delete(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables/events"
+    )
     assert resp.status_code == 403
 
 
@@ -753,9 +788,9 @@ async def test_refresh_stats_probes_only_tables_missing_a_count(
 ):
     slug = await _make_workspace(auth_client, backend, "alpha")
     # A table created through the dialog already carries a (zero) count sidecar.
-    await auth_client.post(f"/workspaces/{slug}/schemas", json={"name": "main"})
+    await auth_client.post(f"/workspaces/{slug}/catalogs/{slug}/schemas", json={"name": "main"})
     await auth_client.post(
-        f"/workspaces/{slug}/schemas/main/tables",
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables",
         json={"name": "dialog_tbl", "columns": [{"name": "id", "type": "INTEGER"}]},
     )
     # Two worksheet-created tables have no sidecar at all.
@@ -763,7 +798,7 @@ async def test_refresh_stats_probes_only_tables_missing_a_count(
     _seed_worksheet_table(fake_polaris, slug, "main", "ws_b")
 
     calls = _patch_probe(monkeypatch)
-    resp = await auth_client.post(f"/workspaces/{slug}/schemas/refresh-stats")
+    resp = await auth_client.post(f"/workspaces/{slug}/catalogs/{slug}/refresh-stats")
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["probed"] == 2
@@ -775,14 +810,14 @@ async def test_refresh_stats_noop_when_every_table_has_a_count(
     auth_client: AsyncClient, backend: StorageBackend, fake_polaris: FakePolaris, monkeypatch
 ):
     slug = await _make_workspace(auth_client, backend, "alpha")
-    await auth_client.post(f"/workspaces/{slug}/schemas", json={"name": "main"})
+    await auth_client.post(f"/workspaces/{slug}/catalogs/{slug}/schemas", json={"name": "main"})
     await auth_client.post(
-        f"/workspaces/{slug}/schemas/main/tables",
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables",
         json={"name": "dialog_tbl", "columns": [{"name": "id", "type": "INTEGER"}]},
     )
 
     calls = _patch_probe(monkeypatch)
-    resp = await auth_client.post(f"/workspaces/{slug}/schemas/refresh-stats")
+    resp = await auth_client.post(f"/workspaces/{slug}/catalogs/{slug}/refresh-stats")
 
     assert resp.status_code == 200
     assert resp.json()["probed"] == 0
@@ -799,7 +834,7 @@ async def test_refresh_stats_503_when_no_agent_connected(
         return None
 
     monkeypatch.setattr(query_module, "pick_agent_for", no_agent)
-    resp = await auth_client.post(f"/workspaces/{slug}/schemas/refresh-stats")
+    resp = await auth_client.post(f"/workspaces/{slug}/catalogs/{slug}/refresh-stats")
     assert resp.status_code == 503
 
 
@@ -810,7 +845,7 @@ async def test_refresh_stats_non_member_forbidden(
     db_session.add(ws)
     await db_session.commit()
 
-    resp = await auth_client.post("/workspaces/other/schemas/refresh-stats")
+    resp = await auth_client.post("/workspaces/other/catalogs/other/refresh-stats")
     assert resp.status_code == 403
 
 
@@ -823,14 +858,16 @@ async def test_recount_reprobes_even_an_already_counted_table(
     """Recount re-measures regardless of the cached value — the freshness escape
     hatch the workspace-wide refresh deliberately skips."""
     slug = await _make_workspace(auth_client, backend, "alpha")
-    await auth_client.post(f"/workspaces/{slug}/schemas", json={"name": "main"})
+    await auth_client.post(f"/workspaces/{slug}/catalogs/{slug}/schemas", json={"name": "main"})
     await auth_client.post(
-        f"/workspaces/{slug}/schemas/main/tables",
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables",
         json={"name": "events", "columns": [{"name": "id", "type": "INTEGER"}]},
     )
 
     calls = _patch_probe(monkeypatch)  # upserts row_count=99
-    resp = await auth_client.post(f"/workspaces/{slug}/schemas/main/tables/events/recount")
+    resp = await auth_client.post(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables/events/recount"
+    )
 
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"row_count": 99}
@@ -841,7 +878,9 @@ async def test_recount_404_for_unknown_table(
     auth_client: AsyncClient, backend: StorageBackend, fake_polaris: FakePolaris
 ):
     slug = await _make_workspace(auth_client, backend, "alpha")
-    resp = await auth_client.post(f"/workspaces/{slug}/schemas/main/tables/ghost/recount")
+    resp = await auth_client.post(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables/ghost/recount"
+    )
     assert resp.status_code == 404
 
 
@@ -855,7 +894,9 @@ async def test_recount_503_when_no_agent_connected(
         return None
 
     monkeypatch.setattr(query_module, "pick_agent_for", no_agent)
-    resp = await auth_client.post(f"/workspaces/{slug}/schemas/main/tables/events/recount")
+    resp = await auth_client.post(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables/events/recount"
+    )
     assert resp.status_code == 503
 
 
@@ -866,5 +907,7 @@ async def test_recount_non_member_forbidden(
     db_session.add(ws)
     await db_session.commit()
 
-    resp = await auth_client.post("/workspaces/other/schemas/main/tables/events/recount")
+    resp = await auth_client.post(
+        "/workspaces/other/catalogs/other/schemas/main/tables/events/recount"
+    )
     assert resp.status_code == 403

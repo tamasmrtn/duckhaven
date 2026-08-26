@@ -38,7 +38,6 @@ from api.models.semantic import (
     SemanticRelationship,
 )
 from api.models.user import User
-from api.openapi import LEGACY_SUFFIX
 from api.schemas.semantic import (
     CompiledQueryOut,
     DatasetIn,
@@ -1124,7 +1123,7 @@ async def semantic_search(
     loaded = [await load_model(db, row, include_unpublished=not published_only) for row in rows]
     hits = search(loaded, q, limit=limit)
     return SemanticSearchOut(
-        hits=[h.as_dict() for h in hits],
+        items=[h.as_dict() for h in hits],
         ambiguous=[h.as_dict() for h in ambiguous(hits)],
         broken=search_broken(loaded, q),
     )
@@ -1382,18 +1381,9 @@ async def table_semantics(
     return TableSemanticsOut(dependents=[DependentOut(**d.as_dict()) for d in found])
 
 
-# Registered under both bases, matching the lineage read route: the canonical
-# per-catalog path and the legacy shim that resolves the workspace default.
-_CANON = "/workspaces/{workspace}/catalogs/{catalog}/schemas"
-_LEGACY = "/workspaces/{workspace}/schemas"
-
-for _base in (_CANON, _LEGACY):
-    router.add_api_route(
-        f"{_base}/{{schema}}/tables/{{table}}/semantic",
-        table_semantics,
-        methods=["GET"],
-        response_model=TableSemanticsOut,
-        # The shim shares the canonical handler, so its operation id would collide.
-        operation_id=(table_semantics.__name__ + (LEGACY_SUFFIX if _base is _LEGACY else "")),
-        deprecated=_base is _LEGACY,
-    )
+router.add_api_route(
+    "/workspaces/{workspace}/catalogs/{catalog}/schemas/{schema}/tables/{table}/semantic",
+    table_semantics,
+    methods=["GET"],
+    response_model=TableSemanticsOut,
+)

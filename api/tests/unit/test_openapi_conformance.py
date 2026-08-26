@@ -15,9 +15,10 @@ import re
 from pathlib import Path
 
 import pytest
-from fastapi.routing import _IncludedRouter
+from fastapi.testclient import TestClient
 
 from api.main import api_app
+from api.openapi import _child_routes
 
 METHODS = ("get", "post", "put", "patch", "delete")
 
@@ -121,6 +122,13 @@ def spec() -> dict:
 
 
 @pytest.fixture(scope="module")
+def client() -> TestClient:
+    """A client that reaches the real routers. No database is set up, so only
+    responses produced before a handler touches one are meaningful here."""
+    return TestClient(api_app, raise_server_exceptions=False)
+
+
+@pytest.fixture(scope="module")
 def operations(spec) -> list[tuple[str, str, dict]]:
     """Every (path, method, operation) in the REST surface."""
     return [
@@ -143,13 +151,14 @@ def dependency_names() -> dict[tuple[str, str], set[str]]:
     def routes(collection):
         """Flatten the router tree to routes with their prefixes applied.
 
-        ``include_router`` wraps each child in an ``_IncludedRouter`` whose
-        ``effective_candidates()`` carry the combined path; the raw
-        ``original_router.routes`` still hold the unprefixed paths.
+        Shares `_child_routes` with the production code deliberately: if a
+        FastAPI upgrade changes how `include_router` nests, both should stop
+        walking the tree the same way rather than disagreeing silently.
         """
         for route in collection:
-            if isinstance(route, _IncludedRouter):
-                yield from routes(route.effective_candidates())
+            children = _child_routes(route)
+            if children is not None:
+                yield from routes(children)
             elif hasattr(route, "dependant") and hasattr(route, "methods"):
                 yield route
 
@@ -271,38 +280,72 @@ def test_authentication_is_described_as_a_security_scheme(spec, operations):
     assert not leaked, f"credentials documented as parameters:\n{failures(leaked)}"
 
 
-# --- Documented error responses (plan phase 3) -----------------------------
+# --- Documented error responses -------------------------------------------
+
+# `apply_conventions` derives 401/403/404/409/503 from each route, so asserting
+# "every route that should declare X does" only re-runs the derivation and can
+# never fail. These check the derivation against the *server* instead: a
+# hand-written sample of routes whose behaviour was confirmed by reading the
+# handler, plus a live request proving the declared code is the one returned.
 
 
-def test_authenticated_operations_document_401(operations, dependency_names):
-    missing = [
-        f"{method.upper()} {path}"
-        for path, method, op in operations
-        if path not in UNAUTHENTICATED
-        and "get_current_user" in dependency_names.get((path, method.upper()), set())
-        and "401" not in error_codes(op)
-    ]
-    assert not missing, f"depends on get_current_user but documents no 401:\n{failures(missing)}"
+#: (method, path, code) triples read off the handlers by hand. Each is a route
+#: whose 4xx the schema must document; picked to cover every way authorization
+#: happens here -- a dependency guard, a membership check inside the body, and a
+#: conflict raised from a service.
+DECLARED_BY_HAND = [
+    # require_permission dependency
+    ("get", "/admin/users", "403"),
+    # assert_workspace_member, called inside the handler
+    ("get", "/queries/{query_id}", "403"),
+    ("delete", "/queries/{query_id}", "403"),
+    # _load_session, called inside the handler
+    ("get", "/sql/sessions/{session_id}", "403"),
+    # _catalog_for_admin raises 403 directly
+    ("delete", "/catalogs/{catalog_id}", "403"),
+    # conflicts raised in the handler body
+    ("post", "/workspaces", "409"),
+    ("post", "/admin/users", "409"),
+    ("delete", "/admin/storage-backends/{storage_backend_id}", "409"),
+    # 503 when a dependency is down
+    ("get", "/healthz", "503"),
+    ("get", "/readyz", "503"),
+    ("post", "/workspaces/{workspace}/sql/sessions", "503"),
+    # unauthenticated routes must not claim a 401 they cannot return
+    ("get", "/version", "401"),
+    ("get", "/healthz", "401"),
+]
 
 
-def test_permission_guarded_operations_document_403(operations, dependency_names):
-    guards = {"require_permission", "require_agent_tier"}
-    missing = [
-        f"{method.upper()} {path}"
-        for path, method, op in operations
-        if guards & dependency_names.get((path, method.upper()), set())
-        and "403" not in error_codes(op)
-    ]
-    assert not missing, f"permission-guarded but documents no 403:\n{failures(missing)}"
+@pytest.mark.parametrize(("method", "path", "code"), DECLARED_BY_HAND)
+def test_known_error_responses_are_declared(spec, method, path, code):
+    """Each of these was confirmed by reading the handler it belongs to."""
+    operation = spec["paths"][path][method]
+    declared = code in operation.get("responses", {})
+    unauthenticated = path in UNAUTHENTICATED and code == "401"
+    if unauthenticated:
+        assert not declared, f"{method.upper()} {path} cannot return {code} but declares it"
+    else:
+        assert declared, f"{method.upper()} {path} can return {code} but does not declare it"
 
 
-def test_operations_addressing_a_resource_document_404(operations):
-    missing = [
-        f"{method.upper()} {path}"
-        for path, method, op in operations
-        if "{" in path and "404" not in error_codes(op)
-    ]
-    assert not missing, f"addresses a resource by id but documents no 404:\n{failures(missing)}"
+def test_a_declared_401_is_the_401_the_server_sends(client):
+    """The schema says these return 401; prove the server agrees, and that the
+    body is the envelope the schema promises rather than something else."""
+    resp = client.get("/workspaces")
+    assert resp.status_code == 401
+    assert resp.json().keys() == {"error", "message", "details"}
+
+
+def test_an_undeclared_error_still_uses_the_envelope(client):
+    """A status no route declares -- 405 from a wrong method -- must still come
+    back in the envelope, because the contract covers every 4xx and 5xx, not
+    only the ones the schema enumerates."""
+    resp = client.request("DELETE", "/version")
+    assert resp.status_code == 405
+    body = resp.json()
+    assert body.keys() == {"error", "message", "details"}
+    assert body["error"] == "bad_request", "an unmapped 4xx must not read as a server fault"
 
 
 # --- Pagination and query parameters (plan phases 3 and 5) -----------------

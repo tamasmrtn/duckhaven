@@ -6,9 +6,10 @@ actually does it, for each way an error can be raised.
 """
 
 import pytest
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.main import api_app
 from api.models.user import User
 from api.services.auth import hash_password
 from api.services.polaris import PolarisBadRequestError, PolarisNotFoundError
@@ -115,3 +116,45 @@ async def test_polaris_errors_use_the_envelope(
     body = resp.json()
     assert body.keys() == ENVELOPE
     assert "upstream said no" in body["message"]
+
+
+async def test_an_unhandled_exception_still_uses_the_envelope(
+    admin_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    """A crash is exactly when a client most needs a parseable body.
+
+    Without a handler for it, an uncaught exception leaves through Starlette as
+    `text/plain` "Internal Server Error" — the one response the SPA's parser
+    returns nothing for.
+
+    Uses its own transport: the shared client re-raises app exceptions, which is
+    right for every other test and wrong for the one asserting what a caller sees
+    when the app breaks.
+    """
+    from api.routers import workspaces
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(workspaces, "lookup_workspace", _boom)
+    transport = ASGITransport(app=api_app, raise_app_exceptions=False)
+    async with AsyncClient(
+        transport=transport, base_url="http://test", cookies=admin_client.cookies
+    ) as crashing:
+        resp = await crashing.get("/workspaces/anything")
+
+    assert resp.status_code == 500
+    body = resp.json()
+    assert body.keys() == ENVELOPE
+    assert body["error"] == "internal_error"
+    assert "kaboom" not in resp.text, "the traceback must not reach the caller"
+
+
+async def test_an_unmapped_4xx_does_not_read_as_a_server_fault(client: AsyncClient):
+    """405 has no entry in the derived-code table. It must still say the caller
+    got it wrong, not that the server broke."""
+    resp = await client.request("DELETE", "/version")
+    assert resp.status_code == 405
+    body = resp.json()
+    assert body.keys() == ENVELOPE
+    assert body["error"] == "bad_request"

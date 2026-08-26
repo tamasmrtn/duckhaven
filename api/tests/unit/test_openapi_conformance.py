@@ -190,7 +190,6 @@ def failures(items) -> str:
 # --- OpenAPI metadata (plan phase 3) ---------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="plan phase 3: explicit operation ids")
 def test_every_operation_sets_an_explicit_operation_id(operations):
     """FastAPI's generated ids embed the path and method, so they churn on every
     rename and collide semantically (`GET /agents` and `GET /admin/agents` are
@@ -226,7 +225,6 @@ def test_every_operation_has_a_summary_and_description(operations):
     assert not missing, f"missing summary or description:\n{failures(missing)}"
 
 
-@pytest.mark.xfail(strict=True, reason="plan phase 3: split the admin tag")
 def test_every_operation_has_exactly_one_allowed_tag(operations):
     bad = [
         f"{method.upper()} {path} -> {op.get('tags')}"

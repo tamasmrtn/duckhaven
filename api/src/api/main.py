@@ -15,6 +15,7 @@ from starlette.types import Scope
 from api.config import settings
 from api.db.session import async_session_factory
 from api.metrics import PrometheusMiddleware
+from api.openapi import operation_id
 from api.routers import (
     agents,
     agents_ws,
@@ -149,7 +150,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 # The browser-facing REST API. Mounted under /api on the outer app so it shares
 # an origin with the SPA; owns the lifespan-managed PolarisClient state.
-api_app = FastAPI(title="duckhaven-api", version=settings.app_version, lifespan=lifespan)
+api_app = FastAPI(
+    title="duckhaven-api",
+    version=settings.app_version,
+    lifespan=lifespan,
+    generate_unique_id_function=operation_id,
+)
 
 # Record request count/latency by route template (skips the /metrics scrape).
 api_app.add_middleware(PrometheusMiddleware)

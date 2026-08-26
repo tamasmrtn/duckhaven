@@ -28,6 +28,7 @@ from api.models.catalog import Catalog
 from api.models.table_metadata import TableMetadata
 from api.models.user import User
 from api.models.workspace import Workspace
+from api.openapi import LEGACY_SUFFIX
 from api.schemas.catalog import (
     AllowedColumnType,
     CatalogSchemaCreate,
@@ -853,4 +854,11 @@ _ROUTES: list[tuple[str, Callable[..., Any], list[str], dict[str, Any]]] = [
 
 for _suffix, _fn, _methods, _kw in _ROUTES:
     router.add_api_route(_CANON + _suffix, _fn, methods=_methods, **_kw)
-    router.add_api_route(_LEGACY + _suffix, _fn, methods=_methods, **_kw)
+    # The shim shares the canonical handlers, so its operation ids would collide.
+    router.add_api_route(
+        _LEGACY + _suffix,
+        _fn,
+        methods=_methods,
+        operation_id=_fn.__name__ + LEGACY_SUFFIX,
+        **_kw,
+    )

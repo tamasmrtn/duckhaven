@@ -14,7 +14,7 @@ router = APIRouter(prefix="/agents")
 
 
 @router.get("", response_model=list[AgentOut])
-async def list_agents(
+async def list_usable_agents(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[AgentOut]:

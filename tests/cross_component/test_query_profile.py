@@ -65,10 +65,10 @@ async def test_select_profile_persisted_and_served(api_client, workspace, health
     assert 100 in produced  # 100 distinct groups actually produced
 
 
-async def test_ddl_has_null_profile(api_client, workspace, healthy_agent) -> None:
+async def test_ddl_has_null_profile(api_client, workspace, catalog, healthy_agent) -> None:
     agent_id = healthy_agent["id"]
     created = await api_client.post(
-        f"/api/workspaces/{workspace}/schemas/analytics/tables",
+        f"/api/workspaces/{workspace}/catalogs/{catalog}/schemas/analytics/tables",
         json={"name": "prof_ddl", "columns": [{"name": "k", "type": "BIGINT", "nullable": True}]},
     )
     assert created.status_code == 201, created.text

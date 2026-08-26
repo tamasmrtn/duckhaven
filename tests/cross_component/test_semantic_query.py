@@ -48,11 +48,6 @@ async def _scalar(api_client, workspace: str, agent_id: str, sql: str):
     return next(iter(rows[0].values()))
 
 
-@pytest.fixture
-def catalog(workspace: str) -> str:
-    return f"c_{workspace.replace('-', '_')}"
-
-
 async def _seed(api_client, workspace: str, agent_id: str) -> None:
     """A two-table star with a deliberate fan-out trap.
 

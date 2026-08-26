@@ -152,6 +152,7 @@ nav:
       - SQL support: reference/sql-support.md
       - Agent reference: reference/agent-reference.md
       - REST API: reference/rest-api.md
+      - API conventions: reference/api-conventions.md
       - Operator scripts: reference/operator-scripts.md
   - Developer:
       - Local development: developer/development.md
@@ -159,4 +160,5 @@ nav:
       - Testing: developer/testing.md
       - Releasing: developer/releasing.md
       - Design system: developer/design-system.md
+      - API consistency plan: developer/api-consistency-plan.md
   - Release notes: release-notes/index.md

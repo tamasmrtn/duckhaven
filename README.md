@@ -5,15 +5,19 @@
 
 ![Worksheet UI](docs/images/worksheet-dark.png)
 
-Sharing `.duckdb` files over Slack doesn't scale, and there's no self-hosted
-way to get governed, collaborative SQL over DuckDB without taking on an
-enterprise-sized platform.
+A data lakehouse doesn't have to mean handing your data, and your bill, to an
+enterprise vendor. Apache Iceberg brought a transactional table format and
+Apache Polaris brought a real catalog — DuckDB was already there. The only
+piece missing was a control plane to hold the three together, so a small team
+could run its own lakehouse instead of Snowflake's or Databricks'.
 
-DuckHaven gives a team collaborative browser worksheets, a governed Apache
-Iceberg catalog via Apache Polaris, compute that scales to zero between runs,
-scheduled queries, SSO, fine-grained access grants, machine identities, and a
-governed AI data assistant — all in one Docker Compose deploy. No Kubernetes,
-no opaque billing, no platform team required.
+DuckHaven exists to prove that case: sovereignty over your own data, built
+entirely on open source, self-hosted end to end. It gives a team collaborative
+browser worksheets, a governed Apache Iceberg catalog via Apache Polaris,
+compute that scales to zero between runs, scheduled queries, SSO, fine-grained
+access grants, machine identities, and a governed AI data assistant — all in
+one Docker Compose deploy. No Kubernetes, no opaque billing, no platform team
+required.
 
 **Documentation:** <https://tamasmrtn.github.io/duckhaven/>
 

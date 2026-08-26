@@ -87,7 +87,7 @@ async def test_create_query_rejects_disallowed_sql(
     )
     assert resp.status_code == 422
     body = resp.json()
-    assert body["detail"]["error"] == "sql_not_allowed"
+    assert body["error"] == "sql_not_allowed"
     # No frame was sent to the agent.
     assert mock_ws.sent == []
 
@@ -130,7 +130,7 @@ async def test_set_concurrency_invalid_profile_rejected(
         json={"sql": "SET duckhaven_concurrency = 'nope'", "agent_id": str(agent.id)},
     )
     assert resp.status_code == 422
-    assert resp.json()["detail"]["error"] == "sql_not_allowed"
+    assert resp.json()["error"] == "sql_not_allowed"
     assert mock_ws.sent == []
 
 
@@ -243,7 +243,7 @@ async def test_dispatch_rejects_agent_missing_extension(
         json={"sql": "SELECT 1", "agent_id": str(agent.id)},
     )
     assert resp.status_code == 422
-    assert resp.json()["detail"]["error"] == "agent_incompatible"
+    assert resp.json()["error"] == "agent_incompatible"
     assert mock_ws.sent == []
 
 
@@ -1391,7 +1391,7 @@ async def test_elastic_pool_target_requires_flag(authed_client: AsyncClient, wor
         f"/workspaces/{workspace.slug}/queries", json={"sql": "SELECT 1"}
     )
     assert resp.status_code == 422
-    assert resp.json()["detail"]["error"] == "agent_required"
+    assert resp.json()["error"] == "agent_required"
 
 
 async def test_elastic_pool_parks_queued_and_provisions(
@@ -1642,7 +1642,7 @@ async def test_set_concurrency_needs_operate_not_use(
         json={"sql": "SET duckhaven_concurrency = 'single'", "agent_id": str(agent.id)},
     )
     assert resp.status_code == 403
-    assert resp.json()["detail"]["error"] == "agent_forbidden"
+    assert resp.json()["error"] == "agent_forbidden"
 
 
 async def test_elastic_auto_pick_skips_agents_the_caller_cannot_use(

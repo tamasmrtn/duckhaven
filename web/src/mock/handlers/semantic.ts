@@ -1,5 +1,6 @@
 import { http, HttpResponse } from "msw";
 import { SEMANTIC_MODELS, reportFor, summarize } from "../fixtures/semantic";
+import { httpError, validationError } from "../lib/errors";
 import { nextId } from "../lib/seed";
 import type { SemanticHit, SemanticModel } from "@/types/semantic";
 
@@ -116,9 +117,9 @@ export const semanticHandlers = [
       description?: string;
     };
     if (find(body.slug)) {
-      return HttpResponse.json(
-        { detail: `A semantic model called '${body.slug}' already exists.` },
-        { status: 409 },
+      return httpError(
+        409,
+        `A semantic model called '${body.slug}' already exists.`,
       );
     }
     const model: SemanticModel = {
@@ -147,10 +148,7 @@ export const semanticHandlers = [
   http.get("/api/workspaces/:ws/semantic/models/:slug", ({ params }) => {
     const model = find(params.slug as string);
     if (!model) {
-      return HttpResponse.json(
-        { detail: `No semantic model '${params.slug as string}'.` },
-        { status: 404 },
-      );
+      return httpError(404, `No semantic model '${params.slug as string}'.`);
     }
     return HttpResponse.json(model);
   }),
@@ -163,14 +161,10 @@ export const semanticHandlers = [
       // Mirrors the API: a model has one owner, so an import is edited at its
       // source and never here.
       if (model.provider !== "native") {
-        return HttpResponse.json(
-          {
-            detail: {
-              error: "imported_model",
-              detail: `'${model.slug}' was imported from '${model.provider}' and is edited there, not here.`,
-            },
-          },
-          { status: 409 },
+        return validationError(
+          "imported_model",
+          `'${model.slug}' was imported from '${model.provider}' and is edited there, not here.`,
+          409,
         );
       }
       const body = (await request.json()) as {
@@ -214,15 +208,11 @@ export const semanticHandlers = [
           .map((r) => `relationship '${r.name}'`),
       ];
       if (dependents.length > 0) {
-        return HttpResponse.json(
-          {
-            detail: {
-              error: "dataset_in_use",
-              detail: `'${name}' still has ${dependents.join(", ")}. Remove them first — deleting the dataset would delete them too.`,
-              dependents,
-            },
-          },
-          { status: 409 },
+        return validationError(
+          "dataset_in_use",
+          `'${name}' still has ${dependents.join(", ")}. Remove them first — deleting the dataset would delete them too.`,
+          409,
+          { dependents },
         );
       }
       model.datasets = model.datasets.filter((d) => d.name !== name);
@@ -245,15 +235,11 @@ export const semanticHandlers = [
       const measuredOn = model.metrics.filter((m) => m.time_dimension === name);
       if (measuredOn.length > 0) {
         const names = measuredOn.map((m) => m.name).sort();
-        return HttpResponse.json(
-          {
-            detail: {
-              error: "dimension_in_use",
-              detail: `${names.join(", ")} ${names.length === 1 ? "is" : "are"} measured on '${name}'. Rebind or remove ${names.length === 1 ? "it" : "them"} first.`,
-              dependents: names.map((n) => `metric '${n}'`),
-            },
-          },
-          { status: 409 },
+        return validationError(
+          "dimension_in_use",
+          `${names.join(", ")} ${names.length === 1 ? "is" : "are"} measured on '${name}'. Rebind or remove ${names.length === 1 ? "it" : "them"} first.`,
+          409,
+          { dependents: names.map((n) => `metric '${n}'`) },
         );
       }
       model.dimensions = model.dimensions.filter((d) => d.name !== name);
@@ -354,11 +340,9 @@ export const semanticHandlers = [
       const expr = (body.expr as unknown as string) ?? null;
       // Mirrors the API: only count may omit an expression to aggregate.
       if (agg !== "count" && !expr) {
-        return HttpResponse.json(
-          {
-            detail: `${agg} needs an expression to aggregate; only count may omit one.`,
-          },
-          { status: 422 },
+        return httpError(
+          422,
+          `${agg} needs an expression to aggregate; only count may omit one.`,
         );
       }
       const filter = (body.filter as unknown as string) ?? null;
@@ -422,16 +406,11 @@ export const semanticHandlers = [
       if (!model) return HttpResponse.json({}, { status: 404 });
       const report = reportFor(model);
       if (!report.ok) {
-        return HttpResponse.json(
-          {
-            detail: {
-              error: "validation_failed",
-              detail:
-                "This model cannot be published until its definitions resolve.",
-              errors: report.errors,
-            },
-          },
-          { status: 422 },
+        return validationError(
+          "validation_failed",
+          "This model cannot be published until its definitions resolve.",
+          422,
+          { errors: report.errors },
         );
       }
       model.status = "published";
@@ -505,17 +484,13 @@ export const semanticHandlers = [
       (name) => !model.metrics.some((m) => m.name === name),
     );
     if (unknown.length > 0) {
-      return HttpResponse.json(
-        {
-          detail: {
-            error: "semantic_error",
-            detail: `'${model.slug}' has no metric called '${unknown[0]}'. Available: ${model.metrics
-              .map((m) => m.name)
-              .sort()
-              .join(", ")}.`,
-          },
-        },
-        { status: 422 },
+      return validationError(
+        "semantic_error",
+        `'${model.slug}' has no metric called '${unknown[0]}'. Available: ${model.metrics
+          .map((m) => m.name)
+          .sort()
+          .join(", ")}.`,
+        422,
       );
     }
 
@@ -597,12 +572,9 @@ export const semanticHandlers = [
     "/api/workspaces/:ws/semantic/imports/:provider",
     async ({ params }) => {
       if (params.provider === "native") {
-        return HttpResponse.json(
-          {
-            detail:
-              "'native' is reserved for definitions authored in DuckHaven and cannot be imported.",
-          },
-          { status: 422 },
+        return httpError(
+          422,
+          "'native' is reserved for definitions authored in DuckHaven and cannot be imported.",
         );
       }
       return HttpResponse.json({

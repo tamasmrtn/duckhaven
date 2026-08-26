@@ -110,7 +110,7 @@ async def test_execution_provider_is_reserved(auth_client, ws):
         json={"provider": "execution", "edges": [_edge()]},
     )
     assert resp.status_code == 422
-    assert "reserved" in resp.json()["detail"]
+    assert "reserved" in resp.json()["message"]
 
 
 async def test_unresolvable_target_is_reported_not_fatal(auth_client, ws, db_session):
@@ -236,7 +236,7 @@ async def test_dbt_import_never_removes_execution_lineage(auth_client, ws, db_se
 async def test_unknown_provider_artifact_is_rejected(auth_client, ws):
     resp = await auth_client.post(f"/workspaces/{ws}/lineage/imports/nope", json={})
     assert resp.status_code == 422
-    assert "No lineage adapter" in resp.json()["detail"]
+    assert "No lineage adapter" in resp.json()["message"]
 
 
 # --- purge ------------------------------------------------------------------
@@ -278,7 +278,7 @@ async def test_artifact_route_rejects_an_unknown_reconcile_mode(auth_client, ws)
         json=manifest,
     )
     assert resp.status_code == 422
-    assert "reconcile must be one of" in resp.json()["detail"]
+    assert "reconcile must be one of" in resp.json()["message"]
 
 
 async def test_dbt_reimport_prunes_a_model_that_lost_every_dependency(auth_client, ws, db_session):

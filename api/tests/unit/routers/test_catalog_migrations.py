@@ -173,7 +173,7 @@ async def test_freeze_gate_blocks_writes_allows_reads(auth_client, owner, db_ses
         json={"sql": "INSERT INTO analytics.t VALUES (1)", "agent_id": str(uuid.uuid4())},
     )
     assert write.status_code == 409
-    assert write.json()["detail"]["error"] == "catalog_read_only"
+    assert write.json()["error"] == "catalog_read_only"
 
     # A read is not blocked by the gate (it fails later on the missing agent).
     read = await auth_client.post(

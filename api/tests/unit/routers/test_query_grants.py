@@ -120,7 +120,7 @@ async def test_scoped_dispatch_denied_without_grant(
     ws, _cat = scoped_ws
     resp = await _run(authed_client, ws, connected_agent, "SELECT * FROM analytics.leads")
     assert resp.status_code == 403
-    assert resp.json()["detail"]["error"] == "grant_denied"
+    assert resp.json()["error"] == "grant_denied"
 
 
 async def test_scoped_dispatch_allowed_with_reader_grant(
@@ -217,7 +217,7 @@ async def test_metadata_enumeration_denied_in_scoped_catalog(
     ws, _cat = scoped_ws
     resp = await _run(authed_client, ws, connected_agent, sql)
     assert resp.status_code == 403
-    assert resp.json()["detail"]["error"] == "grant_denied"
+    assert resp.json()["error"] == "grant_denied"
 
 
 async def test_metadata_enumeration_denied_even_with_a_grant(
@@ -252,9 +252,9 @@ async def test_enumeration_denied_from_the_open_catalog_of_a_mixed_workspace(
     ws, _open_cat, scoped_cat = mixed_ws
     resp = await _run(authed_client, ws, connected_agent, "SELECT * FROM information_schema.tables")
     assert resp.status_code == 403
-    detail = resp.json()["detail"]
-    assert detail["error"] == "grant_denied"
-    assert scoped_cat.slug in detail["detail"]
+    body = resp.json()
+    assert body["error"] == "grant_denied"
+    assert scoped_cat.slug in body["message"]
 
 
 async def test_open_catalog_of_a_mixed_workspace_still_queryable(

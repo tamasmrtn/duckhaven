@@ -41,7 +41,7 @@ async def test_readyz_503_when_draining(client: AsyncClient):
     finally:
         api_app.state.draining = False
     assert resp.status_code == 503
-    assert resp.json()["detail"] == "draining"
+    assert resp.json()["message"] == "draining"
 
 
 async def test_readyz_503_when_polaris_unreachable(client: AsyncClient):
@@ -55,7 +55,7 @@ async def test_readyz_503_when_polaris_unreachable(client: AsyncClient):
     finally:
         del api_app.dependency_overrides[get_polaris_client]
     assert resp.status_code == 503
-    assert "polaris unreachable" in resp.json()["detail"]
+    assert "polaris unreachable" in resp.json()["message"]
 
 
 async def test_healthz_503_when_db_unreachable(client: AsyncClient):
@@ -73,4 +73,4 @@ async def test_healthz_503_when_db_unreachable(client: AsyncClient):
         # client fixture's teardown also clears, but be explicit about scope.
         del api_app.dependency_overrides[get_db]
     assert resp.status_code == 503
-    assert "database unreachable" in resp.json()["detail"]
+    assert "database unreachable" in resp.json()["message"]

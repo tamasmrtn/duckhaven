@@ -195,7 +195,7 @@ async def test_statement_policy_rejection(
         f"/sql/sessions/{session.id}/statements", json={"sql": "INSTALL httpfs"}
     )
     assert resp.status_code == 422
-    assert resp.json()["detail"]["error"] == "statement_not_allowed"
+    assert resp.json()["error"] == "statement_not_allowed"
 
 
 async def test_truncate_statement_is_accepted(
@@ -271,7 +271,7 @@ async def test_sandbox_widening_pragmas_stay_rejected(
     session = await _open_session_row(db_session, workspace, agent, user)
     resp = await authed_client.post(f"/sql/sessions/{session.id}/statements", json={"sql": sql})
     assert resp.status_code == 422
-    assert resp.json()["detail"]["error"] == "statement_not_allowed"
+    assert resp.json()["error"] == "statement_not_allowed"
 
 
 async def test_truncate_database_is_rejected(
@@ -282,7 +282,7 @@ async def test_truncate_database_is_rejected(
         f"/sql/sessions/{session.id}/statements", json={"sql": "TRUNCATE DATABASE d"}
     )
     assert resp.status_code == 422
-    assert resp.json()["detail"]["error"] == "statement_not_allowed"
+    assert resp.json()["error"] == "statement_not_allowed"
 
 
 async def test_statement_on_non_open_session_conflicts(
@@ -461,7 +461,7 @@ async def test_staging_files_non_open_conflicts(
         f"/sql/sessions/{session.id}/staging-files", json={"files": ["o.parquet"]}
     )
     assert resp.status_code == 409
-    assert resp.json()["detail"]["error"] == "session_not_open"
+    assert resp.json()["error"] == "session_not_open"
 
 
 async def test_staging_files_rejects_path_traversal(
@@ -490,7 +490,7 @@ async def test_staging_files_unavailable_backend_422(
         f"/sql/sessions/{session.id}/staging-files", json={"files": ["o.parquet"]}
     )
     assert resp.status_code == 422
-    assert resp.json()["detail"]["error"] == "staging_unavailable"
+    assert resp.json()["error"] == "staging_unavailable"
 
 
 async def test_read_parquet_of_own_staging_get_url_is_admitted(
@@ -527,7 +527,7 @@ async def test_read_parquet_of_foreign_url_is_rejected(
         json={"sql": "SELECT * FROM read_parquet('https://evil.example.com/secret.parquet')"},
     )
     assert resp.status_code == 422
-    assert resp.json()["detail"]["error"] == "statement_not_allowed"
+    assert resp.json()["error"] == "statement_not_allowed"
 
 
 # ── Audit surface: close reason, client identity, list, statement timeline ────
@@ -776,7 +776,7 @@ async def test_open_session_auto_pick_skips_unusable_agents(
 
     resp = await authed_client.post(f"/workspaces/{workspace.slug}/sql/sessions", json={})
     assert resp.status_code == 503
-    assert resp.json()["detail"] == "No connected agent available"
+    assert resp.json()["message"] == "No connected agent available"
 
 
 async def test_open_session_auto_pick_finds_a_granted_agent(
@@ -941,7 +941,7 @@ async def test_open_with_a_disconnected_running_elastic_agent_still_503s(
         f"/workspaces/{workspace.slug}/sql/sessions", json={"agent_id": str(terminated_agent.id)}
     )
     assert resp.status_code == 503
-    assert resp.json()["detail"] == "Agent not connected"
+    assert resp.json()["message"] == "Agent not connected"
 
 
 async def test_open_gives_up_with_503_and_retry_after_by_default(
@@ -956,7 +956,7 @@ async def test_open_gives_up_with_503_and_retry_after_by_default(
 
     resp = await authed_client.post(f"/workspaces/{workspace.slug}/sql/sessions", json={})
     assert resp.status_code == 503
-    assert resp.json()["detail"]["error"] == "compute_starting"
+    assert resp.json()["error"] == "compute_starting"
     assert resp.headers["retry-after"] == "5"
 
     session = (await db_session.execute(sa.select(SqlSession))).scalars().one()
@@ -1064,11 +1064,11 @@ async def test_statement_on_a_pending_session_is_409(
         f"/sql/sessions/{session.id}/statements", json={"sql": "SELECT 1"}
     )
     assert resp.status_code == 409
-    assert "pending" in resp.json()["detail"]["detail"]
+    assert "pending" in resp.json()["message"]
 
 
 async def test_no_agent_with_elastic_disabled_still_503s(authed_client, workspace, enabled):
     """Unchanged for a deployment that does not run elastic compute at all."""
     resp = await authed_client.post(f"/workspaces/{workspace.slug}/sql/sessions", json={})
     assert resp.status_code == 503
-    assert resp.json()["detail"] == "No connected agent available"
+    assert resp.json()["message"] == "No connected agent available"

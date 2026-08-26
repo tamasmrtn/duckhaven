@@ -5,6 +5,8 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
@@ -15,7 +17,7 @@ from starlette.types import Scope
 from api.config import settings
 from api.db.session import async_session_factory
 from api.metrics import PrometheusMiddleware
-from api.openapi import apply_conventions, operation_id
+from api.openapi import apply_conventions, error_body, operation_id
 from api.routers import (
     agents,
     agents_ws,
@@ -181,6 +183,24 @@ api_app.add_middleware(
 )
 
 
+# Every 4xx and 5xx leaves through one of the three handlers below, so the body
+# is the same shape whatever raised it. Handlers keep raising HTTPException as
+# they always have; `error_body` normalises the detail they carry.
+@api_app.exception_handler(StarletteHTTPException)
+async def _http_error_handler(_: Request, exc: StarletteHTTPException) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=error_body(exc.status_code, exc.detail),
+        headers=getattr(exc, "headers", None),
+    )
+
+
+@api_app.exception_handler(RequestValidationError)
+async def _validation_error_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+    code = status.HTTP_422_UNPROCESSABLE_CONTENT
+    return JSONResponse(status_code=code, content=error_body(code, jsonable_encoder(exc.errors())))
+
+
 # Surface PolarisError escaping a route as a meaningful HTTP response instead of a
 # bare 500. NotFound/BadRequest map to their natural client codes; everything else
 # (server errors, conflicts, the base class) is an upstream failure -> 502.
@@ -192,7 +212,7 @@ async def _polaris_error_handler(_: Request, exc: PolarisError) -> JSONResponse:
         code = status.HTTP_422_UNPROCESSABLE_CONTENT
     else:
         code = status.HTTP_502_BAD_GATEWAY
-    return JSONResponse(status_code=code, content={"detail": str(exc)})
+    return JSONResponse(status_code=code, content=error_body(code, str(exc)))
 
 
 api_app.include_router(health.router, tags=["health"])

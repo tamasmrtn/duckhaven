@@ -168,7 +168,7 @@ async def test_an_imported_model_cannot_be_edited_here(auth_client, ws):
     )
 
     assert resp.status_code == 409
-    assert resp.json()["detail"]["error"] == "imported_model"
+    assert resp.json()["error"] == "imported_model"
 
 
 async def test_reimporting_replaces_rather_than_duplicates(auth_client, ws):
@@ -251,7 +251,7 @@ async def test_the_native_provider_name_is_reserved(auth_client, ws):
     )
 
     assert resp.status_code == 422
-    assert "reserved" in resp.json()["detail"]
+    assert "reserved" in resp.json()["message"]
 
 
 async def test_an_unknown_provider_is_a_422(auth_client, ws):
@@ -262,7 +262,7 @@ async def test_an_unknown_provider_is_a_422(auth_client, ws):
     )
 
     assert resp.status_code == 422
-    assert "No semantic adapter" in resp.json()["detail"]
+    assert "No semantic adapter" in resp.json()["message"]
 
 
 async def test_an_unknown_reconcile_mode_is_rejected(auth_client, ws):
@@ -382,7 +382,7 @@ async def test_an_imported_definition_cannot_be_deleted_here(auth_client, ws):
     resp = await auth_client.delete(f"/workspaces/{ws}/semantic/models/sales/metrics/revenue")
 
     assert resp.status_code == 409
-    assert resp.json()["detail"]["error"] == "imported_model"
+    assert resp.json()["error"] == "imported_model"
 
 
 async def test_a_scalar_where_a_list_belongs_is_a_422_not_a_500(auth_client, ws):
@@ -398,4 +398,4 @@ async def test_a_scalar_where_a_list_belongs_is_a_422_not_a_500(auth_client, ws)
     resp = await _import(auth_client, ws, doctored)
 
     assert resp.status_code == 422
-    assert "list" in str(resp.json()["detail"]).lower()
+    assert "list" in str(resp.json()["message"]).lower()

@@ -253,3 +253,41 @@ async def test_list_users_rejects_a_malformed_cursor(admin_client: AsyncClient, 
     resp = await admin_client.get("/admin/users", params={"cursor": "not-a-cursor"})
     assert resp.status_code == 422
     assert resp.json()["error"] == "invalid_cursor"
+
+
+async def test_paging_yields_every_row_exactly_once(
+    admin_client: AsyncClient, admin: User, regular_user: User, db_session
+):
+    """Walking the cursor must cover the collection with no gap and no repeat.
+
+    The fixtures share a `created_at` -- it is second-precision -- so this
+    exercises the tie-break specifically. An earlier cursor carried the sort
+    values themselves, which meant comparing a bound Python timestamp against a
+    stored one; SQLite writes CURRENT_TIMESTAMP without microseconds and
+    SQLAlchemy binds them, so the tie never matched and the second page came
+    back empty.
+    """
+    for n in range(4):
+        db_session.add(
+            User(
+                email=f"extra{n}@users.local",
+                password_hash=hash_password("pw"),
+                name=f"Extra {n}",
+                role="user",
+            )
+        )
+    await db_session.commit()
+
+    expected = [u["email"] for u in (await admin_client.get("/admin/users")).json()["items"]]
+
+    walked: list[str] = []
+    cursor: str | None = None
+    for _ in range(len(expected) + 2):
+        params = {"limit": 2} | ({"cursor": cursor} if cursor else {})
+        body = (await admin_client.get("/admin/users", params=params)).json()
+        walked += [u["email"] for u in body["items"]]
+        cursor = body["cursor"]
+        if not body["has_more"]:
+            break
+
+    assert walked == expected

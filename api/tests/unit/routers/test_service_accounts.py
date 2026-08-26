@@ -128,7 +128,7 @@ async def test_delete_with_history_conflicts(client: AsyncClient, admin_user: Us
 async def test_issue_pat_returns_secret_once(client: AsyncClient, admin_user: User):
     await _as_admin(client)
     sa_id = (await client.post(SA_BASE, json={"name": "svc"})).json()["id"]
-    resp = await client.post(f"{SA_BASE}/{sa_id}/pat", json={})
+    resp = await client.post(f"{SA_BASE}/{sa_id}/pats", json={})
     assert resp.status_code == 201
     body = resp.json()
     assert body["token"].startswith("dh_pat_")
@@ -145,14 +145,14 @@ async def test_issue_pat_returns_secret_once(client: AsyncClient, admin_user: Us
 async def test_issue_pat_never_expires(client: AsyncClient, admin_user: User):
     await _as_admin(client)
     sa_id = (await client.post(SA_BASE, json={"name": "svc"})).json()["id"]
-    resp = await client.post(f"{SA_BASE}/{sa_id}/pat", json={"expires_in_days": None})
+    resp = await client.post(f"{SA_BASE}/{sa_id}/pats", json={"expires_in_days": None})
     assert resp.json()["expires_at"] is None
 
 
 async def test_bearer_resolves_service_account(client: AsyncClient, admin_user: User):
     await _as_admin(client)
     sa = (await client.post(SA_BASE, json={"name": "svc"})).json()
-    token = (await client.post(f"{SA_BASE}/{sa['id']}/pat", json={})).json()["token"]
+    token = (await client.post(f"{SA_BASE}/{sa['id']}/pats", json={})).json()["token"]
 
     # A fresh client with no cookie, authenticating purely by bearer.
     me = await client.get("/me", headers={"Authorization": f"Bearer {token}"})
@@ -163,10 +163,10 @@ async def test_bearer_resolves_service_account(client: AsyncClient, admin_user: 
 async def test_bearer_revoked_rejected(client: AsyncClient, admin_user: User):
     await _as_admin(client)
     sa_id = (await client.post(SA_BASE, json={"name": "svc"})).json()["id"]
-    issued = (await client.post(f"{SA_BASE}/{sa_id}/pat", json={})).json()
+    issued = (await client.post(f"{SA_BASE}/{sa_id}/pats", json={})).json()
     token, pat_id = issued["token"], issued["id"]
 
-    assert (await client.delete(f"{SA_BASE}/{sa_id}/pat/{pat_id}")).status_code == 204
+    assert (await client.delete(f"{SA_BASE}/{sa_id}/pats/{pat_id}")).status_code == 204
     me = await client.get("/me", headers={"Authorization": f"Bearer {token}"})
     assert me.status_code == 401
 
@@ -174,7 +174,7 @@ async def test_bearer_revoked_rejected(client: AsyncClient, admin_user: User):
 async def test_bearer_disabled_account_rejected(client: AsyncClient, admin_user: User):
     await _as_admin(client)
     sa_id = (await client.post(SA_BASE, json={"name": "svc"})).json()["id"]
-    token = (await client.post(f"{SA_BASE}/{sa_id}/pat", json={})).json()["token"]
+    token = (await client.post(f"{SA_BASE}/{sa_id}/pats", json={})).json()["token"]
     await client.patch(f"{SA_BASE}/{sa_id}", json={"is_active": False})
     me = await client.get("/me", headers={"Authorization": f"Bearer {token}"})
     assert me.status_code == 401
@@ -206,7 +206,7 @@ async def test_bearer_malformed_rejected(client: AsyncClient):
 async def test_revoke_unknown_pat_404(client: AsyncClient, admin_user: User):
     await _as_admin(client)
     sa_id = (await client.post(SA_BASE, json={"name": "svc"})).json()["id"]
-    resp = await client.delete(f"{SA_BASE}/{sa_id}/pat/{uuid.uuid4()}")
+    resp = await client.delete(f"{SA_BASE}/{sa_id}/pats/{uuid.uuid4()}")
     assert resp.status_code == 404
 
 
@@ -221,7 +221,7 @@ async def test_rbac_parity_service_account_vs_human(
     await _as_admin(client)
     # role="user" service account, authenticating by bearer.
     sa_id = (await client.post(SA_BASE, json={"name": "svc"})).json()["id"]
-    sa_token = (await client.post(f"{SA_BASE}/{sa_id}/pat", json={})).json()["token"]
+    sa_token = (await client.post(f"{SA_BASE}/{sa_id}/pats", json={})).json()["token"]
 
     # role="user" human, authenticating by cookie.
     db_session.add(

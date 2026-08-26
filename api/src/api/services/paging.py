@@ -12,71 +12,57 @@ page starts strictly after it however much has landed in between.
 
 import base64
 import binascii
-import json
 import uuid
-from datetime import datetime
 from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import Select, and_, or_
+from sqlalchemy import Select, and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
 
-def _encode_value(value: Any) -> Any:
-    return value.isoformat() if isinstance(value, datetime) else str(value)
+def encode_cursor(row_id: uuid.UUID) -> str:
+    """Opaque cursor naming the last row of a page, by id alone.
 
-
-def _decode_value(raw: Any, column: InstrumentedAttribute) -> Any:
-    python_type = column.type.python_type
-    if python_type is datetime:
-        return datetime.fromisoformat(raw)
-    if python_type is uuid.UUID:
-        return uuid.UUID(raw)
-    if python_type is int:
-        return int(raw)
-    return raw
-
-
-def encode_cursor(values: list[Any]) -> str:
-    """Opaque cursor naming the last row of a page by its whole sort key.
-
-    The values must be the ones the database holds, read off the row rather than
-    recomputed: a value that rounds differently from the stored one puts a row on
-    both sides of the split.
+    Deliberately not the sort values. Round-tripping those through the cursor
+    means comparing a bound Python value against a stored one, and the two can
+    disagree on precision -- SQLite's ``CURRENT_TIMESTAMP`` has no microseconds
+    while SQLAlchemy binds them, so an equality tie-break silently matches
+    nothing and the page after the first comes back empty. Naming the row and
+    letting the database compare stored-to-stored cannot drift.
     """
-    return base64.urlsafe_b64encode(
-        json.dumps([_encode_value(v) for v in values]).encode()
-    ).decode()
+    return base64.urlsafe_b64encode(str(row_id).encode()).decode()
 
 
-def decode_cursor(cursor: str, columns: list[InstrumentedAttribute]) -> list[Any]:
+def decode_cursor(cursor: str) -> uuid.UUID:
     """Reverse :func:`encode_cursor`, or 422.
 
     A malformed cursor is a bad request, not a server fault, and ignoring it
     would quietly hand back the whole collection instead of a page.
     """
     try:
-        raw = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
-        if not isinstance(raw, list) or len(raw) != len(columns):
-            raise ValueError("wrong shape")
-        return [_decode_value(v, c) for v, c in zip(raw, columns, strict=True)]
-    except (ValueError, TypeError, binascii.Error, UnicodeDecodeError) as exc:
+        return uuid.UUID(base64.urlsafe_b64decode(cursor.encode()).decode())
+    except (ValueError, binascii.Error, UnicodeDecodeError) as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"error": "invalid_cursor", "detail": "Malformed cursor."},
         ) from exc
 
 
-def _after(columns: list[InstrumentedAttribute], values: list[Any], descending: bool):
-    """Rows strictly after ``values`` in the given ordering.
+def _after(columns: list[InstrumentedAttribute], anchor: uuid.UUID, descending: bool):
+    """Rows strictly after the row ``anchor`` names, in the given ordering.
 
-    Spelled as nested ORs rather than a row-value comparison: SQLite does not
-    evaluate ``(a, b) > (x, y)`` against these column types, and the unit suite
-    runs on SQLite while production runs on Postgres. These collections are small
-    enough that the index shape does not pay for a dialect branch -- the query
-    history keeps the row-value form where it matters.
+    Each sort value is read back with a scalar subquery so the comparison is
+    stored-value against stored-value. Spelled as nested ORs rather than a
+    row-value comparison: SQLite does not evaluate ``(a, b) > (x, y)`` against
+    these column types, and the unit suite runs on SQLite while production runs
+    on Postgres. These collections are small enough that the index shape does
+    not pay for a dialect branch -- the query history keeps the row-value form
+    where it matters.
     """
+    id_column = columns[-1]
+    values = [select(c).where(id_column == anchor).scalar_subquery() for c in columns]
+
     clauses = []
     for i, (column, value) in enumerate(zip(columns, values, strict=True)):
         ahead = column < value if descending else column > value
@@ -96,16 +82,16 @@ async def paginate(
 ) -> tuple[list[Any], str | None, bool]:
     """Run ``stmt`` as one keyset page.
 
-    ``sort_columns`` is the full ordering, ending in a column unique per row --
-    without that tiebreak the order is not total, and rows sharing a value can be
-    served twice or not at all. ``stmt`` must carry its filters but neither ORDER
-    BY nor LIMIT; both are applied here so the ordering and the cursor cannot
-    disagree.
+    ``sort_columns`` is the full ordering and **must end in the row id**: it is
+    both the tiebreak that makes the order total -- without it, rows sharing a
+    value can be served twice or not at all -- and what the cursor names.
+    ``stmt`` must carry its filters but neither ORDER BY nor LIMIT; both are
+    applied here so the ordering and the cursor cannot disagree.
 
     Returns the rows, the cursor for the next page, and whether one exists.
     """
     if cursor is not None:
-        stmt = stmt.where(_after(sort_columns, decode_cursor(cursor, sort_columns), descending))
+        stmt = stmt.where(_after(sort_columns, decode_cursor(cursor), descending))
 
     order = [c.desc() if descending else c.asc() for c in sort_columns]
     # One row more than asked for: its presence is `has_more`, and it costs a row
@@ -119,5 +105,5 @@ async def paginate(
         # `.all()` always yields Row, so the primary entity is at index 0 even
         # when the select carries joined columns alongside it.
         entity = rows[-1][0]
-        next_cursor = encode_cursor([getattr(entity, c.key) for c in sort_columns])
+        next_cursor = encode_cursor(entity.id)
     return rows, next_cursor, has_more

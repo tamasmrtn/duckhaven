@@ -1,5 +1,4 @@
-import { get, post, patch, del } from "./client";
-import type { Page } from "./client";
+import { get, post, patch, del, getAllPages } from "./client";
 import type {
   QueriesPage,
   Query,
@@ -92,9 +91,7 @@ export const queriesApi = {
   cancel: (id: string) => del(`/queries/${id}`),
 
   listSaved: (ws: string) =>
-    get<Page<SavedQuery>>(`/workspaces/${ws}/saved-queries`).then(
-      (p) => p.items,
-    ),
+    getAllPages<SavedQuery>(`/workspaces/${ws}/saved-queries`),
 
   save: (
     ws: string,

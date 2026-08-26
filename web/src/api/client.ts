@@ -102,12 +102,49 @@ export function del(path: string) {
 
 /**
  * A paged collection: `{items, cursor, has_more}` — see the API conventions
- * reference. The screens below read the first page only, so they unwrap to the
- * array they already rendered; a cursor is threaded through where a screen
- * grows a "load more".
+ * reference.
  */
 export interface Page<T> {
   items: T[];
   cursor: string | null;
   has_more: boolean;
+}
+
+/** How many pages `getAllPages` will follow before giving up. */
+const MAX_PAGES = 50;
+
+/**
+ * Read a paged collection in full, following the cursor.
+ *
+ * These lists were unbounded before the server started paging them, and the
+ * screens that render them show every row — an admin who cannot see a user
+ * because the list stopped at 100 has no way to tell. Rather than truncate
+ * silently, walk the pages; the request count is the price of the same answer
+ * the endpoint used to give in one.
+ *
+ * `MAX_PAGES` stops a runaway loop if a server ever returns `has_more` with no
+ * cursor. Screens that grow a real "load more" should page explicitly instead.
+ */
+export async function getAllPages<T>(
+  path: string,
+  params: Record<string, string> = {},
+): Promise<T[]> {
+  const items: T[] = [];
+  let cursor: string | null = null;
+
+  // The path may already carry a filter (a repeated `status`, which cannot go
+  // through the flat `params` object), so merge rather than append.
+  const [base, existing] = path.split("?");
+
+  for (let i = 0; i < MAX_PAGES; i++) {
+    const query = new URLSearchParams(existing);
+    for (const [k, v] of Object.entries(params)) query.set(k, v);
+    query.set("limit", "1000");
+    if (cursor) query.set("cursor", cursor);
+    const page: Page<T> = await get<Page<T>>(`${base}?${query}`);
+    items.push(...page.items);
+    if (!page.has_more || !page.cursor) break;
+    cursor = page.cursor;
+  }
+  return items;
 }

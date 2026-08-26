@@ -1,5 +1,4 @@
-import { get, post, put } from "./client";
-import type { Page } from "./client";
+import { get, post, put, getAllPages } from "./client";
 import type {
   DeploymentHealth,
   MaintenancePolicy,
@@ -21,9 +20,7 @@ export const maintenanceApi = {
   // `status` is no longer defaulted server-side, so the caller says which
   // states it wants; omitting it returns every state.
   recommendations: (status = "open") =>
-    get<Page<Recommendation>>(
-      `/maintenance/recommendations?status=${encodeURIComponent(status)}`,
-    ).then((p) => p.items),
+    getAllPages<Recommendation>("/maintenance/recommendations", { status }),
   dismiss: (id: string) =>
     post<Recommendation>(`/maintenance/recommendations/${id}/dismiss`),
 

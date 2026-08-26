@@ -1,5 +1,4 @@
-import { del, get, patch, post } from "./client";
-import type { Page } from "./client";
+import { del, get, patch, post, getAllPages } from "./client";
 import type { Pat, PatToken, ServiceAccount } from "@/types/service-account";
 
 export interface CreateServiceAccountInput {
@@ -18,8 +17,7 @@ export interface IssuePatInput {
 }
 
 export const serviceAccountsApi = {
-  adminList: async () =>
-    (await get<Page<ServiceAccount>>("/admin/service-accounts")).items,
+  adminList: () => getAllPages<ServiceAccount>("/admin/service-accounts"),
 
   create: (input: CreateServiceAccountInput) =>
     post<ServiceAccount>("/admin/service-accounts", input),

@@ -118,7 +118,19 @@ async def _start_compute(
     return True
 
 
-@router.post("/workspaces/{ws}/sql/sessions", status_code=201, response_model=SqlSessionOut)
+@router.post(
+    "/workspaces/{ws}/sql/sessions",
+    status_code=201,
+    response_model=SqlSessionOut,
+    responses={
+        202: {
+            "description": (
+                "Compute is still starting and `on_wait_timeout=continue` was set. "
+                "Poll `GET /sql/sessions/{session_id}` until it reports `open`."
+            )
+        },
+    },
+)
 async def open_session(
     ws: str,
     body: SqlSessionCreate,

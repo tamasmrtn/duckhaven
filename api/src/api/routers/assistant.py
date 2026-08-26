@@ -189,7 +189,19 @@ async def delete_conversation(
     await db.commit()
 
 
-@router.post("/workspaces/{ws}/assistant/conversations/{conversation_id}/messages")
+@router.post(
+    "/workspaces/{ws}/assistant/conversations/{conversation_id}/messages",
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "description": (
+                "A server-sent event stream of the assistant's turn: token deltas, "
+                "tool calls, and any write awaiting approval."
+            ),
+            "content": {"text/event-stream": {"schema": {"type": "string"}}},
+        },
+    },
+)
 async def send_message(
     ws: str,
     conversation_id: uuid.UUID,
@@ -214,7 +226,19 @@ async def send_message(
     return StreamingResponse(stream, media_type="text/event-stream", headers=_SSE_HEADERS)
 
 
-@router.post("/workspaces/{ws}/assistant/conversations/{conversation_id}/approvals")
+@router.post(
+    "/workspaces/{ws}/assistant/conversations/{conversation_id}/approvals",
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "description": (
+                "A server-sent event stream of the assistant's turn: token deltas, "
+                "tool calls, and any write awaiting approval."
+            ),
+            "content": {"text/event-stream": {"schema": {"type": "string"}}},
+        },
+    },
+)
 async def approve_write(
     ws: str,
     conversation_id: uuid.UUID,

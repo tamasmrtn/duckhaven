@@ -38,14 +38,31 @@ def _resolve(provider_id: str) -> tuple[OidcProvider, object]:
     return provider, client
 
 
-@router.get("/{provider}/login")
+@router.get(
+    "/{provider}/login",
+    status_code=status.HTTP_303_SEE_OTHER,
+    response_class=RedirectResponse,
+    responses={303: {"description": "Redirect to the identity provider's authorization endpoint."}},
+)
 async def oidc_login(provider: str, request: Request):
     """Kick off the Authorization Code + PKCE flow for one provider."""
     _prov, client = _resolve(provider)
     return await client.authorize_redirect(request, _callback_url(request, provider))
 
 
-@router.get("/{provider}/callback")
+@router.get(
+    "/{provider}/callback",
+    status_code=status.HTTP_303_SEE_OTHER,
+    response_class=RedirectResponse,
+    responses={
+        303: {
+            "description": (
+                "Redirect back into the SPA: to `/` with a session cookie on "
+                "success, or to `/login?error=sso` on any failure."
+            )
+        }
+    },
+)
 async def oidc_callback(provider: str, request: Request, db: AsyncSession = Depends(get_db)):
     """Validate the IdP response, JIT-provision, and start a session."""
     prov, client = _resolve(provider)

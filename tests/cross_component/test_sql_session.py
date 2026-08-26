@@ -83,7 +83,7 @@ async def test_hostile_statements_rejected(api_client, workspace, healthy_agent,
     session = await _open(api_client, workspace, healthy_agent["id"])
     resp = await api_client.post(f"/api/sql/sessions/{session['id']}/statements", json={"sql": sql})
     assert resp.status_code == 422, resp.text
-    assert resp.json()["detail"]["error"] == "statement_not_allowed"
+    assert resp.json()["error"] == "statement_not_allowed"
     await api_client.delete(f"/api/sql/sessions/{session['id']}")
 
 
@@ -192,7 +192,7 @@ async def test_close_frees_slot_for_reuse(api_client, workspace, spawn_agent) ->
         f"/api/workspaces/{workspace}/sql/sessions", json={"agent_id": agent_id}
     )
     assert refused.status_code == 503, refused.text
-    assert refused.json()["detail"]["error"] == "session_open_failed"
+    assert refused.json()["error"] == "session_open_failed"
 
     # Close the first session explicitly.
     close = await api_client.delete(f"/api/sql/sessions/{first['id']}")

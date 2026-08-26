@@ -48,7 +48,7 @@ async def test_setup_then_login_logout_me(app_client, setup_token) -> None:
     created = await app_client.post(
         "/setup/admin", json=body, headers={"X-Setup-Token": setup_token}
     )
-    assert created.status_code == 200, created.text
+    assert created.status_code == 201, created.text
     assert created.json()["role"] == "admin"
     assert "session" in app_client.cookies
 

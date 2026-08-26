@@ -155,11 +155,11 @@ async def test_sql_metadata_from_live_agent(api_client, workspace, healthy_agent
     assert {k["name"] for k in body["keywords"]} & {"select", "from", "where"}
 
 
-async def test_table_write_then_read(api_client, workspace, healthy_agent) -> None:
+async def test_table_write_then_read(api_client, workspace, catalog, healthy_agent) -> None:
     agent_id = healthy_agent["id"]
     # Create the table through the control plane (real Polaris DDL).
     created = await api_client.post(
-        f"/api/workspaces/{workspace}/schemas/analytics/tables",
+        f"/api/workspaces/{workspace}/catalogs/{catalog}/schemas/analytics/tables",
         json={
             "name": "kv",
             "columns": [

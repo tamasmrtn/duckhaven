@@ -40,11 +40,6 @@ async def _lineage(api_client, workspace: str, catalog: str, table: str, **param
     return resp.json()
 
 
-@pytest.fixture
-def catalog(workspace: str) -> str:
-    return f"c_{workspace.replace('-', '_')}"
-
-
 async def test_ctas_records_lineage(api_client, workspace, healthy_agent, catalog) -> None:
     agent = healthy_agent["id"]
     await _run(api_client, workspace, agent, "CREATE TABLE lin_src AS SELECT 1 AS n")

@@ -145,15 +145,16 @@ def _start_api(env: Mapping[str, str], port: int, log: Path) -> subprocess.Popen
 
 
 def _create_first_admin(base_url: str) -> None:
-    """Consume the setup token. 409 = an admin already exists (a reused database
-    from a prior local run) — fine, the same credentials log in below."""
+    """Consume the setup token. 201 = created; 409 = an admin already exists (a
+    reused database from a prior local run) — fine, the same credentials log in
+    below."""
     with httpx.Client(base_url=base_url, timeout=10.0) as c:
         r = c.post(
             "/api/setup/admin",
             json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD, "name": "XC Admin"},
             headers={"X-Setup-Token": SETUP_TOKEN},
         )
-        if r.status_code not in (200, 409):
+        if r.status_code not in (201, 409):
             r.raise_for_status()
 
 
@@ -525,3 +526,17 @@ async def workspace(api_client) -> str:
     )
     c.raise_for_status()
     return slug
+
+
+@pytest_asyncio.fixture
+async def catalog(api_client, workspace) -> str:
+    """The slug of `workspace`'s attached catalog.
+
+    Schemas and tables are addressed under their catalog; the default-catalog
+    shim that let it be omitted was removed at api_version 2. Separate from the
+    `workspace` fixture so the many tests that only need the workspace slug are
+    unaffected.
+    """
+    r = await api_client.get(f"/api/workspaces/{workspace}/catalogs")
+    r.raise_for_status()
+    return r.json()[0]["slug"]

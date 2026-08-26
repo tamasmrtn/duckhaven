@@ -89,7 +89,7 @@ async def list_models(
     workspace_id: uuid.UUID,
     user_id: uuid.UUID,
     catalogs: list[Catalog],
-    status: str | None = None,
+    status: list[str] | None = None,
     published_only: bool = False,
 ) -> list[SemanticModel]:
     """Models in this workspace this caller may see, newest name order."""
@@ -97,7 +97,7 @@ async def list_models(
     if published_only:
         stmt = stmt.where(SemanticModel.status == "published")
     elif status:
-        stmt = stmt.where(SemanticModel.status == status)
+        stmt = stmt.where(SemanticModel.status.in_(status))
     rows = list((await db.execute(stmt.order_by(SemanticModel.slug))).scalars())
 
     allowed: list[SemanticModel] = []

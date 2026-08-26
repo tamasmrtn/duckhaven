@@ -213,15 +213,46 @@ async def list_attachable(db: AsyncSession) -> list[Catalog]:
     return list(rows.scalars().all())
 
 
-async def set_default_catalog(db: AsyncSession, *, link: WorkspaceCatalog) -> None:
-    """Point the workspace's default at ``link``, clearing whichever held it.
+async def set_default_catalog(
+    db: AsyncSession,
+    *,
+    workspace_id: uuid.UUID,
+    link: WorkspaceCatalog,
+    is_default: bool,
+) -> None:
+    """Set or clear ``link`` as the workspace's default.
 
     Split out of :func:`attach_catalog` so re-attaching an already-attached
     catalog can move the default without the duplicate check refusing it: the
     attach route is a PUT, and a PUT has to be idempotent.
+
+    Clearing promotes another attachment rather than leaving the workspace
+    without one -- the same invariant :func:`detach_catalog` maintains, and the
+    reason the schema resolution in ``target_catalog`` can assume a default
+    exists wherever any catalog is attached.
     """
-    await _clear_default(db, link.workspace_id)
-    link.is_default = True
+    if is_default:
+        await _clear_default(db, workspace_id)
+        link.is_default = True
+        await db.flush()
+        return
+
+    link.is_default = False
+    await db.flush()
+    successor = (
+        await db.execute(
+            select(WorkspaceCatalog)
+            .join(Catalog, Catalog.id == WorkspaceCatalog.catalog_id)
+            .where(
+                WorkspaceCatalog.workspace_id == workspace_id,
+                WorkspaceCatalog.catalog_id != link.catalog_id,
+            )
+            .order_by(Catalog.slug)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if successor is not None:
+        successor.is_default = True
     await db.flush()
 
 

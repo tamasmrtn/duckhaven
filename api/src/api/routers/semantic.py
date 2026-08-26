@@ -294,7 +294,7 @@ async def _catalog_slugs(ctx: _Context) -> dict[uuid.UUID, str]:
 
 @router.get("/workspaces/{workspace}/semantic/models", response_model=list[ModelSummaryOut])
 async def list_models(
-    status_filter: str | None = Query(default=None, alias="status"),
+    status_filter: list[str] | None = Query(default=None, alias="status"),
     ctx: _Context = Depends(_context("reader")),
     db: AsyncSession = Depends(get_db),
 ) -> list[ModelSummaryOut]:

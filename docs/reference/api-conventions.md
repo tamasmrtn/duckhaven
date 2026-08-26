@@ -4,15 +4,10 @@ The rules every DuckHaven REST endpoint follows. They exist so that the surface 
 predictable as it grows, and so that a client generated from the OpenAPI schema is usable
 without hand-written special cases.
 
-!!! note "Adoption is in progress"
-    These are the target conventions. Parts of the existing surface do not yet comply; the
-    gap and the phased migration are tracked in the
-    [API consistency plan](../developer/api-consistency-plan.md). A conformance test in
-    `api/tests/unit/test_openapi_conformance.py` asserts each rule as it lands, so new
-    endpoints are held to the finished standard rather than the current state.
-
 New endpoints are reviewed against this page. Where a rule has an exception, the exception
-is written down here — an undocumented deviation is a defect.
+is written down here — an undocumented deviation is a defect. Every rule that can be checked
+against the generated schema is also asserted by `api/tests/unit/test_openapi_conformance.py`,
+so an endpoint that drifts fails CI rather than shipping.
 
 ## Path structure
 

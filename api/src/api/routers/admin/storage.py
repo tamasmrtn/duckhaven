@@ -90,24 +90,24 @@ async def create_backend(
     )
 
 
-@router.post("/{backend_id}/health", response_model=StorageBackendHealth)
+@router.post("/{storage_backend_id}/health", response_model=StorageBackendHealth)
 async def check_backend_health(
-    backend_id: uuid.UUID,
+    storage_backend_id: uuid.UUID,
     admin: User = Depends(require_permission(Permission.STORAGE_MANAGE)),
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> StorageBackendHealth:
     """Validate that an external backend's vended credentials can reach storage."""
-    result = await db.execute(select(StorageBackend).where(StorageBackend.id == backend_id))
+    result = await db.execute(select(StorageBackend).where(StorageBackend.id == storage_backend_id))
     sb = result.scalar_one_or_none()
     if sb is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     return await validate_backend(polaris, sb)
 
 
-@router.delete("/{backend_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{storage_backend_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_backend(
-    backend_id: uuid.UUID,
+    storage_backend_id: uuid.UUID,
     admin: User = Depends(require_permission(Permission.STORAGE_MANAGE)),
     db: AsyncSession = Depends(get_db),
 ) -> None:
@@ -115,12 +115,12 @@ async def delete_backend(
 
     Removes only DuckHaven's registration -- nothing in the object store is
     touched."""
-    result = await db.execute(select(StorageBackend).where(StorageBackend.id == backend_id))
+    result = await db.execute(select(StorageBackend).where(StorageBackend.id == storage_backend_id))
     sb = result.scalar_one_or_none()
     if sb is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     count_result = await db.execute(
-        select(func.count()).where(Catalog.storage_backend_id == backend_id)
+        select(func.count()).where(Catalog.storage_backend_id == storage_backend_id)
     )
     if count_result.scalar_one() > 0:
         raise HTTPException(

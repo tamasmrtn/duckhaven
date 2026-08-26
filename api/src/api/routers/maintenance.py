@@ -9,15 +9,17 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from typing import Annotated
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user, get_db
 from api.models.maintenance import MaintenanceRecommendation, TableHealthSample
 from api.models.user import User
 from api.models.workspace import Workspace, WorkspaceMember
+from api.openapi import LEGACY_SUFFIX
 from api.schemas.maintenance import (
     DeploymentHealthOut,
     HealthHistoryPoint,
@@ -30,7 +32,7 @@ from api.schemas.maintenance import (
 )
 from api.services.maintenance import scoring
 from api.services.maintenance.read import latest_samples, sample_for_aggregate
-from api.services.workspace import assert_workspace_member, get_workspace
+from api.services.workspace import assert_workspace_member, get_workspace, resolve_catalog
 
 router = APIRouter()
 
@@ -94,9 +96,9 @@ async def deployment_health(
     return DeploymentHealthOut(summary=overall, workspaces=ws_out)
 
 
-@router.get("/workspaces/{ws}/health", response_model=WorkspaceHealthDetailOut)
+@router.get("/workspaces/{workspace}/health", response_model=WorkspaceHealthDetailOut)
 async def workspace_health(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> WorkspaceHealthDetailOut:
@@ -129,36 +131,42 @@ async def workspace_health(
     return WorkspaceHealthDetailOut(summary=summary, namespaces=namespaces, tables=tables)
 
 
-@router.get(
-    "/workspaces/{ws}/schemas/{schema}/tables/{table}/health",
-    response_model=TableHealthDetailOut,
-)
 async def table_health(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     schema: str,
     table: str,
+    catalog: str | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> TableHealthDetailOut:
     """One table's health, with the history behind it.
 
-    Resolves against the workspace's default catalog. The history is what makes
-    the numbers actionable: a file count that is climbing needs compaction, one
-    that is flat does not."""
+    The history is what makes the numbers actionable: a file count that is
+    climbing needs compaction, one that is flat does not.
+
+    On the canonical catalog-scoped path the samples are narrowed to that
+    catalog. The deprecated workspace-scoped path has no catalog to narrow by,
+    so where two attached catalogs hold a table of the same name it reports
+    whichever was sampled most recently."""
     workspace = await get_workspace(db, ws)
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     await assert_workspace_member(db, workspace.id, user.id)
 
+    scope = [
+        TableHealthSample.workspace_id == workspace.id,
+        TableHealthSample.schema_name == schema,
+        TableHealthSample.table_name == table,
+    ]
+    if catalog is not None:
+        cat = await resolve_catalog(db, workspace.id, catalog)
+        scope.append(TableHealthSample.catalog_id == cat.id)
+
     history_rows = (
         (
             await db.execute(
                 sa.select(TableHealthSample)
-                .where(
-                    TableHealthSample.workspace_id == workspace.id,
-                    TableHealthSample.schema_name == schema,
-                    TableHealthSample.table_name == table,
-                )
+                .where(*scope)
                 .order_by(TableHealthSample.scanned_at.desc())
                 .limit(_HISTORY_LIMIT)
             )
@@ -230,11 +238,11 @@ async def list_recommendations(
 
 
 @router.post(
-    "/maintenance/recommendations/{rec_id}/dismiss",
+    "/maintenance/recommendations/{recommendation_id}/dismiss",
     response_model=RecommendationOut,
 )
 async def dismiss_recommendation(
-    rec_id: uuid.UUID,
+    recommendation_id: uuid.UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> RecommendationOut:
@@ -243,7 +251,7 @@ async def dismiss_recommendation(
 
     A judgement, not a fix: the underlying condition is unchanged and the
     recommendation is kept as a dismissed record rather than deleted."""
-    rec = await db.get(MaintenanceRecommendation, rec_id)
+    rec = await db.get(MaintenanceRecommendation, recommendation_id)
     if rec is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     await assert_workspace_member(db, rec.workspace_id, user.id, min_role="writer")
@@ -252,3 +260,22 @@ async def dismiss_recommendation(
     await db.commit()
     await db.refresh(rec)
     return RecommendationOut.model_validate(rec, from_attributes=True)
+
+
+# The canonical path carries the catalog; the workspace-scoped one resolves
+# without it and is deprecated alongside the rest of the default-catalog shim.
+_HEALTH_SUFFIX = "/{schema}/tables/{table}/health"
+router.add_api_route(
+    "/workspaces/{workspace}/catalogs/{catalog}/schemas" + _HEALTH_SUFFIX,
+    table_health,
+    methods=["GET"],
+    response_model=TableHealthDetailOut,
+)
+router.add_api_route(
+    "/workspaces/{workspace}/schemas" + _HEALTH_SUFFIX,
+    table_health,
+    methods=["GET"],
+    response_model=TableHealthDetailOut,
+    operation_id=table_health.__name__ + LEGACY_SUFFIX,
+    deprecated=True,
+)

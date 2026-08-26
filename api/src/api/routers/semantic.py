@@ -21,8 +21,9 @@ import contextlib
 import json
 import uuid
 from datetime import UTC, datetime
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -106,7 +107,7 @@ class _Context:
 
 def _context(min_role: str):
     async def _dep(
-        ws: str,
+        ws: Annotated[str, Path(alias="workspace")],
         user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db),
     ) -> _Context:
@@ -292,7 +293,7 @@ async def _catalog_slugs(ctx: _Context) -> dict[uuid.UUID, str]:
 # ── Models ────────────────────────────────────────────────────────────────────
 
 
-@router.get("/workspaces/{ws}/semantic/models", response_model=list[ModelSummaryOut])
+@router.get("/workspaces/{workspace}/semantic/models", response_model=list[ModelSummaryOut])
 async def list_models(
     status_filter: str | None = Query(default=None, alias="status"),
     ctx: _Context = Depends(_context("reader")),
@@ -318,7 +319,7 @@ async def list_models(
 
 
 @router.post(
-    "/workspaces/{ws}/semantic/models",
+    "/workspaces/{workspace}/semantic/models",
     response_model=ModelOut,
     status_code=status.HTTP_201_CREATED,
 )
@@ -359,9 +360,9 @@ async def create_model(
     return _full(model, [], [], [], [], await _catalog_slugs(ctx))
 
 
-@router.get("/workspaces/{ws}/semantic/models/{slug}", response_model=ModelOut)
+@router.get("/workspaces/{workspace}/semantic/models/{model}", response_model=ModelOut)
 async def get_model(
-    slug: str,
+    slug: Annotated[str, Path(alias="model")],
     ctx: _Context = Depends(_context("reader")),
     db: AsyncSession = Depends(get_db),
 ) -> ModelOut:
@@ -383,9 +384,9 @@ async def get_model(
     return _full(model, datasets, dimensions, metrics, relationships, await _catalog_slugs(ctx))
 
 
-@router.patch("/workspaces/{ws}/semantic/models/{slug}", response_model=ModelOut)
+@router.patch("/workspaces/{workspace}/semantic/models/{model}", response_model=ModelOut)
 async def update_model(
-    slug: str,
+    slug: Annotated[str, Path(alias="model")],
     body: ModelUpdate,
     ctx: _Context = Depends(_context("writer")),
     db: AsyncSession = Depends(get_db),
@@ -404,9 +405,11 @@ async def update_model(
     return _full(model, datasets, dimensions, metrics, relationships, await _catalog_slugs(ctx))
 
 
-@router.delete("/workspaces/{ws}/semantic/models/{slug}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/workspaces/{workspace}/semantic/models/{model}", status_code=status.HTTP_204_NO_CONTENT
+)
 async def delete_model(
-    slug: str,
+    slug: Annotated[str, Path(alias="model")],
     ctx: _Context = Depends(_context("owner")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
@@ -428,9 +431,9 @@ async def delete_model(
     await db.commit()
 
 
-@router.post("/workspaces/{ws}/semantic/models/{slug}/publish", response_model=ModelOut)
+@router.post("/workspaces/{workspace}/semantic/models/{model}/publish", response_model=ModelOut)
 async def publish_model(
-    slug: str,
+    slug: Annotated[str, Path(alias="model")],
     polaris: PolarisClient = Depends(get_polaris_client),
     ctx: _Context = Depends(_context("owner")),
     db: AsyncSession = Depends(get_db),
@@ -475,9 +478,9 @@ async def publish_model(
     return _full(model, datasets, dimensions, metrics, relationships, await _catalog_slugs(ctx))
 
 
-@router.post("/workspaces/{ws}/semantic/models/{slug}/deprecate", response_model=ModelOut)
+@router.post("/workspaces/{workspace}/semantic/models/{model}/deprecate", response_model=ModelOut)
 async def deprecate_model(
-    slug: str,
+    slug: Annotated[str, Path(alias="model")],
     ctx: _Context = Depends(_context("owner")),
     db: AsyncSession = Depends(get_db),
 ) -> ModelOut:
@@ -502,9 +505,11 @@ async def deprecate_model(
     return _full(model, datasets, dimensions, metrics, relationships, await _catalog_slugs(ctx))
 
 
-@router.post("/workspaces/{ws}/semantic/models/{slug}/validate", response_model=ValidationReportOut)
+@router.post(
+    "/workspaces/{workspace}/semantic/models/{model}/validate", response_model=ValidationReportOut
+)
 async def validate(
-    slug: str,
+    slug: Annotated[str, Path(alias="model")],
     polaris: PolarisClient = Depends(get_polaris_client),
     ctx: _Context = Depends(_context("writer")),
     db: AsyncSession = Depends(get_db),
@@ -574,12 +579,12 @@ async def _dataset_id(db: AsyncSession, model_id: uuid.UUID, name: str) -> uuid.
 
 
 @router.post(
-    "/workspaces/{ws}/semantic/models/{slug}/datasets",
+    "/workspaces/{workspace}/semantic/models/{model}/datasets",
     response_model=DatasetOut,
     status_code=status.HTTP_201_CREATED,
 )
 async def add_dataset(
-    slug: str,
+    slug: Annotated[str, Path(alias="model")],
     body: DatasetIn,
     ctx: _Context = Depends(_context("writer")),
     db: AsyncSession = Depends(get_db),
@@ -632,12 +637,12 @@ async def add_dataset(
 
 
 @router.post(
-    "/workspaces/{ws}/semantic/models/{slug}/dimensions",
+    "/workspaces/{workspace}/semantic/models/{model}/dimensions",
     response_model=DimensionOut,
     status_code=status.HTTP_201_CREATED,
 )
 async def add_dimension(
-    slug: str,
+    slug: Annotated[str, Path(alias="model")],
     body: DimensionIn,
     ctx: _Context = Depends(_context("writer")),
     db: AsyncSession = Depends(get_db),
@@ -685,12 +690,12 @@ async def add_dimension(
 
 
 @router.post(
-    "/workspaces/{ws}/semantic/models/{slug}/metrics",
+    "/workspaces/{workspace}/semantic/models/{model}/metrics",
     response_model=MetricOut,
     status_code=status.HTTP_201_CREATED,
 )
 async def add_metric(
-    slug: str,
+    slug: Annotated[str, Path(alias="model")],
     body: MetricIn,
     ctx: _Context = Depends(_context("writer")),
     db: AsyncSession = Depends(get_db),
@@ -765,11 +770,11 @@ async def add_metric(
 
 
 @router.patch(
-    "/workspaces/{ws}/semantic/models/{slug}/metrics/{metric_name}", response_model=MetricOut
+    "/workspaces/{workspace}/semantic/models/{model}/metrics/{metric}", response_model=MetricOut
 )
 async def update_metric(
-    slug: str,
-    metric_name: str,
+    slug: Annotated[str, Path(alias="model")],
+    metric_name: Annotated[str, Path(alias="metric")],
     body: MetricUpdate,
     ctx: _Context = Depends(_context("writer")),
     db: AsyncSession = Depends(get_db),
@@ -847,12 +852,12 @@ async def update_metric(
 
 
 @router.post(
-    "/workspaces/{ws}/semantic/models/{slug}/relationships",
+    "/workspaces/{workspace}/semantic/models/{model}/relationships",
     response_model=RelationshipOut,
     status_code=status.HTTP_201_CREATED,
 )
 async def add_relationship(
-    slug: str,
+    slug: Annotated[str, Path(alias="model")],
     body: RelationshipIn,
     ctx: _Context = Depends(_context("writer")),
     db: AsyncSession = Depends(get_db),
@@ -912,12 +917,12 @@ async def _child(db: AsyncSession, model_id: uuid.UUID, table, name: str, kind: 
 
 
 @router.delete(
-    "/workspaces/{ws}/semantic/models/{slug}/datasets/{name}",
+    "/workspaces/{workspace}/semantic/models/{model}/datasets/{dataset}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_dataset(
-    slug: str,
-    name: str,
+    slug: Annotated[str, Path(alias="model")],
+    name: Annotated[str, Path(alias="dataset")],
     ctx: _Context = Depends(_context("writer")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
@@ -969,12 +974,12 @@ async def delete_dataset(
 
 
 @router.delete(
-    "/workspaces/{ws}/semantic/models/{slug}/dimensions/{name}",
+    "/workspaces/{workspace}/semantic/models/{model}/dimensions/{dimension}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_dimension(
-    slug: str,
-    name: str,
+    slug: Annotated[str, Path(alias="model")],
+    name: Annotated[str, Path(alias="dimension")],
     ctx: _Context = Depends(_context("writer")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
@@ -1026,12 +1031,12 @@ async def delete_dimension(
 
 
 @router.delete(
-    "/workspaces/{ws}/semantic/models/{slug}/metrics/{name}",
+    "/workspaces/{workspace}/semantic/models/{model}/metrics/{metric}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_metric(
-    slug: str,
-    name: str,
+    slug: Annotated[str, Path(alias="model")],
+    name: Annotated[str, Path(alias="metric")],
     ctx: _Context = Depends(_context("writer")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
@@ -1043,12 +1048,12 @@ async def delete_metric(
 
 
 @router.delete(
-    "/workspaces/{ws}/semantic/models/{slug}/relationships/{name}",
+    "/workspaces/{workspace}/semantic/models/{model}/relationships/{relationship}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_relationship(
-    slug: str,
-    name: str,
+    slug: Annotated[str, Path(alias="model")],
+    name: Annotated[str, Path(alias="relationship")],
     ctx: _Context = Depends(_context("writer")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
@@ -1064,10 +1069,10 @@ async def delete_relationship(
     await db.commit()
 
 
-@router.get("/workspaces/{ws}/semantic/models/{slug}/metrics/{metric_name}/dimensions")
+@router.get("/workspaces/{workspace}/semantic/models/{model}/metrics/{metric}/dimensions")
 async def metric_dimensions(
-    slug: str,
-    metric_name: str,
+    slug: Annotated[str, Path(alias="model")],
+    metric_name: Annotated[str, Path(alias="metric")],
     ctx: _Context = Depends(_context("reader")),
     db: AsyncSession = Depends(get_db),
 ) -> list[str]:
@@ -1096,7 +1101,7 @@ async def metric_dimensions(
 # ── Search and compile ────────────────────────────────────────────────────────
 
 
-@router.get("/workspaces/{ws}/semantic/search", response_model=SemanticSearchOut)
+@router.get("/workspaces/{workspace}/semantic/search", response_model=SemanticSearchOut)
 async def semantic_search(
     q: str = Query(min_length=1, max_length=500),
     limit: int = Query(default=10, ge=1, le=50),
@@ -1125,7 +1130,7 @@ async def semantic_search(
     )
 
 
-@router.post("/workspaces/{ws}/semantic/compile", response_model=CompiledQueryOut)
+@router.post("/workspaces/{workspace}/semantic/compile", response_model=CompiledQueryOut)
 async def compile_query(
     body: MetricQueryIn,
     published_only: bool = Query(default=True),
@@ -1193,7 +1198,9 @@ async def compile_query(
 _RECONCILE_MODES = ("none", "provider_run")
 
 
-@router.post("/workspaces/{ws}/semantic/imports/{provider}", response_model=SemanticImportOut)
+@router.post(
+    "/workspaces/{workspace}/semantic/imports/{provider}", response_model=SemanticImportOut
+)
 async def import_semantics(
     provider: str,
     request: Request,
@@ -1311,7 +1318,7 @@ async def import_semantics(
     )
 
 
-@router.delete("/workspaces/{ws}/semantic/imports", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/workspaces/{workspace}/semantic/imports", status_code=status.HTTP_204_NO_CONTENT)
 async def purge_import(
     provider: str = Query(...),
     ctx: _Context = Depends(_context("owner")),
@@ -1331,7 +1338,7 @@ async def purge_import(
 
 
 async def table_semantics(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     schema: str,
     table: str,
     catalog: str | None = None,
@@ -1377,8 +1384,8 @@ async def table_semantics(
 
 # Registered under both bases, matching the lineage read route: the canonical
 # per-catalog path and the legacy shim that resolves the workspace default.
-_CANON = "/workspaces/{ws}/catalogs/{catalog}/schemas"
-_LEGACY = "/workspaces/{ws}/schemas"
+_CANON = "/workspaces/{workspace}/catalogs/{catalog}/schemas"
+_LEGACY = "/workspaces/{workspace}/schemas"
 
 for _base in (_CANON, _LEGACY):
     router.add_api_route(
@@ -1388,4 +1395,5 @@ for _base in (_CANON, _LEGACY):
         response_model=TableSemanticsOut,
         # The shim shares the canonical handler, so its operation id would collide.
         operation_id=(table_semantics.__name__ + (LEGACY_SUFFIX if _base is _LEGACY else "")),
+        deprecated=_base is _LEGACY,
     )

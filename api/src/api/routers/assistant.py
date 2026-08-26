@@ -1,6 +1,7 @@
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Path, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.responses import StreamingResponse
@@ -57,9 +58,9 @@ async def _workspace(db: AsyncSession, ws: str, user: User):
     return workspace
 
 
-@router.get("/workspaces/{ws}/assistant/status", response_model=AssistantStatusOut)
+@router.get("/workspaces/{workspace}/assistant/status", response_model=AssistantStatusOut)
 async def assistant_status(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> AssistantStatusOut:
@@ -73,9 +74,9 @@ async def assistant_status(
     return AssistantStatusOut(enabled=settings.assistant_enabled)
 
 
-@router.get("/workspaces/{ws}/assistant/conversations", response_model=list[ConversationOut])
+@router.get("/workspaces/{workspace}/assistant/conversations", response_model=list[ConversationOut])
 async def list_conversations(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[AssistantConversation]:
@@ -97,12 +98,12 @@ async def list_conversations(
 
 
 @router.post(
-    "/workspaces/{ws}/assistant/conversations",
+    "/workspaces/{workspace}/assistant/conversations",
     response_model=ConversationOut,
     status_code=status.HTTP_201_CREATED,
 )
 async def create_conversation(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     body: ConversationCreate,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -124,11 +125,11 @@ async def create_conversation(
 
 
 @router.get(
-    "/workspaces/{ws}/assistant/conversations/{conversation_id}",
+    "/workspaces/{workspace}/assistant/conversations/{conversation_id}",
     response_model=ConversationDetailOut,
 )
 async def get_conversation(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     conversation_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -169,11 +170,11 @@ async def get_conversation(
 
 
 @router.patch(
-    "/workspaces/{ws}/assistant/conversations/{conversation_id}",
+    "/workspaces/{workspace}/assistant/conversations/{conversation_id}",
     response_model=ConversationOut,
 )
 async def rename_conversation(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     conversation_id: uuid.UUID,
     body: ConversationUpdate,
     db: AsyncSession = Depends(get_db),
@@ -190,11 +191,11 @@ async def rename_conversation(
 
 
 @router.delete(
-    "/workspaces/{ws}/assistant/conversations/{conversation_id}",
+    "/workspaces/{workspace}/assistant/conversations/{conversation_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_conversation(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     conversation_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -211,7 +212,7 @@ async def delete_conversation(
 
 
 @router.post(
-    "/workspaces/{ws}/assistant/conversations/{conversation_id}/messages",
+    "/workspaces/{workspace}/assistant/conversations/{conversation_id}/messages",
     response_class=StreamingResponse,
     responses={
         200: {
@@ -224,7 +225,7 @@ async def delete_conversation(
     },
 )
 async def send_message(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     conversation_id: uuid.UUID,
     body: TurnRequest,
     db: AsyncSession = Depends(get_db),
@@ -253,7 +254,7 @@ async def send_message(
 
 
 @router.post(
-    "/workspaces/{ws}/assistant/conversations/{conversation_id}/approvals",
+    "/workspaces/{workspace}/assistant/conversations/{conversation_id}/approvals",
     response_class=StreamingResponse,
     responses={
         200: {
@@ -266,7 +267,7 @@ async def send_message(
     },
 )
 async def approve_write(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     conversation_id: uuid.UUID,
     body: ApprovalRequest,
     db: AsyncSession = Depends(get_db),

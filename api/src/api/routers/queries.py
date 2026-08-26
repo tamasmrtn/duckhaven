@@ -2,9 +2,10 @@ import logging
 import time
 import uuid
 from datetime import UTC, datetime
+from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
 from fastapi import Query as QueryParam
 from opentelemetry import trace
 from sqlalchemy import or_, select
@@ -52,9 +53,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.post("/workspaces/{ws}/queries", status_code=202, response_model=QueryOut)
+@router.post("/workspaces/{workspace}/queries", status_code=202, response_model=QueryOut)
 async def create_query(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     body: QueryCreate,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -342,9 +343,9 @@ async def _set_concurrency(
     return query
 
 
-@router.get("/workspaces/{ws}/sql-metadata", response_model=SqlMetadataOut)
+@router.get("/workspaces/{workspace}/sql-metadata", response_model=SqlMetadataOut)
 async def get_sql_metadata(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> SqlMetadataOut:
@@ -374,9 +375,9 @@ async def get_sql_metadata(
         ) from exc
 
 
-@router.get("/workspaces/{ws}/queries", response_model=QueriesPageOut)
+@router.get("/workspaces/{workspace}/queries", response_model=QueriesPageOut)
 async def list_workspace_queries(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     all_workspaces: bool = QueryParam(default=False),
     user_id: uuid.UUID | None = QueryParam(default=None),
     agent_id: uuid.UUID | None = QueryParam(default=None),
@@ -685,9 +686,9 @@ async def get_query_rows(
     )
 
 
-@router.get("/workspaces/{ws}/saved-queries", response_model=list[SavedQueryOut])
+@router.get("/workspaces/{workspace}/saved-queries", response_model=list[SavedQueryOut])
 async def list_saved_queries(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[SavedQueryOut]:
@@ -712,7 +713,7 @@ async def list_saved_queries(
 
 
 @router.post(
-    "/workspaces/{ws}/saved-queries",
+    "/workspaces/{workspace}/saved-queries",
     status_code=201,
     responses={
         200: {"description": "A saved query with this name existed; its SQL was replaced."},
@@ -721,7 +722,7 @@ async def list_saved_queries(
     response_model=SavedQueryOut,
 )
 async def create_saved_query(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     body: SavedQueryCreate,
     response: Response,
     db: AsyncSession = Depends(get_db),
@@ -766,10 +767,12 @@ async def create_saved_query(
     return sq
 
 
-@router.patch("/workspaces/{ws}/saved-queries/{sq_id}", response_model=SavedQueryOut)
+@router.patch(
+    "/workspaces/{workspace}/saved-queries/{saved_query_id}", response_model=SavedQueryOut
+)
 async def update_saved_query(
-    ws: str,
-    sq_id: uuid.UUID,
+    ws: Annotated[str, Path(alias="workspace")],
+    saved_query_id: uuid.UUID,
     body: SavedQueryUpdate,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -783,7 +786,7 @@ async def update_saved_query(
     await assert_workspace_member(db, workspace.id, user.id, min_role="writer")
     result = await db.execute(
         select(SavedQuery).where(
-            SavedQuery.id == sq_id,
+            SavedQuery.id == saved_query_id,
             SavedQuery.workspace_id == workspace.id,
         )
     )
@@ -800,10 +803,10 @@ async def update_saved_query(
     return sq
 
 
-@router.delete("/workspaces/{ws}/saved-queries/{sq_id}", status_code=204)
+@router.delete("/workspaces/{workspace}/saved-queries/{saved_query_id}", status_code=204)
 async def delete_saved_query(
-    ws: str,
-    sq_id: uuid.UUID,
+    ws: Annotated[str, Path(alias="workspace")],
+    saved_query_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> None:
@@ -817,7 +820,7 @@ async def delete_saved_query(
     await assert_workspace_member(db, workspace.id, user.id, min_role="writer")
     result = await db.execute(
         select(SavedQuery).where(
-            SavedQuery.id == sq_id,
+            SavedQuery.id == saved_query_id,
             SavedQuery.workspace_id == workspace.id,
         )
     )

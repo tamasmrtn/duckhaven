@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,9 +44,9 @@ def _escape_like(s: str) -> str:
     return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-@router.get("/{ws}/search", response_model=list[SearchResultOut])
+@router.get("/{workspace}/search", response_model=list[SearchResultOut])
 async def search_workspace(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     q: str = Query(""),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     user: User = Depends(get_current_user),

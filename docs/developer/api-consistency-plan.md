@@ -19,9 +19,9 @@ does not exist), so the surface should be settled before a second consumer is ge
 
 The intended outcome is a surface that generates good third-party clients, plus a written
 convention set that stops the next 161 operations drifting the same way. **Consistency is
-the goal, not novelty.** Of 161 operations, **49 are unchanged**, **80 change only in the
+the goal, not novelty.** Of 161 operations, **49 are unchanged**, **79 change only in the
 schema** (parameter template names, declared status codes, metadata — no URL a client sends
-changes), and **32 change on the wire**. Nothing in this plan changes what a handler does.
+changes), and **33 change on the wire**. Nothing in this plan changes what a handler does.
 
 ---
 
@@ -63,6 +63,8 @@ the status-code-by-method table, 31 bare arrays vs 4 envelopes, 155×`422` + 6×
 | **B11** | **The two grant `PUT`s key the resource in the body, not the path.** Both are genuine idempotent upserts, so `PUT` is defensible, but identity-in-body is not the pattern `PUT /admin/users/{user_id}/workspaces/{ws}` already establishes in the same codebase. | 2 | `routers/grants.py:120`. |
 | **B12** | **Error bodies split 32/68.** 32 raise sites use `detail={"error": ..., "detail": ...}` (concentrated in `queries.py`, `semantic.py`, `sql_sessions.py`); 68 use `detail="<string>"`. Confirms A8 and quantifies it. | 100 | — |
 | **B13** | **Routers raise 78×404, 25×409, 21×503, 11×403, 1×401 — none documented.** This is the concrete measure of A7: the schema documents `422` and nothing else, while the code demonstrably returns five other classes. | 136 raises | — |
+| **B14** | **Authentication is described as per-call parameters, and no `securitySchemes` is declared.** Because `get_current_user` takes `session: str | None = Cookie(...)` and `authorization: str | None = Header(...)`, FastAPI documents both as ordinary optional parameters on every operation that depends on it. The schema declares no `securitySchemes` and no `security`, so a generated client makes the caller pass a cookie and a bearer header by hand on every call instead of configuring credentials once. | 151 of 161 | `GET /workspaces/{ws}` documents `session` and `authorization` alongside `ws` (`deps.py:29-32`). |
+| **B15** | **Two literal segments occupy an identifier slot whose sibling is a name, not a UUID** — the §2.1.6 rule the other four A6 cases satisfy. A catalog named `attach` or an Iceberg namespace named `refresh-stats` would be unreachable. Surfaced by the conformance test, not by reading. `refresh-stats` is also **scoped wrongly**: the handler iterates every schema in the catalog (`schemas.py:372-382`), so it is a catalog-level operation living under `/schemas`. | 3 paths | `POST /workspaces/{ws}/catalogs/attach` shadows `{catalog}`; `POST /workspaces/{ws}/catalogs/{catalog}/schemas/refresh-stats` shadows `{schema}`. |
 
 ### 1.3 Findings confirmed exactly as written
 
@@ -256,7 +258,7 @@ clients consume without special-casing.
 declared status codes, or metadata change; **no URL a client sends changes**, and no SPA or
 MSW edit is required. `**wire**` = the request or response changes on the wire.
 
-**Totals: 49 unchanged · 80 schema-only · 32 wire-breaking.**
+**Totals: 49 unchanged · 79 schema-only · 33 wire-breaking.**
 
 | Current | Proposed | Breaking | Note |
 |---|---|---|---|
@@ -352,7 +354,7 @@ MSW edit is required. `**wire**` = the request or response changes on the wire.
 | `DELETE /workspaces/{ws}/catalogs/{catalog}/grants/{grant_id}` | `DELETE /workspaces/{workspace}/catalogs/{catalog}/grants/{grant_id}` | schema |  |
 | `GET /workspaces/{ws}/catalogs/{catalog}/schemas` | `GET /workspaces/{workspace}/catalogs/{catalog}/schemas` | schema | canonical form |
 | `POST /workspaces/{ws}/catalogs/{catalog}/schemas` | `POST /workspaces/{workspace}/catalogs/{catalog}/schemas` | schema |  |
-| `POST /workspaces/{ws}/catalogs/{catalog}/schemas/refresh-stats` | `POST /workspaces/{workspace}/catalogs/{catalog}/schemas/refresh-stats` | schema |  |
+| `POST /workspaces/{ws}/catalogs/{catalog}/schemas/refresh-stats` | `POST /workspaces/{workspace}/catalogs/{catalog}/refresh-stats` | **wire** | B15: catalog-scoped operation, and frees the `{schema}` slot |
 | `DELETE /workspaces/{ws}/catalogs/{catalog}/schemas/{schema}` | `DELETE /workspaces/{workspace}/catalogs/{catalog}/schemas/{schema}` | schema |  |
 | `GET /workspaces/{ws}/catalogs/{catalog}/schemas/{schema}/tables` | `GET /workspaces/{workspace}/…/tables` | schema | see Risk R2 |
 | `POST /workspaces/{ws}/catalogs/{catalog}/schemas/{schema}/tables` | `POST /workspaces/{workspace}/…/tables` | schema |  |
@@ -435,8 +437,8 @@ no multi-release concurrent-surface window — only a schema-level warning ahead
 
 | Bucket | Contents | Rationale |
 |---|---|---|
-| **Fix now** (Phases 1–4, `api_version` 1) | All OpenAPI metadata (B9, B10, A9, A10); documented `401`/`403`/`404`/`409`/`503` (A7/B13); declaring the real status codes (B1/B2/B3); `limit` caps and defaults (B5/B6); all path-parameter template renames (A4/B4); the new canonical table-health route; `deprecated: true` on the 13 shim ops | None of it changes a URL, request, or response body. Highest value per unit of risk, and it is what makes generated clients usable. |
-| **Fix at the `api_version` 2 bump** (Phase 5) | Error envelope (A8/B12); pagination on 11 collections + 2 searches (A2); `pat`→`pats` (A5); `attach`→`PUT` (A11); 3 POST→201 (A3); shim removal (A1); `status`/`q` parameter types (B7/B8) | Every item changes the wire. Batching them into one release means one migration for consumers instead of several. |
+| **Fix now** (Phases 1–4, `api_version` 1) | All OpenAPI metadata (B9, B10, A9, A10); documented `401`/`403`/`404`/`409`/`503` (A7/B13); declaring the real status codes (B1/B2/B3); `securitySchemes` and hidden auth parameters (B14); `limit` caps and defaults (B5/B6); all path-parameter template renames (A4/B4); the new canonical table-health route; `deprecated: true` on the 13 shim ops | None of it changes a URL, request, or response body. Highest value per unit of risk, and it is what makes generated clients usable. |
+| **Fix at the `api_version` 2 bump** (Phase 5) | Error envelope (A8/B12); pagination on 11 collections + 2 searches (A2); `pat`→`pats` (A5); `attach`→`PUT` (A11); 3 POST→201 (A3); shim removal (A1); `status`/`q` parameter types (B7/B8); the `refresh-stats` move (B15) | Every item changes the wire. Batching them into one release means one migration for consumers instead of several. |
 | **Accepted inconsistency** (documented, unchanged) | A12 global/nested coexistence; `{catalog}` vs `{catalog_id}`; A6 literal siblings; the two `/access-mode` PATCHes; `POST .../health`; `RowsPageOut` as a distinct grid type; the two body-keyed grant `PUT`s; 14 bounded bare-array collections; `GET /auth/oidc/{provider}/callback` side effects | Each is either a coherent pattern that a rule can describe, or a change whose SPA and MSW churn exceeds what consistency buys. §2 states the rule for each so it reads as a decision, not an oversight. |
 
 ---
@@ -452,9 +454,9 @@ final phase's command is longer than the repo's 120-character line limit and mus
 |---|---|
 | 1 | **Land this document and the conventions reference.** Copy the plan to `docs/developer/api-consistency-plan.md`; write `docs/reference/api-conventions.md` from §2; add both to `mkdocs.yml` nav. — `1. Land the plan and conventions reference → verify: mkdocs build --strict` |
 | 2 | **Add the OpenAPI conformance test** (§8.1) with every convention it can already assert marked `xfail(strict=True)`, so the ruleset is executable before anything moves. — `2. Add the OpenAPI conformance test → verify: make test-api` |
-| 3 | **OpenAPI metadata, non-breaking.** Explicit `operation_id` + `summary` + `description` on all 161 routes; split the `admin` tag into five; drop the duplicate `tags=` at `semantic.py:1335`; rename the `*_workspace_detail` handlers; declare `401`/`403`/`404`/`409`/`503` per §2.8.3 via shared `responses=` constants; declare the real status codes for B1/B2/B3; cap `/queries/{query_id}/rows` at `le=1000`; normalise `limit` defaults. — `3. Fix OpenAPI metadata and declared responses → verify: make test-api` |
+| 3 | **OpenAPI metadata, non-breaking.** Explicit `operation_id` + `summary` + `description` on all 161 routes; split the `admin` tag into five; drop the duplicate `tags=` at `semantic.py:1335`; rename the `*_workspace_detail` handlers; declare `401`/`403`/`404`/`409`/`503` per §2.8.3 via shared `responses=` constants; declare the real status codes for B1/B2/B3; declare `securitySchemes` (`cookieAuth`, `bearerAuth`) and mark the `session`/`authorization` parameters `include_in_schema=False`; cap `/queries/{query_id}/rows` at `le=1000`; normalise `limit` defaults. — `3. Fix OpenAPI metadata and declared responses → verify: make test-api` |
 | 4 | **Path-parameter renames, the canonical table-health route, and deprecation flags.** Rename every template per §2.2 across the 30 router modules; add `GET .../catalogs/{catalog}/schemas/{schema}/tables/{table}/health`; add `deprecated=True` to the 14 legacy registrations (`schemas.py:856`, `semantic.py:1329-1335`, `maintenance.py:128`). — `4. Rename path parameters and deprecate the shim → verify: make test-api` plus a schema assertion that no path contains `{ws}`, `{slug}`, `{sa_id}`, `{sq_id}`, `{rec_id}`, `{backend_id}`, `{metric_name}` or a bare `{name}` |
-| 5 | **The breaking release.** `API_VERSION` 1 → 2 (`health.py:27`). In one branch: the error envelope handler in `main.py` and the `client.ts` unwrapper removal; the `{items, cursor, has_more}` envelope on the 11 collections and the 2 searches; `pat` → `pats`; `POST .../catalogs/attach` → `PUT .../catalogs/{catalog}`; the 3 `POST` → `201`; deletion of the `_LEGACY` registrations; `status`/`q` parameter types. SPA and MSW handlers updated in the same branch. — `5. Ship the breaking changes and bump api_version → verify: make test-api && make test-web` |
+| 5 | **The breaking release.** `API_VERSION` 1 → 2 (`health.py:27`). In one branch: the error envelope handler in `main.py` and the `client.ts` unwrapper removal; the `{items, cursor, has_more}` envelope on the 11 collections and the 2 searches; `pat` → `pats`; `POST .../catalogs/attach` → `PUT .../catalogs/{catalog}`; the 3 `POST` → `201`; deletion of the `_LEGACY` registrations; `status`/`q` parameter types; `.../schemas/refresh-stats` → `.../catalogs/{catalog}/refresh-stats`. SPA and MSW handlers updated in the same branch. — `5. Ship the breaking changes and bump api_version → verify: make test-api && make test-web` |
 | 6 | **Docs.** Update `docs/reference/rest-api.md`, the guides naming renamed routes, and the `api_version` note; regenerate any embedded route examples. — `6. Update the docs for the new surface → verify: mkdocs build --strict` |
 | 7 | `7. Run tests and pre-commit → verify: make test-api && make test-web && pre-commit run --all-files && mkdocs build --strict` |
 
@@ -476,7 +478,7 @@ final phase's command is longer than the repo's 120-character line limit and mus
 | 7 | — | — | — | — |
 
 **Phases 1–4 require zero SPA or MSW edits** — that is the point of the schema-only /
-wire-breaking split in §3, and it is why 80 of 112 changes cost nothing outside `api/`.
+wire-breaking split in §3, and it is why 79 of 112 changes cost nothing outside `api/`.
 
 ---
 
@@ -515,11 +517,12 @@ and asserts the §2 rules, so a new endpoint that drifts **fails CI instead of s
 | Every operation has an explicit `operation_id`, unique, `snake_case`, not FastAPI's auto-generated `<fn>_<path>_<method>` form | §2.8.1 | Phase 3 |
 | Every operation has a non-empty `summary` and `description` | §2.8.2 | Phase 3 |
 | Every operation has exactly one tag, drawn from an allow-list | §2.8.4 | Phase 3 |
+| No operation documents `session` or `authorization` as a parameter; the schema declares `securitySchemes` and every authenticated operation references one | §2.8.6 | Phase 3 |
 | Every operation whose route depends on `get_current_user` declares `401`; on `require_permission`/`require_agent_tier` declares `403` | §2.8.3 | Phase 3 |
 | Every path containing `{…}` declares `404` | §2.8.3 | Phase 3 |
 | Every path parameter is the singular of its preceding collection segment, with `_id` iff its schema is `format: uuid`; exceptions read from an explicit allow-list (`provider`) | §2.2 | Phase 4 |
 | No path parameter matches `^(ws|slug|[a-z]{2,3}_id)$` | §2.2 | Phase 4 |
-| A literal path segment may sit beside a sibling id segment only when that id is `format: uuid` | §2.1.6 | Phase 4 |
+| A literal path segment may sit beside a sibling id segment only when that id is `format: uuid` | §2.1.6 | Phase 5 |
 | Every `GET` on a collection path returns either the standard envelope or a schema on the exemption list — and the exemption list in the test **is** the one in §2.5 | §2.5 | Phase 5 |
 | Every `4xx`/`5xx` response references the single `ErrorOut` schema | §2.7 | Phase 5 |
 | Every `POST` returning `201` declares a `Location` header | §2.4 | Phase 5 |

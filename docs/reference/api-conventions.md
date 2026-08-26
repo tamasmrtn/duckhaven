@@ -244,6 +244,12 @@ Prefer raising a specific code over relying on the derived one.
    class names, so a tag covering five unrelated resources produces an unusable class.
 5. A deprecated operation carries `deprecated: true` and names its replacement in the
    description.
+6. **Authentication is described once, as a security scheme — never as per-call
+   parameters.** The schema declares `cookieAuth` and `bearerAuth` under
+   `components.securitySchemes`, and every authenticated operation references one. The
+   `session` cookie and `Authorization` header are `include_in_schema=False`, so a generated
+   client configures credentials once rather than accepting them as arguments on every
+   method. This describes the existing cookie-or-Bearer model; it does not change it.
 
 ## Versioning
 

@@ -38,7 +38,7 @@ BOOTSTRAP_TTL = timedelta(hours=24)
 
 
 @router.get("", response_model=list[AgentOut])
-async def list_agents(
+async def list_all_agents(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[AgentOut]:

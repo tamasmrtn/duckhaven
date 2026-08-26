@@ -37,6 +37,7 @@ from api.models.semantic import (
     SemanticRelationship,
 )
 from api.models.user import User
+from api.openapi import LEGACY_SUFFIX
 from api.schemas.semantic import (
     CompiledQueryOut,
     DatasetIn,
@@ -1332,5 +1333,6 @@ for _base in (_CANON, _LEGACY):
         table_semantics,
         methods=["GET"],
         response_model=TableSemanticsOut,
-        tags=["semantic"],
+        # The shim shares the canonical handler, so its operation id would collide.
+        operation_id=(table_semantics.__name__ + (LEGACY_SUFFIX if _base is _LEGACY else "")),
     )

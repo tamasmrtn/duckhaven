@@ -40,9 +40,13 @@ def _resolve(provider_id: str) -> tuple[OidcProvider, object]:
 
 @router.get(
     "/{provider}/login",
-    status_code=status.HTTP_303_SEE_OTHER,
+    # 302, not 303 and not FastAPI's 307 default for a redirect response: the
+    # response is Authlib's, and `authorize_redirect` builds it with 302. The
+    # decorator cannot change that -- returning a Response bypasses status_code
+    # -- so this declares the code the route actually sends.
+    status_code=status.HTTP_302_FOUND,
     response_class=RedirectResponse,
-    responses={303: {"description": "Redirect to the identity provider's authorization endpoint."}},
+    response_description="Redirect to the identity provider's authorization endpoint.",
 )
 async def oidc_login(provider: str, request: Request):
     """Kick off the Authorization Code + PKCE flow for one provider."""

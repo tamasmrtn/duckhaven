@@ -1,6 +1,7 @@
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Path, status
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -154,10 +155,10 @@ async def list_user_workspaces(
     ]
 
 
-@router.put("/users/{user_id}/workspaces/{ws}", response_model=AdminUserWorkspace)
+@router.put("/users/{user_id}/workspaces/{workspace}", response_model=AdminUserWorkspace)
 async def set_user_workspace_role(
     user_id: uuid.UUID,
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     body: SetMembershipRequest,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_permission(Permission.USERS_MANAGE)),
@@ -185,10 +186,10 @@ async def set_user_workspace_role(
     )
 
 
-@router.delete("/users/{user_id}/workspaces/{ws}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/users/{user_id}/workspaces/{workspace}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_user_from_workspace(
     user_id: uuid.UUID,
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_permission(Permission.USERS_MANAGE)),
 ) -> None:

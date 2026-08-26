@@ -8,8 +8,9 @@ history, which reuses the ``queries`` audit rows tagged ``origin="scheduled"``.
 
 import uuid
 from datetime import UTC, datetime
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Path, status
 from fastapi import Query as QueryParam
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,9 +43,9 @@ def _validate_cron_or_422(expr: str) -> None:
         ) from exc
 
 
-@router.get("/workspaces/{ws}/schedules", response_model=list[ScheduleOut])
+@router.get("/workspaces/{workspace}/schedules", response_model=list[ScheduleOut])
 async def list_schedules(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     saved_query_id: uuid.UUID | None = QueryParam(default=None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -60,9 +61,9 @@ async def list_schedules(
     return list((await db.execute(stmt)).scalars().all())
 
 
-@router.get("/workspaces/{ws}/schedule-runs", response_model=list[QueryOut])
+@router.get("/workspaces/{workspace}/schedule-runs", response_model=list[QueryOut])
 async def list_workspace_schedule_runs(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     limit: int = QueryParam(default=100, le=500),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -83,9 +84,9 @@ async def list_workspace_schedule_runs(
     )
 
 
-@router.post("/workspaces/{ws}/schedules", status_code=201, response_model=ScheduleOut)
+@router.post("/workspaces/{workspace}/schedules", status_code=201, response_model=ScheduleOut)
 async def create_schedule(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     body: ScheduleCreate,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -118,9 +119,9 @@ async def create_schedule(
     return schedule
 
 
-@router.patch("/workspaces/{ws}/schedules/{schedule_id}", response_model=ScheduleOut)
+@router.patch("/workspaces/{workspace}/schedules/{schedule_id}", response_model=ScheduleOut)
 async def update_schedule(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     schedule_id: uuid.UUID,
     body: ScheduleUpdate,
     db: AsyncSession = Depends(get_db),
@@ -159,9 +160,9 @@ async def update_schedule(
     return schedule
 
 
-@router.delete("/workspaces/{ws}/schedules/{schedule_id}", status_code=204)
+@router.delete("/workspaces/{workspace}/schedules/{schedule_id}", status_code=204)
 async def delete_schedule(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     schedule_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -183,9 +184,9 @@ async def delete_schedule(
     await db.commit()
 
 
-@router.get("/workspaces/{ws}/schedules/{schedule_id}/runs", response_model=list[QueryOut])
+@router.get("/workspaces/{workspace}/schedules/{schedule_id}/runs", response_model=list[QueryOut])
 async def list_schedule_runs(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     schedule_id: uuid.UUID,
     limit: int = QueryParam(default=50, le=200),
     db: AsyncSession = Depends(get_db),

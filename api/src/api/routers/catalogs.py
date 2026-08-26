@@ -9,8 +9,9 @@ catalog's creator or an admin and is refused while any binding remains.
 from __future__ import annotations
 
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Path, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -111,9 +112,9 @@ async def list_all_catalogs(
     return [_catalog_out(c, attached_workspaces=await _binding_count(db, c.id)) for c in catalogs]
 
 
-@router.get("/workspaces/{ws}/catalogs", response_model=list[CatalogOut])
+@router.get("/workspaces/{workspace}/catalogs", response_model=list[CatalogOut])
 async def list_workspace_catalogs(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[CatalogOut]:
@@ -152,10 +153,12 @@ async def list_workspace_catalogs(
 
 
 @router.post(
-    "/workspaces/{ws}/catalogs", response_model=CatalogOut, status_code=status.HTTP_201_CREATED
+    "/workspaces/{workspace}/catalogs",
+    response_model=CatalogOut,
+    status_code=status.HTTP_201_CREATED,
 )
 async def create_workspace_catalog(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     body: CatalogCreate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -214,9 +217,9 @@ async def create_workspace_catalog(
     )
 
 
-@router.post("/workspaces/{ws}/catalogs/attach", response_model=CatalogOut)
+@router.post("/workspaces/{workspace}/catalogs/attach", response_model=CatalogOut)
 async def attach_workspace_catalog(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     body: CatalogAttachRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -250,9 +253,9 @@ async def attach_workspace_catalog(
     )
 
 
-@router.delete("/workspaces/{ws}/catalogs/{catalog}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/workspaces/{workspace}/catalogs/{catalog}", status_code=status.HTTP_204_NO_CONTENT)
 async def detach_workspace_catalog(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     catalog: str,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),

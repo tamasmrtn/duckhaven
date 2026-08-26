@@ -9,8 +9,9 @@ per catalog, so they apply wherever the catalog is attached in scoped mode.
 from __future__ import annotations
 
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -75,9 +76,9 @@ async def _payload(db: AsyncSession, workspace_id: uuid.UUID, catalog: Catalog) 
     return CatalogGrantsOut(access_mode=mode, grants=grants, principals=principals)
 
 
-@router.get("/workspaces/{ws}/catalogs/{catalog}/grants", response_model=CatalogGrantsOut)
+@router.get("/workspaces/{workspace}/catalogs/{catalog}/grants", response_model=CatalogGrantsOut)
 async def list_catalog_grants(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     catalog: str,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -94,9 +95,11 @@ async def list_catalog_grants(
     return await _payload(db, workspace.id, cat)
 
 
-@router.patch("/workspaces/{ws}/catalogs/{catalog}/access-mode", response_model=CatalogGrantsOut)
+@router.patch(
+    "/workspaces/{workspace}/catalogs/{catalog}/access-mode", response_model=CatalogGrantsOut
+)
 async def set_access_mode(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     catalog: str,
     body: AccessModeUpdate,
     user: User = Depends(get_current_user),
@@ -122,7 +125,7 @@ async def set_access_mode(
 
 
 @router.put(
-    "/workspaces/{ws}/catalogs/{catalog}/grants",
+    "/workspaces/{workspace}/catalogs/{catalog}/grants",
     response_model=GrantOut,
     responses={
         200: {"description": "The principal already had a grant here; its tier was replaced."},
@@ -130,7 +133,7 @@ async def set_access_mode(
     },
 )
 async def upsert_grant(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     catalog: str,
     body: GrantUpsert,
     response: Response,
@@ -196,11 +199,11 @@ async def upsert_grant(
 
 
 @router.delete(
-    "/workspaces/{ws}/catalogs/{catalog}/grants/{grant_id}",
+    "/workspaces/{workspace}/catalogs/{catalog}/grants/{grant_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_grant(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     catalog: str,
     grant_id: uuid.UUID,
     user: User = Depends(get_current_user),

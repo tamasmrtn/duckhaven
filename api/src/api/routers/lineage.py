@@ -16,8 +16,9 @@ objects they cannot see and then read the names out of it.
 from __future__ import annotations
 
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user, get_db
@@ -167,7 +168,7 @@ async def _persist(
 
 
 async def import_lineage(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     body: LineageImportIn,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -242,7 +243,7 @@ async def import_lineage(
 
 
 async def import_provider_artifact(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     provider: str,
     body: dict = Body(...),
     reconcile: str = "provider_run",
@@ -321,7 +322,7 @@ def _split_artifacts(body: dict) -> tuple[dict, dict | None]:
 
 
 async def purge_provider_lineage(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     provider: str = Query(...),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -345,19 +346,19 @@ async def purge_provider_lineage(
 
 
 router.add_api_route(
-    "/workspaces/{ws}/lineage/imports",
+    "/workspaces/{workspace}/lineage/imports",
     import_lineage,
     methods=["POST"],
     response_model=LineageImportOut,
 )
 router.add_api_route(
-    "/workspaces/{ws}/lineage/imports/{provider}",
+    "/workspaces/{workspace}/lineage/imports/{provider}",
     import_provider_artifact,
     methods=["POST"],
     response_model=LineageImportOut,
 )
 router.add_api_route(
-    "/workspaces/{ws}/lineage/imports",
+    "/workspaces/{workspace}/lineage/imports",
     purge_provider_lineage,
     methods=["DELETE"],
     response_model=LineageImportOut,

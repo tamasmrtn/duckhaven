@@ -11,8 +11,6 @@ cannot quietly land work belonging to a later one. Clearing a phase means
 deleting its marker, never editing the assertion to match the code.
 """
 
-import re
-
 import pytest
 from fastapi.routing import _IncludedRouter
 
@@ -91,8 +89,14 @@ UNAUTHENTICATED = {
     "/auth/oidc/{provider}/callback",
 }
 
-#: Abbreviated or kind-naming parameters the conventions forbid outright.
-BANNED_PARAM_NAMES = re.compile(r"^(ws|slug|name|[a-z]{2,3}_id)$")
+#: Abbreviations and kind-names this migration removed. The general rule is
+#: enforced by test_path_parameters_are_named_for_their_collection; this is a
+#: regression guard, so it names the specific spellings rather than guessing at
+#: what looks abbreviated (`pat_id` is short but correct -- the collection is
+#: `pats` and the value is a UUID).
+BANNED_PARAM_NAMES = frozenset(
+    {"ws", "slug", "name", "sa_id", "sq_id", "rec_id", "backend_id", "metric_name"}
+)
 
 
 # --- Fixtures --------------------------------------------------------------
@@ -337,18 +341,16 @@ def test_unbounded_collections_return_the_standard_envelope(spec, operations):
 # --- Identifiers (plan phase 4) --------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="plan phase 4: path parameter renames")
 def test_no_abbreviated_or_kind_naming_path_parameters(spec):
     banned = [
         f"{path} -> {{{param}}}"
         for path in spec["paths"]
         for _, param in path_params(path)
-        if BANNED_PARAM_NAMES.match(param) and param not in PARAM_NAME_EXCEPTIONS
+        if param in BANNED_PARAM_NAMES and param not in PARAM_NAME_EXCEPTIONS
     ]
     assert not banned, f"abbreviated or kind-naming path parameter:\n{failures(banned)}"
 
 
-@pytest.mark.xfail(strict=True, reason="plan phase 4: path parameter renames")
 def test_path_parameters_are_named_for_their_collection(spec):
     """`{param}` is the singular of the segment before it, `_id` iff it is a UUID."""
     uuid_params = {

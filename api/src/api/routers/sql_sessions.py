@@ -15,9 +15,10 @@ import asyncio
 import contextlib
 import uuid
 from datetime import UTC, datetime
+from typing import Annotated
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response, status
 from fastapi import Query as QueryParam
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -119,7 +120,7 @@ async def _start_compute(
 
 
 @router.post(
-    "/workspaces/{ws}/sql/sessions",
+    "/workspaces/{workspace}/sql/sessions",
     status_code=201,
     response_model=SqlSessionOut,
     responses={
@@ -132,7 +133,7 @@ async def _start_compute(
     },
 )
 async def open_session(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     body: SqlSessionCreate,
     request: Request,
     response: Response,
@@ -344,9 +345,9 @@ async def open_session(
     )
 
 
-@router.get("/workspaces/{ws}/sql/sessions", response_model=list[SqlSessionSummaryOut])
+@router.get("/workspaces/{workspace}/sql/sessions", response_model=list[SqlSessionSummaryOut])
 async def list_sessions(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     status_filter: list[str] | None = QueryParam(default=None, alias="status"),
     user_id: uuid.UUID | None = QueryParam(default=None),
     agent_id: uuid.UUID | None = QueryParam(default=None),
@@ -358,7 +359,7 @@ async def list_sessions(
     """The workspace's SQL sessions, newest first — the audit list.
 
     Any workspace member sees every session in the workspace, consistent with
-    ``GET /workspaces/{ws}/queries``, which already returns every member's SQL.
+    ``GET /workspaces/{workspace}/queries``, which already returns every member's SQL.
     The ``user_id``/``agent_id``/``since`` filters are admin-only affordances and
     rejected with 403 for non-admins, mirroring that endpoint exactly.
 
@@ -463,7 +464,7 @@ async def run_statement(
 ) -> Query:
     """Run a statement on this session's DuckDB connection. 202 with a query id.
 
-    Unlike `POST /workspaces/{ws}/queries`, this reuses one held connection, so
+    Unlike `POST /workspaces/{workspace}/queries`, this reuses one held connection, so
     temp tables, `SET`s and attached catalogs persist between statements. 409 if
     the session is not open."""
     _require_enabled()

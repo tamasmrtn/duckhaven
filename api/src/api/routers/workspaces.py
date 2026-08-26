@@ -1,6 +1,7 @@
 import logging
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Path, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -88,9 +89,9 @@ async def create_workspace(
     return await _workspace_out(db, ws)
 
 
-@router.get("/{ws}", response_model=WorkspaceOut)
+@router.get("/{workspace}", response_model=WorkspaceOut)
 async def get_workspace(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> WorkspaceOut:
@@ -105,9 +106,9 @@ async def get_workspace(
     return await _workspace_out(db, workspace)
 
 
-@router.patch("/{ws}", response_model=WorkspaceOut)
+@router.patch("/{workspace}", response_model=WorkspaceOut)
 async def update_workspace(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     body: WorkspaceUpdate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -126,9 +127,9 @@ async def update_workspace(
     return await _workspace_out(db, workspace)
 
 
-@router.delete("/{ws}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{workspace}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_workspace(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> None:
@@ -143,9 +144,9 @@ async def delete_workspace(
     await remove_workspace(db, workspace)
 
 
-@router.get("/{ws}/members", response_model=list[MemberOut])
+@router.get("/{workspace}/members", response_model=list[MemberOut])
 async def list_members(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[WorkspaceMember]:
@@ -161,9 +162,9 @@ async def list_members(
     return list(result.scalars().all())
 
 
-@router.post("/{ws}/members", response_model=MemberOut, status_code=status.HTTP_201_CREATED)
+@router.post("/{workspace}/members", response_model=MemberOut, status_code=status.HTTP_201_CREATED)
 async def add_member(
-    ws: str,
+    ws: Annotated[str, Path(alias="workspace")],
     body: AddMemberRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),

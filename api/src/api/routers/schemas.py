@@ -2,8 +2,8 @@
 
 Endpoints are catalog-scoped and gated by `assert_workspace_member`. Each is
 exposed twice: the canonical
-``/workspaces/{ws}/catalogs/{catalog}/schemas/...`` form, and a legacy
-``/workspaces/{ws}/schemas/...`` shim that resolves the workspace's *default*
+``/workspaces/{workspace}/catalogs/{catalog}/schemas/...`` form, and a legacy
+``/workspaces/{workspace}/schemas/...`` shim that resolves the workspace's *default*
 catalog (backward compatibility for pre-multi-catalog clients). list operations
 require `reader`; creates/drops require `writer`. Polaris is the authority — we
 never write schema/table state into pg.
@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -276,7 +276,7 @@ def target_catalog(
     """
 
     async def _dep(
-        ws: str,
+        ws: Annotated[str, Path(alias="workspace")],
         catalog: str | None = None,
         user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db),
@@ -852,8 +852,8 @@ async def recount_table(
 
 router = APIRouter()
 
-_CANON = "/workspaces/{ws}/catalogs/{catalog}/schemas"
-_LEGACY = "/workspaces/{ws}/schemas"
+_CANON = "/workspaces/{workspace}/catalogs/{catalog}/schemas"
+_LEGACY = "/workspaces/{workspace}/schemas"
 
 # (suffix, handler, methods, extra kwargs)
 _ROUTES: list[tuple[str, Callable[..., Any], list[str], dict[str, Any]]] = [
@@ -889,5 +889,6 @@ for _suffix, _fn, _methods, _kw in _ROUTES:
         _fn,
         methods=_methods,
         operation_id=_fn.__name__ + LEGACY_SUFFIX,
+        deprecated=True,
         **_kw,
     )

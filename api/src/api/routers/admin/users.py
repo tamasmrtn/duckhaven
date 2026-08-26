@@ -44,6 +44,10 @@ async def list_users(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_permission(Permission.USERS_MANAGE)),
 ) -> list[User]:
+    """Every user account, oldest first, including deactivated ones.
+
+    Service accounts are not here -- they are a separate resource under
+    `/admin/service-accounts`."""
     result = await db.execute(select(User).order_by(User.created_at))
     return list(result.scalars().all())
 

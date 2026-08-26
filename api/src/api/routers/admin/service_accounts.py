@@ -76,6 +76,11 @@ async def list_service_accounts(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_permission(Permission.SERVICE_ACCOUNTS_MANAGE)),
 ) -> list[ServiceAccountOut]:
+    """Every service account, oldest first.
+
+    A service account is a user with no password, reachable only through the
+    tokens issued to it, so it runs through the same permission checks a person
+    does."""
     result = await db.execute(
         select(User).where(User.auth_provider == SERVICE_ACCOUNT_PROVIDER).order_by(User.created_at)
     )
@@ -240,6 +245,10 @@ async def list_pats(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_permission(Permission.SERVICE_ACCOUNTS_MANAGE)),
 ) -> list[Credential]:
+    """The tokens issued to a service account: label, creation and expiry.
+
+    The token values are not stored and cannot be listed -- a token is shown once,
+    when it is issued."""
     await _get_service_account_or_404(db, sa_id)
     result = await db.execute(
         select(Credential)
@@ -256,6 +265,10 @@ async def revoke_pat(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_permission(Permission.SERVICE_ACCOUNTS_MANAGE)),
 ) -> None:
+    """Revoke one token. It stops authenticating immediately.
+
+    Revoking a token leaves the service account and its other tokens alone; to
+    stop all of them at once, deactivate the account."""
     await _get_service_account_or_404(db, sa_id)
     result = await db.execute(
         select(Credential).where(

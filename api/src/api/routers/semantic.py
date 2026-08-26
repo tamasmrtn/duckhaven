@@ -298,6 +298,11 @@ async def list_models(
     ctx: _Context = Depends(_context("reader")),
     db: AsyncSession = Depends(get_db),
 ) -> list[ModelSummaryOut]:
+    """The workspace's semantic models, with their dataset, dimension and metric
+    counts. Filter by `status` for drafts or published models only.
+
+    Filtered by catalog grant: a model bound to tables the caller cannot read is
+    not listed."""
     rows = await store.list_models(
         db,
         workspace_id=ctx.workspace.id,
@@ -322,6 +327,11 @@ async def create_model(
     ctx: _Context = Depends(_context("writer")),
     db: AsyncSession = Depends(get_db),
 ) -> ModelOut:
+    """Create a semantic model. Starts as a draft with no datasets or metrics.
+
+    The slug addresses the model and must be free in the workspace; 409 if it is
+    taken. Add datasets, dimensions, metrics and relationships to it, then
+    validate and publish."""
     existing = (
         await db.execute(
             select(SemanticModel).where(
@@ -355,6 +365,10 @@ async def get_model(
     ctx: _Context = Depends(_context("reader")),
     db: AsyncSession = Depends(get_db),
 ) -> ModelOut:
+    """One semantic model in full: datasets, dimensions, metrics, relationships.
+
+    404 rather than 403 when the caller lacks a grant on the bound tables -- a
+    model should not reveal that it exists."""
     try:
         model = await store.get_model(
             db,
@@ -376,6 +390,10 @@ async def update_model(
     ctx: _Context = Depends(_context("writer")),
     db: AsyncSession = Depends(get_db),
 ) -> ModelOut:
+    """Rename a model or change its description. A partial update.
+
+    Only editable while the model is a draft; the slug is immutable because it
+    addresses the model and may be referenced by compiled queries."""
     model = await _editable(db, ctx, slug)
     if body.name is not None:
         model.name = body.name
@@ -392,6 +410,10 @@ async def delete_model(
     ctx: _Context = Depends(_context("owner")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
+    """Delete a model and everything defined in it. Owner only.
+
+    Deprecating a published model is usually the right move instead: anything
+    still compiling against it breaks the moment it is deleted."""
     try:
         model = await store.get_model(
             db,
@@ -459,6 +481,10 @@ async def deprecate_model(
     ctx: _Context = Depends(_context("owner")),
     db: AsyncSession = Depends(get_db),
 ) -> ModelOut:
+    """Mark a published model deprecated. Owner only.
+
+    It keeps working -- existing queries still compile -- but it is flagged as on
+    the way out, which is what makes retiring one safe."""
     try:
         model = await store.get_model(
             db,
@@ -483,6 +509,10 @@ async def validate(
     ctx: _Context = Depends(_context("writer")),
     db: AsyncSession = Depends(get_db),
 ) -> ValidationReportOut:
+    """Check the model against the tables it binds and report what is broken.
+
+    A report, not a gate: a model that fails validation is still returned with its
+    findings, so they can be fixed. Publishing is what requires a clean run."""
     try:
         model = await store.get_model(
             db,
@@ -554,6 +584,11 @@ async def add_dataset(
     ctx: _Context = Depends(_context("writer")),
     db: AsyncSession = Depends(get_db),
 ) -> DatasetOut:
+    """Bind a table into the model as a dataset. Draft models only.
+
+    Requires the same tier on the table that reading its metadata needs -- other-
+    wise binding to a table and reading the validation error back would leak its
+    schema."""
     model = await _editable(db, ctx, slug)
     await _assert_free(db, model.id, SemanticDataset, body.name, "dataset")
     catalog = await resolve_catalog(db, ctx.workspace.id, body.catalog)
@@ -607,6 +642,10 @@ async def add_dimension(
     ctx: _Context = Depends(_context("writer")),
     db: AsyncSession = Depends(get_db),
 ) -> DimensionOut:
+    """Define a dimension on one of the model's datasets -- something to group or
+    filter by. Draft models only.
+
+    Names are unique within the model; 409 if one is taken."""
     model = await _editable(db, ctx, slug)
     await _assert_free(db, model.id, SemanticDimension, body.name, "dimension")
     dataset_id = await _dataset_id(db, model.id, body.dataset)
@@ -656,6 +695,10 @@ async def add_metric(
     ctx: _Context = Depends(_context("writer")),
     db: AsyncSession = Depends(get_db),
 ) -> MetricOut:
+    """Define a metric -- an aggregation over a dataset. Draft models only.
+
+    Naming a `time_dimension` is what lets the metric be asked for over a period
+    without the caller writing the date logic."""
     model = await _editable(db, ctx, slug)
     await _assert_free(db, model.id, SemanticMetric, body.name, "metric")
     dataset_id = await _dataset_id(db, model.id, body.dataset)
@@ -731,6 +774,7 @@ async def update_metric(
     ctx: _Context = Depends(_context("writer")),
     db: AsyncSession = Depends(get_db),
 ) -> MetricOut:
+    """Change a metric's definition. A partial update. Draft models only."""
     model = await _editable(db, ctx, slug)
     metric = (
         await db.execute(
@@ -813,6 +857,10 @@ async def add_relationship(
     ctx: _Context = Depends(_context("writer")),
     db: AsyncSession = Depends(get_db),
 ) -> RelationshipOut:
+    """Join two of the model's datasets, so a metric on one can be sliced by a
+    dimension on the other. Draft models only.
+
+    422 if both sides name the same dataset."""
     model = await _editable(db, ctx, slug)
     await _assert_free(db, model.id, SemanticRelationship, body.name, "relationship")
     left = await _dataset_id(db, model.id, body.left_dataset)
@@ -1056,6 +1104,11 @@ async def semantic_search(
     ctx: _Context = Depends(_context("reader")),
     db: AsyncSession = Depends(get_db),
 ) -> SemanticSearchOut:
+    """Find metrics and dimensions by name or synonym across the workspace.
+
+    Returns hits with two diagnostics rather than a bare list: `ambiguous` names
+    that matched in more than one model, and `broken` ones whose model no longer
+    validates. Both are things a caller has to know before using a hit."""
     rows = await store.list_models(
         db,
         workspace_id=ctx.workspace.id,

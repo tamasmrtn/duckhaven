@@ -215,7 +215,6 @@ def test_operation_ids_are_unique(operations):
     assert not clashes, f"duplicate operationId:\n{failures(clashes)}"
 
 
-@pytest.mark.xfail(strict=True, reason="plan phase 3: summaries and descriptions")
 def test_every_operation_has_a_summary_and_description(operations):
     missing = [
         f"{method.upper()} {path}"
@@ -371,7 +370,9 @@ def test_path_parameters_are_named_for_their_collection(spec):
     assert not bad, f"path parameter does not match its collection:\n{failures(bad)}"
 
 
-@pytest.mark.xfail(strict=True, reason="plan phase 4: no duplicated route families")
+@pytest.mark.xfail(
+    strict=True, reason="plan phase 5: the shim is removed (phase 4 only deprecates it)"
+)
 def test_no_route_is_served_at_two_paths(spec):
     """The default-catalog shim duplicates the catalog-scoped family. Two routes
     for one resource is the defect the plan exists to remove.

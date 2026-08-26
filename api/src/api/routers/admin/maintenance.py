@@ -37,6 +37,10 @@ async def get_policy(
     admin: User = Depends(require_permission(Permission.MAINTENANCE_MANAGE)),
     db: AsyncSession = Depends(get_db),
 ) -> PolicyOut:
+    """The deployment-wide maintenance policy: scan cadence and the thresholds
+    that decide when a table is recommended for compaction.
+
+    A singleton -- there is one policy, created with defaults on first read."""
     return _policy_out(await get_or_create_policy(db))
 
 
@@ -46,6 +50,11 @@ async def update_policy(
     admin: User = Depends(require_permission(Permission.MAINTENANCE_MANAGE)),
     db: AsyncSession = Depends(get_db),
 ) -> PolicyOut:
+    """Replace the maintenance policy. Idempotent: the same body always leaves the
+    same policy.
+
+    Takes effect on the next scan cycle; recommendations already raised are not
+    re-evaluated."""
     policy = await get_or_create_policy(db)
 
     if body.scan_frequency is not None:

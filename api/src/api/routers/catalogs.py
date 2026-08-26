@@ -117,6 +117,11 @@ async def list_workspace_catalogs(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[CatalogOut]:
+    """The catalogs attached to this workspace, with which one is the default.
+
+    Catalogs are shared M:N, so one may be attached to several workspaces; the
+    per-attachment access mode returned here is this workspace's, not the
+    catalog's."""
     workspace = await get_workspace(db, ws)
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)

@@ -446,6 +446,10 @@ async def get_session(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> SqlSession:
+    """One session's status and the agent holding it.
+
+    Poll this after opening a session with `on_wait_timeout=continue`: the status
+    moves `pending` -> `opening` -> `open` as compute starts."""
     _require_enabled()
     return await _load_session(db, session_id, user)
 
@@ -457,6 +461,11 @@ async def run_statement(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> Query:
+    """Run a statement on this session's DuckDB connection. 202 with a query id.
+
+    Unlike `POST /workspaces/{ws}/queries`, this reuses one held connection, so
+    temp tables, `SET`s and attached catalogs persist between statements. 409 if
+    the session is not open."""
     _require_enabled()
     session = await _load_session(db, session_id, user)
     if session.status != "open":
@@ -595,6 +604,10 @@ async def close_session(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> Response:
+    """Close a session and release its connection and any elastic compute.
+
+    Idempotent: closing an already-closed, expired or failed session succeeds.
+    Everything session-local -- temp tables, `SET`s -- is gone afterwards."""
     _require_enabled()
     session = await _load_session(db, session_id, user)
     if session.status in ("closed", "expired", "failed"):

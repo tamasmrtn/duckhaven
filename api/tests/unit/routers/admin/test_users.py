@@ -1,6 +1,10 @@
+import uuid
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from conftest import seed_workspace
 from httpx import AsyncClient
+from sqlalchemy import delete as sa_delete
 
 from api.models.user import User
 from api.services.auth import hash_password
@@ -291,3 +295,42 @@ async def test_paging_yields_every_row_exactly_once(
             break
 
     assert walked == expected
+
+
+async def test_a_cursor_whose_row_was_deleted_is_an_error(
+    admin_client: AsyncClient, admin: User, regular_user: User, db_session
+):
+    """Deleting the row a cursor points at must not read as "end of list".
+
+    The predicate reads the anchor's sort values back out of the table, so a
+    missing anchor matches nothing — which is indistinguishable from a last page
+    unless the server says otherwise. Silently dropping the rest of the
+    collection is the worst available answer, because the client cannot tell.
+    """
+    # Stamped explicitly: `created_at` is second-precision, so without this the
+    # fixtures tie and the id tiebreak decides the order -- which can put the
+    # admin at the page boundary and have this test delete its own session.
+    later = datetime(2030, 1, 1, tzinfo=UTC)
+    for n in range(3):
+        db_session.add(
+            User(
+                email=f"doomed{n}@users.local",
+                password_hash=hash_password("pw"),
+                name=f"Doomed {n}",
+                role="user",
+                created_at=later + timedelta(minutes=n),
+            )
+        )
+    await db_session.commit()
+
+    body = (await admin_client.get("/admin/users", params={"limit": 3})).json()
+    assert body["has_more"] is True
+    anchor = body["items"][-1]["id"]
+    assert anchor != str(admin.id), "the anchor must not be the caller's own account"
+
+    await db_session.execute(sa_delete(User).where(User.id == uuid.UUID(anchor)))
+    await db_session.commit()
+
+    resp = await admin_client.get("/admin/users", params={"limit": 3, "cursor": body["cursor"]})
+    assert resp.status_code == 422
+    assert resp.json()["error"] == "stale_cursor"

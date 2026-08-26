@@ -76,7 +76,7 @@ async def list_workspace_schedule_runs(
     rows, next_cursor, has_more = await paginate(
         db,
         select(Query).where(Query.workspace_id == workspace.id, Query.schedule_id.isnot(None)),
-        sort_columns=[Query.started_at, Query.id],
+        sort=[Query.started_at.desc(), Query.id.desc()],
         limit=limit,
         cursor=cursor,
     )
@@ -204,7 +204,7 @@ async def list_schedule_runs(
     rows, next_cursor, has_more = await paginate(
         db,
         select(Query).where(Query.schedule_id == schedule_id, Query.workspace_id == workspace.id),
-        sort_columns=[Query.started_at, Query.id],
+        sort=[Query.started_at.desc(), Query.id.desc()],
         limit=limit,
         cursor=cursor,
     )

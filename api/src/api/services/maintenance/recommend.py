@@ -15,6 +15,11 @@ from typing import Any
 
 from api.services.maintenance.scoring import _human_bytes
 
+#: Severity order, most severe first. Ranked rather than compared as a string:
+#: `critical` sorts *after* `info` alphabetically, which would bury exactly the
+#: rows a severity-ordered list exists to surface.
+SEVERITY_RANK = {"critical": 0, "warning": 1, "info": 2}
+
 
 def _severity(value: float, warn: float, bad: float) -> str | None:
     """Higher value is worse for every metric we score. Returns ``None`` below warn."""
@@ -209,5 +214,6 @@ def generate(
         _cleanup_orphans(metrics, thresholds),
         _investigate_growth(metrics, thresholds, history),
     ]
-    rank = {"critical": 0, "warning": 1, "info": 2}
-    return sorted((r for r in out if r is not None), key=lambda r: rank.get(r["severity"], 9))
+    return sorted(
+        (r for r in out if r is not None), key=lambda r: SEVERITY_RANK.get(r["severity"], 9)
+    )

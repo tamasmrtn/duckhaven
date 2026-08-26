@@ -51,15 +51,15 @@ async def list_users(
 ) -> Page[UserOut]:
     """Every user account, oldest first, including deactivated ones.
 
-    Service accounts are not here -- they are a separate resource under
-    `/admin/service-accounts`."""
+    Service accounts are users too, so they appear here as well as under
+    `/admin/service-accounts`; that endpoint is the one that narrows to them and
+    reports their token counts."""
     rows, next_cursor, has_more = await paginate(
         db,
         select(User),
-        sort_columns=[User.created_at, User.id],
+        sort=[User.created_at.asc(), User.id.asc()],
         limit=limit,
         cursor=cursor,
-        descending=False,
     )
     return Page[UserOut](
         items=[UserOut.model_validate(r[0], from_attributes=True) for r in rows],

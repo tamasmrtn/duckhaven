@@ -6,14 +6,13 @@ and cannot drift as routes are added. api/tests/unit/test_openapi_conformance.py
 asserts the result.
 """
 
+import inspect
+import json
+import re
+
 from fastapi.routing import APIRoute
 
 from api.schemas.error import ErrorOut
-
-#: Suffix for the deprecated default-catalog shim's operation ids. The shim
-#: registers the same handlers as the canonical catalog-scoped routes, so their
-#: names collide; the suffix disappears with the shim.
-LEGACY_SUFFIX = "_default_catalog"
 
 
 def operation_id(route: APIRoute) -> str:
@@ -61,15 +60,49 @@ _NOT_FOUND = {
     "description": "No such resource, or the caller may not know it exists.",
     "content": _ERROR_CONTENT,
 }
+_CONFLICT = {
+    "description": "The request conflicts with the resource's current state.",
+    "content": _ERROR_CONTENT,
+}
+_UNAVAILABLE = {
+    "description": "A dependency the request needs is not available right now.",
+    "content": _ERROR_CONTENT,
+}
+
+#: Status constants a handler raises, and the response each implies. Read off the
+#: endpoint's own source: which of these a route can return depends on its body,
+#: not on its signature, so no dependency-tree inspection can find them and
+#: hand-declaring 28 routes would drift the first time one changed.
+_RAISED_IN_SOURCE = {
+    "HTTP_409_CONFLICT": ("409", _CONFLICT),
+    "HTTP_503_SERVICE_UNAVAILABLE": ("503", _UNAVAILABLE),
+}
+
+
+def _child_routes(route) -> list | None:
+    """The routes an `include_router` wrapper stands for, or None if it is a leaf.
+
+    `include_router` wraps children in a private `_IncludedRouter` whose
+    `effective_candidates()` carry the combined path; the public
+    `original_router.routes` still hold the unprefixed ones. Both names are
+    FastAPI internals, so this degrades to treating the route as a leaf rather
+    than letting a patch release turn schema generation into a 500.
+    """
+    candidates = getattr(route, "effective_candidates", None)
+    if callable(candidates):
+        try:
+            return list(candidates())
+        except Exception:  # noqa: BLE001 - any failure means "treat it as a leaf"
+            return None
+    return None
 
 
 def _routes(collection):
     """Flatten the router tree to routes with their prefixes applied."""
-    from fastapi.routing import _IncludedRouter
-
     for route in collection:
-        if isinstance(route, _IncludedRouter):
-            yield from _routes(route.effective_candidates())
+        children = _child_routes(route)
+        if children is not None:
+            yield from _routes(children)
         elif hasattr(route, "dependant") and hasattr(route, "methods"):
             yield route
 
@@ -89,6 +122,21 @@ def _dependency_names(dependant) -> set[str]:
     return names
 
 
+def _raised_codes(route) -> list[tuple[str, dict]]:
+    """The 409/503 responses this route's own body can produce.
+
+    Only direct raises in the endpoint function -- a helper it calls is invisible
+    here, so this under-declares rather than over-declares. Degrades to nothing
+    when the source is unavailable (a bytecode-only deployment), because a
+    missing response line is better than a failed schema build.
+    """
+    try:
+        source = inspect.getsource(route.endpoint)
+    except OSError, TypeError:
+        return []
+    return [pair for name, pair in _RAISED_IN_SOURCE.items() if name in source]
+
+
 def _guarantees(route) -> tuple[bool, bool, bool]:
     """Which of (401, 403, 404) this route can return.
 
@@ -97,13 +145,33 @@ def _guarantees(route) -> tuple[bool, bool, bool]:
     """
     names = _dependency_names(route.dependant)
     authenticated = "get_current_user" in names
-    forbiddable = bool(
-        {"require_permission", "require_agent_tier"} & names
-        # Workspace-scoped routes check membership inside the handler, which no
-        # dependency can show; assert_workspace_member raises 403.
-        or "/workspaces/{" in route.path
-    )
-    return authenticated, authenticated and forbiddable, "{" in route.path
+    # Every authenticated route can 403. Most authorization here runs *inside*
+    # the handler -- assert_workspace_member, _load_session, _catalog_for_admin
+    # all raise it -- so no dependency-tree inspection can find them, and a rule
+    # that only saw the two dependency factories under-declared 16 operations
+    # that demonstrably return 403.
+    return authenticated, authenticated, "{" in route.path
+
+
+def _prune_unreferenced(schema: dict) -> None:
+    """Drop component schemas nothing points at any more.
+
+    Replacing every error body with ErrorOut strands the models FastAPI
+    generated for the responses it replaced. Left in place they are dead weight a
+    client generator turns into real classes, so a consumer ends up with types
+    for responses this API cannot send.
+    """
+    components = schema.get("components", {}).get("schemas", {})
+    if not components:
+        return
+    # Iterate: pruning one schema can strand the ones only it referenced.
+    while True:
+        referenced = set(re.findall(r"#/components/schemas/([A-Za-z0-9_.-]+)", json.dumps(schema)))
+        orphans = set(components) - referenced
+        if not orphans:
+            return
+        for name in orphans:
+            del components[name]
 
 
 def apply_conventions(app) -> None:
@@ -139,8 +207,12 @@ def apply_conventions(app) -> None:
                     responses.setdefault("403", dict(_FORBIDDEN))
                 if addressable:
                     responses.setdefault("404", dict(_NOT_FOUND))
-                # Every error body is ErrorOut, including the 422 FastAPI writes
-                # from the request model and any a router declared by hand.
+                for code, response in _raised_codes(route):
+                    responses.setdefault(code, dict(response))
+                # Every error body is ErrorOut. Total by design, including the
+                # 422 FastAPI generates from the request model: the contract is
+                # one error shape, so a route cannot opt out by declaring its
+                # own. Anything left unreferenced by this is pruned below.
                 for code, response in responses.items():
                     if code[0] in "45":
                         response["content"] = _ERROR_CONTENT
@@ -157,6 +229,8 @@ def apply_conventions(app) -> None:
                     for code, response in responses.items():
                         if code[0] == "2" and not response.get("content"):
                             response["content"] = primary["content"]
+
+        _prune_unreferenced(schema)
         return schema
 
     app.openapi = openapi
@@ -187,7 +261,12 @@ def error_body(status_code: int, detail: object) -> dict[str, object]:
     and the semantic and session routers already use -- and a plain string
     becomes the message under a code derived from the status.
     """
-    fallback = _DERIVED_ERROR_CODES.get(status_code, "internal_error")
+    # An unmapped 4xx is still the caller's problem, so it must not derive a
+    # code that says the server failed -- a 405 or a 429 reading `internal_error`
+    # sends a client looking in the wrong place.
+    fallback = _DERIVED_ERROR_CODES.get(
+        status_code, "internal_error" if status_code >= 500 else "bad_request"
+    )
 
     if isinstance(detail, dict):
         # The established shape is {"error": code, "detail": message}; anything

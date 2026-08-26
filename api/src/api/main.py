@@ -150,6 +150,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await app.state.polaris_client.aclose()
 
 
+logger = logging.getLogger(__name__)
+
 # The browser-facing REST API. Mounted under /api on the outer app so it shares
 # an origin with the SPA; owns the lifespan-managed PolarisClient state.
 api_app = FastAPI(
@@ -199,6 +201,23 @@ async def _http_error_handler(_: Request, exc: StarletteHTTPException) -> JSONRe
 async def _validation_error_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
     code = status.HTTP_422_UNPROCESSABLE_CONTENT
     return JSONResponse(status_code=code, content=error_body(code, jsonable_encoder(exc.errors())))
+
+
+@api_app.exception_handler(Exception)
+async def _unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    """The envelope has to hold for a crash too, or it is not a contract.
+
+    Without this, an uncaught exception leaves through Starlette's own handler as
+    `text/plain` "Internal Server Error" -- the one response a client cannot
+    parse, arriving exactly when it most needs to know what happened. The
+    exception is logged with its traceback and none of it reaches the caller.
+    """
+    logger.exception("Unhandled error serving %s %s", request.method, request.url.path)
+    code = status.HTTP_500_INTERNAL_SERVER_ERROR
+    return JSONResponse(
+        status_code=code,
+        content=error_body(code, "The server failed to handle this request."),
+    )
 
 
 # Surface PolarisError escaping a route as a meaningful HTTP response instead of a

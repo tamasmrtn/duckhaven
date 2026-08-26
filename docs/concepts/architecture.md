@@ -499,7 +499,7 @@ Notes that matter for changes:
 - **`agents.capabilities`** is the last advertised `AgentCapabilities` JSON;
   `result_host`/`result_port` tell the API where to fetch the result Parquet.
 - **`queries` is also the audit log** — there is no separate audit table.
-  `GET /workspaces/{ws}/queries` reads rows straight from `queries`, excluding
+  `GET /workspaces/{workspace}/queries` reads rows straight from `queries`, excluding
   internal rows (`origin = "sample"`, used by the table-sample preview). It is
   workspace-scoped for members; an admin may pass `all_workspaces` (and the
   `user_id`/`agent_id`/`since`/`until` filters) for the cross-workspace audit view.
@@ -581,7 +581,7 @@ sequenceDiagram
     participant AG as Agent (DuckDB)
     participant ST as Storage backend
 
-    UI->>API: POST /api/workspaces/{ws}/queries {sql, agent_id}
+    UI->>API: POST /api/workspaces/{workspace}/queries {sql, agent_id}
     API->>API: auth + membership check
     API->>API: sql_guard.assert_allowed (parse-only)
     API->>API: agent connected? backend compatible?
@@ -596,8 +596,8 @@ sequenceDiagram
     AG->>API: query_done frame {row_count, duration_ms, result_path}
     API->>PG: update query (status=done, ...)
 
-    UI->>API: GET /api/queries/{id} (poll)
-    UI->>API: GET /api/queries/{id}/rows?limit&cursor
+    UI->>API: GET /api/queries/{query_id} (poll)
+    UI->>API: GET /api/queries/{query_id}/rows?limit&cursor
     API->>AG: GET /results/{id}.parquet (Bearer session token)
     AG-->>API: parquet bytes
     API->>API: decode_parquet_page (duckdb read_parquet, LIMIT/OFFSET)
@@ -615,7 +615,7 @@ Key properties:
 - **The execution profile is captured after the run.** The agent normalizes
   DuckDB's JSON profile (query summary + operator tree) and returns it on the
   `query_done` frame; the API persists it on `Query.profile` and serves it from
-  `GET /queries/{id}/profile` for the worksheet's Profile tab. Best-effort, so a
+  `GET /queries/{query_id}/profile` for the worksheet's Profile tab. Best-effort, so a
   profiling failure never fails the query.
 - **Results are materialized where they are produced** — Parquet on the
   executing agent. The control plane fetches that Parquet and decodes the

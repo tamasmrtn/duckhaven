@@ -218,7 +218,7 @@ per-query problems like `out_of_memory`. See [Monitoring](monitoring.md).
 
 After a query finishes, the agent captures DuckDB's per-operator execution
 profile and ships it (KB-sized) to the control plane, where it is stored on the
-query and served from `GET /queries/{id}/profile`. There are two ways to view it:
+query and served from `GET /queries/{query_id}/profile`. There are two ways to view it:
 
 - **Worksheet → Profile tab** — an inline summary + collapsible operator tree
   for a quick glance at the query you just ran, with an **Open full profile**

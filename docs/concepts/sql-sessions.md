@@ -17,17 +17,19 @@ inbound agent port is ever opened.
 
 ## Lifecycle
 
-1. **Open** — `POST /api/workspaces/{ws}/sql/sessions`. The API picks the agent (an explicit `agent_id`, or an
+1. **Open** — `POST /api/workspaces/{workspace}/sql/sessions`. The API picks the agent (an explicit `agent_id`, or an
    auto-picked compatible one), tells it to open and attach a DuckDB connection to the workspace's catalogs, and returns
    a `session_id` once the agent acknowledges. The session **pins** that agent: every later statement routes to it. When
    no agent is up and [elastic compute](elastic-compute.md) is enabled, the open starts one first — see
    [Cold start](#cold-start).
-2. **Run statements** — `POST /api/sql/sessions/{id}/statements`. Each statement is checked against the
+2. **Run statements** — `POST /api/sql/sessions/{session_id}/statements`. Each statement is checked against the
    [statement policy](#statement-policy) and the caller's [permissions](permissions.md), then dispatched to the held
    connection. A statement is recorded as an ordinary query row — `queued`, then `running` once the agent acknowledges
-   receipt, then a terminal `done`/`failed` — so you poll and fetch it through the same `GET /api/queries/{id}` and
-   `/rows` endpoints as any query, and it appears in the audit history tagged to its session.
-3. **Close** — `DELETE /api/sql/sessions/{id}`. The agent drops the connection and frees the compute slot it held.
+   receipt, then a terminal `done`/`failed` — so you poll and fetch it through the same
+   `GET /api/queries/{query_id}` and `/rows` endpoints as any query, and it appears in the
+   audit history tagged to its session.
+3. **Close** — `DELETE /api/sql/sessions/{session_id}`. The agent drops the connection and
+   frees the compute slot it held.
 
 ## Cold start
 
@@ -63,7 +65,7 @@ run statements on. **It abandons the session row, not the compute** — the agen
 retry a few seconds later lands on warm compute rather than triggering a second cold start.
 
 `continue` is for a client that can poll: it gets the `pending` session back with `202` and follows
-`GET /api/sql/sessions/{id}` until the status reads `open`. A `202` on this endpoint is itself the
+`GET /api/sql/sessions/{session_id}` until the status reads `open`. A `202` on this endpoint is itself the
 signal that the server supports the contract; nothing needs to negotiate a version.
 
 !!! note "Client support"
@@ -294,7 +296,7 @@ covers two quite different situations. The row therefore also carries a typed **
 
 | Reason | What happened |
 | --- | --- |
-| `client` | The client called `DELETE /sql/sessions/{id}` — a clean shutdown |
+| `client` | The client called `DELETE /sql/sessions/{session_id}` — a clean shutdown |
 | `idle` | Reaped: no statement for `SQL_SESSION_IDLE_TIMEOUT_S`. Usually a client that crashed or forgot to close |
 | `max_lifetime` | Reaped: alive longer than `SQL_SESSION_MAX_LIFETIME_S`, however busy it was |
 | `open_timeout` | The agent never confirmed the open, so the session never became usable |

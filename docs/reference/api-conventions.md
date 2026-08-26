@@ -115,10 +115,18 @@ count, in which case it returns `200` with a report.
 
 ## Status codes
 
-- `201` + a `Location` header for resource creation
+- `201` for resource creation
 - `202` for accepted async work
 - `204` for empty success
 - `200` for everything else
+
+A `201` must leave the caller able to reach what was made: **return the created resource, or
+send a `Location` header.** Returning the resource is preferred and is what every creating
+endpoint here does — it saves the follow-up request a bare `Location` would cost. `Location`
+is added on top only where the resource's address cannot be derived from the request path:
+`POST /workspaces/{workspace}/sql/sessions` creates a session that is then operated at
+`/sql/sessions/{session_id}`, so it says so. RFC 9110 makes `Location` a SHOULD, and a
+header naming the wrong URL is worse than no header.
 
 Three cases that look like creation but are not:
 
@@ -139,8 +147,15 @@ alongside the decorator's.
 { "items": [], "cursor": null, "has_more": false }
 ```
 
-and accept `cursor` and `limit`. Cursors are opaque and keyset-based, not offsets: history
-is written to continuously, and an offset page would duplicate and skip rows under load.
+and accept `cursor` and `limit`. Cursors are opaque and keyset-based, not offsets: these
+collections are written to continuously, and an offset page would duplicate and skip rows
+under load.
+
+A cursor names the **last row of the page**, and the predicate reads that row's sort values
+back from the database. It deliberately does not carry the values themselves: doing so means
+comparing a value bound from the client against one stored in the table, and the two can
+disagree on precision — which shows up as a page that silently returns nothing. The sort must
+end in the row id, or the order is not total and a row can be served twice or not at all.
 
 **Bounded collections** — bounded by deployment topology or by an already-bounded parent —
 return a bare array and are exempt. The exemption list is exhaustive:
@@ -155,12 +170,26 @@ return a bare array and are exempt. The exemption list is exhaustive:
 
 Adding to this list requires an argument that the collection cannot grow without bound.
 
+Two endpoints are exempt for a different reason, and both say so at the route:
+
+- **A tail is not a page.** `/catalogs/{catalog_id}/migrations/{migration_id}/logs` takes
+  `after`, the last sequence number the client saw, and is polled forward. The collection
+  envelope's cursor goes null on the last page, which would lose exactly the position the
+  client polls from.
+- **A list the server already holds entire is not worth paging.**
+  `/workspaces/{workspace}/catalogs/{catalog}/schemas/{schema}/tables` and
+  `/workspaces/{workspace}/catalogs/{catalog}/schemas/{schema}/tables/{table}/snapshots` are
+  proxied from Iceberg REST, which the Polaris client calls without a page token, so the whole
+  identifier list arrives in one response regardless. Paging them would be a fiction until that
+  client supports page tokens.
+
 **`RowsPageOut` is not a collection envelope.** It describes tabular query output — `rows`,
 `columns`, `column_schema`, `cursor`, `total` — and is deliberately a different type from a
 resource collection. Do not reshape it to match.
 
-**Search returns a report, not a page**: `{"items": [...], ...diagnostics}`, no cursor,
-truncated by `limit`.
+**Search returns a report, not a page**: `{"items": [...], "has_more": …}` plus any
+diagnostics, with no cursor. Search is truncated by `limit`, not walked — a cursor that never
+advances would be a lie, and `has_more` is what tells a caller to narrow the query instead.
 
 `limit` is `default=100, ge=1, le=1000` unless a per-endpoint cost justifies otherwise, and
 the justification goes in the handler docstring.

@@ -15,7 +15,7 @@ from starlette.types import Scope
 from api.config import settings
 from api.db.session import async_session_factory
 from api.metrics import PrometheusMiddleware
-from api.openapi import operation_id
+from api.openapi import apply_conventions, operation_id
 from api.routers import (
     agents,
     agents_ws,
@@ -222,6 +222,10 @@ api_app.include_router(
     admin_service_accounts.router, prefix="/admin", tags=["admin-service-accounts"]
 )
 api_app.include_router(admin_maintenance.router, prefix="/admin", tags=["admin-maintenance"])
+
+# Security schemes and the 401/403/404 responses every guard implies, derived from
+# the routes above rather than hand-declared per endpoint.
+apply_conventions(api_app)
 
 
 class SPAStaticFiles(StaticFiles):

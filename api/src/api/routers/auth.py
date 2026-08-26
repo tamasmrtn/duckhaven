@@ -51,7 +51,7 @@ async def login(
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(
     response: Response,
-    session: str | None = Cookie(default=None),
+    session: str | None = Cookie(default=None, include_in_schema=False),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     if session:

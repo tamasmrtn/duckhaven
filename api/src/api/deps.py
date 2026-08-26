@@ -27,8 +27,8 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
 
 
 async def get_current_user(
-    session: str | None = Cookie(default=None),
-    authorization: str | None = Header(default=None),
+    session: str | None = Cookie(default=None, include_in_schema=False),
+    authorization: str | None = Header(default=None, include_in_schema=False),
     db: AsyncSession = Depends(get_db),
 ) -> User:
     """Resolve the caller to a ``User``, from either an ``Authorization: Bearer``

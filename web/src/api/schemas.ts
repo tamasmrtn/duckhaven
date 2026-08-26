@@ -26,42 +26,31 @@ export interface ColumnSpec {
   nullable: boolean;
 }
 
-// Build the schemas base path. With a catalog slug it targets the canonical
-// catalog-scoped route; without one it falls back to the legacy default-catalog
-// shim (kept for backward compatibility).
-function base(ws: string, catalog?: string): string {
-  return catalog
-    ? `/workspaces/${ws}/catalogs/${catalog}/schemas`
-    : `/workspaces/${ws}/schemas`;
+// Schemas and tables live under a catalog. The default-catalog shim that let
+// this be omitted was removed in api_version 2 — a caller without a catalog has
+// nothing to list, so the hooks disable rather than guessing one.
+function base(ws: string, catalog: string): string {
+  return `/workspaces/${ws}/catalogs/${catalog}/schemas`;
 }
 
 export const schemasApi = {
-  listSchemas: (ws: string, catalog?: string) =>
+  listSchemas: (ws: string, catalog: string) =>
     get<Pick<CatalogSchema, "name" | "catalog" | "workspace_id">[]>(
       base(ws, catalog),
     ),
 
-  listTables: (ws: string, catalog: string | undefined, schema: string) =>
+  listTables: (ws: string, catalog: string, schema: string) =>
     get<CatalogTable[]>(`${base(ws, catalog)}/${schema}/tables`),
 
-  getTable: (
-    ws: string,
-    catalog: string | undefined,
-    schema: string,
-    table: string,
-  ) => get<CatalogTable>(`${base(ws, catalog)}/${schema}/tables/${table}`),
+  getTable: (ws: string, catalog: string, schema: string, table: string) =>
+    get<CatalogTable>(`${base(ws, catalog)}/${schema}/tables/${table}`),
 
-  sampleRows: (
-    ws: string,
-    catalog: string | undefined,
-    schema: string,
-    table: string,
-  ) =>
+  sampleRows: (ws: string, catalog: string, schema: string, table: string) =>
     get<QueryRowsPage>(`${base(ws, catalog)}/${schema}/tables/${table}/sample`),
 
   tableSnapshots: (
     ws: string,
-    catalog: string | undefined,
+    catalog: string,
     schema: string,
     table: string,
   ) =>
@@ -69,7 +58,7 @@ export const schemasApi = {
       `${base(ws, catalog)}/${schema}/tables/${table}/snapshots`,
     ),
 
-  createSchema: (ws: string, catalog: string | undefined, name: string) =>
+  createSchema: (ws: string, catalog: string, name: string) =>
     post<{ name: string; catalog: string; catalog_name: string }>(
       base(ws, catalog),
       { name },
@@ -77,39 +66,29 @@ export const schemasApi = {
 
   // Probe row counts for tables that don't have one yet (e.g. created from the
   // worksheet). Returns how many tables were probed.
-  refreshStats: (ws: string, catalog?: string) =>
-    post<{ probed: number }>(`${base(ws, catalog)}/refresh-stats`, {}),
+  refreshStats: (ws: string, catalog: string) =>
+    post<{ probed: number }>(
+      `/workspaces/${ws}/catalogs/${catalog}/refresh-stats`,
+      {},
+    ),
 
   // Force a fresh row-count probe for one table, even if it already has a count.
-  recountTable: (
-    ws: string,
-    catalog: string | undefined,
-    schema: string,
-    table: string,
-  ) =>
+  recountTable: (ws: string, catalog: string, schema: string, table: string) =>
     post<{ row_count: number | null }>(
       `${base(ws, catalog)}/${schema}/tables/${table}/recount`,
       {},
     ),
 
-  dropSchema: (
-    ws: string,
-    catalog: string | undefined,
-    schema: string,
-    cascade = false,
-  ) => del(`${base(ws, catalog)}/${schema}${cascade ? "?cascade=true" : ""}`),
+  dropSchema: (ws: string, catalog: string, schema: string, cascade = false) =>
+    del(`${base(ws, catalog)}/${schema}${cascade ? "?cascade=true" : ""}`),
 
   createTable: (
     ws: string,
-    catalog: string | undefined,
+    catalog: string,
     schema: string,
     body: { name: string; columns: ColumnSpec[] },
   ) => post<CatalogTable>(`${base(ws, catalog)}/${schema}/tables`, body),
 
-  deleteTable: (
-    ws: string,
-    catalog: string | undefined,
-    schema: string,
-    table: string,
-  ) => del(`${base(ws, catalog)}/${schema}/tables/${table}`),
+  deleteTable: (ws: string, catalog: string, schema: string, table: string) =>
+    del(`${base(ws, catalog)}/${schema}/tables/${table}`),
 };

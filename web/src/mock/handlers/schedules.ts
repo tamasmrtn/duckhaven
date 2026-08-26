@@ -1,4 +1,6 @@
 import { http, HttpResponse } from "msw";
+
+import { page } from "../lib/page";
 import { SCHEDULES, SCHEDULE_RUNS } from "../fixtures/schedules";
 import { findWorkspace } from "../fixtures/workspaces";
 import { nextId } from "../lib/seed";
@@ -116,7 +118,7 @@ export const scheduleHandlers = [
     )
       .slice()
       .sort((a, b) => b.started_at.localeCompare(a.started_at));
-    return HttpResponse.json(runs);
+    return page(runs);
   }),
 
   // Workspace-wide scheduled runs feed (across all schedules), newest first.
@@ -126,6 +128,6 @@ export const scheduleHandlers = [
     const runs = SCHEDULE_RUNS.filter((q) => q.workspace_id === ws.id)
       .slice()
       .sort((a, b) => b.started_at.localeCompare(a.started_at));
-    return HttpResponse.json(runs);
+    return page(runs);
   }),
 ];

@@ -1,10 +1,12 @@
 import { http, HttpResponse } from "msw";
+
+import { page } from "../lib/page";
 import { ALL_USERS } from "../fixtures/users";
 import type { User } from "@/types/auth";
 
 export const userHandlers = [
   http.get("/api/admin/users", () => {
-    return HttpResponse.json(ALL_USERS);
+    return page(ALL_USERS);
   }),
 
   http.post("/api/admin/users", async ({ request }) => {

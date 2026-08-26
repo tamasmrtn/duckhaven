@@ -56,14 +56,21 @@ function FactorBar({ name, factor }: { name: string; factor: HealthFactor }) {
 
 export function TableHealthPanel({
   ws,
+  catalog,
   schema,
   table,
 }: {
   ws: string;
+  catalog: string;
   schema: string;
   table: string;
 }) {
-  const { data, isLoading, isError } = useTableHealth(ws, schema, table);
+  const { data, isLoading, isError } = useTableHealth(
+    ws,
+    catalog,
+    schema,
+    table,
+  );
   const dismiss = useDismissRecommendation();
 
   if (isLoading) {

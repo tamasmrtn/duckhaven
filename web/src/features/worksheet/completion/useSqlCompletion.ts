@@ -17,7 +17,7 @@ import {
 // schemas + table names (eagerly; columns fetched lazily on reference) and the
 // DuckDB function/keyword/type dictionary. Mounted once by WorksheetPage; the
 // catalog is the worksheet's active catalog (undefined → default catalog).
-export function useSqlCompletion(ws: string, catalog?: string): void {
+export function useSqlCompletion(ws: string, catalog: string): void {
   const qc = useQueryClient();
   const schemasQuery = useSchemas(ws, catalog);
   const metadataQuery = useSqlMetadata(ws);

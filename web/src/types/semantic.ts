@@ -179,7 +179,7 @@ export interface SemanticHit {
 }
 
 export interface SemanticSearchResult {
-  hits: SemanticHit[];
+  items: SemanticHit[];
   /**
    * Metrics tied at the top of the ranking — the ones a person has to choose
    * between. Populated when a term matches more than one authoritative

@@ -99,3 +99,15 @@ export function patch<T>(path: string, body?: unknown) {
 export function del(path: string) {
   return request<void>(path, { method: "DELETE" });
 }
+
+/**
+ * A paged collection: `{items, cursor, has_more}` — see the API conventions
+ * reference. The screens below read the first page only, so they unwrap to the
+ * array they already rendered; a cursor is threaded through where a screen
+ * grows a "load more".
+ */
+export interface Page<T> {
+  items: T[];
+  cursor: string | null;
+  has_more: boolean;
+}

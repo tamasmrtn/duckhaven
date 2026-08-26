@@ -16,10 +16,16 @@ export function useWorkspaceHealth(ws: string) {
   });
 }
 
-export function useTableHealth(ws: string, schema: string, table: string) {
+export function useTableHealth(
+  ws: string,
+  catalog: string,
+  schema: string,
+  table: string,
+) {
   return useQuery({
-    queryKey: ["maintenance", "health", ws, schema, table],
-    queryFn: () => maintenanceApi.tableHealth(ws, schema, table),
+    queryKey: ["maintenance", "health", ws, catalog, schema, table],
+    queryFn: () => maintenanceApi.tableHealth(ws, catalog, schema, table),
+    enabled: !!catalog,
     // A table with no scan yet 404s; don't hammer it.
     retry: false,
   });

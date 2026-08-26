@@ -1,5 +1,7 @@
 import { http, HttpResponse } from "msw";
 
+import { page } from "../lib/page";
+
 import { httpError } from "../lib/errors";
 import { nextId } from "../lib/seed";
 import {
@@ -12,7 +14,7 @@ import {
 
 export const catalogMigrationHandlers = [
   http.get("/api/catalogs/:catalogId/migrations", ({ params }) =>
-    HttpResponse.json(migrationsFor(params.catalogId as string)),
+    page(migrationsFor(params.catalogId as string)),
   ),
 
   http.post(

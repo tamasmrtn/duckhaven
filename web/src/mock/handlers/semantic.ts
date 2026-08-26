@@ -465,7 +465,7 @@ export const semanticHandlers = [
     const publishedOnly = url.searchParams.get("published_only") !== "false";
     const scored = search(q, publishedOnly);
     return HttpResponse.json({
-      hits: scored.map((s) => s.hit),
+      items: scored.map((s) => s.hit),
       ambiguous: ambiguous(scored),
     });
   }),

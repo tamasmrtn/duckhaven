@@ -1,4 +1,6 @@
 import { http, HttpResponse } from "msw";
+
+import { page } from "../lib/page";
 import {
   QUERY_HISTORY,
   SAMPLE_PROFILE,
@@ -287,7 +289,7 @@ export const queryHandlers = [
   http.get("/api/workspaces/:ws/saved-queries", ({ params }) => {
     const ws = findWorkspace(params.ws as string);
     if (!ws) return httpError(404, "Workspace not found");
-    return HttpResponse.json(
+    return page(
       SAVED_QUERIES.filter((q) => q.workspace_id === ws.id).map((q) => ({
         ...q,
         created_by_name:

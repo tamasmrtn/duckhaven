@@ -69,22 +69,19 @@ export const catalogHandlers = [
     return HttpResponse.json(out(created), { status: 201 });
   }),
 
-  http.post(
-    "/api/workspaces/:ws/catalogs/attach",
+  // A PUT on the attachment's own address, idempotent: 201 the first time,
+  // 200 when it was already attached.
+  http.put(
+    "/api/workspaces/:ws/catalogs/:catalog",
     async ({ params, request }) => {
       const ws = findWorkspace(params.ws as string);
       if (!ws) return httpError(404, "Workspace not found");
-      const body = (await request.json()) as {
-        catalog_id: string;
-        make_default?: boolean;
-      };
-      const cat = findCatalogById(body.catalog_id);
+      await request.json().catch(() => ({}));
+      const cat = CATALOGS.find((c) => c.slug === params.catalog);
       if (!cat) return httpError(404, "Catalog not found");
-      if (cat.workspace_ids.includes(ws.id)) {
-        return httpError(409, "Already attached");
-      }
-      cat.workspace_ids.push(ws.id);
-      return HttpResponse.json(out(cat));
+      const already = cat.workspace_ids.includes(ws.id);
+      if (!already) cat.workspace_ids.push(ws.id);
+      return HttpResponse.json(out(cat), { status: already ? 200 : 201 });
     },
   ),
 

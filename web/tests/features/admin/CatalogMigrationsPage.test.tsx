@@ -62,25 +62,29 @@ describe("CatalogMigrationsPage", () => {
         );
       }),
       http.get("/api/catalogs/cat-1/migrations", () =>
-        HttpResponse.json([
-          {
-            id: "mig-new",
-            catalog_id: "cat-1",
-            source_storage_backend_id: "sb-1",
-            target_storage_backend_id: "sb-2",
-            status: "pending",
-            tables_total: 0,
-            tables_done: 0,
-            bytes_total: 0,
-            bytes_copied: 0,
-            error: null,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            started_at: null,
-            cutover_at: null,
-            finished_at: null,
-          },
-        ]),
+        HttpResponse.json({
+          items: [
+            {
+              id: "mig-new",
+              catalog_id: "cat-1",
+              source_storage_backend_id: "sb-1",
+              target_storage_backend_id: "sb-2",
+              status: "pending",
+              tables_total: 0,
+              tables_done: 0,
+              bytes_total: 0,
+              bytes_copied: 0,
+              error: null,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              started_at: null,
+              cutover_at: null,
+              finished_at: null,
+            },
+          ],
+          cursor: null,
+          has_more: false,
+        }),
       ),
     );
 
@@ -104,25 +108,29 @@ describe("CatalogMigrationsPage", () => {
   it("renders progress and streamed log lines for an active migration", async () => {
     server.use(
       http.get("/api/catalogs/cat-1/migrations", () =>
-        HttpResponse.json([
-          {
-            id: "mig-x",
-            catalog_id: "cat-1",
-            source_storage_backend_id: "sb-1",
-            target_storage_backend_id: "sb-2",
-            status: "copying",
-            tables_total: 4,
-            tables_done: 2,
-            bytes_total: 0,
-            bytes_copied: 0,
-            error: null,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            started_at: new Date().toISOString(),
-            cutover_at: null,
-            finished_at: null,
-          },
-        ]),
+        HttpResponse.json({
+          items: [
+            {
+              id: "mig-x",
+              catalog_id: "cat-1",
+              source_storage_backend_id: "sb-1",
+              target_storage_backend_id: "sb-2",
+              status: "copying",
+              tables_total: 4,
+              tables_done: 2,
+              bytes_total: 0,
+              bytes_copied: 0,
+              error: null,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              started_at: new Date().toISOString(),
+              cutover_at: null,
+              finished_at: null,
+            },
+          ],
+          cursor: null,
+          has_more: false,
+        }),
       ),
       http.get("/api/catalogs/cat-1/migrations/mig-x", () =>
         HttpResponse.json({

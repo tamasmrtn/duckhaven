@@ -2,32 +2,28 @@ import { useQuery } from "@tanstack/react-query";
 import { schemasApi } from "@/api/schemas";
 
 // Schemas/tables are scoped to a catalog. The catalog slug is part of every
-// query key so a workspace's catalogs never share cache entries. Callers pass
-// `undefined` to target the workspace's default catalog (legacy shim).
+// query key so a workspace's catalogs never share cache entries, and it is
+// required: without one there is nothing to list, so the query stays disabled.
 
-export function useSchemas(ws: string, catalog?: string) {
+export function useSchemas(ws: string, catalog: string) {
   return useQuery({
     queryKey: ["workspace", ws, "catalog", catalog, "schemas"],
     queryFn: () => schemasApi.listSchemas(ws, catalog),
-    enabled: !!ws,
+    enabled: !!ws && !!catalog,
   });
 }
 
-export function useTables(
-  ws: string,
-  catalog: string | undefined,
-  schema: string,
-) {
+export function useTables(ws: string, catalog: string, schema: string) {
   return useQuery({
     queryKey: ["workspace", ws, "catalog", catalog, "schema", schema, "tables"],
     queryFn: () => schemasApi.listTables(ws, catalog, schema),
-    enabled: !!ws && !!schema,
+    enabled: !!ws && !!catalog && !!schema,
   });
 }
 
 export function useTable(
   ws: string,
-  catalog: string | undefined,
+  catalog: string,
   schema: string,
   table: string,
 ) {
@@ -43,13 +39,13 @@ export function useTable(
       table,
     ],
     queryFn: () => schemasApi.getTable(ws, catalog, schema, table),
-    enabled: !!ws && !!schema && !!table,
+    enabled: !!ws && !!catalog && !!schema && !!table,
   });
 }
 
 export function useTableSample(
   ws: string,
-  catalog: string | undefined,
+  catalog: string,
   schema: string,
   table: string,
 ) {
@@ -66,7 +62,7 @@ export function useTableSample(
       "sample",
     ],
     queryFn: () => schemasApi.sampleRows(ws, catalog, schema, table),
-    enabled: !!ws && !!schema && !!table,
+    enabled: !!ws && !!catalog && !!schema && !!table,
     // A denied sample (scoped metadata tier) or missing agent is not worth
     // retrying — surface it to the user immediately.
     retry: false,
@@ -75,7 +71,7 @@ export function useTableSample(
 
 export function useTableSnapshots(
   ws: string,
-  catalog: string | undefined,
+  catalog: string,
   schema: string,
   table: string,
 ) {
@@ -92,6 +88,6 @@ export function useTableSnapshots(
       "snapshots",
     ],
     queryFn: () => schemasApi.tableSnapshots(ws, catalog, schema, table),
-    enabled: !!ws && !!schema && !!table,
+    enabled: !!ws && !!catalog && !!schema && !!table,
   });
 }

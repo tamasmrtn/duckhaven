@@ -690,11 +690,16 @@ export function CatalogTree({
   const [createSchemaOpen, setCreateSchemaOpen] = useState(false);
   const [attachCatalogOpen, setAttachCatalogOpen] = useState(false);
   const { data: catalogs, isLoading } = useCatalogs(ws);
-  const refreshStats = useRefreshCatalogStats(ws);
+  // Refreshing stats is catalog-scoped. It used to reach the workspace's
+  // default catalog implicitly through the default-catalog shim; with the shim
+  // gone the target is named, and it is the same catalog the shim resolved to.
+  const defaultCatalog = catalogs?.find((c) => c.is_default) ?? catalogs?.[0];
+  const refreshStats = useRefreshCatalogStats(ws, defaultCatalog?.slug ?? "");
 
-  // Probe row counts for any tables that lack one (workspace-wide via the
-  // default-catalog shim), then re-read the tree on settle.
+  // Probe row counts for any tables that lack one, then re-read the tree on
+  // settle.
   async function handleRefresh() {
+    if (!defaultCatalog) return;
     try {
       await refreshStats.mutateAsync();
     } catch {

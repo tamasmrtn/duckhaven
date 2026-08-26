@@ -1,4 +1,6 @@
 import { http, HttpResponse } from "msw";
+
+import { page } from "../lib/page";
 import { httpError } from "../lib/errors";
 import {
   HEALTH_TABLES,
@@ -74,7 +76,7 @@ export const maintenanceHandlers = [
   }),
 
   http.get(
-    "/api/workspaces/:ws/schemas/:schema/tables/:table/health",
+    "/api/workspaces/:ws/catalogs/:catalog/schemas/:schema/tables/:table/health",
     ({ params }) => {
       const t = HEALTH_TABLES.find((x) => x.table_name === params.table);
       if (!t) return httpError(404, "No health data yet");
@@ -106,7 +108,7 @@ export const maintenanceHandlers = [
       status === "all"
         ? RECOMMENDATIONS
         : RECOMMENDATIONS.filter((r) => r.status === status);
-    return HttpResponse.json(recs);
+    return page(recs);
   }),
 
   http.post("/api/maintenance/recommendations/:id/dismiss", ({ params }) => {

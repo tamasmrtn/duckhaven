@@ -60,6 +60,10 @@ export const searchHandlers = [
       }
     }
 
-    return HttpResponse.json(results.slice(0, 20));
+    // A search report: truncated by limit, no cursor to walk.
+    return HttpResponse.json({
+      items: results.slice(0, 20),
+      has_more: results.length > 20,
+    });
   }),
 ];

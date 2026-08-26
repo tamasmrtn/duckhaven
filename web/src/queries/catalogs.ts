@@ -36,12 +36,12 @@ export function useAttachCatalog(ws: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({
-      catalogId,
+      catalog,
       makeDefault,
     }: {
-      catalogId: string;
+      catalog: string;
       makeDefault?: boolean;
-    }) => catalogsApi.attach(ws, catalogId, makeDefault),
+    }) => catalogsApi.attach(ws, catalog, makeDefault),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["workspace", ws, "catalogs"] });
       qc.invalidateQueries({ queryKey: ["catalogs"] });

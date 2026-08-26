@@ -1,4 +1,5 @@
 import { get, post, patch, del } from "./client";
+import type { Page } from "./client";
 import { ApiError } from "./client";
 import type { ApiErrorBody } from "./client";
 import type {
@@ -13,7 +14,9 @@ export const assistantApi = {
     get<AssistantStatus>(`/workspaces/${ws}/assistant/status`),
 
   listConversations: (ws: string) =>
-    get<Conversation[]>(`/workspaces/${ws}/assistant/conversations`),
+    get<Page<Conversation>>(`/workspaces/${ws}/assistant/conversations`).then(
+      (p) => p.items,
+    ),
 
   createConversation: (ws: string, title?: string) =>
     post<Conversation>(`/workspaces/${ws}/assistant/conversations`, {

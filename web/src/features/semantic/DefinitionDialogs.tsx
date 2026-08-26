@@ -159,8 +159,8 @@ export function AddDatasetDialog({
   const [primaryKey, setPrimaryKey] = useState("");
 
   const { data: catalogs } = useCatalogs(ws);
-  const { data: schemas } = useSchemas(ws, catalog || undefined);
-  const { data: tables } = useTables(ws, catalog || undefined, schema);
+  const { data: schemas } = useSchemas(ws, catalog);
+  const { data: tables } = useTables(ws, catalog, schema);
 
   const submit = () => {
     setError(null);

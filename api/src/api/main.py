@@ -214,12 +214,14 @@ api_app.include_router(schedules.router, tags=["schedules"])
 api_app.include_router(agents.router, tags=["agents"])
 api_app.include_router(assistant.router, tags=["assistant"])
 api_app.include_router(maintenance.router, tags=["maintenance"])
-api_app.include_router(admin_agents.router, prefix="/admin", tags=["admin"])
-api_app.include_router(admin_agent_access.router, prefix="/admin", tags=["admin"])
-api_app.include_router(admin_storage.router, prefix="/admin", tags=["admin"])
-api_app.include_router(admin_users.router, prefix="/admin", tags=["admin"])
-api_app.include_router(admin_service_accounts.router, prefix="/admin", tags=["admin"])
-api_app.include_router(admin_maintenance.router, prefix="/admin", tags=["admin"])
+api_app.include_router(admin_agents.router, prefix="/admin", tags=["admin-agents"])
+api_app.include_router(admin_agent_access.router, prefix="/admin", tags=["admin-agents"])
+api_app.include_router(admin_storage.router, prefix="/admin", tags=["admin-storage"])
+api_app.include_router(admin_users.router, prefix="/admin", tags=["admin-users"])
+api_app.include_router(
+    admin_service_accounts.router, prefix="/admin", tags=["admin-service-accounts"]
+)
+api_app.include_router(admin_maintenance.router, prefix="/admin", tags=["admin-maintenance"])
 
 
 class SPAStaticFiles(StaticFiles):

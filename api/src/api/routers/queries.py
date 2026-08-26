@@ -59,6 +59,12 @@ async def create_query(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> Query:
+    """Submit SQL for execution. Accepted, not completed: 202 with a query id.
+
+    Dispatch picks a connected agent the caller may use, so 503 means no
+    compatible compute is available rather than that the SQL was wrong. Poll
+    `GET /queries/{query_id}` for status and read results from
+    `GET /queries/{query_id}/rows`."""
     workspace = await get_workspace(db, ws)
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
@@ -534,6 +540,11 @@ async def get_query(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> Query:
+    """One query's status, timings and error, by its global id.
+
+    Addressed globally rather than under its workspace: the id is unique, and the
+    submitter already holds it. Any member of the query's workspace may read it,
+    which is what makes the history an audit trail."""
     result = await db.execute(select(Query).where(Query.id == query_id))
     query = result.scalar_one_or_none()
     if query is None:
@@ -567,6 +578,11 @@ async def cancel_query(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> None:
+    """Ask the agent to stop a running query.
+
+    Best effort and idempotent: cancelling a query that already finished is a
+    no-op, not an error. The query row survives -- cancellation is a terminal
+    status, not a deletion."""
     result = await db.execute(select(Query).where(Query.id == query_id))
     query = result.scalar_one_or_none()
     if query is None:
@@ -585,6 +601,10 @@ async def get_query_rows(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> RowsPageOut:
+    """A page of a finished query's result rows, with their column types.
+
+    A result grid rather than a resource collection, which is why the envelope is
+    `rows`/`columns` rather than `items`. Page with the opaque `cursor`."""
     result = await db.execute(select(Query).where(Query.id == query_id))
     query = result.scalar_one_or_none()
     if query is None:
@@ -671,6 +691,10 @@ async def list_saved_queries(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[SavedQueryOut]:
+    """The workspace's saved queries, with who saved each one.
+
+    Shared, not per-user: a saved query belongs to the workspace, so any member
+    sees all of them."""
     workspace = await get_workspace(db, ws)
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
@@ -703,6 +727,11 @@ async def create_saved_query(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> SavedQuery:
+    """Save SQL under a name, replacing any query already using that name.
+
+    Overwrite-by-name is deliberate: saving over "report" updates that query
+    rather than accumulating duplicates. 201 when it created one, 200 when it
+    replaced one. Requires `writer`."""
     workspace = await get_workspace(db, ws)
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
@@ -745,6 +774,9 @@ async def update_saved_query(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> SavedQuery:
+    """Change a saved query's name, SQL or default agent. Requires `writer`.
+
+    A partial update: omitted fields are left alone."""
     workspace = await get_workspace(db, ws)
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
@@ -775,6 +807,10 @@ async def delete_saved_query(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> None:
+    """Delete a saved query. Requires `writer`.
+
+    Schedules that referenced it are not silently orphaned -- see the schedules
+    router for how a scheduled saved query is retired."""
     workspace = await get_workspace(db, ws)
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)

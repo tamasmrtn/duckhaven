@@ -36,11 +36,21 @@ class VersionOut(BaseModel):
 
 @router.get("/version")
 async def version() -> VersionOut:
+    """The running build and the API contract version. Unauthenticated.
+
+    `version` moves with every release and identifies the build; `api_version` is
+    a single integer bumped only when a change breaks the contract on the wire.
+    A server old enough to lack this endpoint returns 404 -- treat that as the
+    oldest supported version."""
     return VersionOut(version=settings.app_version, api_version=API_VERSION)
 
 
 @router.get("/healthz")
 async def healthz(db: AsyncSession = Depends(get_db)) -> dict[str, str]:
+    """Liveness: is this process up and can it reach its database?
+
+    503 when the database is unreachable. Does not check Polaris -- an upstream
+    outage should not make an otherwise healthy replica get restarted."""
     try:
         await db.execute(text("SELECT 1"))
     except Exception as e:  # noqa: BLE001 — surface any DB failure as 503
@@ -57,6 +67,11 @@ async def readyz(
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> dict[str, str]:
+    """Readiness: should this replica receive traffic?
+
+    Stricter than `/healthz`: 503 while draining, and 503 if either the database
+    or Polaris is unreachable, because a replica that cannot reach the catalog
+    cannot serve a request end to end."""
     if getattr(request.app.state, "draining", False):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="draining")
     try:

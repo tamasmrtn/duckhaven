@@ -18,12 +18,15 @@ from api.services.polaris import PolarisClient
 from api.services.workspace import (
     UNSET,
     assert_workspace_member,
-    delete_workspace,
     get_default_catalog,
-    get_workspace,
     mirror_member_grant,
-    update_workspace,
 )
+
+# Aliased: the route handlers are named for the operations they expose, which
+# collides with the service functions they call.
+from api.services.workspace import delete_workspace as remove_workspace
+from api.services.workspace import get_workspace as lookup_workspace
+from api.services.workspace import update_workspace as apply_workspace_update
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +54,10 @@ async def list_workspaces(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[WorkspaceOut]:
+    """The workspaces the caller is a member of, with each one's default catalog.
+
+    Membership is the filter: this is not an admin listing, and a workspace the
+    caller has no role in is invisible rather than forbidden."""
     result = await db.execute(
         select(Workspace)
         .join(WorkspaceMember, WorkspaceMember.workspace_id == Workspace.id)
@@ -82,12 +89,16 @@ async def create_workspace(
 
 
 @router.get("/{ws}", response_model=WorkspaceOut)
-async def get_workspace_detail(
+async def get_workspace(
     ws: str,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> WorkspaceOut:
-    workspace = await get_workspace(db, ws)
+    """One workspace, in the same shape the list returns.
+
+    ``ws`` accepts the slug or the id: a slug is what a person types, an id is
+    what a stored reference holds."""
+    workspace = await lookup_workspace(db, ws)
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     await assert_workspace_member(db, workspace.id, user.id)
@@ -95,33 +106,41 @@ async def get_workspace_detail(
 
 
 @router.patch("/{ws}", response_model=WorkspaceOut)
-async def update_workspace_detail(
+async def update_workspace(
     ws: str,
     body: WorkspaceUpdate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> WorkspaceOut:
-    workspace = await get_workspace(db, ws)
+    """Rename a workspace or change its description.
+
+    A partial update: an omitted field is left alone, and an explicit ``null``
+    description clears it. The slug is immutable -- it addresses the workspace."""
+    workspace = await lookup_workspace(db, ws)
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     # Identity edits are gated at the same tier as membership management.
     await assert_workspace_member(db, workspace.id, user.id, min_role="owner")
     description = body.description if "description" in body.model_fields_set else UNSET
-    workspace = await update_workspace(db, workspace, name=body.name, description=description)
+    workspace = await apply_workspace_update(db, workspace, name=body.name, description=description)
     return await _workspace_out(db, workspace)
 
 
 @router.delete("/{ws}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_workspace_detail(
+async def delete_workspace(
     ws: str,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    workspace = await get_workspace(db, ws)
+    """Delete a workspace and everything scoped to it.
+
+    Owner only. Catalogs survive: they are attached M:N and may be bound to other
+    workspaces, so this removes the bindings, not the data."""
+    workspace = await lookup_workspace(db, ws)
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     await assert_workspace_member(db, workspace.id, user.id, min_role="owner")
-    await delete_workspace(db, workspace)
+    await remove_workspace(db, workspace)
 
 
 @router.get("/{ws}/members", response_model=list[MemberOut])
@@ -130,7 +149,9 @@ async def list_members(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[WorkspaceMember]:
-    workspace = await get_workspace(db, ws)
+    """Everyone with a role in the workspace. Owner only -- the membership list
+    is also the access-control list."""
+    workspace = await lookup_workspace(db, ws)
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     await assert_workspace_member(db, workspace.id, user.id, min_role="owner")
@@ -148,7 +169,11 @@ async def add_member(
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> WorkspaceMember:
-    workspace = await get_workspace(db, ws)
+    """Give an existing user a role in the workspace.
+
+    Roles are ordered reader < writer < owner; the role granted here is the floor
+    every workspace-scoped permission check measures against."""
+    workspace = await lookup_workspace(db, ws)
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     await assert_workspace_member(db, workspace.id, user.id, min_role="owner")

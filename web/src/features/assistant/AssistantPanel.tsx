@@ -60,13 +60,15 @@ export function AssistantPanel({ ws }: { ws: string }) {
   const { closePanel, editorRef, seedPrompt } = useAssistant();
   const { data: status } = useAssistantStatus(ws);
   const enabled = status?.enabled === true;
-  // Two reasons the panel can be unusable, both known from the cached status
-  // before anything is sent: the feature is off, or the assistant's service
-  // account has no access here. Either way the composer is disabled, so no turn
-  // starts and no model is called.
+  // Off means there is nothing to show at all. Unusable is different: the feature
+  // is on and past conversations are still worth reading, so only sending is
+  // blocked. Both are known from the cached status before anything is sent, so no
+  // turn starts and no model is called either way.
   const turnedOff = status?.enabled === false;
-  const noAccess = enabled && status?.has_workspace_access === false;
-  const disabled = turnedOff || noAccess;
+  const availability = status?.availability;
+  const unusable =
+    enabled && availability !== undefined && availability !== "ok";
+  const cannotSend = turnedOff || unusable;
   const {
     data: conversations = [],
     isLoading: conversationsLoading,
@@ -145,7 +147,7 @@ export function AssistantPanel({ ws }: { ws: string }) {
 
   const submit = async (overrideText?: string) => {
     const prompt = (overrideText ?? draft).trim();
-    if (!prompt || chat.streaming || disabled) return;
+    if (!prompt || chat.streaming || cannotSend) return;
     let id = effectiveId;
     if (!id) {
       const conv = await createConversation.mutateAsync(undefined);
@@ -178,7 +180,7 @@ export function AssistantPanel({ ws }: { ws: string }) {
           </Badge>
         )}
         <div className="ml-auto flex items-center gap-1">
-          {!disabled && conversations.length > 0 && (
+          {!turnedOff && conversations.length > 0 && (
             <ConversationList
               ws={ws}
               conversations={conversations}
@@ -186,7 +188,7 @@ export function AssistantPanel({ ws }: { ws: string }) {
               onSelect={(id) => setPicked(id)}
             />
           )}
-          {!disabled && (
+          {!turnedOff && (
             <Button
               size="icon"
               variant="ghost"
@@ -209,7 +211,7 @@ export function AssistantPanel({ ws }: { ws: string }) {
         </div>
       </div>
 
-      {!disabled &&
+      {!turnedOff &&
         detail?.history_truncated &&
         dismissedTruncationFor !== effectiveId && (
           <div className="flex items-center justify-between gap-2 border-b border-[var(--border-subtle)] px-3 py-1.5">
@@ -229,22 +231,26 @@ export function AssistantPanel({ ws }: { ws: string }) {
           </div>
         )}
 
-      {/* Thread (or the reason it can't be used) */}
-      {disabled ? (
+      {/* Why sending is blocked. A banner, not a replacement for the thread:
+          reading past conversations needs no service-account access at all. */}
+      {unusable && (
+        <div className="border-b border-[var(--border-subtle)] px-3 py-2">
+          <p className="text-sm text-text-secondary" role="status">
+            {availability === "account_unavailable"
+              ? "The assistant's service account is missing or disabled, so it can't answer anything. An admin can re-enable it under Service accounts."
+              : "The assistant isn't a member of this workspace, so every question would come back denied. An admin can add the Assistant account under this workspace's members, then grant it the catalogs it should see."}
+          </p>
+        </div>
+      )}
+
+      {/* Thread (or the turned-off notice) */}
+      {turnedOff ? (
         <div className="flex flex-1 items-center justify-center p-6">
-          {turnedOff ? (
-            <EmptyState
-              icon={Sparkles}
-              title="Assistant is turned off"
-              description="An administrator hasn't enabled the AI assistant for this deployment. Enable it (set ASSISTANT_ENABLED), or ask a DuckHaven admin to turn it on."
-            />
-          ) : (
-            <EmptyState
-              icon={Sparkles}
-              title="Assistant has no access here"
-              description="The assistant is on, but its service account isn't a member of this workspace, so every question would come back denied. An admin can add the Assistant account under this workspace's members, then grant it the catalogs it should see."
-            />
-          )}
+          <EmptyState
+            icon={Sparkles}
+            title="Assistant is turned off"
+            description="An administrator hasn't enabled the AI assistant for this deployment. Enable it (set ASSISTANT_ENABLED), or ask a DuckHaven admin to turn it on."
+          />
         </div>
       ) : (
         <ScrollArea className="flex-1">
@@ -281,8 +287,12 @@ export function AssistantPanel({ ws }: { ws: string }) {
                           <button
                             key={prompt}
                             type="button"
+                            disabled={cannotSend}
                             onClick={() => void submit(prompt)}
-                            className={chipClass}
+                            className={cn(
+                              chipClass,
+                              cannotSend && "opacity-50",
+                            )}
                           >
                             {prompt}
                           </button>
@@ -453,7 +463,7 @@ export function AssistantPanel({ ws }: { ws: string }) {
             ref={composerRef}
             aria-label="Message"
             value={draft}
-            disabled={disabled}
+            disabled={cannotSend}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
@@ -464,8 +474,8 @@ export function AssistantPanel({ ws }: { ws: string }) {
             placeholder={
               turnedOff
                 ? "Assistant is turned off"
-                : noAccess
-                  ? "Assistant has no access to this workspace"
+                : unusable
+                  ? "Assistant can't be used in this workspace"
                   : "Ask about your data…"
             }
             rows={1}
@@ -484,7 +494,7 @@ export function AssistantPanel({ ws }: { ws: string }) {
             <Button
               size="icon"
               onClick={() => void submit()}
-              disabled={disabled || !draft.trim()}
+              disabled={cannotSend || !draft.trim()}
               aria-label="Send"
             >
               <Send className="size-4" />

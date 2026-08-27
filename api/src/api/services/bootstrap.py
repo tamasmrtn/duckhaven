@@ -16,12 +16,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
-from api.models.user import Credential, User
-from api.services.assistant.identity import (
-    ASSISTANT_EMAIL,
-    ASSISTANT_NAME,
-    SERVICE_ACCOUNT_PROVIDER,
-)
+from api.models.user import SERVICE_ACCOUNT_PROVIDER, Credential, User
+from api.services.assistant.identity import ASSISTANT_EMAIL, ASSISTANT_NAME
 
 
 async def seed_agent_bootstrap_token(db: AsyncSession, token: str | None, ttl_hours: int) -> None:

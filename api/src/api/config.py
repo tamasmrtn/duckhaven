@@ -373,13 +373,13 @@ class Settings(BaseSettings):
     # reach stays an admin decision: it starts with no workspace membership and no
     # grants, and the panel says so until one is given.
     assistant_enabled: bool = False
-    # Pydantic AI model string, e.g. "anthropic:claude-sonnet-4-latest",
+    # Pydantic AI model string, e.g. "anthropic:claude-sonnet-5",
     # "openai:gpt-4o", or "mistral:mistral-large-latest". No provider is assumed;
     # for OpenAI-compatible endpoints (Ollama, vLLM, Azure) set the base URL below
     # and use an "openai:<model>" string. Provider API keys come from the standard
     # provider env vars (ANTHROPIC_API_KEY/OPENAI_API_KEY/MISTRAL_API_KEY) unless
     # assistant_api_key is set.
-    assistant_model: str = "anthropic:claude-sonnet-4-latest"
+    assistant_model: str = "anthropic:claude-sonnet-5"
     # OpenAI-compatible base URL (Ollama/vLLM/Azure/…). When set, the model routes
     # through the OpenAI protocol against this endpoint (keyless self-hosted path).
     assistant_openai_base_url: str | None = None

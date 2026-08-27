@@ -7,7 +7,7 @@ import { server } from "@tests/mock/server";
 import {
   CONVERSATIONS,
   setAssistantEnabled,
-  setAssistantWorkspaceAccess,
+  setAssistantAvailability,
 } from "@/mock/fixtures/assistant";
 
 // The panel is a right-side dock opened from the top bar; render a workspace page
@@ -688,27 +688,62 @@ describe("AssistantPanel", () => {
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
   });
 
-  it("says so and blocks input when the assistant has no access here", async () => {
-    setAssistantWorkspaceAccess(false);
+  it("blocks sending but keeps history when the assistant has no access", async () => {
+    setAssistantAvailability({ "acme-analytics": "no_workspace_access" });
     const user = userEvent.setup();
     renderWithProviders({ initialRoute: ROUTE });
     await openPanel(user);
 
     expect(
-      await screen.findByText("Assistant has no access here"),
+      await screen.findByText(/isn't a member of this workspace/i),
     ).toBeInTheDocument();
     // Distinct from the turned-off state: the feature is on, the account isn't.
     expect(
       screen.queryByText("Assistant is turned off"),
     ).not.toBeInTheDocument();
+
+    // Past conversations stay readable — reading them needs no service-account
+    // access at all, so losing access must not hide the audit trail.
     expect(
-      screen.getByText(/isn't a member of this workspace/i),
+      await screen.findByText("There are 42 events in the events table."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Conversation history" }),
     ).toBeInTheDocument();
 
-    // No turn can be started, so no model is ever called for a question that
+    // But no turn can be started, so no model is called for a question that
     // could only come back denied.
     expect(screen.getByLabelText("Message")).toBeDisabled();
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  });
+
+  it("names re-enabling the account when that is the actual fix", async () => {
+    setAssistantAvailability({ "acme-analytics": "account_unavailable" });
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+
+    // Telling an admin to add a membership would send them somewhere that
+    // cannot help, so this state says something different.
+    expect(await screen.findByText(/missing or disabled/i)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/isn't a member of this workspace/i),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  });
+
+  it("keeps the assistant usable in a workspace that does have access", async () => {
+    // Access is per workspace; a block elsewhere must not leak into this one.
+    setAssistantAvailability({ "other-workspace": "no_workspace_access" });
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    expect(screen.getByLabelText("Message")).not.toBeDisabled();
+    expect(
+      screen.queryByText(/isn't a member of this workspace/i),
+    ).not.toBeInTheDocument();
   });
 
   it("proposes an editor edit that the user can accept", async () => {

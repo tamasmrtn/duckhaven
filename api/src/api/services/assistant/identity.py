@@ -18,10 +18,8 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import settings
-from api.models.user import Credential, User
+from api.models.user import SERVICE_ACCOUNT_PROVIDER, Credential, User
 from api.services.auth import generate_pat, hash_token
-
-SERVICE_ACCOUNT_PROVIDER = "service_account"
 
 # The assistant always acts as this one account. Fixed rather than configurable:
 # it is one less thing to get right when turning the assistant on, and it lets

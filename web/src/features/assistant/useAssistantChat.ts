@@ -34,7 +34,10 @@ export function useAssistantChat(
   const { getEditorSql, getCatalog, captureSelection, onProposeEdit } = options;
   const qc = useQueryClient();
   const [streaming, setStreaming] = useState(false);
-  const [streamingText, setStreamingText] = useState("");
+  // One entry per assistant message in the turn, split on the `start` marker
+  // so a streaming reply is grouped exactly as the persisted transcript will
+  // group it, instead of running together into one bubble.
+  const [streamingMessages, setStreamingMessages] = useState<string[]>([]);
   const [liveTools, setLiveTools] = useState<LiveTool[]>([]);
   const [pending, setPending] = useState<PendingApproval | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -80,7 +83,7 @@ export function useAssistantChat(
     setStopped(false);
     setPending(null);
     setPendingUserMessage(null);
-    setStreamingText("");
+    setStreamingMessages([]);
     setLiveTools([]);
   }, [conversationId]);
 
@@ -92,13 +95,19 @@ export function useAssistantChat(
       setStreaming(true);
       setError(null);
       setStopped(false);
-      setStreamingText("");
+      setStreamingMessages([]);
       setLiveTools([]);
       let sawError = false;
       try {
         for await (const frame of frames) {
           if (frame.type === "token") {
-            setStreamingText((t) => t + frame.text);
+            // No marker (an older server, or the turn's first token) keeps
+            // appending to the message already open.
+            setStreamingMessages((ms) =>
+              frame.start || ms.length === 0
+                ? [...ms, frame.text]
+                : [...ms.slice(0, -1), ms[ms.length - 1] + frame.text],
+            );
           } else if (frame.type === "tool_call") {
             setLiveTools((ts) => [...ts, { tool: frame.tool }]);
           } else if (frame.type === "approval_required") {
@@ -132,7 +141,7 @@ export function useAssistantChat(
           // partial reply is gone. Clear it and flag `stopped` to show a "Stopped"
           // note; keep the user's message (pendingUserMessage) and lastPrompt so
           // Retry can resend the same prompt.
-          setStreamingText("");
+          setStreamingMessages([]);
           setLiveTools([]);
           setStopped(true);
         } else {
@@ -142,7 +151,7 @@ export function useAssistantChat(
           await qc.invalidateQueries({
             queryKey: ["workspace", ws, "assistant", "conversations"],
           });
-          setStreamingText("");
+          setStreamingMessages([]);
           setLiveTools([]);
           // Cleared after the refetch settles, so the persisted transcript (which
           // now includes this message) replaces the optimistic echo seamlessly.
@@ -208,8 +217,13 @@ export function useAssistantChat(
     abortRef.current?.abort();
   }, []);
 
+  // Joined for the aria-live announcement and the scroll trigger, which care
+  // about the reply as a whole rather than its message boundaries.
+  const streamingText = streamingMessages.join("\n\n");
+
   return {
     streaming,
+    streamingMessages,
     streamingText,
     liveTools,
     pending,

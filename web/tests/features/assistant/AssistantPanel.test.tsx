@@ -17,6 +17,38 @@ async function openPanel(user: ReturnType<typeof userEvent.setup>) {
   await user.click(toggle);
 }
 
+/**
+ * An SSE response the test drives frame by frame. Keeping the stream open is
+ * what lets a test assert on a mid-turn state: a body that closes on its own
+ * settles the turn, and the live bubbles are cleared for the transcript.
+ */
+function drivenStream() {
+  const encoder = new TextEncoder();
+  const handle: {
+    push: (frame: object) => void;
+    finish: () => void;
+  } = { push: undefined!, finish: undefined! };
+  server.use(
+    http.post(
+      "/api/workspaces/:ws/assistant/conversations/:id/messages",
+      () =>
+        new HttpResponse(
+          new ReadableStream({
+            start(controller) {
+              handle.push = (frame) =>
+                controller.enqueue(
+                  encoder.encode(`data: ${JSON.stringify(frame)}\n\n`),
+                );
+              handle.finish = () => controller.close();
+            },
+          }),
+          { headers: { "Content-Type": "text/event-stream" } },
+        ),
+    ),
+  );
+  return handle;
+}
+
 describe("AssistantPanel", () => {
   it("opens from the top bar and shows the seeded conversation", async () => {
     const user = userEvent.setup();
@@ -431,28 +463,7 @@ describe("AssistantPanel", () => {
   it("does not render half-parsed markdown while a reply streams", async () => {
     // A stream the test drives frame by frame, so the assertion lands on a
     // known partial state instead of racing the transport.
-    const encoder = new TextEncoder();
-    let push!: (frame: object) => void;
-    let finish!: () => void;
-    server.use(
-      http.post(
-        "/api/workspaces/:ws/assistant/conversations/:id/messages",
-        () => {
-          const body = new ReadableStream({
-            start(controller) {
-              push = (frame) =>
-                controller.enqueue(
-                  encoder.encode(`data: ${JSON.stringify(frame)}\n\n`),
-                );
-              finish = () => controller.close();
-            },
-          });
-          return new HttpResponse(body, {
-            headers: { "Content-Type": "text/event-stream" },
-          });
-        },
-      ),
-    );
+    const stream = drivenStream();
 
     const user = userEvent.setup();
     renderWithProviders({ initialRoute: ROUTE });
@@ -461,17 +472,17 @@ describe("AssistantPanel", () => {
 
     await user.type(screen.getByLabelText("Message"), "biggest tables?");
     await user.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() => expect(push).toBeDefined());
+    await waitFor(() => expect(stream.push).toBeDefined());
 
     // A bold marker that has not closed yet. Asserting on the *presence* of the
     // stabilized text is what makes this bite: an unfixed panel renders the
     // literal "The **thr", so there is no element reading "The thr" to find,
     // and findByText waits for the frame rather than racing it.
-    push({ type: "token", text: "The **thr" });
+    stream.push({ type: "token", text: "The **thr" });
     expect(await screen.findByText("The thr")).toBeInTheDocument();
 
     // Once the answer completes, nothing the stabilizer held back is lost.
-    push({
+    stream.push({
       type: "token",
       text: "ee** biggest tables:\n\n| Table | Rows |\n|---|---:|\n| events | 42 |\n",
     });
@@ -482,12 +493,75 @@ describe("AssistantPanel", () => {
     expect(screen.getByRole("cell", { name: "events" })).toBeInTheDocument();
     expect(screen.getByText("three").tagName).toBe("STRONG");
 
-    push({
+    stream.push({
       type: "done",
       message_id: "msg-md",
       usage: { input: 1, output: 1 },
     });
-    finish();
+    stream.finish();
+  });
+
+  it("streams a multi-step reply as the messages the transcript will show", async () => {
+    const stream = drivenStream();
+
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    await user.type(
+      screen.getByLabelText("Message"),
+      "find the customer table",
+    );
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(stream.push).toBeDefined());
+
+    // Two model responses. Each opens with a `start` token, exactly as the
+    // runner marks them, and neither carries whitespace at the seam.
+    stream.push({ type: "token", text: "Checked the catalog.", start: true });
+    const firstBubble = await screen.findByText("Checked the catalog.");
+
+    stream.push({ type: "token", text: "Listing is denied.", start: true });
+    stream.push({ type: "token", text: " Trying SQL instead." });
+    const secondBubble = await screen.findByText(
+      "Listing is denied. Trying SQL instead.",
+    );
+
+    // Separate messages, not one run-on bubble: neither contains the other.
+    expect(firstBubble.textContent).toBe("Checked the catalog.");
+    expect(secondBubble.textContent).not.toContain("Checked the catalog.");
+
+    stream.push({
+      type: "done",
+      message_id: "msg-seg",
+      usage: { input: 1, output: 1 },
+    });
+    stream.finish();
+  });
+
+  it("keeps one bubble when the server sends no message markers", async () => {
+    // An older server never marks a boundary; the reply must still render.
+    const stream = drivenStream();
+
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    await user.type(screen.getByLabelText("Message"), "hello");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(stream.push).toBeDefined());
+
+    stream.push({ type: "token", text: "One " });
+    stream.push({ type: "token", text: "bubble." });
+    expect(await screen.findByText("One bubble.")).toBeInTheDocument();
+
+    stream.push({
+      type: "done",
+      message_id: "msg-one",
+      usage: { input: 1, output: 1 },
+    });
+    stream.finish();
   });
 
   it("clears a stale error/pending bubble when switching conversations", async () => {

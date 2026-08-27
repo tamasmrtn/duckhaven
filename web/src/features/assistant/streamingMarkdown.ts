@@ -7,8 +7,16 @@
 //
 // Unclosed *fences* need no such help — CommonMark runs them to the end of the
 // document, so a partial body is already inside a code block.
+//
+// Only tables written with outer pipes are recognised. A borderless table
+// ("Table | Rows") still flashes its header, because the alternative — treating
+// any trailing line containing a pipe as a table — would hide ordinary prose
+// that happens to contain one.
 
-const FENCE_RE = /^\s{0,3}(`{3,}|~{3,})/;
+const FENCE_OPEN_RE = /^\s{0,3}(`{3,}|~{3,})/;
+// A closing fence carries no info string, so a ```sql *inside* an open block
+// opens nothing and closes nothing.
+const FENCE_CLOSE_RE = /^\s{0,3}(`{3,}|~{3,})\s*$/;
 const DELIMITER_ROW_RE = /^\s*\|?[\s:|-]*-[\s:|-]*$/;
 // Stands in for a complete inline-code span while emphasis is scanned. The
 // sentinel is in the private use area, which a model never emits, so it can't
@@ -40,24 +48,26 @@ function dropUnpaired(text: string, delim: string): string {
  * Remove emphasis and code delimiters that are open but not yet closed, keeping
  * the text they wrap. `The **thr` becomes `The thr`, which then grows in place
  * and gains its bold when the closing `**` arrives, instead of flashing raw
- * asterisks. Complete inline-code spans are held aside first, so the emphasis
- * pass never mangles a `SELECT count(*)`. Underscores are left alone — stripping
- * them would break snake_case identifiers, which outnumber `_emphasis_` by far
- * in an answer about SQL.
+ * asterisks.
+ *
+ * Only `**` and backticks are touched. A lone `*` is left alone: it is far more
+ * often a list bullet or a literal `SELECT * FROM events` than a half-typed
+ * italic, and deleting one of those for the length of the stream is a worse
+ * artifact than the flash it would avoid. Underscores are left alone for the
+ * same reason — snake_case identifiers outnumber `_emphasis_` by far here.
  */
 function stripUnclosedInline(text: string): string {
+  // Hold complete code spans aside, so the emphasis pass never reaches inside
+  // one. Backtick runs pair by length, so ``a`b`` is a single span.
   const spans: string[] = [];
-  let out = text.replace(/`[^`\n]+`/g, (span) => {
+  let out = text.replace(/(`+)(?:(?!\1)[\s\S])+?\1(?!`)/g, (span) => {
     spans.push(span);
     return `\uE000${spans.length - 1}\uE000`;
   });
   // Every complete span is held aside above, so a backtick still here opens
   // something that has not closed — including the `` of a fence being typed,
-  // which pairs up as an empty span but is not one.
-  out = out.replace(/`/g, "");
-  for (const delim of ["**", "*"]) {
-    out = dropUnpaired(out, delim);
-  }
+  // which would otherwise read as an empty span.
+  out = dropUnpaired(out.replace(/`/g, ""), "**");
   return out.replace(SPAN_RE, (_, index: string) => spans[Number(index)]);
 }
 
@@ -76,14 +86,19 @@ export function stabilizeStreamingMarkdown(text: string): string {
   let openFenceLine = -1;
   let lastFenceCloseLine = -1;
   for (let i = 0; i < end; i++) {
-    const match = FENCE_RE.exec(lines[i]);
-    if (!match) continue;
     if (openFence === null) {
-      openFence = match[1];
-      openFenceLine = i;
-    } else if (
-      match[1][0] === openFence[0] &&
-      match[1].length >= openFence.length
+      const open = FENCE_OPEN_RE.exec(lines[i]);
+      if (open) {
+        openFence = open[1];
+        openFenceLine = i;
+      }
+      continue;
+    }
+    const close = FENCE_CLOSE_RE.exec(lines[i]);
+    if (
+      close &&
+      close[1][0] === openFence[0] &&
+      close[1].length >= openFence.length
     ) {
       openFence = null;
       lastFenceCloseLine = i;
@@ -91,11 +106,13 @@ export function stabilizeStreamingMarkdown(text: string): string {
   }
 
   if (openFence !== null) {
-    // The opening fence is itself still being typed, so it would render as an
-    // empty code block: hold it back until it has a body.
-    if (openFenceLine === end - 1 && !endsWithNewline) {
-      return lines.slice(0, openFenceLine).join("\n");
-    }
+    // An opened block with nothing in it yet renders as an empty, padded <pre>:
+    // hold the fence back until a body arrives. This covers both the marker
+    // mid-word ("```sq") and the marker complete but bodyless ("```sql\n").
+    const hasBody = lines
+      .slice(openFenceLine + 1, end)
+      .some((line) => line.trim() !== "");
+    if (!hasBody) return lines.slice(0, openFenceLine).join("\n");
     // Everything past the fence is code. Leave it as it is — and in particular
     // don't run the emphasis pass over a code body.
     return text;

@@ -76,10 +76,13 @@ describe("Markdown while streaming", () => {
         const { container, unmount } = render(
           <Markdown streaming>{frame}</Markdown>,
         );
+        // A lone `*` is allowed through: it survives for the single frame
+        // between the two halves of a `**`, which is the price of never
+        // deleting a bullet or a literal `SELECT *`.
         expect(
           proseText(container),
           `frame: ${JSON.stringify(frame)}`,
-        ).not.toMatch(/[|*`]/);
+        ).not.toMatch(/[|`]|\*\*/);
         unmount();
       }
     },

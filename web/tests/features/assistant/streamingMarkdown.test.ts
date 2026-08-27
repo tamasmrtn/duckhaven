@@ -35,6 +35,18 @@ describe("stabilizeStreamingMarkdown", () => {
       expect(stable("Try:\n\n```sq")).toBe("Try:\n");
     });
 
+    it("holds back a complete fence marker with no body yet", () => {
+      // Otherwise this renders as an empty, padded code block.
+      expect(stable("Try:\n\n```sql\n")).toBe("Try:\n");
+    });
+
+    it("does not read a fence with an info string as a closing fence", () => {
+      // A closing fence carries no info string, so this block is still open and
+      // the emphasis pass must not reach into its body.
+      const nested = "```\n```sql\nSELECT **x";
+      expect(stable(nested)).toBe(nested);
+    });
+
     it("leaves a closed fence alone", () => {
       const closed = "```sql\nSELECT 1\n```";
       expect(stable(closed)).toBe(closed);
@@ -65,11 +77,36 @@ describe("stabilizeStreamingMarkdown", () => {
       expect(stable(snake)).toBe(snake);
     });
 
+    it("leaves a lone asterisk alone", () => {
+      // A single `*` is far more often a bullet or a literal than a half-typed
+      // italic, and deleting one mid-stream is worse than the flash it avoids.
+      for (const text of [
+        "Run SELECT * FROM events",
+        "Options:\n\n* First item",
+        "* alpha\n* beta\n* gamma",
+      ]) {
+        expect(stable(text)).toBe(text);
+      }
+    });
+
+    it("pairs backtick runs by length", () => {
+      for (const text of ["``a`b``", "run `SELECT\n1` now"]) {
+        expect(stable(text)).toBe(text);
+      }
+    });
+
     it("only rewrites the trailing paragraph", () => {
       expect(stable("Intro para\n\nSecond **par")).toBe(
         "Intro para\n\nSecond par",
       );
     });
+  });
+
+  it("leaves a table written without outer pipes alone", () => {
+    // A known limit: recognising these would mean treating any trailing line
+    // with a pipe in it as a table, which would swallow ordinary prose.
+    const borderless = "Biggest:\n\nTable | Rows\n---|---";
+    expect(stable(borderless)).toBe(borderless);
   });
 
   it("returns a finished answer unchanged", () => {

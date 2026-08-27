@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -9,11 +9,14 @@ class AssistantStatusOut(BaseModel):
     # Whether the assistant is enabled in this deployment. Reported even when
     # disabled so the UI can show a clear "turned off" state.
     enabled: bool
-    # Whether the assistant's service account is a member of this workspace. It is
-    # created with no access at all, so this is false until an admin grants some —
-    # reported so the UI can say that up front rather than letting a turn spend a
-    # model run discovering every tool call is denied. Always false when disabled.
-    has_workspace_access: bool = False
+    # Whether the assistant can actually be used here, and if not, why. The account
+    # is created with no access at all, so a fresh deployment reports
+    # "no_workspace_access" until an admin grants some. Reported so the UI can name
+    # the fix up front, rather than letting a turn spend a model run discovering
+    # every tool call is denied. Always "disabled" when the feature is off.
+    availability: Literal["disabled", "account_unavailable", "no_workspace_access", "ok"] = (
+        "disabled"
+    )
 
 
 class ConversationCreate(BaseModel):

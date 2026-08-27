@@ -47,8 +47,8 @@ async def workspace(db_session, user):
 
 
 @pytest_asyncio.fixture
-async def assistant_member(db_session, workspace):
-    """The assistant's service account, added to the workspace as a reader."""
+async def assistant_account(db_session):
+    """The assistant's service account as startup creates it: no access at all."""
     account = User(
         email=ASSISTANT_EMAIL,
         name="Assistant",
@@ -58,9 +58,17 @@ async def assistant_member(db_session, workspace):
     db_session.add(account)
     await db_session.commit()
     await db_session.refresh(account)
-    db_session.add(WorkspaceMember(workspace_id=workspace.id, user_id=account.id, role="reader"))
-    await db_session.commit()
     return account
+
+
+@pytest_asyncio.fixture
+async def assistant_member(db_session, workspace, assistant_account):
+    """...and then added to the workspace as a reader."""
+    db_session.add(
+        WorkspaceMember(workspace_id=workspace.id, user_id=assistant_account.id, role="reader")
+    )
+    await db_session.commit()
+    return assistant_account
 
 
 @pytest_asyncio.fixture
@@ -75,12 +83,12 @@ async def test_disabled_returns_503(authed, workspace, monkeypatch):
     assert resp.status_code == 503
 
 
-async def test_status_reports_enabled_but_without_access(authed, workspace):
+async def test_status_reports_enabled_but_without_access(authed, workspace, assistant_account):
     # The account is created with no membership, so the assistant is on and
     # unusable here — the UI needs both facts to say so without starting a turn.
     resp = await authed.get(f"/workspaces/{workspace.slug}/assistant/status")
     assert resp.status_code == 200
-    assert resp.json() == {"enabled": True, "has_workspace_access": False}
+    assert resp.json() == {"enabled": True, "availability": "no_workspace_access"}
 
 
 async def test_status_reports_access_once_the_account_is_a_member(
@@ -88,7 +96,7 @@ async def test_status_reports_access_once_the_account_is_a_member(
 ):
     resp = await authed.get(f"/workspaces/{workspace.slug}/assistant/status")
     assert resp.status_code == 200
-    assert resp.json() == {"enabled": True, "has_workspace_access": True}
+    assert resp.json() == {"enabled": True, "availability": "ok"}
 
 
 async def test_status_reports_disabled_without_503(authed, workspace, monkeypatch):
@@ -96,10 +104,47 @@ async def test_status_reports_disabled_without_503(authed, workspace, monkeypatc
     resp = await authed.get(f"/workspaces/{workspace.slug}/assistant/status")
     # Reachable even when disabled — that is the whole point.
     assert resp.status_code == 200
-    assert resp.json() == {"enabled": False, "has_workspace_access": False}
+    assert resp.json() == {"enabled": False, "availability": "disabled"}
 
 
-async def test_turn_refused_without_workspace_access(authed, workspace, db_session, user):
+async def test_status_distinguishes_a_disabled_account_from_no_membership(
+    authed, workspace, assistant_member, db_session
+):
+    # Telling an admin to add a membership when the account is disabled sends
+    # them somewhere that cannot fix it, so the two states are reported apart.
+    assistant_member.is_active = False
+    await db_session.commit()
+
+    resp = await authed.get(f"/workspaces/{workspace.slug}/assistant/status")
+    assert resp.json() == {"enabled": True, "availability": "account_unavailable"}
+
+
+async def test_approval_still_answerable_without_workspace_access(
+    authed, workspace, db_session, user, assistant_account, monkeypatch
+):
+    # A paused turn must stay resolvable in both directions: rejecting a write
+    # needs no data access, and refusing here would strand it with no way out.
+    conv = AssistantConversation(workspace_id=workspace.id, user_id=user.id, title="t")
+    db_session.add(conv)
+    await db_session.commit()
+    await db_session.refresh(conv)
+
+    async def _resumed(*_args, **_kwargs):
+        yield 'data: {"type": "token", "text": "denied"}\n\n'
+
+    monkeypatch.setattr("api.routers.assistant.resume_turn", _resumed)
+
+    resp = await authed.post(
+        f"/workspaces/{workspace.slug}/assistant/conversations/{conv.id}/approvals",
+        json={"tool_call_id": "call-1", "approved": False, "reason": "no"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert "denied" in resp.text
+
+
+async def test_turn_refused_without_workspace_access(
+    authed, workspace, db_session, user, assistant_account
+):
     # No membership: the turn is refused outright rather than spending a model run
     # to discover every tool call is denied. The suite blocks real model requests,
     # so a turn that did start would fail loudly here.

@@ -23,7 +23,7 @@ from api.schemas.assistant import (
 )
 from api.schemas.page import Page
 from api.services.assistant import resume_turn, stream_turn
-from api.services.assistant.access import assistant_has_workspace_access
+from api.services.assistant.access import assistant_availability
 from api.services.assistant.persistence import is_history_truncated, render_transcript_with_sql
 from api.services.paging import paginate
 from api.services.workspace import assert_workspace_member, get_workspace
@@ -48,7 +48,13 @@ async def _require_workspace_access(db: AsyncSession, workspace_id: uuid.UUID) -
     so starting it spends a model run to reach a conclusion known up front. The UI
     blocks this case from the cached status, so reaching here means a stale client.
     """
-    if not await assistant_has_workspace_access(db, workspace_id):
+    availability = await assistant_availability(db, workspace_id)
+    if availability == "account_unavailable":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The assistant's service account is missing or disabled.",
+        )
+    if availability == "no_workspace_access":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
@@ -92,10 +98,10 @@ async def assistant_status(
     # assistant is off in order to show a clear disabled state.
     workspace = await _workspace(db, ws, user)
     if not settings.assistant_enabled:
-        return AssistantStatusOut(enabled=False, has_workspace_access=False)
+        return AssistantStatusOut(enabled=False, availability="disabled")
     return AssistantStatusOut(
         enabled=True,
-        has_workspace_access=await assistant_has_workspace_access(db, workspace.id),
+        availability=await assistant_availability(db, workspace.id),
     )
 
 
@@ -315,7 +321,11 @@ async def approve_write(
     aborting it, so the assistant can explain or take another route."""
     _require_enabled()
     workspace = await _workspace(db, ws, user)
-    await _require_workspace_access(db, workspace.id)
+    # Deliberately not access-gated. The turn is already in flight and paused on
+    # this decision; refusing here would strand it with no way to resolve it in
+    # either direction, and rejecting a write needs no data access at all. An
+    # approval that no longer has access fails at the tool call, which is the
+    # governed path the assistant explains.
     conversation = await _load_conversation(db, workspace.id, conversation_id, user.id)
     stream = resume_turn(
         session_factory,

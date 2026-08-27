@@ -1,9 +1,10 @@
 export interface AssistantStatus {
   enabled: boolean;
-  // Whether the assistant's service account has been given access to this
-  // workspace. It is created with none, so this stays false until an admin
-  // grants it — which is why the panel can say so without starting a turn.
-  has_workspace_access: boolean;
+  // Why the assistant can't be used here, or "ok". The two unusable states have
+  // different fixes — re-enable the account vs. add it to this workspace — so the
+  // panel can name the right one without starting a turn.
+  availability:
+    "disabled" | "account_unavailable" | "no_workspace_access" | "ok";
 }
 
 export interface Conversation {

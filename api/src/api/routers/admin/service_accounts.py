@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.deps import get_db, require_permission
 from api.models.query import Query
 from api.models.rbac import Role
-from api.models.user import Credential, User
+from api.models.user import SERVICE_ACCOUNT_PROVIDER, Credential, User
 from api.models.workspace import WorkspaceMember
 from api.schemas.page import Page
 from api.schemas.service_account import (
@@ -27,10 +27,6 @@ from api.services.paging import paginate
 from api.services.permissions import Permission
 
 router = APIRouter(prefix="/service-accounts")
-
-# Service accounts are User rows with this provider: no local password, so they
-# can never complete a password/OIDC/LDAP login — only present a PAT.
-SERVICE_ACCOUNT_PROVIDER = "service_account"
 
 
 def _synthesize_email(name: str) -> str:

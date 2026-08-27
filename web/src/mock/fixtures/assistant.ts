@@ -66,20 +66,23 @@ export let CONVERSATIONS: MockConversation[] = seed();
 // this to exercise the disabled UI state.
 export let ASSISTANT_ENABLED = true;
 
-// Whether the assistant's service account has been granted access to the
-// workspace. Tests flip it to exercise the enabled-but-unusable state.
-export let ASSISTANT_HAS_WORKSPACE_ACCESS = true;
+// Assistant availability per workspace slug — the real endpoint answers per
+// workspace, so a single global flag could not cover a user moving between a
+// granted and a non-granted one. Anything not listed is "ok".
+export let ASSISTANT_AVAILABILITY: Record<string, string> = {};
 
 export function setAssistantEnabled(value: boolean): void {
   ASSISTANT_ENABLED = value;
 }
 
-export function setAssistantWorkspaceAccess(value: boolean): void {
-  ASSISTANT_HAS_WORKSPACE_ACCESS = value;
+export function setAssistantAvailability(
+  availability: Record<string, string>,
+): void {
+  ASSISTANT_AVAILABILITY = availability;
 }
 
 export function resetAssistant(): void {
   CONVERSATIONS = seed();
   ASSISTANT_ENABLED = true;
-  ASSISTANT_HAS_WORKSPACE_ACCESS = true;
+  ASSISTANT_AVAILABILITY = {};
 }

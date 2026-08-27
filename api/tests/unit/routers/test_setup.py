@@ -5,6 +5,7 @@ from httpx import AsyncClient
 
 from api.config import settings
 from api.models.user import User
+from api.services.assistant.identity import ASSISTANT_EMAIL
 from api.services.auth import hash_password
 
 
@@ -35,7 +36,7 @@ async def test_service_account_does_not_count_as_setup_being_done(
     """
     db_session.add(
         User(
-            email="assistant@service-account.local",
+            email=ASSISTANT_EMAIL,
             name="Assistant",
             password_hash=None,
             role="user",

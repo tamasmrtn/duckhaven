@@ -14,8 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
 from api.deps import get_db
-from api.models.user import User
-from api.routers.admin.service_accounts import SERVICE_ACCOUNT_PROVIDER
+from api.models.user import SERVICE_ACCOUNT_PROVIDER, User
 from api.schemas.auth import UserOut
 from api.schemas.setup import FirstAdminRequest, SetupStatus
 from api.services.auth import create_session, hash_password, set_session_cookie

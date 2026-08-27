@@ -428,6 +428,71 @@ describe("AssistantPanel", () => {
     expect(screen.getByText("hang please")).toBeInTheDocument();
   });
 
+  it("does not render half-parsed markdown while a reply streams", async () => {
+    // A stream the test drives frame by frame, so the assertion lands on a
+    // known partial state instead of racing the transport.
+    const encoder = new TextEncoder();
+    let push!: (frame: object) => void;
+    let finish!: () => void;
+    server.use(
+      http.post(
+        "/api/workspaces/:ws/assistant/conversations/:id/messages",
+        () => {
+          const body = new ReadableStream({
+            start(controller) {
+              push = (frame) =>
+                controller.enqueue(
+                  encoder.encode(`data: ${JSON.stringify(frame)}\n\n`),
+                );
+              finish = () => controller.close();
+            },
+          });
+          return new HttpResponse(body, {
+            headers: { "Content-Type": "text/event-stream" },
+          });
+        },
+      ),
+    );
+
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    await user.type(screen.getByLabelText("Message"), "biggest tables?");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(push).toBeDefined());
+
+    // A table that has not reached its delimiter row: the header cells used to
+    // render as pipes appended to the sentence above them.
+    for (const text of [
+      "Biggest tables:\n\n",
+      "| Table ",
+      "| Rows |\n",
+      "|--",
+    ]) {
+      push({ type: "token", text });
+    }
+    const bubble = await screen.findByText("Biggest tables:");
+    await waitFor(() => expect(bubble.textContent).toBe("Biggest tables:"));
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+
+    // Once the table is whole it renders as a grid, with nothing dropped.
+    push({ type: "token", text: "-|---:|\n| events | 42 |\n" });
+    expect(await screen.findByRole("table")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("columnheader", { name: "Table" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "events" })).toBeInTheDocument();
+
+    push({
+      type: "done",
+      message_id: "msg-md",
+      usage: { input: 1, output: 1 },
+    });
+    finish();
+  });
+
   it("clears a stale error/pending bubble when switching conversations", async () => {
     server.use(
       http.post(

@@ -201,7 +201,6 @@ services:
       # endpoint via ASSISTANT_OPENAI_BASE_URL can run keyless. See
       # docs/reference/configuration.md#ai-assistant.
       ASSISTANT_ENABLED: ${ASSISTANT_ENABLED:-false}
-      ASSISTANT_SERVICE_ACCOUNT_SLUG: ${ASSISTANT_SERVICE_ACCOUNT_SLUG:-}
       ASSISTANT_MODEL: ${ASSISTANT_MODEL:-anthropic:claude-sonnet-4-latest}
       ASSISTANT_OPENAI_BASE_URL: ${ASSISTANT_OPENAI_BASE_URL:-}
       ASSISTANT_API_KEY: ${ASSISTANT_API_KEY:-}

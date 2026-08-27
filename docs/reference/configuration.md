@@ -230,8 +230,7 @@ supplied here or via the provider's own standard environment variable (`ANTHROPI
 
 | Variable | Default | Description |
 |---|---|---|
-| `ASSISTANT_ENABLED` | `false` | Master switch. When `false`, the assistant API returns 503 and no model or provider dependency is exercised. |
-| `ASSISTANT_SERVICE_ACCOUNT_SLUG` | — | Slug of the service account the assistant acts as. Its per-workspace membership and catalog grants govern its data access. Required when enabled. |
+| `ASSISTANT_ENABLED` | `false` | Master switch. When `false`, the assistant API returns 503 and no model or provider dependency is exercised. When `true`, the `assistant` service account is created on startup if it does not exist — with no workspace access, which you grant yourself. |
 | `ASSISTANT_MODEL` | `anthropic:claude-sonnet-4-latest` | Pydantic AI model string, e.g. `openai:gpt-4o` or `mistral:mistral-large-latest`. For an OpenAI-compatible endpoint, use `openai:<model>` with the base URL below. |
 | `ASSISTANT_OPENAI_BASE_URL` | — | Base URL of an OpenAI-compatible endpoint (Ollama, vLLM, Azure). When set, the model routes through the OpenAI protocol against this endpoint. |
 | `ASSISTANT_API_KEY` | — | Explicit API key for the model. Optional: hosted providers fall back to their standard env var; keyless endpoints need nothing. **Rotate like any secret.** |

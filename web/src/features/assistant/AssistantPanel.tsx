@@ -20,6 +20,7 @@ import {
   useCreateConversation,
 } from "@/queries/assistant";
 import { useCatalogs } from "@/queries/catalogs";
+import { useThrottledText } from "@/hooks/useThrottledText";
 import { EmptyState } from "@/components/ui/empty-state";
 import { cn } from "@/utils";
 import { useAssistant } from "./AssistantContext";
@@ -34,27 +35,6 @@ import { useAssistantChat } from "./useAssistantChat";
 // "Ask a follow-up" button, so a tweak stays a single edit.
 const chipClass =
   "rounded-full border border-[var(--border-subtle)] px-3 py-1 text-xs text-text-secondary hover:border-[var(--brand-slate-blue)] hover:text-text-primary";
-
-// Throttles a fast-changing string to at most one update per `delayMs`, so an
-// aria-live region can announce streamed text without firing per token.
-function useThrottledText(value: string, delayMs: number): string {
-  const [throttled, setThrottled] = useState(value);
-  const lastFiredAtRef = useRef(0);
-  useEffect(() => {
-    const elapsed = Date.now() - lastFiredAtRef.current;
-    if (elapsed >= delayMs) {
-      lastFiredAtRef.current = Date.now();
-      setThrottled(value);
-      return;
-    }
-    const timeout = setTimeout(() => {
-      lastFiredAtRef.current = Date.now();
-      setThrottled(value);
-    }, delayMs - elapsed);
-    return () => clearTimeout(timeout);
-  }, [value, delayMs]);
-  return throttled;
-}
 
 const GENERIC_STARTER_PROMPTS = [
   "What data do I have access to?",
@@ -341,7 +321,7 @@ export function AssistantPanel({ ws }: { ws: string }) {
             )}
             {chat.streamingText && (
               <>
-                <Bubble role="assistant" text={chat.streamingText} />
+                <Bubble role="assistant" text={chat.streamingText} streaming />
                 {/* Throttled so screen readers get periodic updates, not one per token. */}
                 <div aria-live="polite" className="sr-only">
                   {throttledStreamingText}
@@ -503,10 +483,12 @@ function Bubble({
   role,
   text,
   sql,
+  streaming = false,
 }: {
   role: "user" | "assistant";
   text: string;
   sql?: string | null;
+  streaming?: boolean;
 }) {
   return (
     <div
@@ -517,7 +499,11 @@ function Bubble({
           : "min-w-0 self-start border border-[var(--border-subtle)] bg-[var(--bg-surface)]",
       )}
     >
-      {role === "assistant" ? <Markdown>{text}</Markdown> : text}
+      {role === "assistant" ? (
+        <Markdown streaming={streaming}>{text}</Markdown>
+      ) : (
+        text
+      )}
       {sql && (
         <pre className="mt-2 overflow-x-auto rounded bg-[var(--bg-code)] p-2 font-mono text-xs text-[var(--text-code)]">
           {sql}

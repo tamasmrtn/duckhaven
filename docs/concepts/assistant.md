@@ -62,9 +62,14 @@ arguments and outcome, and a proposed write is paused for human approval rather 
 
 ## Identity
 
-Each deployment binds the assistant to one **service account** — the same kind of principal you create for automation,
-described in [Service accounts & tokens](../guides/service-accounts.md). You govern its data access per workspace with
-[workspace membership](workspaces.md) and [catalog grants](permissions.md), exactly as you would for any principal:
+The assistant acts as one **service account**, named `Assistant` — the same kind of principal you create for
+automation, described in [Service accounts & tokens](../guides/service-accounts.md). It is not configurable, and you do
+not have to create it: enabling the assistant creates it on startup if it is not already there.
+
+Creating it grants nothing. It arrives with no workspace membership and no catalog grants, so until you give it some,
+every question comes back denied — and the assistant panel says exactly that instead of letting you spend a turn finding
+out. You govern its data access per workspace with [workspace membership](workspaces.md) and
+[catalog grants](permissions.md), exactly as you would for any principal:
 
 - Give it `reader` or a `metadata`-tier grant for a browse-and-read assistant.
 - Add `writer` where you want it to be able to propose writes (still gated by approval).
@@ -72,6 +77,10 @@ described in [Service accounts & tokens](../guides/service-accounts.md). You gov
 
 Because access is scoped per workspace, the same assistant can have different reach in different workspaces — broad in a
 sandbox, narrow in production.
+
+Disabling the account in the admin UI is a kill switch: the assistant stops working everywhere and a restart will not
+re-enable it. Deleting it while the assistant is enabled only lasts until the next restart, which recreates it — again
+with no access.
 
 When the assistant makes a call, the runtime mints a **short-lived personal access token** for the service account, uses
 it for that turn, and deletes it immediately after. Nothing long-lived or reconstructable is stored, and every query the

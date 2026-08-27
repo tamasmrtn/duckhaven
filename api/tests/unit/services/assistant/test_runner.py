@@ -30,7 +30,6 @@ from .conftest import hanging_model, parse_sse, scripted_model, text_step, tool_
 @pytest.fixture(autouse=True)
 def _enable_assistant(monkeypatch):
     monkeypatch.setattr(settings, "assistant_enabled", True)
-    monkeypatch.setattr(settings, "assistant_service_account_slug", "assistant")
 
 
 @pytest_asyncio.fixture

@@ -60,7 +60,13 @@ export function AssistantPanel({ ws }: { ws: string }) {
   const { closePanel, editorRef, seedPrompt } = useAssistant();
   const { data: status } = useAssistantStatus(ws);
   const enabled = status?.enabled === true;
-  const disabled = status?.enabled === false;
+  // Two reasons the panel can be unusable, both known from the cached status
+  // before anything is sent: the feature is off, or the assistant's service
+  // account has no access here. Either way the composer is disabled, so no turn
+  // starts and no model is called.
+  const turnedOff = status?.enabled === false;
+  const noAccess = enabled && status?.has_workspace_access === false;
+  const disabled = turnedOff || noAccess;
   const {
     data: conversations = [],
     isLoading: conversationsLoading,
@@ -223,14 +229,22 @@ export function AssistantPanel({ ws }: { ws: string }) {
           </div>
         )}
 
-      {/* Thread (or the disabled notice) */}
+      {/* Thread (or the reason it can't be used) */}
       {disabled ? (
         <div className="flex flex-1 items-center justify-center p-6">
-          <EmptyState
-            icon={Sparkles}
-            title="Assistant is turned off"
-            description="An administrator hasn't enabled the AI assistant for this deployment. Enable it (set ASSISTANT_ENABLED), or ask a DuckHaven admin to turn it on."
-          />
+          {turnedOff ? (
+            <EmptyState
+              icon={Sparkles}
+              title="Assistant is turned off"
+              description="An administrator hasn't enabled the AI assistant for this deployment. Enable it (set ASSISTANT_ENABLED), or ask a DuckHaven admin to turn it on."
+            />
+          ) : (
+            <EmptyState
+              icon={Sparkles}
+              title="Assistant has no access here"
+              description="The assistant is on, but its service account isn't a member of this workspace, so every question would come back denied. An admin can add the Assistant account under this workspace's members, then grant it the catalogs it should see."
+            />
+          )}
         </div>
       ) : (
         <ScrollArea className="flex-1">
@@ -448,7 +462,11 @@ export function AssistantPanel({ ws }: { ws: string }) {
               }
             }}
             placeholder={
-              disabled ? "Assistant is turned off" : "Ask about your data…"
+              turnedOff
+                ? "Assistant is turned off"
+                : noAccess
+                  ? "Assistant has no access to this workspace"
+                  : "Ask about your data…"
             }
             rows={1}
             className="max-h-40 flex-1 resize-none rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2 text-sm outline-none focus-visible:ring-1 focus-visible:ring-[var(--brand-slate-blue)] disabled:opacity-50"

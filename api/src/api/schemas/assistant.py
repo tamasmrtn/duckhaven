@@ -9,6 +9,11 @@ class AssistantStatusOut(BaseModel):
     # Whether the assistant is enabled in this deployment. Reported even when
     # disabled so the UI can show a clear "turned off" state.
     enabled: bool
+    # Whether the assistant's service account is a member of this workspace. It is
+    # created with no access at all, so this is false until an admin grants some —
+    # reported so the UI can say that up front rather than letting a turn spend a
+    # model run discovering every tool call is denied. Always false when disabled.
+    has_workspace_access: bool = False
 
 
 class ConversationCreate(BaseModel):

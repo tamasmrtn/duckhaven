@@ -1,5 +1,9 @@
 export interface AssistantStatus {
   enabled: boolean;
+  // Whether the assistant's service account has been given access to this
+  // workspace. It is created with none, so this stays false until an admin
+  // grants it — which is why the panel can say so without starting a turn.
+  has_workspace_access: boolean;
 }
 
 export interface Conversation {

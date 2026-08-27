@@ -17,15 +17,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.models.catalog import WorkspaceCatalog
 from api.models.catalog_grant import CatalogGrant
 from api.models.workspace import WorkspaceMember
+from api.services.assistant.identity import AssistantIdentityError, resolve_service_account
 
 _WRITER_ROLES = {"writer", "owner"}
 
 
-async def service_account_can_write(
+async def _workspace_member(
     db: AsyncSession, workspace_id: uuid.UUID, service_account_id: uuid.UUID
-) -> bool:
-    """True if the service account could plausibly run a write in this workspace."""
-    member = (
+) -> WorkspaceMember | None:
+    return (
         await db.execute(
             select(WorkspaceMember).where(
                 WorkspaceMember.workspace_id == workspace_id,
@@ -33,6 +33,28 @@ async def service_account_can_write(
             )
         )
     ).scalar_one_or_none()
+
+
+async def assistant_has_workspace_access(db: AsyncSession, workspace_id: uuid.UUID) -> bool:
+    """Whether the assistant's account can do anything at all in this workspace.
+
+    Membership is the coarse gate every loopback call passes through, so without
+    it every tool call comes back denied. Worth answering before a turn starts —
+    the alternative is spending a whole model run to discover it. A missing or
+    disabled account reads as no access for the same reason.
+    """
+    try:
+        account = await resolve_service_account(db)
+    except AssistantIdentityError:
+        return False
+    return await _workspace_member(db, workspace_id, account.id) is not None
+
+
+async def service_account_can_write(
+    db: AsyncSession, workspace_id: uuid.UUID, service_account_id: uuid.UUID
+) -> bool:
+    """True if the service account could plausibly run a write in this workspace."""
+    member = await _workspace_member(db, workspace_id, service_account_id)
     if member is None:
         return False
 

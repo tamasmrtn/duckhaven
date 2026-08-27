@@ -319,9 +319,13 @@ export function AssistantPanel({ ws }: { ws: string }) {
                 </Button>
               </div>
             )}
-            {chat.streamingText && (
+            {chat.streamingMessages.some((text) => text !== "") && (
               <>
-                <Bubble role="assistant" text={chat.streamingText} streaming />
+                {chat.streamingMessages
+                  .filter((text) => text !== "")
+                  .map((text, i) => (
+                    <Bubble key={i} role="assistant" text={text} streaming />
+                  ))}
                 {/* Throttled so screen readers get periodic updates, not one per token. */}
                 <div aria-live="polite" className="sr-only">
                   {throttledStreamingText}

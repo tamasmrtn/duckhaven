@@ -21,6 +21,7 @@ from api.models.assistant import AssistantConversation, AssistantMessage, Assist
 from api.models.user import User
 from api.models.workspace import WorkspaceMember
 from api.services.assistant.agent import get_agent
+from api.services.assistant.persistence import render_transcript_with_sql
 from api.services.assistant.runner import stream_turn
 
 from .conftest import hanging_model, parse_sse, scripted_model, text_step, tool_step
@@ -92,17 +93,12 @@ async def test_turn_browses_and_persists_and_stamps_principal(client, db_session
         assert updated.service_account_id == sa.id
 
 
-async def test_stream_emits_every_word_of_every_text_segment(client, db_session, factory):
-    """A turn's streamed text must carry every word that gets persisted.
+def _talk_call_talk(first: str, second: str) -> FunctionModel:
+    """A model that says something, calls a tool, then says something else.
 
-    The parts manager puts a text part's *first* chunk on the PartStartEvent and
-    only the rest on TextPartDeltas, so mapping deltas alone drops the opening
-    words of every text segment. A turn that says something, calls a tool, then
-    says something else has two such segments.
+    Two `ModelResponse`s, so two text segments — the shape that exposes both how
+    a text part starts and where one displayed message ends and the next begins.
     """
-    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
-    first = "Let me find the customer table first."
-    second = "Catalog listing is denied for my service account."
 
     def function(messages, info) -> ModelResponse:  # non-streaming fallback
         return ModelResponse(parts=[TextPart(second)])
@@ -118,21 +114,71 @@ async def test_stream_emits_every_word_of_every_text_segment(client, db_session,
             # second text part is started later.
             yield {1: DeltaToolCall(name="list_catalogs", json_args="{}")}
 
-    chunks: list[str] = []
-    with get_agent().override(model=FunctionModel(function, stream_function=stream_function)):
-        async for chunk in stream_turn(
-            factory,
-            conversation_id=conv.id,
-            workspace_id=ws.id,
-            workspace_slug=ws.slug,
-            prompt="find the customer table",
-            catalog=None,
-        ):
-            chunks.append(chunk)
+    return FunctionModel(function, stream_function=stream_function)
 
-    streamed = "".join(f["text"] for f in parse_sse(chunks) if f["type"] == "token")
+
+async def _collect_stream(factory, ws, conv, prompt) -> list[dict]:
+    chunks: list[str] = []
+    async for chunk in stream_turn(
+        factory,
+        conversation_id=conv.id,
+        workspace_id=ws.id,
+        workspace_slug=ws.slug,
+        prompt=prompt,
+        catalog=None,
+    ):
+        chunks.append(chunk)
+    return parse_sse(chunks)
+
+
+async def test_stream_emits_every_word_of_every_text_segment(client, db_session, factory):
+    """A turn's streamed text must carry every word that gets persisted.
+
+    The parts manager puts a text part's *first* chunk on the PartStartEvent and
+    only the rest on TextPartDeltas, so mapping deltas alone drops the opening
+    words of every text segment.
+    """
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+    first = "Let me find the customer table first."
+    second = "Catalog listing is denied for my service account."
+    with get_agent().override(model=_talk_call_talk(first, second)):
+        frames = await _collect_stream(factory, ws, conv, "find the customer table")
+
+    streamed = "".join(f["text"] for f in frames if f["type"] == "token")
     # Both segments arrive whole — no segment loses its opening words.
     assert streamed.split() == (first + " " + second).split()
+
+
+async def test_streamed_segments_match_the_persisted_transcript(client, db_session, factory):
+    """What streams must be grouped into the same messages the transcript shows.
+
+    Token frames carry no message identity of their own, so without the `start`
+    marker a multi-step reply streams as one run-on bubble and then re-shuffles
+    into several messages the moment the turn settles. Pinning the two groupings
+    to each other is what stops them drifting apart again.
+    """
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+    first = "Let me find the customer table first."
+    second = "Catalog listing is denied for my service account."
+    with get_agent().override(model=_talk_call_talk(first, second)):
+        frames = await _collect_stream(factory, ws, conv, "find the customer table")
+
+    # Split the streamed tokens the way the client does.
+    segments: list[str] = []
+    for frame in frames:
+        if frame["type"] != "token":
+            continue
+        if frame.get("start") or not segments:
+            segments.append(frame["text"])
+        else:
+            segments[-1] += frame["text"]
+
+    async with factory() as db:
+        transcript = await render_transcript_with_sql(db, conv.id)
+    persisted = [item["text"] for item in transcript if item["role"] == "assistant"]
+
+    assert len(persisted) == 2  # the turn really did produce two messages
+    assert segments == persisted
 
 
 async def test_read_only_assistant_refuses_write(client, db_session, factory):

@@ -282,10 +282,22 @@ async def _stream(
             scoped = deps.selection_sql is not None
 
             async def handler(ctx, events) -> None:
+                # One invocation is one graph node, and text only flows on a model
+                # request node — so the first text frame here opens the response
+                # that render_transcript later shows as its own message. Marking it
+                # lets the client split a streaming reply into the same messages
+                # the settled transcript will, instead of one run-on bubble.
+                # Per response, not per part: render_transcript joins a response's
+                # text parts into one item, so only the first is marked.
+                first_text = True
                 async for event in events:
                     frame = _event_to_frame(event, scoped=scoped)
-                    if frame is not None:
-                        await queue.put(frame)
+                    if frame is None:
+                        continue
+                    if frame["type"] == "token" and first_text:
+                        frame["start"] = True
+                        first_text = False
+                    await queue.put(frame)
 
             async def do_run() -> None:
                 # The span opens here, inside the detached task, not around the

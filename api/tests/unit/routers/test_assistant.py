@@ -11,7 +11,9 @@ from pydantic_ai.usage import RunUsage
 from api.config import settings
 from api.models.assistant import AssistantConversation
 from api.models.user import User
+from api.models.workspace import WorkspaceMember
 from api.services.assistant.deps import ToolCallRecord
+from api.services.assistant.identity import ASSISTANT_EMAIL
 from api.services.assistant.persistence import save_turn
 from api.services.auth import hash_password
 
@@ -27,7 +29,6 @@ def _turn_json(user_text: str, assistant_text: str) -> bytes:
 @pytest.fixture(autouse=True)
 def _enable_assistant(monkeypatch):
     monkeypatch.setattr(settings, "assistant_enabled", True)
-    monkeypatch.setattr(settings, "assistant_service_account_slug", "assistant")
 
 
 @pytest_asyncio.fixture
@@ -46,6 +47,23 @@ async def workspace(db_session, user):
 
 
 @pytest_asyncio.fixture
+async def assistant_member(db_session, workspace):
+    """The assistant's service account, added to the workspace as a reader."""
+    account = User(
+        email=ASSISTANT_EMAIL,
+        name="Assistant",
+        role="user",
+        auth_provider="service_account",
+    )
+    db_session.add(account)
+    await db_session.commit()
+    await db_session.refresh(account)
+    db_session.add(WorkspaceMember(workspace_id=workspace.id, user_id=account.id, role="reader"))
+    await db_session.commit()
+    return account
+
+
+@pytest_asyncio.fixture
 async def authed(client: AsyncClient, user) -> AsyncClient:
     await client.post("/auth/login", json={"email": "a@assist.local", "password": "pw"})
     return client
@@ -57,10 +75,20 @@ async def test_disabled_returns_503(authed, workspace, monkeypatch):
     assert resp.status_code == 503
 
 
-async def test_status_reports_enabled(authed, workspace):
+async def test_status_reports_enabled_but_without_access(authed, workspace):
+    # The account is created with no membership, so the assistant is on and
+    # unusable here — the UI needs both facts to say so without starting a turn.
     resp = await authed.get(f"/workspaces/{workspace.slug}/assistant/status")
     assert resp.status_code == 200
-    assert resp.json() == {"enabled": True}
+    assert resp.json() == {"enabled": True, "has_workspace_access": False}
+
+
+async def test_status_reports_access_once_the_account_is_a_member(
+    authed, workspace, assistant_member
+):
+    resp = await authed.get(f"/workspaces/{workspace.slug}/assistant/status")
+    assert resp.status_code == 200
+    assert resp.json() == {"enabled": True, "has_workspace_access": True}
 
 
 async def test_status_reports_disabled_without_503(authed, workspace, monkeypatch):
@@ -68,7 +96,24 @@ async def test_status_reports_disabled_without_503(authed, workspace, monkeypatc
     resp = await authed.get(f"/workspaces/{workspace.slug}/assistant/status")
     # Reachable even when disabled — that is the whole point.
     assert resp.status_code == 200
-    assert resp.json() == {"enabled": False}
+    assert resp.json() == {"enabled": False, "has_workspace_access": False}
+
+
+async def test_turn_refused_without_workspace_access(authed, workspace, db_session, user):
+    # No membership: the turn is refused outright rather than spending a model run
+    # to discover every tool call is denied. The suite blocks real model requests,
+    # so a turn that did start would fail loudly here.
+    conv = AssistantConversation(workspace_id=workspace.id, user_id=user.id, title="t")
+    db_session.add(conv)
+    await db_session.commit()
+    await db_session.refresh(conv)
+
+    resp = await authed.post(
+        f"/workspaces/{workspace.slug}/assistant/conversations/{conv.id}/messages",
+        json={"prompt": "hello"},
+    )
+    assert resp.status_code == 403
+    assert "no access to this workspace" in resp.json()["message"]
 
 
 async def test_non_member_forbidden(authed, user, db_session):

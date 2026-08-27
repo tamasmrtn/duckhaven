@@ -66,11 +66,20 @@ export let CONVERSATIONS: MockConversation[] = seed();
 // this to exercise the disabled UI state.
 export let ASSISTANT_ENABLED = true;
 
+// Whether the assistant's service account has been granted access to the
+// workspace. Tests flip it to exercise the enabled-but-unusable state.
+export let ASSISTANT_HAS_WORKSPACE_ACCESS = true;
+
 export function setAssistantEnabled(value: boolean): void {
   ASSISTANT_ENABLED = value;
+}
+
+export function setAssistantWorkspaceAccess(value: boolean): void {
+  ASSISTANT_HAS_WORKSPACE_ACCESS = value;
 }
 
 export function resetAssistant(): void {
   CONVERSATIONS = seed();
   ASSISTANT_ENABLED = true;
+  ASSISTANT_HAS_WORKSPACE_ACCESS = true;
 }

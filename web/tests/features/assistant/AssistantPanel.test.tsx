@@ -4,7 +4,11 @@ import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { renderWithProviders } from "@tests/utils";
 import { server } from "@tests/mock/server";
-import { CONVERSATIONS, setAssistantEnabled } from "@/mock/fixtures/assistant";
+import {
+  CONVERSATIONS,
+  setAssistantEnabled,
+  setAssistantWorkspaceAccess,
+} from "@/mock/fixtures/assistant";
 
 // The panel is a right-side dock opened from the top bar; render a workspace page
 // so the worksheet editor bridge is live for the propose-edit test.
@@ -680,6 +684,29 @@ describe("AssistantPanel", () => {
       screen.getByText(/ask a DuckHaven admin to turn it on/i),
     ).toBeInTheDocument();
     // The composer is present but disabled.
+    expect(screen.getByLabelText("Message")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  });
+
+  it("says so and blocks input when the assistant has no access here", async () => {
+    setAssistantWorkspaceAccess(false);
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+
+    expect(
+      await screen.findByText("Assistant has no access here"),
+    ).toBeInTheDocument();
+    // Distinct from the turned-off state: the feature is on, the account isn't.
+    expect(
+      screen.queryByText("Assistant is turned off"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/isn't a member of this workspace/i),
+    ).toBeInTheDocument();
+
+    // No turn can be started, so no model is ever called for a question that
+    // could only come back denied.
     expect(screen.getByLabelText("Message")).toBeDisabled();
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
   });

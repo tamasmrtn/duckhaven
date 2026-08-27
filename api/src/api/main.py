@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -49,7 +50,8 @@ from api.routers.admin import service_accounts as admin_service_accounts
 from api.routers.admin import storage as admin_storage
 from api.routers.admin import users as admin_users
 from api.services.agent_dispatch import drain_local_agents
-from api.services.bootstrap import seed_agent_bootstrap_token
+from api.services.assistant.identity import ASSISTANT_EMAIL
+from api.services.bootstrap import ensure_assistant_service_account, seed_agent_bootstrap_token
 from api.services.oidc import register_oidc
 from api.services.polaris import (
     PolarisBadRequestError,
@@ -79,6 +81,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await seed_roles(db)
         await seed_agent_bootstrap_token(
             db, settings.agent_bootstrap_token, settings.agent_bootstrap_ttl_hours
+        )
+        await ensure_assistant_service_account(db)
+
+    # The assistant's account is fixed now. Settings ignores unknown env vars, so
+    # a deployment still setting the old one would silently keep it and wonder why
+    # its grants stopped applying.
+    if os.environ.get("ASSISTANT_SERVICE_ACCOUNT_SLUG"):
+        logging.getLogger(__name__).warning(
+            "ASSISTANT_SERVICE_ACCOUNT_SLUG is no longer used; the assistant always "
+            "acts as %s. Grant that account the workspace access you want it to have.",
+            ASSISTANT_EMAIL,
         )
 
     register_oidc()

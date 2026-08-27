@@ -3,9 +3,9 @@ import pytest_asyncio
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from api.config import settings
 from api.models.user import Credential, User
 from api.services.assistant.identity import (
+    ASSISTANT_EMAIL,
     AssistantIdentityError,
     ephemeral_pat,
     resolve_service_account,
@@ -21,7 +21,7 @@ async def factory(db_engine):
 @pytest_asyncio.fixture
 async def service_account(db_session):
     account = User(
-        email="assistant@service-account.local",
+        email=ASSISTANT_EMAIL,
         name="Assistant",
         role="user",
         auth_provider="service_account",
@@ -32,16 +32,32 @@ async def service_account(db_session):
     return account
 
 
-async def test_resolve_requires_configured_slug(db_session, monkeypatch):
-    monkeypatch.setattr(settings, "assistant_service_account_slug", None)
+async def test_resolve_errors_when_the_account_is_missing(db_session):
     with pytest.raises(AssistantIdentityError):
         await resolve_service_account(db_session)
 
 
-async def test_resolve_finds_service_account(db_session, service_account, monkeypatch):
-    monkeypatch.setattr(settings, "assistant_service_account_slug", "assistant")
+async def test_resolve_finds_the_fixed_service_account(db_session, service_account):
     resolved = await resolve_service_account(db_session)
     assert resolved.id == service_account.id
+
+
+async def test_resolve_errors_when_the_account_is_disabled(db_session, service_account):
+    # Disabling the account is a kill switch, so it must fail rather than be
+    # quietly worked around.
+    service_account.is_active = False
+    await db_session.commit()
+    with pytest.raises(AssistantIdentityError):
+        await resolve_service_account(db_session)
+
+
+async def test_resolve_errors_when_the_principal_is_not_a_service_account(
+    db_session, service_account
+):
+    service_account.auth_provider = "local"
+    await db_session.commit()
+    with pytest.raises(AssistantIdentityError):
+        await resolve_service_account(db_session)
 
 
 async def test_ephemeral_pat_minted_usable_then_deleted(factory, service_account):

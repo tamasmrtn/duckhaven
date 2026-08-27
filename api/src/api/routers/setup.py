@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.config import settings
 from api.deps import get_db
 from api.models.user import User
+from api.routers.admin.service_accounts import SERVICE_ACCOUNT_PROVIDER
 from api.schemas.auth import UserOut
 from api.schemas.setup import FirstAdminRequest, SetupStatus
 from api.services.auth import create_session, hash_password, set_session_cookie
@@ -22,8 +23,18 @@ from api.services.auth import create_session, hash_password, set_session_cookie
 router = APIRouter(prefix="/setup", tags=["setup"])
 
 
-async def _user_count(db: AsyncSession) -> int:
-    result = await db.execute(select(func.count()).select_from(User))
+async def _human_user_count(db: AsyncSession) -> int:
+    """Accounts a person could sign in with.
+
+    Service accounts are excluded deliberately: they have no password and can only
+    present a PAT, so one existing says nothing about whether a human can get in.
+    The assistant creates one at startup, which on a fresh deployment would
+    otherwise be the only `users` row — and would lock the operator out of first-run
+    setup entirely.
+    """
+    result = await db.execute(
+        select(func.count()).select_from(User).where(User.auth_provider != SERVICE_ACCOUNT_PROVIDER)
+    )
     return int(result.scalar_one())
 
 
@@ -33,7 +44,7 @@ async def setup_status(db: AsyncSession = Depends(get_db)) -> SetupStatus:
 
     The SPA calls it before rendering the login screen, to decide between showing
     sign-in and showing first-run setup."""
-    return SetupStatus(needs_admin=await _user_count(db) == 0)
+    return SetupStatus(needs_admin=await _human_user_count(db) == 0)
 
 
 @router.post("/admin", response_model=UserOut, status_code=status.HTTP_201_CREATED)
@@ -47,8 +58,9 @@ async def create_first_admin(
 
     Authorized by the `X-Setup-Token` header rather than a session, because no
     account exists yet. The token is consumed on success and the endpoint returns
-    409 once any user exists, so it cannot be replayed to mint a second admin."""
-    if await _user_count(db) > 0:
+    409 once a human account exists, so it cannot be replayed to mint a second
+    admin."""
+    if await _human_user_count(db) > 0:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Setup already complete: an admin user exists.",

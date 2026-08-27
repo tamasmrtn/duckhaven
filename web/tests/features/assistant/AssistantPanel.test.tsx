@@ -463,27 +463,24 @@ describe("AssistantPanel", () => {
     await user.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(push).toBeDefined());
 
-    // A table that has not reached its delimiter row: the header cells used to
-    // render as pipes appended to the sentence above them.
-    for (const text of [
-      "Biggest tables:\n\n",
-      "| Table ",
-      "| Rows |\n",
-      "|--",
-    ]) {
-      push({ type: "token", text });
-    }
-    const bubble = await screen.findByText("Biggest tables:");
-    await waitFor(() => expect(bubble.textContent).toBe("Biggest tables:"));
-    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    // A bold marker that has not closed yet. Asserting on the *presence* of the
+    // stabilized text is what makes this bite: an unfixed panel renders the
+    // literal "The **thr", so there is no element reading "The thr" to find,
+    // and findByText waits for the frame rather than racing it.
+    push({ type: "token", text: "The **thr" });
+    expect(await screen.findByText("The thr")).toBeInTheDocument();
 
-    // Once the table is whole it renders as a grid, with nothing dropped.
-    push({ type: "token", text: "-|---:|\n| events | 42 |\n" });
+    // Once the answer completes, nothing the stabilizer held back is lost.
+    push({
+      type: "token",
+      text: "ee** biggest tables:\n\n| Table | Rows |\n|---|---:|\n| events | 42 |\n",
+    });
     expect(await screen.findByRole("table")).toBeInTheDocument();
     expect(
       await screen.findByRole("columnheader", { name: "Table" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("cell", { name: "events" })).toBeInTheDocument();
+    expect(screen.getByText("three").tagName).toBe("STRONG");
 
     push({
       type: "done",

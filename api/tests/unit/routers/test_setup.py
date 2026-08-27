@@ -24,6 +24,38 @@ async def test_status_true_on_empty_db(client: AsyncClient):
     assert resp.json() == {"needs_admin": True}
 
 
+async def test_service_account_does_not_count_as_setup_being_done(
+    client: AsyncClient, db_session, setup_token: str
+):
+    """A fresh stack with the assistant on still needs its first admin.
+
+    The assistant's service account is created at startup, so on a brand new
+    deployment it is the only `users` row. It can never log in — counting it as
+    "someone has an account" locks the operator out of first-run setup entirely.
+    """
+    db_session.add(
+        User(
+            email="assistant@service-account.local",
+            name="Assistant",
+            password_hash=None,
+            role="user",
+            auth_provider="service_account",
+        )
+    )
+    await db_session.commit()
+
+    resp = await client.get("/setup/status")
+    assert resp.status_code == 200
+    assert resp.json() == {"needs_admin": True}
+
+    resp = await client.post(
+        "/setup/admin",
+        json={"email": "admin@test.local", "password": "hunter2hunter2", "name": "Admin"},
+        headers={"X-Setup-Token": setup_token},
+    )
+    assert resp.status_code == 201, resp.text
+
+
 async def test_status_false_after_admin_exists(client: AsyncClient, db_session):
     db_session.add(
         User(

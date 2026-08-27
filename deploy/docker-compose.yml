@@ -195,8 +195,10 @@ services:
       # Plain-HTTP deployment by default; the browser drops Secure cookies over
       # HTTP, which would break login. Set true only behind a TLS terminator.
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
-      # AI data assistant (optional). Off by default. To enable, create a service
-      # account, set its slug here, configure a model, and set ASSISTANT_ENABLED=true.
+      # AI data assistant (optional). Off by default. To enable, configure a model
+      # and set ASSISTANT_ENABLED=true; the "assistant" service account is created
+      # on startup. It starts with no access at all, so add it to the workspaces it
+      # should serve — until then the assistant panel says it cannot be used there.
       # ASSISTANT_API_KEY is a secret (rotate it); a self-hosted OpenAI-compatible
       # endpoint via ASSISTANT_OPENAI_BASE_URL can run keyless. See
       # docs/reference/configuration.md#ai-assistant.

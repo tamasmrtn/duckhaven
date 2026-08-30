@@ -102,14 +102,14 @@ services:
     command: ["/usr/local/bin/etcd"]
 
   patroni-1: &patroni
-    image: ghcr.io/zalando/spilo-16:3.3-p1
+    image: ghcr.io/zalando/spilo-18:4.1-p1
     restart: unless-stopped
     depends_on:
       etcd:
         condition: service_started
     environment: &patroni-env
       SCOPE: duckhaven
-      PGVERSION: "16"
+      PGVERSION: "18"
       ETCD3_HOSTS: "'etcd:2379'"
       # Superuser + replication passwords for the cluster's internal users.
       PGPASSWORD_SUPERUSER: ${POSTGRES_SUPERUSER_PASSWORD:-superuser}
@@ -160,7 +160,7 @@ services:
 
   # ── Object store + Polaris (unchanged from the single-node stack) ────────────
   minio:
-    image: minio/minio:${MINIO_IMAGE_TAG:-latest}
+    image: minio/minio:${MINIO_IMAGE_TAG:-RELEASE.2025-09-07T16-13-09Z}
     restart: unless-stopped
     # Joins the agent's isolated network in addition to `default`, so the
     # agent can reach it while this service keeps its own outbound access.
@@ -179,7 +179,7 @@ services:
       - minio_data:/data
 
   polaris-bootstrap:
-    image: apache/polaris-admin-tool:${POLARIS_IMAGE_TAG:-latest}
+    image: apache/polaris-admin-tool:${POLARIS_IMAGE_TAG:-1.7.0}
     depends_on:
       # Wait for a real Postgres primary, not just pg-haproxy's process: the
       # realm bootstrap writes to Postgres and must not race Patroni leader
@@ -209,7 +209,7 @@ services:
     restart: "no"
 
   polaris:
-    image: apache/polaris:${POLARIS_IMAGE_TAG:-latest}
+    image: apache/polaris:${POLARIS_IMAGE_TAG:-1.7.0}
     restart: unless-stopped
     # Joins the agent's isolated network in addition to `default`, so the
     # agent can reach it while this service keeps its own outbound access.
@@ -353,7 +353,7 @@ services:
       - tempo_data:/var/tempo
 
   otel-collector:
-    image: otel/opentelemetry-collector:${OTEL_COLLECTOR_IMAGE_TAG:-latest}
+    image: otel/opentelemetry-collector:${OTEL_COLLECTOR_IMAGE_TAG:-0.159.0}
     restart: unless-stopped
     # Joins the agent's isolated network in addition to `default`, so the
     # agent can reach it while this service keeps its own outbound access.

@@ -188,7 +188,8 @@ body[data-md-color-primary] .md-tabs {
   box-shadow: 0 8px 22px rgba(255, 241, 0, 0.25);
 }
 
-.dh-hero__art img {
+.dh-hero__art img,
+.dh-hero__art video {
   width: 100%;
   height: auto;
   border-radius: 12px;

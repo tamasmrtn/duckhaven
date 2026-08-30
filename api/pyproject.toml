@@ -9,7 +9,7 @@ dependencies = [
     "alembic>=1.19.1",
     "asyncpg>=0.29",
     "bcrypt>=4.0",
-    "websockets>=17.0.1",
+    "websockets>=17.1",
     "pydantic-settings>=2.0",
     "duckhaven-shared",
     "httpx>=0.28",

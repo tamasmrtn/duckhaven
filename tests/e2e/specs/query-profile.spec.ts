@@ -36,11 +36,20 @@ test("the Profile tab shows the summary and operator tree @smoke", async ({
 });
 
 test("a scan-heavy aggregation flags a scan blow-up", async ({ page, worksheetPage }) => {
+  // The badge judges a scan by its own output, not the query's final result
+  // (see highlights.ts) -- a full scan feeding an aggregate down to a handful
+  // of rows, like HEAVY_SQL above, is the query working as intended, not a
+  // wasteful scan. Triggering it for real needs a filter DuckDB can't push
+  // down to skip unread rows: an Iceberg table scan with a non-sargable
+  // predicate reads every row of the file but emits almost none of them.
+  const table = `prof_scan_${Date.now()}`;
   await worksheetPage.goto();
-  await worksheetPage.run(HEAVY_SQL);
+  await worksheetPage.run(`CREATE TABLE ${table} AS SELECT i AS id FROM range(400000) t(i)`);
+  await worksheetPage.run(`SELECT count(*) FROM ${table} WHERE id % 100000 = 0`);
   await worksheetPage.openProfile();
-  // 400k rows scanned for 50 returned groups => scan blow-up badge.
+  // 400k rows read by the scan itself, 4 rows produced => scan blow-up badge.
   await expect(page.getByText(/Scan blow-up/i).first()).toBeVisible();
+  await worksheetPage.run(`DROP TABLE ${table}`);
 });
 
 test("DDL shows the no-profile state", async ({ page, worksheetPage }) => {

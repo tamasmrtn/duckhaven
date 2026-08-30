@@ -10,6 +10,7 @@ means it won't try. Either way access cannot exceed the grants.
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,15 +18,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.models.catalog import WorkspaceCatalog
 from api.models.catalog_grant import CatalogGrant
 from api.models.workspace import WorkspaceMember
+from api.services.assistant.identity import AssistantIdentityError, resolve_service_account
 
 _WRITER_ROLES = {"writer", "owner"}
 
 
-async def service_account_can_write(
+async def _workspace_member(
     db: AsyncSession, workspace_id: uuid.UUID, service_account_id: uuid.UUID
-) -> bool:
-    """True if the service account could plausibly run a write in this workspace."""
-    member = (
+) -> WorkspaceMember | None:
+    return (
         await db.execute(
             select(WorkspaceMember).where(
                 WorkspaceMember.workspace_id == workspace_id,
@@ -33,6 +34,42 @@ async def service_account_can_write(
             )
         )
     ).scalar_one_or_none()
+
+
+# Why the assistant cannot be used in a workspace, or "ok". Two unusable states
+# rather than one because they have different fixes, and telling an admin to add a
+# membership when the account is disabled sends them somewhere that cannot help.
+AssistantAvailability = Literal["account_unavailable", "no_workspace_access", "ok"]
+
+
+async def assistant_availability(
+    db: AsyncSession, workspace_id: uuid.UUID
+) -> AssistantAvailability:
+    """Whether the assistant can be used in this workspace, and if not, why.
+
+    Membership is the coarse gate every loopback call passes through, so without
+    it every tool call comes back denied. Worth answering before a turn starts —
+    the alternative is spending a whole model run to discover it.
+
+    Two queries rather than one join: resolving the account through
+    ``resolve_service_account`` keeps one definition of what makes it usable, and
+    distinguishing "the account is unusable" from "it is not a member" is the
+    whole point of the return value.
+    """
+    try:
+        account = await resolve_service_account(db)
+    except AssistantIdentityError:
+        return "account_unavailable"
+    if await _workspace_member(db, workspace_id, account.id) is None:
+        return "no_workspace_access"
+    return "ok"
+
+
+async def service_account_can_write(
+    db: AsyncSession, workspace_id: uuid.UUID, service_account_id: uuid.UUID
+) -> bool:
+    """True if the service account could plausibly run a write in this workspace."""
+    member = await _workspace_member(db, workspace_id, service_account_id)
     if member is None:
         return False
 

@@ -23,6 +23,7 @@ from api.schemas.assistant import (
 )
 from api.schemas.page import Page
 from api.services.assistant import resume_turn, stream_turn
+from api.services.assistant.access import assistant_availability
 from api.services.assistant.persistence import is_history_truncated, render_transcript_with_sql
 from api.services.paging import paginate
 from api.services.workspace import assert_workspace_member, get_workspace
@@ -37,6 +38,29 @@ def _require_enabled() -> None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="The AI assistant is not enabled in this deployment.",
+        )
+
+
+async def _require_workspace_access(db: AsyncSession, workspace_id: uuid.UUID) -> None:
+    """Refuse a turn the assistant could only fail at, before any model runs.
+
+    Without workspace membership every tool call the turn makes comes back denied,
+    so starting it spends a model run to reach a conclusion known up front. The UI
+    blocks this case from the cached status, so reaching here means a stale client.
+    """
+    availability = await assistant_availability(db, workspace_id)
+    if availability == "account_unavailable":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The assistant's service account is missing or disabled.",
+        )
+    if availability == "no_workspace_access":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "The assistant's service account has no access to this workspace. "
+                "An admin can add it under the workspace's members."
+            ),
         )
 
 
@@ -72,8 +96,13 @@ async def assistant_status(
     clear disabled state instead of a failure."""
     # Deliberately not gated by `_require_enabled`: the UI needs to learn the
     # assistant is off in order to show a clear disabled state.
-    await _workspace(db, ws, user)
-    return AssistantStatusOut(enabled=settings.assistant_enabled)
+    workspace = await _workspace(db, ws, user)
+    if not settings.assistant_enabled:
+        return AssistantStatusOut(enabled=False, availability="disabled")
+    return AssistantStatusOut(
+        enabled=True,
+        availability=await assistant_availability(db, workspace.id),
+    )
 
 
 @router.get("/workspaces/{workspace}/assistant/conversations", response_model=Page[ConversationOut])
@@ -249,6 +278,7 @@ async def send_message(
     approval request; answer it at `.../approvals` to resume."""
     _require_enabled()
     workspace = await _workspace(db, ws, user)
+    await _require_workspace_access(db, workspace.id)
     conversation = await _load_conversation(db, workspace.id, conversation_id, user.id)
     stream = stream_turn(
         session_factory,
@@ -291,6 +321,11 @@ async def approve_write(
     aborting it, so the assistant can explain or take another route."""
     _require_enabled()
     workspace = await _workspace(db, ws, user)
+    # Deliberately not access-gated. The turn is already in flight and paused on
+    # this decision; refusing here would strand it with no way to resolve it in
+    # either direction, and rejecting a write needs no data access at all. An
+    # approval that no longer has access fails at the tool call, which is the
+    # governed path the assistant explains.
     conversation = await _load_conversation(db, workspace.id, conversation_id, user.id)
     stream = resume_turn(
         session_factory,

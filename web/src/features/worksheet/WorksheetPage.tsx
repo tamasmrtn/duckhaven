@@ -89,9 +89,10 @@ WHERE event_time >= '2026-05-01'
 GROUP BY 1
 ORDER BY 1;`;
 
-// The landing/showcase workspace keeps example worksheets; every other
-// workspace (including freshly created ones) starts blank — worksheets are
-// scoped per workspace rather than shared.
+// The landing/showcase workspace keeps example worksheets in dev/mock mode;
+// every other workspace (including freshly created ones, and this same slug
+// on a real deployed stack) starts blank — worksheets are scoped per
+// workspace rather than shared.
 const DEMO_WORKSPACE_SLUG = "acme-analytics";
 
 const tabsStorageKey = (ws: string) => `dh-worksheets-${ws}`;
@@ -122,7 +123,7 @@ function loadActiveTab(ws: string): string | null {
 }
 
 function seededTabs(ws: string): Tab[] {
-  if (ws === DEMO_WORKSPACE_SLUG) {
+  if (import.meta.env.DEV && ws === DEMO_WORKSPACE_SLUG) {
     return [
       { id: "tab-1", title: "events.sql", sql: DEFAULT_SQL, dirty: false },
       {

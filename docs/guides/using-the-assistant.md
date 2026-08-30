@@ -17,8 +17,10 @@ and what it can and cannot do, see the [AI data assistant](../concepts/assistant
    - "What tables are in the sales schema?"
    - "How many orders were placed last month, by region?"
    - "Describe the customers table."
-3. The assistant streams its answer as it works, showing a rotating status word and an elapsed timer while it's busy. If
-   it opened your worksheet's active catalog, unqualified table names resolve against that catalog automatically. When
+3. The assistant streams its answer as it works, showing a rotating status word and an elapsed timer while it's busy. A
+   question that takes several steps arrives as several messages — one each time the assistant pauses to run something —
+   and they appear as it goes rather than all at the end. If it opened your worksheet's active catalog, unqualified
+   table names resolve against that catalog automatically. When
    it runs a query, the SQL is shown right under the answer, and a preview of the result; open the full result in the
    query grid — or click the **View full result** link that appears after the answer — just as you would for a query
    you ran yourself. When the tables it queried can be resolved, an **Open _table_ in Catalog** chip appears alongside

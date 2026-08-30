@@ -62,9 +62,21 @@ arguments and outcome, and a proposed write is paused for human approval rather 
 
 ## Identity
 
-Each deployment binds the assistant to one **service account** — the same kind of principal you create for automation,
-described in [Service accounts & tokens](../guides/service-accounts.md). You govern its data access per workspace with
-[workspace membership](workspaces.md) and [catalog grants](permissions.md), exactly as you would for any principal:
+The assistant acts as one **service account**, named `Assistant` — the same kind of principal you create for
+automation, described in [Service accounts & tokens](../guides/service-accounts.md). It is not configurable, and you do
+not have to create it: enabling the assistant creates it on startup if it is not already there.
+
+!!! warning "A service account you already named Assistant will be reused"
+    The account is identified by the address a service account named `Assistant` would get,
+    `assistant@service-account.local`. If your deployment already has one under that name — created for unrelated
+    automation — enabling the assistant **adopts it**, along with every workspace membership and catalog grant it
+    holds. Check for it before turning the assistant on, and rename it if the AI assistant should not inherit its
+    reach.
+
+Creating it grants nothing. It arrives with no workspace membership and no catalog grants, so until you give it some,
+every question comes back denied — and the assistant panel says exactly that instead of letting you spend a turn finding
+out. You govern its data access per workspace with [workspace membership](workspaces.md) and
+[catalog grants](permissions.md), exactly as you would for any principal:
 
 - Give it `reader` or a `metadata`-tier grant for a browse-and-read assistant.
 - Add `writer` where you want it to be able to propose writes (still gated by approval).
@@ -72,6 +84,12 @@ described in [Service accounts & tokens](../guides/service-accounts.md). You gov
 
 Because access is scoped per workspace, the same assistant can have different reach in different workspaces — broad in a
 sandbox, narrow in production.
+
+Disabling the account in the admin UI is a kill switch: the assistant stops working everywhere, a restart will not
+re-enable it, and the panel says the account is unavailable rather than pointing you at workspace membership. Disabling
+is also the only option once the assistant has run anything — deleting a service account that has query history is
+refused, to keep the audit trail intact. Where deletion *is* still possible, it lasts until the next restart, which
+recreates the account — again with no access.
 
 When the assistant makes a call, the runtime mints a **short-lived personal access token** for the service account, uses
 it for that turn, and deletes it immediately after. Nothing long-lived or reconstructable is stored, and every query the

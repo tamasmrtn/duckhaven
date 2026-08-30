@@ -1,8 +1,10 @@
 import asyncio
 import contextlib
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder
@@ -14,7 +16,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.staticfiles import StaticFiles
 from starlette.types import Scope
 
-from api.config import settings
+from api.config import Settings, settings
 from api.db.session import async_session_factory
 from api.metrics import PrometheusMiddleware
 from api.openapi import apply_conventions, error_body, operation_id
@@ -49,7 +51,8 @@ from api.routers.admin import service_accounts as admin_service_accounts
 from api.routers.admin import storage as admin_storage
 from api.routers.admin import users as admin_users
 from api.services.agent_dispatch import drain_local_agents
-from api.services.bootstrap import seed_agent_bootstrap_token
+from api.services.assistant.identity import ASSISTANT_EMAIL
+from api.services.bootstrap import ensure_assistant_service_account, seed_agent_bootstrap_token
 from api.services.oidc import register_oidc
 from api.services.polaris import (
     PolarisBadRequestError,
@@ -60,6 +63,24 @@ from api.services.polaris import (
 from api.services.rbac import seed_roles
 from api.telemetry import setup_telemetry
 from duckhaven_shared.telemetry import LOG_FORMAT, install_log_correlation
+
+
+def _stale_slug_setting() -> bool:
+    """Whether the removed ASSISTANT_SERVICE_ACCOUNT_SLUG is still configured."""
+    if os.environ.get("ASSISTANT_SERVICE_ACCOUNT_SLUG"):
+        return True
+    env_file = Settings.model_config.get("env_file")
+    if not env_file:
+        return False
+    try:
+        for line in Path(env_file).read_text().splitlines():
+            name, _, value = line.partition("=")
+            if name.strip() == "ASSISTANT_SERVICE_ACCOUNT_SLUG" and value.strip():
+                return True
+    except OSError:
+        # No dotenv file, or unreadable — the environment check above stands.
+        return False
+    return False
 
 
 @asynccontextmanager
@@ -79,6 +100,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await seed_roles(db)
         await seed_agent_bootstrap_token(
             db, settings.agent_bootstrap_token, settings.agent_bootstrap_ttl_hours
+        )
+        await ensure_assistant_service_account(db)
+
+    # The assistant's account is fixed now. Settings ignores unknown env vars, so a
+    # deployment still setting the old one would silently keep it and wonder why its
+    # grants stopped applying. Check the dotenv file as well as the environment:
+    # pydantic-settings reads .env itself and never writes into os.environ, so an
+    # operator who set it there is exactly the one this warning is for.
+    if _stale_slug_setting():
+        logging.getLogger(__name__).warning(
+            "ASSISTANT_SERVICE_ACCOUNT_SLUG is no longer used; the assistant always "
+            "acts as %s. Grant that account the workspace access you want it to have.",
+            ASSISTANT_EMAIL,
         )
 
     register_oidc()

@@ -9,6 +9,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from api.db.base import Base
 
+# Service accounts are User rows with this provider: no local password, so they
+# can never complete a password/OIDC/LDAP login — only present a PAT. Defined here
+# beside the column it describes, so the routers and services that branch on it
+# cannot drift apart.
+SERVICE_ACCOUNT_PROVIDER = "service_account"
+
 
 class User(Base):
     __tablename__ = "users"

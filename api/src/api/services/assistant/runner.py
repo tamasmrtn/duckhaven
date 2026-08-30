@@ -22,7 +22,13 @@ from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 from pydantic_ai import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDenied
 from pydantic_ai.exceptions import UsageLimitExceeded
-from pydantic_ai.messages import FunctionToolCallEvent, PartDeltaEvent, TextPartDelta
+from pydantic_ai.messages import (
+    FunctionToolCallEvent,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPart,
+    TextPartDelta,
+)
 from pydantic_ai.usage import UsageLimits
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -88,6 +94,16 @@ def _event_to_frame(event, *, scoped: bool) -> dict | None:
     comes from request state, not the model's output, so a model that ignores the
     scoping instructions can't mislabel a full-file rewrite as a scoped edit.
     """
+    # A text part's *first* chunk rides on PartStartEvent, not on a delta: the
+    # parts manager builds TextPart(content=<first chunk>) and streams only the
+    # rest as TextPartDelta. Mapping deltas alone therefore swallows the opening
+    # words of every text segment in a turn, which is why a streamed reply read
+    # as "me find the customer table first." while the persisted one said "Let me
+    # find the customer table first.".
+    if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+        if event.part.content:
+            return {"type": "token", "text": event.part.content}
+        return None
     if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
         if event.delta.content_delta:
             return {"type": "token", "text": event.delta.content_delta}
@@ -266,10 +282,22 @@ async def _stream(
             scoped = deps.selection_sql is not None
 
             async def handler(ctx, events) -> None:
+                # One invocation is one graph node, and text only flows on a model
+                # request node — so the first text frame here opens the response
+                # that render_transcript later shows as its own message. Marking it
+                # lets the client split a streaming reply into the same messages
+                # the settled transcript will, instead of one run-on bubble.
+                # Per response, not per part: render_transcript joins a response's
+                # text parts into one item, so only the first is marked.
+                first_text = True
                 async for event in events:
                     frame = _event_to_frame(event, scoped=scoped)
-                    if frame is not None:
-                        await queue.put(frame)
+                    if frame is None:
+                        continue
+                    if frame["type"] == "token" and first_text:
+                        frame["start"] = True
+                        first_text = False
+                    await queue.put(frame)
 
             async def do_run() -> None:
                 # The span opens here, inside the detached task, not around the

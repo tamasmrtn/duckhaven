@@ -3,6 +3,7 @@ import { http, HttpResponse } from "msw";
 import { page } from "../lib/page";
 import {
   ASSISTANT_ENABLED,
+  ASSISTANT_AVAILABILITY,
   CONVERSATIONS,
   type MockConversation,
 } from "../fixtures/assistant";
@@ -43,7 +44,12 @@ export const assistantHandlers = [
   http.get("/api/workspaces/:ws/assistant/status", ({ params }) => {
     const ws = findWorkspace(params.ws as string);
     if (!ws) return httpError(404, "Workspace not found");
-    return HttpResponse.json({ enabled: ASSISTANT_ENABLED });
+    return HttpResponse.json({
+      enabled: ASSISTANT_ENABLED,
+      availability: ASSISTANT_ENABLED
+        ? (ASSISTANT_AVAILABILITY[ws.slug] ?? "ok")
+        : "disabled",
+    });
   }),
 
   http.get("/api/workspaces/:ws/assistant/conversations", ({ params }) => {

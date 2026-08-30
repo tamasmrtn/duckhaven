@@ -4,7 +4,11 @@ import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { renderWithProviders } from "@tests/utils";
 import { server } from "@tests/mock/server";
-import { CONVERSATIONS, setAssistantEnabled } from "@/mock/fixtures/assistant";
+import {
+  CONVERSATIONS,
+  setAssistantEnabled,
+  setAssistantAvailability,
+} from "@/mock/fixtures/assistant";
 
 // The panel is a right-side dock opened from the top bar; render a workspace page
 // so the worksheet editor bridge is live for the propose-edit test.
@@ -15,6 +19,38 @@ async function openPanel(user: ReturnType<typeof userEvent.setup>) {
     name: "Toggle AI assistant",
   });
   await user.click(toggle);
+}
+
+/**
+ * An SSE response the test drives frame by frame. Keeping the stream open is
+ * what lets a test assert on a mid-turn state: a body that closes on its own
+ * settles the turn, and the live bubbles are cleared for the transcript.
+ */
+function drivenStream() {
+  const encoder = new TextEncoder();
+  const handle: {
+    push: (frame: object) => void;
+    finish: () => void;
+  } = { push: undefined!, finish: undefined! };
+  server.use(
+    http.post(
+      "/api/workspaces/:ws/assistant/conversations/:id/messages",
+      () =>
+        new HttpResponse(
+          new ReadableStream({
+            start(controller) {
+              handle.push = (frame) =>
+                controller.enqueue(
+                  encoder.encode(`data: ${JSON.stringify(frame)}\n\n`),
+                );
+              handle.finish = () => controller.close();
+            },
+          }),
+          { headers: { "Content-Type": "text/event-stream" } },
+        ),
+    ),
+  );
+  return handle;
 }
 
 describe("AssistantPanel", () => {
@@ -428,6 +464,110 @@ describe("AssistantPanel", () => {
     expect(screen.getByText("hang please")).toBeInTheDocument();
   });
 
+  it("does not render half-parsed markdown while a reply streams", async () => {
+    // A stream the test drives frame by frame, so the assertion lands on a
+    // known partial state instead of racing the transport.
+    const stream = drivenStream();
+
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    await user.type(screen.getByLabelText("Message"), "biggest tables?");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(stream.push).toBeDefined());
+
+    // A bold marker that has not closed yet. Asserting on the *presence* of the
+    // stabilized text is what makes this bite: an unfixed panel renders the
+    // literal "The **thr", so there is no element reading "The thr" to find,
+    // and findByText waits for the frame rather than racing it.
+    stream.push({ type: "token", text: "The **thr" });
+    expect(await screen.findByText("The thr")).toBeInTheDocument();
+
+    // Once the answer completes, nothing the stabilizer held back is lost.
+    stream.push({
+      type: "token",
+      text: "ee** biggest tables:\n\n| Table | Rows |\n|---|---:|\n| events | 42 |\n",
+    });
+    expect(await screen.findByRole("table")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("columnheader", { name: "Table" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "events" })).toBeInTheDocument();
+    expect(screen.getByText("three").tagName).toBe("STRONG");
+
+    stream.push({
+      type: "done",
+      message_id: "msg-md",
+      usage: { input: 1, output: 1 },
+    });
+    stream.finish();
+  });
+
+  it("streams a multi-step reply as the messages the transcript will show", async () => {
+    const stream = drivenStream();
+
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    await user.type(
+      screen.getByLabelText("Message"),
+      "find the customer table",
+    );
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(stream.push).toBeDefined());
+
+    // Two model responses. Each opens with a `start` token, exactly as the
+    // runner marks them, and neither carries whitespace at the seam.
+    stream.push({ type: "token", text: "Checked the catalog.", start: true });
+    const firstBubble = await screen.findByText("Checked the catalog.");
+
+    stream.push({ type: "token", text: "Listing is denied.", start: true });
+    stream.push({ type: "token", text: " Trying SQL instead." });
+    const secondBubble = await screen.findByText(
+      "Listing is denied. Trying SQL instead.",
+    );
+
+    // Separate messages, not one run-on bubble: neither contains the other.
+    expect(firstBubble.textContent).toBe("Checked the catalog.");
+    expect(secondBubble.textContent).not.toContain("Checked the catalog.");
+
+    stream.push({
+      type: "done",
+      message_id: "msg-seg",
+      usage: { input: 1, output: 1 },
+    });
+    stream.finish();
+  });
+
+  it("keeps one bubble when the server sends no message markers", async () => {
+    // An older server never marks a boundary; the reply must still render.
+    const stream = drivenStream();
+
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    await user.type(screen.getByLabelText("Message"), "hello");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(stream.push).toBeDefined());
+
+    stream.push({ type: "token", text: "One " });
+    stream.push({ type: "token", text: "bubble." });
+    expect(await screen.findByText("One bubble.")).toBeInTheDocument();
+
+    stream.push({
+      type: "done",
+      message_id: "msg-one",
+      usage: { input: 1, output: 1 },
+    });
+    stream.finish();
+  });
+
   it("clears a stale error/pending bubble when switching conversations", async () => {
     server.use(
       http.post(
@@ -546,6 +686,64 @@ describe("AssistantPanel", () => {
     // The composer is present but disabled.
     expect(screen.getByLabelText("Message")).toBeDisabled();
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  });
+
+  it("blocks sending but keeps history when the assistant has no access", async () => {
+    setAssistantAvailability({ "acme-analytics": "no_workspace_access" });
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+
+    expect(
+      await screen.findByText(/isn't a member of this workspace/i),
+    ).toBeInTheDocument();
+    // Distinct from the turned-off state: the feature is on, the account isn't.
+    expect(
+      screen.queryByText("Assistant is turned off"),
+    ).not.toBeInTheDocument();
+
+    // Past conversations stay readable — reading them needs no service-account
+    // access at all, so losing access must not hide the audit trail.
+    expect(
+      await screen.findByText("There are 42 events in the events table."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Conversation history" }),
+    ).toBeInTheDocument();
+
+    // But no turn can be started, so no model is called for a question that
+    // could only come back denied.
+    expect(screen.getByLabelText("Message")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  });
+
+  it("names re-enabling the account when that is the actual fix", async () => {
+    setAssistantAvailability({ "acme-analytics": "account_unavailable" });
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+
+    // Telling an admin to add a membership would send them somewhere that
+    // cannot help, so this state says something different.
+    expect(await screen.findByText(/missing or disabled/i)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/isn't a member of this workspace/i),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  });
+
+  it("keeps the assistant usable in a workspace that does have access", async () => {
+    // Access is per workspace; a block elsewhere must not leak into this one.
+    setAssistantAvailability({ "other-workspace": "no_workspace_access" });
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    expect(screen.getByLabelText("Message")).not.toBeDisabled();
+    expect(
+      screen.queryByText(/isn't a member of this workspace/i),
+    ).not.toBeInTheDocument();
   });
 
   it("proposes an editor edit that the user can accept", async () => {

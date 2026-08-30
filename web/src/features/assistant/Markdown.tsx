@@ -1,6 +1,13 @@
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/utils";
+import { useThrottledText } from "@/hooks/useThrottledText";
+import { stabilizeStreamingMarkdown } from "./streamingMarkdown";
+
+// A streamed answer is re-parsed in full on every token. Capping that at ~15fps
+// keeps the panel from reflowing on each frame, and is well under the rate a
+// reader notices.
+const STREAM_FRAME_MS = 60;
 
 // Styled renderers for assistant messages. Only GFM markdown is parsed — no raw
 // HTML — so there's no injection surface. Tables scroll horizontally because the
@@ -78,12 +85,26 @@ const COMPONENTS: Components = {
   ),
 };
 
-/** Render assistant markdown (GFM: tables, code, lists, …) as styled HTML. */
-export function Markdown({ children }: { children: string }) {
+/**
+ * Render assistant markdown (GFM: tables, code, lists, …) as styled HTML.
+ *
+ * Pass `streaming` for a reply that is still arriving: its text is throttled and
+ * rewritten so a half-finished construct renders as the shape it will settle
+ * into. A persisted transcript renders its text verbatim.
+ */
+export function Markdown({
+  children,
+  streaming = false,
+}: {
+  children: string;
+  streaming?: boolean;
+}) {
+  const throttled = useThrottledText(children, STREAM_FRAME_MS);
+  const text = streaming ? stabilizeStreamingMarkdown(throttled) : children;
   return (
     <div className="text-sm leading-relaxed">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={COMPONENTS}>
-        {children}
+        {text}
       </ReactMarkdown>
     </div>
   );

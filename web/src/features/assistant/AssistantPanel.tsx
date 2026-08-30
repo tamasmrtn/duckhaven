@@ -20,6 +20,7 @@ import {
   useCreateConversation,
 } from "@/queries/assistant";
 import { useCatalogs } from "@/queries/catalogs";
+import { useThrottledText } from "@/hooks/useThrottledText";
 import { EmptyState } from "@/components/ui/empty-state";
 import { cn } from "@/utils";
 import { useAssistant } from "./AssistantContext";
@@ -34,27 +35,6 @@ import { useAssistantChat } from "./useAssistantChat";
 // "Ask a follow-up" button, so a tweak stays a single edit.
 const chipClass =
   "rounded-full border border-[var(--border-subtle)] px-3 py-1 text-xs text-text-secondary hover:border-[var(--brand-slate-blue)] hover:text-text-primary";
-
-// Throttles a fast-changing string to at most one update per `delayMs`, so an
-// aria-live region can announce streamed text without firing per token.
-function useThrottledText(value: string, delayMs: number): string {
-  const [throttled, setThrottled] = useState(value);
-  const lastFiredAtRef = useRef(0);
-  useEffect(() => {
-    const elapsed = Date.now() - lastFiredAtRef.current;
-    if (elapsed >= delayMs) {
-      lastFiredAtRef.current = Date.now();
-      setThrottled(value);
-      return;
-    }
-    const timeout = setTimeout(() => {
-      lastFiredAtRef.current = Date.now();
-      setThrottled(value);
-    }, delayMs - elapsed);
-    return () => clearTimeout(timeout);
-  }, [value, delayMs]);
-  return throttled;
-}
 
 const GENERIC_STARTER_PROMPTS = [
   "What data do I have access to?",
@@ -80,7 +60,15 @@ export function AssistantPanel({ ws }: { ws: string }) {
   const { closePanel, editorRef, seedPrompt } = useAssistant();
   const { data: status } = useAssistantStatus(ws);
   const enabled = status?.enabled === true;
-  const disabled = status?.enabled === false;
+  // Off means there is nothing to show at all. Unusable is different: the feature
+  // is on and past conversations are still worth reading, so only sending is
+  // blocked. Both are known from the cached status before anything is sent, so no
+  // turn starts and no model is called either way.
+  const turnedOff = status?.enabled === false;
+  const availability = status?.availability;
+  const unusable =
+    enabled && availability !== undefined && availability !== "ok";
+  const cannotSend = turnedOff || unusable;
   const {
     data: conversations = [],
     isLoading: conversationsLoading,
@@ -159,7 +147,7 @@ export function AssistantPanel({ ws }: { ws: string }) {
 
   const submit = async (overrideText?: string) => {
     const prompt = (overrideText ?? draft).trim();
-    if (!prompt || chat.streaming || disabled) return;
+    if (!prompt || chat.streaming || cannotSend) return;
     let id = effectiveId;
     if (!id) {
       const conv = await createConversation.mutateAsync(undefined);
@@ -192,7 +180,7 @@ export function AssistantPanel({ ws }: { ws: string }) {
           </Badge>
         )}
         <div className="ml-auto flex items-center gap-1">
-          {!disabled && conversations.length > 0 && (
+          {!turnedOff && conversations.length > 0 && (
             <ConversationList
               ws={ws}
               conversations={conversations}
@@ -200,7 +188,7 @@ export function AssistantPanel({ ws }: { ws: string }) {
               onSelect={(id) => setPicked(id)}
             />
           )}
-          {!disabled && (
+          {!turnedOff && (
             <Button
               size="icon"
               variant="ghost"
@@ -223,7 +211,7 @@ export function AssistantPanel({ ws }: { ws: string }) {
         </div>
       </div>
 
-      {!disabled &&
+      {!turnedOff &&
         detail?.history_truncated &&
         dismissedTruncationFor !== effectiveId && (
           <div className="flex items-center justify-between gap-2 border-b border-[var(--border-subtle)] px-3 py-1.5">
@@ -243,8 +231,20 @@ export function AssistantPanel({ ws }: { ws: string }) {
           </div>
         )}
 
-      {/* Thread (or the disabled notice) */}
-      {disabled ? (
+      {/* Why sending is blocked. A banner, not a replacement for the thread:
+          reading past conversations needs no service-account access at all. */}
+      {unusable && (
+        <div className="border-b border-[var(--border-subtle)] px-3 py-2">
+          <p className="text-sm text-text-secondary" role="status">
+            {availability === "account_unavailable"
+              ? "The assistant's service account is missing or disabled, so it can't answer anything. An admin can re-enable it under Service accounts."
+              : "The assistant isn't a member of this workspace, so every question would come back denied. An admin can add the Assistant account under this workspace's members, then grant it the catalogs it should see."}
+          </p>
+        </div>
+      )}
+
+      {/* Thread (or the turned-off notice) */}
+      {turnedOff ? (
         <div className="flex flex-1 items-center justify-center p-6">
           <EmptyState
             icon={Sparkles}
@@ -287,8 +287,12 @@ export function AssistantPanel({ ws }: { ws: string }) {
                           <button
                             key={prompt}
                             type="button"
+                            disabled={cannotSend}
                             onClick={() => void submit(prompt)}
-                            className={chipClass}
+                            className={cn(
+                              chipClass,
+                              cannotSend && "opacity-50",
+                            )}
                           >
                             {prompt}
                           </button>
@@ -339,9 +343,13 @@ export function AssistantPanel({ ws }: { ws: string }) {
                 </Button>
               </div>
             )}
-            {chat.streamingText && (
+            {chat.streamingMessages.some((text) => text !== "") && (
               <>
-                <Bubble role="assistant" text={chat.streamingText} />
+                {chat.streamingMessages
+                  .filter((text) => text !== "")
+                  .map((text, i) => (
+                    <Bubble key={i} role="assistant" text={text} streaming />
+                  ))}
                 {/* Throttled so screen readers get periodic updates, not one per token. */}
                 <div aria-live="polite" className="sr-only">
                   {throttledStreamingText}
@@ -455,7 +463,7 @@ export function AssistantPanel({ ws }: { ws: string }) {
             ref={composerRef}
             aria-label="Message"
             value={draft}
-            disabled={disabled}
+            disabled={cannotSend}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
@@ -464,7 +472,11 @@ export function AssistantPanel({ ws }: { ws: string }) {
               }
             }}
             placeholder={
-              disabled ? "Assistant is turned off" : "Ask about your data…"
+              turnedOff
+                ? "Assistant is turned off"
+                : unusable
+                  ? "Assistant can't be used in this workspace"
+                  : "Ask about your data…"
             }
             rows={1}
             className="max-h-40 flex-1 resize-none rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2 text-sm outline-none focus-visible:ring-1 focus-visible:ring-[var(--brand-slate-blue)] disabled:opacity-50"
@@ -482,7 +494,7 @@ export function AssistantPanel({ ws }: { ws: string }) {
             <Button
               size="icon"
               onClick={() => void submit()}
-              disabled={disabled || !draft.trim()}
+              disabled={cannotSend || !draft.trim()}
               aria-label="Send"
             >
               <Send className="size-4" />
@@ -503,10 +515,12 @@ function Bubble({
   role,
   text,
   sql,
+  streaming = false,
 }: {
   role: "user" | "assistant";
   text: string;
   sql?: string | null;
+  streaming?: boolean;
 }) {
   return (
     <div
@@ -517,7 +531,11 @@ function Bubble({
           : "min-w-0 self-start border border-[var(--border-subtle)] bg-[var(--bg-surface)]",
       )}
     >
-      {role === "assistant" ? <Markdown>{text}</Markdown> : text}
+      {role === "assistant" ? (
+        <Markdown streaming={streaming}>{text}</Markdown>
+      ) : (
+        text
+      )}
       {sql && (
         <pre className="mt-2 overflow-x-auto rounded bg-[var(--bg-code)] p-2 font-mono text-xs text-[var(--text-code)]">
           {sql}

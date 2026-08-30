@@ -1,5 +1,10 @@
 export interface AssistantStatus {
   enabled: boolean;
+  // Why the assistant can't be used here, or "ok". The two unusable states have
+  // different fixes — re-enable the account vs. add it to this workspace — so the
+  // panel can name the right one without starting a turn.
+  availability:
+    "disabled" | "account_unavailable" | "no_workspace_access" | "ok";
 }
 
 export interface Conversation {
@@ -45,7 +50,9 @@ export interface ConversationDetail extends Conversation {
 
 // Server-sent events streamed from a turn.
 export type AssistantFrame =
-  | { type: "token"; text: string }
+  // `start` marks the first token of a model response, which is the message
+  // boundary the settled transcript will use. Absent on every other token.
+  | { type: "token"; text: string; start?: boolean }
   | { type: "tool_call"; tool: string; args: unknown }
   | {
       type: "approval_required";

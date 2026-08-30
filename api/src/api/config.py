@@ -368,20 +368,18 @@ class Settings(BaseSettings):
     # ── AI data assistant ─────────────────────────────────────────────────────
     # A governed, model-agnostic chat assistant that browses catalog metadata and
     # runs SQL as a service-account principal, through the same REST chokepoints as
-    # any other client. Disabled by default; enable by pointing it at a service
-    # account (created via the admin UI) and configuring a model.
+    # any other client. Disabled by default; enabling it configures a model and
+    # creates the "assistant" service account on startup. What that account may
+    # reach stays an admin decision: it starts with no workspace membership and no
+    # grants, and the panel says so until one is given.
     assistant_enabled: bool = False
-    # Slug of the service account the assistant acts as. Its workspace memberships
-    # and catalog grants govern the assistant's data access exactly like any
-    # principal. The synthesized email is "{slug}@service-account.local".
-    assistant_service_account_slug: str | None = None
-    # Pydantic AI model string, e.g. "anthropic:claude-sonnet-4-latest",
+    # Pydantic AI model string, e.g. "anthropic:claude-sonnet-5",
     # "openai:gpt-4o", or "mistral:mistral-large-latest". No provider is assumed;
     # for OpenAI-compatible endpoints (Ollama, vLLM, Azure) set the base URL below
     # and use an "openai:<model>" string. Provider API keys come from the standard
     # provider env vars (ANTHROPIC_API_KEY/OPENAI_API_KEY/MISTRAL_API_KEY) unless
     # assistant_api_key is set.
-    assistant_model: str = "anthropic:claude-sonnet-4-latest"
+    assistant_model: str = "anthropic:claude-sonnet-5"
     # OpenAI-compatible base URL (Ollama/vLLM/Azure/…). When set, the model routes
     # through the OpenAI protocol against this endpoint (keyless self-hosted path).
     assistant_openai_base_url: str | None = None

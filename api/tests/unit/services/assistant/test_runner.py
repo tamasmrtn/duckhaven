@@ -11,6 +11,8 @@ import contextlib
 import pytest
 import pytest_asyncio
 from conftest import seed_workspace
+from pydantic_ai.messages import ModelResponse, TextPart
+from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -19,6 +21,7 @@ from api.models.assistant import AssistantConversation, AssistantMessage, Assist
 from api.models.user import User
 from api.models.workspace import WorkspaceMember
 from api.services.assistant.agent import get_agent
+from api.services.assistant.persistence import render_transcript_with_sql
 from api.services.assistant.runner import stream_turn
 
 from .conftest import hanging_model, parse_sse, scripted_model, text_step, tool_step
@@ -27,7 +30,6 @@ from .conftest import hanging_model, parse_sse, scripted_model, text_step, tool_
 @pytest.fixture(autouse=True)
 def _enable_assistant(monkeypatch):
     monkeypatch.setattr(settings, "assistant_enabled", True)
-    monkeypatch.setattr(settings, "assistant_service_account_slug", "assistant")
 
 
 @pytest_asyncio.fixture
@@ -90,6 +92,94 @@ async def test_turn_browses_and_persists_and_stamps_principal(client, db_session
         assert updated.service_account_id == sa.id
 
 
+def _talk_call_talk(first: str, second: str) -> FunctionModel:
+    """A model that says something, calls a tool, then says something else.
+
+    Two `ModelResponse`s, so two text segments — the shape that exposes both how
+    a text part starts and where one displayed message ends and the next begins.
+    """
+
+    def function(messages, info) -> ModelResponse:  # non-streaming fallback
+        return ModelResponse(parts=[TextPart(second)])
+
+    requests = iter([first, second])
+
+    async def stream_function(messages, info):
+        text = next(requests)
+        for word in text.split(" "):
+            yield word + " "
+        if text is first:
+            # Same response: text *and* a tool call, so the run continues and a
+            # second text part is started later.
+            yield {1: DeltaToolCall(name="list_catalogs", json_args="{}")}
+
+    return FunctionModel(function, stream_function=stream_function)
+
+
+async def _collect_stream(factory, ws, conv, prompt) -> list[dict]:
+    chunks: list[str] = []
+    async for chunk in stream_turn(
+        factory,
+        conversation_id=conv.id,
+        workspace_id=ws.id,
+        workspace_slug=ws.slug,
+        prompt=prompt,
+        catalog=None,
+    ):
+        chunks.append(chunk)
+    return parse_sse(chunks)
+
+
+async def test_stream_emits_every_word_of_every_text_segment(client, db_session, factory):
+    """A turn's streamed text must carry every word that gets persisted.
+
+    The parts manager puts a text part's *first* chunk on the PartStartEvent and
+    only the rest on TextPartDeltas, so mapping deltas alone drops the opening
+    words of every text segment.
+    """
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+    first = "Let me find the customer table first."
+    second = "Catalog listing is denied for my service account."
+    with get_agent().override(model=_talk_call_talk(first, second)):
+        frames = await _collect_stream(factory, ws, conv, "find the customer table")
+
+    streamed = "".join(f["text"] for f in frames if f["type"] == "token")
+    # Both segments arrive whole — no segment loses its opening words.
+    assert streamed.split() == (first + " " + second).split()
+
+
+async def test_streamed_segments_match_the_persisted_transcript(client, db_session, factory):
+    """What streams must be grouped into the same messages the transcript shows.
+
+    Token frames carry no message identity of their own, so without the `start`
+    marker a multi-step reply streams as one run-on bubble and then re-shuffles
+    into several messages the moment the turn settles. Pinning the two groupings
+    to each other is what stops them drifting apart again.
+    """
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+    first = "Let me find the customer table first."
+    second = "Catalog listing is denied for my service account."
+    with get_agent().override(model=_talk_call_talk(first, second)):
+        frames = await _collect_stream(factory, ws, conv, "find the customer table")
+
+    # Split the streamed tokens the way the client does.
+    segments: list[str] = []
+    for frame in frames:
+        if frame["type"] != "token":
+            continue
+        if frame.get("start") or not segments:
+            segments.append(frame["text"])
+        else:
+            segments[-1] += frame["text"]
+
+    async with factory() as db:
+        transcript = await render_transcript_with_sql(db, conv.id)
+    persisted = [item["text"] for item in transcript if item["role"] == "assistant"]
+
+    assert len(persisted) == 2  # the turn really did produce two messages
+    assert segments == persisted
+
+
 async def test_read_only_assistant_refuses_write(client, db_session, factory):
     ws, _catalog, conv = await _seed(db_session, sa_role="reader")
     # The model tries a write, then (after the ModelRetry refusal) answers.
@@ -141,9 +231,13 @@ async def test_stop_cancels_and_discards_the_turn(client, db_session, factory):
             catalog=None,
         )
         # Start pulling the stream so the turn actually begins (mints identity,
-        # starts the model run), then cancel the pull — exactly what Starlette
-        # does to the body generator on client disconnect. Bounded so a
-        # cancellation that fails to propagate fails the test instead of hanging.
+        # starts the model run). The model emits one token before it blocks, so
+        # take that frame first; the *next* pull is the one that can't complete.
+        first = await asyncio.wait_for(gen.__anext__(), timeout=5)
+        assert '"type": "token"' in first
+        # Then cancel a pull mid-turn — exactly what Starlette does to the body
+        # generator on client disconnect. Bounded so a cancellation that fails to
+        # propagate fails the test instead of hanging.
         pull = asyncio.ensure_future(gen.__anext__())
         await asyncio.sleep(0.3)
         assert not pull.done()  # the run is under way and blocked in the model

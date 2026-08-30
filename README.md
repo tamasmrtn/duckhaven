@@ -3,7 +3,7 @@
 > A self-hosted lakehouse for DuckDB — governed SQL worksheets, an Apache
 > Iceberg catalog, and elastic compute, on your own infrastructure.
 
-![Worksheet UI](docs/images/worksheet-dark.png)
+![DuckHaven demo walkthrough](docs/images/demo.mp4)
 
 A data lakehouse doesn't have to mean handing your data, and your bill, to an
 enterprise vendor. Apache Iceberg brought a transactional table format and
@@ -16,33 +16,36 @@ entirely on open source, self-hosted end to end. It gives a team collaborative
 browser worksheets, a governed Apache Iceberg catalog via Apache Polaris,
 compute that scales to zero between runs, scheduled queries, SSO, fine-grained
 access grants, machine identities, and a governed AI data assistant — all in
-one Docker Compose deploy. No Kubernetes, no opaque billing, no platform team
-required.
+one Docker Compose deploy.
 
 **Documentation:** <https://tamasmrtn.github.io/duckhaven/>
 
 ## Alternatives
 
-DuckHaven is not the only way to run SQL over DuckDB. Pick the tool that fits
+DuckHaven is not the only way to run a data warehouse/lakehouse. Pick the tool that fits
 your constraints:
 
 - **[MotherDuck](https://motherduck.com/)** is managed DuckDB in the cloud, with
   collaboration and sharing built in. Use it when you want zero operational
   overhead and are comfortable with a SaaS holding your data.
+- **[Snowflake](https://www.snowflake.com/)** is the dominant cloud data
+  warehouse — elastic virtual warehouses, mature SQL tooling, and a huge
+  ecosystem. Use it when you want a proven, fully managed warehouse and don't
+  mind per-second compute billing and your data living in Snowflake's cloud.
 - **[Databricks](https://www.databricks.com/)** is the enterprise lakehouse —
   Spark, notebooks, and Unity Catalog Enterprise. Use it when you have a platform
   team, a Kubernetes budget, and workloads that outgrow a single box.
 - **Ad hoc DuckDB** is a `.duckdb` file and a CLI. Use it for solo, throwaway
   analysis where collaboration, query history, and governance don't matter.
 
-| | DuckHaven | MotherDuck | Databricks | Ad hoc DuckDB |
-|---|---|---|---|---|
-| **Hosting** | Self-hosted | Cloud SaaS | Cloud/Enterprise | Local only |
-| **Engine** | DuckDB | DuckDB | Spark/JVM | DuckDB |
-| **Collaboration** | Worksheets + catalog + scheduling + audit | Worksheets + sharing | Worksheets + notebooks | None |
-| **Governance** | Apache Polaris | Proprietary | Unity Catalog Enterprise | None |
-| **Complexity** | Docker Compose | Zero setup | Kubernetes + platform team | Scripts |
-| **Cost model** | Free (self-hosted) | Per-seat SaaS | Enterprise contract | Free |
+| | DuckHaven | MotherDuck | Snowflake | Databricks | Ad hoc DuckDB |
+|---|---|---|---|---|---|
+| **Hosting** | Self-hosted | Cloud SaaS | Cloud SaaS | Cloud/Enterprise | Local only |
+| **Engine** | DuckDB | DuckDB | Proprietary | Spark/JVM | DuckDB |
+| **Collaboration** | Worksheets + catalog + scheduling + audit | Worksheets + sharing | Worksheets + sharing | Worksheets + notebooks | None |
+| **Governance** | Apache Polaris | Proprietary | Proprietary (RBAC + Horizon) | Unity Catalog Enterprise | None |
+| **Complexity** | Docker Compose | Zero setup | Zero setup | Kubernetes + platform team | Scripts |
+| **Cost model** | Free (self-hosted) | Per-seat SaaS | Per-second compute billing | Enterprise contract | Free |
 
 **Use DuckHaven instead when** you run a homelab or a small team and want
 collaborative, governed SQL over DuckDB on your own infrastructure — browser
@@ -53,6 +56,8 @@ trail — with data sovereignty, network privacy, and no SaaS lock-in.
 ## Features
 
 ### Worksheets & query execution
+
+![Worksheet UI](docs/images/worksheet-dark.png)
 
 - **Browser-based worksheets** — Monaco SQL editor with tabs, catalog-aware
   autocomplete, and a paginated results grid that pages results by row window
@@ -274,6 +279,10 @@ The full shipped feature set is above. Here's what's actively being worked on:
 
 - **Command Line Interface** — let users manage Duckhaven directly from
   scripts and CI/CD pipelines without needing the web UI.
+- **MCP Server** - let users connect to DuckHaven using AI Agents
+- **Plugin Store** - A governed store of plugins for DuckHaven to allow users install tools of their liking
+- **Helm chart** - For the kubernetes users
+- **Terraform modules for AWS & GCP**
 - **Performance** — closing the gaps in query planning, per-query memory
   sizing, and result delivery that show up under real, larger-than-toy
   workloads.

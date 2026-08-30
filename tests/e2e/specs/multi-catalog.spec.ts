@@ -78,15 +78,17 @@ test("a catalog attached to two workspaces is shared (M:N)", async ({ page, work
 
   // Create the catalog in A and write a row through A's worksheet.
   await createWorkspace(page.request, wsA);
-  const catalogId = await createCatalog(page.request, wsA, shared);
+  await createCatalog(page.request, wsA, shared);
   await worksheetPage.goto(wsA);
   await worksheetPage.run(`CREATE TABLE "${shared}"."analytics"."t" (id BIGINT)`);
   await worksheetPage.run(`INSERT INTO "${shared}"."analytics"."t" VALUES (7)`);
 
-  // Attach the same catalog to a second workspace.
+  // Attach the same catalog to a second workspace. A membership write, so
+  // it's a PUT on the membership's own address (catalog named in the path)
+  // rather than a POST .../attach action.
   await createWorkspace(page.request, wsB);
-  const attach = await page.request.post(`/api/workspaces/${wsB}/catalogs/attach`, {
-    data: { catalog_id: catalogId },
+  const attach = await page.request.put(`/api/workspaces/${wsB}/catalogs/${shared}`, {
+    data: {},
   });
   expect(attach.ok(), `attach: ${await attach.text()}`).toBeTruthy();
   expect((await attach.json()).attached_workspaces).toBe(2);
@@ -107,8 +109,8 @@ test("dropping a catalog is refused while attached, allowed after detaching ever
   await createWorkspace(page.request, wsA);
   const catalogId = await createCatalog(page.request, wsA, cat);
   await createWorkspace(page.request, wsB);
-  const attach = await page.request.post(`/api/workspaces/${wsB}/catalogs/attach`, {
-    data: { catalog_id: catalogId },
+  const attach = await page.request.put(`/api/workspaces/${wsB}/catalogs/${cat}`, {
+    data: {},
   });
   expect(attach.ok()).toBeTruthy();
 

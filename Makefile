@@ -91,7 +91,7 @@ test-e2e:
 # tag if needed. QUARKUS_OTEL_SDK_DISABLED stays true here (unlike the compose
 # stacks): this dev flow runs no OTel collector, so exporting would only spam
 # connection errors.
-POLARIS_IMAGE_TAG ?= latest
+POLARIS_IMAGE_TAG ?= 1.7.0
 POLARIS_S3_BUCKET ?= warehouse
 
 polaris-dev:

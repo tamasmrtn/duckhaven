@@ -40,3 +40,25 @@ updates:
       actions:
         patterns:
           - "*"
+
+  - package-ecosystem: "docker-compose"
+    directory: "/deploy"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - docker
+    groups:
+      docker-minor-patch:
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # DuckHaven's own images — tagged by release.yml, not a third-party
+      # dependency for Dependabot to track.
+      - dependency-name: "ghcr.io/tamasmrtn/duckhaven-api"
+      - dependency-name: "ghcr.io/tamasmrtn/duckhaven-agent"
+      # minio/minio's community Docker images were discontinued (last tag
+      # RELEASE.2025-09-07T16-13-09Z) — nothing new will ever be published.
+      - dependency-name: "minio/minio"

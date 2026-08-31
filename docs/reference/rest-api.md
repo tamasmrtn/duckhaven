@@ -94,9 +94,20 @@ Two properties are deliberate:
   token able to mint tokens would outlive its own revocation — revoking the leaked one would leave every successor it
   issued working — so issuing one always costs an interactive sign-in.
 
+A principal may hold **25 live tokens**; issuing a 26th returns **409 `too_many_tokens`**. Self-issuance needs no
+permission, so a ceiling is what keeps the collection bounded — revoke one you no longer use to make room.
+
 Unattended callers do not use this endpoint. CI, schedulers and tooling authenticate with a
 [service-account PAT](../guides/service-accounts.md), issued by an admin at
-`POST /api/admin/service-accounts/{service_account_id}/pats`.
+`POST /api/admin/service-accounts/{service_account_id}/pats`. A service account presenting its own token here gets
+**403 `service_account_tokens_are_managed`**: its tokens are deliberately issued by an administrator at different
+trust levels, and one of them must not be able to revoke another.
+
+!!! note "Only password sign-ins can reach this today"
+    Issuing requires a session cookie, and the only client that mints one is `dh auth login`, which signs in with a
+    password. On a deployment that authenticates solely through an identity provider there is no way for a person to
+    issue themselves a token — the SPA has no interface for it — so ask an administrator for a
+    [service-account token](../guides/service-accounts.md) instead.
 
 ### Managing your own tokens
 

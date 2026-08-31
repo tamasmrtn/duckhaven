@@ -104,11 +104,11 @@ dh catalog list
 dh schema list
 dh table list sales
 dh table get sales.orders
-dh table sample sales.orders --limit 20
+dh table sample sales.orders
 ```
 
 A table is `schema.table`, or `catalog.schema.table` when you want a catalog other than your default
-for one command.
+for one command. `dh table sample` returns a fixed 20-row preview; for anything else, write the query.
 
 ## Use it from a script
 

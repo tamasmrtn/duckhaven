@@ -1,10 +1,12 @@
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 
-from api.models.user import Credential, User
+from api.models.user import SERVICE_ACCOUNT_PROVIDER, Credential, User
+from api.services import pats
 from api.services.auth import PAT_PREFIX, hash_password, hash_token
 
 
@@ -206,21 +208,29 @@ async def test_own_pats_lists_metadata_only(client: AsyncClient, admin_user: Use
     assert len(rows) == 1
     assert set(rows[0]) == {"id", "created_at", "expires_at", "current"}
     assert token not in resp.text
-    assert hash_token(token) not in resp.text
 
 
 async def test_the_token_making_the_request_is_marked_current(
     client: AsyncClient, admin_user: User
 ):
     """Three hashes look alike; without this a caller cannot tell whose expiry
-    is about to break them."""
+    is about to break them.
+
+    Asserted by id rather than by position: two tokens minted in the same clock
+    tick tie on ``created_at``, so which sorts first is decided by the id
+    tie-break and is not the creation order.
+    """
     await _login(client)
-    first = await _issue(client)
-    await _issue(client)
+    first = (await client.post("/me/pats", json={})).json()
+    await client.post("/me/pats", json={})
     client.cookies.clear()
 
-    rows = (await client.get("/me/pats", headers={"Authorization": f"Bearer {first}"})).json()
-    assert [row["current"] for row in rows] == [True, False]
+    rows = (
+        await client.get("/me/pats", headers={"Authorization": f"Bearer {first['token']}"})
+    ).json()
+    assert len(rows) == 2
+    current = [row for row in rows if row["current"]]
+    assert [row["id"] for row in current] == [first["id"]]
 
 
 async def test_a_cookie_caller_marks_no_token_current(client: AsyncClient, admin_user: User):
@@ -269,14 +279,19 @@ async def test_a_token_can_revoke_itself(client: AsyncClient, admin_user: User):
 
 
 async def test_revoking_leaves_the_other_tokens_alone(client: AsyncClient, admin_user: User):
+    """Revoke by the id the issuing call returned, not by list position: the
+    listing ties on `created_at` and is ordered by the id tie-break."""
     await _login(client)
-    await _issue(client)
-    keep = await _issue(client)
-    first = (await client.get("/me/pats")).json()[0]["id"]
+    doomed = (await client.post("/me/pats", json={})).json()
+    keep = (await client.post("/me/pats", json={})).json()
 
-    assert (await client.delete(f"/me/pats/{first}")).status_code == 204
+    assert (await client.delete(f"/me/pats/{doomed['id']}")).status_code == 204
     client.cookies.clear()
-    assert (await client.get("/me", headers={"Authorization": f"Bearer {keep}"})).status_code == 200
+    headers = {"Authorization": f"Bearer {keep['token']}"}
+    assert (await client.get("/me", headers=headers)).status_code == 200
+    assert (
+        await client.get("/me", headers={"Authorization": f"Bearer {doomed['token']}"})
+    ).status_code == 401
 
 
 async def test_revoking_someone_elses_token_is_a_404_not_a_403(
@@ -305,3 +320,113 @@ async def test_revoking_an_unknown_token_is_a_404(client: AsyncClient, admin_use
 
 async def test_listing_own_pats_requires_authentication(client: AsyncClient):
     assert (await client.get("/me/pats")).status_code == 401
+
+
+# --- Gaps the review found ------------------------------------------------
+
+
+@pytest.fixture
+async def plain_user(db_session):
+    """A user with no global permissions -- the feature's actual audience."""
+    user = User(
+        email="analyst@test.local",
+        password_hash=hash_password("secret"),
+        name="Analyst",
+        role="user",
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+    return user
+
+
+async def test_a_user_with_no_permissions_can_issue_their_own(
+    client: AsyncClient, plain_user: User
+):
+    """Every other test signs in as an admin, so a route accidentally wrapped in
+    `require_permission` would not have been noticed."""
+    login = await client.post(
+        "/auth/login", json={"email": "analyst@test.local", "password": "secret"}
+    )
+    assert login.status_code == 200
+    assert (await client.post("/me/pats", json={})).status_code == 201
+    assert len((await client.get("/me/pats")).json()) == 1
+
+
+async def test_revoking_a_session_credential_by_id_is_refused(
+    client: AsyncClient, db_session, admin_user: User
+):
+    """The scoping filters on `kind` as well as owner: session and agent
+    credentials share this table, and an id-only lookup would reach them."""
+    await _login(client)
+    session_cred = (
+        await db_session.execute(
+            select(Credential).where(
+                Credential.user_id == admin_user.id, Credential.kind == "session"
+            )
+        )
+    ).scalar_one()
+
+    assert (await client.delete(f"/me/pats/{session_cred.id}")).status_code == 404
+    assert await db_session.get(Credential, session_cred.id) is not None
+    # And the session still works, so nothing was quietly broken.
+    assert (await client.get("/me")).status_code == 200
+
+
+async def test_self_issuance_is_capped(client: AsyncClient, admin_user: User):
+    """Self-issuance needs no permission, so without a ceiling any signed-in
+    caller can mint credentials without bound -- and they outlive the session."""
+    await _login(client)
+    for _ in range(pats.MAX_LIVE_PATS):
+        assert (await client.post("/me/pats", json={})).status_code == 201
+
+    refused = await client.post("/me/pats", json={})
+    assert refused.status_code == 409
+    assert refused.json()["error"] == "too_many_tokens"
+    # Revoking one makes room again.
+    first = (await client.get("/me/pats")).json()[0]["id"]
+    assert (await client.delete(f"/me/pats/{first}")).status_code == 204
+    assert (await client.post("/me/pats", json={})).status_code == 201
+
+
+async def test_a_service_account_token_cannot_reach_me_pats(
+    client: AsyncClient, db_session, admin_user: User
+):
+    """Its tokens are issued by an admin at different trust levels; a low-trust
+    one must not be able to revoke a high-trust sibling."""
+    account = User(
+        email="ci@service-account.local",
+        name="ci",
+        role="user",
+        auth_provider=SERVICE_ACCOUNT_PROVIDER,
+    )
+    db_session.add(account)
+    await db_session.commit()
+    _, token = await pats.issue(db_session, account.id, expires_in_days=90)
+
+    headers = {"Authorization": f"Bearer {token}"}
+    assert (await client.get("/me/pats", headers=headers)).status_code == 403
+    revoke = await client.delete(f"/me/pats/{uuid.uuid4()}", headers=headers)
+    assert revoke.status_code == 403
+    assert revoke.json()["error"] == "service_account_tokens_are_managed"
+
+
+@pytest.mark.parametrize("scheme", ["Bearer", "bearer", "BEARER"])
+async def test_the_bearer_scheme_is_matched_case_insensitively(
+    client: AsyncClient, admin_user: User, scheme: str
+):
+    """RFC 9110 makes it case-insensitive. A lowercase `bearer` used to fall
+    through to the cookie branch, so a caller sending both got the request the
+    guard exists to refuse."""
+    await _login(client)
+    token = await _issue(client)
+
+    # The cookie is still present: the guard must refuse on the header alone.
+    refused = await client.post("/me/pats", json={}, headers={"Authorization": f"{scheme} {token}"})
+    assert refused.status_code == 403
+    assert refused.json()["error"] == "session_required"
+
+    # And it authenticates the same way whatever the case.
+    client.cookies.clear()
+    me = await client.get("/me", headers={"Authorization": f"{scheme} {token}"})
+    assert me.status_code == 200

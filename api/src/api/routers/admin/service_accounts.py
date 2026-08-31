@@ -1,6 +1,5 @@
 import re
 import uuid
-from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi import Query as QueryParam  # `Query` here is the model
@@ -22,7 +21,8 @@ from api.schemas.service_account import (
     ServiceAccountOut,
     UpdateServiceAccountRequest,
 )
-from api.services.auth import generate_pat, get_user_by_email, hash_token
+from api.services import pats
+from api.services.auth import get_user_by_email
 from api.services.paging import paginate
 from api.services.permissions import Permission
 
@@ -231,23 +231,20 @@ async def issue_pat(
     """Issue a PAT for the service account. The raw secret is returned here once
     and only its SHA-256 hash is stored."""
     account = await _get_service_account_or_404(db, service_account_id)
-    token = generate_pat()
-    expires_at = (
-        None
-        if body.expires_in_days is None
-        else datetime.now(tz=UTC) + timedelta(days=body.expires_in_days)
-    )
-    cred = Credential(
-        user_id=account.id,
-        kind="pat",
-        token=None,
-        token_hash=hash_token(token),
-        expires_at=expires_at,
-    )
-    db.add(cred)
-    await db.commit()
-    await db.refresh(cred)
-    return PatTokenOut(id=cred.id, token=token, expires_at=expires_at)
+    try:
+        cred, token = await pats.issue(db, account.id, expires_in_days=body.expires_in_days)
+    except pats.TooManyTokens as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "too_many_tokens",
+                "detail": (
+                    f"This account already holds {pats.MAX_LIVE_PATS} tokens, the maximum. "
+                    "Revoke one it no longer uses and try again."
+                ),
+            },
+        ) from exc
+    return PatTokenOut(id=cred.id, token=token, expires_at=cred.expires_at)
 
 
 @router.get("/{service_account_id}/pats", response_model=list[PatOut])
@@ -261,12 +258,7 @@ async def list_pats(
     The token values are not stored and cannot be listed -- a token is shown once,
     when it is issued."""
     await _get_service_account_or_404(db, service_account_id)
-    result = await db.execute(
-        select(Credential)
-        .where(Credential.user_id == service_account_id, Credential.kind == "pat")
-        .order_by(Credential.created_at)
-    )
-    return list(result.scalars().all())
+    return await pats.list_for(db, service_account_id)
 
 
 @router.delete("/{service_account_id}/pats/{pat_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -281,15 +273,5 @@ async def revoke_pat(
     Revoking a token leaves the service account and its other tokens alone; to
     stop all of them at once, deactivate the account."""
     await _get_service_account_or_404(db, service_account_id)
-    result = await db.execute(
-        select(Credential).where(
-            Credential.id == pat_id,
-            Credential.user_id == service_account_id,
-            Credential.kind == "pat",
-        )
-    )
-    cred = result.scalar_one_or_none()
-    if cred is None:
+    if not await pats.revoke(db, service_account_id, pat_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-    await db.delete(cred)
-    await db.commit()

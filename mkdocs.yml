@@ -92,6 +92,7 @@ nav:
       - Quickstart: getting-started/quickstart.md
       - Your first workspace: getting-started/first-workspace.md
       - Your first query: getting-started/first-query.md
+      - Command line (dh): getting-started/cli-quickstart.md
   - Concepts:
       - What is DuckHaven?: concepts/what-is-duckhaven.md
       - Architecture: concepts/architecture.md
@@ -151,6 +152,7 @@ nav:
       - Configuration: reference/configuration.md
       - SQL support: reference/sql-support.md
       - Agent reference: reference/agent-reference.md
+      - CLI reference: reference/cli.md
       - REST API: reference/rest-api.md
       - API conventions: reference/api-conventions.md
       - Operator scripts: reference/operator-scripts.md

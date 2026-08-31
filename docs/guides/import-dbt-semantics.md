@@ -21,7 +21,13 @@ the sibling importer that reads the same artifact for lineage.
 
 ```bash
 dbt parse                       # writes target/manifest.json
+dh semantic import dbt target/manifest.json
+```
 
+Without the CLI, the endpoint takes the artifact as its body. Send it as raw bytes
+rather than re-encoded JSON, so a parse error points at the line you wrote:
+
+```bash
 curl -X POST "$DH/api/workspaces/$WS/semantic/imports/dbt" \
   -H 'Content-Type: text/plain' \
   --data-binary @target/manifest.json
@@ -93,8 +99,8 @@ Imported definitions arrive as a **draft**. An import is a pipeline publishing,
 not a person deciding, so nothing answers a question until somebody publishes it:
 
 ```bash
-curl -X POST "$DH/api/workspaces/$WS/semantic/models/<project>/validate"
-curl -X POST "$DH/api/workspaces/$WS/semantic/models/<project>/publish"
+dh semantic validate <project>
+dh semantic publish  <project>
 ```
 
 Validation resolves every binding against the live catalog. Publishing needs
@@ -106,8 +112,8 @@ metrics ride on that one decision.
 ## Re-publishing and retiring
 
 By default a payload is treated as dbt's **complete** set for the workspace, and
-models it no longer declares are retired. Pass `?reconcile=none` when publishing
-a subset.
+models it no longer declares are retired. Pass `--reconcile none` when publishing
+a subset (`?reconcile=none` over HTTP).
 
 An imported model is **read-only in DuckHaven** — `PATCH` returns 409. A model has
 exactly one owner, which is what stops the two copies disagreeing: change it in
@@ -116,11 +122,12 @@ dbt and import again.
 To remove everything dbt published:
 
 ```bash
-curl -X DELETE "$DH/api/workspaces/$WS/semantic/imports?provider=dbt"
+dh semantic purge --provider dbt
 ```
 
 ## Related
 
+- [Command-line quickstart](../getting-started/cli-quickstart.md) — installing and signing in `dh`
 - [Semantic layer](../concepts/semantic-layer.md)
 - [Define metrics](define-metrics.md) — authoring in DuckHaven instead
 - [Import lineage from dbt](import-dbt-lineage.md)

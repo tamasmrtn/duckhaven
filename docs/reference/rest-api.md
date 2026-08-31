@@ -65,6 +65,69 @@ See [Permissions](../concepts/permissions.md) for the underlying model. Both are
 security schemes (`cookieAuth`, `bearerAuth`), so a generated client configures credentials once rather than passing
 them on every call.
 
+### Issuing your own token
+
+A signed-in person can mint a token for themselves, which is how a human gets a credential for a command-line client
+without an admin issuing one:
+
+```sh
+curl -X POST "$DH/api/me/pats" \
+  -H 'Content-Type: application/json' \
+  -b "session=$SESSION_COOKIE" \
+  -d '{"expires_in_days": 90}'
+```
+
+```json
+{ "id": "…", "token": "dh_pat_…", "expires_at": "2026-11-29T09:14:00Z" }
+```
+
+The token carries the caller's own identity, so it can do exactly what they can — and it tracks their role as it
+changes, because permissions are resolved from the user on each request rather than frozen into the token. The secret
+is returned once and only its SHA-256 hash is stored.
+
+Two properties are deliberate:
+
+- **`expires_in_days` is mandatory and capped at 365.** The admin-issued service-account form accepts `null` for a
+  token that never expires, because an admin grants it knowingly to an unattended pipeline. A token anyone can mint
+  for themselves is not that.
+- **This route accepts the session cookie only.** Presenting a bearer token returns **403 `session_required`**. A
+  token able to mint tokens would outlive its own revocation — revoking the leaked one would leave every successor it
+  issued working — so issuing one always costs an interactive sign-in.
+
+Unattended callers do not use this endpoint. CI, schedulers and tooling authenticate with a
+[service-account PAT](../guides/service-accounts.md), issued by an admin at
+`POST /api/admin/service-accounts/{service_account_id}/pats`.
+
+### Managing your own tokens
+
+`GET /api/me/pats` lists what you hold, and `DELETE /api/me/pats/{pat_id}` revokes one:
+
+```json
+[
+  { "id": "…", "created_at": "2026-08-31T09:00:00Z", "expires_at": "2026-11-29T09:00:00Z",
+    "current": true }
+]
+```
+
+**The listing never returns a token, and cannot.** Only a SHA-256 hash of the secret is stored, so a
+token is shown once — when it is issued — and a forgotten one is replaced rather than recovered. This
+is the same contract GitHub and GitLab publish for their access tokens.
+
+That leaves a listing of hashes with nothing a person can read, so the token authenticating the
+request is marked **`current`**. Without it a caller holding three tokens sees three
+indistinguishable rows and cannot tell which expiry is the one about to break them.
+
+Unlike issuing, both of these accept a bearer token as well as a session:
+
+- **Listing** is what lets a client warn you before your own token expires, and a client
+  authenticates with that very token.
+- **Revoking** only ever removes access, so a leaked token cannot escalate with it — and a token
+  able to retire itself is worth more than the nuisance of one being used to retire its siblings.
+  GitLab reaches the same conclusion, letting any token call its self-revocation route.
+
+Revoking another user's token returns **404**, not 403, so the endpoint cannot be used to discover
+that one exists.
+
 ## Errors
 
 Every `4xx` and `5xx` response has the same body:

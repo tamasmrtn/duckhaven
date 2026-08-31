@@ -51,6 +51,40 @@ async def get_current_user(
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
 
+async def get_session_only_user(
+    session: str | None = Cookie(default=None, include_in_schema=False),
+    authorization: str | None = Header(default=None, include_in_schema=False),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """Resolve the caller from the ``session`` cookie alone, refusing a Bearer PAT.
+
+    The counterpart to :func:`get_current_user` for the one operation that must
+    not accept a token: minting a PAT. A token able to mint tokens outlives its
+    own revocation -- revoke the leaked one and the successors it issued keep
+    working -- so creating one always costs an interactive sign-in.
+
+    A presented Bearer token is refused with 403 rather than ignored, so an
+    unattended caller is told to use a service-account token instead of reading a
+    bare 401 as a bad credential.
+    """
+    if authorization and authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": "session_required",
+                "detail": (
+                    "Issuing a token requires an interactive session, not a bearer token. "
+                    "For unattended callers, issue a service-account token instead."
+                ),
+            },
+        )
+    if session:
+        user = await get_session_user(db, session)
+        if user is not None and user.is_active:
+            return user
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+
+
 def require_permission(
     permission: Permission,
 ) -> Callable[..., Coroutine[Any, Any, User]]:

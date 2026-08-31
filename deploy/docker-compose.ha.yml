@@ -148,7 +148,7 @@ services:
 
   # Single read-write Postgres endpoint -> current Patroni leader.
   pg-haproxy:
-    image: haproxy:2.9-alpine
+    image: haproxy:3.4-alpine
     restart: unless-stopped
     depends_on:
       patroni-1:

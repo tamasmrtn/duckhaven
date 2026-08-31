@@ -284,6 +284,16 @@ Which workspaces a user belongs to, and in what role.
 <user_id>
 ```
 
+## `dh agent`
+
+Compute agents you may run queries on.
+
+### `dh agent list`
+
+The agents this caller may run queries on, with their capabilities. Distinct from `dh admin agent
+list`, which needs `agents:manage` and shows every agent in the deployment; this is the list an
+analyst can actually use, and where `--agent <name>` resolves a name from.
+
 ## `dh api`
 
 Call any endpoint directly.
@@ -410,6 +420,7 @@ Detach a catalog from the workspace. The catalog itself survives.
 
 ```text
 <catalog>
+--yes/-y
 ```
 
 ### `dh catalog drop`
@@ -418,6 +429,7 @@ Drop a catalog outright, by id. Destructive.
 
 ```text
 <catalog_id>
+--yes/-y
 ```
 
 ### `dh catalog list`
@@ -507,6 +519,7 @@ Remove every edge a retired producer asserted. Requires workspace owner.
 
 ```text
 --provider
+--yes/-y
 ```
 
 ## `dh profile`
@@ -726,6 +739,7 @@ Drop a schema.
 
 ```text
 <name>
+--yes/-y
 ```
 
 ### `dh schema list`
@@ -793,6 +807,7 @@ Remove everything one provider published. Requires workspace owner.
 
 ```text
 --provider
+--yes/-y
 ```
 
 ### `dh semantic relationship`
@@ -924,6 +939,7 @@ Drop a table.
 
 ```text
 <table>
+--yes/-y
 ```
 
 ### `dh table get`
@@ -1005,6 +1021,7 @@ Delete a workspace.
 
 ```text
 <workspace>
+--yes/-y
 ```
 
 ### `dh workspace get`

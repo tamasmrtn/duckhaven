@@ -145,6 +145,30 @@ pipeline can tell bad SQL from a broken CLI or an unreachable server:
 | 6 | The query ran and failed |
 | 7 | Timed out |
 | 8 | Server unavailable |
+| 9 | A destructive command was not confirmed, so nothing happened |
+
+### Destructive commands ask first
+
+Commands that destroy data — `workspace delete`, `catalog drop`, `catalog detach`, `schema drop`,
+`table drop`, `lineage purge` and `semantic purge` — will not run unattended. At a terminal they ask,
+and the default answer is no:
+
+```sh
+$ dh table drop sales.orders
+Drop table sales.orders? [y/N]:
+```
+
+Anywhere else — a pipeline, a cron job, a CI step — there is nobody to ask, so `dh` **refuses and
+exits `9` without sending anything**. Pass `--yes` (or `-y`) to say so up front:
+
+```sh
+dh table drop sales.orders --yes
+```
+
+!!! note "Why it refuses instead of prompting"
+    Prompting in a job with no terminal would hang it on a question nobody will answer, and
+    proceeding anyway would make `--yes` decorative. Exit `9` is its own code so a script can tell
+    "the server rejected this" (`5`) from "I never sent it".
 
 ### Credentials in CI
 

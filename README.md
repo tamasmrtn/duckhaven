@@ -3,7 +3,8 @@
 > A self-hosted lakehouse for DuckDB — governed SQL worksheets, an Apache
 > Iceberg catalog, and elastic compute, on your own infrastructure.
 
-![DuckHaven demo walkthrough](docs/images/demo.mp4)
+<video src="https://github.com/user-attachments/assets/88d62bfd-c2ac-4c47-a42a-311ecf30b7da" controls width="1
+00%"></video>
 
 A data lakehouse doesn't have to mean handing your data, and your bill, to an
 enterprise vendor. Apache Iceberg brought a transactional table format and

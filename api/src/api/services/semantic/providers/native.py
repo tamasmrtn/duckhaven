@@ -67,13 +67,9 @@ from api.services.semantic.ingest import (
     CanonicalRelationship,
 )
 from api.services.semantic.model import AGGREGATIONS, TIME_GRAINS
-from api.services.semantic.providers import ProviderModels
+from api.services.semantic.providers import ProviderModels, SemanticDocumentError
 
 CARDINALITIES = ("many_to_one", "one_to_one")
-
-
-class SemanticDocumentError(ValueError):
-    """The document could not be read at all, as opposed to one entry being bad."""
 
 
 def parse_document(payload: str | bytes | dict) -> dict:

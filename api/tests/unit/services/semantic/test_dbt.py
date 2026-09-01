@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from api.services.lineage.resolve import Resolver
+from api.services.semantic.providers import SemanticDocumentError
 from api.services.semantic.providers.dbt import models_from_manifest
 
 pytestmark = pytest.mark.asyncio
@@ -275,3 +276,46 @@ async def test_two_foreign_entities_to_one_dataset_do_not_collide(manifest, reso
 
     names = [r.name for r in out.models[0].relationships]
     assert len(names) == len(set(names))
+
+
+# --- Artifacts that are not a dbt manifest ---------------------------------
+#
+# The import route reads its body as raw bytes so YAML and JSON both reach an
+# adapter unmodified, which makes posting the wrong one an easy mistake. Every
+# case below used to escape as an uncaught exception and return 500, blaming the
+# server for the client's choice of file.
+
+
+async def test_yaml_posted_to_the_dbt_provider_is_rejected_not_a_crash(resolver):
+    """The live failure: a hand-written semantic YAML sent to `.../imports/dbt`."""
+    document = "models:\n  - slug: sales\n    name: Sales\n"
+
+    with pytest.raises(SemanticDocumentError, match="Could not parse the artifact as JSON"):
+        await models_from_manifest(document, resolve=resolver)
+
+
+async def test_the_message_points_at_the_provider_that_takes_yaml(resolver):
+    """Knowing it failed is not enough; the reader needs to know where to send it."""
+    with pytest.raises(SemanticDocumentError, match="duckhaven"):
+        await models_from_manifest("models:\n  - slug: sales\n", resolve=resolver)
+
+
+async def test_unparseable_text_is_rejected(resolver):
+    with pytest.raises(SemanticDocumentError, match="Could not parse"):
+        await models_from_manifest("this is not a manifest", resolve=resolver)
+
+
+async def test_an_empty_body_is_rejected(resolver):
+    """An empty file is a real CI outcome -- `dbt parse` failed and wrote nothing."""
+    with pytest.raises(SemanticDocumentError, match="Could not parse"):
+        await models_from_manifest("", resolve=resolver)
+
+
+@pytest.mark.parametrize(
+    ("body", "kind"),
+    [("[]", "list"), ("null", "NoneType"), ('"a string"', "str"), ("42", "int")],
+)
+async def test_valid_json_that_is_not_an_object_is_rejected(body, kind, resolver):
+    """These parse cleanly and then fail on `.get`, which is the same 500 later."""
+    with pytest.raises(SemanticDocumentError, match=f"must be a JSON object, got {kind}"):
+        await models_from_manifest(body, resolve=resolver)

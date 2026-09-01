@@ -390,6 +390,10 @@ Time windows must be stated explicitly: `last_complete` (the last N complete per
 ending today), `to_date` (period start through today), or `absolute` (explicit dates, end exclusive). There is no
 default, because "last month" means a different window to different people.
 
+An artifact the chosen provider cannot read — YAML posted to `dbt`, an empty file, anything that is not a JSON object
+where a manifest belongs — comes back as **422** naming the format that provider expects, not a 500. Which matters to a
+pipeline: a 5xx reads as "retry me", and a wrong file will never import no matter how often it is sent.
+
 ## Lineage
 
 Read the [lineage](../concepts/lineage.md) graph around a table, and import lineage produced elsewhere.

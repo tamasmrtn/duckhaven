@@ -5,7 +5,7 @@
         polaris-dev polaris-dev-s3 polaris-dev-down \
         localstack-dev localstack-dev-down \
         idp-dev idp-dev-down \
-        lint format docs-index \
+        lint format docs-index eval-synth \
         migrate migrate-new migrate-down \
         compose-up compose-down compose-logs compose-pull \
         clean
@@ -226,6 +226,16 @@ format:
 # adding, removing or renaming a docs page; pre-commit and CI check for drift.
 docs-index:
 	uv run --package duckhaven-api python -m api.services.assistant.knowledge.generate
+
+# ── Assistant evals ───────────────────────────────────────────────────────────
+# Tier 1 (deterministic, free) runs inside `make test-api`; the retrieval half
+# needs Postgres and runs inside `make test-integration-api`. Neither needs a
+# provider key. Only synthesis costs money, and it is a deliberate act: it drafts
+# candidate cases for a human to promote, never the golden set itself.
+eval-synth:
+	@[ -n "$$ASSISTANT_EVAL_API_KEY" ] || { echo "ASSISTANT_EVAL_API_KEY not set; synthesis calls a model"; exit 1; }
+	ANTHROPIC_API_KEY=$$ASSISTANT_EVAL_API_KEY \
+	  uv run --package duckhaven-api python -m tests.evals.synth $(ARGS)
 
 # ── Database migrations ───────────────────────────────────────────────────────
 migrate:

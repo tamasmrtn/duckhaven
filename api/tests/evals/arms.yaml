@@ -1,0 +1,43 @@
+# Named configurations of the assistant, for the harness to run.
+#
+# An arm is what makes a comparison possible from one codebase: run the same
+# cases under two of these and you have the answer to "did that change help?".
+# Arms configure the real product switches, so an arm can only describe a state
+# the deployment can actually be in.
+#
+#   make eval-compare ARM_A=with-docs ARM_B=baseline
+
+# The assistant as it was before issue #241: no product knowledge, no page
+# index, no documentation tools. The control arm for the whole feature.
+baseline:
+  docs_enabled: false
+  workspace:
+    semantic_summary: "  - sales (12 metrics) — Orders and revenue."
+    can_write: false
+
+# The assistant as shipped. Same workspace, so the only difference between the
+# two arms is the knowledge — which is what makes the comparison mean anything.
+with-docs:
+  docs_enabled: true
+  workspace:
+    semantic_summary: "  - sales (12 metrics) — Orders and revenue."
+    can_write: false
+
+# Every conditional block on at once. Not a comparison arm — it exists so the
+# prompt-budget ceiling is measured against the largest prompt the product can
+# actually produce, rather than the smallest.
+everything:
+  docs_enabled: true
+  workspace:
+    semantic_summary: "  - sales (12 metrics) — Orders and revenue."
+    storage_kinds: [s3, adls_gen2]
+    elastic_enabled: true
+    agent_count: 3
+    can_write: true
+
+# "Is the cheap model good enough here?" — the question this harness should be
+# able to answer without being rewritten. Inherits with-docs' configuration and
+# changes only the model.
+cheap-model:
+  inherits: with-docs
+  model: "anthropic:claude-haiku-4-5-20251001"

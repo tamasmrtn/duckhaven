@@ -335,3 +335,172 @@ async def test_ordinals_increment_across_turns(db_session, conversation):
     history = await load_history(db_session, conversation.id)
     transcript = render_transcript(history)
     assert [i["text"] for i in transcript] == ["one", "first", "two", "second"]
+
+
+async def _stamp(db_session, conversation, base=None):
+    """Give every row of this conversation an explicit created_at.
+
+    Required on SQLite, not merely tidy: ``CURRENT_TIMESTAMP`` renders without
+    microseconds while SQLAlchemy binds comparison values with them, so a
+    server-defaulted timestamp never satisfies the window query's ``>=``. Postgres
+    stores real timestamptz and gives every row in a transaction the same
+    ``now()``, so this is a test-harness concern only.
+    """
+    base = base or datetime(2026, 1, 1, tzinfo=UTC)
+    messages = (
+        (
+            await db_session.execute(
+                select(AssistantMessage).where(AssistantMessage.conversation_id == conversation.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for m in messages:
+        m.created_at = base + timedelta(minutes=m.ordinal)
+    calls = (
+        (
+            await db_session.execute(
+                select(AssistantToolCall).where(
+                    AssistantToolCall.conversation_id == conversation.id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for c in calls:
+        c.created_at = base
+    await db_session.commit()
+    return base
+
+
+async def test_read_pages_are_cited_on_the_turn_that_read_them(db_session, conversation):
+    """Same timestamp-window attribution as SQL, and the same trap: without the
+    windowing every citation would pile onto one answer."""
+    await save_turn(
+        db_session,
+        conversation,
+        new_messages_json=_turn_json("how does time travel work?", "Use the AT clause."),
+        usage=RunUsage(input_tokens=1, output_tokens=1),
+        records={
+            "c1": ToolCallRecord(
+                tool="read_doc_page",
+                args={"path": "guides/snapshots-time-travel.md"},
+                status="ok",
+            )
+        },
+    )
+    await save_turn(
+        db_session,
+        conversation,
+        new_messages_json=_turn_json("what statements are rejected?", "ATTACH and INSTALL."),
+        usage=RunUsage(input_tokens=1, output_tokens=1),
+        records={
+            "c2": ToolCallRecord(
+                tool="read_doc_page", args={"path": "reference/sql-support.md"}, status="ok"
+            )
+        },
+    )
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    messages = (
+        (
+            await db_session.execute(
+                select(AssistantMessage).where(AssistantMessage.conversation_id == conversation.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for m in messages:
+        m.created_at = base if m.ordinal == 0 else base + timedelta(minutes=1)
+    calls = (
+        (
+            await db_session.execute(
+                select(AssistantToolCall).where(
+                    AssistantToolCall.conversation_id == conversation.id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for c in calls:
+        c.created_at = base if "snapshots" in c.args["path"] else base + timedelta(minutes=1)
+    await db_session.commit()
+
+    by_text = {i["text"]: i for i in await render_transcript_with_sql(db_session, conversation.id)}
+
+    assert [s["path"] for s in by_text["Use the AT clause."]["sources"]] == [
+        "guides/snapshots-time-travel.md"
+    ]
+    assert [s["path"] for s in by_text["ATTACH and INSTALL."]["sources"]] == [
+        "reference/sql-support.md"
+    ]
+    # A user line is never a citation, and neither is a turn that read nothing.
+    assert by_text["how does time travel work?"]["sources"] is None
+
+
+async def test_a_citation_carries_the_page_title_and_a_pinned_url(db_session, conversation):
+    """The chip should read the way a reader recognises the page, and link to the
+    version this build shipped rather than to whatever the site says today."""
+    await save_turn(
+        db_session,
+        conversation,
+        new_messages_json=_turn_json("q", "a"),
+        usage=RunUsage(input_tokens=1, output_tokens=1),
+        records={
+            "c1": ToolCallRecord(
+                tool="read_doc_page", args={"path": "reference/sql-support.md"}, status="ok"
+            )
+        },
+    )
+
+    await _stamp(db_session, conversation)
+
+    items = await render_transcript_with_sql(db_session, conversation.id)
+    source = next(i for i in items if i["role"] == "assistant")["sources"][0]
+
+    assert source["title"] == "SQL support"
+    assert source["url"].endswith("/reference/sql-support/")
+
+
+async def test_searching_without_reading_cites_nothing(db_session, conversation):
+    """A search records its query, not its results. Citing what was searched
+    would credit the answer to pages the assistant may never have read."""
+    await save_turn(
+        db_session,
+        conversation,
+        new_messages_json=_turn_json("q", "a"),
+        usage=RunUsage(input_tokens=1, output_tokens=1),
+        records={"c1": ToolCallRecord(tool="search_docs", args={"query": "time travel"})},
+    )
+
+    await _stamp(db_session, conversation)
+
+    items = await render_transcript_with_sql(db_session, conversation.id)
+
+    assert next(i for i in items if i["role"] == "assistant")["sources"] is None
+
+
+async def test_a_page_read_twice_is_cited_once(db_session, conversation):
+    await save_turn(
+        db_session,
+        conversation,
+        new_messages_json=_turn_json("q", "a"),
+        usage=RunUsage(input_tokens=1, output_tokens=1),
+        records={
+            "c1": ToolCallRecord(
+                tool="read_doc_page", args={"path": "reference/sql-support.md"}, status="ok"
+            ),
+            "c2": ToolCallRecord(
+                tool="read_doc_page", args={"path": "reference/sql-support.md"}, status="ok"
+            ),
+        },
+    )
+
+    await _stamp(db_session, conversation)
+
+    items = await render_transcript_with_sql(db_session, conversation.id)
+
+    assert len(next(i for i in items if i["role"] == "assistant")["sources"]) == 1

@@ -245,6 +245,7 @@ supplied here or via the provider's own standard environment variable (`ANTHROPI
 | `ASSISTANT_DOCS_ENABLED` | `true` | Whether the assistant knows what DuckHaven is — the curated [product-knowledge section](../concepts/assistant.md#product-knowledge) and page index in its instructions, plus the `read_doc_page` tool. Set `false` to restore exactly the instructions and tool set it had before, at the cost of an assistant that answers product questions from general knowledge of other platforms. |
 | `ASSISTANT_DOCS_DIR` | `/app/docs` | Where the documentation pages live. The image copies `docs/` here; point it at the repository's `docs/` when running from a source checkout. If the directory is absent the assistant simply reports that documentation is unavailable rather than failing a turn. |
 | `ASSISTANT_DOCS_MAX_PAGE_CHARS` | `20000` | Largest page the assistant reads in one call (~5k tokens). Three pages exceed it — Architecture, Configuration, and REST API — and come back truncated with a link to the full page. |
+| `ASSISTANT_DOCS_SEARCH_LIMIT` | `5` | Default number of pages `search_docs` returns. The assistant may ask for between 1 and 10; anything outside that is clamped. |
 | `DOCS_SITE_URL` | `https://tamasmrtn.github.io/duckhaven` | Public documentation site, used when the assistant links a page it read. Change it if you host the docs yourself. |
 
 ### Observability

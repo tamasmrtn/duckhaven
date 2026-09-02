@@ -119,7 +119,12 @@ export const assistantHandlers = [
         prompt: string;
         selection_sql?: string | null;
       };
-      conv.transcript.push({ role: "user", text: prompt, sql: null });
+      conv.transcript.push({
+        role: "user",
+        text: prompt,
+        sql: null,
+        sources: null,
+      });
 
       // A stream that emits a token then never closes, so the turn stays
       // "streaming" until the client aborts it (exercises the Stop button).
@@ -179,6 +184,7 @@ export const assistantHandlers = [
           role: "assistant",
           text: "I updated two parts of your query.",
           sql: proposed,
+          sources: null,
         });
         return sse([
           {
@@ -203,6 +209,7 @@ export const assistantHandlers = [
           role: "assistant",
           text: "I proposed a query in your editor.",
           sql: proposed,
+          sources: null,
         });
         return sse([
           {
@@ -221,7 +228,12 @@ export const assistantHandlers = [
       }
 
       const answer = "Here is what I found.";
-      conv.transcript.push({ role: "assistant", text: answer, sql: null });
+      conv.transcript.push({
+        role: "assistant",
+        text: answer,
+        sql: null,
+        sources: null,
+      });
       return sse([
         { type: "token", text: "Here is " },
         { type: "token", text: "what I found." },
@@ -243,7 +255,12 @@ export const assistantHandlers = [
       const answer = approved
         ? "Done — the write ran."
         : "Okay, I won't run it.";
-      conv.transcript.push({ role: "assistant", text: answer, sql: null });
+      conv.transcript.push({
+        role: "assistant",
+        text: answer,
+        sql: null,
+        sources: null,
+      });
       return sse([
         { type: "token", text: answer },
         {

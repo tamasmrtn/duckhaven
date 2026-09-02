@@ -17,11 +17,22 @@ export interface Conversation {
   updated_at: string;
 }
 
+export interface DocSource {
+  path: string;
+  title: string;
+  // The published page for the version this deployment runs — not the latest
+  // docs, so the link shows what the assistant actually read. Null when the
+  // page is no longer in the shipped index.
+  url: string | null;
+}
+
 export interface TranscriptItem {
   role: "user" | "assistant";
   text: string;
   // The SQL this turn ran or proposed, if any (attributed server-side).
   sql: string | null;
+  // Documentation pages this turn opened. Null on most turns.
+  sources: DocSource[] | null;
 }
 
 export interface AssistantToolCallTableRef {

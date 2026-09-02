@@ -367,3 +367,35 @@ def test_a_run_with_nothing_to_score_reports_none_rather_than_zero():
 
     assert scores["tool_choice"] is None
     assert scores["refusal_rate_on_negative_cases"] is None
+
+
+# ── Citations ─────────────────────────────────────────────────────────────────
+
+
+def test_citation_presence_rewards_a_real_path():
+    indexed = set(load_index().paths)
+
+    assert metrics.citation_presence("See reference/sql-support.md.", indexed) == 1.0
+
+
+def test_an_invented_path_scores_zero_rather_than_being_ignored():
+    """The user sees citations as links, so a path that does not exist is a
+    broken link and a small confabulation of its own."""
+    indexed = set(load_index().paths)
+
+    assert metrics.citation_presence("See reference/made-up-page.md.", indexed) == 0.0
+
+
+def test_an_answer_that_cites_nothing_is_unscored_rather_than_failed():
+    """Not every product answer needs a citation, and scoring those zero would
+    push the assistant towards citing something for the sake of it."""
+    assert metrics.citation_presence("DuckHaven does not expire snapshots.", set()) is None
+
+
+def test_cited_paths_finds_every_path_named():
+    answer = "See reference/sql-support.md and guides/snapshots-time-travel.md."
+
+    assert metrics.cited_paths(answer) == {
+        "reference/sql-support.md",
+        "guides/snapshots-time-travel.md",
+    }

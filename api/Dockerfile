@@ -59,6 +59,13 @@ COPY --from=builder /app/.venv /app/.venv
 # The built SPA, served by FastAPI at / (see api.main, settings.static_dir).
 COPY --from=ui-builder /web/dist /app/static
 
+# The documentation corpus, read by the assistant's read_doc_page tool (see
+# settings.assistant_docs_dir). Only the Markdown travels — docs/images is
+# excluded in .dockerignore, which keeps ~9 MB of screenshots and the demo video
+# out of the runtime layer. The pages are the same files mkdocs builds the site
+# from, so there is no second copy to drift.
+COPY docs /app/docs
+
 # Alembic migrations applied at container start by api-entrypoint.sh.
 COPY api/alembic.ini /app/alembic.ini
 COPY api/alembic /app/alembic

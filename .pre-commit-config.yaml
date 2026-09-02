@@ -32,6 +32,17 @@ repos:
 
   - repo: local
     hooks:
+      # The assistant's page index is generated from docs/ and mkdocs.yml. A page
+      # added, renamed or removed without regenerating leaves the assistant
+      # pointing at a path that no longer exists — the failure that let
+      # docs/llms.txt drift to listing 31 of 69 pages before this was automated.
+      - id: docs-index-drift
+        name: docs index is current
+        language: system
+        entry: bash -c 'make docs-index >/dev/null && git diff --exit-code -- api/src/api/services/assistant/knowledge/docs_index.yaml docs/llms.txt || { echo "The docs index was stale and has been regenerated in your working tree. Review the changes and git add them, then commit again."; exit 1; }'
+        files: ^(docs/.*\.md|mkdocs\.yml|api/src/api/services/assistant/knowledge/generate\.py)$
+        pass_filenames: false
+
       - id: prettier
         name: Prettier
         language: system

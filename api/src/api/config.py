@@ -418,6 +418,18 @@ class Settings(BaseSettings):
     # the complete revert, with no rollback needed — at the cost of an assistant
     # that answers product questions from general knowledge of other platforms.
     assistant_docs_enabled: bool = True
+    # Where the documentation pages live. The image copies docs/ to /app/docs;
+    # point this at the repo's docs/ when running from a source checkout. Same
+    # shape as static_dir above, and absent simply disables the docs tools rather
+    # than failing a turn.
+    assistant_docs_dir: Path = Path("/app/docs")
+    # Cap on a single page returned by read_doc_page (~5k tokens). Three indexed
+    # pages exceed it — architecture, configuration and rest-api — and come back
+    # truncated with a link to the full page.
+    assistant_docs_max_page_chars: int = 20_000
+    # Public documentation site, used to cite a page the assistant read. Pages
+    # are cited at the version this build shipped with, not at latest.
+    docs_site_url: str = "https://tamasmrtn.github.io/duckhaven"
 
     # ── OIDC SSO (Part A) ─────────────────────────────────────────────────────
     # When enabled, the login page shows a "Sign in with SSO" button and the

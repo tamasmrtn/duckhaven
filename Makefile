@@ -5,7 +5,7 @@
         polaris-dev polaris-dev-s3 polaris-dev-down \
         localstack-dev localstack-dev-down \
         idp-dev idp-dev-down \
-        lint format docs-index eval-synth \
+        lint format docs-index eval-synth eval-judged eval-compare \
         migrate migrate-new migrate-down \
         compose-up compose-down compose-logs compose-pull \
         clean
@@ -236,6 +236,22 @@ eval-synth:
 	@[ -n "$$ASSISTANT_EVAL_API_KEY" ] || { echo "ASSISTANT_EVAL_API_KEY not set; synthesis calls a model"; exit 1; }
 	ANTHROPIC_API_KEY=$$ASSISTANT_EVAL_API_KEY \
 	  uv run --package duckhaven-api python -m tests.evals.synth $(ARGS)
+
+# Tier 2, absolute: faithfulness and answer relevancy against thresholds. This is
+# the regression and reporting mode. ~$3.40 per run at 30 cases; see
+# docs/developer/testing.md before enabling it on a schedule.
+eval-judged:
+	@[ -n "$$ASSISTANT_EVAL_API_KEY" ] || { echo "ASSISTANT_EVAL_API_KEY not set; tier 2 calls a model"; exit 1; }
+	ASSISTANT_EVAL_ARM=$(or $(ARM),with-docs) \
+	  uv run --package duckhaven-api pytest api/tests/evals/test_tier2_judged.py -v -s
+
+# Tier 2, pairwise: which of two arms is better, judged in both orders. This is
+# the mode that answers "did my change help?". ~$6.40 per run.
+eval-compare:
+	@[ -n "$$ASSISTANT_EVAL_API_KEY" ] || { echo "ASSISTANT_EVAL_API_KEY not set; tier 2 calls a model"; exit 1; }
+	ANTHROPIC_API_KEY=$$ASSISTANT_EVAL_API_KEY \
+	  uv run --package duckhaven-api python -m tests.evals.compare \
+	    --a=$(or $(ARM_A),with-docs) --b=$(or $(ARM_B),baseline)
 
 # ── Database migrations ───────────────────────────────────────────────────────
 migrate:

@@ -22,6 +22,9 @@ the assistant can see and do with the same grants they already use for people.
   suggestion (it never edits or runs on its own). If your worksheet has a non-empty text selection when you ask, the
   proposed edit is scoped to just that selection instead of rewriting the whole worksheet.
 - **Explain** — summarise what it found and show the SQL it ran.
+- **Answer questions about DuckHaven itself** — which SQL statements are allowed, how to query a table as of a past
+  snapshot, why `DESCRIBE` rather than `information_schema.columns` reads an Iceberg table's columns, and what
+  DuckHaven does not do. See [Product knowledge](#product-knowledge) below.
 - **Ask when unsure** — if a request is missing something it needs to answer correctly (the grain, a time window,
   which table), it asks a short clarifying question rather than guessing.
 
@@ -107,6 +110,39 @@ The assistant is model-agnostic: the provider and model are deployment configura
 supports Anthropic, OpenAI, and Mistral natively, and any OpenAI-compatible endpoint (for example a self-hosted Ollama
 or vLLM server) via a base URL — so a fully self-hosted, keyless deployment is possible. See
 [Configuration](../reference/configuration.md#ai-assistant) for the settings.
+
+## Product knowledge
+
+The assistant is told what DuckHaven is, not just how to operate it. Its instructions carry a curated summary of the
+platform's own behaviour — the DuckDB-on-Iceberg dialect and how to address tables across catalogs, the read-only
+time-travel syntax, why an Iceberg table's columns come from `DESCRIBE` rather than `information_schema.columns`, which
+statements the [SQL guard](../reference/sql-support.md) rejects, and which result values lose precision in transit.
+
+The point is less that it can recite these than that it acts on them. Without the `DESCRIBE` rule it writes
+`information_schema.columns` and gets a placeholder row back; without the allowlist it proposes statements the API
+rejects before a compute agent ever sees them.
+
+It is also told to answer these questions from that summary rather than from general knowledge of other data
+platforms, to say plainly when it does not know instead of guessing, and to describe anything experimental or
+unshipped in those words rather than as available. DuckHaven differs from Snowflake and Databricks in ways that
+matter, and a confident wrong answer about one of those differences is worse than no answer.
+
+!!! note "A summary, not the documentation"
+    This is a fixed, curated section — roughly a page of the highest-value facts. The assistant cannot yet search or
+    quote the documentation set, so it can tell you what the dialect supports but not walk you through a specific
+    guide. Set `ASSISTANT_DOCS_ENABLED=false` to remove the section entirely.
+
+## What it knows about your workspace
+
+The assistant's instructions are assembled per turn from what the workspace actually has, so it is told about a
+feature only where that feature is in use. A workspace with published [semantic models](semantic-layer.md) is told to
+prefer them; one whose catalogs sit on [external storage](storage-backends.md) is told that credentials are vended
+per query and never static; a deployment running [elastic compute](elastic-compute.md) is told that a query may wait
+while an agent starts; and a workspace with more than one [agent](agents.md) is told a worksheet chooses between them.
+
+A workspace using none of these is told nothing about any of them — not that they are switched off. That is
+deliberate: the instructions stay short, and an assistant that has never heard of a feature cannot offer it to
+someone who does not have it.
 
 ## Semantic grounding
 

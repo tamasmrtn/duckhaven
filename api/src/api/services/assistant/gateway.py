@@ -137,6 +137,22 @@ class Gateway:
         resp = await self._get(f"/workspaces/{self._ws}/catalogs")
         return [{"slug": c["slug"], "name": c.get("name")} for c in resp.json()]
 
+    async def storage_kinds(self) -> tuple[str, ...]:
+        """Distinct storage-backend kinds behind this workspace's catalogs.
+
+        Its own call rather than a wider ``list_catalogs``: that one is a tool
+        result the model reads on most turns, and the backend kind is prompt
+        context, not something worth spending tokens on every time it browses.
+        """
+        resp = await self._get(f"/workspaces/{self._ws}/catalogs")
+        kinds = {c.get("storage_backend_kind") for c in resp.json()}
+        return tuple(sorted(k for k in kinds if k))
+
+    async def count_agents(self) -> int:
+        """How many compute agents this workspace can dispatch to."""
+        resp = await self._get("/agents")
+        return len(resp.json())
+
     async def list_schemas(self, catalog: str) -> list[str]:
         resp = await self._get(f"/workspaces/{self._ws}/catalogs/{catalog}/schemas")
         return [s["name"] for s in resp.json()]

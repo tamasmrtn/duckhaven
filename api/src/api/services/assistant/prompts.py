@@ -1,20 +1,24 @@
 """System instructions for the assistant.
 
-Built per run rather than held as a constant, because whether this workspace has
-curated semantic definitions changes what the assistant should do first — and the
-agent object is process-wide, shared across every workspace on the replica, so the
-difference cannot live in a module-level string.
+Built per run rather than held as a constant, because what this workspace has —
+curated semantic definitions, external storage, elastic compute, more than one
+agent — changes what the assistant should do first, and the agent object is
+process-wide, shared across every workspace on the replica, so the difference
+cannot live in a module-level string.
 
-The semantic paragraph is **omitted entirely** when a workspace has published
-nothing. That is the deployment-safety property: a DuckHaven that never defines a
-metric gets byte-for-byte the instructions it had before the semantic layer
-existed, so nothing about its assistant changes.
+Every conditional paragraph is **omitted entirely** when its feature is absent.
+That is the deployment-safety property, and it is the rule for all of them, not
+just the semantic one: a workspace without a feature gets no text about it — not
+a sentence saying the feature is off. A DuckHaven that defines no metric, uses
+the bundled object store, runs static agents and has one of them gets exactly
+``BASE_PROMPT + PRODUCT_PROMPT`` and nothing else.
 """
 
 from __future__ import annotations
 
 from pydantic_ai import RunContext
 
+from api.config import settings
 from api.services.assistant.deps import AssistantDeps
 
 BASE_PROMPT = """\
@@ -58,6 +62,53 @@ Governance you must respect:
 Be concise. Explain your findings and the SQL you ran."""
 
 
+# What DuckHaven *is*, as opposed to how to work in it. Resident rather than
+# fetched because each of these changes what the assistant does on an ordinary
+# turn: without the DESCRIBE rule it writes information_schema.columns and gets a
+# placeholder row back, and without the allowlist it proposes statements the API
+# rejects before an agent ever sees them. The deeper reference — the full
+# degraded-type table, the worked information_schema examples — is documentation,
+# not instruction, and is deliberately left out.
+PRODUCT_PROMPT = """\
+
+About DuckHaven, the product you run inside:
+- Queries run on DuckDB against Apache Iceberg tables in Polaris REST catalogs.
+  The dialect is DuckDB's. Address tables as catalog.schema.table; an unqualified
+  schema.table resolves against the worksheet's active catalog.
+- Get a table's columns and types with describe_table, or DESCRIBE in SQL. Do not
+  use information_schema.columns: for Iceberg tables it returns one placeholder
+  row (column "__", type UNKNOWN) instead of the real columns, and inside a SQL
+  session it is worse than empty — correct for tables already touched in that
+  session, placeholders for the rest. This is a known DuckDB limitation, not
+  something an upgrade will fix. information_schema.tables and .schemata do work
+  for listing, but are rejected outright in any workspace holding a catalog
+  attached in scoped mode.
+- Time travel is read-only, via DuckDB's AT clause:
+    SELECT * FROM analytics.events AT (VERSION => 7287998166701990000);
+    SELECT * FROM analytics.events AT (TIMESTAMP => '2026-05-01 00:00:00');
+  Snapshot history and file details come from iceberg_snapshots(...) and
+  iceberg_metadata(...). DuckHaven does not expire, roll back, or compact
+  snapshots.
+- Statements outside the allowlist are rejected before reaching an agent:
+  ATTACH/DETACH, COPY/EXPORT, INSTALL/LOAD, SET, CALL, EXPLAIN, VACUUM,
+  transaction control, and the PRAGMA <name> = <value> form. DESCRIBE, SHOW,
+  SUMMARIZE and the row-returning PRAGMAs are allowed and return a result grid.
+- Values you receive are not always exact: DECIMAL and HUGEINT arrive as JSON
+  numbers that have passed through a float, so never present them as exact;
+  BLOB arrives as hex text and INTERVAL as an ISO-8601 duration. The reported
+  column type is always the query's real type.
+- On Iceberg, TRUNCATE is not a cheap metadata operation — it writes delete
+  files proportional to the table's size, exactly as the equivalent DELETE does.
+
+Answering questions about DuckHaven itself:
+- Answer from this section, never from general knowledge of other data platforms
+  — DuckHaven differs from them in ways that matter.
+- If you do not know, say so and say what you would need to check. Never infer
+  that a feature exists because comparable products have it.
+- Where something is experimental, unshipped, or a roadmap item, say so in those
+  words rather than describing it as available."""
+
+
 SEMANTIC_PROMPT = """\
 
 This workspace has curated semantic models — agreed definitions of what its
@@ -86,17 +137,82 @@ business terms mean:
   for it — a metric that exists and is broken needs repairing, not reinventing."""
 
 
+STORAGE_PROMPT = """\
+
+This workspace reaches external object storage ({kinds}). Credentials are never
+static: Polaris vends short-lived, connection-scoped credentials per query — an
+AWS role assumed via STS, or an Azure SAS minted through a consented Entra app.
+If storage access fails, say the vended credential or the trust configuration is
+at fault; never suggest putting keys in a query."""
+
+
+ELASTIC_PROMPT = """\
+
+This deployment has elastic compute: agents are provisioned on demand and
+terminated when idle. A query may wait while one starts. If the user asks why a
+query is queued or why an agent went away, that is expected behaviour rather
+than a fault."""
+
+
+FLEET_PROMPT = """\
+
+{n} compute agents are available; a worksheet chooses one per query. Concurrency
+is set per agent with SET duckhaven_concurrency."""
+
+
+# The bundled MinIO object store is the default and needs no explanation; only a
+# backend whose credentials are vended from somewhere else changes what the
+# assistant should say when access fails.
+_EXTERNAL_STORAGE = frozenset({"s3", "adls_gen2"})
+
+
 # The static prompt, kept as the exact text used when a workspace has no semantic
 # models. Imported by tests that assert the no-semantics path is unchanged.
 SYSTEM_PROMPT = BASE_PROMPT
 
 
-def build_instructions(ctx: RunContext[AssistantDeps]) -> str:
-    """Assemble this run's instructions from the workspace's semantic summary."""
-    summary = getattr(ctx.deps, "semantic_summary", None)
+def _semantic_block(deps: AssistantDeps) -> str | None:
+    summary = getattr(deps, "semantic_summary", None)
     if not summary:
-        return BASE_PROMPT
-    return BASE_PROMPT + "\n" + SEMANTIC_PROMPT.format(models=summary)
+        return None
+    return SEMANTIC_PROMPT.format(models=summary)
+
+
+def _storage_block(deps: AssistantDeps) -> str | None:
+    kinds = sorted(set(deps.storage_kinds or ()) & _EXTERNAL_STORAGE)
+    if not kinds:
+        return None
+    return STORAGE_PROMPT.format(kinds=", ".join(kinds))
+
+
+def _elastic_block(deps: AssistantDeps) -> str | None:
+    return ELASTIC_PROMPT if deps.elastic_enabled else None
+
+
+def _fleet_block(deps: AssistantDeps) -> str | None:
+    # One agent is the ordinary case and needs no explanation — there is nothing
+    # for a worksheet to choose between.
+    if not deps.agent_count or deps.agent_count < 2:
+        return None
+    return FLEET_PROMPT.format(n=deps.agent_count)
+
+
+_INJECTORS = (_semantic_block, _storage_block, _elastic_block, _fleet_block)
+
+
+def build_instructions(ctx: RunContext[AssistantDeps]) -> str:
+    """Assemble this run's instructions from what this workspace actually has.
+
+    Order is fixed rather than data-dependent, so the same workspace produces a
+    byte-identical prompt on every turn — a model that sees its instructions
+    reshuffled between turns is needlessly hard to debug, and a stable string is
+    what makes the prompt cacheable.
+    """
+    parts = [BASE_PROMPT]
+    if settings.assistant_docs_enabled:
+        parts.append(PRODUCT_PROMPT)
+    parts.extend(block for render in _INJECTORS if (block := render(ctx.deps)))
+    return "\n".join(parts)
 
 
 def format_summary(models: list[dict]) -> str:

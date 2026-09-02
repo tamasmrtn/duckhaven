@@ -412,6 +412,12 @@ class Settings(BaseSettings):
     # Include prompt/SQL/result content on assistant trace spans (gen_ai semconv).
     # Off means spans keep roles, token usage, tool names, timing, and status only.
     assistant_trace_include_content: bool = True
+    # Whether the assistant knows what DuckHaven is: the curated product-knowledge
+    # section in its instructions (SQL dialect, time travel, the DESCRIBE rule,
+    # known limitations). Off restores exactly the instructions it had before —
+    # the complete revert, with no rollback needed — at the cost of an assistant
+    # that answers product questions from general knowledge of other platforms.
+    assistant_docs_enabled: bool = True
 
     # ── OIDC SSO (Part A) ─────────────────────────────────────────────────────
     # When enabled, the login page shows a "Sign in with SSO" button and the

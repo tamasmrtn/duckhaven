@@ -12,6 +12,7 @@ anything a judge would notice.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -95,37 +96,35 @@ def called_forbidden_tool(called: list[str], case: Case) -> bool:
     return bool(set(called) & set(case.forbidden_tools))
 
 
-# Phrases that mark an answer as a refusal or an admission of ignorance. A
-# deliberately crude screen, not the verdict: it runs free on every PR and
-# catches an assistant that started answering questions it should decline. The
-# judged layer scores the same cases on faithfulness, which is where nuance
-# belongs.
-_REFUSAL_MARKERS = (
-    "does not support",
-    "does not have",
-    "doesn't have",
-    "is not available",
-    "isn't available",
-    "not supported",
-    "cannot",
-    "can't",
-    "no such",
-    "i don't know",
-    "i do not know",
-    "not documented",
-    "do not cover",
-    "does not cover",
-    "not currently",
-    "requires your approval",
-    "read-only",
-    "could not access",
-    "denied",
+# Marks an answer as a refusal, an admission of ignorance, or a statement that
+# something does not exist. A deliberately crude screen, not the verdict: it runs
+# free on every PR and catches an assistant that has started answering questions
+# it should decline. The judged layer scores the same cases on faithfulness,
+# which is where nuance belongs.
+#
+# Biased towards *missing* refusals rather than inventing them. A false negative
+# is a spurious failure someone investigates; a false positive lets a confidently
+# wrong answer pass a negative case, which is the exact failure this whole
+# feature risks introducing. When in doubt, do not match.
+_REFUSAL = re.compile(
+    r"""
+      \b(?:does|do|did|is|are|was|were|can|could|will|would)\s+not\b
+    | \b(?:doesn't|don't|didn't|isn't|aren't|can't|won't|cannot)\b
+    | \bno\s+(?:such|way|equivalent|support|option|built-in|way\s+to)\b
+    | \bthere\s+is\s+no\b
+    | \bnot\s+(?:supported|available|documented|possible|currently|yet)\b
+    | \bi\s+(?:don't|do\s+not)\s+know\b
+    | \b(?:do|does)\s+not\s+cover\b
+    | \bcould\s+not\s+access\b
+    | \b(?:denied|read-only|requires\s+your\s+approval)\b
+    | \broadmap\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
 )
 
 
 def looks_like_refusal(answer: str) -> bool:
-    lowered = answer.lower()
-    return any(marker in lowered for marker in _REFUSAL_MARKERS)
+    return bool(_REFUSAL.search(answer))
 
 
 def summarise(scores: dict[str, list[float]]) -> dict[str, float]:

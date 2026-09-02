@@ -11,9 +11,12 @@ notice them growing.
 import uuid
 from types import SimpleNamespace
 
+from api.services.assistant import prompts
 from api.services.assistant.deps import AssistantDeps
+from api.services.assistant.knowledge.loader import load_index
 from api.services.assistant.prompts import (
     BASE_PROMPT,
+    DOCS_INDEX_PROMPT,
     ELASTIC_PROMPT,
     FLEET_PROMPT,
     MAX_SUMMARY_LINE_CHARS,
@@ -31,6 +34,10 @@ from api.services.assistant.prompts import (
 WORST_CASE_SUMMARY = format_summary(
     [{"model": "m" * 200, "metrics": 999, "description": "d" * 500}] * (MAX_SUMMARY_MODELS + 10)
 )
+
+
+def _raise(*_args, **_kwargs):
+    raise FileNotFoundError("docs_index.yaml did not ship")
 
 
 def ctx(**kwargs) -> SimpleNamespace:
@@ -74,14 +81,46 @@ def test_the_rejected_statement_list_names_its_one_exception():
 # ── The baseline, and staying out of the way ──────────────────────────────────
 
 
-def test_a_bare_workspace_gets_base_plus_product_and_nothing_else():
+def test_a_bare_workspace_gets_base_product_and_index_and_nothing_else():
     """The anti-leak snapshot: equality fails if any injector fires uninvited."""
-    assert build_instructions(ctx()) == BASE_PROMPT + "\n" + PRODUCT_PROMPT
+    expected = "\n".join(
+        [BASE_PROMPT, PRODUCT_PROMPT, DOCS_INDEX_PROMPT.format(index=load_index().prompt_block())]
+    )
+
+    assert build_instructions(ctx()) == expected
 
 
 def test_disabling_product_knowledge_restores_the_original_instructions():
     """The complete revert, with no rollback: byte-for-byte the prior prompt."""
     assert build_instructions(ctx(docs_enabled=False)) == BASE_PROMPT
+
+
+def test_the_resident_index_lists_paths_the_read_tool_accepts():
+    """The index is the model's menu; a path on it that the tool rejects is a
+    dead end the model cannot diagnose."""
+    instructions = build_instructions(ctx())
+
+    for page in load_index().pages:
+        assert page.path in instructions
+
+
+def test_the_resident_index_omits_summaries():
+    """Titles route; summaries are the useful half of a search result. Resident
+    they would cost ~2,500 tokens instead of ~800."""
+    instructions = build_instructions(ctx())
+    index = load_index()
+
+    assert index.pages[0].title in instructions
+    assert index.pages[0].summary not in instructions
+
+
+def test_a_missing_index_degrades_rather_than_fails(monkeypatch):
+    """A packaging bug should cost the assistant its documentation, not the turn."""
+    monkeypatch.setattr(prompts, "load_index", _raise)
+
+    instructions = build_instructions(ctx())
+
+    assert instructions == BASE_PROMPT + "\n" + PRODUCT_PROMPT
 
 
 def test_a_bare_workspace_is_told_nothing_about_features_it_lacks():
@@ -185,7 +224,9 @@ def test_every_block_is_separated_by_a_blank_line():
 
 def test_each_resident_block_is_within_budget():
     assert len(BASE_PROMPT) <= 2_600
-    assert len(PRODUCT_PROMPT) <= 2_800
+    assert len(PRODUCT_PROMPT) <= 3_000
+    # ~50 chars per page, so this allows roughly eight more before a bump.
+    assert len(DOCS_INDEX_PROMPT.format(index=load_index().prompt_block())) <= 3_800
 
 
 def test_the_conditional_blocks_stay_small():
@@ -202,9 +243,9 @@ def test_the_semantic_summary_is_bounded_however_the_workspace_is_named():
 
 
 def test_the_assembled_instructions_are_within_budget():
-    """~1,250 tokens for a bare workspace; ~2,450 for the largest a workspace can
+    """~2,150 tokens for a bare workspace; ~3,350 for the largest a workspace can
     make its own, which is the number the input window has to hold."""
-    assert len(build_instructions(ctx())) <= 5_200
+    assert len(build_instructions(ctx())) <= 9_000
 
     everything = build_instructions(
         ctx(
@@ -215,4 +256,4 @@ def test_the_assembled_instructions_are_within_budget():
         )
     )
 
-    assert len(everything) <= 10_200
+    assert len(everything) <= 13_600

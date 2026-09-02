@@ -62,14 +62,29 @@ ignorance, or a clarifying question. They guard the sharpest risk in giving an a
 has read the documentation and now confabulates fluently about features DuckHaven does not have. On those cases more
 knowledge producing a more confident answer is the failure being tested.
 
-| Tier | What it scores | Trigger | Cost |
-|---|---|---|---|
-| 1a | Metric correctness, case-set validity, arm configuration | `make test-api` | free |
-| 1b | Retrieval: recall@5, MRR over the docs corpus | `make test-integration-api` (needs Postgres) | free |
-| 2 | Faithfulness and answer relevancy, judged | on demand only | ~$7 per run |
+| Tier | What it scores | Trigger | Model calls | Cost per run |
+|---|---|---|---|---|
+| 1a | Metric correctness, case-set validity, arm configuration, judge arithmetic | `make test-api` | none | free |
+| 1b | Retrieval: recall@5 and MRR over the docs corpus | `make test-integration-api` (needs Postgres) | none | free |
+| 2 absolute | Faithfulness and answer relevancy against thresholds | `make eval-judged` | 30 runs + 60 judge calls | **~$3.40** |
+| 2 pairwise | Which of two arms is better | `make eval-compare` | 60 runs + 60 judge calls | **~$6.40** |
 
-Tiers 1a and 1b need no provider key and run on every pull request. Tier 2 is not yet built; see
-`docs/developer/assistant-knowledge-plan.md`.
+Tiers 1a and 1b need no provider key and run on every pull request. Tier 2 runs on demand only — there is no cron —
+so it costs nothing when idle. Figures assume Claude Sonnet at \$3/M input and \$15/M output, and roughly four model
+requests per case at 6k input and 400 output tokens each; check them against your own provider before enabling
+anything on a schedule. A weekly absolute run would be about \$15/month.
+
+**The judge is pinned and its identity is recorded in every report.** An unpinned judge silently invalidates
+comparison against older runs: a faithfulness score that drops from 4.3 to 4.0 could mean the assistant got worse or
+the judge changed, and nothing in the number tells you which.
+
+**Pairwise comparisons are judged in both orders**, and a win counts only when the judge agrees with itself after the
+answers are swapped. Judges systematically prefer whichever answer they see first — by a reported 10–15 points of win
+rate, which is larger than most effects worth measuring. Disagreements become ties and are counted as the *flip rate*;
+a run whose flip rate exceeds 25% is reported as inconclusive however decisive its headline looks.
+
+A single faithfulness score of 1 on a negative case fails the run outright, regardless of the mean. That one case is
+what the tier exists to catch, and an average is exactly the wrong way to look at it.
 
 An **arm** is a named configuration of the assistant — which model, whether product knowledge is on, what the
 workspace has — defined in `api/tests/evals/arms.yaml`. Arms configure the real `build_instructions` and
@@ -79,8 +94,18 @@ and a harness cannot drift into measuring something the assistant does not do.
 ```bash
 make test-api                 # tier 1a, no key needed
 make test-integration-api     # tier 1b, needs DATABASE_URL
-ASSISTANT_EVAL_API_KEY=… make eval-synth ARGS="--limit 5"   # draft candidate cases
+
+export ASSISTANT_EVAL_API_KEY=…                             # tier 2 only, costs money
+make eval-judged  ARM=with-docs                             # score one arm
+make eval-compare ARM_A=with-docs ARM_B=baseline            # compare two
+make eval-synth   ARGS="--limit 5"                          # draft candidate cases
 ```
+
+Reports land in `api/tests/evals/reports/` (gitignored — a run's numbers belong in the pull request that cites
+them, not in the tree). The GitHub workflow `assistant-eval.yml` runs the same targets on `workflow_dispatch`; it
+ships inert and exits with a notice until someone adds `ASSISTANT_EVAL_API_KEY` to repository secrets. Neither
+`workflow_dispatch` nor `schedule` is reachable from a fork, which is what makes a secret safe there — running this
+on `pull_request` would not be.
 
 `eval-synth` writes `cases.candidate.yaml` for a human to promote by hand. It never adds to the golden set itself,
 and it never drafts a negative case — asserting that something does *not* exist requires knowing the whole product,

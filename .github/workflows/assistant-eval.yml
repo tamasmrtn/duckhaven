@@ -1,0 +1,84 @@
+name: Assistant eval
+
+# Tier 2 of the assistant eval harness: judged scoring, which calls a model and
+# costs money. Deliberately NOT on `pull_request` — running it per push on a
+# repository anyone can open a PR against is both expensive and a way to hand a
+# provider key to a fork.
+#
+# `workflow_dispatch` and `schedule` are the two triggers a fork cannot reach,
+# which is what makes a secret safe here.
+#
+# The job is inert until someone adds ASSISTANT_EVAL_API_KEY to repository
+# secrets: the first step checks for it and exits cleanly with a notice. The file
+# can ship, be reviewed, and be enabled later without a second change.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'absolute (score one arm) or pairwise (compare two)'
+        type: choice
+        options: [absolute, pairwise]
+        default: absolute
+      arm_a:
+        description: 'Arm to score, or the first arm of a comparison'
+        default: with-docs
+      arm_b:
+        description: 'Second arm, pairwise only'
+        default: baseline
+
+  # A weekly absolute run gives a trend line rather than isolated readings.
+  # Left commented because the cost is a decision, not a default: ~$3.40 per
+  # run, so roughly $15/month. Uncomment to enable.
+  # schedule:
+  #   - cron: '0 9 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  eval:
+    name: Judged eval
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check for a provider key
+        id: key
+        env:
+          KEY: ${{ secrets.ASSISTANT_EVAL_API_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "::notice::ASSISTANT_EVAL_API_KEY is not configured; skipping the judged eval."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: astral-sh/setup-uv@v7
+        if: steps.key.outputs.run == 'true'
+        with:
+          enable-cache: true
+
+      - run: uv sync --dev
+        if: steps.key.outputs.run == 'true'
+
+      - name: Score one arm
+        if: steps.key.outputs.run == 'true' && inputs.mode != 'pairwise'
+        env:
+          ASSISTANT_EVAL_API_KEY: ${{ secrets.ASSISTANT_EVAL_API_KEY }}
+        run: make eval-judged ARM=${{ inputs.arm_a || 'with-docs' }}
+
+      - name: Compare two arms
+        if: steps.key.outputs.run == 'true' && inputs.mode == 'pairwise'
+        env:
+          ASSISTANT_EVAL_API_KEY: ${{ secrets.ASSISTANT_EVAL_API_KEY }}
+        run: make eval-compare ARM_A=${{ inputs.arm_a }} ARM_B=${{ inputs.arm_b }}
+
+      # Kept whatever the outcome: a failing run is the one whose report is
+      # worth reading.
+      - uses: actions/upload-artifact@v7
+        if: always() && steps.key.outputs.run == 'true'
+        with:
+          name: assistant-eval-report
+          path: api/tests/evals/reports/
+          if-no-files-found: ignore

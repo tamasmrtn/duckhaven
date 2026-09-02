@@ -242,6 +242,7 @@ supplied here or via the provider's own standard environment variable (`ANTHROPI
 | `ASSISTANT_RESULT_ROW_CAP` | `100` | Max rows of a query result fed into model context (the full result is still available in the UI). |
 | `ASSISTANT_RESULT_BYTE_CAP` | `32768` | Max bytes of a result sample fed into model context. |
 | `ASSISTANT_TRACE_INCLUDE_CONTENT` | `true` | When [tracing](../operations/tracing.md#the-ai-assistant) is enabled, record the turn's content (prompt, generated SQL, tool arguments, result samples) on spans. Set `false` to keep only structure — roles, token usage, tool names, timing, status — out of the trace backend. No effect when tracing is off. |
+| `ASSISTANT_DOCS_ENABLED` | `true` | Whether the assistant knows what DuckHaven is — the curated [product-knowledge section](../concepts/assistant.md#product-knowledge) in its instructions. Set `false` to restore exactly the instructions it had before, at the cost of an assistant that answers product questions from general knowledge of other platforms. |
 
 ### Observability
 

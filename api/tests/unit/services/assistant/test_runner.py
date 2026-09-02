@@ -21,7 +21,9 @@ from api.models.assistant import AssistantConversation, AssistantMessage, Assist
 from api.models.user import User
 from api.models.workspace import WorkspaceMember
 from api.services.assistant.agent import get_agent
+from api.services.assistant.gateway import Gateway, GatewayError
 from api.services.assistant.persistence import render_transcript_with_sql
+from api.services.assistant.prompts import BASE_PROMPT, PRODUCT_PROMPT
 from api.services.assistant.runner import stream_turn
 
 from .conftest import hanging_model, parse_sse, scripted_model, text_step, tool_step
@@ -128,6 +130,63 @@ async def _collect_stream(factory, ws, conv, prompt) -> list[dict]:
     ):
         chunks.append(chunk)
     return parse_sse(chunks)
+
+
+def _instruction_capturing_model(captured: list[str]) -> FunctionModel:
+    """Records the instructions the model was actually sent, then answers."""
+
+    def function(messages, info) -> ModelResponse:
+        captured.append(messages[0].instructions or "")
+        return ModelResponse(parts=[TextPart("ok")])
+
+    async def stream_function(messages, info):
+        captured.append(messages[0].instructions or "")
+        yield "ok"
+
+    return FunctionModel(function, stream_function=stream_function)
+
+
+async def test_resolved_workspace_context_reaches_the_model(
+    client, db_session, factory, monkeypatch
+):
+    """The wiring end to end: a deployment setting becomes prompt text.
+
+    ``build_instructions`` is unit-tested against hand-built deps; this is the
+    other half — that the turn actually resolves the context and hands it over.
+    """
+    monkeypatch.setattr(settings, "elastic_compute_enabled", True)
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+    captured: list[str] = []
+
+    with get_agent().override(model=_instruction_capturing_model(captured)):
+        await _run_stream(factory, ws, conv, "hello")
+
+    assert captured
+    assert "About DuckHaven, the product you run inside" in captured[0]
+    assert "This deployment has elastic compute" in captured[0]
+
+
+async def test_a_turn_survives_every_advisory_lookup_failing(
+    client, db_session, factory, monkeypatch
+):
+    """Prompt context is advisory: losing it thins the instructions rather than
+    costing the user an answer."""
+
+    async def boom(self, *args, **kwargs):
+        raise GatewayError("upstream is unavailable")
+
+    for method in ("list_semantic_models", "storage_kinds", "count_agents"):
+        monkeypatch.setattr(Gateway, method, boom)
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+    captured: list[str] = []
+
+    with get_agent().override(model=_instruction_capturing_model(captured)):
+        frames = await _collect_stream(factory, ws, conv, "hello")
+
+    assert [f["type"] for f in frames if f["type"] == "error"] == []
+    assert any(f["type"] == "done" for f in frames)
+    # Thinned to the baseline, not broken: no half-rendered feature paragraphs.
+    assert captured[0] == BASE_PROMPT + "\n" + PRODUCT_PROMPT
 
 
 async def test_stream_emits_every_word_of_every_text_segment(client, db_session, factory):

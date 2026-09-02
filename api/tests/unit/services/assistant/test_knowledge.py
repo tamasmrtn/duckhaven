@@ -11,9 +11,11 @@ import shutil
 
 import pytest
 import yaml
+from sqlalchemy import select
 
 from api.config import settings
-from api.services.assistant.knowledge import generate
+from api.models.docs import DocsCorpusMeta, DocsPage
+from api.services.assistant.knowledge import generate, sync
 from api.services.assistant.knowledge.loader import (
     INDEX_PATH,
     DocsUnavailableError,
@@ -176,3 +178,56 @@ def test_pages_are_cited_at_the_published_url():
     assert page_url("reference/sql-support.md") == (
         "https://tamasmrtn.github.io/duckhaven/reference/sql-support/"
     )
+
+
+# ── Loading the corpus into the search tables ─────────────────────────────────
+#
+# Ranking needs Postgres and is scored in api/tests/integration/. What is
+# checked here is the loading contract, which is dialect-independent: load once,
+# skip when unchanged, and replace wholesale so a deleted page really goes.
+
+
+def _fake_corpus(pages, monkeypatch, hash_="h1"):
+    monkeypatch.setattr(sync, "_corpus", lambda: (hash_, pages))
+
+
+def _page(path, body="body text"):
+    return {"path": path, "title": path, "section": "Concepts", "summary": "s", "body": body}
+
+
+async def test_the_corpus_loads_once_and_then_skips(db_session, monkeypatch):
+    _fake_corpus([_page("a.md"), _page("b.md")], monkeypatch)
+
+    assert await sync.sync_corpus(db_session) is True
+    assert await sync.sync_corpus(db_session) is False
+
+    rows = (await db_session.execute(select(DocsPage))).scalars().all()
+    assert {r.path for r in rows} == {"a.md", "b.md"}
+    meta = (await db_session.execute(select(DocsCorpusMeta))).scalar_one()
+    assert meta.page_count == 2
+    assert meta.app_version == settings.app_version
+
+
+async def test_a_new_release_replaces_the_corpus_wholesale(db_session, monkeypatch):
+    """A page removed from docs/ must leave search too. Diffing would leave the
+    assistant citing a page its own build no longer ships."""
+    _fake_corpus([_page("a.md"), _page("gone.md")], monkeypatch, hash_="old")
+    await sync.sync_corpus(db_session)
+
+    _fake_corpus([_page("a.md"), _page("new.md")], monkeypatch, hash_="new")
+    assert await sync.sync_corpus(db_session) is True
+
+    rows = (await db_session.execute(select(DocsPage))).scalars().all()
+    assert {r.path for r in rows} == {"a.md", "new.md"}
+
+
+async def test_a_deployment_without_docs_starts_anyway(db_session, monkeypatch):
+    """A missing corpus must never stop a replica booting."""
+
+    def absent():
+        raise DocsUnavailableError("no docs here")
+
+    monkeypatch.setattr(sync, "_corpus", absent)
+
+    assert await sync.sync_corpus(db_session) is False
+    assert (await db_session.execute(select(DocsPage))).scalars().all() == []

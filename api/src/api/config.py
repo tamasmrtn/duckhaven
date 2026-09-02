@@ -427,6 +427,9 @@ class Settings(BaseSettings):
     # pages exceed it — architecture, configuration and rest-api — and come back
     # truncated with a link to the full page.
     assistant_docs_max_page_chars: int = 20_000
+    # Default number of pages search_docs returns; the tool clamps its own
+    # argument to 1-10 regardless.
+    assistant_docs_search_limit: int = 5
     # Public documentation site, used to cite a page the assistant read. Pages
     # are cited at the version this build shipped with, not at latest.
     docs_site_url: str = "https://tamasmrtn.github.io/duckhaven"

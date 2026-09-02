@@ -45,6 +45,50 @@ and binds the work parked for it.
 - New query/hook → `renderHook` plus an MSW handler override.
 - Bug fix → a regression test that fails before the fix.
 
+## Evaluating the AI assistant
+
+The assistant is scored by a standing harness rather than by reading transcripts, because "did that prompt edit make
+it better or worse?" is not a question anyone can answer by eye. The case set lives in `api/tests/evals/cases.yaml`
+and is reviewed like code.
+
+Every case records **where its answer lives** and **who wrote it**. The first makes retrieval scoring plain
+arithmetic — recall@5 and MRR need no model at all. The second matters more than it looks: a question synthesised
+*from* a page is trivially answerable by a system that retrieved that page, so scores are always reported split by
+provenance. Mixing them flatters the system, measurably — auto-synthesised cases currently score recall@5 of 0.83
+against hand-written cases' 0.75.
+
+**Roughly a third of the set are negative cases** — questions whose correct answer is a refusal, an admission of
+ignorance, or a clarifying question. They guard the sharpest risk in giving an assistant product knowledge: one that
+has read the documentation and now confabulates fluently about features DuckHaven does not have. On those cases more
+knowledge producing a more confident answer is the failure being tested.
+
+| Tier | What it scores | Trigger | Cost |
+|---|---|---|---|
+| 1a | Metric correctness, case-set validity, arm configuration | `make test-api` | free |
+| 1b | Retrieval: recall@5, MRR over the docs corpus | `make test-integration-api` (needs Postgres) | free |
+| 2 | Faithfulness and answer relevancy, judged | on demand only | ~$7 per run |
+
+Tiers 1a and 1b need no provider key and run on every pull request. Tier 2 is not yet built; see
+`docs/developer/assistant-knowledge-plan.md`.
+
+An **arm** is a named configuration of the assistant — which model, whether product knowledge is on, what the
+workspace has — defined in `api/tests/evals/arms.yaml`. Arms configure the real `build_instructions` and
+`build_toolset` rather than reimplementing them, so an arm can only describe a state the product can actually be in,
+and a harness cannot drift into measuring something the assistant does not do.
+
+```bash
+make test-api                 # tier 1a, no key needed
+make test-integration-api     # tier 1b, needs DATABASE_URL
+ASSISTANT_EVAL_API_KEY=… make eval-synth ARGS="--limit 5"   # draft candidate cases
+```
+
+`eval-synth` writes `cases.candidate.yaml` for a human to promote by hand. It never adds to the golden set itself,
+and it never drafts a negative case — asserting that something does *not* exist requires knowing the whole product,
+which a model shown one page can only invent.
+
+Grow the set from real failures rather than by enumerating questions at a desk. `search_docs` records `no_results` on
+its audit row precisely so the questions the documentation failed to answer can be found later.
+
 ## Before you push
 
 ```bash

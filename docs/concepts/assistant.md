@@ -128,9 +128,14 @@ unshipped in those words rather than as available. DuckHaven differs from Snowfl
 matter, and a confident wrong answer about one of those differences is worse than no answer.
 
 Beyond that summary, the assistant carries an **index of this documentation** — every page's path and title, grouped
-by section — and can open any of them in full. Asked something the summary does not cover, it reads the page that does
-and names the path it used, rather than reasoning from a title. Set `ASSISTANT_DOCS_ENABLED=false` to remove both the
-section and the documentation tool.
+by section — and can both **search** the full text of every page and **open** any of them in full. Asked something the
+summary does not cover, it searches for the pages that discuss it, reads the best match, and names the path it used
+rather than reasoning from a title. Set `ASSISTANT_DOCS_ENABLED=false` to remove the section and both tools.
+
+Search is ordinary lexical full-text — Postgres's, over the pages the image ships — not a semantic or vector index.
+That is a deliberate choice for a corpus of this size, and it has an honest consequence: a question sharing no words
+with the page that answers it may not find it. When search comes back empty the assistant says the documentation does
+not cover the question rather than inventing an answer, which is the behaviour that matters.
 
 !!! note "It answers for the version you are running"
     The pages the assistant reads ship inside the DuckHaven image, so they describe **your** release rather than the

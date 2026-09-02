@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from api.services.assistant.gateway import Gateway
@@ -56,6 +57,13 @@ class AssistantDeps:
     # How many compute agents are visible. None when the lookup failed; the
     # fleet paragraph is omitted below two, where there is nothing to choose.
     agent_count: int | None = None
+    # Ranked documentation search, bound to the runner's session factory.
+    #
+    # A single narrow capability rather than a database session: documentation is
+    # ungoverned public content with no grant to enforce, but handing tools a
+    # session would give *every* tool general database access, which is exactly
+    # what the loopback-gateway design exists to prevent. None disables the tool.
+    docs_search: Callable[[str, int], Awaitable[list[dict]]] | None = None
     # Tool-call audit records for this run, keyed by the SDK tool_call_id. Populated
     # by the governance hooks; drained by the runner and persisted after the turn.
     records: dict[str, ToolCallRecord] = field(default_factory=dict)

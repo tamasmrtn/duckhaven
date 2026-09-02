@@ -24,7 +24,7 @@ from api.config import settings
 from api.services.assistant.knowledge import generate
 from api.services.assistant.knowledge.loader import load_index
 from tests.evals.fixtures import EvalGateway
-from tests.evals.harness import ArmConfig, run_case
+from tests.evals.harness import ArmConfig, docs_search_backend, run_case
 from tests.evals.judge import (
     JUDGE_MODEL,
     JUDGE_SETTINGS,
@@ -63,15 +63,17 @@ async def test_absolute_scores_meet_their_thresholds():
 
     scores = []
     runs = []
-    for case in cases:
-        result = await run_case(
-            arm,
-            case.question,
-            gateway=EvalGateway(can_write=arm.workspace.get("can_write", False)),
-            case_name=case.name,
-        )
-        runs.append((case, result.answer, result.tools_called))
-        scores.append(await score_absolute(case, result))
+    async with docs_search_backend() as docs_search:
+        for case in cases:
+            result = await run_case(
+                arm,
+                case.question,
+                gateway=EvalGateway(can_write=arm.workspace.get("can_write", False)),
+                docs_search=docs_search,
+                case_name=case.name,
+            )
+            runs.append((case, result.answer, result.tools_called))
+            scores.append(await score_absolute(case, result))
 
     summary = summarise_scores(scores)
     # Free, deterministic, and computed from what the run already collected — so

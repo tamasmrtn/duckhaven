@@ -139,6 +139,7 @@ async def render_transcript_with_sql(db: AsyncSession, conversation_id: uuid.UUI
     for row in rows:
         upper_bound = row.created_at
         sql: str | None = None
+        paths: list[str] = []
         while call_idx < len(tool_calls):
             call = tool_calls[call_idx]
             if lower_bound is not None and call.created_at <= lower_bound:
@@ -152,19 +153,53 @@ async def render_transcript_with_sql(db: AsyncSession, conversation_id: uuid.UUI
                     # Last matching call wins: a turn that both ran and proposed
                     # SQL surfaces whichever committed later (its most recent action).
                     sql = candidate
+            # Only pages actually *opened*. A search records its query, not its
+            # results, so citing what was searched would credit the answer to
+            # pages the assistant may never have read.
+            if call.tool == "read_doc_page" and isinstance(call.args, dict):
+                path = call.args.get("path")
+                if path and path not in paths:
+                    paths.append(path)
             call_idx += 1
         row_messages = sanitize_messages(ModelMessagesTypeAdapter.validate_python(row.payload))
         row_items = render_transcript(row_messages)
         for item in row_items:
             item["sql"] = None
-        if sql:
-            for item in reversed(row_items):
-                if item["role"] == "assistant":
-                    item["sql"] = sql
-                    break
+            item["sources"] = None
+        last_assistant = next(
+            (item for item in reversed(row_items) if item["role"] == "assistant"), None
+        )
+        if last_assistant is not None:
+            if sql:
+                last_assistant["sql"] = sql
+            if paths:
+                last_assistant["sources"] = _sources(paths)
         items.extend(row_items)
         lower_bound = upper_bound
     return items
+
+
+def _sources(paths: list[str]) -> list[dict]:
+    """Turn read page paths into citable sources.
+
+    Titles and URLs come from the shipped index, so a citation names the page the
+    way a reader would recognise it and links to the version this build actually
+    carries — not to whatever the docs site says today.
+    """
+    from api.services.assistant.knowledge.loader import load_index, page_url
+
+    try:
+        index = load_index()
+    except Exception:  # noqa: BLE001 — a citation is never worth failing a read
+        return [{"path": path, "title": path, "url": None} for path in paths]
+    return [
+        {
+            "path": path,
+            "title": page.title if (page := index.get(path)) else path,
+            "url": page_url(path) if page else None,
+        }
+        for path in paths
+    ]
 
 
 async def is_history_truncated(db: AsyncSession, conversation_id: uuid.UUID) -> bool:

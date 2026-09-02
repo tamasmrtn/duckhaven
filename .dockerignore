@@ -18,3 +18,11 @@ deploy/terraform
 site
 test-results
 node_modules
+
+# The API image copies docs/ so the assistant can read it, but only the Markdown
+# is useful there — the screenshots and the demo video are ~9 MB of the 10 MB and
+# are only ever served by the docs site, which mkdocs builds from a checkout.
+docs/images
+docs/assets
+docs/stylesheets
+docs/javascripts

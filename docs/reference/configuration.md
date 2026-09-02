@@ -242,7 +242,10 @@ supplied here or via the provider's own standard environment variable (`ANTHROPI
 | `ASSISTANT_RESULT_ROW_CAP` | `100` | Max rows of a query result fed into model context (the full result is still available in the UI). |
 | `ASSISTANT_RESULT_BYTE_CAP` | `32768` | Max bytes of a result sample fed into model context. |
 | `ASSISTANT_TRACE_INCLUDE_CONTENT` | `true` | When [tracing](../operations/tracing.md#the-ai-assistant) is enabled, record the turn's content (prompt, generated SQL, tool arguments, result samples) on spans. Set `false` to keep only structure — roles, token usage, tool names, timing, status — out of the trace backend. No effect when tracing is off. |
-| `ASSISTANT_DOCS_ENABLED` | `true` | Whether the assistant knows what DuckHaven is — the curated [product-knowledge section](../concepts/assistant.md#product-knowledge) in its instructions. Set `false` to restore exactly the instructions it had before, at the cost of an assistant that answers product questions from general knowledge of other platforms. |
+| `ASSISTANT_DOCS_ENABLED` | `true` | Whether the assistant knows what DuckHaven is — the curated [product-knowledge section](../concepts/assistant.md#product-knowledge) and page index in its instructions, plus the `read_doc_page` tool. Set `false` to restore exactly the instructions and tool set it had before, at the cost of an assistant that answers product questions from general knowledge of other platforms. |
+| `ASSISTANT_DOCS_DIR` | `/app/docs` | Where the documentation pages live. The image copies `docs/` here; point it at the repository's `docs/` when running from a source checkout. If the directory is absent the assistant simply reports that documentation is unavailable rather than failing a turn. |
+| `ASSISTANT_DOCS_MAX_PAGE_CHARS` | `20000` | Largest page the assistant reads in one call (~5k tokens). Three pages exceed it — Architecture, Configuration, and REST API — and come back truncated with a link to the full page. |
+| `DOCS_SITE_URL` | `https://tamasmrtn.github.io/duckhaven` | Public documentation site, used when the assistant links a page it read. Change it if you host the docs yourself. |
 
 ### Observability
 

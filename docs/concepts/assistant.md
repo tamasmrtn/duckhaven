@@ -127,10 +127,16 @@ platforms, to say plainly when it does not know instead of guessing, and to desc
 unshipped in those words rather than as available. DuckHaven differs from Snowflake and Databricks in ways that
 matter, and a confident wrong answer about one of those differences is worse than no answer.
 
-!!! note "A summary, not the documentation"
-    This is a fixed, curated section — roughly a page of the highest-value facts. The assistant cannot yet search or
-    quote the documentation set, so it can tell you what the dialect supports but not walk you through a specific
-    guide. Set `ASSISTANT_DOCS_ENABLED=false` to remove the section entirely.
+Beyond that summary, the assistant carries an **index of this documentation** — every page's path and title, grouped
+by section — and can open any of them in full. Asked something the summary does not cover, it reads the page that does
+and names the path it used, rather than reasoning from a title. Set `ASSISTANT_DOCS_ENABLED=false` to remove both the
+section and the documentation tool.
+
+!!! note "It answers for the version you are running"
+    The pages the assistant reads ship inside the DuckHaven image, so they describe **your** release rather than the
+    latest published documentation. If you are running an older version, that is a feature: it will not tell you about
+    something your deployment does not have. It also means the assistant cannot see documentation written after your
+    build — upgrade to get it.
 
 ## What it knows about your workspace
 

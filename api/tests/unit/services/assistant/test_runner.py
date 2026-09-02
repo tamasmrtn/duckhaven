@@ -22,8 +22,9 @@ from api.models.user import User
 from api.models.workspace import WorkspaceMember
 from api.services.assistant.agent import get_agent
 from api.services.assistant.gateway import Gateway, GatewayError
+from api.services.assistant.knowledge.loader import load_index
 from api.services.assistant.persistence import render_transcript_with_sql
-from api.services.assistant.prompts import BASE_PROMPT, PRODUCT_PROMPT
+from api.services.assistant.prompts import BASE_PROMPT, DOCS_INDEX_PROMPT, PRODUCT_PROMPT
 from api.services.assistant.runner import stream_turn
 
 from .conftest import hanging_model, parse_sse, scripted_model, text_step, tool_step
@@ -186,7 +187,11 @@ async def test_a_turn_survives_every_advisory_lookup_failing(
     assert [f["type"] for f in frames if f["type"] == "error"] == []
     assert any(f["type"] == "done" for f in frames)
     # Thinned to the baseline, not broken: no half-rendered feature paragraphs.
-    assert captured[0] == BASE_PROMPT + "\n" + PRODUCT_PROMPT
+    # The docs index survives, because it ships with the code rather than being
+    # resolved per turn — losing the gateway does not lose the documentation.
+    assert captured[0] == "\n".join(
+        [BASE_PROMPT, PRODUCT_PROMPT, DOCS_INDEX_PROMPT.format(index=load_index().prompt_block())]
+    )
 
 
 async def test_stream_emits_every_word_of_every_text_segment(client, db_session, factory):

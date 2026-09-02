@@ -22,11 +22,42 @@ function seed(): MockConversation[] {
       updated_at: "2026-07-01T10:05:00Z",
       history_truncated: false,
       transcript: [
-        { role: "user", text: "How many events are there?", sql: null },
+        {
+          role: "user",
+          text: "How many events are there?",
+          sql: null,
+          sources: null,
+        },
         {
           role: "assistant",
           text: "There are 42 events in the events table.",
           sql: "SELECT count(*) FROM events",
+          sources: null,
+        },
+        {
+          role: "user",
+          text: "How do I query it as it was last week?",
+          sql: null,
+          sources: null,
+        },
+        {
+          // Carries sources so the Sources row is visible in mock-driven dev
+          // without needing a live model.
+          role: "assistant",
+          text: "Use DuckDB's AT clause: `SELECT * FROM events AT (TIMESTAMP => '2026-06-24')`.",
+          sql: null,
+          sources: [
+            {
+              path: "guides/snapshots-time-travel.md",
+              title: "Snapshots & time travel",
+              url: "https://tamasmrtn.github.io/duckhaven/guides/snapshots-time-travel/",
+            },
+            {
+              path: "reference/sql-support.md",
+              title: "SQL support",
+              url: "https://tamasmrtn.github.io/duckhaven/reference/sql-support/",
+            },
+          ],
         },
       ],
       tool_calls: [

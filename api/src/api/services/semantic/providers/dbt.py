@@ -41,7 +41,7 @@ from api.services.semantic.ingest import (
     CanonicalRelationship,
 )
 from api.services.semantic.model import AGGREGATIONS, TIME_GRAINS
-from api.services.semantic.providers import ProviderModels
+from api.services.semantic.providers import ProviderModels, SemanticDocumentError
 
 # dbt's aggregation vocabulary onto DuckHaven's. The ones with no entry —
 # median, percentile, sum_boolean — have no V1 equivalent and skip the metric.
@@ -137,6 +137,36 @@ def _filter_templates(metric: dict) -> list[str]:
     ]
 
 
+def _manifest(payload) -> dict:
+    """The artifact as a mapping, or a 422 saying what arrived instead.
+
+    The import route reads its body as raw bytes so a hand-written YAML document
+    and a machine-written JSON manifest can both reach the adapter unmodified.
+    That makes posting YAML to `.../imports/dbt` an easy mistake, and it used to
+    reach `json.loads` uncaught: a `JSONDecodeError` escaped as a 500, blaming
+    the server for the client's choice of file. `SemanticDocumentError` is what
+    the route turns into the 422 this is.
+
+    A payload that parses but is not an object -- `[]`, `null`, a bare string --
+    is caught here too. It would otherwise fail later on `.get`, which is the
+    same 500 with a stack trace nobody can act on.
+    """
+    if isinstance(payload, dict):
+        return payload
+    try:
+        parsed = json.loads(payload)
+    except (ValueError, TypeError) as exc:
+        raise SemanticDocumentError(
+            f"Could not parse the artifact as JSON: {exc}. dbt publishes "
+            "manifest.json; a YAML document belongs to the 'duckhaven' provider."
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise SemanticDocumentError(
+            f"A dbt manifest must be a JSON object, got {type(parsed).__name__}."
+        )
+    return parsed
+
+
 async def models_from_manifest(payload, *, resolve: Resolver) -> ProviderModels:
     """Translate a dbt manifest's semantic models and metrics into one model.
 
@@ -148,7 +178,7 @@ async def models_from_manifest(payload, *, resolve: Resolver) -> ProviderModels:
     the replica for the length of a large project, whereas this walks a few
     hundred dict entries and does no parsing.
     """
-    manifest = payload if isinstance(payload, dict) else json.loads(payload)
+    manifest = _manifest(payload)
     out = ProviderModels()
 
     semantic_models: dict[str, Any] = manifest.get("semantic_models") or {}

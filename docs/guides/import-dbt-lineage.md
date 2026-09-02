@@ -11,7 +11,25 @@ The `target/manifest.json` your project writes, and a token with **writer** acce
 
 ## Publishing the manifest
 
-Post the artifact to the dbt import endpoint exactly as dbt wrote it. There is nothing to extract or transform first:
+Send the artifact exactly as dbt wrote it. There is nothing to extract or transform first:
+
+```sh
+dh lineage import dbt target/manifest.json
+```
+
+The response says what changed:
+
+```json
+{ "created": 24, "updated": 3, "removed": 1, "skipped": [] }
+```
+
+Adding `--catalog-json target/catalog.json` also imports
+[column-level lineage](#column-level-lineage); the manifest alone gives you table-to-table.
+
+### Without the CLI
+
+The endpoint takes the artifact as its body, so `curl` works too. The two-file form goes under one
+object, which is the part worth getting right:
 
 ```sh
 curl -fsS -X POST \
@@ -19,12 +37,6 @@ curl -fsS -X POST \
   -H "Content-Type: application/json" \
   --data @target/manifest.json \
   https://duckhaven.internal/api/workspaces/<workspace>/lineage/imports/dbt
-```
-
-The response says what changed:
-
-```json
-{ "created": 24, "updated": 3, "removed": 1, "skipped": [] }
 ```
 
 Open any imported table in the catalog explorer and the Lineage tab shows the graph, with each edge labelled `dbt`.
@@ -41,13 +53,10 @@ job that runs it:
 ```yaml
 # CI, on merge. `dbt parse` needs no warehouse: it reads the project and
 # writes target/manifest.json without connecting or executing anything.
+# DH_HOST, DH_TOKEN and DH_WORKSPACE come from the job's environment.
+- run: pip install duckhaven-cli
 - run: dbt parse --target prod
-- run: |
-    curl -fsS -X POST \
-      -H "Authorization: Bearer $DUCKHAVEN_PAT" \
-      -H "Content-Type: application/json" \
-      --data @target/manifest.json \
-      "$DUCKHAVEN_URL/api/workspaces/$DUCKHAVEN_WORKSPACE/lineage/imports/dbt"
+- run: dh lineage import dbt target/manifest.json
 ```
 
 !!! note "Publish once per environment"
@@ -59,10 +68,10 @@ job that runs it:
 Keep publishing an explicit step rather than something a `dbt run` does implicitly. Lineage is a governance side
 effect: if the API is unreachable, that should fail a small visible CI step, not the pipeline that moves your data.
 
-!!! note "A DuckHaven CLI will cover this later"
-    Publishing is a plain HTTP POST today, and deliberately so — nothing extra to install. A future DuckHaven CLI will
-    wrap it, so credentials and workspace can come from existing configuration instead of being wired into CI by hand.
-    The endpoint and its behaviour will not change.
+!!! tip "Credentials for CI"
+    `dh` reads `DH_HOST`, `DH_TOKEN` and `DH_WORKSPACE` from the environment, so no config file is
+    needed in a pipeline. Use a [service-account token](service-accounts.md) rather than a personal
+    one: a token tied to a person expires and disappears when they leave.
 
 ## How your project maps onto the catalog
 
@@ -108,9 +117,7 @@ the graph keeps both and labels them, and that disagreement is usually worth a l
 If you stop running dbt, remove its edges so the graph stops claiming relationships nothing will refresh:
 
 ```sh
-curl -X DELETE \
-  -H "Authorization: Bearer $DUCKHAVEN_PAT" \
-  "https://duckhaven.internal/api/workspaces/<workspace>/lineage/imports?provider=dbt"
+dh lineage purge --provider dbt
 ```
 
 This requires workspace **owner**.
@@ -120,11 +127,16 @@ This requires workspace **owner**.
 Publishing `catalog.json` alongside the manifest gets you [column-level
 lineage](../concepts/lineage.md#column-level-lineage) for your dbt models as well as table-level.
 
-Generate both, then post them together:
+Generate both, then send them together:
 
 ```sh
 dbt docs generate                      # writes manifest.json *and* catalog.json
+dh lineage import dbt target/manifest.json --catalog-json target/catalog.json
+```
 
+The endpoint takes both artifacts under one object, so without the CLI you assemble that yourself:
+
+```sh
 curl -X POST \
   -H "Authorization: Bearer $DUCKHAVEN_PAT" \
   -H "Content-Type: application/json" \
@@ -135,8 +147,8 @@ curl -X POST \
   "https://duckhaven.internal/api/workspaces/<workspace>/lineage/imports/dbt"
 ```
 
-Posting the manifest on its own still works and still gives you table-level lineage; nothing about the existing request
-shape changed.
+Publishing the manifest on its own still works and still gives you table-level lineage; nothing about the existing
+request shape changed.
 
 **Why two artifacts.** dbt does not publish column-to-column derivation — `manifest.json` records column *definitions*,
 and column-level lineage is a hosted-platform feature rather than something in the artifacts. What dbt *does* publish is

@@ -69,6 +69,17 @@ conflict resolution, and what is deliberately *out* of scope (no row- or column-
 security, no groups) — is in
 [Identity & permissions › Scoped access](../concepts/permissions.md#scoped-access).
 
+The same changes are scriptable, which is usually what you want for access control that should be
+reviewed rather than clicked:
+
+```sh
+dh grant access-mode scoped --catalog finance
+dh grant set --user analyst@example.com --tier reader --schema marketing --catalog finance
+dh grant list --catalog finance
+```
+
+`--user` takes an email, a name or an id. See [the CLI reference](../reference/cli.md#dh-grant).
+
 ## Layer 4 — Agent access: which compute you may run on
 
 Layers 1–3 decide which *data* a query may touch. This one decides which

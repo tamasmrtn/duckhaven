@@ -32,6 +32,15 @@ from api.services.lineage.resolve import Skipped
 from api.services.semantic.ingest import CanonicalModel
 
 
+class SemanticDocumentError(ValueError):
+    """The document could not be read at all, as opposed to one entry being bad.
+
+    Every adapter's way of saying "this artifact is not the format I take", and
+    the one exception the import route turns into a 422. Anything else escaping
+    an adapter is a bug in that adapter, and is reported as a 500 because it is.
+    """
+
+
 @dataclass
 class ProviderModels:
     """What an adapter recovered from one producer's artifact."""

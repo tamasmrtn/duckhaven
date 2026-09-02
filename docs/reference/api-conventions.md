@@ -166,7 +166,8 @@ return a bare array and are exempt. The exemption list is exhaustive:
 `/workspaces` · `/workspaces/{workspace}/members` · `/catalogs` ·
 `/workspaces/{workspace}/catalogs` · `/agents` · `/admin/agents` · `/admin/agents/metrics` ·
 `/admin/storage-backends` · `/admin/users/{user_id}/workspaces` ·
-`/admin/service-accounts/{service_account_id}/pats` · `/workspaces/{workspace}/schedules` ·
+`/admin/service-accounts/{service_account_id}/pats` · `/me/pats` ·
+`/workspaces/{workspace}/schedules` ·
 `/workspaces/{workspace}/semantic/models` ·
 `/workspaces/{workspace}/semantic/models/{model}/metrics/{metric}/dimensions` ·
 `/workspaces/{workspace}/catalogs/{catalog}/schemas`

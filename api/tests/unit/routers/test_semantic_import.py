@@ -399,3 +399,45 @@ async def test_a_scalar_where_a_list_belongs_is_a_422_not_a_500(auth_client, ws)
 
     assert resp.status_code == 422
     assert "list" in str(resp.json()["message"]).lower()
+
+
+async def test_yaml_posted_to_the_dbt_provider_is_a_422_not_a_500(auth_client, ws):
+    """The artifact being unreadable is the client's mistake, not the server's.
+
+    Found running the CLI against a live stack: `dh semantic import dbt` on a
+    hand-written YAML document returned 500. The adapter reached `json.loads`
+    with YAML and let `JSONDecodeError` escape, so a wrong-file mistake was
+    reported as the server breaking -- and a 5xx tells a pipeline to retry
+    something that will never succeed.
+    """
+    resp = await auth_client.post(
+        f"/workspaces/{ws}/semantic/imports/dbt",
+        content=DOCUMENT,
+        headers={"Content-Type": "text/plain"},
+    )
+
+    assert resp.status_code == 422, resp.text
+    assert "JSON" in resp.json()["message"]
+
+
+async def test_the_422_says_where_a_yaml_document_should_go(auth_client, ws):
+    """A rejection that does not name the fix costs a support round trip."""
+    resp = await auth_client.post(
+        f"/workspaces/{ws}/semantic/imports/dbt",
+        content=DOCUMENT,
+        headers={"Content-Type": "text/plain"},
+    )
+
+    assert "duckhaven" in resp.json()["message"]
+
+
+@pytest.mark.parametrize("body", ["", "not a manifest", "[]", "null", "42"])
+async def test_an_artifact_that_is_not_a_manifest_is_a_422(body, auth_client, ws):
+    """An empty body is a real CI outcome: `dbt parse` failed and wrote nothing."""
+    resp = await auth_client.post(
+        f"/workspaces/{ws}/semantic/imports/dbt",
+        content=body,
+        headers={"Content-Type": "text/plain"},
+    )
+
+    assert resp.status_code == 422, resp.text

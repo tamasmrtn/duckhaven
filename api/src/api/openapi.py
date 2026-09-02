@@ -46,6 +46,12 @@ SECURITY_SCHEMES = {
 #: sent. A list of single-key objects is OpenAPI's "any of these".
 _EITHER_CREDENTIAL = [{"cookieAuth": []}, {"bearerAuth": []}]
 
+#: Routes that take the session cookie and refuse a bearer token. Issuing a PAT
+#: is the case: a token able to mint tokens would outlive its own revocation, so
+#: ``deps.get_session_only_user`` guards it. Declared here rather than left as
+#: "either", or a generated client would offer a credential the route rejects.
+_COOKIE_ONLY = [{"cookieAuth": []}]
+
 _ERROR_CONTENT = {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorOut"}}}
 
 _UNAUTHORIZED = {
@@ -137,20 +143,21 @@ def _raised_codes(route) -> list[tuple[str, dict]]:
     return [pair for name, pair in _RAISED_IN_SOURCE.items() if name in source]
 
 
-def _guarantees(route) -> tuple[bool, bool, bool]:
-    """Which of (401, 403, 404) this route can return.
+def _guarantees(route) -> tuple[bool, bool, bool, bool]:
+    """Which of (401, 403, 404) this route can return, and whether it is cookie-only.
 
     Derived from the guards the route actually declares rather than hand-written
     per endpoint, so a new route is documented correctly the moment it is added.
     """
     names = _dependency_names(route.dependant)
-    authenticated = "get_current_user" in names
+    cookie_only = "get_session_only_user" in names
+    authenticated = "get_current_user" in names or cookie_only
     # Every authenticated route can 403. Most authorization here runs *inside*
     # the handler -- assert_workspace_member, _load_session, _catalog_for_admin
     # all raise it -- so no dependency-tree inspection can find them, and a rule
     # that only saw the two dependency factories under-declared 16 operations
     # that demonstrably return 403.
-    return authenticated, authenticated, "{" in route.path
+    return authenticated, authenticated, "{" in route.path, cookie_only
 
 
 def _prune_unreferenced(schema: dict) -> None:
@@ -198,10 +205,12 @@ def apply_conventions(app) -> None:
                 route = by_operation.get((path, method.upper()))
                 if route is None:
                     continue
-                authenticated, forbiddable, addressable = _guarantees(route)
+                authenticated, forbiddable, addressable, cookie_only = _guarantees(route)
                 responses = operation.setdefault("responses", {})
                 if authenticated:
-                    operation.setdefault("security", _EITHER_CREDENTIAL)
+                    operation.setdefault(
+                        "security", _COOKIE_ONLY if cookie_only else _EITHER_CREDENTIAL
+                    )
                     responses.setdefault("401", dict(_UNAUTHORIZED))
                 if forbiddable:
                     responses.setdefault("403", dict(_FORBIDDEN))

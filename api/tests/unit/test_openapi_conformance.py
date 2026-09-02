@@ -44,6 +44,7 @@ BOUNDED_COLLECTIONS = {
     "/admin/storage-backends",
     "/admin/users/{user_id}/workspaces",
     "/admin/service-accounts/{service_account_id}/pats",
+    "/me/pats",
     "/workspaces/{workspace}/schedules",
     "/workspaces/{workspace}/semantic/models",
     "/workspaces/{workspace}/semantic/models/{model}/metrics/{metric}/dimensions",

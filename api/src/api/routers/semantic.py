@@ -79,8 +79,7 @@ from api.services.semantic.ingest import (
     upsert_models,
 )
 from api.services.semantic.model import load_model
-from api.services.semantic.providers import get_adapter
-from api.services.semantic.providers.native import SemanticDocumentError
+from api.services.semantic.providers import SemanticDocumentError, get_adapter
 from api.services.semantic.retrieve import ambiguous, search, search_broken
 from api.services.semantic.timespec import TimeRange
 from api.services.semantic.validate import validate_model

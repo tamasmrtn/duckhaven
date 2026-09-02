@@ -10,6 +10,13 @@ A service account is a first-class member of the same access model as a user. It
 makes is authorized and audited exactly like a human user's — there is no separate permission system. It simply has no
 password and can never complete a browser login.
 
+!!! tip "People can now issue their own tokens"
+    A service account is for **unattended** callers. A person who just wants to use
+    [the command line](../getting-started/cli-quickstart.md) runs `dh auth login`, which mints a
+    token for their own identity — no administrator needed, and no shared credential. Keep service
+    accounts for CI, schedulers and tooling, where a token tied to a person would break the day they
+    leave.
+
 !!! note "Native tokens only, for now"
     This covers DuckHaven-native PATs, which work with no external identity provider. Federating a service account to an
     Azure Entra ID or AWS IAM identity is planned but **not yet available**.

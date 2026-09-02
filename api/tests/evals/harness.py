@@ -19,8 +19,9 @@ the one ``test_semantic_tools.py`` already uses to drive the agent directly.
 
 from __future__ import annotations
 
+import os
 import uuid
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -163,3 +164,44 @@ class _FakeCtx:
 
     def __init__(self, deps: AssistantDeps) -> None:
         self.deps = deps
+
+
+@asynccontextmanager
+async def docs_search_backend():
+    """A working ``search_docs`` for a judged run, or a loud refusal to fake one.
+
+    Without this the tool raises "not available" on every call, and a judged run
+    would score an assistant whose search is permanently broken — penalising the
+    arm that *has* documentation in precisely the comparison the feature exists
+    to make. A quietly crippled arm is worse than no run at all.
+
+    Loads the corpus as well as connecting, because an empty ``docs_pages`` fails
+    the same way but silently: search returns nothing, and the assistant reports
+    that the documentation does not cover the question.
+    """
+    url = os.getenv("DATABASE_URL")
+    if not url:
+        raise RuntimeError(
+            "DATABASE_URL is required for a judged run: without it search_docs cannot "
+            "work, and the run would score an assistant that has documentation it "
+            "cannot search. Point it at a Postgres with migrations applied."
+        )
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from api.services.assistant.knowledge.search import search_pages
+    from api.services.assistant.knowledge.sync import sync_corpus
+
+    engine = create_async_engine(url)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with factory() as db:
+            await sync_corpus(db)
+
+        async def search(query: str, limit: int) -> list[dict]:
+            async with factory() as db:
+                return await search_pages(db, query, limit=limit)
+
+        yield search
+    finally:
+        await engine.dispose()

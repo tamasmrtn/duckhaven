@@ -26,7 +26,7 @@ from pathlib import Path
 
 from api.config import settings
 from tests.evals.fixtures import EvalGateway
-from tests.evals.harness import ArmConfig, RunResult, run_case
+from tests.evals.harness import ArmConfig, RunResult, docs_search_backend, run_case
 from tests.evals.judge import JUDGE_MODEL, JUDGE_SETTINGS, judge_pair, resolve_pair
 from tests.evals.metrics import Case, load_cases
 
@@ -129,13 +129,18 @@ def render(report: dict) -> str:
     return "\n".join(lines)
 
 
+async def _run(arm_a: str, arm_b: str) -> dict:
+    async with docs_search_backend() as docs_search:
+        return await compare(arm_a, arm_b, docs_search=docs_search)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--a", required=True, help="arm name from arms.yaml")
     parser.add_argument("--b", required=True, help="arm name from arms.yaml")
     args = parser.parse_args()
 
-    report = asyncio.run(compare(args.a, args.b))
+    report = asyncio.run(_run(args.a, args.b))
     print(render(report))
 
     REPORTS_DIR.mkdir(exist_ok=True)

@@ -44,6 +44,7 @@ from api.services.assistant.identity import (
     ephemeral_pat,
     resolve_service_account,
 )
+from api.services.assistant.knowledge.search import search_pages
 from api.services.assistant.persistence import load_history, save_turn
 from api.services.assistant.prompts import format_summary
 
@@ -168,6 +169,20 @@ async def _advisory(name: str, coro):
         return None
 
 
+def _docs_search(session_factory: async_sessionmaker[AsyncSession]):
+    """Bind documentation search to its own session.
+
+    Its own, not the turn's: loopback tool calls already open their own sessions,
+    and the runner's session is not safe to share with a concurrently streaming run.
+    """
+
+    async def search(query: str, limit: int) -> list[dict]:
+        async with session_factory() as db:
+            return await search_pages(db, query, limit=limit)
+
+    return search
+
+
 @contextlib.asynccontextmanager
 async def _turn_context(
     session_factory: async_sessionmaker[AsyncSession],
@@ -224,6 +239,7 @@ async def _turn_context(
                 elastic_enabled=settings.elastic_compute_enabled,
                 docs_enabled=settings.assistant_docs_enabled,
                 agent_count=agent_count,
+                docs_search=_docs_search(session_factory),
             )
 
 

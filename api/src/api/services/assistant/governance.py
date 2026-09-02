@@ -114,6 +114,12 @@ async def _audit(
         warning = result.get("semantic_warning")
         if warning:
             record.detail = str(warning)
+        # A documentation search that found nothing is not an error — the honest
+        # answer is "the docs do not cover this". But it is the clearest signal
+        # of a question DuckHaven cannot answer, and it is only mineable later if
+        # it lands on the row rather than staying in the reply the model saw.
+        if call.tool_name == "search_docs" and not result.get("results"):
+            record.detail = "no_results"
     record.latency_ms = int((time.monotonic() - record.started) * 1000)
     return result
 

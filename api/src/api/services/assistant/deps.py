@@ -45,6 +45,17 @@ class AssistantDeps:
     # case the instructions omit the semantic section entirely and the assistant
     # behaves exactly as it did before the semantic layer existed.
     semantic_summary: str | None = None
+    # The distinct storage-backend kinds behind this workspace's catalogs
+    # ("object_store" | "s3" | "adls_gen2"). Drives the external-storage
+    # paragraph; the bundled object store alone adds nothing.
+    storage_kinds: tuple[str, ...] | None = None
+    # Whether this deployment provisions agents on demand. Deployment-level
+    # config rather than workspace state, but carried here with the rest so
+    # build_instructions stays a pure function of its RunContext.
+    elastic_enabled: bool = False
+    # How many compute agents are visible. None when the lookup failed; the
+    # fleet paragraph is omitted below two, where there is nothing to choose.
+    agent_count: int | None = None
     # Tool-call audit records for this run, keyed by the SDK tool_call_id. Populated
     # by the governance hooks; drained by the runner and persisted after the turn.
     records: dict[str, ToolCallRecord] = field(default_factory=dict)

@@ -23,6 +23,7 @@ import { useCatalogs } from "@/queries/catalogs";
 import { useThrottledText } from "@/hooks/useThrottledText";
 import { EmptyState } from "@/components/ui/empty-state";
 import { cn } from "@/utils";
+import type { DocSource } from "@/types/assistant";
 import { useAssistant } from "./AssistantContext";
 import { ConversationList } from "./ConversationList";
 import { Markdown } from "./Markdown";
@@ -308,6 +309,7 @@ export function AssistantPanel({ ws }: { ws: string }) {
                 role={item.role}
                 text={item.text}
                 sql={item.sql}
+                sources={item.sources}
               />
             ))}
             {chat.pendingUserMessage && (
@@ -515,11 +517,13 @@ function Bubble({
   role,
   text,
   sql,
+  sources,
   streaming = false,
 }: {
   role: "user" | "assistant";
   text: string;
   sql?: string | null;
+  sources?: DocSource[] | null;
   streaming?: boolean;
 }) {
   return (
@@ -540,6 +544,34 @@ function Bubble({
         <pre className="mt-2 overflow-x-auto rounded bg-[var(--bg-code)] p-2 font-mono text-xs text-[var(--text-code)]">
           {sql}
         </pre>
+      )}
+      {sources && sources.length > 0 && (
+        // The pages this answer was actually drawn from. The tool-call trace
+        // records them too, but it is collapsed by default, and a citation the
+        // reader has to expand a panel to find is not a citation.
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-[var(--border-subtle)] pt-2">
+          <span className="text-xs text-[var(--text-muted)]">Sources</span>
+          {sources.map((source) =>
+            source.url ? (
+              <a
+                key={source.path}
+                href={source.url}
+                target="_blank"
+                rel="noreferrer"
+                className={chipClass}
+                // Links to the docs for the version this deployment runs, not
+                // to whatever the site publishes today.
+                title={source.path}
+              >
+                {source.title}
+              </a>
+            ) : (
+              <span key={source.path} className={chipClass} title={source.path}>
+                {source.title}
+              </span>
+            ),
+          )}
+        </div>
       )}
     </div>
   );

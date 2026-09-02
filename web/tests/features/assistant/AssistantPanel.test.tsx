@@ -79,6 +79,42 @@ describe("AssistantPanel", () => {
     expect(screen.getByText("SELECT count(*) FROM events")).toBeInTheDocument();
   });
 
+  it("cites the documentation pages an answer was drawn from", async () => {
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText(/Use DuckDB's AT clause/);
+
+    // The tool-call trace records the same pages, but Activity is collapsed by
+    // default — a citation the reader must expand a panel to find is not one.
+    expect(screen.getByText("Sources")).toBeInTheDocument();
+    const link = screen.getByRole("link", { name: "Snapshots & time travel" });
+    expect(link).toHaveAttribute(
+      "href",
+      "https://tamasmrtn.github.io/duckhaven/guides/snapshots-time-travel/",
+    );
+    expect(
+      screen.getByRole("link", { name: "SQL support" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows no Sources row on an answer that read no documentation", async () => {
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    const answer = await screen.findByText(
+      "There are 42 events in the events table.",
+    );
+
+    // Most turns cite nothing; an empty Sources heading would be noise on all
+    // of them.
+    expect(
+      within(
+        answer.closest("div.max-w-\\[90\\%\\]") as HTMLElement,
+      ).queryByText("Sources"),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows a dismissible notice when the conversation history is truncated", async () => {
     const conv = CONVERSATIONS.find((c) => c.id === "conv-1")!;
     conv.history_truncated = true;

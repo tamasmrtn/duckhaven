@@ -127,6 +127,32 @@ def looks_like_refusal(answer: str) -> bool:
     return bool(_REFUSAL.search(answer))
 
 
+# A documentation path as it appears in an answer: "reference/sql-support.md".
+_CITED_PATH = re.compile(r"\b[a-z0-9-]+/[a-z0-9-]+\.md\b")
+
+
+def cited_paths(answer: str) -> set[str]:
+    """Documentation paths the answer names, whether or not they are real."""
+    return set(_CITED_PATH.findall(answer))
+
+
+def citation_presence(answer: str, indexed: set[str]) -> float | None:
+    """1.0 when the answer cites at least one real page, 0.0 when it cites none.
+
+    ``None`` when the answer names no path at all — not every product answer
+    needs one, and scoring those as failures would push the assistant towards
+    citing something for the sake of it.
+
+    A cited path that is *not* in the index scores 0.0 rather than being ignored.
+    The user sees citations as links, so an invented path is a broken link and a
+    small confabulation in its own right.
+    """
+    named = cited_paths(answer)
+    if not named:
+        return None
+    return 1.0 if named & indexed else 0.0
+
+
 def summarise(scores: dict[str, list[float]]) -> dict[str, float]:
     """Mean per group, so a regression can be localised to a category or slice."""
     return {

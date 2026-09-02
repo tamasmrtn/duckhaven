@@ -54,6 +54,12 @@ def test_system_prompt_instructs_to_ask_clarifying_questions():
     assert "guessing and running SQL" in SYSTEM_PROMPT
 
 
+def test_the_product_block_asks_for_citations():
+    """The user sees cited paths as links, so this instruction is what makes the
+    Sources row appear at all."""
+    assert "Name the pages you used, by path" in PRODUCT_PROMPT
+
+
 def test_the_product_block_carries_the_facts_that_change_behaviour():
     """Not a paraphrase check — these four decide what the assistant *does*."""
     assert "information_schema.columns" in PRODUCT_PROMPT
@@ -198,7 +204,10 @@ def test_every_block_is_separated_by_a_blank_line():
 
 def test_each_resident_block_is_within_budget():
     assert len(BASE_PROMPT) <= 2_600
-    assert len(PRODUCT_PROMPT) <= 2_800
+    # Raised from 2,800 in phase 5, deliberately, to make room for the
+    # citation instruction. Growing a block past its ceiling is meant to be
+    # a decision someone makes, not something that happens.
+    assert len(PRODUCT_PROMPT) <= 3_000
     # ~50 chars per page, so this allows roughly eight more before a bump.
     assert len(DOCS_INDEX_PROMPT.format(index=load_index().prompt_block())) <= 3_800
 

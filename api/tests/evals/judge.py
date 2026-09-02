@@ -23,10 +23,9 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.settings import ModelSettings
-from pydantic_evals.evaluators.llm_as_a_judge import judge_input_output
 
 from tests.evals.harness import RunResult
 from tests.evals.metrics import Case
@@ -123,6 +122,22 @@ class PairwiseVerdict(BaseModel):
     reason: str
 
 
+class GradedVerdict(BaseModel):
+    """A rubric score on the 1-5 scale the rubrics define.
+
+    Scored through a plain agent rather than ``pydantic_evals``' ``LLMJudge``.
+    Its built-in system prompt frames a rubric as a pass/fail *statement* -
+    "if the statement in the rubric is true, then the output passes" - and its
+    worked examples score 1.0 and 0.0. A graded rubric handed to it is fighting
+    that framing, and the 0-1 score it returns would make thresholds of 4.2 and
+    4.0 unreachable: every run would fail, for a reason nothing in the output
+    explains. Owning the prompt keeps the scale unambiguous.
+    """
+
+    score: int = Field(ge=1, le=5, description="The rubric score, from 1 to 5.")
+    reason: str = Field(description="One sentence justifying the score.")
+
+
 @dataclass(frozen=True)
 class CaseScore:
     case: str
@@ -149,19 +164,13 @@ async def score_absolute(case: Case, result: RunResult) -> CaseScore:
     two — an answer that is faithful but off-topic should score 5 and 2, not 3.5
     twice.
     """
-    faithful = await judge_input_output(
-        inputs=f"QUESTION: {case.question}\n\nCONTEXT:\n{_context(result)}",
-        output=result.answer,
-        rubric=FAITHFULNESS_RUBRIC,
-        model=JUDGE_MODEL,
-        model_settings=JUDGE_SETTINGS,
+    faithful = await _grade(
+        FAITHFULNESS_RUBRIC,
+        f"QUESTION: {case.question}\n\nCONTEXT:\n{_context(result)}\n\nANSWER:\n{result.answer}",
     )
-    relevant = await judge_input_output(
-        inputs=f"QUESTION: {case.question}",
-        output=result.answer,
-        rubric=RELEVANCY_RUBRIC,
-        model=JUDGE_MODEL,
-        model_settings=JUDGE_SETTINGS,
+    relevant = await _grade(
+        RELEVANCY_RUBRIC,
+        f"QUESTION: {case.question}\n\nANSWER:\n{result.answer}",
     )
     return CaseScore(
         case=case.name,
@@ -172,6 +181,11 @@ async def score_absolute(case: Case, result: RunResult) -> CaseScore:
         relevancy=float(relevant.score),
         reason=faithful.reason,
     )
+
+
+async def _grade(rubric: str, body: str) -> GradedVerdict:
+    agent = Agent(JUDGE_MODEL, output_type=GradedVerdict, model_settings=JUDGE_SETTINGS)
+    return (await agent.run(f"{rubric}\n\n{body}")).output
 
 
 async def judge_pair(question: str, context: str, first: str, second: str) -> PairwiseVerdict:

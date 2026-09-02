@@ -37,6 +37,12 @@ jobs:
               - 'uv.lock'
               - 'Makefile'
               - '.github/workflows/ci.yml'
+              # The assistant reads docs/ at runtime and ships a generated index
+              # of it, so a docs-only PR can break Python tests and must run
+              # them — without this the index drift gate never fires on exactly
+              # the changes that cause drift.
+              - 'docs/**'
+              - 'mkdocs.yml'
             web:
               - 'web/**'
               - '.github/workflows/ci.yml'

@@ -5,7 +5,7 @@
         polaris-dev polaris-dev-s3 polaris-dev-down \
         localstack-dev localstack-dev-down \
         idp-dev idp-dev-down \
-        lint format \
+        lint format docs-index \
         migrate migrate-new migrate-down \
         compose-up compose-down compose-logs compose-pull \
         clean
@@ -219,6 +219,13 @@ lint:
 format:
 	uv run ruff format api/src agent/src shared/src
 	cd web && npm run format
+
+# ── Assistant documentation index ─────────────────────────────────────────────
+# Regenerates docs_index.yaml (what the assistant sees) and docs/llms.txt from
+# docs/ and mkdocs.yml. Hand-edited page summaries are preserved. Run after
+# adding, removing or renaming a docs page; pre-commit and CI check for drift.
+docs-index:
+	uv run --package duckhaven-api python -m api.services.assistant.knowledge.generate
 
 # ── Database migrations ───────────────────────────────────────────────────────
 migrate:

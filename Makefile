@@ -233,8 +233,9 @@ docs-index:
 # provider key. Only synthesis costs money, and it is a deliberate act: it drafts
 # candidate cases for a human to promote, never the golden set itself.
 eval-synth:
-	@[ -n "$$ASSISTANT_EVAL_API_KEY" ] || { echo "ASSISTANT_EVAL_API_KEY not set; synthesis calls a model"; exit 1; }
-	ASSISTANT_API_KEY=$$ASSISTANT_EVAL_API_KEY \
+	@set -a; [ -f .env ] && . ./.env; set +a; [ -n "$$ASSISTANT_EVAL_API_KEY" ] || { echo "ASSISTANT_EVAL_API_KEY not set; synthesis calls a model"; exit 1; }
+	set -a; [ -f .env ] && . ./.env; set +a; \
+	  ASSISTANT_API_KEY=$$ASSISTANT_EVAL_API_KEY PYTHONPATH=api \
 	  uv run --package duckhaven-api python -m tests.evals.synth $(ARGS)
 
 # Tier 2, absolute: faithfulness and answer relevancy against thresholds. This is
@@ -245,15 +246,18 @@ eval-synth:
 # endpoint (Ollama, vLLM) as ASSISTANT_API_KEY; a hosted provider reads its own
 # standard variable, which your shell already exports.
 eval-judged:
-	@[ -n "$$ASSISTANT_EVAL_API_KEY" ] || { echo "ASSISTANT_EVAL_API_KEY not set; tier 2 calls a model"; exit 1; }
-	ASSISTANT_EVAL_ARM=$(or $(ARM),with-docs) \
+	@set -a; [ -f .env ] && . ./.env; set +a; [ -n "$$ASSISTANT_EVAL_API_KEY" ] || { echo "ASSISTANT_EVAL_API_KEY not set; tier 2 calls a model"; exit 1; }
+	set -a; [ -f .env ] && . ./.env; set +a; \
+	  ASSISTANT_EVAL_ARM=$(or $(ARM),with-docs) \
+	  ASSISTANT_API_KEY=$$ASSISTANT_EVAL_API_KEY \
 	  uv run --package duckhaven-api pytest api/tests/evals/test_tier2_judged.py -v -s
 
 # Tier 2, pairwise: which of two arms is better, judged in both orders. This is
 # the mode that answers "did my change help?". ~$6.40 per run.
 eval-compare:
-	@[ -n "$$ASSISTANT_EVAL_API_KEY" ] || { echo "ASSISTANT_EVAL_API_KEY not set; tier 2 calls a model"; exit 1; }
-	ASSISTANT_API_KEY=$$ASSISTANT_EVAL_API_KEY \
+	@set -a; [ -f .env ] && . ./.env; set +a; [ -n "$$ASSISTANT_EVAL_API_KEY" ] || { echo "ASSISTANT_EVAL_API_KEY not set; tier 2 calls a model"; exit 1; }
+	set -a; [ -f .env ] && . ./.env; set +a; \
+	  ASSISTANT_API_KEY=$$ASSISTANT_EVAL_API_KEY PYTHONPATH=api \
 	  uv run --package duckhaven-api python -m tests.evals.compare \
 	    --a=$(or $(ARM_A),with-docs) --b=$(or $(ARM_B),baseline)
 

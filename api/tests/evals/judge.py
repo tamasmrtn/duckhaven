@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -122,8 +123,14 @@ MIN_FAITHFULNESS = 4.2
 MIN_RELEVANCY = 4.0
 
 
+@lru_cache(maxsize=1)
 def judge_model() -> Any:
     """The judge, constructed the same way the product constructs a model.
+
+    Cached, because it was being rebuilt for every call. A judged run makes 168
+    of them, each previously creating its own ``OpenAIProvider`` and connection
+    pool — which is what left dozens of idle TLS connections open against
+    ollama.com and is a plausible contributor to the timeout that killed a run.
 
     A bare string works for a hosted provider; an OpenAI-compatible endpoint
     needs a real client, and passing the string through would silently score
@@ -220,15 +227,29 @@ async def score_absolute(case: Case, result: RunResult) -> CaseScore:
     )
 
 
+@lru_cache(maxsize=1)
+def _graded_agent() -> Agent:
+    return Agent(judge_model(), output_type=GradedVerdict, model_settings=JUDGE_SETTINGS)
+
+
+@lru_cache(maxsize=1)
+def _pairwise_agent() -> Agent:
+    return Agent(judge_model(), output_type=PairwiseVerdict, model_settings=JUDGE_SETTINGS)
+
+
+def reset_judge() -> None:
+    """Drop the cached judge. For tests that change the configured model."""
+    for cached in (judge_model, _graded_agent, _pairwise_agent):
+        cached.cache_clear()
+
+
 async def _grade(rubric: str, body: str) -> GradedVerdict:
-    agent = Agent(judge_model(), output_type=GradedVerdict, model_settings=JUDGE_SETTINGS)
-    return (await agent.run(f"{rubric}\n\n{body}")).output
+    return (await _graded_agent().run(f"{rubric}\n\n{body}")).output
 
 
 async def judge_pair(question: str, context: str, first: str, second: str) -> PairwiseVerdict:
     """One pairwise comparison, in the order given. Call twice, swapped."""
-    agent = Agent(judge_model(), output_type=PairwiseVerdict, model_settings=JUDGE_SETTINGS)
-    result = await agent.run(
+    result = await _pairwise_agent().run(
         f"{PAIRWISE_RUBRIC}\n\n"
         f"QUESTION: {question}\n\n"
         f"CONTEXT:\n{context}\n\n"

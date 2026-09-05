@@ -27,7 +27,13 @@ from pathlib import Path
 from api.config import settings
 from api.services.assistant.knowledge.loader import read_page
 from tests.evals.fixtures import EvalGateway
-from tests.evals.harness import ArmConfig, RunResult, docs_search_backend, run_case
+from tests.evals.harness import (
+    ArmConfig,
+    RunResult,
+    docs_search_backend,
+    retrying,
+    run_case,
+)
 from tests.evals.judge import JUDGE_MODEL, JUDGE_SETTINGS, judge_pair, resolve_pair
 from tests.evals.metrics import Case, load_cases
 
@@ -40,18 +46,31 @@ MAX_TRUSTWORTHY_FLIP_RATE = 0.25
 
 
 async def _answer(arm: ArmConfig, case: Case, docs_search) -> RunResult:
-    return await run_case(
-        arm,
-        case.question,
-        gateway=EvalGateway(can_write=arm.workspace.get("can_write", False)),
-        docs_search=docs_search,
-        case_name=case.name,
+    return await retrying(
+        lambda: run_case(
+            arm,
+            case.question,
+            gateway=EvalGateway(can_write=arm.workspace.get("can_write", False)),
+            docs_search=docs_search,
+            case_name=case.name,
+        )
     )
 
 
-# How much of each page the judge sees. Enough to contain the answer, short
-# enough that a dozen pages do not swamp the two answers being compared.
-_CONTEXT_CHARS = 2_500
+# Total characters of documentation the judge sees, shared across however many
+# pages a case names rather than capped per page.
+#
+# A flat per-page cap of 2,500 quietly cost two correct answers. The assistant
+# read reference/sql-support.md in full - 9,258 characters, well inside
+# read_doc_page's own limit - and cited a real section beginning at character
+# 4,683. The judge saw the first 2,500 characters, could not find the section,
+# and called a correct citation a fabrication. Both losses in the run that
+# exposed this were of that shape.
+#
+# A budget rather than a per-page cap means the common case, one or two pages,
+# is sent whole; only a case naming many pages is trimmed, and then evenly.
+_CONTEXT_BUDGET = 24_000
+_MIN_PER_PAGE = 2_000
 
 
 def _context(case: Case, *results: RunResult) -> str:
@@ -73,13 +92,22 @@ def _context(case: Case, *results: RunResult) -> str:
         if source not in paths:
             paths.append(source)
 
-    blocks = []
+    pages = []
     for path in paths:
         try:
-            page = read_page(path)
+            pages.append((path, read_page(path)))
         except Exception:  # noqa: BLE001 — a missing page is context we lack, not a failure
             continue
-        blocks.append(f"--- {path} ({page['title']}) ---\n{page['text'][:_CONTEXT_CHARS]}")
+
+    # Share the budget, and never trim a page below the point where it stops
+    # being usable evidence.
+    per_page = max(_MIN_PER_PAGE, _CONTEXT_BUDGET // len(pages)) if pages else 0
+    blocks = []
+    for path, page in pages:
+        text = page["text"]
+        if len(text) > per_page:
+            text = text[:per_page] + f"\n[… {len(text) - per_page:,} characters not shown]"
+        blocks.append(f"--- {path} ({page['title']}) ---\n{text}")
     if blocks:
         return "\n\n".join(blocks)
 
@@ -103,13 +131,14 @@ async def compare(arm_a: str, arm_b: str, docs_search=None) -> dict:
     cases = load_cases()
     outcomes: list[dict] = []
 
-    for case in cases:
+    for n, case in enumerate(cases, 1):
+        print(f"  [{n}/{len(cases)}] {case.name}", flush=True)
         a = await _answer(a_config, case, docs_search)
         b = await _answer(b_config, case, docs_search)
         context = _context(case, a, b)
         # Both orders. The judge never learns which arm is which.
-        first = await judge_pair(case.question, context, a.answer, b.answer)
-        second = await judge_pair(case.question, context, b.answer, a.answer)
+        first = await retrying(lambda: judge_pair(case.question, context, a.answer, b.answer))
+        second = await retrying(lambda: judge_pair(case.question, context, b.answer, a.answer))
         winner, flipped = resolve_pair(first.winner, second.winner)
         outcomes.append(
             {

@@ -398,3 +398,62 @@ def test_the_ollama_arms_differ_from_each_other_only_in_knowledge():
     assert ollama_base.openai_base_url == ollama_docs.openai_base_url
     assert ollama_base.workspace == ollama_docs.workspace
     assert ollama_base.docs_enabled != ollama_docs.docs_enabled
+
+
+# ── Tool arguments arrive in two shapes ───────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        # Anthropic and friends hand back a dict.
+        ({"path": "reference/sql-support.md"}, {"path": "reference/sql-support.md"}),
+        # Every OpenAI-compatible endpoint — Ollama, vLLM, Azure — sends a string.
+        ('{"path": "reference/sql-support.md"}', {"path": "reference/sql-support.md"}),
+        ("", {}),
+        ("{not json", {}),
+        ({}, {}),
+    ],
+)
+def test_tool_args_are_read_whichever_form_the_provider_sends(args, expected):
+    """The string form was treated as "no arguments", silently and totally: over a
+    full run read_doc_page was called 19 times and the page recorded 0 times. The
+    judge then never saw what the assistant had read, and scored correct citations
+    as fabrications."""
+    from pydantic_ai.messages import ToolCallPart
+
+    from tests.evals.harness import _tool_args
+
+    assert _tool_args(ToolCallPart("read_doc_page", args)) == expected
+
+
+async def test_a_read_page_is_recorded_from_a_string_argument():
+    """End to end through run_case, because the unit above would still pass if
+    run_case stopped calling it."""
+
+    def model_reading_a_page() -> FunctionModel:
+        steps = iter(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            "read_doc_page",
+                            '{"path": "reference/sql-support.md"}',
+                        )
+                    ]
+                ),
+                ModelResponse(parts=[TextPart("done")]),
+            ]
+        )
+
+        def function(messages, info) -> ModelResponse:
+            return next(steps)
+
+        return FunctionModel(function)
+
+    result = await run_case(
+        ArmConfig.load("with-docs"), "what statements are allowed?", model=model_reading_a_page()
+    )
+
+    assert result.tools_called == ["read_doc_page"]
+    assert result.doc_paths == ["reference/sql-support.md"]

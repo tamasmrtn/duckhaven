@@ -20,6 +20,8 @@ the one ``test_semantic_tools.py`` already uses to drive the agent directly.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 import os
 import uuid
 from contextlib import asynccontextmanager, contextmanager
@@ -146,6 +148,30 @@ def build_agent(arm: ArmConfig, model: Any = None) -> Agent:
     )
 
 
+def _tool_args(part: ToolCallPart) -> dict:
+    """A tool call's arguments, whichever form the provider sent them in.
+
+    ``ToolCallPart.args`` is a dict for some providers and a JSON *string* for
+    others — every OpenAI-compatible endpoint, which is how DuckHaven reaches
+    Ollama and vLLM. Treating the string case as "no arguments" was silent and
+    total: across a full 42-case run, ``read_doc_page`` was called 19 times and
+    the page it opened was recorded 0 times.
+
+    The judge then never saw the page, its context fell back to "no
+    documentation covers this question", and a correct quotation from a real
+    page was scored as a fabrication. The harness was penalising the assistant
+    for doing the more rigorous thing.
+
+    ``runner.py`` has always parsed the string form; this is the same handling,
+    which is where it should have come from in the first place.
+    """
+    args = part.args
+    if isinstance(args, str):
+        with contextlib.suppress(json.JSONDecodeError):
+            args = json.loads(args)
+    return args if isinstance(args, dict) else {}
+
+
 async def run_case(
     arm: ArmConfig,
     question: str,
@@ -169,7 +195,7 @@ async def run_case(
             if not isinstance(part, ToolCallPart):
                 continue
             tools_called.append(part.tool_name)
-            args = part.args if isinstance(part.args, dict) else {}
+            args = _tool_args(part)
             if part.tool_name == "read_doc_page" and args.get("path"):
                 doc_paths.append(args["path"])
 

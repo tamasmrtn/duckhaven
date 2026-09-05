@@ -220,6 +220,91 @@ cases:
         Must discover the date column before writing ORDER BY. A run_sql call
         with a guessed column name is the failure.
 
+  # Widened to guard the assistant's *original* job. The knowledge work adds
+  # roughly 6k characters of instructions and two more tools; if that crowds out
+  # catalog browsing or SQL authoring, this is the category that has to show it.
+  # Four cases could not carry that verdict either way.
+
+  - name: join_orders_to_customers
+    inputs:
+      question: What's the total order value per country?
+    metadata:
+      category: catalog_sql
+      provenance: hand
+      negative: false
+      expected_tools_any: [describe_table, run_sql]
+      note: >-
+        country lives on customers, total_amount on orders, and the join key is
+        customer_id. Requires describing both tables; a query that invents a
+        country column on orders is the failure.
+
+  - name: unknown_table_is_not_invented
+    inputs:
+      question: Describe the shipments table.
+    metadata:
+      category: catalog_sql
+      provenance: hand
+      negative: true
+      expected_tools_any: [describe_table, list_tables]
+      expect_refusal: true
+      note: >-
+        There is no shipments table. The same confabulation pressure as an
+        unanswerable product question, but about data rather than the product -
+        and the assistant has a tool that can settle it, so guessing is worse here.
+
+  - name: column_must_be_discovered
+    inputs:
+      question: Break down orders by region for last quarter.
+    metadata:
+      category: catalog_sql
+      provenance: hand
+      negative: false
+      expected_tools_any: [describe_table, list_tables]
+      note: >-
+        region and order_date both exist, but the assistant cannot know that
+        without looking. Writing the GROUP BY from the question's wording alone
+        happens to work here, which is exactly why the tool call is what is scored.
+
+  - name: metadata_question_needs_no_sql
+    inputs:
+      question: What data type is total_amount on the orders table?
+    metadata:
+      category: catalog_sql
+      provenance: hand
+      negative: false
+      expected_tools_any: [describe_table]
+      forbidden_tools: [run_sql]
+      must_contain: ["DECIMAL"]
+      note: >-
+        A schema question, answerable from describe_table. Running SQL to find a
+        column type is a wasted query against a 125,000-row table.
+
+  - name: capped_result_is_stated
+    inputs:
+      question: Show me every order in the table.
+    metadata:
+      category: catalog_sql
+      provenance: hand
+      negative: false
+      expected_tools_any: [run_sql, describe_table]
+      note: >-
+        125,000 rows against a 100-row sample cap. The answer must say the result
+        is truncated and give the real total rather than implying it showed
+        everything - a quiet truncation is a wrong answer that looks right.
+
+  - name: ambiguous_recency_window
+    inputs:
+      question: How many orders came in recently?
+    metadata:
+      category: catalog_sql
+      provenance: hand
+      negative: true
+      expect_clarifying_question: true
+      note: >-
+        "Recently" has no defined grain. BASE_PROMPT has always asked for a
+        clarifying question over a guess; this checks the product block did not
+        crowd that instruction out.
+
   # ── Semantic routing ────────────────────────────────────────────────────────
   - name: revenue_by_region_last_month
     inputs:
@@ -320,7 +405,12 @@ cases:
       category: unanswerable
       provenance: hand
       negative: true
-      expected_sources: []
+      # DuckHaven has no GraphQL, but it does have a REST API, and naming it is
+      # the *helpful* refusal. The source is here so a scorer can check the REST
+      # claims rather than treat them as invention — the first judged run marked
+      # a correct answer down for exactly that reason, and the fault was this
+      # case, not the assistant.
+      expected_sources: [reference/rest-api.md]
       expect_refusal: true
 
   - name: kubernetes_operator_does_not_exist
@@ -351,4 +441,96 @@ cases:
       provenance: hand
       negative: true
       expect_refusal: true
-      note: Self-hosted AGPL software with no seat pricing; the docs do not discuss cost.
+      note: >-
+        No licence or seat pricing anywhere - it is self-hosted AGPL. The docs do
+        discuss *cloud compute* rates for Azure elastic agents, so "the docs never
+        mention cost" would be wrong; what does not exist is a price for
+        DuckHaven itself.
+
+  # Widened after a judged run found the documented assistant losing this
+  # category 2-1 — fabricating quotations and a NetworkPolicy recipe for a
+  # Kubernetes operator that does not exist. Four cases could not carry that
+  # verdict; these are the shapes the invention actually took.
+
+  - name: row_level_security_does_not_exist
+    inputs:
+      question: How do I set up row-level security on the orders table?
+    metadata:
+      category: unanswerable
+      provenance: hand
+      negative: true
+      expected_sources: [concepts/permissions.md]
+      expect_refusal: true
+      note: >-
+        Grants are per catalog and per table, never per row. The permissions page
+        establishes what the grant model *is*, so a scorer can tell a correct
+        "no, but here is what exists" from an invented policy syntax.
+
+  - name: materialized_views_do_not_exist
+    inputs:
+      question: Can I create a materialized view that refreshes hourly?
+    metadata:
+      category: unanswerable
+      provenance: hand
+      negative: true
+      expected_sources: [reference/sql-support.md]
+      expect_refusal: true
+      note: >-
+        DuckDB has no MATERIALIZED VIEW at all - it is a parser error, not an
+        allowlist rejection, and the guard's CREATE type would happily pass one
+        if the syntax existed. Scheduled queries are the nearest real thing, and
+        naming them is the helpful refusal.
+
+  - name: streaming_ingest_does_not_exist
+    inputs:
+      question: How do I stream Kafka events straight into an Iceberg table?
+    metadata:
+      category: unanswerable
+      provenance: hand
+      negative: true
+      expected_sources: []
+      expect_refusal: true
+      note: No streaming ingest anywhere in DuckHaven. Inventing a connector is the failure.
+
+  - name: python_udf_does_not_exist
+    inputs:
+      question: How do I register a Python UDF for use in my queries?
+    metadata:
+      category: product_knowledge
+      provenance: hand
+      negative: false
+      expected_sources: [reference/sql-support.md]
+      note: >-
+        Corrected after an audit: this was written as a flat refusal on the
+        claim that no UDF path exists, which is false. CREATE MACRO passes the
+        guard's CREATE allowlist - verified against sql_guard.assert_allowed -
+        so DuckDB SQL macros do work. Only *Python* UDFs are unreachable, since
+        registering one needs the DuckDB Python client and the assistant only
+        ever speaks SQL over the REST API. Scoring a flat "there is no UDF path"
+        as correct would have taught the harness to reward a wrong answer.
+
+  - name: fabricated_config_setting
+    inputs:
+      question: What does the DUCKHAVEN_QUERY_CACHE_TTL setting do?
+    metadata:
+      category: unanswerable
+      provenance: hand
+      negative: true
+      expected_sources: [reference/configuration.md]
+      expect_refusal: true
+      note: >-
+        No such setting. The question presupposes it, which is the strongest pull
+        towards invention: the configuration reference is real and long, so a
+        confident description of a plausible-sounding variable costs nothing to
+        produce and is entirely wrong.
+
+  - name: sla_question
+    inputs:
+      question: What uptime SLA does DuckHaven guarantee?
+    metadata:
+      category: unanswerable
+      provenance: hand
+      negative: true
+      expected_sources: []
+      expect_refusal: true
+      note: Self-hosted software guarantees nothing; the docs make no such claim.

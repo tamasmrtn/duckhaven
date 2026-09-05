@@ -1,14 +1,12 @@
 """Tier 2: absolute scoring against a live model and a live judge.
 
-Costs money and needs a provider key, so it is skipped unless
-``ASSISTANT_EVAL_API_KEY`` is set. It is not part of any CI gate — see
-``docs/developer/testing.md`` for what it costs and when to run it.
+Costs money, needs a provider key, and is in no CI gate.
 
     ASSISTANT_EVAL_API_KEY=… make eval-judged ARM=with-docs
 
-This is the regression and reporting mode: scores tracked over time against
-thresholds. To ask whether a *change* helped, use pairwise instead — it is more
-sensitive to a small real difference than watching a mean wobble.
+The regression and reporting mode: scores tracked over time against thresholds.
+To ask whether a *change* helped, use pairwise — more sensitive to a small real
+difference than watching a mean wobble.
 """
 
 from __future__ import annotations
@@ -45,17 +43,14 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(autouse=True)
 def _real_models_allowed(monkeypatch):
-    """The assistant suite blocks live model calls by default; this is the one
-    place that must opt out, and it does so explicitly and under an env gate."""
+    """The assistant suite blocks live model calls; this is the one place that
+    opts out, explicitly and under an env gate."""
     from pydantic_ai import models
 
     monkeypatch.setattr(models, "ALLOW_MODEL_REQUESTS", True)
     monkeypatch.setattr(settings, "assistant_docs_dir", generate._repo_root() / "docs")
-    # The key reaches an OpenAI-compatible endpoint through this setting, which
-    # is what _build_model reads. A hosted provider takes its own standard
-    # variable from the environment instead — assuming Anthropic here would make
-    # every other provider fail with an authentication error that looks nothing
-    # like the actual problem.
+    # What _build_model reads for an OpenAI-compatible endpoint. A hosted
+    # provider takes its own standard variable from the environment instead.
     monkeypatch.setattr(settings, "assistant_api_key", os.environ["ASSISTANT_EVAL_API_KEY"])
     load_index.cache_clear()
     yield

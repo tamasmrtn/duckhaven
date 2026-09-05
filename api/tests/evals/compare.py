@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from api.config import settings
+from api.services.assistant.knowledge.loader import read_page
 from tests.evals.fixtures import EvalGateway
 from tests.evals.harness import ArmConfig, RunResult, docs_search_backend, run_case
 from tests.evals.judge import JUDGE_MODEL, JUDGE_SETTINGS, judge_pair, resolve_pair
@@ -48,10 +49,52 @@ async def _answer(arm: ArmConfig, case: Case, docs_search) -> RunResult:
     )
 
 
-def _context(a: RunResult, b: RunResult) -> str:
-    pages = sorted(set(a.doc_paths) | set(b.doc_paths))
-    return "Documentation pages available to both:\n" + (
-        "\n".join(f"- {p}" for p in pages) or "(none)"
+# How much of each page the judge sees. Enough to contain the answer, short
+# enough that a dozen pages do not swamp the two answers being compared.
+_CONTEXT_CHARS = 2_500
+
+
+def _context(case: Case, *results: RunResult) -> str:
+    """The ground truth for this question, as page text rather than page names.
+
+    The first version listed only the paths the arms had *opened*, which was
+    wrong in a way that inverted the whole result: the assistant answers most
+    product questions straight from its resident knowledge without opening
+    anything, so the judge saw an empty context and — following criterion 1 —
+    marked every correct, documented answer as an invented capability. The arm
+    that knew things was punished for knowing them.
+
+    The case file already names where each answer lives. Feeding that text to the
+    judge is what makes "supported by the context" a real test instead of a test
+    of whether a tool happened to fire.
+    """
+    paths: list[str] = []
+    for source in (*case.doc_sources, *(p for r in results for p in r.doc_paths)):
+        if source not in paths:
+            paths.append(source)
+
+    blocks = []
+    for path in paths:
+        try:
+            page = read_page(path)
+        except Exception:  # noqa: BLE001 — a missing page is context we lack, not a failure
+            continue
+        blocks.append(f"--- {path} ({page['title']}) ---\n{page['text'][:_CONTEXT_CHARS]}")
+    if blocks:
+        return "\n\n".join(blocks)
+
+    # No page covers this. What that means depends on what was asked, and getting
+    # it wrong in either direction costs the run its point.
+    if case.category in ("product_knowledge", "unanswerable"):
+        return (
+            "No documentation page covers this question. That is itself informative: an "
+            "answer that confidently describes a DuckHaven capability here is very likely "
+            "inventing one, and an answer that says so is correct."
+        )
+    return (
+        "This question is about the workspace's data rather than the product, so no "
+        "documentation applies. Judge on criteria 2-4 and do not treat a factual answer "
+        "as an invented capability."
     )
 
 
@@ -63,7 +106,7 @@ async def compare(arm_a: str, arm_b: str, docs_search=None) -> dict:
     for case in cases:
         a = await _answer(a_config, case, docs_search)
         b = await _answer(b_config, case, docs_search)
-        context = _context(a, b)
+        context = _context(case, a, b)
         # Both orders. The judge never learns which arm is which.
         first = await judge_pair(case.question, context, a.answer, b.answer)
         second = await judge_pair(case.question, context, b.answer, a.answer)

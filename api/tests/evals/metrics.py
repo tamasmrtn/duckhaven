@@ -37,8 +37,27 @@ class Case:
 
     @property
     def doc_sources(self) -> tuple[str, ...]:
-        """Only the documentation pages — 'table:' sources are catalog cases."""
+        """Pages that establish the truth for this question.
+
+        What a judge should check the answer against. 'table:' sources name a
+        catalog object rather than a page and are excluded.
+        """
         return tuple(s for s in self.expected_sources if not s.startswith("table:"))
+
+    @property
+    def retrieval_targets(self) -> tuple[str, ...]:
+        """Pages search is expected to *find* — which is not the same set.
+
+        On a negative case the page is context for a judge, not a target for an
+        index: ``row_level_security_does_not_exist`` names the permissions page
+        so a scorer can tell "no, but here is the real grant model" from an
+        invented policy syntax, but the docs never discuss row-level security,
+        so a good index ranking that page highly for those words would be a
+        coincidence rather than a success. Scoring recall over these cases
+        measures the corpus's silence, and punishes retrieval for it — it took
+        hand-written recall@5 from 0.75 to 0.54 the moment six were added.
+        """
+        return () if self.negative else self.doc_sources
 
 
 def load_cases(path: Path = CASES_PATH) -> list[Case]:

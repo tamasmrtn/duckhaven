@@ -6,8 +6,12 @@ So it lives here and runs in CI's ``integration`` job, which is gated on the sam
 path filter as the rest of the Python suite. Every pull request that touches
 ``api/`` or ``docs/`` scores retrieval.
 
-What is asserted is the *aggregate*: recall@5 and MRR over the cases that name a
-documentation page, reported separately by provenance. Auto-synthesised questions
+What is asserted is the *aggregate*: recall@5 and MRR over the cases where
+retrieval is supposed to succeed, reported separately by provenance. Negative
+cases are excluded — their pages exist to give a judge ground truth, not to be
+found by a search for words the documentation deliberately does not contain.
+
+Auto-synthesised questions
 were written from the page they point at, so they are trivially answerable by a
 system that retrieved that page; scoring them together with hand-written ones
 would flatter the index. Individual cases are allowed to miss — the thresholds
@@ -120,7 +124,7 @@ async def test_a_malformed_query_does_not_raise(corpus):
 
 
 async def test_retrieval_scores_meet_their_thresholds(corpus):
-    cases = [c for c in load_cases() if c.doc_sources]
+    cases = [c for c in load_cases() if c.retrieval_targets]
     recall: dict[str, list[float]] = {"hand": [], "auto": []}
     rr: dict[str, list[float]] = {"hand": [], "auto": []}
     misses: list[str] = []
@@ -128,11 +132,11 @@ async def test_retrieval_scores_meet_their_thresholds(corpus):
     for case in cases:
         results = await search_pages(corpus, case.question, limit=5)
         paths = [r["path"] for r in results]
-        hit = recall_at_k(paths, case.doc_sources, k=5)
+        hit = recall_at_k(paths, case.retrieval_targets, k=5)
         recall[case.provenance].append(hit)
-        rr[case.provenance].append(reciprocal_rank(paths, case.doc_sources))
+        rr[case.provenance].append(reciprocal_rank(paths, case.retrieval_targets))
         if not hit:
-            misses.append(f"{case.name}: wanted {case.doc_sources}, got {paths[:3]}")
+            misses.append(f"{case.name}: wanted {case.retrieval_targets}, got {paths[:3]}")
 
     overall_recall = sum(sum(v) for v in recall.values()) / sum(len(v) for v in recall.values())
     overall_mrr = sum(sum(v) for v in rr.values()) / sum(len(v) for v in rr.values())
@@ -150,10 +154,12 @@ async def test_retrieval_scores_meet_their_thresholds(corpus):
 async def test_hand_written_cases_are_scored_on_their_own(corpus):
     """The slice that carries the signal must clear the bar by itself, or a pile
     of easy synthesised questions could carry a failing index over the line."""
-    cases = [c for c in load_cases() if c.doc_sources and c.provenance == "hand"]
+    cases = [c for c in load_cases() if c.retrieval_targets and c.provenance == "hand"]
     scores = [
         recall_at_k(
-            [r["path"] for r in await search_pages(corpus, c.question, limit=5)], c.doc_sources, k=5
+            [r["path"] for r in await search_pages(corpus, c.question, limit=5)],
+            c.retrieval_targets,
+            k=5,
         )
         for c in cases
     ]

@@ -103,20 +103,20 @@ make eval-synth   ARGS="--limit 5"                          # draft candidate ca
 
 ### Running against a self-hosted or keyless model
 
-An arm can name an OpenAI-compatible endpoint, which is the same path a keyless DuckHaven uses in production — Ollama,
-vLLM, Azure. The arm sets `model` and `openai_base_url`, and the harness builds the client through the *same*
-`_build_model()` the application uses, so an arm can only describe a deployment the product can actually be in.
+An arm names an OpenAI-compatible endpoint — Ollama, vLLM, Azure — which is the same path a keyless DuckHaven uses in
+production. The harness builds the client through the *same* `_build_model()` the application uses, so an arm can only
+describe a deployment the product can actually be in. The shipped arms are configured this way:
 
 ```yaml
-ollama-with-docs:
-  inherits: with-docs
-  model: "gpt-oss:120b-cloud"
+with-docs:
+  docs_enabled: true
+  model: "glm-5.3-flash:cloud"
   openai_base_url: "https://ollama.com/v1"
 ```
 
 ```bash
 export ASSISTANT_EVAL_API_KEY=<your provider key>
-make eval-compare ARM_A=ollama-with-docs ARM_B=ollama-baseline
+make eval-compare ARM_A=with-docs ARM_B=baseline
 ```
 
 The judge is configured separately, so it need not be the model under test — judging with the same model you are

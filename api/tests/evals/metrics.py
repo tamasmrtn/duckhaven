@@ -1,13 +1,9 @@
 """Retrieval and behaviour metrics — arithmetic, no model in the loop.
 
-The whole point of a case file that states where its answer lives is that
-retrieval quality becomes countable. Ragas and friends need an LLM for context
-precision and recall only because they infer relevance from text; a curated case
-that names its source page makes that unnecessary, and free.
-
-This is the cheap early-warning layer: a broken index, a tokenizer change, or a
-ranking regression shows up here in seconds, on every pull request, long before
-anything a judge would notice.
+A case that names its own source page makes recall@k and MRR countable, where
+inferring relevance from text would need an LLM. The cheap early-warning layer: a
+broken index or a ranking regression shows up here in seconds, on every pull
+request, long before a judge would notice.
 """
 
 from __future__ import annotations
@@ -46,16 +42,13 @@ class Case:
 
     @property
     def retrieval_targets(self) -> tuple[str, ...]:
-        """Pages search is expected to *find* — which is not the same set.
+        """Pages search is expected to *find* — not the same set as the above.
 
         On a negative case the page is context for a judge, not a target for an
-        index: ``row_level_security_does_not_exist`` names the permissions page
-        so a scorer can tell "no, but here is the real grant model" from an
-        invented policy syntax, but the docs never discuss row-level security,
-        so a good index ranking that page highly for those words would be a
-        coincidence rather than a success. Scoring recall over these cases
-        measures the corpus's silence, and punishes retrieval for it — it took
-        hand-written recall@5 from 0.75 to 0.54 the moment six were added.
+        index: the documentation never discusses row-level security, so ranking
+        the permissions page highly for those words would be coincidence. Scoring
+        recall over these measures the corpus's silence and punishes retrieval
+        for it.
         """
         return () if self.negative else self.doc_sources
 
@@ -86,9 +79,8 @@ def load_cases(path: Path = CASES_PATH) -> list[Case]:
 def recall_at_k(retrieved: list[str], expected: tuple[str, ...], k: int) -> float:
     """1.0 when any expected page is in the top k.
 
-    Deliberately "any", not "all": a case names every page that *could* answer
-    it, and finding one of them is a good retrieval. Requiring all would punish
-    a correct ranking for the sin of having alternatives.
+    "Any", not "all": a case names every page that *could* answer it, and
+    requiring all would punish a correct ranking for having alternatives.
     """
     if not expected:
         return 1.0
@@ -115,16 +107,10 @@ def called_forbidden_tool(called: list[str], case: Case) -> bool:
     return bool(set(called) & set(case.forbidden_tools))
 
 
-# Marks an answer as a refusal, an admission of ignorance, or a statement that
-# something does not exist. A deliberately crude screen, not the verdict: it runs
-# free on every PR and catches an assistant that has started answering questions
-# it should decline. The judged layer scores the same cases on faithfulness,
-# which is where nuance belongs.
-#
-# Biased towards *missing* refusals rather than inventing them. A false negative
-# is a spurious failure someone investigates; a false positive lets a confidently
-# wrong answer pass a negative case, which is the exact failure this whole
-# feature risks introducing. When in doubt, do not match.
+# A crude free screen, not the verdict — the judged layer scores the same cases
+# on faithfulness. Biased towards *missing* refusals rather than inventing them:
+# a false negative is a spurious failure someone investigates, while a false
+# positive lets a confidently wrong answer pass a negative case.
 _REFUSAL = re.compile(
     r"""
       \b(?:does|do|did|is|are|was|were|can|could|will|would)\s+not\b

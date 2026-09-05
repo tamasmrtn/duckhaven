@@ -1,33 +1,34 @@
 # Named configurations of the assistant, for the harness to run.
 #
-# An arm is what makes a comparison possible from one codebase: run the same
-# cases under two of these and you have the answer to "did that change help?".
-# Arms configure the real product switches, so an arm can only describe a state
-# the deployment can actually be in.
-#
 #   make eval-compare ARM_A=with-docs ARM_B=baseline
+#
+# Set openai_base_url to http://localhost:11434/v1 to go through a local Ollama
+# daemon rather than ollama.com.
 
-# The assistant as it was before issue #241: no product knowledge, no page
-# index, no documentation tools. The control arm for the whole feature.
+# The two comparison arms. They share a model, an endpoint and a workspace, so
+# the only difference between them is the knowledge — which is what makes a win
+# attributable to it. Change one and change the other.
 baseline:
   docs_enabled: false
+  model: "glm-5.3-flash:cloud"
+  openai_base_url: "https://ollama.com/v1"
   workspace:
     semantic_summary: "  - sales (12 metrics) — Orders and revenue."
     can_write: false
 
-# The assistant as shipped. Same workspace, so the only difference between the
-# two arms is the knowledge — which is what makes the comparison mean anything.
 with-docs:
   docs_enabled: true
+  model: "glm-5.3-flash:cloud"
+  openai_base_url: "https://ollama.com/v1"
   workspace:
     semantic_summary: "  - sales (12 metrics) — Orders and revenue."
     can_write: false
 
-# Every conditional block on at once. Not a comparison arm — it exists so the
-# prompt-budget ceiling is measured against the largest prompt the product can
-# actually produce, rather than the smallest.
+# Not a comparison arm. Every conditional block on at once, so the prompt-budget
+# ceiling is measured against the largest prompt the product can produce rather
+# than the smallest, and can_write on so the write-approval path is reachable.
 everything:
-  docs_enabled: true
+  inherits: with-docs
   workspace:
     semantic_summary: "  - sales (12 metrics) — Orders and revenue."
     storage_kinds: [s3, adls_gen2]
@@ -35,31 +36,9 @@ everything:
     agent_count: 3
     can_write: true
 
-# "Is the cheap model good enough here?" — the question this harness should be
-# able to answer without being rewritten. Inherits with-docs' configuration and
-# changes only the model.
-cheap-model:
+# "Is the cheaper model good enough here?" — run it against with-docs. Names a
+# model that has actually been exercised against this harness; an arm pointing
+# at something unverified is a failed run waiting to happen.
+cheaper-model:
   inherits: with-docs
-  model: "anthropic:claude-haiku-4-5-20251001"
-
-# ── Ollama Cloud ──────────────────────────────────────────────────────────────
-# The same two comparison arms, run through DuckHaven's OpenAI-compatible path
-# rather than a hosted provider. Nothing about the assistant changes; only how
-# the model is reached — which is the point, since a self-hosted or keyless
-# DuckHaven runs exactly this way in production.
-#
-#   export ASSISTANT_EVAL_API_KEY=<your ollama key>
-#   make eval-compare ARM_A=ollama-with-docs ARM_B=ollama-baseline
-#
-# Set openai_base_url to http://localhost:11434/v1 to go through a local Ollama
-# daemon instead of ollama.com directly.
-
-ollama-baseline:
-  inherits: baseline
-  model: "glm-5.3-flash:cloud"
-  openai_base_url: "https://ollama.com/v1"
-
-ollama-with-docs:
-  inherits: with-docs
-  model: "glm-5.3-flash:cloud"
-  openai_base_url: "https://ollama.com/v1"
+  model: "gpt-oss:120b-cloud"

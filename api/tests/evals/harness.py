@@ -1,20 +1,13 @@
 """Run the assistant under a named configuration, and record what it did.
 
-The **arm** is the reusable idea here. An arm names a configuration — which
-model, whether product knowledge is on, what the workspace has — and the runner
-takes it as an input rather than branching on it. That is what lets one codebase
-produce two arms for a comparison, and what makes this harness answer "is the
-cheap model good enough?" later without being rewritten.
+An arm configures the *real* assembly rather than reimplementing it: it patches
+settings, then calls the production ``_build_model``, ``build_instructions`` and
+``build_toolset``. A harness that assembled its own prompt would drift, and would
+then be measuring something the product does not do — the failure that makes an
+eval worse than no eval.
 
-An arm configures the *real* assembly rather than reimplementing it. It patches
-settings and constructs deps, then calls ``build_instructions`` and
-``build_toolset`` exactly as the runner does. A harness that assembled its own
-prompt would drift, and would then be measuring something the product does not
-do — the one failure that makes an eval worse than no eval.
-
-``runner.py`` is deliberately not involved: its SSE streaming, persistence and
-identity minting are irrelevant to scoring an answer, and the pattern here is
-the one ``test_semantic_tools.py`` already uses to drive the agent directly.
+``runner.py`` is deliberately not involved: its streaming, persistence and
+identity minting are irrelevant to scoring an answer.
 """
 
 from __future__ import annotations
@@ -92,8 +85,8 @@ class RunResult:
         return self.doc_paths
 
 
-# Everything an arm can change is a real deployment setting, so an arm can only
-# describe a state the product can actually be in.
+# Real deployment settings, so an arm can only describe a state the product can
+# actually be in.
 _ARM_SETTINGS = ("assistant_docs_enabled", "assistant_model", "assistant_openai_base_url")
 
 
@@ -132,22 +125,16 @@ def deps_for(arm: ArmConfig, *, gateway: Any = None, docs_search: Any = None) ->
 def build_agent(arm: ArmConfig, model: Any = None) -> Agent:
     """The production agent, configured for this arm.
 
-    Instructions, tools **and the model** all come from the real functions, so an
-    arm can only express configurations the product can actually be in. The model
-    matters as much as the rest: ``_build_model`` is what turns an OpenAI-compatible
-    base URL into a working client, and a harness that passed the model string
-    straight through would silently ignore it — scoring an Ollama or vLLM
-    deployment against Anthropic, or failing outright.
+    Every argument mirrors ``agent.py``. ``_build_model`` in particular is what
+    turns an OpenAI-compatible base URL into a working client; passing the model
+    string straight through would silently score an Ollama deployment against
+    whatever the default provider is.
 
-    ``model`` overrides everything and takes a constructed object, which is how
-    tier 1 injects a ``FunctionModel`` without touching provider settings.
+    ``model`` overrides everything, which is how tier 1 injects a
+    ``FunctionModel`` without touching provider settings.
     """
     return Agent(
         model or _build_model(),
-        # Every argument below is production's. build_agent previously reproduced
-        # three of agent.py's eight, and each omission was silent: no output type
-        # made the write-approval path unrepresentable, and no max_tokens meant
-        # eval answers were not subject to the cap real users get.
         output_type=[str, DeferredToolRequests],
         deps_type=AssistantDeps,
         instructions=build_instructions,
@@ -160,10 +147,8 @@ def build_agent(arm: ArmConfig, model: Any = None) -> Agent:
 def _render_output(output: Any) -> str:
     """The answer as text, including the case where there is deliberately none.
 
-    A write that needs human approval is not a failure and not an answer: the
-    turn pauses and the UI asks. Rendering it as a marker lets a judge see that
-    the assistant *paused* rather than refused or complied, which are three
-    different behaviours that ``str()`` on the raw object would flatten.
+    Refusing, complying and pausing for approval are three different behaviours;
+    ``str()`` on the raw object would flatten them into one.
     """
     if isinstance(output, DeferredToolRequests):
         pending = ", ".join(call.tool_name for call in output.approvals) or "a write"
@@ -174,19 +159,10 @@ def _render_output(output: Any) -> str:
 def _tool_args(part: ToolCallPart) -> dict:
     """A tool call's arguments, whichever form the provider sent them in.
 
-    ``ToolCallPart.args`` is a dict for some providers and a JSON *string* for
-    others — every OpenAI-compatible endpoint, which is how DuckHaven reaches
-    Ollama and vLLM. Treating the string case as "no arguments" was silent and
-    total: across a full 42-case run, ``read_doc_page`` was called 19 times and
-    the page it opened was recorded 0 times.
-
-    The judge then never saw the page, its context fell back to "no
-    documentation covers this question", and a correct quotation from a real
-    page was scored as a fabrication. The harness was penalising the assistant
-    for doing the more rigorous thing.
-
-    ``runner.py`` has always parsed the string form; this is the same handling,
-    which is where it should have come from in the first place.
+    A dict from some providers, a JSON string from every OpenAI-compatible one.
+    Treating the string as "no arguments" fails silently and completely — the
+    judge never learns which page was read, and scores correct citations as
+    fabrications.
     """
     args = part.args
     if isinstance(args, str):
@@ -213,16 +189,13 @@ async def run_case(
             result = await agent.run(
                 question,
                 deps=deps,
-                # The same ceiling production enforces. Without it a model stuck
-                # in a tool loop runs unbounded on somebody's quota; two cases in
-                # a recent run already reached fourteen tool calls.
+                # Production's ceiling. Without it a looping model runs unbounded
+                # on somebody's quota.
                 usage_limits=UsageLimits(request_limit=settings.assistant_request_limit),
             )
         except UsageLimitExceeded:
-            # Recorded as this case's answer rather than raised. One looping case
-            # must not discard the other forty-one, and "it never finished" is
-            # itself a result worth scoring - production surfaces the same thing
-            # to the user.
+            # Recorded rather than raised: one looping case must not discard the
+            # other forty-one, and "it never finished" is a result worth scoring.
             return RunResult(
                 arm=arm.name,
                 case=case_name,
@@ -266,20 +239,13 @@ class _FakeCtx:
 async def retrying(call, *, attempts: int = 4, base_delay: float = 2.0):
     """Retry one model call through a transient provider failure.
 
-    A judged run is 168 sequential calls over ten-odd minutes, and a single
-    timeout anywhere in it used to discard the whole run — every completed case
-    lost, and the quota spent on them with it. Transient network faults are
-    normal at that duration; treating one as fatal is what is not.
+    A judged run is 168 sequential calls over half an hour, so a network fault
+    somewhere in it is normal; discarding the whole run over one is not.
 
-    Retried on transport failures, and on structured output that does not
-    validate. The second is the expected failure with a smaller open model, and
-    resampling it is right — but every retry is printed, so a judge that is
-    *systematically* malformed shows up in the log instead of being smoothed
-    away into a clean-looking result.
-
-    A rejected request — bad key, unknown model, refused content — is a real
-    answer and surfaces immediately. Retrying until a provider happens to agree
-    would hide exactly the problems worth seeing.
+    Structured output that fails to validate is also retried — the expected
+    failure with a smaller open model. Every retry prints its exception type, so
+    a *systematically* malformed judge shows up in the log rather than being
+    smoothed into a clean-looking result. A rejected request surfaces at once.
     """
     from pydantic_ai.exceptions import (
         ModelAPIError,
@@ -308,14 +274,9 @@ async def retrying(call, *, attempts: int = 4, base_delay: float = 2.0):
 async def docs_search_backend():
     """A working ``search_docs`` for a judged run, or a loud refusal to fake one.
 
-    Without this the tool raises "not available" on every call, and a judged run
-    would score an assistant whose search is permanently broken — penalising the
-    arm that *has* documentation in precisely the comparison the feature exists
-    to make. A quietly crippled arm is worse than no run at all.
-
-    Loads the corpus as well as connecting, because an empty ``docs_pages`` fails
-    the same way but silently: search returns nothing, and the assistant reports
-    that the documentation does not cover the question.
+    Refuses rather than degrading, because both degradations are silent and both
+    score the documented arm as if it had no documentation: no backend makes
+    every search raise, and an unloaded corpus makes every search return nothing.
     """
     url = os.getenv("DATABASE_URL")
     if not url:

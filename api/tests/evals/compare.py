@@ -1,16 +1,12 @@
 """Pairwise comparison of two arms — the mode that answers "did my change help?".
 
-Absolute scores drift and wobble; a win rate over the same cases is more
-sensitive to a small real change, which is why this is the mode for judging a
-prompt edit or a model swap rather than watching a mean move by 0.1.
+More sensitive to a small real change than watching an absolute mean move by 0.1.
 
-Every pair is judged **twice, with the answers swapped**, and a win counts only
-when the judge agrees with itself both ways. Judges systematically prefer
-whichever answer they see first — a reported 10–15 points of win rate, larger
-than most effects worth measuring — so a single-order verdict is not evidence.
-Disagreements become ties and are counted separately as the *flip rate*: a run
-with a high flip rate is one whose verdicts should not be trusted, however
-decisive its headline looks.
+Every pair is judged twice with the answers swapped, and a win counts only when
+the judge agrees both ways. Judges prefer whichever answer they see first by a
+reported 10-15 points of win rate, larger than most effects worth measuring, so
+a single-order verdict is not evidence. Disagreements become ties and are
+counted as the *flip rate*.
 
     make eval-compare ARM_A=with-docs ARM_B=baseline
 """
@@ -40,8 +36,7 @@ from tests.evals.metrics import Case, load_cases
 REPORTS_DIR = Path(__file__).with_name("reports")
 
 # Above this, position bias is dominating and the comparison is not evidence.
-# Reliability work puts the typical rate around 14%; well past that means the
-# rubric is not discriminating between these two arms.
+# Reliability work puts the typical rate near 14%.
 MAX_TRUSTWORTHY_FLIP_RATE = 0.25
 
 
@@ -57,18 +52,9 @@ async def _answer(arm: ArmConfig, case: Case, docs_search) -> RunResult:
     )
 
 
-# Total characters of documentation the judge sees, shared across however many
-# pages a case names rather than capped per page.
-#
-# A flat per-page cap of 2,500 quietly cost two correct answers. The assistant
-# read reference/sql-support.md in full - 9,258 characters, well inside
-# read_doc_page's own limit - and cited a real section beginning at character
-# 4,683. The judge saw the first 2,500 characters, could not find the section,
-# and called a correct citation a fabrication. Both losses in the run that
-# exposed this were of that shape.
-#
-# A budget rather than a per-page cap means the common case, one or two pages,
-# is sent whole; only a case naming many pages is trimmed, and then evenly.
+# Shared across however many pages a case names, rather than capped per page: a
+# flat cap truncates before the cited section and the judge then rules a correct
+# citation a fabrication. A budget sends the common one-or-two-page case whole.
 _CONTEXT_BUDGET = 24_000
 _MIN_PER_PAGE = 2_000
 
@@ -76,16 +62,10 @@ _MIN_PER_PAGE = 2_000
 def _context(case: Case, *results: RunResult) -> str:
     """The ground truth for this question, as page text rather than page names.
 
-    The first version listed only the paths the arms had *opened*, which was
-    wrong in a way that inverted the whole result: the assistant answers most
-    product questions straight from its resident knowledge without opening
-    anything, so the judge saw an empty context and — following criterion 1 —
-    marked every correct, documented answer as an invented capability. The arm
-    that knew things was punished for knowing them.
-
-    The case file already names where each answer lives. Feeding that text to the
-    judge is what makes "supported by the context" a real test instead of a test
-    of whether a tool happened to fire.
+    Sourced from the case file rather than from what the arms happened to open:
+    the assistant answers most product questions from resident knowledge without
+    opening anything, so context built from tool calls is usually empty — and an
+    empty context makes criterion 1 mark every correct answer as invention.
     """
     paths: list[str] = []
     for source in (*case.doc_sources, *(p for r in results for p in r.doc_paths)):
@@ -99,8 +79,7 @@ def _context(case: Case, *results: RunResult) -> str:
         except Exception:  # noqa: BLE001 — a missing page is context we lack, not a failure
             continue
 
-    # Share the budget, and never trim a page below the point where it stops
-    # being usable evidence.
+    # Never trim below the point where a page stops being usable evidence.
     per_page = max(_MIN_PER_PAGE, _CONTEXT_BUDGET // len(pages)) if pages else 0
     blocks = []
     for path, page in pages:
@@ -111,8 +90,8 @@ def _context(case: Case, *results: RunResult) -> str:
     if blocks:
         return "\n\n".join(blocks)
 
-    # No page covers this. What that means depends on what was asked, and getting
-    # it wrong in either direction costs the run its point.
+    # What "no page" means depends on what was asked, and getting it wrong in
+    # either direction costs the run its point.
     if case.category in ("product_knowledge", "unanswerable"):
         return (
             "No documentation page covers this question. That is itself informative: an "
@@ -149,10 +128,7 @@ async def compare(arm_a: str, arm_b: str, docs_search=None) -> dict:
                 "winner": winner,
                 "flipped": flipped,
                 "reason": first.reason,
-                # The answers themselves, and what each arm did to produce them.
-                # Without these a verdict can only be argued about: diagnosing the
-                # first regression this harness found meant inferring the answers
-                # from the judge's prose, which is guesswork dressed as analysis.
+                # Without these a verdict can only be argued about, not checked.
                 "answer_a": a.answer,
                 "answer_b": b.answer,
                 "tools_a": a.tools_called,
@@ -177,8 +153,8 @@ def _report(arm_a: str, arm_b: str, outcomes: list[dict]) -> dict:
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "arm_a": arm_a,
         "arm_b": arm_b,
-        # Recorded, not assumed: a comparison against a run scored by a different
-        # judge is not a comparison, and this is what makes that checkable later.
+        # A comparison against a run scored by a different judge is not a
+        # comparison; recording it is what makes that checkable later.
         "judge_model": JUDGE_MODEL,
         "judge_temperature": JUDGE_SETTINGS.get("temperature"),
         "assistant_model": settings.assistant_model,
@@ -186,8 +162,8 @@ def _report(arm_a: str, arm_b: str, outcomes: list[dict]) -> dict:
         "wins_a": counts["A"],
         "wins_b": counts["B"],
         "ties": counts["tie"],
-        # Over decided pairs only. A win rate diluted by ties says less about
-        # which arm is better than about how often the judge could tell.
+        # Over decided pairs only: a rate diluted by ties says more about how
+        # often the judge could tell than about which arm is better.
         "win_rate_a": round(counts["A"] / decided, 3) if decided else None,
         "flip_rate": round(flips / len(outcomes), 3) if outcomes else 0.0,
         "trustworthy": bool(outcomes) and flips / len(outcomes) <= MAX_TRUSTWORTHY_FLIP_RATE,

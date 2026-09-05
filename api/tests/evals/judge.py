@@ -1,20 +1,12 @@
 """Tier 2: the judged layer — faithfulness, answer relevancy, and pairwise wins.
 
-This is the only part of the harness that costs money, and the only part that
-needs a provider key. Everything a free check can catch is caught in tier 1
-first; a judge is reserved for the two things that genuinely need judgement.
+The only part of the harness that costs money. Everything a free check can catch
+is caught in tier 1; a judge is reserved for the two things that need judgement.
 
-**The judge is pinned, and the run records what actually answered.** An unpinned
-judge silently invalidates every comparison against an older run — a score that
-drops from 4.3 to 4.0 could mean the assistant got worse or the judge changed,
-and nothing in the number distinguishes them. The model id the provider actually
-resolved is written into the manifest so a shift can at least be attributed.
-
-**Pairwise judging is run in both orders.** Judges systematically prefer whichever
-answer is shown first, by a reported 10–15 points of win rate, which is larger
-than most effects worth measuring. A win counts only when the judge agrees with
-itself after the answers are swapped; a disagreement is a tie and is counted, so
-the flip rate is visible rather than buried in the win rate.
+The judge is pinned and every report records it. An unpinned judge silently
+invalidates comparison against older runs: a score falling from 4.3 to 4.0 could
+mean the assistant got worse or the judge changed, and nothing in the number
+distinguishes them.
 """
 
 from __future__ import annotations
@@ -35,13 +27,12 @@ from tests.evals.metrics import Case
 # comparison against a run scored by a different judge is not a comparison.
 JUDGE_MODEL = os.getenv("ASSISTANT_EVAL_JUDGE_MODEL", "anthropic:claude-sonnet-5")
 
-# An OpenAI-compatible endpoint for the judge — Ollama Cloud, a self-hosted
-# Ollama, vLLM. Separate from the assistant's, because judging with the same
-# model you are scoring is a conflict of interest worth being able to avoid.
+# Separate from the assistant's endpoint, because judging with the model you are
+# scoring is a conflict of interest worth being able to avoid.
 JUDGE_BASE_URL = os.getenv("ASSISTANT_EVAL_JUDGE_BASE_URL") or None
 
-# Temperature 0. A judge that disagrees with itself between runs adds variance to
-# every number it produces, and the whole point here is detecting small changes.
+# Temperature 0: a judge that disagrees with itself adds variance to every number
+# it produces, and the point is detecting small changes.
 JUDGE_SETTINGS = ModelSettings(temperature=0.0, max_tokens=512)
 
 
@@ -117,8 +108,8 @@ If neither is clearly better on criteria 1 and 2, reply "tie". Do not break a
 genuine tie on style or length."""
 
 
-# Means below these fail a run. Set where a competent assistant sits, not where
-# a perfect one would: a threshold nobody can meet gets deleted, not fixed.
+# Set where a competent assistant sits, not where a perfect one would: a
+# threshold nobody can meet gets deleted, not fixed.
 MIN_FAITHFULNESS = 4.2
 MIN_RELEVANCY = 4.0
 
@@ -127,15 +118,12 @@ MIN_RELEVANCY = 4.0
 def judge_model() -> Any:
     """The judge, constructed the same way the product constructs a model.
 
-    Cached, because it was being rebuilt for every call. A judged run makes 168
-    of them, each previously creating its own ``OpenAIProvider`` and connection
-    pool — which is what left dozens of idle TLS connections open against
-    ollama.com and is a plausible contributor to the timeout that killed a run.
+    Cached: a judged run makes 168 calls, and building a provider per call leaves
+    that many connection pools open.
 
     A bare string works for a hosted provider; an OpenAI-compatible endpoint
     needs a real client, and passing the string through would silently score
-    against whatever the default provider happened to be — or fail with an
-    authentication error that looks nothing like the actual problem.
+    against whatever the default provider happened to be.
     """
     if not JUDGE_BASE_URL:
         return JUDGE_MODEL
@@ -163,13 +151,10 @@ class PairwiseVerdict(BaseModel):
 class GradedVerdict(BaseModel):
     """A rubric score on the 1-5 scale the rubrics define.
 
-    Scored through a plain agent rather than ``pydantic_evals``' ``LLMJudge``.
-    Its built-in system prompt frames a rubric as a pass/fail *statement* -
-    "if the statement in the rubric is true, then the output passes" - and its
-    worked examples score 1.0 and 0.0. A graded rubric handed to it is fighting
-    that framing, and the 0-1 score it returns would make thresholds of 4.2 and
-    4.0 unreachable: every run would fail, for a reason nothing in the output
-    explains. Owning the prompt keeps the scale unambiguous.
+    Scored through a plain agent rather than a library judge framed around
+    pass/fail statements: a 0-1 score would make thresholds of 4.2 and 4.0
+    unreachable, and every run would fail for a reason nothing in the output
+    explains.
     """
 
     score: int = Field(ge=1, le=5, description="The rubric score, from 1 to 5.")
@@ -188,24 +173,17 @@ class CaseScore:
 
 
 def _context(case: Case, result: RunResult) -> str:
-    """What the answer is entitled to say, as page text rather than page names.
-
-    Shares its reasoning with the pairwise context in ``compare.py``: the
-    assistant answers most product questions from resident knowledge without
-    opening anything, so scoring faithfulness against "pages it happened to
-    open" measures tool usage rather than groundedness.
-    """
+    """What the answer is entitled to say. See ``compare._context``."""
     from tests.evals.compare import _context as _pairwise_context
 
     return _pairwise_context(case, result)
 
 
 async def score_absolute(case: Case, result: RunResult) -> CaseScore:
-    """Faithfulness and answer relevancy for one answer, scored separately.
+    """Faithfulness and answer relevancy, scored separately.
 
-    Two calls rather than one because a combined prompt lets a judge average the
-    two — an answer that is faithful but off-topic should score 5 and 2, not 3.5
-    twice.
+    Two calls rather than one: a combined prompt lets a judge average them, and
+    an answer that is faithful but off-topic should score 5 and 2, not 3.5 twice.
     """
     faithful = await _grade(
         FAITHFULNESS_RUBRIC,
@@ -262,14 +240,9 @@ async def judge_pair(question: str, context: str, first: str, second: str) -> Pa
 def resolve_pair(shown_a_first: str, shown_b_first: str) -> tuple[str, bool]:
     """Combine both orderings into one verdict, and say whether the judge flipped.
 
-    ``shown_a_first`` is the verdict when arm A occupied slot 1; ``shown_b_first``
-    is the verdict when B did. Both are "1", "2" or "tie" and refer to *slots*,
-    so the second has to be read inverted before the two can be compared.
-
-    A win requires agreement in both directions. Disagreement is position bias
-    showing itself, and is recorded as a tie *and* as a flip so it stays visible:
-    a run whose flip rate is high is a run whose verdicts should not be trusted,
-    however decisive its win rate looks.
+    Both arguments name a *slot*, so the second is read inverted. A win requires
+    agreement in both directions; disagreement is position bias showing itself,
+    recorded as a tie and as a flip so it stays visible.
     """
     first = {"1": "A", "2": "B", "tie": "tie"}[shown_a_first]
     second = {"1": "B", "2": "A", "tie": "tie"}[shown_b_first]
@@ -282,9 +255,9 @@ def resolve_pair(shown_a_first: str, shown_b_first: str) -> tuple[str, bool]:
 def summarise_scores(scores: list[CaseScore]) -> dict:
     """Means overall and per slice, plus the negative cases that failed outright.
 
-    A single faithfulness score of 1 on a negative case fails the run regardless
-    of the mean: that one case is the thing this tier exists to catch, and an
-    average is exactly the wrong way to look at it.
+    One faithfulness score of 1 on a negative case fails the run regardless of
+    the mean: that case is what this tier exists to catch, and an average is
+    exactly the wrong way to look at it.
     """
 
     def mean(values: list[float]) -> float:

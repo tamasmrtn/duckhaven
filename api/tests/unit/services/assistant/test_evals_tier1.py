@@ -187,10 +187,12 @@ def test_arms_load_from_the_file():
 
 
 def test_an_arm_can_inherit_and_override():
-    cheap = ArmConfig.load("cheap-model")
+    cheap = ArmConfig.load("cheaper-model")
+    docs = ArmConfig.load("with-docs")
 
-    assert cheap.model == "anthropic:claude-haiku-4-5-20251001"
-    assert cheap.docs_enabled is True  # inherited from with-docs
+    assert cheap.model != docs.model
+    assert cheap.docs_enabled is True
+    assert cheap.openai_base_url == docs.openai_base_url
 
 
 def test_an_unknown_arm_fails_loudly():
@@ -346,7 +348,7 @@ def test_an_arm_can_target_an_openai_compatible_endpoint():
     would silently score against whatever the default provider happened to be."""
     from tests.evals.harness import _arm_settings, build_agent
 
-    arm = ArmConfig.load("ollama-with-docs")
+    arm = ArmConfig.load("with-docs")
     with _arm_settings(arm):
         model = build_agent(arm).model
 
@@ -358,16 +360,13 @@ def test_an_arm_can_target_an_openai_compatible_endpoint():
     assert str(model.client.base_url).startswith(arm.openai_base_url)
 
 
-def test_a_hosted_provider_arm_stays_a_plain_model_string():
-    """No base URL means no client to build: the string is handed to pydantic-ai,
-    which resolves the provider lazily from its standard environment variable.
-    Asserted on the string rather than on Agent.model, because touching that
-    forces provider construction and needs a real key."""
+def test_an_arm_can_override_only_the_model():
+    """The model-selection use case: everything inherited, one thing changed."""
     from api.services.assistant.agent import _build_model
     from tests.evals.harness import _arm_settings
 
-    with _arm_settings(ArmConfig.load("cheap-model")):
-        assert _build_model() == "anthropic:claude-haiku-4-5-20251001"
+    with _arm_settings(ArmConfig.load("cheaper-model")):
+        assert _build_model().model_name == "gpt-oss:120b-cloud"
 
 
 def test_an_arm_restores_every_setting_it_touched():
@@ -381,7 +380,7 @@ def test_an_arm_restores_every_setting_it_touched():
         settings.assistant_openai_base_url,
     )
 
-    with _arm_settings(ArmConfig.load("ollama-baseline")):
+    with _arm_settings(ArmConfig.load("baseline")):
         assert settings.assistant_openai_base_url == "https://ollama.com/v1"
 
     assert (
@@ -389,16 +388,6 @@ def test_an_arm_restores_every_setting_it_touched():
         settings.assistant_model,
         settings.assistant_openai_base_url,
     ) == before
-
-
-def test_the_ollama_arms_differ_from_each_other_only_in_knowledge():
-    ollama_base = ArmConfig.load("ollama-baseline")
-    ollama_docs = ArmConfig.load("ollama-with-docs")
-
-    assert ollama_base.model == ollama_docs.model
-    assert ollama_base.openai_base_url == ollama_docs.openai_base_url
-    assert ollama_base.workspace == ollama_docs.workspace
-    assert ollama_base.docs_enabled != ollama_docs.docs_enabled
 
 
 # ── Tool arguments arrive in two shapes ───────────────────────────────────────

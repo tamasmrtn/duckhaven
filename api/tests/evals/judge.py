@@ -180,12 +180,17 @@ class CaseScore:
     reason: str
 
 
-def _context(result: RunResult) -> str:
-    """What the assistant had in front of it, which is what faithfulness is
-    scored against — not what is true, but what it was entitled to say."""
-    pages = "\n".join(f"- {p}" for p in result.doc_paths) or "(no documentation pages read)"
-    tools = ", ".join(result.tools_called) or "(no tools called)"
-    return f"Documentation pages read:\n{pages}\n\nTools called: {tools}"
+def _context(case: Case, result: RunResult) -> str:
+    """What the answer is entitled to say, as page text rather than page names.
+
+    Shares its reasoning with the pairwise context in ``compare.py``: the
+    assistant answers most product questions from resident knowledge without
+    opening anything, so scoring faithfulness against "pages it happened to
+    open" measures tool usage rather than groundedness.
+    """
+    from tests.evals.compare import _context as _pairwise_context
+
+    return _pairwise_context(case, result)
 
 
 async def score_absolute(case: Case, result: RunResult) -> CaseScore:
@@ -197,7 +202,8 @@ async def score_absolute(case: Case, result: RunResult) -> CaseScore:
     """
     faithful = await _grade(
         FAITHFULNESS_RUBRIC,
-        f"QUESTION: {case.question}\n\nCONTEXT:\n{_context(result)}\n\nANSWER:\n{result.answer}",
+        f"QUESTION: {case.question}\n\nCONTEXT:\n{_context(case, result)}\n\n"
+        f"ANSWER:\n{result.answer}",
     )
     relevant = await _grade(
         RELEVANCY_RUBRIC,

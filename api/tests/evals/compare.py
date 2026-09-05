@@ -1,16 +1,12 @@
 """Pairwise comparison of two arms — the mode that answers "did my change help?".
 
-Absolute scores drift and wobble; a win rate over the same cases is more
-sensitive to a small real change, which is why this is the mode for judging a
-prompt edit or a model swap rather than watching a mean move by 0.1.
+More sensitive to a small real change than watching an absolute mean move by 0.1.
 
-Every pair is judged **twice, with the answers swapped**, and a win counts only
-when the judge agrees with itself both ways. Judges systematically prefer
-whichever answer they see first — a reported 10–15 points of win rate, larger
-than most effects worth measuring — so a single-order verdict is not evidence.
-Disagreements become ties and are counted separately as the *flip rate*: a run
-with a high flip rate is one whose verdicts should not be trusted, however
-decisive its headline looks.
+Every pair is judged twice with the answers swapped, and a win counts only when
+the judge agrees both ways. Judges prefer whichever answer they see first by a
+reported 10-15 points of win rate, larger than most effects worth measuring, so
+a single-order verdict is not evidence. Disagreements become ties and are
+counted as the *flip rate*.
 
     make eval-compare ARM_A=with-docs ARM_B=baseline
 """
@@ -25,33 +21,87 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from api.config import settings
+from api.services.assistant.knowledge.loader import read_page
 from tests.evals.fixtures import EvalGateway
-from tests.evals.harness import ArmConfig, RunResult, run_case
+from tests.evals.harness import (
+    ArmConfig,
+    RunResult,
+    docs_search_backend,
+    retrying,
+    run_case,
+)
 from tests.evals.judge import JUDGE_MODEL, JUDGE_SETTINGS, judge_pair, resolve_pair
 from tests.evals.metrics import Case, load_cases
 
 REPORTS_DIR = Path(__file__).with_name("reports")
 
 # Above this, position bias is dominating and the comparison is not evidence.
-# Reliability work puts the typical rate around 14%; well past that means the
-# rubric is not discriminating between these two arms.
+# Reliability work puts the typical rate near 14%.
 MAX_TRUSTWORTHY_FLIP_RATE = 0.25
 
 
 async def _answer(arm: ArmConfig, case: Case, docs_search) -> RunResult:
-    return await run_case(
-        arm,
-        case.question,
-        gateway=EvalGateway(can_write=arm.workspace.get("can_write", False)),
-        docs_search=docs_search,
-        case_name=case.name,
+    return await retrying(
+        lambda: run_case(
+            arm,
+            case.question,
+            gateway=EvalGateway(can_write=arm.workspace.get("can_write", False)),
+            docs_search=docs_search,
+            case_name=case.name,
+        )
     )
 
 
-def _context(a: RunResult, b: RunResult) -> str:
-    pages = sorted(set(a.doc_paths) | set(b.doc_paths))
-    return "Documentation pages available to both:\n" + (
-        "\n".join(f"- {p}" for p in pages) or "(none)"
+# Shared across however many pages a case names, rather than capped per page: a
+# flat cap truncates before the cited section and the judge then rules a correct
+# citation a fabrication. A budget sends the common one-or-two-page case whole.
+_CONTEXT_BUDGET = 24_000
+_MIN_PER_PAGE = 2_000
+
+
+def _context(case: Case, *results: RunResult) -> str:
+    """The ground truth for this question, as page text rather than page names.
+
+    Sourced from the case file rather than from what the arms happened to open:
+    the assistant answers most product questions from resident knowledge without
+    opening anything, so context built from tool calls is usually empty — and an
+    empty context makes criterion 1 mark every correct answer as invention.
+    """
+    paths: list[str] = []
+    for source in (*case.doc_sources, *(p for r in results for p in r.doc_paths)):
+        if source not in paths:
+            paths.append(source)
+
+    pages = []
+    for path in paths:
+        try:
+            pages.append((path, read_page(path)))
+        except Exception:  # noqa: BLE001 — a missing page is context we lack, not a failure
+            continue
+
+    # Never trim below the point where a page stops being usable evidence.
+    per_page = max(_MIN_PER_PAGE, _CONTEXT_BUDGET // len(pages)) if pages else 0
+    blocks = []
+    for path, page in pages:
+        text = page["text"]
+        if len(text) > per_page:
+            text = text[:per_page] + f"\n[… {len(text) - per_page:,} characters not shown]"
+        blocks.append(f"--- {path} ({page['title']}) ---\n{text}")
+    if blocks:
+        return "\n\n".join(blocks)
+
+    # What "no page" means depends on what was asked, and getting it wrong in
+    # either direction costs the run its point.
+    if case.category in ("product_knowledge", "unanswerable"):
+        return (
+            "No documentation page covers this question. That is itself informative: an "
+            "answer that confidently describes a DuckHaven capability here is very likely "
+            "inventing one, and an answer that says so is correct."
+        )
+    return (
+        "This question is about the workspace's data rather than the product, so no "
+        "documentation applies. Judge on criteria 2-4 and do not treat a factual answer "
+        "as an invented capability."
     )
 
 
@@ -60,13 +110,14 @@ async def compare(arm_a: str, arm_b: str, docs_search=None) -> dict:
     cases = load_cases()
     outcomes: list[dict] = []
 
-    for case in cases:
+    for n, case in enumerate(cases, 1):
+        print(f"  [{n}/{len(cases)}] {case.name}", flush=True)
         a = await _answer(a_config, case, docs_search)
         b = await _answer(b_config, case, docs_search)
-        context = _context(a, b)
+        context = _context(case, a, b)
         # Both orders. The judge never learns which arm is which.
-        first = await judge_pair(case.question, context, a.answer, b.answer)
-        second = await judge_pair(case.question, context, b.answer, a.answer)
+        first = await retrying(lambda: judge_pair(case.question, context, a.answer, b.answer))
+        second = await retrying(lambda: judge_pair(case.question, context, b.answer, a.answer))
         winner, flipped = resolve_pair(first.winner, second.winner)
         outcomes.append(
             {
@@ -77,6 +128,13 @@ async def compare(arm_a: str, arm_b: str, docs_search=None) -> dict:
                 "winner": winner,
                 "flipped": flipped,
                 "reason": first.reason,
+                # Without these a verdict can only be argued about, not checked.
+                "answer_a": a.answer,
+                "answer_b": b.answer,
+                "tools_a": a.tools_called,
+                "tools_b": b.tools_called,
+                "pages_a": a.doc_paths,
+                "pages_b": b.doc_paths,
             }
         )
 
@@ -95,8 +153,8 @@ def _report(arm_a: str, arm_b: str, outcomes: list[dict]) -> dict:
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "arm_a": arm_a,
         "arm_b": arm_b,
-        # Recorded, not assumed: a comparison against a run scored by a different
-        # judge is not a comparison, and this is what makes that checkable later.
+        # A comparison against a run scored by a different judge is not a
+        # comparison; recording it is what makes that checkable later.
         "judge_model": JUDGE_MODEL,
         "judge_temperature": JUDGE_SETTINGS.get("temperature"),
         "assistant_model": settings.assistant_model,
@@ -104,8 +162,8 @@ def _report(arm_a: str, arm_b: str, outcomes: list[dict]) -> dict:
         "wins_a": counts["A"],
         "wins_b": counts["B"],
         "ties": counts["tie"],
-        # Over decided pairs only. A win rate diluted by ties says less about
-        # which arm is better than about how often the judge could tell.
+        # Over decided pairs only: a rate diluted by ties says more about how
+        # often the judge could tell than about which arm is better.
         "win_rate_a": round(counts["A"] / decided, 3) if decided else None,
         "flip_rate": round(flips / len(outcomes), 3) if outcomes else 0.0,
         "trustworthy": bool(outcomes) and flips / len(outcomes) <= MAX_TRUSTWORTHY_FLIP_RATE,
@@ -129,13 +187,18 @@ def render(report: dict) -> str:
     return "\n".join(lines)
 
 
+async def _run(arm_a: str, arm_b: str) -> dict:
+    async with docs_search_backend() as docs_search:
+        return await compare(arm_a, arm_b, docs_search=docs_search)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--a", required=True, help="arm name from arms.yaml")
     parser.add_argument("--b", required=True, help="arm name from arms.yaml")
     args = parser.parse_args()
 
-    report = asyncio.run(compare(args.a, args.b))
+    report = asyncio.run(_run(args.a, args.b))
     print(render(report))
 
     REPORTS_DIR.mkdir(exist_ok=True)

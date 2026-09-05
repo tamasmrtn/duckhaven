@@ -1,14 +1,12 @@
 """Tier 2: absolute scoring against a live model and a live judge.
 
-Costs money and needs a provider key, so it is skipped unless
-``ASSISTANT_EVAL_API_KEY`` is set. It is not part of any CI gate — see
-``docs/developer/testing.md`` for what it costs and when to run it.
+Costs money, needs a provider key, and is in no CI gate.
 
     ASSISTANT_EVAL_API_KEY=… make eval-judged ARM=with-docs
 
-This is the regression and reporting mode: scores tracked over time against
-thresholds. To ask whether a *change* helped, use pairwise instead — it is more
-sensitive to a small real difference than watching a mean wobble.
+The regression and reporting mode: scores tracked over time against thresholds.
+To ask whether a *change* helped, use pairwise — more sensitive to a small real
+difference than watching a mean wobble.
 """
 
 from __future__ import annotations
@@ -24,7 +22,7 @@ from api.config import settings
 from api.services.assistant.knowledge import generate
 from api.services.assistant.knowledge.loader import load_index
 from tests.evals.fixtures import EvalGateway
-from tests.evals.harness import ArmConfig, run_case
+from tests.evals.harness import ArmConfig, docs_search_backend, run_case
 from tests.evals.judge import (
     JUDGE_MODEL,
     JUDGE_SETTINGS,
@@ -45,13 +43,15 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(autouse=True)
 def _real_models_allowed(monkeypatch):
-    """The assistant suite blocks live model calls by default; this is the one
-    place that must opt out, and it does so explicitly and under an env gate."""
+    """The assistant suite blocks live model calls; this is the one place that
+    opts out, explicitly and under an env gate."""
     from pydantic_ai import models
 
     monkeypatch.setattr(models, "ALLOW_MODEL_REQUESTS", True)
     monkeypatch.setattr(settings, "assistant_docs_dir", generate._repo_root() / "docs")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", os.environ["ASSISTANT_EVAL_API_KEY"])
+    # What _build_model reads for an OpenAI-compatible endpoint. A hosted
+    # provider takes its own standard variable from the environment instead.
+    monkeypatch.setattr(settings, "assistant_api_key", os.environ["ASSISTANT_EVAL_API_KEY"])
     load_index.cache_clear()
     yield
     load_index.cache_clear()
@@ -62,14 +62,16 @@ async def test_absolute_scores_meet_their_thresholds():
     cases = load_cases()
 
     scores = []
-    for case in cases:
-        result = await run_case(
-            arm,
-            case.question,
-            gateway=EvalGateway(can_write=arm.workspace.get("can_write", False)),
-            case_name=case.name,
-        )
-        scores.append(await score_absolute(case, result))
+    async with docs_search_backend() as docs_search:
+        for case in cases:
+            result = await run_case(
+                arm,
+                case.question,
+                gateway=EvalGateway(can_write=arm.workspace.get("can_write", False)),
+                docs_search=docs_search,
+                case_name=case.name,
+            )
+            scores.append(await score_absolute(case, result))
 
     summary = summarise_scores(scores)
     summary |= {

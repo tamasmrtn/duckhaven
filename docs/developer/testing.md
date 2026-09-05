@@ -101,6 +101,49 @@ make eval-compare ARM_A=with-docs ARM_B=baseline            # compare two
 make eval-synth   ARGS="--limit 5"                          # draft candidate cases
 ```
 
+### Running against a self-hosted or keyless model
+
+An arm names an OpenAI-compatible endpoint — Ollama, vLLM, Azure — which is the same path a keyless DuckHaven uses in
+production. The harness builds the client through the *same* `_build_model()` the application uses, so an arm can only
+describe a deployment the product can actually be in. The shipped arms are configured this way:
+
+```yaml
+with-docs:
+  docs_enabled: true
+  model: "glm-5.3-flash:cloud"
+  openai_base_url: "https://ollama.com/v1"
+```
+
+```bash
+export ASSISTANT_EVAL_API_KEY=<your provider key>
+make eval-compare ARM_A=with-docs ARM_B=baseline
+```
+
+The judge is configured separately, so it need not be the model under test — judging with the same model you are
+scoring is a conflict of interest worth being able to avoid:
+
+```bash
+export ASSISTANT_EVAL_JUDGE_MODEL=gpt-oss:120b-cloud
+export ASSISTANT_EVAL_JUDGE_BASE_URL=https://ollama.com/v1
+```
+
+`ASSISTANT_EVAL_API_KEY` reaches an OpenAI-compatible endpoint as `ASSISTANT_API_KEY`. A hosted provider reads its own
+standard variable (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …) from your environment instead.
+
+### Measuring whether a change helped
+
+`baseline` is the assistant as it was before the documentation work: no product-knowledge block, no page index, no
+documentation tools. `with-docs` is the assistant as shipped. They share a workspace, so the only difference between
+them is the knowledge — which is what makes a win attributable.
+
+```bash
+make eval-compare ARM_A=with-docs ARM_B=baseline
+```
+
+Read `by_category` rather than only the headline. 18 of the 30 cases are `product_knowledge` or `unanswerable`, where
+documentation should decide the answer; the other 12 exercise catalog browsing, semantic routing and governance, where
+both arms should behave identically and ties are the correct result.
+
 Reports land in `api/tests/evals/reports/` (gitignored — a run's numbers belong in the pull request that cites
 them, not in the tree). The GitHub workflow `assistant-eval.yml` runs the same targets on `workflow_dispatch`; it
 ships inert and exits with a notice until someone adds `ASSISTANT_EVAL_API_KEY` to repository secrets. Neither

@@ -1,32 +1,24 @@
 """Tier 2: the judged layer — faithfulness, answer relevancy, and pairwise wins.
 
-This is the only part of the harness that costs money, and the only part that
-needs a provider key. Everything a free check can catch is caught in tier 1
-first; a judge is reserved for the two things that genuinely need judgement.
+The only part of the harness that costs money. Everything a free check can catch
+is caught in tier 1; a judge is reserved for the two things that need judgement.
 
-**The judge is pinned, and the run records what actually answered.** An unpinned
-judge silently invalidates every comparison against an older run — a score that
-drops from 4.3 to 4.0 could mean the assistant got worse or the judge changed,
-and nothing in the number distinguishes them. The model id the provider actually
-resolved is written into the manifest so a shift can at least be attributed.
-
-**Pairwise judging is run in both orders.** Judges systematically prefer whichever
-answer is shown first, by a reported 10–15 points of win rate, which is larger
-than most effects worth measuring. A win counts only when the judge agrees with
-itself after the answers are swapped; a disagreement is a tie and is counted, so
-the flip rate is visible rather than buried in the win rate.
+The judge is pinned and every report records it. An unpinned judge silently
+invalidates comparison against older runs: a score falling from 4.3 to 4.0 could
+mean the assistant got worse or the judge changed, and nothing in the number
+distinguishes them.
 """
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Literal
+from functools import lru_cache
+from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.settings import ModelSettings
-from pydantic_evals.evaluators.llm_as_a_judge import judge_input_output
 
 from tests.evals.harness import RunResult
 from tests.evals.metrics import Case
@@ -35,8 +27,12 @@ from tests.evals.metrics import Case
 # comparison against a run scored by a different judge is not a comparison.
 JUDGE_MODEL = os.getenv("ASSISTANT_EVAL_JUDGE_MODEL", "anthropic:claude-sonnet-5")
 
-# Temperature 0. A judge that disagrees with itself between runs adds variance to
-# every number it produces, and the whole point here is detecting small changes.
+# Separate from the assistant's endpoint, because judging with the model you are
+# scoring is a conflict of interest worth being able to avoid.
+JUDGE_BASE_URL = os.getenv("ASSISTANT_EVAL_JUDGE_BASE_URL") or None
+
+# Temperature 0: a judge that disagrees with itself adds variance to every number
+# it produces, and the point is detecting small changes.
 JUDGE_SETTINGS = ModelSettings(temperature=0.0, max_tokens=512)
 
 
@@ -112,15 +108,57 @@ If neither is clearly better on criteria 1 and 2, reply "tie". Do not break a
 genuine tie on style or length."""
 
 
-# Means below these fail a run. Set where a competent assistant sits, not where
-# a perfect one would: a threshold nobody can meet gets deleted, not fixed.
+# Set where a competent assistant sits, not where a perfect one would: a
+# threshold nobody can meet gets deleted, not fixed.
 MIN_FAITHFULNESS = 4.2
 MIN_RELEVANCY = 4.0
+
+
+@lru_cache(maxsize=1)
+def judge_model() -> Any:
+    """The judge, constructed the same way the product constructs a model.
+
+    Cached: a judged run makes 168 calls, and building a provider per call leaves
+    that many connection pools open.
+
+    A bare string works for a hosted provider; an OpenAI-compatible endpoint
+    needs a real client, and passing the string through would silently score
+    against whatever the default provider happened to be.
+    """
+    if not JUDGE_BASE_URL:
+        return JUDGE_MODEL
+
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    # Strip only a leading "openai:" — the rest may itself contain a colon, as
+    # every Ollama tag does ("glm-5.1:cloud").
+    name = JUDGE_MODEL.removeprefix("openai:")
+    return OpenAIChatModel(
+        name,
+        provider=OpenAIProvider(
+            base_url=JUDGE_BASE_URL,
+            api_key=os.getenv("ASSISTANT_EVAL_API_KEY") or "not-required",
+        ),
+    )
 
 
 class PairwiseVerdict(BaseModel):
     winner: Literal["1", "2", "tie"]
     reason: str
+
+
+class GradedVerdict(BaseModel):
+    """A rubric score on the 1-5 scale the rubrics define.
+
+    Scored through a plain agent rather than a library judge framed around
+    pass/fail statements: a 0-1 score would make thresholds of 4.2 and 4.0
+    unreachable, and every run would fail for a reason nothing in the output
+    explains.
+    """
+
+    score: int = Field(ge=1, le=5, description="The rubric score, from 1 to 5.")
+    reason: str = Field(description="One sentence justifying the score.")
 
 
 @dataclass(frozen=True)
@@ -134,34 +172,27 @@ class CaseScore:
     reason: str
 
 
-def _context(result: RunResult) -> str:
-    """What the assistant had in front of it, which is what faithfulness is
-    scored against — not what is true, but what it was entitled to say."""
-    pages = "\n".join(f"- {p}" for p in result.doc_paths) or "(no documentation pages read)"
-    tools = ", ".join(result.tools_called) or "(no tools called)"
-    return f"Documentation pages read:\n{pages}\n\nTools called: {tools}"
+def _context(case: Case, result: RunResult) -> str:
+    """What the answer is entitled to say. See ``compare._context``."""
+    from tests.evals.compare import _context as _pairwise_context
+
+    return _pairwise_context(case, result)
 
 
 async def score_absolute(case: Case, result: RunResult) -> CaseScore:
-    """Faithfulness and answer relevancy for one answer, scored separately.
+    """Faithfulness and answer relevancy, scored separately.
 
-    Two calls rather than one because a combined prompt lets a judge average the
-    two — an answer that is faithful but off-topic should score 5 and 2, not 3.5
-    twice.
+    Two calls rather than one: a combined prompt lets a judge average them, and
+    an answer that is faithful but off-topic should score 5 and 2, not 3.5 twice.
     """
-    faithful = await judge_input_output(
-        inputs=f"QUESTION: {case.question}\n\nCONTEXT:\n{_context(result)}",
-        output=result.answer,
-        rubric=FAITHFULNESS_RUBRIC,
-        model=JUDGE_MODEL,
-        model_settings=JUDGE_SETTINGS,
+    faithful = await _grade(
+        FAITHFULNESS_RUBRIC,
+        f"QUESTION: {case.question}\n\nCONTEXT:\n{_context(case, result)}\n\n"
+        f"ANSWER:\n{result.answer}",
     )
-    relevant = await judge_input_output(
-        inputs=f"QUESTION: {case.question}",
-        output=result.answer,
-        rubric=RELEVANCY_RUBRIC,
-        model=JUDGE_MODEL,
-        model_settings=JUDGE_SETTINGS,
+    relevant = await _grade(
+        RELEVANCY_RUBRIC,
+        f"QUESTION: {case.question}\n\nANSWER:\n{result.answer}",
     )
     return CaseScore(
         case=case.name,
@@ -174,10 +205,29 @@ async def score_absolute(case: Case, result: RunResult) -> CaseScore:
     )
 
 
+@lru_cache(maxsize=1)
+def _graded_agent() -> Agent:
+    return Agent(judge_model(), output_type=GradedVerdict, model_settings=JUDGE_SETTINGS)
+
+
+@lru_cache(maxsize=1)
+def _pairwise_agent() -> Agent:
+    return Agent(judge_model(), output_type=PairwiseVerdict, model_settings=JUDGE_SETTINGS)
+
+
+def reset_judge() -> None:
+    """Drop the cached judge. For tests that change the configured model."""
+    for cached in (judge_model, _graded_agent, _pairwise_agent):
+        cached.cache_clear()
+
+
+async def _grade(rubric: str, body: str) -> GradedVerdict:
+    return (await _graded_agent().run(f"{rubric}\n\n{body}")).output
+
+
 async def judge_pair(question: str, context: str, first: str, second: str) -> PairwiseVerdict:
     """One pairwise comparison, in the order given. Call twice, swapped."""
-    agent = Agent(JUDGE_MODEL, output_type=PairwiseVerdict, model_settings=JUDGE_SETTINGS)
-    result = await agent.run(
+    result = await _pairwise_agent().run(
         f"{PAIRWISE_RUBRIC}\n\n"
         f"QUESTION: {question}\n\n"
         f"CONTEXT:\n{context}\n\n"
@@ -190,14 +240,9 @@ async def judge_pair(question: str, context: str, first: str, second: str) -> Pa
 def resolve_pair(shown_a_first: str, shown_b_first: str) -> tuple[str, bool]:
     """Combine both orderings into one verdict, and say whether the judge flipped.
 
-    ``shown_a_first`` is the verdict when arm A occupied slot 1; ``shown_b_first``
-    is the verdict when B did. Both are "1", "2" or "tie" and refer to *slots*,
-    so the second has to be read inverted before the two can be compared.
-
-    A win requires agreement in both directions. Disagreement is position bias
-    showing itself, and is recorded as a tie *and* as a flip so it stays visible:
-    a run whose flip rate is high is a run whose verdicts should not be trusted,
-    however decisive its win rate looks.
+    Both arguments name a *slot*, so the second is read inverted. A win requires
+    agreement in both directions; disagreement is position bias showing itself,
+    recorded as a tie and as a flip so it stays visible.
     """
     first = {"1": "A", "2": "B", "tie": "tie"}[shown_a_first]
     second = {"1": "B", "2": "A", "tie": "tie"}[shown_b_first]
@@ -210,9 +255,9 @@ def resolve_pair(shown_a_first: str, shown_b_first: str) -> tuple[str, bool]:
 def summarise_scores(scores: list[CaseScore]) -> dict:
     """Means overall and per slice, plus the negative cases that failed outright.
 
-    A single faithfulness score of 1 on a negative case fails the run regardless
-    of the mean: that one case is the thing this tier exists to catch, and an
-    average is exactly the wrong way to look at it.
+    One faithfulness score of 1 on a negative case fails the run regardless of
+    the mean: that case is what this tier exists to catch, and an average is
+    exactly the wrong way to look at it.
     """
 
     def mean(values: list[float]) -> float:

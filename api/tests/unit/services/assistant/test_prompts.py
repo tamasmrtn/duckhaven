@@ -54,6 +54,15 @@ def test_system_prompt_instructs_to_ask_clarifying_questions():
     assert "guessing and running SQL" in SYSTEM_PROMPT
 
 
+def test_the_product_block_forbids_inventing_a_feature():
+    """Added after a judged comparison caught exactly this: asked about a
+    Kubernetes operator DuckHaven does not have, the documented assistant
+    fabricated quotations from real pages and sketched a NetworkPolicy recipe.
+    More knowledge produced more confident invention."""
+    assert "Never quote or attribute wording to a page you have not opened" in PRODUCT_PROMPT
+    assert "say DuckHaven does not have it and stop" in PRODUCT_PROMPT
+
+
 def test_the_product_block_asks_for_citations():
     """The user sees cited paths as links, so this instruction is what makes the
     Sources row appear at all."""
@@ -204,10 +213,11 @@ def test_every_block_is_separated_by_a_blank_line():
 
 def test_each_resident_block_is_within_budget():
     assert len(BASE_PROMPT) <= 2_600
-    # Raised from 2,800 in phase 5, deliberately, to make room for the
-    # citation instruction. Growing a block past its ceiling is meant to be
-    # a decision someone makes, not something that happens.
-    assert len(PRODUCT_PROMPT) <= 3_000
+    # Raised twice, both times deliberately: 2,800 -> 3,000 for the citation
+    # instruction, and 3,000 -> 3,300 after a judged run caught the assistant
+    # fabricating quotations for a feature DuckHaven does not have. Growing a
+    # block past its ceiling is meant to be a decision someone makes.
+    assert len(PRODUCT_PROMPT) <= 3_300
     # ~50 chars per page, so this allows roughly eight more before a bump.
     assert len(DOCS_INDEX_PROMPT.format(index=load_index().prompt_block())) <= 3_800
 

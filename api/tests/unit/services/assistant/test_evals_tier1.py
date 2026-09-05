@@ -14,6 +14,7 @@ scoring needs a real model deciding for itself, which is tier 2 — see
 """
 
 import pytest
+from pydantic_ai import DeferredToolRequests
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
@@ -186,10 +187,12 @@ def test_arms_load_from_the_file():
 
 
 def test_an_arm_can_inherit_and_override():
-    cheap = ArmConfig.load("cheap-model")
+    cheap = ArmConfig.load("cheaper-model")
+    docs = ArmConfig.load("with-docs")
 
-    assert cheap.model == "anthropic:claude-haiku-4-5-20251001"
-    assert cheap.docs_enabled is True  # inherited from with-docs
+    assert cheap.model != docs.model
+    assert cheap.docs_enabled is True
+    assert cheap.openai_base_url == docs.openai_base_url
 
 
 def test_an_unknown_arm_fails_loudly():
@@ -334,3 +337,199 @@ def test_cited_paths_finds_every_path_named():
         "reference/sql-support.md",
         "guides/snapshots-time-travel.md",
     }
+
+
+# ── An arm reaches the model the way production does ──────────────────────────
+
+
+def test_an_arm_can_target_an_openai_compatible_endpoint():
+    """Ollama, vLLM, Azure — DuckHaven's keyless path. The harness must build the
+    model through the same function production uses, or an arm naming a base URL
+    would silently score against whatever the default provider happened to be."""
+    from tests.evals.harness import _arm_settings, build_agent
+
+    arm = ArmConfig.load("with-docs")
+    with _arm_settings(arm):
+        model = build_agent(arm).model
+
+    # Asserts the wiring, not the choice: which model an arm names is meant to
+    # change, and a test that pins the string turns every model swap into a
+    # failing suite.
+    assert type(model).__name__ == "OpenAIChatModel"
+    assert model.model_name == arm.model
+    assert str(model.client.base_url).startswith(arm.openai_base_url)
+
+
+def test_an_arm_can_override_only_the_model():
+    """The model-selection use case: everything inherited, one thing changed."""
+    from api.services.assistant.agent import _build_model
+    from tests.evals.harness import _arm_settings
+
+    with _arm_settings(ArmConfig.load("cheaper-model")):
+        assert _build_model().model_name == "gpt-oss:120b-cloud"
+
+
+def test_an_arm_restores_every_setting_it_touched():
+    """Arms mutate process-wide settings. A leaked base URL would redirect every
+    later case — and every other test in the suite — at the wrong endpoint."""
+    from tests.evals.harness import _arm_settings
+
+    before = (
+        settings.assistant_docs_enabled,
+        settings.assistant_model,
+        settings.assistant_openai_base_url,
+    )
+
+    with _arm_settings(ArmConfig.load("baseline")):
+        assert settings.assistant_openai_base_url == "https://ollama.com/v1"
+
+    assert (
+        settings.assistant_docs_enabled,
+        settings.assistant_model,
+        settings.assistant_openai_base_url,
+    ) == before
+
+
+# ── Tool arguments arrive in two shapes ───────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        # Anthropic and friends hand back a dict.
+        ({"path": "reference/sql-support.md"}, {"path": "reference/sql-support.md"}),
+        # Every OpenAI-compatible endpoint — Ollama, vLLM, Azure — sends a string.
+        ('{"path": "reference/sql-support.md"}', {"path": "reference/sql-support.md"}),
+        ("", {}),
+        ("{not json", {}),
+        ({}, {}),
+    ],
+)
+def test_tool_args_are_read_whichever_form_the_provider_sends(args, expected):
+    """The string form was treated as "no arguments", silently and totally: over a
+    full run read_doc_page was called 19 times and the page recorded 0 times. The
+    judge then never saw what the assistant had read, and scored correct citations
+    as fabrications."""
+    from pydantic_ai.messages import ToolCallPart
+
+    from tests.evals.harness import _tool_args
+
+    assert _tool_args(ToolCallPart("read_doc_page", args)) == expected
+
+
+async def test_a_read_page_is_recorded_from_a_string_argument():
+    """End to end through run_case, because the unit above would still pass if
+    run_case stopped calling it."""
+
+    def model_reading_a_page() -> FunctionModel:
+        steps = iter(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            "read_doc_page",
+                            '{"path": "reference/sql-support.md"}',
+                        )
+                    ]
+                ),
+                ModelResponse(parts=[TextPart("done")]),
+            ]
+        )
+
+        def function(messages, info) -> ModelResponse:
+            return next(steps)
+
+        return FunctionModel(function)
+
+    result = await run_case(
+        ArmConfig.load("with-docs"), "what statements are allowed?", model=model_reading_a_page()
+    )
+
+    assert result.tools_called == ["read_doc_page"]
+    assert result.doc_paths == ["reference/sql-support.md"]
+
+
+# ── The harness matches production's agent, not a subset of it ────────────────
+
+
+def test_the_eval_agent_carries_productions_settings():
+    """build_agent reproduced three of agent.py's eight arguments, and every
+    omission was silent. This pins the ones that changed behaviour."""
+    from pydantic_ai import DeferredToolRequests
+
+    from tests.evals.harness import build_agent
+
+    agent = build_agent(ArmConfig.load("with-docs"), model=_echo_model())
+
+    assert DeferredToolRequests in agent.output_type
+    assert agent.model_settings["max_tokens"] == settings.assistant_max_output_tokens
+
+
+async def test_a_looping_case_is_recorded_not_raised():
+    """One case that never terminates must not discard the other forty-one, and
+    "it never finished" is itself a result worth scoring."""
+
+    def endless_tool_caller() -> FunctionModel:
+        def function(messages, info) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart("list_catalogs", {})])
+
+        return FunctionModel(function)
+
+    from tests.evals.fixtures import EvalGateway
+
+    result = await run_case(
+        ArmConfig.load("with-docs"),
+        "loop forever",
+        model=endless_tool_caller(),
+        gateway=EvalGateway(),
+        case_name="looping",
+    )
+
+    assert "step limit" in result.answer
+    assert result.case == "looping"
+
+
+def test_a_paused_write_reads_as_paused_rather_than_as_an_answer():
+    """Refusing, complying and pausing for approval are three different
+    behaviours; str() on the raw object would flatten them into one."""
+    from types import SimpleNamespace
+
+    from tests.evals.harness import _render_output
+
+    deferred = DeferredToolRequests(
+        approvals=[SimpleNamespace(tool_name="run_sql", tool_call_id="1", args={})]
+    )
+
+    rendered = _render_output(deferred)
+
+    assert "paused" in rendered and "run_sql" in rendered
+    assert _render_output("an ordinary answer") == "an ordinary answer"
+
+
+def test_the_judge_client_is_built_once():
+    """It was rebuilt per call: 168 calls, 168 connection pools, dozens of idle
+    TLS connections against the provider."""
+    from tests.evals.judge import _graded_agent, _pairwise_agent, judge_model
+
+    assert judge_model() is judge_model()
+    assert _graded_agent() is _graded_agent()
+    assert _graded_agent() is not _pairwise_agent()
+
+
+async def test_malformed_structured_output_is_resampled_not_fatal():
+    """The expected Ollama failure: a smaller model returning output that does
+    not validate. One bad sample must not end a forty-minute run."""
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+    from tests.evals.harness import retrying
+
+    attempts = {"n": 0}
+
+    async def flaky():
+        attempts["n"] += 1
+        if attempts["n"] < 2:
+            raise UnexpectedModelBehavior("Exceeded maximum retries for result validation")
+        return "ok"
+
+    assert await retrying(flaky, base_delay=0.01) == "ok"
+    assert attempts["n"] == 2

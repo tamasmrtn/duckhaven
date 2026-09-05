@@ -41,4 +41,4 @@ everything:
 # at something unverified is a failed run waiting to happen.
 cheaper-model:
   inherits: with-docs
-  model: "gpt-oss:120b-cloud"
+  model: "deepseek-v4-flash:cloud"

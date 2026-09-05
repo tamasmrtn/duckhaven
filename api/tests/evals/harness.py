@@ -30,8 +30,10 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic_ai import Agent
+from pydantic_ai import Agent, DeferredToolRequests
+from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.usage import UsageLimits
 
 from api.config import settings
 from api.services.assistant.agent import _build_model
@@ -142,10 +144,31 @@ def build_agent(arm: ArmConfig, model: Any = None) -> Agent:
     """
     return Agent(
         model or _build_model(),
+        # Every argument below is production's. build_agent previously reproduced
+        # three of agent.py's eight, and each omission was silent: no output type
+        # made the write-approval path unrepresentable, and no max_tokens meant
+        # eval answers were not subject to the cap real users get.
+        output_type=[str, DeferredToolRequests],
         deps_type=AssistantDeps,
         instructions=build_instructions,
         tools=build_toolset(),
+        model_settings={"max_tokens": settings.assistant_max_output_tokens},
+        defer_model_check=True,
     )
+
+
+def _render_output(output: Any) -> str:
+    """The answer as text, including the case where there is deliberately none.
+
+    A write that needs human approval is not a failure and not an answer: the
+    turn pauses and the UI asks. Rendering it as a marker lets a judge see that
+    the assistant *paused* rather than refused or complied, which are three
+    different behaviours that ``str()`` on the raw object would flatten.
+    """
+    if isinstance(output, DeferredToolRequests):
+        pending = ", ".join(call.tool_name for call in output.approvals) or "a write"
+        return f"[paused: {pending} awaiting the user's approval before it runs]"
+    return str(output)
 
 
 def _tool_args(part: ToolCallPart) -> dict:
@@ -186,7 +209,31 @@ async def run_case(
         deps = deps_for(arm, gateway=gateway, docs_search=docs_search)
         agent = build_agent(arm, model=model)
         instructions = build_instructions(_FakeCtx(deps))
-        result = await agent.run(question, deps=deps)
+        try:
+            result = await agent.run(
+                question,
+                deps=deps,
+                # The same ceiling production enforces. Without it a model stuck
+                # in a tool loop runs unbounded on somebody's quota; two cases in
+                # a recent run already reached fourteen tool calls.
+                usage_limits=UsageLimits(request_limit=settings.assistant_request_limit),
+            )
+        except UsageLimitExceeded:
+            # Recorded as this case's answer rather than raised. One looping case
+            # must not discard the other forty-one, and "it never finished" is
+            # itself a result worth scoring - production surfaces the same thing
+            # to the user.
+            return RunResult(
+                arm=arm.name,
+                case=case_name,
+                answer=(
+                    "[no answer: the assistant reached its step limit of "
+                    f"{settings.assistant_request_limit} model requests for this turn]"
+                ),
+                tools_called=[],
+                doc_paths=[],
+                instructions=instructions,
+            )
 
     tools_called: list[str] = []
     doc_paths: list[str] = []
@@ -202,7 +249,7 @@ async def run_case(
     return RunResult(
         arm=arm.name,
         case=case_name,
-        answer=str(result.output),
+        answer=_render_output(result.output),
         tools_called=tools_called,
         doc_paths=doc_paths,
         instructions=instructions,
@@ -224,24 +271,35 @@ async def retrying(call, *, attempts: int = 4, base_delay: float = 2.0):
     lost, and the quota spent on them with it. Transient network faults are
     normal at that duration; treating one as fatal is what is not.
 
-    Only retried on transport-level failures. A malformed response or a rejected
-    request is a real result and must surface, not be papered over by trying
-    again until the provider happens to agree.
+    Retried on transport failures, and on structured output that does not
+    validate. The second is the expected failure with a smaller open model, and
+    resampling it is right — but every retry is printed, so a judge that is
+    *systematically* malformed shows up in the log instead of being smoothed
+    away into a clean-looking result.
+
+    A rejected request — bad key, unknown model, refused content — is a real
+    answer and surfaces immediately. Retrying until a provider happens to agree
+    would hide exactly the problems worth seeing.
     """
-    from pydantic_ai.exceptions import ModelAPIError
+    from pydantic_ai.exceptions import (
+        ModelAPIError,
+        ModelHTTPError,
+        UnexpectedModelBehavior,
+    )
 
     for attempt in range(attempts):
         try:
             return await call()
-        except ModelAPIError as exc:
-            transient = any(
+        except (ModelAPIError, ModelHTTPError, UnexpectedModelBehavior) as exc:
+            transient = isinstance(exc, UnexpectedModelBehavior) or any(
                 s in str(exc).lower()
-                for s in ("timed out", "timeout", "connection", "502", "503", "504")
+                for s in ("timed out", "timeout", "connection", "502", "503", "504", "429")
             )
             if not transient or attempt == attempts - 1:
                 raise
             delay = base_delay * (2**attempt)
-            print(f"    transient provider error ({exc}); retrying in {delay:.0f}s", flush=True)
+            kind = type(exc).__name__
+            print(f"    {kind}: {exc}; retrying in {delay:.0f}s", flush=True)
             await asyncio.sleep(delay)
     raise AssertionError("unreachable")
 

@@ -14,6 +14,7 @@ scoring needs a real model deciding for itself, which is tier 2 — see
 """
 
 import pytest
+from pydantic_ai import DeferredToolRequests
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
@@ -457,3 +458,89 @@ async def test_a_read_page_is_recorded_from_a_string_argument():
 
     assert result.tools_called == ["read_doc_page"]
     assert result.doc_paths == ["reference/sql-support.md"]
+
+
+# ── The harness matches production's agent, not a subset of it ────────────────
+
+
+def test_the_eval_agent_carries_productions_settings():
+    """build_agent reproduced three of agent.py's eight arguments, and every
+    omission was silent. This pins the ones that changed behaviour."""
+    from pydantic_ai import DeferredToolRequests
+
+    from tests.evals.harness import build_agent
+
+    agent = build_agent(ArmConfig.load("with-docs"), model=_echo_model())
+
+    assert DeferredToolRequests in agent.output_type
+    assert agent.model_settings["max_tokens"] == settings.assistant_max_output_tokens
+
+
+async def test_a_looping_case_is_recorded_not_raised():
+    """One case that never terminates must not discard the other forty-one, and
+    "it never finished" is itself a result worth scoring."""
+
+    def endless_tool_caller() -> FunctionModel:
+        def function(messages, info) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart("list_catalogs", {})])
+
+        return FunctionModel(function)
+
+    from tests.evals.fixtures import EvalGateway
+
+    result = await run_case(
+        ArmConfig.load("with-docs"),
+        "loop forever",
+        model=endless_tool_caller(),
+        gateway=EvalGateway(),
+        case_name="looping",
+    )
+
+    assert "step limit" in result.answer
+    assert result.case == "looping"
+
+
+def test_a_paused_write_reads_as_paused_rather_than_as_an_answer():
+    """Refusing, complying and pausing for approval are three different
+    behaviours; str() on the raw object would flatten them into one."""
+    from types import SimpleNamespace
+
+    from tests.evals.harness import _render_output
+
+    deferred = DeferredToolRequests(
+        approvals=[SimpleNamespace(tool_name="run_sql", tool_call_id="1", args={})]
+    )
+
+    rendered = _render_output(deferred)
+
+    assert "paused" in rendered and "run_sql" in rendered
+    assert _render_output("an ordinary answer") == "an ordinary answer"
+
+
+def test_the_judge_client_is_built_once():
+    """It was rebuilt per call: 168 calls, 168 connection pools, dozens of idle
+    TLS connections against the provider."""
+    from tests.evals.judge import _graded_agent, _pairwise_agent, judge_model
+
+    assert judge_model() is judge_model()
+    assert _graded_agent() is _graded_agent()
+    assert _graded_agent() is not _pairwise_agent()
+
+
+async def test_malformed_structured_output_is_resampled_not_fatal():
+    """The expected Ollama failure: a smaller model returning output that does
+    not validate. One bad sample must not end a forty-minute run."""
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+    from tests.evals.harness import retrying
+
+    attempts = {"n": 0}
+
+    async def flaky():
+        attempts["n"] += 1
+        if attempts["n"] < 2:
+            raise UnexpectedModelBehavior("Exceeded maximum retries for result validation")
+        return "ok"
+
+    assert await retrying(flaky, base_delay=0.01) == "ok"
+    assert attempts["n"] == 2

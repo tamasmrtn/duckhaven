@@ -349,9 +349,12 @@ def test_an_arm_can_target_an_openai_compatible_endpoint():
     with _arm_settings(arm):
         model = build_agent(arm).model
 
+    # Asserts the wiring, not the choice: which model an arm names is meant to
+    # change, and a test that pins the string turns every model swap into a
+    # failing suite.
     assert type(model).__name__ == "OpenAIChatModel"
-    assert model.model_name == "gpt-oss:120b-cloud"
-    assert "ollama.com" in str(model.client.base_url)
+    assert model.model_name == arm.model
+    assert str(model.client.base_url).startswith(arm.openai_base_url)
 
 
 def test_a_hosted_provider_arm_stays_a_plain_model_string():

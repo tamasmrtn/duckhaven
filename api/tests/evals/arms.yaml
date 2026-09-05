@@ -56,10 +56,10 @@ cheap-model:
 
 ollama-baseline:
   inherits: baseline
-  model: "gpt-oss:120b-cloud"
+  model: "glm-5.3-flash:cloud"
   openai_base_url: "https://ollama.com/v1"
 
 ollama-with-docs:
   inherits: with-docs
-  model: "gpt-oss:120b-cloud"
+  model: "glm-5.3-flash:cloud"
   openai_base_url: "https://ollama.com/v1"

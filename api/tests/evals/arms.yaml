@@ -41,3 +41,25 @@ everything:
 cheap-model:
   inherits: with-docs
   model: "anthropic:claude-haiku-4-5-20251001"
+
+# ── Ollama Cloud ──────────────────────────────────────────────────────────────
+# The same two comparison arms, run through DuckHaven's OpenAI-compatible path
+# rather than a hosted provider. Nothing about the assistant changes; only how
+# the model is reached — which is the point, since a self-hosted or keyless
+# DuckHaven runs exactly this way in production.
+#
+#   export ASSISTANT_EVAL_API_KEY=<your ollama key>
+#   make eval-compare ARM_A=ollama-with-docs ARM_B=ollama-baseline
+#
+# Set openai_base_url to http://localhost:11434/v1 to go through a local Ollama
+# daemon instead of ollama.com directly.
+
+ollama-baseline:
+  inherits: baseline
+  model: "gpt-oss:120b-cloud"
+  openai_base_url: "https://ollama.com/v1"
+
+ollama-with-docs:
+  inherits: with-docs
+  model: "gpt-oss:120b-cloud"
+  openai_base_url: "https://ollama.com/v1"

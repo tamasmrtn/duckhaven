@@ -234,12 +234,16 @@ docs-index:
 # candidate cases for a human to promote, never the golden set itself.
 eval-synth:
 	@[ -n "$$ASSISTANT_EVAL_API_KEY" ] || { echo "ASSISTANT_EVAL_API_KEY not set; synthesis calls a model"; exit 1; }
-	ANTHROPIC_API_KEY=$$ASSISTANT_EVAL_API_KEY \
+	ASSISTANT_API_KEY=$$ASSISTANT_EVAL_API_KEY \
 	  uv run --package duckhaven-api python -m tests.evals.synth $(ARGS)
 
 # Tier 2, absolute: faithfulness and answer relevancy against thresholds. This is
-# the regression and reporting mode. ~$3.40 per run at 30 cases; see
-# docs/developer/testing.md before enabling it on a schedule.
+# the regression and reporting mode. ~$3.40 per run at 30 cases on a hosted
+# provider; see docs/developer/testing.md before enabling it on a schedule.
+#
+# ASSISTANT_EVAL_API_KEY is the gate and the key. It reaches an OpenAI-compatible
+# endpoint (Ollama, vLLM) as ASSISTANT_API_KEY; a hosted provider reads its own
+# standard variable, which your shell already exports.
 eval-judged:
 	@[ -n "$$ASSISTANT_EVAL_API_KEY" ] || { echo "ASSISTANT_EVAL_API_KEY not set; tier 2 calls a model"; exit 1; }
 	ASSISTANT_EVAL_ARM=$(or $(ARM),with-docs) \
@@ -249,7 +253,7 @@ eval-judged:
 # the mode that answers "did my change help?". ~$6.40 per run.
 eval-compare:
 	@[ -n "$$ASSISTANT_EVAL_API_KEY" ] || { echo "ASSISTANT_EVAL_API_KEY not set; tier 2 calls a model"; exit 1; }
-	ANTHROPIC_API_KEY=$$ASSISTANT_EVAL_API_KEY \
+	ASSISTANT_API_KEY=$$ASSISTANT_EVAL_API_KEY \
 	  uv run --package duckhaven-api python -m tests.evals.compare \
 	    --a=$(or $(ARM_A),with-docs) --b=$(or $(ARM_B),baseline)
 

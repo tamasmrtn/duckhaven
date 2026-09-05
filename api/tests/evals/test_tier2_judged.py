@@ -51,7 +51,12 @@ def _real_models_allowed(monkeypatch):
 
     monkeypatch.setattr(models, "ALLOW_MODEL_REQUESTS", True)
     monkeypatch.setattr(settings, "assistant_docs_dir", generate._repo_root() / "docs")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", os.environ["ASSISTANT_EVAL_API_KEY"])
+    # The key reaches an OpenAI-compatible endpoint through this setting, which
+    # is what _build_model reads. A hosted provider takes its own standard
+    # variable from the environment instead — assuming Anthropic here would make
+    # every other provider fail with an authentication error that looks nothing
+    # like the actual problem.
+    monkeypatch.setattr(settings, "assistant_api_key", os.environ["ASSISTANT_EVAL_API_KEY"])
     load_index.cache_clear()
     yield
     load_index.cache_clear()

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
@@ -33,6 +33,11 @@ from tests.evals.metrics import Case
 # Pinned deliberately. Override only to compare judges, never casually: a
 # comparison against a run scored by a different judge is not a comparison.
 JUDGE_MODEL = os.getenv("ASSISTANT_EVAL_JUDGE_MODEL", "anthropic:claude-sonnet-5")
+
+# An OpenAI-compatible endpoint for the judge — Ollama Cloud, a self-hosted
+# Ollama, vLLM. Separate from the assistant's, because judging with the same
+# model you are scoring is a conflict of interest worth being able to avoid.
+JUDGE_BASE_URL = os.getenv("ASSISTANT_EVAL_JUDGE_BASE_URL") or None
 
 # Temperature 0. A judge that disagrees with itself between runs adds variance to
 # every number it produces, and the whole point here is detecting small changes.
@@ -117,6 +122,32 @@ MIN_FAITHFULNESS = 4.2
 MIN_RELEVANCY = 4.0
 
 
+def judge_model() -> Any:
+    """The judge, constructed the same way the product constructs a model.
+
+    A bare string works for a hosted provider; an OpenAI-compatible endpoint
+    needs a real client, and passing the string through would silently score
+    against whatever the default provider happened to be — or fail with an
+    authentication error that looks nothing like the actual problem.
+    """
+    if not JUDGE_BASE_URL:
+        return JUDGE_MODEL
+
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    # Strip only a leading "openai:" — the rest may itself contain a colon, as
+    # every Ollama tag does ("glm-5.1:cloud").
+    name = JUDGE_MODEL.removeprefix("openai:")
+    return OpenAIChatModel(
+        name,
+        provider=OpenAIProvider(
+            base_url=JUDGE_BASE_URL,
+            api_key=os.getenv("ASSISTANT_EVAL_API_KEY") or "not-required",
+        ),
+    )
+
+
 class PairwiseVerdict(BaseModel):
     winner: Literal["1", "2", "tie"]
     reason: str
@@ -184,13 +215,13 @@ async def score_absolute(case: Case, result: RunResult) -> CaseScore:
 
 
 async def _grade(rubric: str, body: str) -> GradedVerdict:
-    agent = Agent(JUDGE_MODEL, output_type=GradedVerdict, model_settings=JUDGE_SETTINGS)
+    agent = Agent(judge_model(), output_type=GradedVerdict, model_settings=JUDGE_SETTINGS)
     return (await agent.run(f"{rubric}\n\n{body}")).output
 
 
 async def judge_pair(question: str, context: str, first: str, second: str) -> PairwiseVerdict:
     """One pairwise comparison, in the order given. Call twice, swapped."""
-    agent = Agent(JUDGE_MODEL, output_type=PairwiseVerdict, model_settings=JUDGE_SETTINGS)
+    agent = Agent(judge_model(), output_type=PairwiseVerdict, model_settings=JUDGE_SETTINGS)
     result = await agent.run(
         f"{PAIRWISE_RUBRIC}\n\n"
         f"QUESTION: {question}\n\n"

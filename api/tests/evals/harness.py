@@ -31,6 +31,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ToolCallPart
 
 from api.config import settings
+from api.services.assistant.agent import _build_model
 from api.services.assistant.deps import AssistantDeps
 from api.services.assistant.prompts import build_instructions
 from api.services.assistant.tools import build_toolset
@@ -43,9 +44,14 @@ class ArmConfig:
     """One named configuration of the assistant."""
 
     name: str
-    # Any pydantic-ai model: a provider string for tier 2, a FunctionModel for
-    # tier 1. None means "whatever this deployment is configured with".
+    # A provider string ("anthropic:claude-sonnet-5"), or a bare tag when
+    # openai_base_url is set ("glm-5.1:cloud"). None means "whatever this
+    # deployment is configured with".
     model: Any = None
+    # An OpenAI-compatible endpoint — Ollama Cloud, a self-hosted Ollama, vLLM,
+    # Azure. Set it and the arm runs through exactly the path a keyless or
+    # self-hosted DuckHaven uses in production.
+    openai_base_url: str | None = None
     # The real product switch, not a harness-only flag: drives the
     # product-knowledge block, the page index, and the two documentation tools.
     docs_enabled: bool = True
@@ -81,15 +87,25 @@ class RunResult:
         return self.doc_paths
 
 
+# Everything an arm can change is a real deployment setting, so an arm can only
+# describe a state the product can actually be in.
+_ARM_SETTINGS = ("assistant_docs_enabled", "assistant_model", "assistant_openai_base_url")
+
+
 @contextmanager
 def _arm_settings(arm: ArmConfig):
-    """Apply an arm's deployment-level configuration for the duration of a run."""
-    previous = settings.assistant_docs_enabled
+    """Apply an arm's deployment configuration for the duration of a run."""
+    previous = {name: getattr(settings, name) for name in _ARM_SETTINGS}
     settings.assistant_docs_enabled = arm.docs_enabled
+    if arm.model:
+        settings.assistant_model = arm.model
+    if arm.openai_base_url:
+        settings.assistant_openai_base_url = arm.openai_base_url
     try:
         yield
     finally:
-        settings.assistant_docs_enabled = previous
+        for name, value in previous.items():
+            setattr(settings, name, value)
 
 
 def deps_for(arm: ArmConfig, *, gateway: Any = None, docs_search: Any = None) -> AssistantDeps:
@@ -111,11 +127,18 @@ def deps_for(arm: ArmConfig, *, gateway: Any = None, docs_search: Any = None) ->
 def build_agent(arm: ArmConfig, model: Any = None) -> Agent:
     """The production agent, configured for this arm.
 
-    ``instructions`` and ``tools`` come from the real functions, so an arm can
-    only express configurations the product can actually be in.
+    Instructions, tools **and the model** all come from the real functions, so an
+    arm can only express configurations the product can actually be in. The model
+    matters as much as the rest: ``_build_model`` is what turns an OpenAI-compatible
+    base URL into a working client, and a harness that passed the model string
+    straight through would silently ignore it — scoring an Ollama or vLLM
+    deployment against Anthropic, or failing outright.
+
+    ``model`` overrides everything and takes a constructed object, which is how
+    tier 1 injects a ``FunctionModel`` without touching provider settings.
     """
     return Agent(
-        model or arm.model or settings.assistant_model,
+        model or _build_model(),
         deps_type=AssistantDeps,
         instructions=build_instructions,
         tools=build_toolset(),

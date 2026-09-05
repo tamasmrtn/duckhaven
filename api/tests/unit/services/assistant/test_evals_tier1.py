@@ -334,3 +334,64 @@ def test_cited_paths_finds_every_path_named():
         "reference/sql-support.md",
         "guides/snapshots-time-travel.md",
     }
+
+
+# ── An arm reaches the model the way production does ──────────────────────────
+
+
+def test_an_arm_can_target_an_openai_compatible_endpoint():
+    """Ollama, vLLM, Azure — DuckHaven's keyless path. The harness must build the
+    model through the same function production uses, or an arm naming a base URL
+    would silently score against whatever the default provider happened to be."""
+    from tests.evals.harness import _arm_settings, build_agent
+
+    arm = ArmConfig.load("ollama-with-docs")
+    with _arm_settings(arm):
+        model = build_agent(arm).model
+
+    assert type(model).__name__ == "OpenAIChatModel"
+    assert model.model_name == "gpt-oss:120b-cloud"
+    assert "ollama.com" in str(model.client.base_url)
+
+
+def test_a_hosted_provider_arm_stays_a_plain_model_string():
+    """No base URL means no client to build: the string is handed to pydantic-ai,
+    which resolves the provider lazily from its standard environment variable.
+    Asserted on the string rather than on Agent.model, because touching that
+    forces provider construction and needs a real key."""
+    from api.services.assistant.agent import _build_model
+    from tests.evals.harness import _arm_settings
+
+    with _arm_settings(ArmConfig.load("cheap-model")):
+        assert _build_model() == "anthropic:claude-haiku-4-5-20251001"
+
+
+def test_an_arm_restores_every_setting_it_touched():
+    """Arms mutate process-wide settings. A leaked base URL would redirect every
+    later case — and every other test in the suite — at the wrong endpoint."""
+    from tests.evals.harness import _arm_settings
+
+    before = (
+        settings.assistant_docs_enabled,
+        settings.assistant_model,
+        settings.assistant_openai_base_url,
+    )
+
+    with _arm_settings(ArmConfig.load("ollama-baseline")):
+        assert settings.assistant_openai_base_url == "https://ollama.com/v1"
+
+    assert (
+        settings.assistant_docs_enabled,
+        settings.assistant_model,
+        settings.assistant_openai_base_url,
+    ) == before
+
+
+def test_the_ollama_arms_differ_from_each_other_only_in_knowledge():
+    ollama_base = ArmConfig.load("ollama-baseline")
+    ollama_docs = ArmConfig.load("ollama-with-docs")
+
+    assert ollama_base.model == ollama_docs.model
+    assert ollama_base.openai_base_url == ollama_docs.openai_base_url
+    assert ollama_base.workspace == ollama_docs.workspace
+    assert ollama_base.docs_enabled != ollama_docs.docs_enabled

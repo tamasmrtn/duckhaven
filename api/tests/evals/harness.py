@@ -19,6 +19,7 @@ the one ``test_semantic_tools.py`` already uses to drive the agent directly.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 from contextlib import asynccontextmanager, contextmanager
@@ -187,6 +188,36 @@ class _FakeCtx:
 
     def __init__(self, deps: AssistantDeps) -> None:
         self.deps = deps
+
+
+async def retrying(call, *, attempts: int = 4, base_delay: float = 2.0):
+    """Retry one model call through a transient provider failure.
+
+    A judged run is 168 sequential calls over ten-odd minutes, and a single
+    timeout anywhere in it used to discard the whole run — every completed case
+    lost, and the quota spent on them with it. Transient network faults are
+    normal at that duration; treating one as fatal is what is not.
+
+    Only retried on transport-level failures. A malformed response or a rejected
+    request is a real result and must surface, not be papered over by trying
+    again until the provider happens to agree.
+    """
+    from pydantic_ai.exceptions import ModelAPIError
+
+    for attempt in range(attempts):
+        try:
+            return await call()
+        except ModelAPIError as exc:
+            transient = any(
+                s in str(exc).lower()
+                for s in ("timed out", "timeout", "connection", "502", "503", "504")
+            )
+            if not transient or attempt == attempts - 1:
+                raise
+            delay = base_delay * (2**attempt)
+            print(f"    transient provider error ({exc}); retrying in {delay:.0f}s", flush=True)
+            await asyncio.sleep(delay)
+    raise AssertionError("unreachable")
 
 
 @asynccontextmanager

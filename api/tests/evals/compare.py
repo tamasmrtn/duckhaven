@@ -120,6 +120,16 @@ async def compare(arm_a: str, arm_b: str, docs_search=None) -> dict:
                 "winner": winner,
                 "flipped": flipped,
                 "reason": first.reason,
+                # The answers themselves, and what each arm did to produce them.
+                # Without these a verdict can only be argued about: diagnosing the
+                # first regression this harness found meant inferring the answers
+                # from the judge's prose, which is guesswork dressed as analysis.
+                "answer_a": a.answer,
+                "answer_b": b.answer,
+                "tools_a": a.tools_called,
+                "tools_b": b.tools_called,
+                "pages_a": a.doc_paths,
+                "pages_b": b.doc_paths,
             }
         )
 

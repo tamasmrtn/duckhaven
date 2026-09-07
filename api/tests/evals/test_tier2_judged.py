@@ -33,7 +33,7 @@ from tests.evals.judge import (
     score_absolute,
     summarise_scores,
 )
-from tests.evals.metrics import load_cases
+from tests.evals.metrics import behaviour_scores, load_cases
 
 REPORTS_DIR = Path(__file__).with_name("reports")
 
@@ -62,6 +62,7 @@ async def test_absolute_scores_meet_their_thresholds():
     cases = load_cases()
 
     scores = []
+    runs = []
     for case in cases:
         result = await run_case(
             arm,
@@ -69,9 +70,13 @@ async def test_absolute_scores_meet_their_thresholds():
             gateway=EvalGateway(can_write=arm.workspace.get("can_write", False)),
             case_name=case.name,
         )
+        runs.append((case, result.answer, result.tools_called))
         scores.append(await score_absolute(case, result))
 
     summary = summarise_scores(scores)
+    # Free, deterministic, and computed from what the run already collected — so
+    # they ride along here rather than needing a tier of their own.
+    summary |= behaviour_scores(runs)
     summary |= {
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "arm": arm.name,
@@ -91,5 +96,14 @@ async def test_absolute_scores_meet_their_thresholds():
         "the assistant answered a negative case confidently: "
         f"{summary['confabulated_on_negative_cases']}"
     )
+    # A governance failure, not a rate to average: one forbidden call is a case
+    # where the assistant reached past its grants and the judge would never see
+    # it, because the answer that follows can read perfectly well.
+    assert not summary["forbidden_tool_calls"], (
+        f"forbidden tools were called on: {summary['forbidden_tool_calls']}"
+    )
     assert summary["faithfulness"] >= MIN_FAITHFULNESS
     assert summary["relevancy"] >= MIN_RELEVANCY
+    # tool_choice and refusal_rate_on_negative_cases are reported, not gated:
+    # nothing has measured them yet, and a bar set from a guess either passes
+    # meaninglessly or fails a run nobody can fix. Set them from the first run.

@@ -306,3 +306,64 @@ async def test_an_arms_settings_are_restored_after_a_run():
     await run_case(ArmConfig.load("baseline"), "hi", model=_echo_model())
 
     assert settings.assistant_docs_enabled == before
+
+
+# ── The behaviour scores that ride along with the judged tier ─────────────────
+
+
+def _case(name="c", *, negative=False, expected=(), forbidden=()):
+    return metrics.Case(
+        name=name,
+        question="q",
+        category="product_knowledge",
+        provenance="hand",
+        negative=negative,
+        expected_sources=(),
+        expected_tools_any=expected,
+        forbidden_tools=forbidden,
+        must_contain=(),
+        expect_refusal=negative,
+        note="",
+    )
+
+
+def test_tool_choice_is_scored_only_over_cases_that_ask_for_a_tool():
+    """A case naming no expected tool has no opinion, and counting it as a pass
+    would inflate the rate with cases that cannot fail."""
+    runs = [
+        (_case("a", expected=("search_docs",)), "ans", ["search_docs"]),
+        (_case("b", expected=("search_docs",)), "ans", ["run_sql"]),
+        (_case("c"), "ans", []),
+    ]
+
+    assert metrics.behaviour_scores(runs)["tool_choice"] == 0.5
+
+
+def test_a_forbidden_tool_is_named_rather_than_averaged():
+    """One is a governance failure. A rate would let it disappear into a run that
+    otherwise looks fine, and the judge never sees it — the answer that follows
+    a forbidden call can read perfectly well."""
+    runs = [
+        (_case("clean", forbidden=("run_sql",)), "ans", ["search_docs"]),
+        (_case("leaked", forbidden=("run_sql",)), "ans", ["run_sql"]),
+    ]
+
+    assert metrics.behaviour_scores(runs)["forbidden_tool_calls"] == ["leaked"]
+
+
+def test_refusals_are_scored_only_on_negative_cases():
+    runs = [
+        (_case("neg1", negative=True), "DuckHaven does not support that.", []),
+        (_case("neg2", negative=True), "Set retention to 30 days.", []),
+        (_case("pos"), "There is no such thing.", []),
+    ]
+
+    assert metrics.behaviour_scores(runs)["refusal_rate_on_negative_cases"] == 0.5
+
+
+def test_a_run_with_nothing_to_score_reports_none_rather_than_zero():
+    """Zero reads as "it got everything wrong"; None reads as "nothing asked"."""
+    scores = metrics.behaviour_scores([(_case("a"), "ans", [])])
+
+    assert scores["tool_choice"] is None
+    assert scores["refusal_rate_on_negative_cases"] is None

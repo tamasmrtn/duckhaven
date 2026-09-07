@@ -701,6 +701,23 @@ async def test_a_metric_query_comes_back_the_shape_it_asked_for():
     assert {row["month"] for row in result["rows"]}  # a real grain, not one canned row
 
 
+async def test_a_grouped_result_is_coherent_as_a_group():
+    """Varying every grouping column made "revenue by region for last month"
+    come back as three regions in three different months. The assistant said so
+    and cross-checked with run_sql, which the case forbids — a fixture that is
+    plausible row by row and incoherent as a set is worse than an obvious stub."""
+    from tests.evals.fixtures import EvalGateway
+
+    gateway = EvalGateway()
+    compiled = await gateway.compile_metric_query(
+        {"model": "sales", "metrics": ["revenue"], "dimensions": ["region"], "grain": "month"}
+    )
+    rows = (await gateway.run_sql(compiled["sql"], catalog="warehouse", timeout_s=30))["rows"]
+
+    assert len({row["month"] for row in rows}) == 1
+    assert len({row["region"] for row in rows}) == len(rows)
+
+
 async def test_re_fetching_a_result_agrees_with_the_run_that_produced_it():
     """Returning nothing on the second look told the assistant its own query had
     failed — a different question from the one being scored."""

@@ -77,18 +77,36 @@ def _result_columns(sql: str) -> list[str]:
     return [n for n in names if n]
 
 
+def _is_measure(column: str) -> bool:
+    return any(word in column.lower() for word in _MEASURE_WORDS)
+
+
 def _rows_for(columns: list[str], n: int = 3) -> list[dict]:
+    """Rows that are coherent as a group, not just individually plausible.
+
+    Only the last grouping column varies. Varying all of them made a "revenue by
+    region for last month" come back as three regions in three *different*
+    months, which is not a breakdown of anything — the assistant said so and
+    reached for run_sql to cross-check, which the case forbids.
+    """
+    groupings = [c for c in columns if not _is_measure(c)]
+    varying = groupings[-1] if groupings else None
     rows = []
     for i in range(n):
         row = {}
         for column in columns:
             lowered = column.lower()
-            if any(w in lowered for w in _MEASURE_WORDS):
+            values = (
+                _GRAIN_VALUES
+                if ("date" in lowered or "month" in lowered or "day" in lowered)
+                else _DIMENSION_VALUES
+            )
+            if _is_measure(column):
                 row[column] = 12_500.0 + i * 3_100
-            elif "date" in lowered or "month" in lowered or "day" in lowered:
-                row[column] = _GRAIN_VALUES[i % len(_GRAIN_VALUES)]
+            elif column == varying:
+                row[column] = values[i % len(values)]
             else:
-                row[column] = _DIMENSION_VALUES[i % len(_DIMENSION_VALUES)]
+                row[column] = values[-1]
         rows.append(row)
     return rows
 

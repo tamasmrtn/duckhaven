@@ -157,6 +157,7 @@ nav:
       - API conventions: reference/api-conventions.md
       - Operator scripts: reference/operator-scripts.md
   - Developer:
+      - Codebase map: developer/codebase-map.md
       - Local development: developer/development.md
       - Contributing: developer/contributing.md
       - Testing: developer/testing.md

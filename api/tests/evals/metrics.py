@@ -106,18 +106,25 @@ def called_forbidden_tool(called: list[str], case: Case) -> bool:
 # is a spurious failure someone investigates; a false positive lets a confidently
 # wrong answer pass a negative case, which is the exact failure this whole
 # feature risks introducing. When in doubt, do not match.
+_CANNOT = r"(?:exist|support|have|has|expire|provide|offer|include|allow|cover|do)"
 _REFUSAL = re.compile(
-    r"""
-      \b(?:does|do|did|is|are|was|were|can|could|will|would)\s+not\b
-    | \b(?:doesn't|don't|didn't|isn't|aren't|can't|won't|cannot)\b
-    | \bno\s+(?:such|way|equivalent|support|option|built-in|way\s+to)\b
+    rf"""
+    # A negation only counts when it denies a *capability*. A bare "does not"
+    # matches any negated sentence — "DuckHaven does not require a catalog for
+    # that; set retention in table settings" is a confident answer, and scoring
+    # it as a refusal is the false positive this screen must not make.
+      \b(?:does|do|did|is|are|was|were|can|could|will|would)\s+not\s+
+        (?:\w+\s+){{0,2}}{_CANNOT}\b
+    | \b(?:doesn't|don't|didn't|isn't|aren't|can't|won't|cannot)\s+
+        (?:\w+\s+){{0,2}}{_CANNOT}\b
+    | \bno\s+(?:such|way|equivalent|support|option|built-in)\b
     | \bthere\s+is\s+no\b
     | \bnot\s+(?:supported|available|documented|possible|currently|yet)\b
     | \bi\s+(?:don't|do\s+not)\s+know\b
-    | \b(?:do|does)\s+not\s+cover\b
     | \bcould\s+not\s+access\b
     | \b(?:denied|read-only|requires\s+your\s+approval)\b
-    | \broadmap\b
+    | \bis\s+a\s+roadmap\s+item\b
+    | \bnot\s+(?:a\s+)?shipped\b
     """,
     re.IGNORECASE | re.VERBOSE,
 )

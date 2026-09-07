@@ -72,10 +72,14 @@ async def main_async(model: str, per_page: int, limit: int | None) -> None:
     directory = docs_dir()
     pages = [p for p in index.pages if p.section in SYNTHESISABLE_SECTIONS][:limit]
 
-    existing = set()
+    # Kept, not just consulted: the dedupe below excludes everything already
+    # drafted, so writing only the new cases would delete the batch a human is
+    # part-way through triaging.
+    previous: list[dict] = []
     if CANDIDATES_PATH.exists():
         raw = yaml.safe_load(CANDIDATES_PATH.read_text()) or {}
-        existing = {c["inputs"]["question"] for c in raw.get("cases", [])}
+        previous = raw.get("cases") or []
+    existing = {c["inputs"]["question"] for c in previous}
 
     cases: list[dict] = []
     for page in pages:
@@ -104,9 +108,13 @@ async def main_async(model: str, per_page: int, limit: int | None) -> None:
         "# scored as their own slice — see cases.yaml for why.\n"
     )
     CANDIDATES_PATH.write_text(
-        header + yaml.dump({"cases": cases}, sort_keys=False, allow_unicode=True, width=96)
+        header
+        + yaml.dump({"cases": previous + cases}, sort_keys=False, allow_unicode=True, width=96)
     )
-    print(f"\n{len(cases)} candidates -> {CANDIDATES_PATH.name}")
+    print(
+        f"\n{len(cases)} new candidates ({len(previous) + len(cases)} total)"
+        f" -> {CANDIDATES_PATH.name}"
+    )
 
 
 def main() -> None:

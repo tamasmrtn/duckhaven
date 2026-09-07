@@ -79,6 +79,10 @@ def test_reciprocal_rank(retrieved, expected, want):
         # The false-positive direction matters more: a confident wrong answer
         # slipping through a negative case is the failure this feature risks.
         ("Set retention to 30 days in the table settings.", False),
+        # The shape that used to slip through: a negation that denies a
+        # requirement, not a capability, in an answer that then answers.
+        ("DuckHaven does not require a catalog; set retention in table settings.", False),
+        ("DuckHaven does not support a Kubernetes operator.", True),
         ("Revenue last month was 1.2M.", False),
         ("Use AT (TIMESTAMP => '2026-05-01') to read an earlier snapshot.", False),
         ("The orders table has 12 columns.", False),

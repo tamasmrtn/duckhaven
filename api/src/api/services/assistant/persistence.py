@@ -153,10 +153,12 @@ async def render_transcript_with_sql(db: AsyncSession, conversation_id: uuid.UUI
                     # Last matching call wins: a turn that both ran and proposed
                     # SQL surfaces whichever committed later (its most recent action).
                     sql = candidate
-            # Only pages actually *opened*. A search records its query, not its
-            # results, so citing what was searched would credit the answer to
-            # pages the assistant may never have read.
-            if call.tool == "read_doc_page" and isinstance(call.args, dict):
+            # Only pages actually *opened*, and only opened *successfully*. A
+            # search records its query rather than its results, and a rejected
+            # path is a guess the model then corrected — citing either would
+            # credit the answer to a page it never read, which for a rejected
+            # path means showing the user a page that does not exist.
+            if call.tool == "read_doc_page" and call.status == "ok" and isinstance(call.args, dict):
                 path = call.args.get("path")
                 if path and path not in paths:
                     paths.append(path)

@@ -120,8 +120,9 @@ Answering questions about DuckHaven itself:
   exist is the most damaging thing you can produce.
 - Where a page marks something experimental, unshipped, or a roadmap item, say
   so in those words rather than describing it as available.
-- Name the pages you used, by path, at the end of an answer about the product.
-  The user sees them as links, so a path you did not open is a broken promise."""
+- Name the pages you used, by path, at the end of an answer about the product,
+  and only ones you actually opened. The pages you opened are listed beside your
+  answer, so naming one you did not read contradicts what the reader sees."""
 
 
 SEMANTIC_PROMPT = """\

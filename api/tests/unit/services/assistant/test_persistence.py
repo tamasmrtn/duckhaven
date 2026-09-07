@@ -465,6 +465,37 @@ async def test_a_citation_carries_the_page_title_and_a_pinned_url(db_session, co
     assert source["url"].endswith("/reference/sql-support/")
 
 
+async def test_a_page_the_model_failed_to_open_is_not_cited(db_session, conversation):
+    """A rejected path is a guess the model then corrected. Citing it shows the
+    user a link to a page that does not exist, under a heading promising "each
+    page the assistant opened"."""
+    await save_turn(
+        db_session,
+        conversation,
+        new_messages_json=_turn_json("is there row-level security?", "No."),
+        usage=RunUsage(input_tokens=1, output_tokens=1),
+        records={
+            "c1": ToolCallRecord(
+                tool="read_doc_page",
+                args={"path": "concepts/row-level-security.md"},
+                status="denied",
+            ),
+            "c2": ToolCallRecord(
+                tool="read_doc_page",
+                args={"path": "reference/sql-support.md"},
+                status="ok",
+            ),
+        },
+    )
+
+    await _stamp(db_session, conversation)
+
+    items = await render_transcript_with_sql(db_session, conversation.id)
+    sources = next(i for i in items if i["role"] == "assistant")["sources"]
+
+    assert [s["path"] for s in sources] == ["reference/sql-support.md"]
+
+
 async def test_searching_without_reading_cites_nothing(db_session, conversation):
     """A search records its query, not its results. Citing what was searched
     would credit the answer to pages the assistant may never have read."""

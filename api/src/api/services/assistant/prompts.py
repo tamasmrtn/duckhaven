@@ -9,16 +9,13 @@ cannot live in a module-level string.
 Every conditional paragraph is **omitted entirely** when its feature is absent.
 That is the deployment-safety property, and it is the rule for all of them, not
 just the semantic one: a workspace without a feature gets no text about it — not
-a sentence saying the feature is off. A DuckHaven that defines no metric, uses
-the bundled object store, runs static agents and has one of them gets exactly
-``BASE_PROMPT + PRODUCT_PROMPT`` and nothing else.
+a sentence saying the feature is off.
 """
 
 from __future__ import annotations
 
 from pydantic_ai import RunContext
 
-from api.config import settings
 from api.services.assistant.deps import AssistantDeps
 
 BASE_PROMPT = """\
@@ -66,9 +63,7 @@ Be concise. Explain your findings and the SQL you ran."""
 # fetched because each of these changes what the assistant does on an ordinary
 # turn: without the DESCRIBE rule it writes information_schema.columns and gets a
 # placeholder row back, and without the allowlist it proposes statements the API
-# rejects before an agent ever sees them. The deeper reference — the full
-# degraded-type table, the worked information_schema examples — is documentation,
-# not instruction, and is deliberately left out.
+# rejects before an agent ever sees them.
 PRODUCT_PROMPT = """\
 
 About DuckHaven, the product you run inside:
@@ -93,6 +88,9 @@ About DuckHaven, the product you run inside:
   ATTACH/DETACH, COPY/EXPORT, INSTALL/LOAD, SET, CALL, EXPLAIN, VACUUM,
   transaction control, and the PRAGMA <name> = <value> form. DESCRIBE, SHOW,
   SUMMARIZE and the row-returning PRAGMAs are allowed and return a result grid.
+  The one exception to the SET rejection is DuckHaven's own control command,
+  SET duckhaven_concurrency = '<profile>' (and RESET duckhaven_concurrency),
+  which is intercepted before the guard and retunes the selected agent.
 - Values you receive are not always exact: DECIMAL and HUGEINT arrive as JSON
   numbers that have passed through a float, so never present them as exact;
   BLOB arrives as hex text and INTERVAL as an ISO-8601 duration. The reported
@@ -154,20 +152,24 @@ query is queued or why an agent went away, that is expected behaviour rather
 than a fault."""
 
 
+# No count: fleet size changes between turns, and a number in the instructions
+# would be stale by the time the model acted on it. What the assistant needs is
+# that there is more than one, which is what makes the choice worth mentioning.
 FLEET_PROMPT = """\
 
-{n} compute agents are available; a worksheet chooses one per query. Concurrency
-is set per agent with SET duckhaven_concurrency."""
+Several compute agents are available. The user picks which one runs each query
+from the worksheet's engine picker — there is no cost-based routing or query
+planner choosing between them."""
 
 
-# The bundled MinIO object store is the default and needs no explanation; only a
-# backend whose credentials are vended from somewhere else changes what the
-# assistant should say when access fails.
-_EXTERNAL_STORAGE = frozenset({"s3", "adls_gen2"})
+# The bundled MinIO object store is the default and needs no explanation; every
+# other backend vends its credentials from somewhere else, which changes what the
+# assistant should say when access fails. Named as an exclusion rather than an
+# allowlist so a backend kind added later gets the paragraph by default.
+_BUNDLED_STORAGE = frozenset({"object_store"})
 
 
-# The static prompt, kept as the exact text used when a workspace has no semantic
-# models. Imported by tests that assert the no-semantics path is unchanged.
+# Alias for BASE_PROMPT, kept for importers that predate the injectors.
 SYSTEM_PROMPT = BASE_PROMPT
 
 
@@ -179,7 +181,7 @@ def _semantic_block(deps: AssistantDeps) -> str | None:
 
 
 def _storage_block(deps: AssistantDeps) -> str | None:
-    kinds = sorted(set(deps.storage_kinds or ()) & _EXTERNAL_STORAGE)
+    kinds = sorted(set(deps.storage_kinds or ()) - _BUNDLED_STORAGE)
     if not kinds:
         return None
     return STORAGE_PROMPT.format(kinds=", ".join(kinds))
@@ -194,7 +196,7 @@ def _fleet_block(deps: AssistantDeps) -> str | None:
     # for a worksheet to choose between.
     if not deps.agent_count or deps.agent_count < 2:
         return None
-    return FLEET_PROMPT.format(n=deps.agent_count)
+    return FLEET_PROMPT
 
 
 _INJECTORS = (_semantic_block, _storage_block, _elastic_block, _fleet_block)
@@ -203,16 +205,27 @@ _INJECTORS = (_semantic_block, _storage_block, _elastic_block, _fleet_block)
 def build_instructions(ctx: RunContext[AssistantDeps]) -> str:
     """Assemble this run's instructions from what this workspace actually has.
 
-    Order is fixed rather than data-dependent, so the same workspace produces a
-    byte-identical prompt on every turn — a model that sees its instructions
-    reshuffled between turns is needlessly hard to debug, and a stable string is
-    what makes the prompt cacheable.
+    Order is fixed rather than data-dependent, so a workspace whose features have
+    not changed produces a byte-identical prompt on every turn — instructions that
+    reshuffle between turns are needlessly hard to debug.
+
+    A pure function of its ``RunContext``: everything it varies on arrives through
+    ``deps``, including the deployment-level toggles, so the process-wide agent can
+    serve every workspace on the replica.
     """
     parts = [BASE_PROMPT]
-    if settings.assistant_docs_enabled:
+    if ctx.deps.docs_enabled:
         parts.append(PRODUCT_PROMPT)
     parts.extend(block for render in _INJECTORS if (block := render(ctx.deps)))
     return "\n".join(parts)
+
+
+# Model names and descriptions are user-supplied and unbounded, so both the line
+# count and the line width are capped: this is the only part of the resident
+# instructions a workspace can grow, and the budget assertions are worth nothing
+# without a worst case to assert against.
+MAX_SUMMARY_MODELS = 20
+MAX_SUMMARY_LINE_CHARS = 120
 
 
 def format_summary(models: list[dict]) -> str:
@@ -224,8 +237,11 @@ def format_summary(models: list[dict]) -> str:
     they are fetched only when relevant.
     """
     lines = []
-    for model in models[:20]:
+    for model in models[:MAX_SUMMARY_MODELS]:
         description = (model.get("description") or "").strip().splitlines()
         summary = f" — {description[0]}" if description else ""
-        lines.append(f"  - {model['model']} ({model.get('metrics', 0)} metrics){summary}")
+        line = f"  - {model['model']} ({model.get('metrics', 0)} metrics){summary}"
+        if len(line) > MAX_SUMMARY_LINE_CHARS:
+            line = line[: MAX_SUMMARY_LINE_CHARS - 1] + "…"
+        lines.append(line)
     return "\n".join(lines)

@@ -82,6 +82,33 @@ def test_contributor_docs_are_left_out():
     assert "reference/sql-support.md" in paths
 
 
+# Pages `read_doc_page` will truncate. Reference tables whose length is the
+# surface they document: cutting them means deleting documentation of real
+# settings or endpoints, so they are recorded rather than fixed. A *new* entry
+# here is the thing to argue about — see the truncation marker in loader.py for
+# what the assistant is told when it opens one.
+TRUNCATES = {
+    "reference/configuration.md",
+    "reference/rest-api.md",
+    "concepts/sql-sessions.md",
+}
+
+
+def test_no_new_page_grows_past_what_the_reader_can_return():
+    """A page over the cap comes back cut off, and the assistant can only tell
+    the user it continues elsewhere. Silent growth past it is the failure mode:
+    nothing else in the repo would notice, and the page that goes over is
+    usually the long one somebody most needs read in full."""
+    cap = settings.assistant_docs_max_page_chars
+    over = {
+        p.path
+        for p in load_index().pages
+        if len((DOCS_DIR / p.path).read_text(encoding="utf-8")) > cap
+    }
+
+    assert over == TRUNCATES
+
+
 def test_every_page_has_a_title_and_a_summary():
     thin = [p.path for p in load_index().pages if not p.title or len(p.summary) < 20]
 

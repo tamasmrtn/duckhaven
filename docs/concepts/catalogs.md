@@ -37,7 +37,7 @@ The active catalog is chosen per worksheet; existing single-catalog SQL keeps wo
 DuckHaven never shadows catalog *structure* (schemas, tables, columns) in its own database. Polaris is the source of
 truth; Postgres holds only a supplementary [metadata](metadata.md) sidecar for facts Polaris does not track, such as
 ownership and last-write provenance. This split is an
-[architectural invariant](architecture.md#11-architectural-invariants).
+[architectural invariant](architecture.md#8-architectural-invariants).
 
 ## DuckHaven-owned catalogs
 

@@ -1,7 +1,7 @@
 # Metadata
 
 DuckHaven splits its state across two stores, and the split is an
-[architectural invariant](architecture.md#11-architectural-invariants): catalog structure lives in
+[architectural invariant](architecture.md#8-architectural-invariants): catalog structure lives in
 [Polaris](catalogs.md), and DuckHaven's own entities live in Postgres.
 
 ## Who owns what

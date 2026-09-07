@@ -46,10 +46,16 @@ own behaviour and can read any page of this documentation:
 - "Why does `information_schema.columns` show `__` for my table?"
 - "Can I set a snapshot retention policy?"
 
-When it looks something up, the **Activity** list in the panel shows the `search_docs` and `read_doc_page` calls and
-the path it read, and the answer names that path. If the documentation does not cover something, it will say so
-rather than guessing — DuckHaven differs from other platforms in ways where a confident wrong answer is worse than
-none.
+When an answer draws on the documentation, a **Sources** row appears beneath it with a link to each page the
+assistant opened. The links point at the documentation for the version you are running, so they show what it
+actually read rather than whatever the site publishes today. Most answers cite nothing, and that is normal — the row
+only appears when a page was opened.
+
+The **Activity** list in the panel records the same `search_docs` and `read_doc_page` calls in more detail, but it is
+collapsed by default; the Sources row is there so a citation does not require expanding a panel to find.
+
+If the documentation does not cover something, the assistant will say so rather than guessing — DuckHaven differs
+from other platforms in ways where a confident wrong answer is worse than none.
 
 !!! note "It describes your version"
     The pages travel inside the DuckHaven image, so answers match the release you are running rather than the latest

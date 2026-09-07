@@ -62,6 +62,15 @@ def test_system_prompt_instructs_to_ask_clarifying_questions():
     assert "guessing and running SQL" in SYSTEM_PROMPT
 
 
+def test_the_product_block_asks_for_citations():
+    """Paths in the answer text render as plain Markdown; the linked Sources row
+    is built from the audit trail and appears with or without this instruction.
+    What it buys is the two agreeing — a named path the model never opened
+    contradicts the row beside it."""
+    assert "Name the pages you used, by path" in PRODUCT_PROMPT
+    assert "only ones you actually opened" in PRODUCT_PROMPT
+
+
 def test_the_product_block_carries_the_facts_that_change_behaviour():
     """Not a paraphrase check — these decide what the assistant *does*."""
     assert "information_schema.columns" in PRODUCT_PROMPT

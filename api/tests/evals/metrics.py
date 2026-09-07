@@ -134,6 +134,32 @@ def looks_like_refusal(answer: str) -> bool:
     return bool(_REFUSAL.search(answer))
 
 
+# A documentation path as it appears in an answer: "reference/sql-support.md".
+_CITED_PATH = re.compile(r"\b[a-z0-9-]+/[a-z0-9-]+\.md\b")
+
+
+def cited_paths(answer: str) -> set[str]:
+    """Documentation paths the answer names, whether or not they are real."""
+    return set(_CITED_PATH.findall(answer))
+
+
+def citation_presence(answer: str, indexed: set[str]) -> float | None:
+    """1.0 when the answer cites at least one real page, 0.0 when it cites none.
+
+    ``None`` when the answer names no path at all — not every product answer
+    needs one, and scoring those as failures would push the assistant towards
+    citing something for the sake of it.
+
+    A cited path that is *not* in the index scores 0.0 rather than being ignored.
+    The user sees citations as links, so an invented path is a broken link and a
+    small confabulation in its own right.
+    """
+    named = cited_paths(answer)
+    if not named:
+        return None
+    return 1.0 if named & indexed else 0.0
+
+
 def summarise(scores: dict[str, list[float]]) -> dict[str, float]:
     """Mean per group, so a regression can be localised to a category or slice."""
     return {
@@ -141,7 +167,7 @@ def summarise(scores: dict[str, list[float]]) -> dict[str, float]:
     }
 
 
-def behaviour_scores(runs: list[tuple[Case, str, list[str]]]) -> dict:
+def behaviour_scores(runs: list[tuple[Case, str, list[str]]], indexed: set[str]) -> dict:
     """What the assistant *did* on a run, scored without a judge.
 
     Deterministic and free — every input is already collected by the run — so
@@ -152,13 +178,26 @@ def behaviour_scores(runs: list[tuple[Case, str, list[str]]]) -> dict:
 
     ``forbidden_tool_calls`` names cases rather than reporting a rate. One is a
     governance failure and averaging it away is the wrong shape.
+
+    ``indexed`` is the set of real documentation paths, for scoring citations.
     """
     expected = [
         called_expected_tool(tools, case) for case, _, tools in runs if case.expected_tools_any
     ]
     negatives = [looks_like_refusal(answer) for case, answer, _ in runs if case.negative]
+    cited = [
+        score
+        for case, answer, _ in runs
+        if case.category == "product_knowledge"
+        and (score := citation_presence(answer, indexed)) is not None
+    ]
     return {
         "tool_choice": round(sum(expected) / len(expected), 4) if expected else None,
+        # Over the product answers that cited *something*: an uncited answer is
+        # deliberately unscored, so the denominator is the answers that made a
+        # claim about which page they came from.
+        "citation_presence": round(sum(cited) / len(cited), 4) if cited else None,
+        "answers_citing_a_page": len(cited),
         "forbidden_tool_calls": sorted(
             case.name for case, _, tools in runs if called_forbidden_tool(tools, case)
         ),

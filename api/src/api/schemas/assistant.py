@@ -61,6 +61,16 @@ class ToolCallOut(BaseModel):
     created_at: datetime
 
 
+class DocSource(BaseModel):
+    """A documentation page an answer was drawn from."""
+
+    path: str
+    title: str
+    # Points at the version this build shipped, not at the latest published docs,
+    # so the link says what the assistant actually read.
+    url: str | None = None
+
+
 class TranscriptItem(BaseModel):
     """One rendered line of the conversation for display."""
 
@@ -69,6 +79,9 @@ class TranscriptItem(BaseModel):
     # The SQL this turn ran or proposed, if any — attributed by a same-transaction
     # timestamp window (see render_transcript_with_sql), shown inline by default.
     sql: str | None = None
+    # Documentation pages this turn opened, attributed by the same window. None
+    # when it answered without reading any — most turns.
+    sources: list[DocSource] | None = None
 
 
 class ConversationDetailOut(ConversationOut):

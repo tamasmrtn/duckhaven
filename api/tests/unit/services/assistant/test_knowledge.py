@@ -12,6 +12,7 @@ import shutil
 import pytest
 import yaml
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 
 from api.config import settings
 from api.models.docs import DocsCorpusMeta, DocsPage
@@ -321,3 +322,19 @@ async def test_a_deployment_without_docs_starts_anyway(db_session, monkeypatch):
 
     assert await sync.sync_corpus(db_session) is False
     assert (await db_session.execute(select(DocsPage))).scalars().all() == []
+
+
+async def test_a_database_that_refuses_the_write_still_lets_the_replica_boot(
+    db_session, monkeypatch
+):
+    """The other half of best-effort, and the half that takes the API down with
+    it: this runs inside the lifespan, so an unapplied migration here means the
+    replica does not start at all rather than starting without search."""
+    _fake_corpus([_page("a.md")], monkeypatch)
+
+    async def refuse(*args, **kwargs):
+        raise OperationalError("no such table: docs_corpus_meta", None, Exception())
+
+    monkeypatch.setattr(type(db_session), "execute", refuse)
+
+    assert await sync.sync_corpus(db_session) is False

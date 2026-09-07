@@ -37,8 +37,14 @@ class DocsCorpusMeta(Base):
     """Which corpus is currently loaded, so a replica can skip a no-op reload.
 
     Single row, ``id = 1``. The hash covers the index and every page body, so a
-    rolling deploy converges: whichever replica boots with a newer image notices
-    the mismatch and rebuilds, and the others then match on their next start.
+    replica whose image carries a different corpus rebuilds it on boot.
+
+    Last writer wins — the hash identifies a corpus but does not order two of
+    them. Mid-rolling-deploy an old-image replica restarting after a new one
+    will load the old pages back, so ``search_docs`` (Postgres) and
+    ``read_doc_page`` (the image's own files) can disagree until the rollout
+    finishes. Both halves are the same documentation set one release apart,
+    which is why this is left alone rather than version-gated.
     """
 
     __tablename__ = "docs_corpus_meta"

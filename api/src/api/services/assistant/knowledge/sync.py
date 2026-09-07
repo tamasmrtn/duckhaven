@@ -67,6 +67,19 @@ async def sync_corpus(db: AsyncSession) -> bool:
         logger.warning("No documentation corpus to load; assistant search will be empty.")
         return False
 
+    try:
+        return await _load(db, content_hash, pages)
+    except Exception:  # noqa: BLE001 — the contract above: never fail a boot
+        # The database half is as fallible as the filesystem half, and it is the
+        # half that takes the whole replica down: this runs inside the lifespan,
+        # so an unapplied migration or a lock timeout here means the API does not
+        # start at all, rather than starting without assistant search.
+        logger.warning("Could not load the documentation corpus.", exc_info=True)
+        await db.rollback()
+        return False
+
+
+async def _load(db: AsyncSession, content_hash: str, pages: list[dict]) -> bool:
     current = (await db.execute(select(DocsCorpusMeta).limit(1))).scalar_one_or_none()
     if current is not None and current.content_hash == content_hash:
         return False
@@ -78,6 +91,7 @@ async def sync_corpus(db: AsyncSession) -> bool:
         await db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _LOCK_KEY})
         current = (await db.execute(select(DocsCorpusMeta).limit(1))).scalar_one_or_none()
         if current is not None and current.content_hash == content_hash:
+            await db.rollback()
             return False
 
     await db.execute(delete(DocsPage))

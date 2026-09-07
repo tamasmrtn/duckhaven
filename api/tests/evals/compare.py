@@ -79,7 +79,10 @@ def _context(case: Case, *results: RunResult) -> str:
         except Exception:  # noqa: BLE001 — a missing page is context we lack, not a failure
             continue
 
-    # Never trim below the point where a page stops being usable evidence.
+    # Never trim below the point where a page stops being usable evidence — and
+    # so that the floor cannot quietly repeal the budget, drop the pages that do
+    # not fit rather than shrinking every share below it.
+    pages = pages[: _CONTEXT_BUDGET // _MIN_PER_PAGE]
     per_page = max(_MIN_PER_PAGE, _CONTEXT_BUDGET // len(pages)) if pages else 0
     blocks = []
     for path, page in pages:
@@ -98,10 +101,14 @@ def _context(case: Case, *results: RunResult) -> str:
             "answer that confidently describes a DuckHaven capability here is very likely "
             "inventing one, and an answer that says so is correct."
         )
+    # Rubric-agnostic on purpose: this text reaches the faithfulness judge too,
+    # which scores on a single 1-5 scale and has no numbered criteria to defer to.
     return (
         "This question is about the workspace's data rather than the product, so no "
-        "documentation applies. Judge on criteria 2-4 and do not treat a factual answer "
-        "as an invented capability."
+        "documentation applies and the catalog results the assistant worked from are "
+        "not reproduced here. A specific factual answer is therefore unverifiable "
+        "rather than invented; judge what can be judged and do not mark it down for "
+        "claims this context cannot confirm either way."
     )
 
 

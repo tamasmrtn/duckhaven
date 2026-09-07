@@ -232,6 +232,58 @@ async def test_a_product_question_that_did_open_docs_is_not_flagged(db_session, 
     assert findings["answered_without_docs"] == []
 
 
+async def test_a_product_question_answered_after_only_searching_is_flagged(
+    db_session, conversation
+):
+    """A search records its query, not its results. A turn that searched, ignored
+    every hit and answered from memory is the confident wrong answer this signal
+    exists to find — treating the search as a citation hides exactly that."""
+    await save_turn(
+        db_session,
+        conversation,
+        new_messages_json=_turn(
+            "does DuckHaven support snapshot retention?",
+            "Yes — set retention_days on the table.",
+        ),
+        usage=RunUsage(input_tokens=1, output_tokens=1),
+        records={
+            "c1": ToolCallRecord(
+                tool="search_docs", args={"query": "snapshot retention"}, status="ok"
+            )
+        },
+    )
+    await _stamp(db_session, conversation, datetime(2026, 6, 1, tzinfo=UTC))
+
+    findings = await miner.mine(db_session, SINCE)
+
+    assert [f["question"] for f in findings["answered_without_docs"]] == [
+        "does DuckHaven support snapshot retention?"
+    ]
+
+
+async def test_a_page_the_model_failed_to_open_does_not_count_as_reading_it(
+    db_session, conversation
+):
+    await save_turn(
+        db_session,
+        conversation,
+        new_messages_json=_turn("is there row-level security in DuckHaven?", "Yes, via grants."),
+        usage=RunUsage(input_tokens=1, output_tokens=1),
+        records={
+            "c1": ToolCallRecord(
+                tool="read_doc_page",
+                args={"path": "concepts/row-level-security.md"},
+                status="denied",
+            )
+        },
+    )
+    await _stamp(db_session, conversation, datetime(2026, 6, 1, tzinfo=UTC))
+
+    findings = await miner.mine(db_session, SINCE)
+
+    assert len(findings["answered_without_docs"]) == 1
+
+
 async def test_one_cited_turn_does_not_vouch_for_its_neighbours(db_session, conversation):
     """A regression. The first version asked "did this *conversation* ever open a
     page?", so a single cited turn silenced the signal for every other turn beside

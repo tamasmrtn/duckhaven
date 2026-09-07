@@ -127,7 +127,13 @@ async def mine(db, since: datetime) -> dict[str, list[dict]]:
             findings["unanswered_by_docs"].append(entry | {"query": args.get("query", "")})
         elif call.status in ("error", "denied"):
             findings["docs_tool_failed"].append(
-                entry | {"path": args.get("path", ""), "detail": call.detail or ""}
+                entry
+                | {
+                    # A failed search carries a query and no path; rendering only
+                    # the path printed an empty bullet for half of these.
+                    "path": args.get("path") or args.get("query") or "",
+                    "detail": call.detail or "",
+                }
             )
 
     # Signals 3 and 4 need the turn itself.
@@ -143,13 +149,16 @@ async def mine(db, since: datetime) -> dict[str, list[dict]]:
         )
     ).all()
 
-    # Docs calls per conversation, in order, so each turn can be given its own
-    # window. Asking merely "did this conversation ever open a page?" would let
-    # one cited turn vouch for every other turn beside it — which is exactly the
-    # answer signal 4 is trying to find.
+    # Only successful `read_doc_page` calls count as opening documentation, and
+    # they are collected per conversation so each turn gets its own window.
+    # A *search* records its query, not its results, so a turn that searched,
+    # ignored every hit and answered from memory is exactly the confident wrong
+    # answer this signal exists to find — counting it as cited hides it. The
+    # transcript renderer draws the same line for the same reason.
     docs_calls: dict[uuid.UUID, list] = {}
     for call, _ in rows:
-        docs_calls.setdefault(call.conversation_id, []).append(call.created_at)
+        if call.tool == "read_doc_page" and call.status == "ok":
+            docs_calls.setdefault(call.conversation_id, []).append(call.created_at)
 
     previous_turn_at: dict[uuid.UUID, object] = {}
     for message, title in turns:

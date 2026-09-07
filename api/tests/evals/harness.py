@@ -82,7 +82,11 @@ class RunResult:
 
 @contextmanager
 def _arm_settings(arm: ArmConfig):
-    """Apply an arm's deployment-level configuration for the duration of a run."""
+    """Apply an arm's deployment-level configuration for the duration of a run.
+
+    Only ``build_toolset`` still reads the setting; the instructions take the
+    toggle from the deps, so this covers the tool schema alone.
+    """
     previous = settings.assistant_docs_enabled
     settings.assistant_docs_enabled = arm.docs_enabled
     try:
@@ -102,6 +106,7 @@ def deps_for(arm: ArmConfig, *, gateway: Any = None, docs_search: Any = None) ->
         semantic_summary=arm.workspace.get("semantic_summary"),
         storage_kinds=tuple(arm.workspace.get("storage_kinds", ()) or ()) or None,
         elastic_enabled=arm.workspace.get("elastic_enabled", False),
+        docs_enabled=arm.docs_enabled,
         agent_count=arm.workspace.get("agent_count"),
         docs_search=docs_search,
     )

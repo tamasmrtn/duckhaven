@@ -191,7 +191,7 @@ async def test_a_turn_survives_every_advisory_lookup_failing(
     # The docs index survives, because it ships with the code rather than being
     # resolved per turn — losing the gateway does not lose the documentation.
     assert captured[0] == "\n".join(
-        [BASE_PROMPT, PRODUCT_PROMPT, DOCS_INDEX_PROMPT.format(index=load_index().prompt_block())]
+        [BASE_PROMPT, PRODUCT_PROMPT, DOCS_INDEX_PROMPT.format(index=load_index().prompt_block)]
     )
 
 

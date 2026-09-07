@@ -59,13 +59,6 @@ COPY --from=builder /app/.venv /app/.venv
 # The built SPA, served by FastAPI at / (see api.main, settings.static_dir).
 COPY --from=ui-builder /web/dist /app/static
 
-# The documentation corpus, read by the assistant's read_doc_page tool (see
-# settings.assistant_docs_dir). Only the Markdown travels — docs/images is
-# excluded in .dockerignore, which keeps ~9 MB of screenshots and the demo video
-# out of the runtime layer. The pages are the same files mkdocs builds the site
-# from, so there is no second copy to drift.
-COPY docs /app/docs
-
 # Alembic migrations applied at container start by api-entrypoint.sh.
 COPY api/alembic.ini /app/alembic.ini
 COPY api/alembic /app/alembic
@@ -74,6 +67,12 @@ COPY api/alembic /app/alembic
 # reads them and constructs DATABASE_URL / SECRET_KEY at runtime (folds in the
 # former init-secrets one-shot, so the api service prepares its own secrets).
 COPY deploy/api-entrypoint.sh /usr/local/bin/api-entrypoint.sh
+
+# The documentation corpus, read by the assistant's read_doc_page tool (see
+# settings.assistant_docs_dir). Last of the copies because Markdown churns most
+# and would otherwise invalidate the migration, entrypoint and hardening layers.
+# Only the Markdown travels — .dockerignore holds back docs/images and friends.
+COPY docs /app/docs
 
 # Hardening: drop pip, purge perl-base, patch the base image, run as a
 # dedicated non-root user.

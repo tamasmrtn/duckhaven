@@ -374,11 +374,18 @@ async def search_docs(ctx: RunContext[AssistantDeps], query: str, limit: int = 5
         query: What to search for, in the user's own words.
         limit: How many pages to return (default 5, maximum 10).
     """
+    # Both permanent: no retry can wire up a backend or switch the feature on, so
+    # they answer rather than spending from the tool budget and ending the turn on
+    # a generic internal error. A failed *call* is different — it may be the query
+    # the model chose — so that one stays retryable.
+    if not ctx.deps.docs_enabled:
+        return {"error": "Documentation lookup is not enabled in this deployment."}
     if ctx.deps.docs_search is None:
-        raise ModelRetry("Documentation search is not available in this deployment.")
+        return {"error": "Documentation search is not available in this deployment."}
     try:
         results = await ctx.deps.docs_search(query, max(1, min(limit, 10)))
     except Exception as exc:  # noqa: BLE001 — surfaced to the model, not the user
+        logger.warning("search_docs(%r) failed", query, exc_info=exc)
         raise ModelRetry(f"Documentation search failed: {exc}") from exc
     return {"results": results, "version": settings.app_version}
 

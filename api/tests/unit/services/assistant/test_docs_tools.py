@@ -88,7 +88,7 @@ async def test_an_oversized_page_says_how_much_it_is_missing(monkeypatch):
 # fact that a search failure is retryable rather than turn-ending.
 
 
-def _search_ctx(results=None, *, fail=None, seen=None):
+def _search_ctx(results=None, *, fail=None, seen=None, docs_enabled=True):
     async def search(query: str, limit: int) -> list[dict]:
         if seen is not None:
             seen.append((query, limit))
@@ -96,7 +96,7 @@ def _search_ctx(results=None, *, fail=None, seen=None):
             raise fail
         return results or []
 
-    return SimpleNamespace(deps=SimpleNamespace(docs_search=search))
+    return SimpleNamespace(deps=SimpleNamespace(docs_search=search, docs_enabled=docs_enabled))
 
 
 async def test_search_returns_ranked_pages():
@@ -126,19 +126,28 @@ async def test_limit_is_clamped(asked, used):
 
 
 async def test_a_search_failure_is_retryable():
+    """A failed call may be the query the model chose, so this one it can fix."""
     with pytest.raises(ModelRetry) as exc:
         await search_docs(_search_ctx(fail=RuntimeError("connection reset")), "x")
 
     assert "connection reset" in str(exc.value)
 
 
-async def test_search_is_unavailable_when_unwired():
-    ctx = SimpleNamespace(deps=SimpleNamespace(docs_search=None))
+async def test_an_unwired_search_answers_rather_than_retrying():
+    """No retry wires up a backend. Retrying spends the tool budget and ends the
+    turn on "internal error" instead of saying search is unavailable."""
+    ctx = SimpleNamespace(deps=SimpleNamespace(docs_search=None, docs_enabled=True))
 
-    with pytest.raises(ModelRetry) as exc:
-        await search_docs(ctx, "anything")
+    result = await search_docs(ctx, "anything")
 
-    assert "not available" in str(exc.value)
+    assert "not available" in result["error"]
+
+
+async def test_a_workspace_with_the_feature_off_cannot_reach_search():
+    """The toolset binds once per process; the deps are per turn."""
+    result = await search_docs(_search_ctx([], docs_enabled=False), "anything")
+
+    assert "not enabled" in result["error"]
 
 
 # ── The toolset ───────────────────────────────────────────────────────────────

@@ -18,7 +18,7 @@ dependencies = [
     # TIMESTAMP WITH TIME ZONE cell (decode_parquet_page); it isn't pulled in
     # transitively, so bundle it explicitly. See issue #162.
     "pytz>=2026.3.post1",
-    "authlib>=1.3",
+    "authlib>=1.8.0",
     "ldap3>=2.9",
     "itsdangerous>=2.0",
     "boto3>=1.34",

@@ -3,14 +3,11 @@ name: Assistant eval
 # Tier 2 of the assistant eval harness: judged scoring, which calls a model and
 # costs money. Deliberately NOT on `pull_request` — running it per push on a
 # repository anyone can open a PR against is both expensive and a way to hand a
-# provider key to a fork.
+# provider key to a fork. `workflow_dispatch` and `schedule` are the two triggers
+# a fork cannot reach, which is what makes a secret safe here.
 #
-# `workflow_dispatch` and `schedule` are the two triggers a fork cannot reach,
-# which is what makes a secret safe here.
-#
-# The job is inert until someone adds ASSISTANT_EVAL_API_KEY to repository
-# secrets: the first step checks for it and exits cleanly with a notice. The file
-# can ship, be reviewed, and be enabled later without a second change.
+# The job is inert until ASSISTANT_EVAL_API_KEY is in repository secrets: the
+# first step checks for it and exits with a notice.
 on:
   workflow_dispatch:
     inputs:
@@ -18,17 +15,26 @@ on:
         description: 'absolute (score one arm) or pairwise (compare two)'
         type: choice
         options: [absolute, pairwise]
-        default: absolute
+        default: pairwise
       arm_a:
         description: 'Arm to score, or the first arm of a comparison'
         default: with-docs
       arm_b:
         description: 'Second arm, pairwise only'
         default: baseline
+      # The judge is an input rather than a constant because it is the one thing
+      # you change to check a verdict you doubt — and it must not silently differ
+      # from the local default, or CI numbers cannot be compared with local ones.
+      judge_model:
+        description: 'Judge model'
+        default: deepseek-v4-flash:cloud
+      judge_base_url:
+        description: 'Judge endpoint (blank for a hosted provider)'
+        default: https://ollama.com/v1
 
-  # A weekly absolute run gives a trend line rather than isolated readings.
-  # Left commented because the cost is a decision, not a default: ~$3.40 per
-  # run, so roughly $15/month. Uncomment to enable.
+  # A weekly run gives a trend line rather than isolated readings. Left commented
+  # because the cost is a decision, not a default — price 84 assistant runs plus
+  # 84 judge calls against your own provider before enabling it.
   # schedule:
   #   - cron: '0 9 * * 1'
 
@@ -39,15 +45,46 @@ jobs:
   eval:
     name: Judged eval
     runs-on: ubuntu-latest
+    # A full pairwise run is ~40 minutes. This bounds a hung provider call, which
+    # would otherwise sit on GitHub's 6-hour default.
+    timeout-minutes: 90
+
+    # search_docs is Postgres-backed, and the harness refuses to run without it
+    # rather than scoring the documented arm as if it had no documentation.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: testdb
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:testpassword@localhost:5432/testdb
+      # There is no .env in a CI checkout — it is gitignored — so every variable
+      # the harness reads has to be named here.
+      ASSISTANT_EVAL_API_KEY: ${{ secrets.ASSISTANT_EVAL_API_KEY }}
+      # Defaulted here as well as on the input: a `schedule` trigger supplies no
+      # inputs, and an env var set to "" is not the same as unset — os.getenv
+      # returns the empty string rather than its default, which would hand the
+      # judge an empty model name.
+      ASSISTANT_EVAL_JUDGE_MODEL: ${{ inputs.judge_model || 'deepseek-v4-flash:cloud' }}
+      ASSISTANT_EVAL_JUDGE_BASE_URL: ${{ inputs.judge_base_url || 'https://ollama.com/v1' }}
+
     steps:
       - uses: actions/checkout@v7
 
       - name: Check for a provider key
         id: key
-        env:
-          KEY: ${{ secrets.ASSISTANT_EVAL_API_KEY }}
         run: |
-          if [ -z "$KEY" ]; then
+          if [ -z "$ASSISTANT_EVAL_API_KEY" ]; then
             echo "::notice::ASSISTANT_EVAL_API_KEY is not configured; skipping the judged eval."
             echo "run=false" >> "$GITHUB_OUTPUT"
           else
@@ -62,20 +99,23 @@ jobs:
       - run: uv sync --dev
         if: steps.key.outputs.run == 'true'
 
+      # The corpus is loaded into docs_pages on first search; the tables it goes
+      # into come from here.
+      - name: Run migrations
+        if: steps.key.outputs.run == 'true'
+        run: uv run alembic upgrade head
+        working-directory: api
+
       - name: Score one arm
         if: steps.key.outputs.run == 'true' && inputs.mode != 'pairwise'
-        env:
-          ASSISTANT_EVAL_API_KEY: ${{ secrets.ASSISTANT_EVAL_API_KEY }}
-        run: make eval-judged ARM=${{ inputs.arm_a || 'with-docs' }}
+        run: make eval-judged ARM=${{ inputs.arm_a }}
 
       - name: Compare two arms
         if: steps.key.outputs.run == 'true' && inputs.mode == 'pairwise'
-        env:
-          ASSISTANT_EVAL_API_KEY: ${{ secrets.ASSISTANT_EVAL_API_KEY }}
         run: make eval-compare ARM_A=${{ inputs.arm_a }} ARM_B=${{ inputs.arm_b }}
 
-      # Kept whatever the outcome: a failing run is the one whose report is
-      # worth reading.
+      # Kept whatever the outcome: a failing run is the one whose report is worth
+      # reading.
       - uses: actions/upload-artifact@v7
         if: always() && steps.key.outputs.run == 'true'
         with:

@@ -336,7 +336,7 @@ def test_tool_choice_is_scored_only_over_cases_that_ask_for_a_tool():
         (_case("c"), "ans", []),
     ]
 
-    assert metrics.behaviour_scores(runs)["tool_choice"] == 0.5
+    assert metrics.behaviour_scores(runs, set())["tool_choice"] == 0.5
 
 
 def test_a_forbidden_tool_is_named_rather_than_averaged():
@@ -348,7 +348,7 @@ def test_a_forbidden_tool_is_named_rather_than_averaged():
         (_case("leaked", forbidden=("run_sql",)), "ans", ["run_sql"]),
     ]
 
-    assert metrics.behaviour_scores(runs)["forbidden_tool_calls"] == ["leaked"]
+    assert metrics.behaviour_scores(runs, set())["forbidden_tool_calls"] == ["leaked"]
 
 
 def test_refusals_are_scored_only_on_negative_cases():
@@ -358,12 +358,12 @@ def test_refusals_are_scored_only_on_negative_cases():
         (_case("pos"), "There is no such thing.", []),
     ]
 
-    assert metrics.behaviour_scores(runs)["refusal_rate_on_negative_cases"] == 0.5
+    assert metrics.behaviour_scores(runs, set())["refusal_rate_on_negative_cases"] == 0.5
 
 
 def test_a_run_with_nothing_to_score_reports_none_rather_than_zero():
     """Zero reads as "it got everything wrong"; None reads as "nothing asked"."""
-    scores = metrics.behaviour_scores([(_case("a"), "ans", [])])
+    scores = metrics.behaviour_scores([(_case("a"), "ans", [])], set())
 
     assert scores["tool_choice"] is None
     assert scores["refusal_rate_on_negative_cases"] is None
@@ -399,3 +399,29 @@ def test_cited_paths_finds_every_path_named():
         "reference/sql-support.md",
         "guides/snapshots-time-travel.md",
     }
+
+
+def test_citation_presence_is_scored_over_the_answers_that_cited_something():
+    """An uncited answer is deliberately unscored, so it must not land in the
+    denominator either — otherwise the rate measures how often the assistant
+    cited at all, which is the thing citation_presence declines to judge."""
+    indexed = {"reference/sql-support.md"}
+    runs = [
+        (_case("real"), "See reference/sql-support.md.", []),
+        (_case("invented"), "See reference/made-up.md.", []),
+        (_case("silent"), "DuckHaven does not expire snapshots.", []),
+    ]
+
+    scores = metrics.behaviour_scores(runs, indexed)
+
+    assert scores["citation_presence"] == 0.5
+    assert scores["answers_citing_a_page"] == 2
+
+
+def test_only_product_answers_are_scored_for_citations():
+    """A catalog answer naming a path is not citing documentation."""
+    catalog = _case("sql")
+    catalog = metrics.Case(**{**catalog.__dict__, "category": "catalog_sql"})
+    runs = [(catalog, "See reference/made-up.md.", [])]
+
+    assert metrics.behaviour_scores(runs, set())["citation_presence"] is None

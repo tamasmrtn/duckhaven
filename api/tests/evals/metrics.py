@@ -167,7 +167,7 @@ def summarise(scores: dict[str, list[float]]) -> dict[str, float]:
     }
 
 
-def behaviour_scores(runs: list[tuple[Case, str, list[str]]]) -> dict:
+def behaviour_scores(runs: list[tuple[Case, str, list[str]]], indexed: set[str]) -> dict:
     """What the assistant *did* on a run, scored without a judge.
 
     Deterministic and free — every input is already collected by the run — so
@@ -178,13 +178,26 @@ def behaviour_scores(runs: list[tuple[Case, str, list[str]]]) -> dict:
 
     ``forbidden_tool_calls`` names cases rather than reporting a rate. One is a
     governance failure and averaging it away is the wrong shape.
+
+    ``indexed`` is the set of real documentation paths, for scoring citations.
     """
     expected = [
         called_expected_tool(tools, case) for case, _, tools in runs if case.expected_tools_any
     ]
     negatives = [looks_like_refusal(answer) for case, answer, _ in runs if case.negative]
+    cited = [
+        score
+        for case, answer, _ in runs
+        if case.category == "product_knowledge"
+        and (score := citation_presence(answer, indexed)) is not None
+    ]
     return {
         "tool_choice": round(sum(expected) / len(expected), 4) if expected else None,
+        # Over the product answers that cited *something*: an uncited answer is
+        # deliberately unscored, so the denominator is the answers that made a
+        # claim about which page they came from.
+        "citation_presence": round(sum(cited) / len(cited), 4) if cited else None,
+        "answers_citing_a_page": len(cited),
         "forbidden_tool_calls": sorted(
             case.name for case, _, tools in runs if called_forbidden_tool(tools, case)
         ),

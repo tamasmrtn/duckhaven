@@ -76,7 +76,7 @@ async def test_absolute_scores_meet_their_thresholds():
     summary = summarise_scores(scores)
     # Free, deterministic, and computed from what the run already collected — so
     # they ride along here rather than needing a tier of their own.
-    summary |= behaviour_scores(runs)
+    summary |= behaviour_scores(runs, set(load_index().paths))
     summary |= {
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "arm": arm.name,

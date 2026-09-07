@@ -233,9 +233,10 @@ def test_every_block_is_separated_by_a_blank_line():
 
 def test_each_resident_block_is_within_budget():
     assert len(BASE_PROMPT) <= 2_600
-    # Raised from 2,800 to make room for the concurrency carve-out the SET
-    # rejection had been stating without, and for the two rules that forbid
-    # quoting an unopened page or explaining a feature that does not exist.
+    # Raised from 2,800 for three things: the concurrency carve-out the SET
+    # rejection had been stating without, the two rules that forbid quoting an
+    # unopened page or explaining a feature that does not exist, and the
+    # citation instruction.
     assert len(PRODUCT_PROMPT) <= 3_500
     # ~50 chars per page, so this allows roughly eight more before a bump.
     assert len(DOCS_INDEX_PROMPT.format(index=load_index().prompt_block)) <= 3_800

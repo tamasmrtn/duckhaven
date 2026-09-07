@@ -20,6 +20,7 @@ from api.config import settings
 from api.models.assistant import AssistantConversation, AssistantMessage, AssistantToolCall
 from api.models.user import User
 from api.models.workspace import WorkspaceMember
+from api.services.assistant import runner
 from api.services.assistant.agent import get_agent
 from api.services.assistant.gateway import Gateway, GatewayError
 from api.services.assistant.persistence import render_transcript_with_sql
@@ -187,6 +188,23 @@ async def test_a_turn_survives_every_advisory_lookup_failing(
     assert any(f["type"] == "done" for f in frames)
     # Thinned to the baseline, not broken: no half-rendered feature paragraphs.
     assert captured[0] == BASE_PROMPT + "\n" + PRODUCT_PROMPT
+
+
+async def test_a_hung_advisory_lookup_gives_up_rather_than_waiting(monkeypatch):
+    """These lookups sit between the user's question and the model's first token,
+    and the gateway's client timeout is sized for SQL (minutes), not metadata.
+
+    Driven directly rather than through a turn: cancelling a loopback call
+    mid-flight tears down the shared SQLite connection, which is a property of
+    the test database rather than of the timeout.
+    """
+
+    async def never_returns():
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(runner, "_ADVISORY_TIMEOUT_S", 0.01)
+
+    assert await runner._advisory("agent count", never_returns()) is None
 
 
 async def test_stream_emits_every_word_of_every_text_segment(client, db_session, factory):

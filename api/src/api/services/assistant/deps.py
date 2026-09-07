@@ -49,12 +49,14 @@ class AssistantDeps:
     # ("object_store" | "s3" | "adls_gen2"). Drives the external-storage
     # paragraph; the bundled object store alone adds nothing.
     storage_kinds: tuple[str, ...] | None = None
-    # Whether this deployment provisions agents on demand. Deployment-level
-    # config rather than workspace state, but carried here with the rest so
-    # build_instructions stays a pure function of its RunContext.
+    # Deployment-level toggles, carried here with the workspace's own state so
+    # build_instructions stays a pure function of its RunContext rather than
+    # reading module-level settings behind the caller's back.
     elastic_enabled: bool = False
-    # How many compute agents are visible. None when the lookup failed; the
-    # fleet paragraph is omitted below two, where there is nothing to choose.
+    docs_enabled: bool = True
+    # How many compute agents are connected and dispatchable. None when the lookup
+    # failed; the fleet paragraph is omitted below two, where there is nothing to
+    # choose between.
     agent_count: int | None = None
     # Tool-call audit records for this run, keyed by the SDK tool_call_id. Populated
     # by the governance hooks; drained by the runner and persisted after the turn.

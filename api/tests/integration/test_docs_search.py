@@ -36,10 +36,11 @@ MIGRATION = Path(__file__).resolve().parents[2] / "alembic" / "versions" / "0041
 DOCS_DIR = generate._repo_root() / "docs"
 
 # Thresholds, not per-case assertions, and set from measurement rather than
-# aspiration. As committed the corpus scores recall@5 = 0.79 and MRR = 0.48 over
-# the cases that name a page; the bars sit below that so they catch a regression
-# instead of failing on the next reworded question. Raise them when retrieval
-# actually improves — a threshold nobody can meet gets deleted, not fixed.
+# aspiration. The scores themselves are printed by the test on every run rather
+# than quoted here, because a number in a comment goes stale the first time
+# somebody rewords a case — this one had claimed 0.79 through two case-set
+# changes. The margin over these bars is thin (a case or two), so a failure here
+# means "look at the misses", not necessarily "retrieval regressed".
 MIN_RECALL_AT_5 = 0.70
 MIN_MRR = 0.40
 

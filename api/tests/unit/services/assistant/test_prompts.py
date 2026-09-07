@@ -84,7 +84,7 @@ def test_the_rejected_statement_list_names_its_one_exception():
 def test_a_bare_workspace_gets_base_product_and_index_and_nothing_else():
     """The anti-leak snapshot: equality fails if any injector fires uninvited."""
     expected = "\n".join(
-        [BASE_PROMPT, PRODUCT_PROMPT, DOCS_INDEX_PROMPT.format(index=load_index().prompt_block())]
+        [BASE_PROMPT, PRODUCT_PROMPT, DOCS_INDEX_PROMPT.format(index=load_index().prompt_block)]
     )
 
     assert build_instructions(ctx()) == expected
@@ -224,9 +224,12 @@ def test_every_block_is_separated_by_a_blank_line():
 
 def test_each_resident_block_is_within_budget():
     assert len(BASE_PROMPT) <= 2_600
-    assert len(PRODUCT_PROMPT) <= 3_000
+    # Raised from 2,800 to make room for the concurrency carve-out the SET
+    # rejection had been stating without, and for the two rules that forbid
+    # quoting an unopened page or explaining a feature that does not exist.
+    assert len(PRODUCT_PROMPT) <= 3_500
     # ~50 chars per page, so this allows roughly eight more before a bump.
-    assert len(DOCS_INDEX_PROMPT.format(index=load_index().prompt_block())) <= 3_800
+    assert len(DOCS_INDEX_PROMPT.format(index=load_index().prompt_block)) <= 3_800
 
 
 def test_the_conditional_blocks_stay_small():
@@ -243,9 +246,9 @@ def test_the_semantic_summary_is_bounded_however_the_workspace_is_named():
 
 
 def test_the_assembled_instructions_are_within_budget():
-    """~2,150 tokens for a bare workspace; ~3,350 for the largest a workspace can
+    """~2,250 tokens for a bare workspace; ~3,500 for the largest a workspace can
     make its own, which is the number the input window has to hold."""
-    assert len(build_instructions(ctx())) <= 9_000
+    assert len(build_instructions(ctx())) <= 9_600
 
     everything = build_instructions(
         ctx(
@@ -256,4 +259,4 @@ def test_the_assembled_instructions_are_within_budget():
         )
     )
 
-    assert len(everything) <= 13_600
+    assert len(everything) <= 14_400

@@ -606,14 +606,60 @@ def test_a_paused_write_reads_as_paused_rather_than_as_an_answer():
     assert _render_output("an ordinary answer") == "an ordinary answer"
 
 
-def test_the_judge_client_is_built_once():
+@pytest.fixture
+def judge_module():
+    """The judge with its caches empty, and emptied again afterwards.
+
+    Every test below pins ``JUDGE_BASE_URL`` itself. They are module constants
+    read at import, so whichever branch of ``judge_model`` runs is decided by the
+    environment the suite starts in — locally ``.env`` sets a base URL and the
+    Anthropic path is never touched, while CI sets neither and it is the only
+    path taken. A test that silently swaps code paths per machine is not a test.
+    """
+    from tests.evals import judge
+
+    caches = (judge.judge_model, judge._graded_agent, judge._pairwise_agent)
+    for cache in caches:
+        cache.cache_clear()
+    yield judge
+    for cache in caches:
+        cache.cache_clear()
+
+
+def _pin(judge, monkeypatch, *, base_url, model):
+    monkeypatch.setattr(judge, "JUDGE_BASE_URL", base_url)
+    monkeypatch.setattr(judge, "JUDGE_MODEL", model)
+    # A key so the provider can be constructed. Nothing sends a request, and the
+    # suite blocks that outright.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "not-a-real-key")
+    for cache in (judge.judge_model, judge._graded_agent, judge._pairwise_agent):
+        cache.cache_clear()
+
+
+def test_the_judge_client_is_built_once(judge_module, monkeypatch):
     """It was rebuilt per call: 168 calls, 168 connection pools, dozens of idle
     TLS connections against the provider."""
-    from tests.evals.judge import _graded_agent, _pairwise_agent, judge_model
+    _pin(judge_module, monkeypatch, base_url=None, model="anthropic:claude-sonnet-5")
 
-    assert judge_model() is judge_model()
-    assert _graded_agent() is _graded_agent()
-    assert _graded_agent() is not _pairwise_agent()
+    assert judge_module._graded_agent() is judge_module._graded_agent()
+    assert judge_module._graded_agent() is not judge_module._pairwise_agent()
+    # Not `judge_model() is judge_model()`: with no base URL that returns a plain
+    # string, and `is` on the same interned string holds whether or not anything
+    # is cached. One miss across both agents is the actual property.
+    assert judge_module.judge_model.cache_info().misses == 1
+
+
+def test_the_judge_can_target_an_openai_compatible_endpoint(judge_module, monkeypatch):
+    """The keyless path — Ollama, vLLM — and the one the harness actually ran on.
+    A bare string here would score against whatever the default provider is."""
+    _pin(judge_module, monkeypatch, base_url="https://ollama.com/v1", model="glm-5.3-flash:cloud")
+
+    model = judge_module.judge_model()
+
+    assert type(model).__name__ == "OpenAIChatModel"
+    assert model.model_name == "glm-5.3-flash:cloud"
+    assert "ollama.com" in str(model.client.base_url)
+    assert judge_module._graded_agent() is judge_module._graded_agent()
 
 
 async def test_malformed_structured_output_is_resampled_not_fatal():

@@ -6,6 +6,9 @@ from pydantic_ai import models
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 
+from api.config import settings
+from api.services.assistant.knowledge import generate
+
 
 @pytest.fixture(autouse=True)
 def _block_real_models():
@@ -14,6 +17,17 @@ def _block_real_models():
     models.ALLOW_MODEL_REQUESTS = False
     yield
     models.ALLOW_MODEL_REQUESTS = previous
+
+
+@pytest.fixture(autouse=True)
+def _docs_from_the_checkout(monkeypatch):
+    """Point the docs corpus at ``docs/``, as the image points it at /app/docs.
+
+    Without this the whole suite runs in the one state a deployment should never
+    be in — an index that loads with no page bodies behind it — and every test of
+    the documentation feature would assert on the degraded path by accident.
+    """
+    monkeypatch.setattr(settings, "assistant_docs_dir", generate._repo_root() / "docs")
 
 
 def text_step(content: str) -> tuple:

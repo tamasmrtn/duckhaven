@@ -19,8 +19,10 @@ install-web:
 	cd web && npm install
 
 # ── Development ───────────────────────────────────────────────────────────────
+# ASSISTANT_DOCS_DIR: the setting defaults to the image path, so a checkout must
+# point it at docs/ or the assistant runs without documentation.
 dev-api:
-	uv run --package duckhaven-api uvicorn api.main:app --reload --port 8000
+	ASSISTANT_DOCS_DIR=docs uv run --package duckhaven-api uvicorn api.main:app --reload --port 8000
 
 dev-web:
 	cd web && npm run dev

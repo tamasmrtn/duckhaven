@@ -18,8 +18,9 @@ import logging
 
 from pydantic_ai import RunContext
 
+from api.config import settings
 from api.services.assistant.deps import AssistantDeps
-from api.services.assistant.knowledge.loader import load_index
+from api.services.assistant.knowledge.loader import docs_available, load_index
 
 logger = logging.getLogger(__name__)
 
@@ -219,17 +220,24 @@ _INJECTORS = (_semantic_block, _storage_block, _elastic_block, _fleet_block)
 
 
 def _docs_index_block() -> str | None:
-    """The resident page list, or nothing if the index did not ship.
+    """The resident page list, or nothing if the corpus is not fully present.
 
-    A missing index is a packaging bug, not a deployment state, so it is logged
-    rather than passed over in silence — but it degrades the turn to an assistant
-    without documentation instead of failing it. ``read_doc_page`` reports the
-    same fault loudly if the model tries to use it.
+    Gated on the page *bodies* as well as the index: they ship by different
+    routes and can go missing independently, and a menu of 63 pages the reader
+    cannot open is worse than no menu — the model is told to cite what it read,
+    then finds every path fails. ``build_toolset`` withholds the tool on the same
+    condition, so the two stay consistent.
     """
     try:
-        return DOCS_INDEX_PROMPT.format(index=load_index().prompt_block())
+        if not docs_available():
+            logger.warning(
+                "Documentation corpus unavailable (index or %s); assistant runs without it.",
+                settings.assistant_docs_dir,
+            )
+            return None
+        return DOCS_INDEX_PROMPT.format(index=load_index().prompt_block)
     except Exception:
-        logger.warning("Documentation index unavailable; assistant runs without it.")
+        logger.warning("Documentation index could not be read.", exc_info=True)
         return None
 
 

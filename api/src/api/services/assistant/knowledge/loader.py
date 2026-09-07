@@ -1,21 +1,17 @@
 """Read the documentation index, and read pages out of the docs tree.
 
-Two separate things travel by two separate routes, on purpose. The **index** is a
-committed artefact inside this package, so it ships in the wheel and is reviewable
-in a diff. The **page bodies** are the real ``docs/`` tree, copied into the image
-by the Dockerfile — never duplicated into the repository, which is what keeps them
-from drifting the way ``llms.txt`` did.
-
-The snapshot is pinned to the release that built the image. An assistant that
-answered from newer documentation than its own code would describe features it
-does not have, which is the sharpest failure this whole feature risks.
+The index and the page bodies travel by different routes: the index is committed
+inside this package and ships in the wheel, the bodies are the real ``docs/``
+tree copied into the image. So they can go missing independently, and both are
+pinned to the release that built the image — an assistant answering from newer
+documentation than its own code would describe features it does not have.
 """
 
 from __future__ import annotations
 
 import difflib
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import cached_property, lru_cache
 from pathlib import Path
 
 import yaml
@@ -35,7 +31,6 @@ class Page:
 
 @dataclass(frozen=True)
 class DocsIndex:
-    intro: str
     pages: tuple[Page, ...]
 
     @property
@@ -49,6 +44,7 @@ class DocsIndex:
         """Indexed paths closest to a miss, so a wrong guess can be corrected."""
         return difflib.get_close_matches(path, self.paths, n=n, cutoff=0.3)
 
+    @cached_property
     def prompt_block(self) -> str:
         """The always-resident index: section, path and title, nothing more.
 
@@ -69,18 +65,33 @@ class DocsIndex:
 
 @lru_cache(maxsize=1)
 def load_index() -> DocsIndex:
-    raw = yaml.safe_load(INDEX_PATH.read_text()) or {}
+    raw = yaml.safe_load(INDEX_PATH.read_text(encoding="utf-8")) or {}
+    pages = raw.get("pages") or []
+    if not pages:
+        # A file that parses but lists nothing would otherwise render an index
+        # block that names no pages, leaving the model told to call read_doc_page
+        # with "one of these exact paths:" and then shown none.
+        raise DocsUnavailableError(f"Documentation index is empty or malformed: {INDEX_PATH}")
     return DocsIndex(
-        intro=raw.get("intro", ""),
-        pages=tuple(
-            Page(p["path"], p["title"], p["section"], p.get("summary", ""))
-            for p in raw.get("pages", [])
-        ),
+        pages=tuple(Page(p["path"], p["title"], p["section"], p.get("summary", "")) for p in pages),
     )
 
 
 class DocsUnavailableError(RuntimeError):
-    """The docs tree is not present in this deployment."""
+    """The documentation is not usable in this deployment."""
+
+
+class PageNotIndexed(LookupError):
+    """The requested path is not in the index — a model guess, not a fault."""
+
+
+def docs_available() -> bool:
+    """Whether both halves of the corpus are present: the index and the bodies."""
+    try:
+        load_index()
+    except Exception:  # noqa: BLE001 — any unreadable index means "not available"
+        return False
+    return settings.assistant_docs_dir.is_dir()
 
 
 def docs_dir() -> Path:
@@ -100,19 +111,31 @@ def read_page(path: str) -> dict:
     """
     page = load_index().get(path)
     if page is None:
-        raise KeyError(path)
+        raise PageNotIndexed(path)
 
-    resolved = (docs_dir() / path).resolve()
+    root = docs_dir().resolve()
+    resolved = (root / path).resolve()
     # Belt and braces: the index is the allowlist, but a symlink inside docs/
-    # could still point out of the tree, and a page that escapes is not a page.
-    if not resolved.is_relative_to(docs_dir().resolve()) or not resolved.is_file():
+    # could still point out of the tree.
+    if not resolved.is_relative_to(root) or not resolved.is_file():
         raise DocsUnavailableError(f"Documentation page is missing from this build: {path}")
 
-    text = resolved.read_text()
+    text = resolved.read_text(encoding="utf-8")
     cap = settings.assistant_docs_max_page_chars
     truncated = len(text) > cap
     if truncated:
-        text = text[:cap].rsplit("\n", 1)[0] + f"\n\n[truncated — full page at {page_url(path)}]"
+        kept = text[:cap].rsplit("\n", 1)[0]
+        # Say how much is missing, in the model's own units. A bare "[truncated]"
+        # reads as a formality on a page that otherwise looks complete, and the
+        # honest-but-wrong answer that follows is "the documentation does not
+        # cover that" — from a page where it does, further down.
+        withheld = len(text) - len(kept)
+        text = (
+            f"{kept}\n\n[This page was cut off here: {withheld:,} of {len(text):,} characters "
+            f"are not shown, including everything after this point. If the answer is not "
+            f"above, say the page continues beyond what you can read and point the user at "
+            f"{page_url(path)} — do not conclude the documentation is silent.]"
+        )
     return {
         "path": path,
         "title": page.title,
@@ -123,5 +146,4 @@ def read_page(path: str) -> dict:
 
 
 def page_url(path: str) -> str:
-    """The published URL for a page, at the version this build shipped with."""
     return f"{settings.docs_site_url.rstrip('/')}/{path.removesuffix('.md')}/"

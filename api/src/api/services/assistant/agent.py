@@ -73,6 +73,11 @@ def get_agent() -> Agent[AssistantDeps, str]:
         instructions=build_instructions,
         tools=build_toolset(),
         capabilities=[build_governance(), _instrumentation()],
+        # The SDK default is one retry per tool, which is too thin now that a tool
+        # takes a free-text path: two wrong guesses off a 63-page index end the
+        # turn with a generic internal error and the user loses the answer. Three
+        # is enough for the model to act on the "closest paths" hint it gets back.
+        retries={"tools": 3},
         model_settings={"max_tokens": settings.assistant_max_output_tokens},
         defer_model_check=True,
         name="duckhaven-assistant",

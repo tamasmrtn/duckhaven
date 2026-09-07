@@ -75,7 +75,9 @@ async def test_absolute_scores_meet_their_thresholds():
     summary |= {
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "arm": arm.name,
-        "assistant_model": settings.assistant_model,
+        # The arm's model, not the process default: `_arm_settings` has already
+        # restored the latter by the time the report is built.
+        "assistant_model": arm.model or settings.assistant_model,
         "judge_model": JUDGE_MODEL,
         "judge_temperature": JUDGE_SETTINGS.get("temperature"),
     }

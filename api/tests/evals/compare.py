@@ -57,6 +57,8 @@ def _context(a: RunResult, b: RunResult) -> str:
 
 async def compare(arm_a: str, arm_b: str, docs_search=None) -> dict:
     a_config, b_config = ArmConfig.load(arm_a), ArmConfig.load(arm_b)
+    model_a = a_config.model or settings.assistant_model
+    model_b = b_config.model or settings.assistant_model
     cases = load_cases()
     outcomes: list[dict] = []
 
@@ -80,13 +82,18 @@ async def compare(arm_a: str, arm_b: str, docs_search=None) -> dict:
             }
         )
 
-    return _report(arm_a, arm_b, outcomes)
+    return _report(arm_a, arm_b, outcomes, model_a, model_b)
 
 
-def _report(arm_a: str, arm_b: str, outcomes: list[dict]) -> dict:
+def _report(arm_a: str, arm_b: str, outcomes: list[dict], model_a: str, model_b: str) -> dict:
     counts = Counter(o["winner"] for o in outcomes)
     decided = counts["A"] + counts["B"]
     flips = sum(1 for o in outcomes if o["flipped"])
+    # A plain tie cannot flip — the judge declined in both orders — so counting
+    # it in the denominator hides position bias behind however many cases the
+    # rubric could not separate. The comparable set is the pairs the judge
+    # decided at all: the ones it called consistently, plus the ones it flipped.
+    comparable = decided + flips
     by_category: dict[str, Counter] = {}
     for outcome in outcomes:
         by_category.setdefault(outcome["category"], Counter())[outcome["winner"]] += 1
@@ -99,7 +106,11 @@ def _report(arm_a: str, arm_b: str, outcomes: list[dict]) -> dict:
         # judge is not a comparison, and this is what makes that checkable later.
         "judge_model": JUDGE_MODEL,
         "judge_temperature": JUDGE_SETTINGS.get("temperature"),
-        "assistant_model": settings.assistant_model,
+        # Per arm, and captured before the run: `_arm_settings` restores the
+        # process default in its finally, so reading settings here recorded a
+        # model that never ran — and a pairwise run has two of them anyway.
+        "model_a": model_a,
+        "model_b": model_b,
         "cases": len(outcomes),
         "wins_a": counts["A"],
         "wins_b": counts["B"],
@@ -107,8 +118,8 @@ def _report(arm_a: str, arm_b: str, outcomes: list[dict]) -> dict:
         # Over decided pairs only. A win rate diluted by ties says less about
         # which arm is better than about how often the judge could tell.
         "win_rate_a": round(counts["A"] / decided, 3) if decided else None,
-        "flip_rate": round(flips / len(outcomes), 3) if outcomes else 0.0,
-        "trustworthy": bool(outcomes) and flips / len(outcomes) <= MAX_TRUSTWORTHY_FLIP_RATE,
+        "flip_rate": round(flips / comparable, 3) if comparable else None,
+        "trustworthy": bool(comparable) and flips / comparable <= MAX_TRUSTWORTHY_FLIP_RATE,
         "by_category": {k: dict(v) for k, v in sorted(by_category.items())},
         "outcomes": outcomes,
     }

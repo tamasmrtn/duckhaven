@@ -73,10 +73,14 @@ def _outcome(winner, *, flipped=False, category="product_knowledge"):
     }
 
 
+def _rep(outcomes):
+    return _report("a", "b", outcomes, "model-a", "model-b")
+
+
 def test_win_rate_is_over_decided_pairs_only():
     """A rate diluted by ties says more about how often the judge could tell
     than about which arm is better."""
-    report = _report("a", "b", [_outcome("A"), _outcome("A"), _outcome("B"), _outcome("tie")])
+    report = _rep([_outcome("A"), _outcome("A"), _outcome("B"), _outcome("tie")])
 
     assert report["wins_a"] == 2
     assert report["wins_b"] == 1
@@ -86,7 +90,7 @@ def test_win_rate_is_over_decided_pairs_only():
 
 def test_an_all_tie_run_reports_no_win_rate_rather_than_zero():
     """Zero would read as 'A lost'; None reads as 'nothing was decided'."""
-    report = _report("a", "b", [_outcome("tie"), _outcome("tie")])
+    report = _rep([_outcome("tie"), _outcome("tie")])
 
     assert report["win_rate_a"] is None
 
@@ -94,7 +98,7 @@ def test_an_all_tie_run_reports_no_win_rate_rather_than_zero():
 def test_a_high_flip_rate_marks_the_run_untrustworthy():
     flippy = [_outcome("tie", flipped=True)] * 3 + [_outcome("A")]
 
-    report = _report("a", "b", flippy)
+    report = _rep(flippy)
 
     assert report["flip_rate"] == 0.75
     assert report["trustworthy"] is False
@@ -103,31 +107,49 @@ def test_a_high_flip_rate_marks_the_run_untrustworthy():
 def test_a_normal_flip_rate_leaves_the_run_trustworthy():
     outcomes = [_outcome("A")] * 9 + [_outcome("tie", flipped=True)]
 
-    report = _report("a", "b", outcomes)
+    report = _rep(outcomes)
 
     assert report["flip_rate"] == 0.1
     assert report["flip_rate"] <= MAX_TRUSTWORTHY_FLIP_RATE
     assert report["trustworthy"] is True
 
 
+def test_plain_ties_do_not_dilute_the_flip_rate():
+    """A tie the judge reached in both orders cannot flip, so counting it in the
+    denominator hides position bias behind cases the rubric could not separate.
+    Half the comparable pairs flipping is not a 12% flip rate."""
+    outcomes = [_outcome("A")] * 6 + [_outcome("tie", flipped=True)] * 6 + [_outcome("tie")] * 30
+
+    report = _rep(outcomes)
+
+    assert report["flip_rate"] == 0.5
+    assert report["trustworthy"] is False
+
+
+def test_a_run_the_judge_never_decided_reports_no_flip_rate():
+    """Nothing was comparable, so there is no rate — None, not a reassuring 0.0."""
+    report = _rep([_outcome("tie"), _outcome("tie")])
+
+    assert report["flip_rate"] is None
+    assert report["trustworthy"] is False
+
+
 def test_the_report_records_which_judge_produced_it():
     """Without this an absolute or pairwise number cannot be compared to an older
     one: a shift could be the assistant or the judge, and nothing distinguishes
     them after the fact."""
-    report = _report("a", "b", [_outcome("A")])
+    report = _rep([_outcome("A")])
 
     assert report["judge_model"] == judge.JUDGE_MODEL
     assert report["judge_temperature"] == 0.0
-    assert report["assistant_model"]
+    # The arms' own models, not the process default. Asserting merely truthy let
+    # the report record a model that never ran.
+    assert (report["model_a"], report["model_b"]) == ("model-a", "model-b")
 
 
 def test_results_are_broken_down_by_category():
     """So a regression can be localised rather than just observed."""
-    report = _report(
-        "a",
-        "b",
-        [_outcome("A", category="governance"), _outcome("B", category="unanswerable")],
-    )
+    report = _rep([_outcome("A", category="governance"), _outcome("B", category="unanswerable")])
 
     assert report["by_category"] == {"governance": {"A": 1}, "unanswerable": {"B": 1}}
 

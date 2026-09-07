@@ -12,20 +12,19 @@ pages:
 - path: getting-started/installation.md
   title: Installation
   section: Getting started
-  summary: Prerequisites and the full installation walkthrough for the Docker Compose stack.
+  summary: Prerequisites and how to install the stack.
 - path: getting-started/quickstart.md
   title: Quickstart
   section: Getting started
-  summary: Stand up the full DuckHaven control plane with one docker compose stack and run your first
-    query.
+  summary: Stand up the full stack with one `docker compose` command and run your first query.
 - path: getting-started/first-workspace.md
   title: Your first workspace
   section: Getting started
-  summary: A workspace is where your team collaborates.
+  summary: Create a workspace and invite collaborators.
 - path: getting-started/first-query.md
   title: Your first query
   section: Getting started
-  summary: With a workspace in place, open a worksheet and run some SQL.
+  summary: Write and run a query in a browser worksheet.
 - path: getting-started/cli-quickstart.md
   title: Command line (dh)
   section: Getting started
@@ -33,31 +32,27 @@ pages:
 - path: concepts/what-is-duckhaven.md
   title: What is DuckHaven?
   section: Concepts
-  summary: DuckHaven is a self-hosted, governed DuckDB + Iceberg analytics platform for small teams
-    (roughly 2–10 users).
+  summary: Overview of the product and who it is for.
 - path: concepts/architecture.md
   title: Architecture
   section: Concepts
-  summary: This document is the map of the DuckHaven codebase.
+  summary: The control-plane / compute split and data flow — the defining idea behind DuckHaven.
 - path: concepts/workspaces.md
   title: Workspaces
   section: Concepts
-  summary: 'A workspace is DuckHaven''s governance and collaboration boundary: it groups people and
-    the work they run.'
+  summary: How workspaces isolate queries, permissions, and history.
 - path: concepts/catalogs.md
   title: Catalogs & Polaris
   section: Concepts
-  summary: DuckHaven uses Apache Polaris as the authority for catalog structure and as the vendor
-    of short-lived storage credentials.
+  summary: The shared Iceberg catalog governed by Apache Polaris.
 - path: concepts/tables.md
   title: Tables & Iceberg
   section: Concepts
-  summary: Every table DuckHaven creates is an Apache Iceberg table, catalog-managed by Polaris.
+  summary: Iceberg-native tables, snapshots, and time travel.
 - path: concepts/agents.md
   title: Agents
   section: Concepts
-  summary: 'An agent is DuckHaven''s unit of compute: a Python process that embeds a DuckDB engine,
-    runs on its own host, and dials home to the control plane over a WebSocket.'
+  summary: DuckDB compute agents you pick per query.
 - path: concepts/elastic-compute.md
   title: Elastic compute
   section: Concepts
@@ -70,8 +65,7 @@ pages:
 - path: concepts/query-execution.md
   title: Query execution
   section: Concepts
-  summary: 'The path a query takes from Run to results: queueing, memory estimation, concurrency profiles,
-    and column types.'
+  summary: Queueing, memory estimation, and concurrency.
 - path: concepts/sql-sessions.md
   title: SQL sessions
   section: Concepts
@@ -80,12 +74,11 @@ pages:
 - path: concepts/permissions.md
   title: Permissions
   section: Concepts
-  summary: DuckHaven separates who you are (identity) from what you can do (authorization).
+  summary: Per-workspace access control and audit trail.
 - path: concepts/assistant.md
   title: AI assistant
   section: Concepts
-  summary: The AI data assistant is a governed, model-agnostic chat assistant that helps people explore
-    a workspace's data.
+  summary: The governed AI data assistant and how it enforces access.
 - path: concepts/metadata.md
   title: Metadata
   section: Concepts
@@ -109,12 +102,11 @@ pages:
 - path: deployment/install.md
   title: Docker Compose
   section: Deployment
-  summary: DuckHaven runs as one docker compose stack — Postgres, Apache Polaris, and the DuckHaven
-    API (which serves both the REST API and the web UI on port 8000).
+  summary: Deploy the full stack with Docker Compose.
 - path: deployment/add-agent.md
   title: Add an agent
   section: Deployment
-  summary: Agents run DuckDB and execute queries dispatched by the control plane.
+  summary: Scale compute by adding DuckDB agents.
 - path: deployment/homelab-elastic-setup.md
   title: Elastic compute on a single Docker host
   section: Deployment
@@ -128,11 +120,11 @@ pages:
 - path: deployment/storage.md
   title: Configure storage
   section: Deployment
-  summary: A storage backend is the object-storage location where a workspace's Iceberg tables live.
+  summary: Point DuckHaven at your object storage backend.
 - path: deployment/reverse-proxy-tls.md
   title: Reverse proxy & TLS
   section: Deployment
-  summary: The bundled api service publishes plain HTTP on port 8000.
+  summary: Front the stack with a reverse proxy and TLS.
 - path: deployment/high-availability.md
   title: High availability
   section: Deployment
@@ -150,31 +142,27 @@ pages:
 - path: deployment/backup-restore.md
   title: Backup & restore
   section: Deployment
-  summary: DuckHaven's only durable state is the Postgres volume (postgresdata), which holds users,
-    workspaces, saved queries, audit log, agent registrations, and the Polaris metastore (in…
+  summary: Back up and restore DuckHaven data.
 - path: guides/run-queries.md
   title: Run queries
   section: Guides
-  summary: Worksheets are DuckHaven's primary surface — a browser SQL editor backed by the agent you
-    choose.
+  summary: Day-to-day querying in worksheets.
 - path: guides/manage-catalogs.md
   title: Manage catalogs
   section: Guides
-  summary: A workspace attaches one or more catalogs — decoupled data domains, each its own Apache
-    Polaris catalog of schemas and Iceberg tables.
+  summary: Create and govern catalogs.
 - path: guides/migrate-catalog-storage.md
   title: Migrate a catalog's storage
   section: Guides
-  summary: A catalog's storage backend is chosen when the catalog is created, but it is not permanent.
+  summary: Move a catalog to a different storage backend without losing data.
 - path: guides/snapshots-time-travel.md
   title: Snapshots & time travel
   section: Guides
-  summary: Every Iceberg table keeps a snapshot history.
+  summary: Query tables at a past snapshot.
 - path: guides/query-profiles.md
   title: Read query profiles
   section: Guides
-  summary: After a query finishes, the executing agent captures DuckDB's per-operator execution profile
-    and ships it to the control plane.
+  summary: Inspect operator graphs, timing, and spills.
 - path: guides/saved-queries.md
   title: Saved queries
   section: Guides
@@ -207,21 +195,19 @@ pages:
 - path: guides/using-the-assistant.md
   title: Use the AI assistant
   section: Guides
-  summary: 'The AI data assistant lets you explore a workspace''s data by chatting: ask a question
-    in plain language and it will browse the catalog, run SQL, and explain what it found.'
+  summary: Browse the catalog, run SQL, and propose worksheet edits with the assistant.
 - path: guides/access-levels.md
   title: How access works
   section: Guides
-  summary: DuckHaven decides what you can do in four independent layers.
+  summary: The three access layers, including fine-grained catalog/schema/table grants.
 - path: guides/users-access.md
   title: Manage users & access
   section: Guides
-  summary: 'This guide is the how-to for the first two of DuckHaven''s three access layers: a user''s
-    global role (what they can administer) and their workspace membership (which workspaces…'
+  summary: Administer users and permissions.
 - path: guides/service-accounts.md
   title: Service accounts & tokens
   section: Guides
-  summary: Every human sign-in flow in DuckHaven — password, SSO, LDAP — assumes a person at a browser.
+  summary: Machine auth via service accounts and Personal Access Tokens.
 - path: guides/connect-idp.md
   title: Connect an IdP (SSO)
   section: Guides
@@ -272,17 +258,15 @@ pages:
 - path: reference/configuration.md
   title: Configuration
   section: Reference
-  summary: Every DuckHaven environment variable, in one place.
+  summary: Every control-plane and agent environment variable.
 - path: reference/sql-support.md
   title: SQL support
   section: Reference
-  summary: DuckHaven validates every statement against an allowlist at the API boundary (parse-only
-    — the control plane never executes user SQL) before dispatching it to an agent.
+  summary: Supported SQL surface and DuckDB features.
 - path: reference/agent-reference.md
   title: Agent reference
   section: Reference
-  summary: A DuckHaven agent is a Python process that embeds DuckDB, connects to the control plane
-    via WebSocket, executes SQL queries dispatched by users, and serves result Parquet files…
+  summary: Agent configuration and behavior.
 - path: reference/cli.md
   title: CLI reference
   section: Reference
@@ -290,7 +274,7 @@ pages:
 - path: reference/rest-api.md
   title: REST API
   section: Reference
-  summary: 'The REST API surface: resources, endpoints, and how to authenticate against them.'
+  summary: The control-plane REST API.
 - path: reference/api-conventions.md
   title: API conventions
   section: Reference

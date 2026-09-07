@@ -426,6 +426,9 @@ class Settings(BaseSettings):
     # few pages exceed it and come back cut off, with a marker saying how much is
     # missing so a truncated page is not mistaken for a complete one.
     assistant_docs_max_page_chars: int = 20_000
+    # Default number of pages search_docs returns; the tool clamps its own
+    # argument to 1-10 regardless.
+    assistant_docs_search_limit: int = 5
     # Public documentation site, used to cite a page the assistant read. Pages
     # are cited at the version this build shipped with, not at latest. Keep it in
     # step with mkdocs.yml's site_url, which is what docs/llms.txt is built from.

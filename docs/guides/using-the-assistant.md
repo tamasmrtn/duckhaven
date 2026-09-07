@@ -46,9 +46,10 @@ own behaviour and can read any page of this documentation:
 - "Why does `information_schema.columns` show `__` for my table?"
 - "Can I set a snapshot retention policy?"
 
-When it opens a page to answer, the **Activity** list in the panel shows the `read_doc_page` call and the path it
-read, and the answer names that path. If the documentation does not cover something, it will say so rather than
-guessing — DuckHaven differs from other platforms in ways where a confident wrong answer is worse than none.
+When it looks something up, the **Activity** list in the panel shows the `search_docs` and `read_doc_page` calls and
+the path it read, and the answer names that path. If the documentation does not cover something, it will say so
+rather than guessing — DuckHaven differs from other platforms in ways where a confident wrong answer is worse than
+none.
 
 !!! note "It describes your version"
     The pages travel inside the DuckHaven image, so answers match the release you are running rather than the latest

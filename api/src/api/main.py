@@ -52,6 +52,7 @@ from api.routers.admin import storage as admin_storage
 from api.routers.admin import users as admin_users
 from api.services.agent_dispatch import drain_local_agents
 from api.services.assistant.identity import ASSISTANT_EMAIL
+from api.services.assistant.knowledge.sync import sync_corpus
 from api.services.bootstrap import ensure_assistant_service_account, seed_agent_bootstrap_token
 from api.services.oidc import register_oidc
 from api.services.polaris import (
@@ -102,6 +103,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             db, settings.agent_bootstrap_token, settings.agent_bootstrap_ttl_hours
         )
         await ensure_assistant_service_account(db)
+        # Load the shipped documentation into the search index. Keyed by a content
+        # hash, so this is a no-op on every boot that is not a new release, and
+        # best-effort: a replica must never fail to start over its docs cache.
+        await sync_corpus(db)
 
     # The assistant's account is fixed now. Settings ignores unknown env vars, so a
     # deployment still setting the old one would silently keep it and wonder why its

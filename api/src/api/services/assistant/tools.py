@@ -1,12 +1,18 @@
 """The assistant's tools: thin wrappers over the governed loopback gateway.
 
 Each tool is a plain async function; Pydantic AI derives its JSON schema from the
-signature and docstring. Every tool that reaches the user's data does so only
+signature and docstring. Every tool that touches a *user's* data does so only
 through :class:`~api.services.assistant.gateway.Gateway`, which goes through the
 governed REST API as the service account — never the database, DuckDB or Polaris
-directly. The documentation tools are the one exception, and they are not an
-exception to the rule that matters: they read a fixed, indexed set of files that
-ship with the image, and touch nothing the service account's grants govern.
+directly. That is what bounds the assistant to its grants.
+
+The documentation tools are the one exception, and only because there is nothing
+for the exception to bypass: ``docs/`` is ungoverned public content, identical to
+what the docs site serves, carrying no grants and no per-workspace visibility.
+They still get no database session. ``read_doc_page`` reads the shipped files,
+and ``search_docs`` receives a single bound callable
+(``AssistantDeps.docs_search``) rather than a session, so no tool gains general
+database access.
 """
 
 from __future__ import annotations
@@ -347,7 +353,44 @@ async def read_doc_page(ctx: RunContext[AssistantDeps], path: str) -> dict:
         return {"error": str(exc)}
 
 
-DOCS_TOOLS = (read_doc_page,)
+async def search_docs(ctx: RunContext[AssistantDeps], query: str, limit: int = 5) -> dict:
+    """Search DuckHaven's documentation for the pages that answer a question.
+
+    Use this for questions about DuckHaven itself when you do not already know
+    which page covers the topic — "how does time travel work?", "what storage
+    backends are supported?", "can I schedule a query?". It searches the full
+    text of every page, not just the titles listed in your instructions.
+
+    Returns ranked matches, each with the page ``path``, ``title``, a one-line
+    ``summary``, and a short ``excerpt`` showing where the words matched. The
+    excerpt is a fragment, not the answer — call ``read_doc_page`` on the best
+    match before answering anything specific.
+
+    Returns an empty ``results`` list when nothing matches. That is a real
+    answer: it means the documentation does not cover this, and you should say
+    so rather than filling the gap from general knowledge.
+
+    Args:
+        query: What to search for, in the user's own words.
+        limit: How many pages to return (default 5, maximum 10).
+    """
+    # Both permanent: no retry can wire up a backend or switch the feature on, so
+    # they answer rather than spending from the tool budget and ending the turn on
+    # a generic internal error. A failed *call* is different — it may be the query
+    # the model chose — so that one stays retryable.
+    if not ctx.deps.docs_enabled:
+        return {"error": "Documentation lookup is not enabled in this deployment."}
+    if ctx.deps.docs_search is None:
+        return {"error": "Documentation search is not available in this deployment."}
+    try:
+        results = await ctx.deps.docs_search(query, max(1, min(limit, 10)))
+    except Exception as exc:  # noqa: BLE001 — surfaced to the model, not the user
+        logger.warning("search_docs(%r) failed", query, exc_info=exc)
+        raise ModelRetry(f"Documentation search failed: {exc}") from exc
+    return {"results": results, "version": settings.app_version}
+
+
+DOCS_TOOLS = (read_doc_page, search_docs)
 
 ALL_TOOLS = [
     search_semantic,
@@ -364,6 +407,7 @@ ALL_TOOLS = [
     get_worksheet_selection,
     propose_sql_edit,
     read_doc_page,
+    search_docs,
 ]
 
 

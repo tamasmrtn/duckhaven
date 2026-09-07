@@ -34,6 +34,7 @@ const VERB_POOLS: Record<string, string[]> = {
     "Diving for rows…",
   ],
   explain_metric: ["Reading the definitions…", "Checking what counts…"],
+  read_doc_page: ["Leafing through the manual…", "Checking the handbook…"],
 };
 
 // Shown before the first tool call arrives, or for a tool with no dedicated pool.

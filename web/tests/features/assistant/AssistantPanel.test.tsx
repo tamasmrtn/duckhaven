@@ -286,6 +286,25 @@ describe("AssistantPanel", () => {
     expect(screen.getByText("run_sql")).toBeInTheDocument();
   });
 
+  it("shows which page a documentation call opened", async () => {
+    // Without the path the row reads "read_doc_page" and nothing else, which is
+    // what the guide describes the Activity list as showing.
+    const conv = CONVERSATIONS.find((c) => c.id === "conv-1")!;
+    conv.tool_calls[0] = {
+      ...conv.tool_calls[0],
+      tool: "read_doc_page",
+      args: { path: "reference/sql-support.md" },
+    };
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    await user.click(screen.getByRole("button", { name: /Activity \(1\)/ }));
+
+    expect(screen.getByText("reference/sql-support.md")).toBeInTheDocument();
+  });
+
   it("echoes the user's message immediately, before the reply streams in", async () => {
     const user = userEvent.setup();
     renderWithProviders({ initialRoute: ROUTE });

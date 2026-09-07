@@ -39,6 +39,13 @@ export function ToolCallCard({
       ? [call.args["metric"] as string]
       : [];
 
+  // Which page it opened is the whole content of a documentation call — without
+  // it the row reads "read_doc_page" and nothing else.
+  const docPath =
+    call.tool === "read_doc_page" && typeof call.args?.["path"] === "string"
+      ? (call.args["path"] as string)
+      : null;
+
   return (
     <div className="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2 text-xs">
       <div className="flex items-center gap-2">
@@ -75,6 +82,9 @@ export function ToolCallCard({
             {model}
           </Link>
         </p>
+      )}
+      {docPath && (
+        <p className="mt-1 font-mono text-text-secondary">{docPath}</p>
       )}
       {sql && (
         <pre className="mt-1 overflow-x-auto whitespace-pre-wrap font-mono text-[11px] text-text-secondary">

@@ -68,6 +68,12 @@ COPY api/alembic /app/alembic
 # former init-secrets one-shot, so the api service prepares its own secrets).
 COPY deploy/api-entrypoint.sh /usr/local/bin/api-entrypoint.sh
 
+# The documentation corpus, read by the assistant's read_doc_page tool (see
+# settings.assistant_docs_dir). Last of the copies because Markdown churns most
+# and would otherwise invalidate the migration, entrypoint and hardening layers.
+# Only the Markdown travels — .dockerignore holds back docs/images and friends.
+COPY docs /app/docs
+
 # Hardening: drop pip, purge perl-base, patch the base image, run as a
 # dedicated non-root user.
 # perl-base is marked Essential but nothing in this image depends on it, and

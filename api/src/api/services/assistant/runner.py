@@ -145,6 +145,29 @@ def _deferred_sql(call) -> str | None:
     return args.get("sql") if isinstance(args, dict) else None
 
 
+# Prompt context is optional, but the user is waiting on it: these lookups sit
+# between the request and the model's first token, and the gateway's own client
+# timeout is sized for SQL (minutes), not for three metadata reads.
+_ADVISORY_TIMEOUT_S = 5.0
+
+
+async def _advisory(name: str, coro):
+    """Resolve optional prompt context, or give up quietly.
+
+    Never fatal: a workspace whose advisory lookup fails gets the instructions of
+    a workspace without that feature, which is a state the prompt already handles.
+    Failing the turn instead would trade a slightly thinner prompt for no answer
+    at all — but it degrades what the assistant knows about the workspace, so it
+    is logged rather than swallowed.
+    """
+    try:
+        async with asyncio.timeout(_ADVISORY_TIMEOUT_S):
+            return await coro
+    except Exception:  # noqa: BLE001 — advisory context, never fatal
+        logger.warning("Assistant prompt context unavailable: %s", name, exc_info=True)
+        return None
+
+
 @contextlib.asynccontextmanager
 async def _turn_context(
     session_factory: async_sessionmaker[AsyncSession],
@@ -179,17 +202,14 @@ async def _turn_context(
                 byte_cap=settings.assistant_result_byte_cap,
                 service_account_id=str(service_account_id),
             )
-            # One cheap call, so the instructions can name this workspace's
-            # subject areas. Best-effort: if it fails the assistant simply runs
-            # without the semantic section rather than the turn failing, which is
-            # the same state a workspace with no models is in anyway.
-            summary: str | None = None
-            try:
-                published = await gateway.list_semantic_models()
-                if published:
-                    summary = format_summary(published)
-            except Exception:  # noqa: BLE001 — advisory context, never fatal
-                summary = None
+            # Three cheap lookups, so the instructions can describe what this
+            # workspace actually has. Concurrent because they are independent and
+            # the turn waits on all of them before the model sees anything.
+            published, storage_kinds, agent_count = await asyncio.gather(
+                _advisory("semantic models", gateway.list_semantic_models()),
+                _advisory("storage kinds", gateway.storage_kinds()),
+                _advisory("agent count", gateway.count_agents()),
+            )
 
             yield AssistantDeps(
                 gateway=gateway,
@@ -199,7 +219,11 @@ async def _turn_context(
                 service_account_id=service_account_id,
                 editor_sql=editor_sql,
                 selection_sql=selection_sql,
-                semantic_summary=summary,
+                semantic_summary=format_summary(published) if published else None,
+                storage_kinds=storage_kinds,
+                elastic_enabled=settings.elastic_compute_enabled,
+                docs_enabled=settings.assistant_docs_enabled,
+                agent_count=agent_count,
             )
 
 

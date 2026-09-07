@@ -137,6 +137,29 @@ class Gateway:
         resp = await self._get(f"/workspaces/{self._ws}/catalogs")
         return [{"slug": c["slug"], "name": c.get("name")} for c in resp.json()]
 
+    async def storage_kinds(self) -> tuple[str, ...]:
+        """Distinct storage-backend kinds behind this workspace's catalogs.
+
+        Its own call rather than a wider ``list_catalogs``: that one is a tool
+        result the model reads on most turns, and the backend kind is prompt
+        context, not something worth spending tokens on every time it browses.
+        """
+        resp = await self._get(f"/workspaces/{self._ws}/catalogs")
+        kinds = {c.get("storage_backend_kind") for c in resp.json()}
+        return tuple(sorted(k for k in kinds if k))
+
+    async def count_agents(self) -> int:
+        """How many compute agents are connected and dispatchable right now.
+
+        Counts by reported status, not rows: ``GET /agents`` lists every agent the
+        service account may target — including ones that are registered but not
+        currently connected, which it reports as ``unavailable`` — and on an
+        elastic deployment terminated agents are retained for reuse, so a row
+        count would keep growing while the usable fleet stayed at one.
+        """
+        resp = await self._get("/agents")
+        return sum(1 for agent in resp.json() if agent.get("status") == "healthy")
+
     async def list_schemas(self, catalog: str) -> list[str]:
         resp = await self._get(f"/workspaces/{self._ws}/catalogs/{catalog}/schemas")
         return [s["name"] for s in resp.json()]

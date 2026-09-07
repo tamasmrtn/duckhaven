@@ -340,11 +340,21 @@ async def test_a_broken_definition_is_not_silently_replaced():
 # ── Falling back, and staying out of the way ──────────────────────────────────
 
 
-async def test_with_no_semantic_models_the_instructions_are_unchanged():
-    """The deployment-safety property, stated as a test."""
+async def test_with_no_semantic_models_the_semantic_section_is_absent():
+    """The deployment-safety property, stated as a test.
+
+    Asserts the absence of the semantic paragraph rather than equality with
+    ``BASE_PROMPT``: the instructions legitimately carry other blocks now, so
+    equality would only restate how ``build_instructions`` happens to be built.
+    The baseline itself is pinned in ``test_prompts.py``.
+    """
     ctx = SimpleNamespace(deps=deps(StubGateway()))
 
-    assert build_instructions(ctx) == BASE_PROMPT
+    instructions = build_instructions(ctx)
+
+    assert instructions.startswith(BASE_PROMPT)
+    assert "curated semantic models" not in instructions
+    assert "search_semantic FIRST" not in instructions
 
 
 async def test_with_models_the_instructions_name_them():

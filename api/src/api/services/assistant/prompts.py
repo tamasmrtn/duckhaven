@@ -1,14 +1,15 @@
 """System instructions for the assistant.
 
-Built per run rather than held as a constant, because whether this workspace has
-curated semantic definitions changes what the assistant should do first — and the
-agent object is process-wide, shared across every workspace on the replica, so the
-difference cannot live in a module-level string.
+Built per run rather than held as a constant, because what this workspace has —
+curated semantic definitions, external storage, elastic compute, more than one
+agent — changes what the assistant should do first, and the agent object is
+process-wide, shared across every workspace on the replica, so the difference
+cannot live in a module-level string.
 
-The semantic paragraph is **omitted entirely** when a workspace has published
-nothing. That is the deployment-safety property: a DuckHaven that never defines a
-metric gets byte-for-byte the instructions it had before the semantic layer
-existed, so nothing about its assistant changes.
+Every conditional paragraph is **omitted entirely** when its feature is absent.
+That is the deployment-safety property, and it is the rule for all of them, not
+just the semantic one: a workspace without a feature gets no text about it — not
+a sentence saying the feature is off.
 """
 
 from __future__ import annotations
@@ -58,6 +59,54 @@ Governance you must respect:
 Be concise. Explain your findings and the SQL you ran."""
 
 
+# What DuckHaven *is*, as opposed to how to work in it. Resident rather than
+# fetched because each of these changes what the assistant does on an ordinary
+# turn: without the DESCRIBE rule it writes information_schema.columns and gets a
+# placeholder row back, and without the allowlist it proposes statements the API
+# rejects before an agent ever sees them.
+PRODUCT_PROMPT = """\
+
+About DuckHaven, the product you run inside:
+- Queries run on DuckDB against Apache Iceberg tables in Polaris REST catalogs.
+  The dialect is DuckDB's. Address tables as catalog.schema.table; an unqualified
+  schema.table resolves against the worksheet's active catalog.
+- Get a table's columns and types with describe_table, or DESCRIBE in SQL. Do not
+  use information_schema.columns: for Iceberg tables it returns one placeholder
+  row (column "__", type UNKNOWN) instead of the real columns, and inside a SQL
+  session it is worse than empty — correct for tables already touched in that
+  session, placeholders for the rest. This is a known DuckDB limitation, not
+  something an upgrade will fix. information_schema.tables and .schemata do work
+  for listing, but are rejected outright in any workspace holding a catalog
+  attached in scoped mode.
+- Time travel is read-only, via DuckDB's AT clause:
+    SELECT * FROM analytics.events AT (VERSION => 7287998166701990000);
+    SELECT * FROM analytics.events AT (TIMESTAMP => '2026-05-01 00:00:00');
+  Snapshot history and file details come from iceberg_snapshots(...) and
+  iceberg_metadata(...). DuckHaven does not expire, roll back, or compact
+  snapshots.
+- Statements outside the allowlist are rejected before reaching an agent:
+  ATTACH/DETACH, COPY/EXPORT, INSTALL/LOAD, SET, CALL, EXPLAIN, VACUUM,
+  transaction control, and the PRAGMA <name> = <value> form. DESCRIBE, SHOW,
+  SUMMARIZE and the row-returning PRAGMAs are allowed and return a result grid.
+  The one exception to the SET rejection is DuckHaven's own control command,
+  SET duckhaven_concurrency = '<profile>' (and RESET duckhaven_concurrency),
+  which is intercepted before the guard and retunes the selected agent.
+- Values you receive are not always exact: DECIMAL and HUGEINT arrive as JSON
+  numbers that have passed through a float, so never present them as exact;
+  BLOB arrives as hex text and INTERVAL as an ISO-8601 duration. The reported
+  column type is always the query's real type.
+- On Iceberg, TRUNCATE is not a cheap metadata operation — it writes delete
+  files proportional to the table's size, exactly as the equivalent DELETE does.
+
+Answering questions about DuckHaven itself:
+- Answer from this section, never from general knowledge of other data platforms
+  — DuckHaven differs from them in ways that matter.
+- If you do not know, say so and say what you would need to check. Never infer
+  that a feature exists because comparable products have it.
+- Where something is experimental, unshipped, or a roadmap item, say so in those
+  words rather than describing it as available."""
+
+
 SEMANTIC_PROMPT = """\
 
 This workspace has curated semantic models — agreed definitions of what its
@@ -86,17 +135,97 @@ business terms mean:
   for it — a metric that exists and is broken needs repairing, not reinventing."""
 
 
-# The static prompt, kept as the exact text used when a workspace has no semantic
-# models. Imported by tests that assert the no-semantics path is unchanged.
+STORAGE_PROMPT = """\
+
+This workspace reaches external object storage ({kinds}). Credentials are never
+static: Polaris vends short-lived, connection-scoped credentials per query — an
+AWS role assumed via STS, or an Azure SAS minted through a consented Entra app.
+If storage access fails, say the vended credential or the trust configuration is
+at fault; never suggest putting keys in a query."""
+
+
+ELASTIC_PROMPT = """\
+
+This deployment has elastic compute: agents are provisioned on demand and
+terminated when idle. A query may wait while one starts. If the user asks why a
+query is queued or why an agent went away, that is expected behaviour rather
+than a fault."""
+
+
+# No count: fleet size changes between turns, and a number in the instructions
+# would be stale by the time the model acted on it. What the assistant needs is
+# that there is more than one, which is what makes the choice worth mentioning.
+FLEET_PROMPT = """\
+
+Several compute agents are available. The user picks which one runs each query
+from the worksheet's engine picker — there is no cost-based routing or query
+planner choosing between them."""
+
+
+# The bundled MinIO object store is the default and needs no explanation; every
+# other backend vends its credentials from somewhere else, which changes what the
+# assistant should say when access fails. Named as an exclusion rather than an
+# allowlist so a backend kind added later gets the paragraph by default.
+_BUNDLED_STORAGE = frozenset({"object_store"})
+
+
+# Alias for BASE_PROMPT, kept for importers that predate the injectors.
 SYSTEM_PROMPT = BASE_PROMPT
 
 
-def build_instructions(ctx: RunContext[AssistantDeps]) -> str:
-    """Assemble this run's instructions from the workspace's semantic summary."""
-    summary = getattr(ctx.deps, "semantic_summary", None)
+def _semantic_block(deps: AssistantDeps) -> str | None:
+    summary = getattr(deps, "semantic_summary", None)
     if not summary:
-        return BASE_PROMPT
-    return BASE_PROMPT + "\n" + SEMANTIC_PROMPT.format(models=summary)
+        return None
+    return SEMANTIC_PROMPT.format(models=summary)
+
+
+def _storage_block(deps: AssistantDeps) -> str | None:
+    kinds = sorted(set(deps.storage_kinds or ()) - _BUNDLED_STORAGE)
+    if not kinds:
+        return None
+    return STORAGE_PROMPT.format(kinds=", ".join(kinds))
+
+
+def _elastic_block(deps: AssistantDeps) -> str | None:
+    return ELASTIC_PROMPT if deps.elastic_enabled else None
+
+
+def _fleet_block(deps: AssistantDeps) -> str | None:
+    # One agent is the ordinary case and needs no explanation — there is nothing
+    # for a worksheet to choose between.
+    if not deps.agent_count or deps.agent_count < 2:
+        return None
+    return FLEET_PROMPT
+
+
+_INJECTORS = (_semantic_block, _storage_block, _elastic_block, _fleet_block)
+
+
+def build_instructions(ctx: RunContext[AssistantDeps]) -> str:
+    """Assemble this run's instructions from what this workspace actually has.
+
+    Order is fixed rather than data-dependent, so a workspace whose features have
+    not changed produces a byte-identical prompt on every turn — instructions that
+    reshuffle between turns are needlessly hard to debug.
+
+    A pure function of its ``RunContext``: everything it varies on arrives through
+    ``deps``, including the deployment-level toggles, so the process-wide agent can
+    serve every workspace on the replica.
+    """
+    parts = [BASE_PROMPT]
+    if ctx.deps.docs_enabled:
+        parts.append(PRODUCT_PROMPT)
+    parts.extend(block for render in _INJECTORS if (block := render(ctx.deps)))
+    return "\n".join(parts)
+
+
+# Model names and descriptions are user-supplied and unbounded, so both the line
+# count and the line width are capped: this is the only part of the resident
+# instructions a workspace can grow, and the budget assertions are worth nothing
+# without a worst case to assert against.
+MAX_SUMMARY_MODELS = 20
+MAX_SUMMARY_LINE_CHARS = 120
 
 
 def format_summary(models: list[dict]) -> str:
@@ -108,8 +237,11 @@ def format_summary(models: list[dict]) -> str:
     they are fetched only when relevant.
     """
     lines = []
-    for model in models[:20]:
+    for model in models[:MAX_SUMMARY_MODELS]:
         description = (model.get("description") or "").strip().splitlines()
         summary = f" — {description[0]}" if description else ""
-        lines.append(f"  - {model['model']} ({model.get('metrics', 0)} metrics){summary}")
+        line = f"  - {model['model']} ({model.get('metrics', 0)} metrics){summary}"
+        if len(line) > MAX_SUMMARY_LINE_CHARS:
+            line = line[: MAX_SUMMARY_LINE_CHARS - 1] + "…"
+        lines.append(line)
     return "\n".join(lines)

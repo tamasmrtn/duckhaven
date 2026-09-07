@@ -170,6 +170,12 @@ class CaseScore:
     faithfulness: float
     relevancy: float
     reason: str
+    # What the assistant actually did. Kept so a failing run explains itself:
+    # the aggregate names the case that failed and nothing else, and re-running
+    # to find out is both slow and not guaranteed to reproduce.
+    answer: str = ""
+    tools_called: tuple[str, ...] = ()
+    doc_paths: tuple[str, ...] = ()
 
 
 def _context(case: Case, result: RunResult) -> str:
@@ -202,6 +208,9 @@ async def score_absolute(case: Case, result: RunResult) -> CaseScore:
         faithfulness=float(faithful.score),
         relevancy=float(relevant.score),
         reason=faithful.reason,
+        answer=result.answer,
+        tools_called=tuple(result.tools_called),
+        doc_paths=tuple(result.doc_paths),
     )
 
 
@@ -271,6 +280,21 @@ def summarise_scores(scores: list[CaseScore]) -> dict:
 
     confabulated = [s.case for s in scores if s.negative and s.faithfulness <= 1.0]
     return {
+        "outcomes": [
+            {
+                "case": s.case,
+                "category": s.category,
+                "provenance": s.provenance,
+                "negative": s.negative,
+                "faithfulness": s.faithfulness,
+                "relevancy": s.relevancy,
+                "reason": s.reason,
+                "tools_called": list(s.tools_called),
+                "doc_paths": list(s.doc_paths),
+                "answer": s.answer,
+            }
+            for s in scores
+        ],
         "cases": len(scores),
         "faithfulness": mean([s.faithfulness for s in scores]),
         "relevancy": mean([s.relevancy for s in scores]),

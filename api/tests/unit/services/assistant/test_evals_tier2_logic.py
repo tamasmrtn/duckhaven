@@ -232,3 +232,30 @@ def test_the_pairwise_rubric_ranks_correctness_above_everything():
 def test_the_judge_is_pinned_and_deterministic():
     assert judge.JUDGE_MODEL
     assert judge.JUDGE_SETTINGS.get("temperature") == 0.0
+
+
+def test_the_summary_keeps_what_each_case_actually_did():
+    """The aggregate names a failing case and nothing else. Without the answer
+    and the tool calls beside it, finding out why means re-running — slowly, and
+    with no guarantee the assistant makes the same choices twice."""
+    scores = [
+        judge.CaseScore(
+            case="revenue_by_region",
+            category="semantic_routing",
+            provenance="hand",
+            negative=False,
+            faithfulness=4.0,
+            relevancy=5.0,
+            reason="grounded",
+            answer="Revenue by region is …",
+            tools_called=("search_semantic", "query_metric"),
+            doc_paths=("concepts/semantic-layer.md",),
+        )
+    ]
+
+    outcome = judge.summarise_scores(scores)["outcomes"][0]
+
+    assert outcome["case"] == "revenue_by_region"
+    assert outcome["tools_called"] == ["search_semantic", "query_metric"]
+    assert outcome["doc_paths"] == ["concepts/semantic-layer.md"]
+    assert outcome["answer"].startswith("Revenue by region")

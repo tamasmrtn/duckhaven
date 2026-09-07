@@ -5,17 +5,13 @@ what is worth keeping into ``cases.yaml``. Nothing is added to the golden set
 automatically, and that is the point — the synthesiser buys breadth cheaply, it
 does not decide what the assistant is measured against.
 
-Two rules constrain it, both because a synthesised question is weaker evidence
-than a written one:
-
-- Cases are marked ``provenance: auto`` and scored as their own slice. A question
-  written *from* a page is trivially answerable by a system that retrieved that
-  page, so mixing the slices would flatter the index. The retrieval suite already
-  shows the gap — auto cases outscore hand-written ones.
-- It never drafts a **negative** case. A refusal case asserts that something does
-  not exist, which requires knowing the whole product; a model shown one page can
-  only invent that, and an invented negative is worse than no negative because it
-  will be trusted.
+Two rules, both because a synthesised question is weaker evidence than a written
+one. Cases are marked ``provenance: auto`` and scored as their own slice, since a
+question written *from* a page is trivially answerable by a system that retrieved
+it. And it never drafts a **negative** case: asserting that something does not
+exist requires knowing the whole product, so a model shown one page can only
+invent it, and an invented negative is worse than none because it will be
+trusted.
 
 Costs a model call per page, so it is a deliberate act, not part of any suite.
 """
@@ -34,9 +30,8 @@ from api.services.assistant.knowledge.loader import docs_dir, load_index
 
 CANDIDATES_PATH = Path(__file__).with_name("cases.candidate.yaml")
 
-# Only sections whose pages answer "what does the product do", which is what the
-# assistant is asked. Deployment and operations pages answer an operator's
-# questions and belong in the set only once somebody actually asks one.
+# Deployment and operations pages answer an operator's questions, and belong in
+# the set only once somebody actually asks one.
 SYNTHESISABLE_SECTIONS = ("Concepts", "Guides", "Reference", "Getting started")
 
 PROMPT = """\

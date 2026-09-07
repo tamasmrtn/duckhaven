@@ -118,3 +118,44 @@ class TestAuditRecordsTables:
         record = ctx.deps.records["call-1"]
         assert record.status == "error"
         assert record.tables is None
+
+
+class TestDocsSearchDetail:
+    """``detail="no_results"`` is the feedback miner's strongest signal: it drafts
+    each one as a case asserting DuckHaven cannot answer the question. It must
+    therefore mean a search that ran and matched nothing, never a search that
+    could not run."""
+
+    async def test_an_empty_search_is_stamped(self):
+        async def handler(_args):
+            return {"results": [], "version": "1.0"}
+
+        _, record = await _run_audit(
+            _ctx(), tool_name="search_docs", args={"query": "graphql"}, handler=handler
+        )
+
+        assert record.detail == "no_results"
+
+    async def test_a_search_with_hits_is_not_stamped(self):
+        async def handler(_args):
+            return {"results": [{"path": "a.md"}], "version": "1.0"}
+
+        _, record = await _run_audit(
+            _ctx(), tool_name="search_docs", args={"query": "time travel"}, handler=handler
+        )
+
+        assert record.detail is None
+
+    async def test_an_unavailable_backend_is_not_stamped_as_an_empty_search(self):
+        """search_docs answers a permanent failure with an error rather than
+        retrying. Reading that as "no results" would brand every question in a
+        broken deployment as one the documentation cannot answer."""
+
+        async def handler(_args):
+            return {"error": "Documentation search is not available in this deployment."}
+
+        _, record = await _run_audit(
+            _ctx(), tool_name="search_docs", args={"query": "anything"}, handler=handler
+        )
+
+        assert record.detail is None

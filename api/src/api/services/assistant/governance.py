@@ -118,7 +118,11 @@ async def _audit(
         # answer is "the docs do not cover this". But it is the clearest signal
         # of a question DuckHaven cannot answer, and it is only mineable later if
         # it lands on the row rather than staying in the reply the model saw.
-        if call.tool_name == "search_docs" and not result.get("results"):
+        # "results" must be present: search_docs answers an unavailable backend
+        # with an {"error": ...} dict, and reading that as an empty search would
+        # brand every question in a broken deployment as one the docs cannot
+        # answer — which is what the feedback miner turns into negative cases.
+        if call.tool_name == "search_docs" and "results" in result and not result["results"]:
             record.detail = "no_results"
     record.latency_ms = int((time.monotonic() - record.started) * 1000)
     return result

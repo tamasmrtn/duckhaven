@@ -94,3 +94,23 @@ async def test_get_query_result_allows_own_query():
 def test_translate_other_codes(code, prefix):
     err = _translate(_status_error(code, {"detail": "x"}))
     assert prefix in str(err)
+
+
+@respx.mock
+async def test_count_agents_counts_only_the_ones_that_can_run_a_query():
+    """``GET /agents`` lists registered agents, reporting disconnected ones as
+    ``unavailable``. Counting rows would tell the prompt a fleet exists that
+    cannot take a query — and on an elastic deployment terminated agents are kept
+    for reuse, so the row count grows while the usable fleet stays at one."""
+    respx.get("http://assistant.internal/agents").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"id": "a", "status": "healthy"},
+                {"id": "b", "status": "unavailable"},
+                {"id": "c", "status": "healthy"},
+            ],
+        )
+    )
+    async with httpx.AsyncClient(base_url="http://assistant.internal") as client:
+        assert await _gateway(client=client).count_agents() == 2

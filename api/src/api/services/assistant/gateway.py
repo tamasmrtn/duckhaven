@@ -149,9 +149,16 @@ class Gateway:
         return tuple(sorted(k for k in kinds if k))
 
     async def count_agents(self) -> int:
-        """How many compute agents this workspace can dispatch to."""
+        """How many compute agents are connected and dispatchable right now.
+
+        Counts by reported status, not rows: ``GET /agents`` lists every agent the
+        service account may target — including ones that are registered but not
+        currently connected, which it reports as ``unavailable`` — and on an
+        elastic deployment terminated agents are retained for reuse, so a row
+        count would keep growing while the usable fleet stayed at one.
+        """
         resp = await self._get("/agents")
-        return len(resp.json())
+        return sum(1 for agent in resp.json() if agent.get("status") == "healthy")
 
     async def list_schemas(self, catalog: str) -> list[str]:
         resp = await self._get(f"/workspaces/{self._ws}/catalogs/{catalog}/schemas")

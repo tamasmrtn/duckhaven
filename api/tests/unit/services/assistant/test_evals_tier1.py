@@ -456,8 +456,17 @@ def test_an_arm_can_override_only_the_model():
     from api.services.assistant.agent import _build_model
     from tests.evals.harness import _arm_settings
 
-    with _arm_settings(ArmConfig.load("cheaper-model")):
-        assert _build_model().model_name == "gpt-oss:120b-cloud"
+    parent = ArmConfig.load("with-docs")
+    arm = ArmConfig.load("cheaper-model")
+
+    assert arm.model != parent.model
+    assert (arm.openai_base_url, arm.docs_enabled, arm.workspace) == (
+        parent.openai_base_url,
+        parent.docs_enabled,
+        parent.workspace,
+    )
+    with _arm_settings(arm):
+        assert _build_model().model_name == arm.model
 
 
 def test_an_arm_restores_every_setting_it_touched():

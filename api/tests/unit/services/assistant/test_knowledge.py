@@ -17,6 +17,8 @@ from api.services.assistant.knowledge import generate
 from api.services.assistant.knowledge.loader import (
     INDEX_PATH,
     DocsUnavailableError,
+    PageNotIndexed,
+    docs_available,
     load_index,
     page_url,
     read_page,
@@ -50,11 +52,23 @@ def test_every_indexed_path_resolves_to_a_real_page():
     assert missing == []
 
 
-def test_every_navigable_page_is_indexed():
-    """The other direction: a new page must not be silently absent."""
-    discovered = {p.path for p in generate.discover(DOCS_DIR, REPO_ROOT / "mkdocs.yml")}
+def test_every_page_in_the_docs_tree_is_indexed():
+    """The other direction, and it must read ``docs/`` rather than the nav.
 
-    assert discovered == set(load_index().paths)
+    The index is derived from ``mkdocs.yml``'s nav, so comparing it against
+    another nav walk compares the generator with itself and passes no matter what
+    is on disk. A page written but never added to nav is the drift this whole
+    feature exists to prevent, and mkdocs will not catch it either: its
+    ``nav.omitted_files`` default is ``info``, which ``--strict`` does not
+    promote to an error.
+    """
+    on_disk = {
+        str(p.relative_to(DOCS_DIR))
+        for p in DOCS_DIR.rglob("*.md")
+        if generate._is_indexed(str(p.relative_to(DOCS_DIR)))
+    }
+
+    assert on_disk == set(load_index().paths)
 
 
 def test_contributor_docs_are_left_out():
@@ -113,10 +127,64 @@ def test_a_page_missing_from_the_index_gets_a_derived_summary():
         ("# T\n\nUse `DESCRIBE` instead.", "Use DESCRIBE instead."),
         ("# T\n\n!!! note\n    Skipped.\n\nThe real lead.", "The real lead."),
         ("# T\n\n## Straight to a heading", ""),
+        # A bold or italic lead is prose, not a list item.
+        ("# T\n\n**DuckHaven** is a platform. More.", "DuckHaven is a platform."),
+        ("# T\n\n*Note* this describes storage.", "Note this describes storage."),
+        ("# T\n\n- a list item\n\nThe real lead.", "The real lead."),
+        # snake_case is an identifier, not emphasis — this docs set is full of them.
+        ("# T\n\nSet `assistant_docs_dir` first.", "Set assistant_docs_dir first."),
+        ("# T\n\nThe ASSISTANT_DOCS_ENABLED flag. Next.", "The ASSISTANT_DOCS_ENABLED flag."),
+        # An abbreviation is not the end of a sentence.
+        ("# T\n\nSee e.g. the guide. Next.", "See e.g. the guide."),
+        (
+            "# T\n\nSnapshots, tables, etc. are covered. Next.",
+            "Snapshots, tables, etc. are covered.",
+        ),
     ],
 )
 def test_summaries_are_reduced_to_one_plain_line(body, expected):
     assert generate.summarise(body) == expected
+
+
+def test_llms_txt_matches_what_the_generator_produces():
+    """The published index for other people's models. It has no unit of its own
+    otherwise, and the pre-commit hook that regenerates it does not run in CI."""
+    committed = yaml.safe_load(INDEX_PATH.read_text())
+    pages = generate.merge(generate.discover(DOCS_DIR, REPO_ROOT / "mkdocs.yml"), committed)
+    site_url = yaml.load(
+        (REPO_ROOT / "mkdocs.yml").read_text(), Loader=generate._TagIgnoringLoader
+    )["site_url"]
+
+    rendered = generate.render_llms_txt(pages, committed.get("intro", ""), site_url)
+
+    assert rendered == (DOCS_DIR / "llms.txt").read_text()
+
+
+def test_a_nav_entry_with_no_title_takes_the_pages_h1(tmp_path):
+    """MkDocs accepts a bare `- guides/foo.md`; this used to raise AttributeError
+    from the middle of `make docs-index`."""
+    docs = tmp_path / "docs"
+    (docs / "guides").mkdir(parents=True)
+    (docs / "guides" / "foo.md").write_text("# Foo the page\n\nA lead sentence.\n")
+    mkdocs = tmp_path / "mkdocs.yml"
+    mkdocs.write_text("site_url: https://x/\nnav:\n  - Guides:\n    - guides/foo.md\n")
+
+    (page,) = generate.discover(docs, mkdocs)
+
+    assert (page.title, page.section) == ("Foo the page", "Guides")
+
+
+def test_a_third_nav_level_is_not_dropped(tmp_path):
+    """A nested subtree used to be skipped whole, silently taking its pages out."""
+    docs = tmp_path / "docs"
+    (docs / "guides").mkdir(parents=True)
+    (docs / "guides" / "deep.md").write_text("# Deep\n\nA lead sentence.\n")
+    mkdocs = tmp_path / "mkdocs.yml"
+    mkdocs.write_text(
+        "site_url: https://x/\nnav:\n  - Guides:\n    - Sub:\n      - Deep: guides/deep.md\n"
+    )
+
+    assert [p.path for p in generate.discover(docs, mkdocs)] == ["guides/deep.md"]
 
 
 # ── Reading a page ────────────────────────────────────────────────────────────
@@ -137,14 +205,14 @@ def test_an_oversized_page_is_truncated_with_a_pointer(monkeypatch):
     result = read_page("concepts/architecture.md")
 
     assert result["truncated"] is True
-    assert len(result["text"]) < 800
-    assert "[truncated — full page at https://" in result["text"]
+    assert "characters are not shown" in result["text"]
+    assert page_url("concepts/architecture.md") in result["text"]
 
 
 def test_an_unindexed_path_is_refused():
     """The index is the allowlist, which is what makes traversal unreachable."""
     for path in ("developer/testing.md", "../../etc/passwd", "/etc/passwd", "nope.md"):
-        with pytest.raises(KeyError):
+        with pytest.raises(PageNotIndexed):
             read_page(path)
 
 
@@ -176,3 +244,25 @@ def test_pages_are_cited_at_the_published_url():
     assert page_url("reference/sql-support.md") == (
         "https://tamasmrtn.github.io/duckhaven/reference/sql-support/"
     )
+
+
+def test_an_index_that_parses_but_lists_nothing_is_an_error(monkeypatch, tmp_path):
+    """A truncated write or a bad merge parses fine and yields zero pages. Read
+    as success it produces an instructions block telling the model to call
+    read_doc_page "with one of these exact paths:" and then listing none."""
+    empty = tmp_path / "docs_index.yaml"
+    empty.write_text("intro: hello\npages: []\n")
+    monkeypatch.setattr("api.services.assistant.knowledge.loader.INDEX_PATH", empty)
+    load_index.cache_clear()
+
+    with pytest.raises(DocsUnavailableError):
+        load_index()
+
+
+def test_an_empty_index_takes_the_docs_feature_out_rather_than_half_on(monkeypatch, tmp_path):
+    empty = tmp_path / "docs_index.yaml"
+    empty.write_text("pages: []\n")
+    monkeypatch.setattr("api.services.assistant.knowledge.loader.INDEX_PATH", empty)
+    load_index.cache_clear()
+
+    assert docs_available() is False

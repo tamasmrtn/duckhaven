@@ -40,7 +40,7 @@ repos:
         name: docs index is current
         language: system
         entry: bash -c 'make docs-index >/dev/null && git diff --exit-code -- api/src/api/services/assistant/knowledge/docs_index.yaml docs/llms.txt || { echo "The docs index was stale and has been regenerated in your working tree. Review the changes and git add them, then commit again."; exit 1; }'
-        files: ^(docs/.*\.md|mkdocs\.yml|api/src/api/services/assistant/knowledge/generate\.py)$
+        files: ^(docs/.*\.md|docs/llms\.txt|mkdocs\.yml|api/src/api/services/assistant/knowledge/(generate|docs_index)\.(py|yaml))$
         pass_filenames: false
 
       - id: prettier

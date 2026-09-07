@@ -18,6 +18,7 @@ jobs:
       pull-requests: read
     outputs:
       python: ${{ steps.filter.outputs.python }}
+      docs: ${{ steps.filter.outputs.docs }}
       web: ${{ steps.filter.outputs.web }}
       e2e: ${{ steps.filter.outputs.e2e }}
       infra: ${{ steps.filter.outputs.infra }}
@@ -37,10 +38,11 @@ jobs:
               - 'uv.lock'
               - 'Makefile'
               - '.github/workflows/ci.yml'
-              # The assistant reads docs/ at runtime and ships a generated index
-              # of it, so a docs-only PR can break Python tests and must run
-              # them — without this the index drift gate never fires on exactly
-              # the changes that cause drift.
+            # The assistant ships a generated index of docs/, so a docs-only PR
+            # can break the drift gate. Its own output rather than folding into
+            # `python`: that one also gates the integration and cross-component
+            # jobs, and a Markdown typo does not need Postgres, Polaris and MinIO.
+            docs:
               - 'docs/**'
               - 'mkdocs.yml'
             web:
@@ -76,7 +78,9 @@ jobs:
     name: Python tests
     runs-on: ubuntu-latest
     needs: [changes]
-    if: needs.changes.outputs.python == 'true'
+    # Also on docs changes: this job carries the index drift gate, and the
+    # pre-commit hook that would otherwise catch it does not run in CI.
+    if: needs.changes.outputs.python == 'true' || needs.changes.outputs.docs == 'true'
     permissions:
       pull-requests: write
     services:

@@ -9,10 +9,12 @@ Run with ``make docs-index``. Emits two files from one source of truth:
   hand-maintained file that had drifted to listing 31 of 69 pages.
 
 Titles, sections and ordering come from ``mkdocs.yml``'s nav rather than from the
-files, because the nav is what a reader actually sees and ``mkdocs build
---strict`` already guarantees it lists every page. Summaries are derived from
-each page's opening paragraph and then **preserved across regeneration**, so a
-hand-tuned one is never clobbered by a mechanical guess.
+files, because the nav is what a reader actually sees. That does mean a page
+absent from the nav is absent from the index, and mkdocs will not complain —
+``validation.nav.omitted_files`` defaults to ``info``, which ``--strict`` does
+not promote — so the drift test reads ``docs/`` directly rather than trusting
+this walk. Summaries are derived from each page's opening paragraph and then
+**preserved across regeneration**, so a hand-tuned one is never clobbered.
 
 Deliberately records no version or commit: the index would then change on every
 commit and the drift gate would fire constantly. The running version is stamped
@@ -22,10 +24,11 @@ at read time from ``settings.app_version`` instead.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
+
+from api.services.assistant.knowledge.loader import Page
 
 # Contributor documentation answers questions about working *on* DuckHaven, not
 # about using it, and the release notes date instantly. Excluding them keeps the
@@ -38,8 +41,8 @@ INDEX_PATH = Path(__file__).with_name("docs_index.yaml")
 
 
 def _repo_root() -> Path:
-    """Walk up to the checkout. This is a dev tool — it never runs in the image,
-    where the module lives in site-packages and there is no repository above it."""
+    """Walk up to the checkout. Only the generator and its tests need this; the
+    running image reads the index from the package and the bodies from /app/docs."""
     for candidate in Path(__file__).resolve().parents:
         if (candidate / "mkdocs.yml").is_file():
             return candidate
@@ -47,17 +50,20 @@ def _repo_root() -> Path:
 
 
 _LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")
-_INLINE_MARKUP = re.compile(r"[*_]{1,2}([^*_]+)[*_]{1,2}")
-_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+# Emphasis only where Markdown itself would see it: a delimiter flanked by word
+# characters is part of an identifier, and `assistant_docs_dir` must not come out
+# as "assistantdocsdir" in a documentation set full of snake_case settings.
+_INLINE_MARKUP = re.compile(r"(?<!\w)([*_]{1,2})(?=\S)(.+?)(?<=\S)\1(?!\w)")
+# A sentence ends at .!? followed by space — unless what precedes it is an
+# abbreviation or an initial, which would cut "See e.g. the guide" to "See e.g."
+_SENTENCE_END = re.compile(
+    r"(?<![A-Z]\.)(?<!\be\.g\.)(?<!\bi\.e\.)(?<!\betc\.)(?<!\bvs\.)(?<=[.!?])\s+"
+)
 _SUMMARY_MAX = 180
-
-
-@dataclass(frozen=True)
-class Page:
-    path: str  # repo-relative to docs/, e.g. "reference/sql-support.md"
-    title: str  # the nav title, which is what a reader sees
-    section: str
-    summary: str
+# Lines that are structure rather than prose. Bullets are a marker *followed by
+# space*: "**DuckHaven** is…" is a lead paragraph, not a list.
+_SKIP_PREFIXES = ("#", "---", "!!!", "|", "<", ">", "```")
+_BULLETS = ("- ", "* ", "+ ")
 
 
 class _TagIgnoringLoader(yaml.SafeLoader):
@@ -93,7 +99,8 @@ def summarise(body: str) -> str:
             if (
                 not stripped
                 or line[:1].isspace()
-                or stripped.startswith(("#", "---", "!!!", "|", "<", ">", "-", "*", "```"))
+                or stripped.startswith(_SKIP_PREFIXES)
+                or stripped.startswith(_BULLETS)
             ):
                 continue
         if not stripped:
@@ -101,36 +108,50 @@ def summarise(body: str) -> str:
         paragraph.append(stripped)
     text = " ".join(paragraph)
     text = _LINK.sub(r"\1", text)
-    text = _INLINE_MARKUP.sub(r"\1", text)
+    text = _INLINE_MARKUP.sub(r"\2", text)
     text = text.replace("`", "").strip()
     if not text:
         return ""
-    # Prefer a whole first sentence; fall back to a word-boundary truncation.
     first = _SENTENCE_END.split(text)[0]
     if len(first) <= _SUMMARY_MAX:
         return first
     return text[:_SUMMARY_MAX].rsplit(" ", 1)[0].rstrip(",;:") + "…"
 
 
+_H1 = re.compile(r"^#\s+(.+)$", re.MULTILINE)
+
+
+def _walk(nav: list, section: str) -> list[tuple[str, str | None, str]]:
+    """Flatten a nav to ``(path, title, section)``, at any nesting depth.
+
+    Every shape MkDocs accepts, because the alternatives are worse than the few
+    lines: a bare ``- guides/foo.md`` entry used to raise ``AttributeError`` from
+    the middle of ``make docs-index``, and a third nav level was skipped whole,
+    silently taking its pages out of the index.
+    """
+    found: list[tuple[str, str | None, str]] = []
+    for entry in nav:
+        if isinstance(entry, str):
+            found.append((entry, None, section))
+        elif isinstance(entry, dict):
+            for title, value in entry.items():
+                if isinstance(value, str):
+                    found.append((value, title, section or title))
+                elif isinstance(value, list):
+                    found += _walk(value, section or title)
+    return found
+
+
 def discover(docs_dir: Path, mkdocs_yml: Path) -> list[Page]:
-    """Every navigable page, in nav order, with a derived summary."""
-    config = yaml.load(mkdocs_yml.read_text(), Loader=_TagIgnoringLoader)
+    config = yaml.load(mkdocs_yml.read_text(encoding="utf-8"), Loader=_TagIgnoringLoader)
     pages: list[Page] = []
-    for entry in config["nav"]:
-        ((section, value),) = entry.items()
-        children = [{section: value}] if isinstance(value, str) else value
-        for child in children:
-            ((title, path),) = child.items()
-            if not isinstance(path, str) or not _is_indexed(path):
-                continue
-            pages.append(
-                Page(
-                    path=path,
-                    title=title,
-                    section=section,
-                    summary=summarise((docs_dir / path).read_text()),
-                )
-            )
+    for path, title, section in _walk(config["nav"], ""):
+        if not _is_indexed(path):
+            continue
+        body = (docs_dir / path).read_text(encoding="utf-8")
+        # A bare nav entry carries no title; MkDocs falls back to the page's H1.
+        heading = title or (m.group(1).strip() if (m := _H1.search(body)) else Path(path).stem)
+        pages.append(Page(path=path, title=heading, section=section, summary=summarise(body)))
     return pages
 
 
@@ -141,7 +162,7 @@ def merge(discovered: list[Page], existing: dict) -> list[Page]:
 
 
 class _IndexDumper(yaml.SafeDumper):
-    """Writes multi-line strings as block scalars, so the intro stays readable."""
+    pass
 
 
 _IndexDumper.add_representer(
@@ -175,7 +196,6 @@ def render_index(pages: list[Page], intro: str) -> str:
 
 
 def render_llms_txt(pages: list[Page], intro: str, site_url: str) -> str:
-    """The same index in the llms.txt convention, grouped by nav section."""
     out = ["# DuckHaven", ""]
     out += [f"> {line}" for line in intro.strip().splitlines()]
     section = None

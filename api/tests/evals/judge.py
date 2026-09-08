@@ -167,9 +167,19 @@ class CaseScore:
     category: str
     provenance: str
     negative: bool
+    # Whether the case names documentation the answer can be checked against.
+    # Faithfulness is groundedness in retrieved context, so on a case with no
+    # such context it is not a weak signal, it is the wrong question.
+    grounded: bool
     faithfulness: float
     relevancy: float
     reason: str
+    # What the assistant actually did. Kept so a failing run explains itself:
+    # the aggregate names the case that failed and nothing else, and re-running
+    # to find out is both slow and not guaranteed to reproduce.
+    answer: str = ""
+    tools_called: tuple[str, ...] = ()
+    doc_paths: tuple[str, ...] = ()
 
 
 def _context(case: Case, result: RunResult) -> str:
@@ -199,9 +209,13 @@ async def score_absolute(case: Case, result: RunResult) -> CaseScore:
         category=case.category,
         provenance=case.provenance,
         negative=case.negative,
+        grounded=bool(case.doc_sources),
         faithfulness=float(faithful.score),
         relevancy=float(relevant.score),
         reason=faithful.reason,
+        answer=result.answer,
+        tools_called=tuple(result.tools_called),
+        doc_paths=tuple(result.doc_paths),
     )
 
 
@@ -253,11 +267,23 @@ def resolve_pair(shown_a_first: str, shown_b_first: str) -> tuple[str, bool]:
 
 
 def summarise_scores(scores: list[CaseScore]) -> dict:
-    """Means overall and per slice, plus the negative cases that failed outright.
+    """Means per slice, plus the negative cases that failed outright.
 
     One faithfulness score of 1 on a negative case fails the run regardless of
     the mean: that case is what this tier exists to catch, and an average is
-    exactly the wrong way to look at it.
+    exactly the wrong way to look at it. That check spans every negative case —
+    most of them name no documentation, and they are the ones most likely to
+    invent a feature.
+
+    The faithfulness *mean* is narrower. It covers only the cases that name
+    documentation, because faithfulness measures whether an answer is supported
+    by retrieved context and 23 of the 42 cases retrieve none: they ask whether
+    the assistant routed to the semantic layer, refused a write, or resisted an
+    injection. Scoring those on groundedness averaged a real signal together with
+    a meaningless one — adding tool results to the context moved 22 of 42 cases
+    for a net 0.14 on the headline, which is what an incoherent mean looks like.
+    They are gated on the behaviour metrics and relevancy instead, and their
+    faithfulness is still reported, unaggregated, as a diagnostic.
     """
 
     def mean(values: list[float]) -> float:
@@ -269,16 +295,40 @@ def summarise_scores(scores: list[CaseScore]) -> dict:
         by_category.setdefault(score.category, []).append(score.faithfulness)
         by_provenance.setdefault(score.provenance, []).append(score.faithfulness)
 
+    grounded = [s for s in scores if s.grounded]
+    behavioural = [s for s in scores if not s.grounded]
     confabulated = [s.case for s in scores if s.negative and s.faithfulness <= 1.0]
     return {
+        "outcomes": [
+            {
+                "case": s.case,
+                "category": s.category,
+                "provenance": s.provenance,
+                "negative": s.negative,
+                "faithfulness": s.faithfulness,
+                "relevancy": s.relevancy,
+                "reason": s.reason,
+                "tools_called": list(s.tools_called),
+                "doc_paths": list(s.doc_paths),
+                "answer": s.answer,
+            }
+            for s in scores
+        ],
         "cases": len(scores),
-        "faithfulness": mean([s.faithfulness for s in scores]),
+        # Over the grounded cases only. `faithfulness_cases` travels with it so a
+        # mean over nineteen is never read as a mean over forty-two.
+        "faithfulness": mean([s.faithfulness for s in grounded]),
+        "faithfulness_cases": len(grounded),
+        # Reported, never gated: there is no retrieved context on these to be
+        # faithful to. A low number here is a prompt to go and read the answers.
+        "faithfulness_ungrounded": mean([s.faithfulness for s in behavioural]),
+        "faithfulness_ungrounded_cases": len(behavioural),
         "relevancy": mean([s.relevancy for s in scores]),
         "faithfulness_by_category": {k: mean(v) for k, v in sorted(by_category.items())},
         "faithfulness_by_provenance": {k: mean(v) for k, v in sorted(by_provenance.items())},
         "confabulated_on_negative_cases": confabulated,
         "passed": (
-            mean([s.faithfulness for s in scores]) >= MIN_FAITHFULNESS
+            mean([s.faithfulness for s in grounded]) >= MIN_FAITHFULNESS
             and mean([s.relevancy for s in scores]) >= MIN_RELEVANCY
             and not confabulated
         ),

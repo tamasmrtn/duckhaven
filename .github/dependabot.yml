@@ -41,6 +41,27 @@ updates:
         patterns:
           - "*"
 
+  # The Dockerfiles pin their Chainguard base images by digest (cgr.dev
+  # rebuilds :latest continuously, so a digest is the only reproducible
+  # reference) — this is what keeps those pins from going stale.
+  - package-ecosystem: "docker"
+    directory: "/api"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - docker
+
+  - package-ecosystem: "docker"
+    directory: "/agent"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - docker
+
   - package-ecosystem: "docker-compose"
     directory: "/deploy"
     schedule:

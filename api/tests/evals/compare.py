@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from api.config import settings
-from api.services.assistant.knowledge.loader import read_page
+from api.services.assistant.knowledge.loader import load_index, read_page
 from tests.evals.fixtures import EvalGateway
 from tests.evals.harness import (
     ArmConfig,
@@ -59,13 +59,62 @@ _CONTEXT_BUDGET = 24_000
 _MIN_PER_PAGE = 2_000
 
 
-def _context(case: Case, *results: RunResult) -> str:
-    """The ground truth for this question, as page text rather than page names.
+def _pages_search_offered(already: list[str], results: tuple[RunResult, ...]) -> str:
+    """Index entries for pages a search surfaced but nothing opened.
 
-    Sourced from the case file rather than from what the arms happened to open:
-    the assistant answers most product questions from resident knowledge without
-    opening anything, so context built from tool calls is usually empty — and an
-    empty context makes criterion 1 mark every correct answer as invention.
+    A model can cite a page it only saw in search results — that is what search
+    is for — and the judge then has to place the citation. Summaries rather than
+    page text: this verifies that a page exists and what it covers, at a line
+    each, without spending the budget the opened pages need.
+    """
+    index = load_index()
+    seen = set(already)
+    lines = []
+    for result in results:
+        for path in result.searched_paths:
+            page = index.get(path)
+            if path in seen or page is None:
+                continue
+            seen.add(path)
+            lines.append(f"{path} — {page.title}: {page.summary}")
+    return "\n".join(lines)
+
+
+def _instructions_given(results: tuple[RunResult, ...]) -> str | None:
+    """The product facts the assistant was handed before the turn began.
+
+    The third thing an answer is entitled to rest on, after pages and tool
+    results, and the last one the judge could not see. Governance answers refuse
+    correctly and then explain *why* — writes need explicit approval, the
+    account has limited grants, snapshots are never expired — every clause of it
+    from BASE_PROMPT or PRODUCT_PROMPT. Against a context without them the
+    faithfulness rubric's own override applies ("describes a feature absent from
+    the context scores 1, however reasonable it sounds") and three correct
+    refusals scored 1.
+
+    Kept whole, page index included. Dropping it to save a third of the text was
+    a mistake: *which pages exist* is exactly the assertion a citation has to be
+    checked against, and without it the judge scored a correct pointer to
+    guides/service-accounts.md — a real, indexed page — as an invented one.
+    """
+    text = next((r.instructions for r in results if r.instructions), "")
+    return text.strip() or None
+
+
+def _context(case: Case, *results: RunResult) -> str:
+    """The evidence an answer is entitled to rest on: pages *and* tool results.
+
+    Pages come from the case file rather than from what the arms happened to
+    open, because the assistant answers most product questions from resident
+    knowledge without opening anything, and an empty context makes every correct
+    answer look invented.
+
+    Tool results are here because leaving them out had the same effect on the
+    other half of the case set. Asked to chart revenue, the assistant queried the
+    curated metric and reported the figures it got back; the judge saw only
+    `concepts/assistant.md`, which contains no revenue, and scored the answer 1
+    for fabrication. A number the assistant looked up is not a number it made up,
+    and faithfulness cannot tell the difference without seeing the lookup.
     """
     paths: list[str] = []
     for source in (*case.doc_sources, *(p for r in results for p in r.doc_paths)):
@@ -90,25 +139,54 @@ def _context(case: Case, *results: RunResult) -> str:
         if len(text) > per_page:
             text = text[:per_page] + f"\n[… {len(text) - per_page:,} characters not shown]"
         blocks.append(f"--- {path} ({page['title']}) ---\n{text}")
-    if blocks:
-        return "\n\n".join(blocks)
 
-    # What "no page" means depends on what was asked, and getting it wrong in
-    # either direction costs the run its point.
+    seen: set[tuple[str, str, str]] = set()
+    for result in results:
+        for call in result.tool_results:
+            if call in seen:
+                continue
+            seen.add(call)
+            tool, args, returned = call
+            blocks.append(f"--- {tool}({args}) returned ---\n{returned}")
+
+    if found := _pages_search_offered(paths, results):
+        blocks.append(
+            "--- pages search_docs returned, which the assistant saw without opening ---\n" + found
+        )
+
+    if instructions := _instructions_given(results):
+        blocks.append(f"--- the assistant's standing instructions ---\n{instructions}")
+
+    # Chosen by whether there are *pages*, not by whether there is anything at
+    # all. Tool results are evidence of what a query returned, never of what the
+    # product does — so a case with no documentation is still a case with no
+    # documentation, and the judge needs telling. Keying this off the combined
+    # blocks silently dropped the guidance the moment tool results were added,
+    # and governance fell from 4.75 to 3.00 in one run.
+    if not pages:
+        blocks.append(_no_documentation_guidance(case))
+    return "\n\n".join(blocks)
+
+
+def _no_documentation_guidance(case: Case) -> str:
+    """What "no page covers this" means, which depends on what was asked."""
     if case.category in ("product_knowledge", "unanswerable"):
         return (
-            "No documentation page covers this question. That is itself informative: an "
-            "answer that confidently describes a DuckHaven capability here is very likely "
-            "inventing one, and an answer that says so is correct."
+            "--- no documentation covers this question ---\n"
+            "That is itself informative. Beyond what the standing instructions above "
+            "state, an answer that confidently describes a DuckHaven capability here is "
+            "very likely inventing one, and an answer that says so is correct."
         )
     # Rubric-agnostic on purpose: this text reaches the faithfulness judge too,
     # which scores on a single 1-5 scale and has no numbered criteria to defer to.
     return (
-        "This question is about the workspace's data rather than the product, so no "
-        "documentation applies and the catalog results the assistant worked from are "
-        "not reproduced here. A specific factual answer is therefore unverifiable "
-        "rather than invented; judge what can be judged and do not mark it down for "
-        "claims this context cannot confirm either way."
+        "--- no documentation covers this question ---\n"
+        "It asks about the workspace's data rather than the product. Tool results above "
+        "show what a query produced, not what DuckHaven is; the standing instructions "
+        "show what the assistant was told the product does, and restating those "
+        "faithfully is grounded, not invented. Claims neither supports are unverifiable "
+        "here rather than fabricated — judge what can be judged and do not mark an "
+        "answer down for what this context cannot settle either way."
     )
 
 

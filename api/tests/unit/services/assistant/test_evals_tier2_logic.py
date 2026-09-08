@@ -157,12 +157,21 @@ def test_results_are_broken_down_by_category():
 # ── Absolute scoring ──────────────────────────────────────────────────────────
 
 
-def _score(name, faithfulness, relevancy=5.0, *, negative=False, category="product_knowledge"):
+def _score(
+    name,
+    faithfulness,
+    relevancy=5.0,
+    *,
+    negative=False,
+    category="product_knowledge",
+    grounded=True,
+):
     return CaseScore(
         case=name,
         category=category,
         provenance="hand",
         negative=negative,
+        grounded=grounded,
         faithfulness=faithfulness,
         relevancy=relevancy,
         reason="",
@@ -232,3 +241,69 @@ def test_the_pairwise_rubric_ranks_correctness_above_everything():
 def test_the_judge_is_pinned_and_deterministic():
     assert judge.JUDGE_MODEL
     assert judge.JUDGE_SETTINGS.get("temperature") == 0.0
+
+
+def test_the_summary_keeps_what_each_case_actually_did():
+    """The aggregate names a failing case and nothing else. Without the answer
+    and the tool calls beside it, finding out why means re-running — slowly, and
+    with no guarantee the assistant makes the same choices twice."""
+    scores = [
+        judge.CaseScore(
+            case="revenue_by_region",
+            category="semantic_routing",
+            provenance="hand",
+            negative=False,
+            grounded=False,
+            faithfulness=4.0,
+            relevancy=5.0,
+            reason="grounded",
+            answer="Revenue by region is …",
+            tools_called=("search_semantic", "query_metric"),
+            doc_paths=("concepts/semantic-layer.md",),
+        )
+    ]
+
+    outcome = judge.summarise_scores(scores)["outcomes"][0]
+
+    assert outcome["case"] == "revenue_by_region"
+    assert outcome["tools_called"] == ["search_semantic", "query_metric"]
+    assert outcome["doc_paths"] == ["concepts/semantic-layer.md"]
+    assert outcome["answer"].startswith("Revenue by region")
+
+
+def test_the_faithfulness_mean_covers_only_grounded_cases():
+    """Faithfulness is groundedness in retrieved context. Over half the case set
+    retrieves none — they ask whether the assistant routed to the semantic layer
+    or refused a write — and averaging those in mixes a real signal with a
+    meaningless one."""
+    scores = [_score("doc", 5.0), _score("behaviour", 1.0, grounded=False)]
+
+    summary = judge.summarise_scores(scores)
+
+    assert summary["faithfulness"] == 5.0
+    assert summary["faithfulness_cases"] == 1
+    assert summary["faithfulness_ungrounded"] == 1.0
+    assert summary["faithfulness_ungrounded_cases"] == 1
+
+
+def test_an_ungrounded_case_cannot_fail_the_faithfulness_threshold():
+    """It is gated on the behaviour metrics and relevancy instead."""
+    scores = [_score("doc", 5.0)] + [
+        _score(f"behaviour{i}", 1.0, grounded=False) for i in range(20)
+    ]
+
+    assert judge.summarise_scores(scores)["passed"] is True
+
+
+def test_confabulation_still_spans_every_negative_case():
+    """Thirteen of nineteen negative cases name no documentation, and they are
+    the ones most likely to invent a feature. Narrowing this check to grounded
+    cases would take the safety net off exactly where it is needed."""
+    scores = [_score("good", 5.0)] + [
+        _score("invented", 1.0, negative=True, grounded=False, category="unanswerable")
+    ]
+
+    summary = judge.summarise_scores(scores)
+
+    assert summary["confabulated_on_negative_cases"] == ["invented"]
+    assert summary["passed"] is False

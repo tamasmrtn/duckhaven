@@ -233,11 +233,13 @@ def test_every_block_is_separated_by_a_blank_line():
 
 def test_each_resident_block_is_within_budget():
     assert len(BASE_PROMPT) <= 2_600
-    # Raised from 2,800 for three things: the concurrency carve-out the SET
+    # Raised from 2,800 for four things: the concurrency carve-out the SET
     # rejection had been stating without, the two rules that forbid quoting an
-    # unopened page or explaining a feature that does not exist, and the
-    # citation instruction.
-    assert len(PRODUCT_PROMPT) <= 3_500
+    # unopened page or explaining a feature that does not exist, the citation
+    # instruction, and the v1 scope limits — a judged run caught the assistant
+    # drawing an ASCII bar chart, with growth percentages, for a product whose
+    # own concept page says it has no chart generation.
+    assert len(PRODUCT_PROMPT) <= 3_900
     # ~50 chars per page, so this allows roughly eight more before a bump.
     assert len(DOCS_INDEX_PROMPT.format(index=load_index().prompt_block)) <= 3_800
 
@@ -256,9 +258,9 @@ def test_the_semantic_summary_is_bounded_however_the_workspace_is_named():
 
 
 def test_the_assembled_instructions_are_within_budget():
-    """~2,250 tokens for a bare workspace; ~3,500 for the largest a workspace can
+    """~2,400 tokens for a bare workspace; ~3,650 for the largest a workspace can
     make its own, which is the number the input window has to hold."""
-    assert len(build_instructions(ctx())) <= 9_600
+    assert len(build_instructions(ctx())) <= 10_000
 
     everything = build_instructions(
         ctx(
@@ -269,4 +271,14 @@ def test_the_assembled_instructions_are_within_budget():
         )
     )
 
-    assert len(everything) <= 14_400
+    assert len(everything) <= 14_800
+
+
+def test_the_product_block_names_the_v1_scope_limits():
+    """`concepts/assistant.md` lists these; without them in the instructions the
+    assistant approximates instead of declining. A judged run caught it drawing
+    an ASCII bar chart, with growth percentages, on a case whose whole point is
+    that DuckHaven has no chart generation."""
+    assert "cannot render a chart" in PRODUCT_PROMPT
+    assert "charted in a worksheet" in PRODUCT_PROMPT
+    assert "cannot run on a schedule" in PRODUCT_PROMPT

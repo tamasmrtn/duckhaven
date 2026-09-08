@@ -1,8 +1,9 @@
 import { useMemo, useState, type UIEvent } from "react";
 import {
-  useReactTable,
-  getCoreRowModel,
-  getSortedRowModel,
+  useTable,
+  tableFeatures,
+  rowSortingFeature,
+  createSortedRowModel,
   flexRender,
   type ColumnDef,
   type SortingState,
@@ -48,6 +49,13 @@ function copyValue(value: string) {
   void navigator.clipboard.writeText(value);
 }
 
+// Declared once, statically, per the v9 migration guide — passed into
+// useTable rather than rebuilt on every render.
+const tableFeatureSet = tableFeatures({
+  rowSortingFeature,
+  sortedRowModel: createSortedRowModel(),
+});
+
 function downloadCsv(columns: string[], rows: QueryRow[]) {
   const header = columns.join(",");
   const body = rows
@@ -91,38 +99,38 @@ export function ResultsTable({
       onLoadMore();
     }
   }
-  const colDefs: ColumnDef<QueryRow>[] = columns.map((col) => ({
-    accessorKey: col,
-    header: col,
-    cell: ({ getValue }) => {
-      const raw = getValue();
-      const display = cellDisplay(raw);
-      const isNull = raw === null || raw === undefined;
-      return (
-        <button
-          type="button"
-          onClick={() => copyValue(display)}
-          className={cn(
-            "block w-full truncate text-left font-mono text-xs font-tabular",
-            isNull ? "text-text-tertiary italic" : "text-text-primary",
-          )}
-          title={display}
-          aria-label={`Copy ${display}`}
-        >
-          {display}
-        </button>
-      );
-    },
-  }));
+  const colDefs: ColumnDef<typeof tableFeatureSet, QueryRow>[] = columns.map(
+    (col) => ({
+      accessorKey: col,
+      header: col,
+      cell: ({ getValue }) => {
+        const raw = getValue();
+        const display = cellDisplay(raw);
+        const isNull = raw === null || raw === undefined;
+        return (
+          <button
+            type="button"
+            onClick={() => copyValue(display)}
+            className={cn(
+              "block w-full truncate text-left font-mono text-xs font-tabular",
+              isNull ? "text-text-tertiary italic" : "text-text-primary",
+            )}
+            title={display}
+            aria-label={`Copy ${display}`}
+          >
+            {display}
+          </button>
+        );
+      },
+    }),
+  );
 
-  // eslint-disable-next-line react-hooks/incompatible-library
-  const table = useReactTable({
+  const table = useTable({
+    features: tableFeatureSet,
     data: rows,
     columns: colDefs,
     state: { sorting },
     onSortingChange: setSorting,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
   });
 
   if (error) {
@@ -288,7 +296,7 @@ export function ResultsTable({
                   i % 2 === 0 ? "bg-transparent" : "bg-[var(--bg-surface)]/50",
                 )}
               >
-                {row.getVisibleCells().map((cell) => (
+                {row.getAllCells().map((cell) => (
                   <td key={cell.id} className="px-3 py-1 max-w-[200px]">
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>

@@ -286,6 +286,12 @@ def target_tables(stmt: exp.Expression) -> list[exp.Table]:
         return [t for e in stmt.expressions for t in e.find_all(exp.Table)]
     if not isinstance(stmt, _WRITE_NODES):
         return []
+    # sqlglot >=30.18 moved DROP's target(s) off `this` onto a `tables` list
+    # (to support multi-table `DROP TABLE t1, t2`); older versions kept a
+    # single target on `this`. Check both so this works across the bump.
+    tables = stmt.args.get("tables")
+    if tables:
+        return list(tables)
     this = stmt.this
     if isinstance(this, exp.Table):
         return [this]

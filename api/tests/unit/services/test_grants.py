@@ -161,6 +161,15 @@ def test_extract_drop_target():
     assert len(refs) == 1 and refs[0].is_target and refs[0].table == "t"
 
 
+def test_extract_drop_multi_table_targets():
+    # sqlglot >=30.18 parses a comma-separated DROP's targets into a `tables`
+    # list rather than a single `this` — both tables must still resolve as
+    # write targets.
+    refs = extract_table_refs("DROP TABLE cat.s.t1, cat.s.t2")
+    assert len(refs) == 2 and all(r.is_target for r in refs)
+    assert {r.table for r in refs} == {"t1", "t2"}
+
+
 @pytest.mark.parametrize("sql", ["TRUNCATE TABLE cat.s.t", "TRUNCATE cat.s.t"])
 def test_extract_truncate_target(sql):
     # sqlglot parses TRUNCATE to its own node whose target lives in `expressions`,

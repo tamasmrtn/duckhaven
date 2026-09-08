@@ -102,7 +102,7 @@ class Settings(BaseSettings):
     # Directory of the built SPA, served at / when present (baked into the image).
     static_dir: Path = Path("/app/static")
     # File holding the one-shot first-admin setup token, written by
-    # deploy/api-entrypoint.sh on first boot and deleted by the API after the
+    # api.entrypoint on first boot and deleted by the API after the
     # first admin is created.
     setup_token_path: Path = Path("/var/duckhaven/setup_token")
     # The same token, supplied directly. Takes precedence over the file, and is

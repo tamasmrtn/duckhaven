@@ -21,7 +21,9 @@ repos:
       - id: markdownlint
         # The docs landing page is an MkDocs Material template page that relies
         # on inline HTML (grid cards) and YAML front matter; mdl can't parse it.
-        exclude: ^docs/index\.md$
+        # README.md embeds a <video> tag (MD033); mdl has no inline per-line
+        # suppression, only whole-file exclusion or a repo-wide rule disable.
+        exclude: ^(docs/index\.md|README\.md)$
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.13

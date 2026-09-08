@@ -1,5 +1,8 @@
 # ── Builder ──────────────────────────────────────────────────────────────────
-FROM python:3.14-slim AS builder
+# -dev keeps a shell for the build; runtime below is distroless. Pinned by
+# digest since :latest rebuilds continuously (tracked by Dependabot).
+FROM cgr.dev/chainguard/python:latest-dev@sha256:de669347e9c1348d3fb952b1ab93738412bd7207769a882701691825741bfce3 AS builder
+USER root
 
 # uv is a build-time tool — copy the pinned binary instead of pip-installing it.
 COPY --from=ghcr.io/astral-sh/uv:0.8.22 /uv /usr/local/bin/uv
@@ -34,8 +37,14 @@ RUN mkdir -p /home/duckhaven && \
     [c.execute(f'INSTALL {ext}') for ext in ('httpfs','azure','iceberg')]; \
     [c.execute(f'LOAD {ext}') for ext in ('httpfs','azure','iceberg')]"
 
+# Pre-created here since the runtime stage has no shell to mkdir/chown in;
+# copied with --chown below.
+RUN mkdir -p /var/duckhaven-agent/results
+
 # ── Runtime ──────────────────────────────────────────────────────────────────
-FROM python:3.14-slim AS runtime
+# Distroless: no shell, package manager, or apt/dpkg — the unfixable
+# OS-package CVEs the old purge-and-upgrade step chased don't exist here.
+FROM cgr.dev/chainguard/python:latest@sha256:1f37785e5cdb70151f36aaa15e1e3cef4571424dbefbf4b0d8a9222535cb13ff AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -46,28 +55,17 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # Only the populated virtualenv is needed at runtime.
-COPY --from=builder /app/.venv /app/.venv
-
-# Hardening: drop pip, purge perl-base, patch the base image, run as a
-# dedicated non-root user.
-# perl-base is marked Essential but nothing in this image depends on it, and
-# it carries 8 of the base image's CRITICAL/HIGH CVEs — all of them unfixable
-# (Debian ships no patch). Purging it takes CRITICAL to zero. The forced flags
-# are required only because of the Essential marker; apt still works after.
-RUN pip uninstall -y pip 2>/dev/null || true; \
-    dpkg --purge --force-remove-essential --force-depends perl-base; \
-    apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*; \
-    useradd --system --create-home --home-dir /home/duckhaven duckhaven
+COPY --chown=65532:65532 --from=builder /app/.venv /app/.venv
 
 # Pre-installed DuckDB extensions, owned by the runtime user.
-COPY --from=builder /home/duckhaven/.duckdb /home/duckhaven/.duckdb
-RUN chown -R duckhaven:duckhaven /home/duckhaven
+COPY --chown=65532:65532 --from=builder /home/duckhaven/.duckdb /home/duckhaven/.duckdb
 
-# Pre-create the results dir owned by the runtime user so an empty named volume
-# mounted here inherits non-root ownership (the agent writes result Parquet as
-# the duckhaven user).
-RUN mkdir -p /var/duckhaven-agent/results && chown -R duckhaven:duckhaven /var/duckhaven-agent
+# Pre-created in the builder stage (see comment there) — no shell here to mkdir/chown.
+COPY --chown=65532:65532 --from=builder /var/duckhaven-agent/results /var/duckhaven-agent/results
 
-USER duckhaven
+USER 65532:65532
 
-CMD ["python", "-m", "agent.main"]
+# Overrides the base's own ENTRYPOINT (its system python, not our venv's) so
+# "python" resolves via PATH to /app/.venv/bin/python instead.
+ENTRYPOINT ["python"]
+CMD ["-m", "agent.main"]

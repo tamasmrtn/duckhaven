@@ -26,7 +26,7 @@ migrations automatically.
 Read the one-shot setup token on the host:
 
 ```bash
-docker compose exec api cat /var/duckhaven/setup_token
+docker compose cp api:/var/duckhaven/setup_token ./setup_token && cat ./setup_token
 ```
 
 Open `http://<host>:8000` in a browser. The app detects an empty database and routes you to the setup screen — paste the

@@ -94,7 +94,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # basicConfig has no filter= param; attach trace_id/span_id correlation now.
     install_log_correlation()
 
-    # Migrations have already run (api-entrypoint.sh) by the time the app
+    # Migrations have already run (api.entrypoint) by the time the app
     # starts, so the credentials table exists. Seed before serving traffic so
     # the bundled agent can register the moment /api/healthz reports ready.
     async with async_session_factory() as db:

@@ -33,7 +33,12 @@ make dev-web
 
 The first time you visit `http://localhost:8000` (or the Vite dev server at
 `http://localhost:5173`), you'll land on the setup screen. Read the one-shot
-token with `docker compose -f deploy/docker-compose.yml exec api cat /var/duckhaven/setup_token`
+token with:
+
+```sh
+docker compose -f deploy/docker-compose.yml cp api:/var/duckhaven/setup_token ./setup_token && cat ./setup_token
+```
+
 and paste it into the form to create the first admin.
 
 The frontend dev server runs on `http://localhost:5173` and proxies API calls to `http://localhost:8000`.

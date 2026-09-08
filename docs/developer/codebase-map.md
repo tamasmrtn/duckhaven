@@ -173,8 +173,9 @@ disabled before a query is even sent.
 `deploy/docker-compose.yml` defines the all-in-one stack:
 `postgres` → `polaris-bootstrap` (one-shot schema + root principal) →
 `polaris` → `api` → `agent`, plus `minio` for object storage.
-`api-entrypoint.sh` generates the first-boot secrets (including the one-shot
-admin setup token), runs Alembic migrations, then starts uvicorn; the API
+The API's own entrypoint (`api/src/api/entrypoint.py`) generates the first-boot
+secrets (including the one-shot admin setup token), runs Alembic migrations,
+then starts uvicorn; the API
 also seeds the agent bootstrap token on startup. `minio` pre-creates the
 warehouse bucket in its own entrypoint. Remote agents can still be deployed
 per host against the same control plane. `scripts/` holds operator helpers

@@ -249,7 +249,7 @@ the UI design system, see [docs/developer/design-system.md](docs/developer/desig
 ```bash
 curl -O https://raw.githubusercontent.com/tamasmrtn/duckhaven/main/deploy/docker-compose.yml
 docker compose up -d
-docker compose exec api cat /var/duckhaven/setup_token
+docker compose cp api:/var/duckhaven/setup_token ./setup_token && cat ./setup_token
 # open http://<host>:8000 and paste the token into the setup screen
 ```
 

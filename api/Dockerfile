@@ -12,7 +12,12 @@ RUN npm run build
 # Output lives in /web/dist (MSW is dev-only, excluded from the production build).
 
 # ── Builder ──────────────────────────────────────────────────────────────────
-FROM python:3.14-slim AS builder
+# Chainguard's -dev variant keeps a shell + package manager for the build; the
+# runtime stage below is fully distroless. Pinned by digest — :latest is a
+# rolling tag Chainguard rebuilds continuously, so an unpinned FROM would make
+# builds nondeterministic. Dependabot (docker ecosystem) tracks the digest.
+FROM cgr.dev/chainguard/python:latest-dev@sha256:de669347e9c1348d3fb952b1ab93738412bd7207769a882701691825741bfce3 AS builder
+USER root
 
 # uv is a build-time tool — copy the pinned binary instead of pip-installing it.
 COPY --from=ghcr.io/astral-sh/uv:0.8.22 /uv /usr/local/bin/uv
@@ -37,8 +42,19 @@ COPY shared/src shared/src
 COPY api/src api/src
 RUN uv sync --frozen --no-dev --no-editable --package duckhaven-api
 
+# /var/duckhaven is the api_data mount point; /var/duckhaven/secrets lives
+# within it (holds the generated secret_key). Pre-created here and copied into
+# the runtime stage with --chown below, since the distroless runtime stage has
+# no shell to mkdir/chown in — this lets the empty-volume init copy inherit
+# the correct ownership.
+RUN mkdir -p /app/rootfs/var/duckhaven/secrets
+
 # ── Runtime ──────────────────────────────────────────────────────────────────
-FROM python:3.14-slim AS runtime
+# Distroless: no shell, no package manager, no apt/dpkg/coreutils — the class
+# of unfixable OS-package CVEs the Debian-based image needed a manual
+# purge-and-upgrade step to chase (perl-base, util-linux, ...) doesn't exist
+# here to begin with.
+FROM cgr.dev/chainguard/python:latest@sha256:1f37785e5cdb70151f36aaa15e1e3cef4571424dbefbf4b0d8a9222535cb13ff AS runtime
 
 # Release version, injected from the git tag by CI (docker/metadata-action).
 # Surfaced at GET /api/version and as OpenAPI info.version; defaults to a dev
@@ -54,49 +70,33 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # Only the populated virtualenv is needed at runtime.
-COPY --from=builder /app/.venv /app/.venv
+COPY --chown=65532:65532 --from=builder /app/.venv /app/.venv
 
 # The built SPA, served by FastAPI at / (see api.main, settings.static_dir).
-COPY --from=ui-builder /web/dist /app/static
+COPY --chown=65532:65532 --from=ui-builder /web/dist /app/static
 
-# Alembic migrations applied at container start by api-entrypoint.sh.
-COPY api/alembic.ini /app/alembic.ini
-COPY api/alembic /app/alembic
-
-# Entrypoint. On first boot it generates the app secret + setup_token, then
-# reads them and constructs DATABASE_URL / SECRET_KEY at runtime (folds in the
-# former init-secrets one-shot, so the api service prepares its own secrets).
-COPY deploy/api-entrypoint.sh /usr/local/bin/api-entrypoint.sh
+# Alembic migrations applied at container start by api.entrypoint.
+COPY --chown=65532:65532 api/alembic.ini /app/alembic.ini
+COPY --chown=65532:65532 api/alembic /app/alembic
 
 # The documentation corpus, read by the assistant's read_doc_page tool (see
 # settings.assistant_docs_dir). Last of the copies because Markdown churns most
-# and would otherwise invalidate the migration, entrypoint and hardening layers.
+# and would otherwise invalidate the migration and venv layers.
 # Only the Markdown travels — .dockerignore holds back docs/images and friends.
-COPY docs /app/docs
+COPY --chown=65532:65532 docs /app/docs
 
-# Hardening: drop pip, purge perl-base, patch the base image, run as a
-# dedicated non-root user.
-# perl-base is marked Essential but nothing in this image depends on it, and
-# it carries 8 of the base image's CRITICAL/HIGH CVEs — all of them unfixable
-# (Debian ships no patch). Purging it takes CRITICAL to zero. The forced flags
-# are required only because of the Essential marker; apt still works after.
-# /var/duckhaven is the api_data mount point; /var/duckhaven/secrets lives
-# within it (holds the generated secret_key). Pre-creating the secrets dir
-# owned by duckhaven lets the empty-volume init copy inherit the correct
-# ownership.
-RUN pip uninstall -y pip 2>/dev/null || true; \
-    dpkg --purge --force-remove-essential --force-depends perl-base; \
-    apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*; \
-    useradd --system --create-home --home-dir /home/duckhaven duckhaven; \
-    mkdir -p /var/duckhaven/secrets && chown -R duckhaven:duckhaven /var/duckhaven; \
-    chmod +x /usr/local/bin/api-entrypoint.sh
+# /var/duckhaven/secrets, pre-created and owned by the runtime user in the
+# builder stage (see comment there — this stage has no shell to mkdir/chown in).
+COPY --chown=65532:65532 --from=builder /app/rootfs/var/duckhaven /var/duckhaven
 
-USER duckhaven
+USER 65532:65532
 
 EXPOSE 8000
 
-ENTRYPOINT ["/usr/local/bin/api-entrypoint.sh"]
-# --timeout-graceful-shutdown bounds the drain: on SIGTERM the lifespan marks the
-# replica not-ready and hands its agents to peers, then in-flight requests get up
-# to this long to finish before connections are force-closed.
+# api.entrypoint is the Python port of the old shell entrypoint (distroless has
+# no shell to run one in): generates the secret key + setup token on first
+# boot, applies migrations, then execs the CMD below in place (same PID),
+# which is what makes --timeout-graceful-shutdown work — uvicorn must receive
+# SIGTERM directly as PID 1.
+ENTRYPOINT ["python", "-m", "api.entrypoint"]
 CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-graceful-shutdown", "30"]

@@ -258,8 +258,8 @@ polaris-bootstrap →  apache/polaris:latest  (one-shot realm/principal; storage
 
 `polaris-bootstrap` is the only remaining one-shot — it provisions the Polaris
 realm/principal (the admin tool ships as its own image). Everything else
-self-prepares: `api-entrypoint.sh` generates the secret key + setup token on
-first boot and applies migrations; the API seeds the agent bootstrap token on
+self-prepares: the API's own entrypoint (`api.entrypoint`) generates the secret
+key + setup token on first boot and applies migrations; the API seeds the agent bootstrap token on
 startup; `minio` pre-creates the warehouse bucket in its entrypoint; Postgres
 creates the dedicated `polaris` DB via an initdb script. MinIO's `:9000`
 endpoint must be reachable by remote agents (the URL Polaris vends to DuckDB),

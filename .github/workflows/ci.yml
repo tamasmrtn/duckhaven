@@ -268,9 +268,11 @@ jobs:
         run: ./scripts/wait-for-stack.sh
       - name: Capture the first-boot setup token
         run: |
-          token=$(docker compose -f deploy/docker-compose.yml exec -T api \
-            cat /var/duckhaven/setup_token)
-          echo "DH_SETUP_TOKEN=$token" >> "$GITHUB_ENV"
+          # The api image is distroless (no shell/coreutils to exec into), so
+          # this reads the file out via the daemon's container-archive API
+          # instead of `exec ... cat`.
+          docker compose -f deploy/docker-compose.yml cp api:/var/duckhaven/setup_token ./setup_token
+          echo "DH_SETUP_TOKEN=$(cat ./setup_token)" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v7
         with:
           node-version: '22'

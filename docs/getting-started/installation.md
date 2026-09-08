@@ -37,7 +37,7 @@ No `git clone` and no `.env` editing are required. On first boot the stack auto-
 Read the one-shot setup token on the host:
 
 ```bash
-docker compose exec api cat /var/duckhaven/setup_token
+docker compose cp api:/var/duckhaven/setup_token ./setup_token && cat ./setup_token
 ```
 
 Open `http://<host>:8000`, paste the token into the setup screen, and choose admin credentials. The token is consumed

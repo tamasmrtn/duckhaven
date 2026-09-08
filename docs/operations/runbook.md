@@ -25,7 +25,7 @@ directly on the host.
    `:v1.2` / `:v1` on git tags. Built for `linux/amd64` and `linux/arm64`.
 2. Start the stack: `make compose-up`. Migrations apply automatically.
 3. Read the one-shot setup token:
-   `docker compose -f deploy/docker-compose.yml exec api cat /var/duckhaven/setup_token`.
+   `docker compose -f deploy/docker-compose.yml cp api:/var/duckhaven/setup_token ./setup_token && cat ./setup_token`.
 4. Open `http://<host>:8000` and create the first admin from the setup
    screen using the token.
 5. The API listens on port `8000` on the Tailscale address only. There is no
@@ -267,3 +267,24 @@ SELECT id, status, tables_done, tables_total, error FROM catalog_migrations ORDE
 - **Cancel.** Cancelling before cutover tears the shadow copy down and leaves the catalog on its original backend.
 - **Reverse a completed migration.** The old data is retained for `MIGRATION_RETENTION_DAYS` after cutover — start a new
   migration back to the original backend within that window.
+
+---
+
+## 9. Debugging a running container (no shell in production images)
+
+The `api` and `agent` images run on Chainguard's distroless base: no shell, no package manager, no coreutils in the
+running container. `docker compose exec api sh` (or `bash`) no longer works. What still works unchanged: `docker logs`,
+`docker compose logs`, `docker inspect`, `docker stats`, `docker top`, and both services' healthchecks.
+
+- **Read a file out of the container.** Use `docker compose cp <service>:<path> <local-path>` (or plain `docker cp`) —
+  this reads via the daemon's container-archive API and doesn't execute anything inside the container. This is the
+  direct replacement for the old `exec ... cat` pattern (see §1 step 3).
+- **One-off shell access, preferred: `docker debug <container>`.** Docker Desktop's ephemeral debug-toolbox sidecar
+  attaches a shell into a running container's namespaces without modifying the image, and works against distroless by
+  design. Verify it's available on your actual host — it's historically been a Docker Desktop feature, not bundled
+  with a plain Linux `dockerd`.
+- **One-off shell access, fallback: run the `-dev` tag.** Temporarily run the image's `-dev` build (e.g.
+  `cgr.dev/chainguard/python:latest-dev`-based) for the affected service — it has a full shell, coreutils, and pip, at
+  the cost of not being the exact production image.
+- **Everything else** (logs, health, resource usage, process list) needs no workaround — those all operate from
+  outside the container via the Docker API, not by execing into it.

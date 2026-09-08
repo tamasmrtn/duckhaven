@@ -60,12 +60,19 @@ _MIN_PER_PAGE = 2_000
 
 
 def _context(case: Case, *results: RunResult) -> str:
-    """The ground truth for this question, as page text rather than page names.
+    """The evidence an answer is entitled to rest on: pages *and* tool results.
 
-    Sourced from the case file rather than from what the arms happened to open:
-    the assistant answers most product questions from resident knowledge without
-    opening anything, so context built from tool calls is usually empty — and an
-    empty context makes criterion 1 mark every correct answer as invention.
+    Pages come from the case file rather than from what the arms happened to
+    open, because the assistant answers most product questions from resident
+    knowledge without opening anything, and an empty context makes every correct
+    answer look invented.
+
+    Tool results are here because leaving them out had the same effect on the
+    other half of the case set. Asked to chart revenue, the assistant queried the
+    curated metric and reported the figures it got back; the judge saw only
+    `concepts/assistant.md`, which contains no revenue, and scored the answer 1
+    for fabrication. A number the assistant looked up is not a number it made up,
+    and faithfulness cannot tell the difference without seeing the lookup.
     """
     paths: list[str] = []
     for source in (*case.doc_sources, *(p for r in results for p in r.doc_paths)):
@@ -90,6 +97,15 @@ def _context(case: Case, *results: RunResult) -> str:
         if len(text) > per_page:
             text = text[:per_page] + f"\n[… {len(text) - per_page:,} characters not shown]"
         blocks.append(f"--- {path} ({page['title']}) ---\n{text}")
+
+    seen: set[tuple[str, str]] = set()
+    for result in results:
+        for tool, summary in result.tool_results:
+            if (tool, summary) in seen:
+                continue
+            seen.add((tool, summary))
+            blocks.append(f"--- tool result: {tool} ---\n{summary}")
+
     if blocks:
         return "\n\n".join(blocks)
 

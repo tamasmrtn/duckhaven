@@ -825,3 +825,34 @@ def test_a_case_with_pages_gets_no_such_disclaimer():
 
     assert "reference/sql-support.md" in context
     assert "no documentation covers this question" not in context
+
+
+def test_the_judge_sees_the_instructions_the_assistant_was_given():
+    """The third thing an answer may rest on. Governance answers refuse
+    correctly and explain why — writes need approval, the account has limited
+    grants — every clause from BASE_PROMPT. Without them the rubric's own
+    override applies and a correct refusal scores 1 for inventing capabilities."""
+    from tests.evals.compare import _context
+
+    result = _run_result(instructions="Only run SELECT statements unless the user has write")
+
+    context = _context(_case("write"), result)
+
+    assert "standing instructions" in context
+    assert "Only run SELECT statements" in context
+
+
+def test_the_resident_page_index_is_left_out_of_the_judge_context():
+    """It lists paths and asserts nothing, and it is a third of the text."""
+    from api.services.assistant.knowledge.loader import load_index
+    from api.services.assistant.prompts import DOCS_INDEX_PROMPT
+    from tests.evals.compare import _context
+
+    index = DOCS_INDEX_PROMPT.format(index=load_index().prompt_block)
+    result = _run_result(instructions=f"Product facts here.{index}And more facts.")
+
+    context = _context(_case("c"), result)
+
+    assert "Product facts here." in context
+    assert "And more facts." in context
+    assert "documentation, by section" not in context

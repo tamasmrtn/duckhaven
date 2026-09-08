@@ -21,7 +21,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from api.config import settings
-from api.services.assistant.knowledge.loader import read_page
+from api.services.assistant.knowledge.loader import load_index, read_page
+from api.services.assistant.prompts import DOCS_INDEX_PROMPT
 from tests.evals.fixtures import EvalGateway
 from tests.evals.harness import (
     ArmConfig,
@@ -57,6 +58,31 @@ async def _answer(arm: ArmConfig, case: Case, docs_search) -> RunResult:
 # citation a fabrication. A budget sends the common one-or-two-page case whole.
 _CONTEXT_BUDGET = 24_000
 _MIN_PER_PAGE = 2_000
+
+
+def _instructions_given(results: tuple[RunResult, ...]) -> str | None:
+    """The product facts the assistant was handed before the turn began.
+
+    The third thing an answer is entitled to rest on, after pages and tool
+    results, and the last one the judge could not see. Governance answers refuse
+    correctly and then explain *why* — writes need explicit approval, the
+    account has limited grants, snapshots are never expired — every clause of it
+    from BASE_PROMPT or PRODUCT_PROMPT. Against a context without them the
+    faithfulness rubric's own override applies ("describes a feature absent from
+    the context scores 1, however reasonable it sounds") and three correct
+    refusals scored 1.
+
+    The resident page index is dropped: it lists paths and asserts nothing, and
+    it is a third of the text.
+    """
+    text = next((r.instructions for r in results if r.instructions), "")
+    if not text:
+        return None
+    try:
+        text = text.replace(DOCS_INDEX_PROMPT.format(index=load_index().prompt_block), "")
+    except Exception:  # noqa: BLE001 — no index shipped is not a scoring failure
+        pass
+    return text.strip() or None
 
 
 def _context(case: Case, *results: RunResult) -> str:
@@ -106,6 +132,9 @@ def _context(case: Case, *results: RunResult) -> str:
             seen.add((tool, summary))
             blocks.append(f"--- tool result: {tool} ---\n{summary}")
 
+    if instructions := _instructions_given(results):
+        blocks.append(f"--- the assistant's standing instructions ---\n{instructions}")
+
     # Chosen by whether there are *pages*, not by whether there is anything at
     # all. Tool results are evidence of what a query returned, never of what the
     # product does — so a case with no documentation is still a case with no
@@ -122,19 +151,20 @@ def _no_documentation_guidance(case: Case) -> str:
     if case.category in ("product_knowledge", "unanswerable"):
         return (
             "--- no documentation covers this question ---\n"
-            "That is itself informative: an answer that confidently describes a "
-            "DuckHaven capability here is very likely inventing one, and an answer that "
-            "says so is correct."
+            "That is itself informative. Beyond what the standing instructions above "
+            "state, an answer that confidently describes a DuckHaven capability here is "
+            "very likely inventing one, and an answer that says so is correct."
         )
     # Rubric-agnostic on purpose: this text reaches the faithfulness judge too,
     # which scores on a single 1-5 scale and has no numbered criteria to defer to.
     return (
         "--- no documentation covers this question ---\n"
-        "It asks about the workspace's data rather than the product. Anything above is "
-        "what the assistant's own tools returned, which shows what a query produced but "
-        "not what DuckHaven is. Claims about the product that neither confirms are "
-        "unverifiable here rather than invented; judge what can be judged and do not "
-        "mark an answer down for what this context cannot settle either way."
+        "It asks about the workspace's data rather than the product. Tool results above "
+        "show what a query produced, not what DuckHaven is; the standing instructions "
+        "show what the assistant was told the product does, and restating those "
+        "faithfully is grounded, not invented. Claims neither supports are unverifiable "
+        "here rather than fabricated — judge what can be judged and do not mark an "
+        "answer down for what this context cannot settle either way."
     )
 
 

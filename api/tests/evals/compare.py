@@ -140,13 +140,14 @@ def _context(case: Case, *results: RunResult) -> str:
             text = text[:per_page] + f"\n[… {len(text) - per_page:,} characters not shown]"
         blocks.append(f"--- {path} ({page['title']}) ---\n{text}")
 
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, str]] = set()
     for result in results:
-        for tool, summary in result.tool_results:
-            if (tool, summary) in seen:
+        for call in result.tool_results:
+            if call in seen:
                 continue
-            seen.add((tool, summary))
-            blocks.append(f"--- tool result: {tool} ---\n{summary}")
+            seen.add(call)
+            tool, args, returned = call
+            blocks.append(f"--- {tool}({args}) returned ---\n{returned}")
 
     if found := _pages_search_offered(paths, results):
         blocks.append(

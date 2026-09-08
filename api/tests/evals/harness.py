@@ -82,7 +82,11 @@ class RunResult:
     # queried from one it invented. Without these, faithfulness scores every
     # data-backed answer as fabrication: the context holds documentation only,
     # and no page contains this workspace's revenue.
-    tool_results: list[tuple[str, str]] = field(default_factory=list)
+    # (tool, arguments, return). The arguments matter as much as the return: an
+    # answer that says "SELECT 1 came back as three region names" is checkable
+    # only if the judge can see the SQL that was sent, and without it a precise,
+    # accurate bug report scores as invention.
+    tool_results: list[tuple[str, str, str]] = field(default_factory=list)
     # Pages `search_docs` put in front of the model. It can cite one without
     # opening it, and a citation the judge cannot place reads as invention.
     searched_paths: list[str] = field(default_factory=list)
@@ -250,16 +254,20 @@ async def run_case(
 
     tools_called: list[str] = []
     doc_paths: list[str] = []
-    tool_results: list[tuple[str, str]] = []
+    tool_results: list[tuple[str, str, str]] = []
     searched_paths: list[str] = []
+    sent: dict[str, str] = {}
     for message in result.all_messages():
         for part in getattr(message, "parts", []):
+            if isinstance(part, ToolCallPart):
+                sent[part.tool_call_id] = _summarise_return(_tool_args(part))
             if isinstance(part, ToolReturnPart):
                 # read_doc_page returns a whole page; the judge already gets page
                 # text from the case's own sources, so only the data tools add
                 # anything here.
                 if part.tool_name != "read_doc_page":
-                    tool_results.append((part.tool_name, _summarise_return(part.content)))
+                    args = sent.get(part.tool_call_id, "")
+                    tool_results.append((part.tool_name, args, _summarise_return(part.content)))
                 if part.tool_name == "search_docs":
                     searched_paths += _searched_paths(part.content)
                 continue

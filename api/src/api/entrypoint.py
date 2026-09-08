@@ -1,10 +1,6 @@
 """Container entrypoint: generates first-boot secrets, applies migrations, then
-execs the CMD. Python port of deploy/api-entrypoint.sh — the distroless runtime
-image has no shell to run that script in. This folds in the former init-secrets
-one-shot: there is no separate bootstrap container, so the api service prepares
-its own secrets idempotently on every start.
-
-Invoked as ``ENTRYPOINT ["python", "-m", "api.entrypoint"]``; sys.argv[1:] is the
+execs the CMD. Python port of deploy/api-entrypoint.sh (distroless has no shell
+to run that in). Invoked as ``python -m api.entrypoint``; sys.argv[1:] is the
 CMD Docker appends (e.g. ``uvicorn api.main:app ...``).
 """
 
@@ -38,10 +34,9 @@ def _write_if_absent(path: Path, env_val: str) -> None:
 
 
 def _database_url() -> str:
-    # A DATABASE_URL supplied by the environment wins unconditionally: assembling
-    # one here can only ever express user-and-password auth, and a passwordless
-    # connection (e.g. Azure managed identity, where the driver fetches a
-    # short-lived token per connection) has no password to put in a URL at all.
+    # DATABASE_URL from the environment always wins: this can only ever build a
+    # user+password URL, and a passwordless connection (e.g. Azure managed
+    # identity, token-based) has no password to put in one at all.
     database_url = os.environ.get("DATABASE_URL") or ""
     if database_url:
         return database_url
@@ -66,10 +61,8 @@ def main(argv: list[str]) -> None:
     secrets_dir.mkdir(parents=True, exist_ok=True)
 
     secret_key_path = secrets_dir / "secret_key"
-    # The setup_token gates the browser-driven first-admin creation (POST
-    # /api/setup/admin); it is generated ONLY on first boot so a stranger
-    # reading the volume after the operator has already created the admin
-    # cannot mint a fresh token.
+    # Gates first-admin creation (POST /api/setup/admin); generated ONLY on
+    # first boot so a stranger reading the volume later can't mint a fresh one.
     first_boot = not _is_populated(secret_key_path)
 
     _write_if_absent(secret_key_path, os.environ.get("SECRET_KEY") or "")

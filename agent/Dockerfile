@@ -1,8 +1,6 @@
 # ── Builder ──────────────────────────────────────────────────────────────────
-# Chainguard's -dev variant keeps a shell + package manager for the build; the
-# runtime stage below is fully distroless. Pinned by digest — :latest is a
-# rolling tag Chainguard rebuilds continuously, so an unpinned FROM would make
-# builds nondeterministic. Dependabot (docker ecosystem) tracks the digest.
+# -dev keeps a shell for the build; runtime below is distroless. Pinned by
+# digest since :latest rebuilds continuously (tracked by Dependabot).
 FROM cgr.dev/chainguard/python:latest-dev@sha256:de669347e9c1348d3fb952b1ab93738412bd7207769a882701691825741bfce3 AS builder
 USER root
 
@@ -39,16 +37,13 @@ RUN mkdir -p /home/duckhaven && \
     [c.execute(f'INSTALL {ext}') for ext in ('httpfs','azure','iceberg')]; \
     [c.execute(f'LOAD {ext}') for ext in ('httpfs','azure','iceberg')]"
 
-# Pre-create the results dir here — the distroless runtime stage has no shell
-# to mkdir/chown in. Copied with --chown below so an empty named volume
-# mounted here inherits the runtime user's ownership.
+# Pre-created here since the runtime stage has no shell to mkdir/chown in;
+# copied with --chown below.
 RUN mkdir -p /var/duckhaven-agent/results
 
 # ── Runtime ──────────────────────────────────────────────────────────────────
-# Distroless: no shell, no package manager, no apt/dpkg/coreutils — the class
-# of unfixable OS-package CVEs the Debian-based image needed a manual
-# purge-and-upgrade step to chase (perl-base, util-linux, ...) doesn't exist
-# here to begin with.
+# Distroless: no shell, package manager, or apt/dpkg — the unfixable
+# OS-package CVEs the old purge-and-upgrade step chased don't exist here.
 FROM cgr.dev/chainguard/python:latest@sha256:1f37785e5cdb70151f36aaa15e1e3cef4571424dbefbf4b0d8a9222535cb13ff AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -65,17 +60,12 @@ COPY --chown=65532:65532 --from=builder /app/.venv /app/.venv
 # Pre-installed DuckDB extensions, owned by the runtime user.
 COPY --chown=65532:65532 --from=builder /home/duckhaven/.duckdb /home/duckhaven/.duckdb
 
-# Results dir, pre-created and owned by the runtime user in the builder stage
-# (see comment there — this stage has no shell to mkdir/chown in).
+# Pre-created in the builder stage (see comment there) — no shell here to mkdir/chown.
 COPY --chown=65532:65532 --from=builder /var/duckhaven-agent/results /var/duckhaven-agent/results
 
 USER 65532:65532
 
-# The base image bakes in its own ENTRYPOINT (["/usr/bin/python"], the system
-# interpreter, not our venv's) — override it explicitly so "python" resolves
-# via PATH to /app/.venv/bin/python, which has agent/duckhaven-shared on its
-# sys.path. Split from CMD (rather than one CMD ["python", "-m", ...]) so the
-# resolution intent is explicit rather than relying on CMD alone overriding
-# whatever the base declares.
+# Overrides the base's own ENTRYPOINT (its system python, not our venv's) so
+# "python" resolves via PATH to /app/.venv/bin/python instead.
 ENTRYPOINT ["python"]
 CMD ["-m", "agent.main"]

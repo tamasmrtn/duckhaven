@@ -12,10 +12,8 @@ RUN npm run build
 # Output lives in /web/dist (MSW is dev-only, excluded from the production build).
 
 # ── Builder ──────────────────────────────────────────────────────────────────
-# Chainguard's -dev variant keeps a shell + package manager for the build; the
-# runtime stage below is fully distroless. Pinned by digest — :latest is a
-# rolling tag Chainguard rebuilds continuously, so an unpinned FROM would make
-# builds nondeterministic. Dependabot (docker ecosystem) tracks the digest.
+# -dev keeps a shell for the build; runtime below is distroless. Pinned by
+# digest since :latest rebuilds continuously (tracked by Dependabot).
 FROM cgr.dev/chainguard/python:latest-dev@sha256:de669347e9c1348d3fb952b1ab93738412bd7207769a882701691825741bfce3 AS builder
 USER root
 
@@ -42,18 +40,14 @@ COPY shared/src shared/src
 COPY api/src api/src
 RUN uv sync --frozen --no-dev --no-editable --package duckhaven-api
 
-# /var/duckhaven is the api_data mount point; /var/duckhaven/secrets lives
-# within it (holds the generated secret_key). Pre-created here and copied into
-# the runtime stage with --chown below, since the distroless runtime stage has
-# no shell to mkdir/chown in — this lets the empty-volume init copy inherit
-# the correct ownership.
+# /var/duckhaven/secrets holds the generated secret_key. Pre-created here and
+# copied into the runtime stage with --chown below — that stage has no shell
+# to mkdir/chown in.
 RUN mkdir -p /app/rootfs/var/duckhaven/secrets
 
 # ── Runtime ──────────────────────────────────────────────────────────────────
-# Distroless: no shell, no package manager, no apt/dpkg/coreutils — the class
-# of unfixable OS-package CVEs the Debian-based image needed a manual
-# purge-and-upgrade step to chase (perl-base, util-linux, ...) doesn't exist
-# here to begin with.
+# Distroless: no shell, package manager, or apt/dpkg — the unfixable
+# OS-package CVEs the old purge-and-upgrade step chased don't exist here.
 FROM cgr.dev/chainguard/python:latest@sha256:1f37785e5cdb70151f36aaa15e1e3cef4571424dbefbf4b0d8a9222535cb13ff AS runtime
 
 # Release version, injected from the git tag by CI (docker/metadata-action).
@@ -85,18 +79,15 @@ COPY --chown=65532:65532 api/alembic /app/alembic
 # Only the Markdown travels — .dockerignore holds back docs/images and friends.
 COPY --chown=65532:65532 docs /app/docs
 
-# /var/duckhaven/secrets, pre-created and owned by the runtime user in the
-# builder stage (see comment there — this stage has no shell to mkdir/chown in).
+# Pre-created in the builder stage (see comment there) — no shell here to mkdir/chown.
 COPY --chown=65532:65532 --from=builder /app/rootfs/var/duckhaven /var/duckhaven
 
 USER 65532:65532
 
 EXPOSE 8000
 
-# api.entrypoint is the Python port of the old shell entrypoint (distroless has
-# no shell to run one in): generates the secret key + setup token on first
-# boot, applies migrations, then execs the CMD below in place (same PID),
-# which is what makes --timeout-graceful-shutdown work — uvicorn must receive
-# SIGTERM directly as PID 1.
+# api.entrypoint replaces the old shell script (see its docstring) and execs
+# the CMD in place, so uvicorn gets SIGTERM directly as PID 1 — required for
+# --timeout-graceful-shutdown to bound the drain correctly.
 ENTRYPOINT ["python", "-m", "api.entrypoint"]
 CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-graceful-shutdown", "30"]

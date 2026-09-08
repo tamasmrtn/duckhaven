@@ -83,6 +83,9 @@ class RunResult:
     # data-backed answer as fabrication: the context holds documentation only,
     # and no page contains this workspace's revenue.
     tool_results: list[tuple[str, str]] = field(default_factory=list)
+    # Pages `search_docs` put in front of the model. It can cite one without
+    # opening it, and a citation the judge cannot place reads as invention.
+    searched_paths: list[str] = field(default_factory=list)
 
     @property
     def cited_paths(self) -> list[str]:
@@ -179,6 +182,20 @@ def _summarise_return(content: object) -> str:
     return text[:_TOOL_RESULT_CHARS] + f" … [+{len(text) - _TOOL_RESULT_CHARS:,} chars]"
 
 
+def _searched_paths(content: object) -> list[str]:
+    """The page paths a search returned, whether or not the model opened them."""
+    if isinstance(content, str):
+        with contextlib.suppress(json.JSONDecodeError):
+            content = json.loads(content)
+    if not isinstance(content, dict):
+        return []
+    return [
+        hit["path"]
+        for hit in content.get("results") or []
+        if isinstance(hit, dict) and hit.get("path")
+    ]
+
+
 def _tool_args(part: ToolCallPart) -> dict:
     """A tool call's arguments, whichever form the provider sent them in.
 
@@ -234,6 +251,7 @@ async def run_case(
     tools_called: list[str] = []
     doc_paths: list[str] = []
     tool_results: list[tuple[str, str]] = []
+    searched_paths: list[str] = []
     for message in result.all_messages():
         for part in getattr(message, "parts", []):
             if isinstance(part, ToolReturnPart):
@@ -242,6 +260,8 @@ async def run_case(
                 # anything here.
                 if part.tool_name != "read_doc_page":
                     tool_results.append((part.tool_name, _summarise_return(part.content)))
+                if part.tool_name == "search_docs":
+                    searched_paths += _searched_paths(part.content)
                 continue
             if not isinstance(part, ToolCallPart):
                 continue
@@ -258,6 +278,7 @@ async def run_case(
         doc_paths=doc_paths,
         instructions=instructions,
         tool_results=tool_results,
+        searched_paths=searched_paths,
     )
 
 

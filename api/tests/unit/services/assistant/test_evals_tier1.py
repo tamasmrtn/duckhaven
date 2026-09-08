@@ -13,6 +13,8 @@ scoring needs a real model deciding for itself, which is tier 2 — see
 ``api/tests/integration/test_docs_search.py``.
 """
 
+import json
+
 import pytest
 from pydantic_ai import DeferredToolRequests
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
@@ -842,17 +844,55 @@ def test_the_judge_sees_the_instructions_the_assistant_was_given():
     assert "Only run SELECT statements" in context
 
 
-def test_the_resident_page_index_is_left_out_of_the_judge_context():
-    """It lists paths and asserts nothing, and it is a third of the text."""
+def test_the_judge_can_tell_which_pages_exist():
+    """The resident page index goes to the judge whole. Stripping it to save a
+    third of the text cost a correct citation: `guides/service-accounts.md` is a
+    real, indexed page, and without the index the judge scored the pointer to it
+    as an invented page."""
     from api.services.assistant.knowledge.loader import load_index
     from api.services.assistant.prompts import DOCS_INDEX_PROMPT
     from tests.evals.compare import _context
 
     index = DOCS_INDEX_PROMPT.format(index=load_index().prompt_block)
-    result = _run_result(instructions=f"Product facts here.{index}And more facts.")
 
-    context = _context(_case("c"), result)
+    context = _context(_case("c"), _run_result(instructions=f"Product facts.{index}"))
 
-    assert "Product facts here." in context
-    assert "And more facts." in context
-    assert "documentation, by section" not in context
+    assert "guides/service-accounts.md" in context
+
+
+def test_a_page_search_surfaced_can_be_placed_without_being_opened():
+    """A model may cite a page it only saw in search results — that is what
+    search is for. The judge then has to place the citation, and scored an
+    accurate claim sourced from a search hit as invention because the page had
+    never entered its context."""
+    from tests.evals.compare import _context
+
+    result = _run_result(searched_paths=["concepts/elastic-compute.md"])
+
+    context = _context(_case("pricing"), result)
+
+    assert "search_docs returned" in context
+    assert "concepts/elastic-compute.md" in context
+
+
+def test_a_page_that_was_opened_is_not_also_listed_as_merely_searched():
+    """It is already in the context in full; the summary line would be noise."""
+    from tests.evals.compare import _context
+
+    case = _case("c")
+    case = metrics.Case(**{**case.__dict__, "expected_sources": ("reference/sql-support.md",)})
+    result = _run_result(searched_paths=["reference/sql-support.md"])
+
+    context = _context(case, result)
+
+    assert "search_docs returned" not in context
+
+
+def test_search_results_capture_the_paths_a_search_offered():
+    from tests.evals.harness import _searched_paths
+
+    content = {"results": [{"path": "a.md"}, {"path": "b.md"}, {"no": "path"}], "version": "1"}
+
+    assert _searched_paths(content) == ["a.md", "b.md"]
+    assert _searched_paths(json.dumps(content)) == ["a.md", "b.md"]
+    assert _searched_paths("not json") == []

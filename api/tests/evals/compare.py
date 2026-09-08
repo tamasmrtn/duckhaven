@@ -22,7 +22,6 @@ from pathlib import Path
 
 from api.config import settings
 from api.services.assistant.knowledge.loader import load_index, read_page
-from api.services.assistant.prompts import DOCS_INDEX_PROMPT
 from tests.evals.fixtures import EvalGateway
 from tests.evals.harness import (
     ArmConfig,
@@ -60,6 +59,27 @@ _CONTEXT_BUDGET = 24_000
 _MIN_PER_PAGE = 2_000
 
 
+def _pages_search_offered(already: list[str], results: tuple[RunResult, ...]) -> str:
+    """Index entries for pages a search surfaced but nothing opened.
+
+    A model can cite a page it only saw in search results — that is what search
+    is for — and the judge then has to place the citation. Summaries rather than
+    page text: this verifies that a page exists and what it covers, at a line
+    each, without spending the budget the opened pages need.
+    """
+    index = load_index()
+    seen = set(already)
+    lines = []
+    for result in results:
+        for path in result.searched_paths:
+            page = index.get(path)
+            if path in seen or page is None:
+                continue
+            seen.add(path)
+            lines.append(f"{path} — {page.title}: {page.summary}")
+    return "\n".join(lines)
+
+
 def _instructions_given(results: tuple[RunResult, ...]) -> str | None:
     """The product facts the assistant was handed before the turn began.
 
@@ -72,16 +92,12 @@ def _instructions_given(results: tuple[RunResult, ...]) -> str | None:
     the context scores 1, however reasonable it sounds") and three correct
     refusals scored 1.
 
-    The resident page index is dropped: it lists paths and asserts nothing, and
-    it is a third of the text.
+    Kept whole, page index included. Dropping it to save a third of the text was
+    a mistake: *which pages exist* is exactly the assertion a citation has to be
+    checked against, and without it the judge scored a correct pointer to
+    guides/service-accounts.md — a real, indexed page — as an invented one.
     """
     text = next((r.instructions for r in results if r.instructions), "")
-    if not text:
-        return None
-    try:
-        text = text.replace(DOCS_INDEX_PROMPT.format(index=load_index().prompt_block), "")
-    except Exception:  # noqa: BLE001 — no index shipped is not a scoring failure
-        pass
     return text.strip() or None
 
 
@@ -131,6 +147,11 @@ def _context(case: Case, *results: RunResult) -> str:
                 continue
             seen.add((tool, summary))
             blocks.append(f"--- tool result: {tool} ---\n{summary}")
+
+    if found := _pages_search_offered(paths, results):
+        blocks.append(
+            "--- pages search_docs returned, which the assistant saw without opening ---\n" + found
+        )
 
     if instructions := _instructions_given(results):
         blocks.append(f"--- the assistant's standing instructions ---\n{instructions}")

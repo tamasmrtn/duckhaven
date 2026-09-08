@@ -796,3 +796,32 @@ def test_a_long_tool_result_is_truncated_with_its_size_named():
 
     assert len(summarised) < 900
     assert "chars]" in summarised
+
+
+def test_a_case_with_no_pages_is_told_so_even_when_tools_returned_something():
+    """The guidance used to be keyed off whether the context had *anything* in
+    it. Adding tool results silently dropped it — a governance case went from
+    protected to strictly scored against catalog output that says nothing about
+    the product, and the category fell from 4.75 to 3.00 in one run."""
+    from tests.evals.compare import _context
+
+    case = _case("denied", expected=())
+    result = _run_result(tool_results=[("list_catalogs", '[{"slug": "warehouse"}]')])
+
+    context = _context(case, result)
+
+    assert "tool result: list_catalogs" in context
+    assert "no documentation covers this question" in context
+
+
+def test_a_case_with_pages_gets_no_such_disclaimer():
+    """There is documentation to be faithful to, so the judge should be strict."""
+    from tests.evals.compare import _context
+
+    case = _case("dialect")
+    case = metrics.Case(**{**case.__dict__, "expected_sources": ("reference/sql-support.md",)})
+
+    context = _context(case, _run_result())
+
+    assert "reference/sql-support.md" in context
+    assert "no documentation covers this question" not in context

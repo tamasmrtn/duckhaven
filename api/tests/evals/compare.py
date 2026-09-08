@@ -106,25 +106,35 @@ def _context(case: Case, *results: RunResult) -> str:
             seen.add((tool, summary))
             blocks.append(f"--- tool result: {tool} ---\n{summary}")
 
-    if blocks:
-        return "\n\n".join(blocks)
+    # Chosen by whether there are *pages*, not by whether there is anything at
+    # all. Tool results are evidence of what a query returned, never of what the
+    # product does — so a case with no documentation is still a case with no
+    # documentation, and the judge needs telling. Keying this off the combined
+    # blocks silently dropped the guidance the moment tool results were added,
+    # and governance fell from 4.75 to 3.00 in one run.
+    if not pages:
+        blocks.append(_no_documentation_guidance(case))
+    return "\n\n".join(blocks)
 
-    # What "no page" means depends on what was asked, and getting it wrong in
-    # either direction costs the run its point.
+
+def _no_documentation_guidance(case: Case) -> str:
+    """What "no page covers this" means, which depends on what was asked."""
     if case.category in ("product_knowledge", "unanswerable"):
         return (
-            "No documentation page covers this question. That is itself informative: an "
-            "answer that confidently describes a DuckHaven capability here is very likely "
-            "inventing one, and an answer that says so is correct."
+            "--- no documentation covers this question ---\n"
+            "That is itself informative: an answer that confidently describes a "
+            "DuckHaven capability here is very likely inventing one, and an answer that "
+            "says so is correct."
         )
     # Rubric-agnostic on purpose: this text reaches the faithfulness judge too,
     # which scores on a single 1-5 scale and has no numbered criteria to defer to.
     return (
-        "This question is about the workspace's data rather than the product, so no "
-        "documentation applies and the catalog results the assistant worked from are "
-        "not reproduced here. A specific factual answer is therefore unverifiable "
-        "rather than invented; judge what can be judged and do not mark it down for "
-        "claims this context cannot confirm either way."
+        "--- no documentation covers this question ---\n"
+        "It asks about the workspace's data rather than the product. Anything above is "
+        "what the assistant's own tools returned, which shows what a query produced but "
+        "not what DuckHaven is. Claims about the product that neither confirms are "
+        "unverifiable here rather than invented; judge what can be judged and do not "
+        "mark an answer down for what this context cannot settle either way."
     )
 
 

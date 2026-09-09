@@ -7,6 +7,10 @@ load-bearing property of the design: enforcement (``assert_workspace_member`` �
 chokepoints, so a harness bug or a prompt-injected tool call can never exceed the
 service account's grants.
 
+Shared with :mod:`api.services.mcp`, which is the same design pointed at a
+different principal: there the loopback carries the MCP caller's own access token
+rather than the assistant's, so the grants it cannot exceed are theirs.
+
 Router-body checks (membership, the SQL allowlist) live *above* the service layer,
 so a direct service call would skip them — hence the loopback rather than a direct
 ``dispatch_query`` call.
@@ -133,6 +137,24 @@ class Gateway:
         return resp
 
     # ── Catalog browse ────────────────────────────────────────────────────────
+    async def list_workspaces(self) -> list[dict]:
+        """The workspaces this principal is a member of.
+
+        Not workspace-scoped, unlike everything else here: an MCP client has no
+        ambient workspace the way a worksheet does, so its agent has to be able to
+        discover which ones its token actually reaches.
+        """
+        resp = await self._get("/workspaces")
+        return [
+            {
+                "workspace": w["slug"],
+                "name": w.get("name"),
+                "description": w.get("description"),
+                "default_catalog": w.get("default_catalog"),
+            }
+            for w in resp.json()
+        ]
+
     async def list_catalogs(self) -> list[dict]:
         resp = await self._get(f"/workspaces/{self._ws}/catalogs")
         return [{"slug": c["slug"], "name": c.get("name")} for c in resp.json()]

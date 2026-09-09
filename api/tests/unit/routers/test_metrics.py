@@ -125,8 +125,14 @@ async def test_failed_query_counts_but_skips_histograms(db_session):
     await query_service.handle_agent_frame(db_session, await _done_frame(query.id, status="failed"))
 
     assert _value("duckhaven_queries_total", {"replica_id": RID, "status": "failed"}) == before + 1
-    # Duration/result histograms only observe successful queries.
-    assert _value("duckhaven_query_duration_seconds_count", {"replica_id": RID}) == dur_before
+    # Duration/result histograms only observe successful queries. Both sides are
+    # coerced the same way, for the reason spelled out in test_internal_queries_
+    # excluded below: an untouched histogram reads back as None, so coercing only
+    # `before` compared None to 0 and failed on whichever tests xdist happened to
+    # schedule alongside this one.
+    assert (
+        _value("duckhaven_query_duration_seconds_count", {"replica_id": RID}) or 0
+    ) == dur_before
 
 
 async def test_internal_queries_excluded(db_session):

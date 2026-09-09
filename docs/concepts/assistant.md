@@ -30,6 +30,10 @@ the assistant can see and do with the same grants they already use for people.
 
 It runs one turn at a time in a conversation, and each conversation is private to the person who started it.
 
+To use an AI agent you already have — Claude Code, Claude Desktop, Cursor — against the same data instead, see the
+[MCP server](mcp-server.md). It inherits the governance described below, but acts as the caller's own identity rather
+than as a shared service account.
+
 ## What it cannot do
 
 - It cannot exceed the data access of its service account. If the account was granted read-only, `metadata`-tier, or

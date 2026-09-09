@@ -106,6 +106,7 @@ nav:
       - SQL sessions: concepts/sql-sessions.md
       - Permissions: concepts/permissions.md
       - AI assistant: concepts/assistant.md
+      - MCP server: concepts/mcp-server.md
       - Metadata: concepts/metadata.md
       - Lineage: concepts/lineage.md
       - Semantic layer: concepts/semantic-layer.md
@@ -134,6 +135,7 @@ nav:
       - Define metrics: guides/define-metrics.md
       - Import semantics from dbt: guides/import-dbt-semantics.md
       - Use the AI assistant: guides/using-the-assistant.md
+      - Connect an MCP client: guides/connect-mcp-client.md
       - How access works: guides/access-levels.md
       - Manage users & access: guides/users-access.md
       - Service accounts & tokens: guides/service-accounts.md

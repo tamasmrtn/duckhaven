@@ -159,6 +159,12 @@ trail — with data sovereignty, network privacy, and no SaaS lock-in.
 - **Semantic layer for AI assistant** — Curated metric and dimension
   definitions the assistant grounds its SQL in, instead of inferring intent
   from raw table/column names alone.
+- **MCP server** — An [MCP](https://modelcontextprotocol.io) endpoint at `/mcp`
+  so an AI agent you already use (Claude Code, Claude Desktop, Cursor) can
+  browse catalogs, run governed SQL, and query the semantic layer — as the
+  holder of a DuckHaven access token, through the same enforcement chokepoints
+  as any other client, so it is never a new way in. Read-only by default. See
+  [docs/concepts/mcp-server.md](docs/concepts/mcp-server.md).
 ### Storage
 
 - **Bring your own storage** — One backend per workspace: bundled object
@@ -280,7 +286,6 @@ The full shipped feature set is above. Here's what's actively being worked on:
 
 - **Command Line Interface** — let users manage Duckhaven directly from
   scripts and CI/CD pipelines without needing the web UI.
-- **MCP Server** - let users connect to DuckHaven using AI Agents
 - **Plugin Store** - A governed store of plugins for DuckHaven to allow users install tools of their liking
 - **Helm chart** - For the kubernetes users
 - **Terraform modules for AWS & GCP**

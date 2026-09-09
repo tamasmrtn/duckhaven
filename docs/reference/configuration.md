@@ -248,6 +248,30 @@ supplied here or via the provider's own standard environment variable (`ANTHROPI
 | `ASSISTANT_DOCS_SEARCH_LIMIT` | `5` | Default number of pages `search_docs` returns. The assistant may ask for between 1 and 10; anything outside that is clamped. |
 | `DOCS_SITE_URL` | `https://tamasmrtn.github.io/duckhaven` | Public documentation site, used when the assistant links a page it read. Change it if you host the docs yourself. |
 
+### MCP server
+
+Controls the [Model Context Protocol endpoint](../concepts/mcp-server.md) at `/mcp`, which lets an external AI agent
+(Claude Code, Claude Desktop, Cursor) browse catalogs and run governed SQL as the holder of a DuckHaven
+[access token](../guides/service-accounts.md). To connect a client, see
+[Connect an MCP client](../guides/connect-mcp-client.md).
+
+Unlike the AI assistant this is **on by default**, because it needs no model, no API key and no service account, and it
+can reach nothing the caller's token could not already reach through `/api`. It rides the API's existing port, so there
+is no new service and no new port to open — but the token travels on every request, so put a deployment reachable
+beyond a trusted network behind [TLS](../deployment/reverse-proxy-tls.md).
+
+| Variable | Default | Description |
+|---|---|---|
+| `MCP_ENABLED` | `true` | Master switch. When `false`, `/mcp` returns 503 and no tool is reachable. The endpoint is otherwise always mounted, so toggling this takes effect on the next request rather than needing a restart. |
+| `MCP_ALLOW_WRITES` | `false` | Whether `run_sql` may execute `INSERT`/`UPDATE`/`DELETE`/DDL. Off because DuckHaven's only write-approval mechanism is the assistant's in-conversation approve/deny panel, which a generic MCP client cannot show — so a write here would run unattended. Turning it on does not widen what a token can do: the [SQL guard](sql-support.md) and [catalog grants](../concepts/permissions.md) still apply, and a token with no write grant still cannot write. Re-read on every call, so a change takes effect immediately. |
+| `MCP_QUERY_TIMEOUT_S` | `120.0` | How long `run_sql` waits for a query before cancelling it. A query still running at the deadline is cancelled rather than left occupying a compute agent. |
+| `MCP_RESULT_ROW_CAP` | `100` | Max rows returned to the agent in one call. The rest is paged with `get_query_result`, so a `SELECT *` over a large table cannot fill the agent's context in one go. |
+| `MCP_RESULT_BYTE_CAP` | `32768` | Max bytes of a result sample returned in one call; trims below the row cap when rows are wide. |
+
+Origin checking reuses `CORS_ORIGINS`: a request carrying an `Origin` header not on that list is refused with 403,
+which is what stops a web page you visit from driving a DuckHaven server on your network. Ordinary MCP clients send no
+`Origin` and are unaffected.
+
 ### Observability
 
 Controls the Prometheus metrics endpoint and OpenTelemetry tracing. See

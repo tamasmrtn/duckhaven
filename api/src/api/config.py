@@ -434,6 +434,33 @@ class Settings(BaseSettings):
     # step with mkdocs.yml's site_url, which is what docs/llms.txt is built from.
     docs_site_url: str = "https://tamasmrtn.github.io/duckhaven"
 
+    # ── MCP server ────────────────────────────────────────────────────────────
+    # A Model Context Protocol endpoint at /mcp, so an external AI agent (Claude
+    # Code, Claude Desktop, Cursor) can browse metadata, run governed SQL and use
+    # the semantic layer. Every tool call goes through the same REST API as any
+    # other client, authenticated with the caller's own access token — so it is a
+    # second front door onto the existing enforcement, not a new one.
+    #
+    # On by default, unlike the assistant: it needs no model, no API key and no
+    # service account, and it can reach nothing the caller's token could not
+    # already reach through /api. Set false to remove the endpoint (503).
+    mcp_enabled: bool = True
+    # Whether run_sql may execute non-SELECT statements. Off by default because
+    # DuckHaven's only write-approval mechanism is the assistant's in-conversation
+    # approve/deny panel, which a generic MCP client has no equivalent for — so a
+    # write here would run unattended. Turning it on does not widen what a token
+    # can do (the SQL guard and catalog grants still apply); it stops refusing
+    # locally what the REST API would have accepted.
+    mcp_allow_writes: bool = False
+    # Per-call ceiling on how long run_sql waits for a query, mirroring the
+    # assistant's. A query still running at the deadline is cancelled rather than
+    # left to occupy an agent.
+    mcp_query_timeout_s: float = 120.0
+    # Result-sample caps fed back to the calling agent. The full result stays
+    # available through get_query_result's cursor, a page at a time.
+    mcp_result_row_cap: int = 100
+    mcp_result_byte_cap: int = 32_768
+
     # ── OIDC SSO (Part A) ─────────────────────────────────────────────────────
     # When enabled, the login page shows a "Sign in with SSO" button and the
     # /auth/oidc/* endpoints are live. Local accounts keep working regardless so

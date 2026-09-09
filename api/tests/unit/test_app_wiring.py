@@ -1,13 +1,14 @@
-"""Wiring tests for the outer ASGI app: the REST API is reachable under /api
-and the agent WebSocket stays at the root path."""
+"""Wiring tests for the outer ASGI app: the REST API is reachable under /api,
+the MCP endpoint sits at /mcp, and the agent WebSocket stays at the root path."""
 
 from contextlib import asynccontextmanager
 
 from httpx import ASGITransport, AsyncClient
-from starlette.routing import Mount
+from starlette.routing import Mount, Route
 
 from api.deps import get_db
 from api.main import _outer_lifespan, api_app, app
+from api.services.mcp.server import MCP_PATH, mcp_asgi_app
 
 
 def test_api_mounted_under_api_prefix():
@@ -16,6 +17,25 @@ def test_api_mounted_under_api_prefix():
 
 def test_agent_ws_route_stays_at_root():
     assert app.url_path_for("agent_connect") == "/agents/connect"
+
+
+def test_mcp_is_an_exact_route_not_a_mount():
+    """A Mount only matches paths *below* its prefix.
+
+    Mounting would turn `POST /mcp` — the URL in every client config and every
+    docs example — into a 307 to `/mcp/`, which not all clients follow on a POST.
+    """
+    routes = [r for r in app.routes if isinstance(r, Route) and r.path == MCP_PATH]
+    assert len(routes) == 1
+    assert routes[0].app is mcp_asgi_app
+
+
+def test_mcp_is_registered_before_the_spa_catch_all():
+    """Starlette matches routes in order, so a catch-all registered first wins."""
+    paths = [getattr(r, "path", None) for r in app.routes]
+    assert MCP_PATH in paths
+    if "/" in paths:
+        assert paths.index(MCP_PATH) < paths.index("/")
 
 
 async def test_api_prefix_routes_reach_routers():

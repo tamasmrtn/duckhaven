@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import JSONResponse, Response
+from starlette.routing import Route
 from starlette.staticfiles import StaticFiles
 from starlette.types import Scope
 
@@ -54,6 +55,7 @@ from api.services.agent_dispatch import drain_local_agents
 from api.services.assistant.identity import ASSISTANT_EMAIL
 from api.services.assistant.knowledge.sync import sync_corpus
 from api.services.bootstrap import ensure_assistant_service_account, seed_agent_bootstrap_token
+from api.services.mcp.server import MCP_PATH, mcp_asgi_app, mcp_session_manager
 from api.services.oidc import register_oidc
 from api.services.polaris import (
     PolarisBadRequestError,
@@ -331,16 +333,27 @@ async def _outer_lifespan(outer: FastAPI) -> AsyncIterator[None]:
         # be reachable from here as well. Lineage extraction reads a source
         # table's columns through it when it cannot resolve them from the SQL.
         outer.state.polaris_client = api_app.state.polaris_client
-        yield
+        # Same reason: the MCP endpoint's own lifespan never runs, and its
+        # transport needs a live task group before it can serve a request.
+        # Entered unconditionally — MCP_ENABLED is checked per request, so
+        # toggling it never leaves the transport half-started.
+        async with mcp_session_manager():
+            yield
 
 
 # Outer ASGI app: agent WebSocket at root (agents dial /agents/connect), the
-# REST API under /api, and the built SPA at / (only present in the image).
+# REST API under /api, the MCP endpoint at /mcp, and the built SPA at / (only
+# present in the image).
 app = FastAPI(lifespan=_outer_lifespan)
 app.include_router(agents_ws.router, tags=["agents"])
 # Network-private inter-replica dispatch; never exposed past the internal network.
 app.include_router(internal.router)
 app.mount("/api", api_app)
+# An exact route rather than a mount: Streamable HTTP is one path that accepts
+# POST, and a mount would only match *below* /mcp — redirecting the documented
+# URL to /mcp/, which not every client follows on a POST. Registered before the
+# SPA catch-all below, since Starlette matches routes in order.
+app.router.routes.append(Route(MCP_PATH, endpoint=mcp_asgi_app))
 if settings.static_dir.is_dir():
     app.mount("/", SPAStaticFiles(directory=settings.static_dir, html=True), name="ui")
 

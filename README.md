@@ -121,6 +121,13 @@ trail — with data sovereignty, network privacy, and no SaaS lock-in.
 
 ### Automation & operations
 
+- **Command line (`dh`)** — `pip install duckhaven-cli` gives scripts and CI
+  pipelines everything the web UI offers: run and page queries, browse and
+  manage catalogs, set grants, publish dbt lineage and semantic models, drive
+  SQL sessions, and administer users, service accounts and agents. `dh auth
+  login` mints a token for your own identity, so nobody needs a shared
+  credential, and `dh api` reaches any endpoint the typed commands don't cover
+  yet. See [docs/reference/cli.md](docs/reference/cli.md).
 - **Scheduled queries** — Run saved queries on a cron schedule (UTC), leader-elected
   across replicas, with a per-schedule run history. No overlap, no backfill, and
   no automatic retries — the next tick is the next attempt.
@@ -284,8 +291,6 @@ cutting a new release see [docs/developer/releasing.md](docs/developer/releasing
 
 The full shipped feature set is above. Here's what's actively being worked on:
 
-- **Command Line Interface** — let users manage Duckhaven directly from
-  scripts and CI/CD pipelines without needing the web UI.
 - **Plugin Store** - A governed store of plugins for DuckHaven to allow users install tools of their liking
 - **Helm chart** - For the kubernetes users
 - **Terraform modules for AWS & GCP**

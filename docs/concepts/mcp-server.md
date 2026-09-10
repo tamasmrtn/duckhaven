@@ -151,9 +151,13 @@ Two things follow from being reachable over the network:
 
 - **Use TLS.** The access token travels on the `Authorization` header of every request. On anything beyond a trusted
   LAN, put DuckHaven behind [a reverse proxy with TLS](../deployment/reverse-proxy-tls.md).
-- **Browser origins are checked.** A request carrying an `Origin` header is refused unless that origin is in the same
-  allowlist the web app uses (`CORS_ORIGINS`), which is what stops a web page you visit from driving a DuckHaven server
-  on your network. Ordinary MCP clients send no `Origin` and are unaffected.
+- **Browser origins are refused.** A request carrying an `Origin` header is rejected unless that origin is in the same
+  allowlist the web app uses (`CORS_ORIGINS`) — the spec requires this, and it is what stops a web page you visit from
+  driving a DuckHaven server on your network. Ordinary MCP clients send no `Origin` at all and are unaffected.
+
+    Being on the allowlist is not enough to make a **browser-based** MCP client work, and none is supported today: the
+    endpoint serves no CORS response headers and answers the preflight `OPTIONS` with a 401, so the browser blocks the
+    request. The allowlist narrows who is refused; it does not open a door.
 
 !!! note "Scope of this first version"
     The server exposes tools only — no MCP *resources*, *prompts*, or *sampling*. There is no OAuth authorization

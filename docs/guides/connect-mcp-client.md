@@ -127,4 +127,4 @@ A healthy server answers with its tool definitions — thirteen, or eleven where
 | `503`, "The MCP server is not enabled" | `MCP_ENABLED=false` on this deployment. See [Configuration](../reference/configuration.md#mcp-server). |
 | A tool reports "Access denied" or "Not found" | Your token is working; your grants do not cover that object. Ask for [workspace membership](users-access.md#workspace-membership-and-roles) or a [grant](access-levels.md). |
 | "This MCP server is read-only" | Expected. Writes are off unless an operator sets `MCP_ALLOW_WRITES=true`; see [Read-only by default](../concepts/mcp-server.md#read-only-by-default). |
-| A `307` redirect, or the client cannot connect | Check the URL has no trailing slash — it is `/mcp`, not `/mcp/`. |
+| The client cannot connect at all | Check the host and port, and that nothing between you and DuckHaven strips the `Authorization` header. Both `/mcp` and `/mcp/` are served, so a trailing slash is not the cause. |

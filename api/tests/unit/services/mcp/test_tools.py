@@ -87,16 +87,25 @@ async def test_writes_are_refused_by_default(gateways, sql):
     assert gateways == [], "the statement must not reach the gateway at all"
 
 
-async def test_unparseable_sql_is_refused_while_read_only(gateways):
-    """Not provably a SELECT is not a SELECT.
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELCT * FROM orders",  # a typo, not a write
+        "EXPLAIN SELECT 1",  # refused by the guard, but not for writing
+        "ATTACH 'x.db'",  # likewise
+    ],
+)
+async def test_sql_that_is_neither_a_read_nor_a_write_goes_to_the_server(gateways, sql):
+    """The local gate answers one question: is this a write?
 
-    `is_read_only` reports False when DuckDB cannot parse the statement, so the
-    refusal here is conservative by construction rather than by a second guess at
-    what the text meant.
+    Anything else — a typo, a statement DuckHaven refuses outright — is refused
+    server-side for a reason that has nothing to do with write permission. Saying
+    "ask your operator to enable writes" would send the agent after a setting that
+    cannot help, on a turn it is told to treat as final. The server names the real
+    reason instead, so these must reach it.
     """
-    with pytest.raises(ToolError):
-        await tools.run_sql(ctx(), "ws", "SELCT * FROM")
-    assert gateways == []
+    await tools.run_sql(ctx(), "ws", sql)
+    assert gateways[0].calls[0][0] == "run_sql"
 
 
 async def test_a_select_runs_while_read_only(gateways):
@@ -291,7 +300,7 @@ async def test_the_gateway_is_built_for_the_calling_principal():
     their own grants — so the id has to come from the authenticated call, not from
     anything the client sent.
     """
-    call = McpCall(user_id="user-42", email="a@b.test", client=object())
+    call = McpCall(user_id="user-42", client=object())
     request = SimpleNamespace(scope={SCOPE_KEY: call})
     gateway = tools._gateway(
         SimpleNamespace(request_context=SimpleNamespace(request=request)), "ws"

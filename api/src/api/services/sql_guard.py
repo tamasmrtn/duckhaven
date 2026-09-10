@@ -29,6 +29,10 @@ _ALLOWED_TYPES = {
     duckdb.StatementType.DROP,
 }
 
+# Derived rather than listed again, so a statement type admitted in future is
+# gated as a write by default instead of silently becoming a permitted read.
+_WRITE_TYPES = _ALLOWED_TYPES - {duckdb.StatementType.SELECT}
+
 
 class SQLNotAllowed(ValueError):
     """Raised when `assert_allowed` rejects the SQL.
@@ -68,3 +72,24 @@ def is_read_only(sql: str) -> bool:
     except Exception:  # noqa: BLE001 - parse failure -> not provably read-only
         return False
     return bool(statements) and all(s.type == duckdb.StatementType.SELECT for s in statements)
+
+
+def is_write(sql: str) -> bool:
+    """True iff some statement writes data or changes the catalog.
+
+    Deliberately **not** the negation of :func:`is_read_only`. Three things are
+    neither: SQL that does not parse, an empty body, and a statement this
+    platform refuses outright (``EXPLAIN``, ``ATTACH``, ``PRAGMA``, …). Each is
+    rejected for a reason that has nothing to do with write permission, so a
+    caller gating on writes must let them through to ``assert_allowed`` and
+    report *its* message instead.
+
+    Answering "is this a write?" with "yes" for a typo would send someone off
+    to grant write access, or an operator off to change a setting, when the fix
+    is a missing letter.
+    """
+    try:
+        statements = duckdb.extract_statements(sql)
+    except Exception:  # noqa: BLE001 - unparseable is not provably a write
+        return False
+    return any(s.type in _WRITE_TYPES for s in statements)

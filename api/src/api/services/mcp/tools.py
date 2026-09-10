@@ -46,7 +46,7 @@ from api.services.assistant.knowledge.loader import (
 )
 from api.services.assistant.knowledge.search import search_pages
 from api.services.mcp.auth import current_call
-from api.services.sql_guard import is_read_only
+from api.services.sql_guard import is_write
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +153,12 @@ async def run_sql(ctx: Context, workspace: Workspace, sql: str, catalog: str | N
         sql: The SQL to execute.
         catalog: Catalog to resolve unqualified names against. Optional.
     """
-    if not is_read_only(sql) and not settings.mcp_allow_writes:
+    # `is_write`, not `not is_read_only`: a statement that fails to parse, or one
+    # DuckHaven refuses outright (EXPLAIN, ATTACH, …), is neither a read nor a
+    # write. Refusing those here would answer a typo with "ask your operator to
+    # enable writes" — advice that cannot help, on a turn the agent is told to
+    # treat as final. They go to the server instead, which names the real reason.
+    if is_write(sql) and not settings.mcp_allow_writes:
         raise ToolError(
             "This MCP server is read-only: only SELECT statements are permitted. "
             "Writes are disabled because there is no way to ask a human to approve "
@@ -405,5 +410,3 @@ READ_TOOLS = (
 #: Withheld entirely when the corpus is not on disk or the operator has turned
 #: product knowledge off — a tool in the schema is a tool the agent will call.
 DOCS_TOOLS = (search_docs, read_doc_page)
-
-ALL_TOOLS = (*READ_TOOLS, run_sql, *DOCS_TOOLS)

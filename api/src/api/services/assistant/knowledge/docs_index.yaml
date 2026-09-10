@@ -79,6 +79,11 @@ pages:
   title: AI assistant
   section: Concepts
   summary: The governed AI data assistant and how it enforces access.
+- path: concepts/mcp-server.md
+  title: MCP server
+  section: Concepts
+  summary: DuckHaven speaks the Model Context Protocol, so an AI agent running somewhere else — Claude
+    Code in your terminal, Claude Desktop, Cursor — can work with your data directly.
 - path: concepts/metadata.md
   title: Metadata
   section: Concepts
@@ -196,6 +201,11 @@ pages:
   title: Use the AI assistant
   section: Guides
   summary: Browse the catalog, run SQL, and propose worksheet edits with the assistant.
+- path: guides/connect-mcp-client.md
+  title: Connect an MCP client
+  section: Guides
+  summary: DuckHaven exposes a Model Context Protocol server at /mcp, so an AI agent — Claude Code,
+    Claude Desktop, Cursor, or anything else that speaks MCP — can browse your catalogs and…
 - path: guides/access-levels.md
   title: How access works
   section: Guides

@@ -242,11 +242,38 @@ supplied here or via the provider's own standard environment variable (`ANTHROPI
 | `ASSISTANT_RESULT_ROW_CAP` | `100` | Max rows of a query result fed into model context (the full result is still available in the UI). |
 | `ASSISTANT_RESULT_BYTE_CAP` | `32768` | Max bytes of a result sample fed into model context. |
 | `ASSISTANT_TRACE_INCLUDE_CONTENT` | `true` | When [tracing](../operations/tracing.md#the-ai-assistant) is enabled, record the turn's content (prompt, generated SQL, tool arguments, result samples) on spans. Set `false` to keep only structure — roles, token usage, tool names, timing, status — out of the trace backend. No effect when tracing is off. |
-| `ASSISTANT_DOCS_ENABLED` | `true` | Whether the assistant knows what DuckHaven is — the curated [product-knowledge section](../concepts/assistant.md#product-knowledge) and page index in its instructions, plus the `read_doc_page` tool. Set `false` to restore exactly the instructions and tool set it had before, at the cost of an assistant that answers product questions from general knowledge of other platforms. |
+| `ASSISTANT_DOCS_ENABLED` | `true` | Whether the assistant knows what DuckHaven is — the curated [product-knowledge section](../concepts/assistant.md#product-knowledge) and page index in its instructions, plus the `read_doc_page` tool. Set `false` to restore exactly the instructions and tool set it had before, at the cost of an assistant that answers product questions from general knowledge of other platforms. Despite the name this is deployment-wide: it also withholds the documentation tools from the [MCP server](../concepts/mcp-server.md#documentation-lookup). |
 | `ASSISTANT_DOCS_DIR` | `/app/docs` | Where the documentation pages live. The image copies `docs/` here; point it at the repository's `docs/` when running from a source checkout (`make dev-api` does). If the directory is absent, the page list is left out of the assistant's instructions and the documentation tools are withheld — it behaves as a deployment without the feature rather than offering pages it cannot open. |
 | `ASSISTANT_DOCS_MAX_PAGE_CHARS` | `20000` | Largest page the assistant reads in one call (~5k tokens). The longest few pages exceed it and come back cut off, with a marker stating how much was withheld and a link to the full page, so the assistant does not report a truncated page as silence. |
 | `ASSISTANT_DOCS_SEARCH_LIMIT` | `5` | Default number of pages `search_docs` returns. The assistant may ask for between 1 and 10; anything outside that is clamped. |
 | `DOCS_SITE_URL` | `https://tamasmrtn.github.io/duckhaven` | Public documentation site, used when the assistant links a page it read. Change it if you host the docs yourself. |
+
+### MCP server
+
+Controls the [Model Context Protocol endpoint](../concepts/mcp-server.md) at `/mcp`, which lets an external AI agent
+(Claude Code, Claude Desktop, Cursor) browse catalogs and run governed SQL as the holder of a DuckHaven
+[access token](../guides/service-accounts.md). To connect a client, see
+[Connect an MCP client](../guides/connect-mcp-client.md).
+
+Unlike the AI assistant this is **on by default**, because it needs no model, no API key and no service account, and it
+can reach nothing the caller's token could not already reach through `/api`. It rides the API's existing port, so there
+is no new service and no new port to open — but the token travels on every request, so put a deployment reachable
+beyond a trusted network behind [TLS](../deployment/reverse-proxy-tls.md).
+
+| Variable | Default | Description |
+|---|---|---|
+| `MCP_ENABLED` | `true` | Master switch. When `false`, `/mcp` returns 503 and no tool is reachable. The endpoint is otherwise always mounted, so toggling this takes effect on the next request rather than needing a restart. |
+| `MCP_ALLOW_WRITES` | `false` | Whether `run_sql` may execute `INSERT`/`UPDATE`/`DELETE`/DDL. Off because DuckHaven's only write-approval mechanism is the assistant's in-conversation approve/deny panel, which a generic MCP client cannot show — so a write here would run unattended. Turning it on does not widen what a token can do: the [SQL guard](sql-support.md) and [catalog grants](../concepts/permissions.md) still apply, and a token with no write grant still cannot write. Re-read on every call, so a change takes effect immediately. |
+| `MCP_QUERY_TIMEOUT_S` | `120.0` | How long `run_sql` waits for a query before cancelling it. A query still running at the deadline is cancelled rather than left occupying a compute agent. |
+| `MCP_RESULT_ROW_CAP` | `100` | Max rows returned to the agent in one call. The rest is paged with `get_query_result`, so a `SELECT *` over a large table cannot fill the agent's context in one go. |
+| `MCP_RESULT_BYTE_CAP` | `32768` | Max bytes of a result sample returned in one call; trims below the row cap when rows are wide. |
+
+Two settings from other sections also apply here. Origin checking reuses `CORS_ORIGINS`: a request carrying an
+`Origin` header not on that list is refused with 403, which is what stops a web page you visit from driving a
+DuckHaven server on your network — ordinary MCP clients send no `Origin` and are unaffected. And
+`ASSISTANT_DOCS_ENABLED` governs the `search_docs` / `read_doc_page` tools here as well as in the assistant panel: it
+is the deployment's single decision about whether AI may read the shipped documentation, so setting it `false`
+withholds them from both. They are withheld automatically when `ASSISTANT_DOCS_DIR` holds no corpus.
 
 ### Observability
 

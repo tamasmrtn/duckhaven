@@ -23,6 +23,7 @@ const VERB_POOLS: Record<string, string[]> = {
   list_tables: LIST_VERBS,
   describe_table: ["Preening the schema…", "Dabbling in the data…"],
   get_query_result: ["Surfacing results…", "Bobbing along…"],
+  get_table_lineage: ["Tracing the stream…", "Following the flow upriver…"],
   get_worksheet_sql: ["Dabbling in the data…"],
   get_worksheet_selection: ["Dabbling in the data…"],
   propose_sql_edit: ["Drafting a nest…", "Nesting the answer…"],

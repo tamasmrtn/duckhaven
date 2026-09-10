@@ -16,6 +16,9 @@ the assistant can see and do with the same grants they already use for people.
   stored definition, and can explain how a metric is calculated and what it excludes.
 - **Browse metadata** — list the catalogs, schemas, and tables visible to it, and describe a table's columns, row count,
   and size.
+- **Trace lineage** — answer "where does this come from?" and "what breaks if I change it?" from the recorded
+  [lineage graph](lineage.md) rather than by guessing from column names. A source it holds no grant on comes back
+  unnamed but still present, and it is told to say so rather than report the path as ending there.
 - **Run SQL** — write and execute a query, then reason over a capped sample of the results. The full result set is
   available to you in the UI, exactly as if you had run the query yourself.
 - **Propose editor edits** — on the worksheet, write or change the SQL in your editor as a highlighted, accept-or-reject
@@ -29,6 +32,10 @@ the assistant can see and do with the same grants they already use for people.
   which table), it asks a short clarifying question rather than guessing.
 
 It runs one turn at a time in a conversation, and each conversation is private to the person who started it.
+
+To use an AI agent you already have — Claude Code, Claude Desktop, Cursor — against the same data instead, see the
+[MCP server](mcp-server.md). It inherits the governance described below, but acts as the caller's own identity rather
+than as a shared service account.
 
 ## What it cannot do
 

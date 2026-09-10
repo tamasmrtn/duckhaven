@@ -209,6 +209,17 @@ services:
       ASSISTANT_MODEL: ${ASSISTANT_MODEL:-anthropic:claude-sonnet-5}
       ASSISTANT_OPENAI_BASE_URL: ${ASSISTANT_OPENAI_BASE_URL:-}
       ASSISTANT_API_KEY: ${ASSISTANT_API_KEY:-}
+      # MCP server at /mcp, so an external AI agent (Claude Code, Claude Desktop,
+      # Cursor) can browse metadata and run governed SQL as the holder of a
+      # DuckHaven access token. On by default — it needs no configuration and can
+      # reach nothing that token could not already reach through /api. Writes are
+      # off separately: there is no way to ask a human to approve one over MCP.
+      # See docs/concepts/mcp-server.md.
+      MCP_ENABLED: ${MCP_ENABLED:-true}
+      MCP_ALLOW_WRITES: ${MCP_ALLOW_WRITES:-false}
+      MCP_QUERY_TIMEOUT_S: ${MCP_QUERY_TIMEOUT_S:-120.0}
+      MCP_RESULT_ROW_CAP: ${MCP_RESULT_ROW_CAP:-100}
+      MCP_RESULT_BYTE_CAP: ${MCP_RESULT_BYTE_CAP:-32768}
       # OIDC / SSO (optional). Empty by default -> SSO off, local login only.
       # OIDC_PROVIDERS is a JSON list of providers (one button each); see
       # docs/guides/connect-idp.md. The OIDC_* fields below are a single-provider

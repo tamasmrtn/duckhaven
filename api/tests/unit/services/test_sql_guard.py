@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from api.services.sql_guard import SQLNotAllowed, assert_allowed, is_read_only
+from api.services.sql_guard import SQLNotAllowed, assert_allowed, is_read_only, is_write
 
 ALLOWED = [
     "SELECT 1",
@@ -127,4 +127,49 @@ def test_is_read_only_true(sql: str) -> None:
 
 @pytest.mark.parametrize("sql", NOT_READ_ONLY)
 def test_is_read_only_false(sql: str) -> None:
+    assert is_read_only(sql) is False
+
+
+# `is_write` gates the MCP server's read-only mode. It is deliberately not the
+# negation of `is_read_only`: a caller that treated "not a read" as "a write"
+# would answer a typo by telling someone to ask for write access.
+WRITES = [
+    "INSERT INTO t VALUES (1)",
+    "UPDATE t SET x=1",
+    "DELETE FROM t",
+    "CREATE TABLE t (x INT)",
+    "ALTER TABLE t ADD COLUMN x INT",
+    "DROP TABLE t",
+    "MERGE INTO t USING u ON t.id=u.id WHEN MATCHED THEN DELETE",
+    "SELECT 1; INSERT INTO t VALUES (1)",  # any write taints the batch
+]
+
+#: Neither a read nor a write. The first two are reads; the rest are refused by
+#: `assert_allowed` for reasons unrelated to write permission, so the caller has
+#: to forward them and report *its* message.
+NOT_WRITES = [
+    "SELECT 1",
+    "select 1; select 2",
+    "",
+    "NOT EVEN SQL",
+    "SELCT * FROM t",
+    "EXPLAIN SELECT 1",
+    "ATTACH 'other.db'",
+    "PRAGMA database_list",
+]
+
+
+@pytest.mark.parametrize("sql", WRITES)
+def test_is_write_true(sql: str) -> None:
+    assert is_write(sql) is True
+
+
+@pytest.mark.parametrize("sql", NOT_WRITES)
+def test_is_write_false(sql: str) -> None:
+    assert is_write(sql) is False
+
+
+@pytest.mark.parametrize("sql", WRITES)
+def test_every_write_is_also_not_read_only(sql: str) -> None:
+    """The two agree wherever they overlap; they differ only outside it."""
     assert is_read_only(sql) is False

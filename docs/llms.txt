@@ -30,6 +30,7 @@
 - [SQL sessions](https://tamasmrtn.github.io/duckhaven/concepts/sql-sessions/): A SQL session is a persistent database connection that DuckHaven holds open on one agent on your behalf, so a client can run many statements with connection-scoped state —…
 - [Permissions](https://tamasmrtn.github.io/duckhaven/concepts/permissions/): Per-workspace access control and audit trail.
 - [AI assistant](https://tamasmrtn.github.io/duckhaven/concepts/assistant/): The governed AI data assistant and how it enforces access.
+- [MCP server](https://tamasmrtn.github.io/duckhaven/concepts/mcp-server/): DuckHaven speaks the Model Context Protocol, so an AI agent running somewhere else — Claude Code in your terminal, Claude Desktop, Cursor — can work with your data directly.
 - [Metadata](https://tamasmrtn.github.io/duckhaven/concepts/metadata/): DuckHaven splits its state across two stores, and the split is an architectural invariant: catalog structure lives in Polaris, and DuckHaven's own entities live in Postgres.
 - [Lineage](https://tamasmrtn.github.io/duckhaven/concepts/lineage/): Lineage answers two questions about a table: where did this data come from, and what breaks if I change it.
 - [Semantic layer](https://tamasmrtn.github.io/duckhaven/concepts/semantic-layer/): A semantic model records what your business terms mean and how they are calculated: that revenue is the sum of amount over purchase events, excluding test accounts, measured on…
@@ -62,6 +63,7 @@
 - [Define metrics](https://tamasmrtn.github.io/duckhaven/guides/define-metrics/): This guide walks through creating a semantic model, defining a metric, and publishing it so the AI assistant will use it.
 - [Import semantics from dbt](https://tamasmrtn.github.io/duckhaven/guides/import-dbt-semantics/): If your metrics are already defined in dbt's semantic layer, DuckHaven can import them rather than making you write them twice.
 - [Use the AI assistant](https://tamasmrtn.github.io/duckhaven/guides/using-the-assistant/): Browse the catalog, run SQL, and propose worksheet edits with the assistant.
+- [Connect an MCP client](https://tamasmrtn.github.io/duckhaven/guides/connect-mcp-client/): DuckHaven exposes a Model Context Protocol server at /mcp, so an AI agent — Claude Code, Claude Desktop, Cursor, or anything else that speaks MCP — can browse your catalogs and…
 - [How access works](https://tamasmrtn.github.io/duckhaven/guides/access-levels/): The three access layers, including fine-grained catalog/schema/table grants.
 - [Manage users & access](https://tamasmrtn.github.io/duckhaven/guides/users-access/): Administer users and permissions.
 - [Service accounts & tokens](https://tamasmrtn.github.io/duckhaven/guides/service-accounts/): Machine auth via service accounts and Personal Access Tokens.

@@ -7,6 +7,10 @@ load-bearing property of the design: enforcement (``assert_workspace_member`` �
 chokepoints, so a harness bug or a prompt-injected tool call can never exceed the
 service account's grants.
 
+Shared with :mod:`api.services.mcp`, which is the same design pointed at a
+different principal: there the loopback carries the MCP caller's own access token
+rather than the assistant's, so the grants it cannot exceed are theirs.
+
 Router-body checks (membership, the SQL allowlist) live *above* the service layer,
 so a direct service call would skip them — hence the loopback rather than a direct
 ``dispatch_query`` call.
@@ -133,6 +137,24 @@ class Gateway:
         return resp
 
     # ── Catalog browse ────────────────────────────────────────────────────────
+    async def list_workspaces(self) -> list[dict]:
+        """The workspaces this principal is a member of.
+
+        Not workspace-scoped, unlike everything else here: an MCP client has no
+        ambient workspace the way a worksheet does, so its agent has to be able to
+        discover which ones its token actually reaches.
+        """
+        resp = await self._get("/workspaces")
+        return [
+            {
+                "workspace": w["slug"],
+                "name": w.get("name"),
+                "description": w.get("description"),
+                "default_catalog": w.get("default_catalog"),
+            }
+            for w in resp.json()
+        ]
+
     async def list_catalogs(self) -> list[dict]:
         resp = await self._get(f"/workspaces/{self._ws}/catalogs")
         return [{"slug": c["slug"], "name": c.get("name")} for c in resp.json()]
@@ -181,6 +203,82 @@ class Gateway:
                 {"name": c["name"], "type": c["type"], "nullable": c.get("nullable")}
                 for c in t.get("columns", [])
             ],
+        }
+
+    async def table_lineage(
+        self,
+        catalog: str,
+        schema: str,
+        table: str,
+        *,
+        direction: str = "both",
+        depth: int = 2,
+        columns_for: list[str] | None = None,
+    ) -> dict:
+        """The bounded lineage graph around a table, trimmed for an agent.
+
+        Passed through rather than reshaped in two respects that matter. A
+        ``redacted`` node keeps its key — a hash, not a name — so the graph keeps
+        its shape and an agent can see that *something* it may not read sits
+        there. And all three truncation flags survive, because a partial graph
+        that looks complete is the one failure this endpoint's own design goes
+        out of its way to prevent.
+
+        What is dropped is the per-provider freshness block: each edge carries a
+        name, two timestamps, an observation count and two more flags per
+        producer, which is most of the payload and answers a question ("should I
+        trust this claim?") that belongs to a person looking at the graph rather
+        than to an agent traversing it. The provider *names* stay, since which
+        producer asserted an edge is the part that changes what an agent says.
+        """
+        params: dict[str, object] = {"direction": direction, "depth": depth}
+        if columns_for:
+            params["columns_for"] = columns_for
+        resp = await self._get(
+            f"/workspaces/{self._ws}/catalogs/{catalog}/schemas/{schema}/tables/{table}/lineage",
+            params=params,
+        )
+        graph = resp.json()
+        return {
+            "root": graph.get("root"),
+            "nodes": [
+                {
+                    key: value
+                    for key, value in (
+                        ("key", n["key"]),
+                        ("kind", n["kind"]),
+                        ("catalog", n.get("catalog")),
+                        ("schema", n.get("schema_name")),
+                        ("table", n.get("table")),
+                        ("system", n.get("system")),
+                        ("distance", n.get("distance")),
+                        ("column_count", n.get("column_count")),
+                    )
+                    # A redacted node carries no names; omitting the empty keys
+                    # says that more plainly than a row of nulls.
+                    if value is not None
+                }
+                for n in graph.get("nodes", [])
+            ],
+            "edges": [
+                {
+                    "source_key": e["source_key"],
+                    "target_key": e["target_key"],
+                    "operation": e.get("operation"),
+                    "confidence": e.get("confidence"),
+                    "stale": e.get("stale", False),
+                    "providers": [p["name"] for p in e.get("providers", [])],
+                    "column_lineage": e.get("column_lineage", "unknown"),
+                    "columns": [
+                        {"source_column": c["source_column"], "target_column": c["target_column"]}
+                        for c in e.get("columns", [])
+                    ],
+                }
+                for e in graph.get("edges", [])
+            ],
+            "truncated": graph.get("truncated", False),
+            "hidden": graph.get("hidden", False),
+            "columns_truncated": graph.get("columns_truncated", False),
         }
 
     # ── Semantic layer ────────────────────────────────────────────────────────

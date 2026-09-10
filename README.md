@@ -121,6 +121,13 @@ trail — with data sovereignty, network privacy, and no SaaS lock-in.
 
 ### Automation & operations
 
+- **Command line (`dh`)** — `pip install duckhaven-cli` gives scripts and CI
+  pipelines everything the web UI offers: run and page queries, browse and
+  manage catalogs, set grants, publish dbt lineage and semantic models, drive
+  SQL sessions, and administer users, service accounts and agents. `dh auth
+  login` mints a token for your own identity, so nobody needs a shared
+  credential, and `dh api` reaches any endpoint the typed commands don't cover
+  yet. See [docs/reference/cli.md](docs/reference/cli.md).
 - **Scheduled queries** — Run saved queries on a cron schedule (UTC), leader-elected
   across replicas, with a per-schedule run history. No overlap, no backfill, and
   no automatic retries — the next tick is the next attempt.
@@ -159,6 +166,13 @@ trail — with data sovereignty, network privacy, and no SaaS lock-in.
 - **Semantic layer for AI assistant** — Curated metric and dimension
   definitions the assistant grounds its SQL in, instead of inferring intent
   from raw table/column names alone.
+- **MCP server** — An [MCP](https://modelcontextprotocol.io) endpoint at `/mcp`
+  so an AI agent you already use (Claude Code, Claude Desktop, Cursor) can
+  browse catalogs, run governed SQL, query the semantic layer, and search
+  DuckHaven's own documentation for the version you are running — as the
+  holder of a DuckHaven access token, through the same enforcement chokepoints
+  as any other client, so it is never a new way in. Read-only by default. See
+  [docs/concepts/mcp-server.md](docs/concepts/mcp-server.md).
 ### Storage
 
 - **Bring your own storage** — One backend per workspace: bundled object
@@ -278,9 +292,6 @@ cutting a new release see [docs/developer/releasing.md](docs/developer/releasing
 
 The full shipped feature set is above. Here's what's actively being worked on:
 
-- **Command Line Interface** — let users manage Duckhaven directly from
-  scripts and CI/CD pipelines without needing the web UI.
-- **MCP Server** - let users connect to DuckHaven using AI Agents
 - **Plugin Store** - A governed store of plugins for DuckHaven to allow users install tools of their liking
 - **Helm chart** - For the kubernetes users
 - **Terraform modules for AWS & GCP**

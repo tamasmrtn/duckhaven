@@ -168,7 +168,8 @@ trail — with data sovereignty, network privacy, and no SaaS lock-in.
   from raw table/column names alone.
 - **MCP server** — An [MCP](https://modelcontextprotocol.io) endpoint at `/mcp`
   so an AI agent you already use (Claude Code, Claude Desktop, Cursor) can
-  browse catalogs, run governed SQL, and query the semantic layer — as the
+  browse catalogs, run governed SQL, query the semantic layer, and search
+  DuckHaven's own documentation for the version you are running — as the
   holder of a DuckHaven access token, through the same enforcement chokepoints
   as any other client, so it is never a new way in. Read-only by default. See
   [docs/concepts/mcp-server.md](docs/concepts/mcp-server.md).

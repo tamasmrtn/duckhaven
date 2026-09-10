@@ -15,7 +15,7 @@ from api.services.mcp.server import MCP_PATH, build_server
 from ...conftest import seed_workspace
 from .conftest import call_tool, rpc_body, rpc_headers
 
-EXPECTED_TOOLS = {
+DATA_TOOLS = {
     "list_workspaces",
     "list_catalogs",
     "list_schemas",
@@ -29,6 +29,13 @@ EXPECTED_TOOLS = {
     "explain_metric",
 }
 
+DOCS_TOOLS = {"search_docs", "read_doc_page"}
+
+#: Tools that read the caller's data and so must name a workspace. The
+#: documentation tools are excluded on purpose: `docs/` is the same public
+#: content for everyone, with no workspace to scope it to.
+WORKSPACE_SCOPED = DATA_TOOLS - {"list_workspaces"}
+
 
 async def _tools() -> dict:
     return {t.name: t for t in await build_server().list_tools()}
@@ -38,7 +45,9 @@ async def _tools() -> dict:
 
 
 async def test_the_advertised_tools_are_exactly_the_intended_set():
-    assert set(await _tools()) == EXPECTED_TOOLS
+    # The conftest points assistant_docs_dir at the repository's own docs/, so
+    # the corpus is present and the documentation tools are registered.
+    assert set(await _tools()) == DATA_TOOLS | DOCS_TOOLS
 
 
 async def test_no_web_app_only_tool_leaks_in():
@@ -52,12 +61,21 @@ async def test_no_web_app_only_tool_leaks_in():
     assert not names & {"get_worksheet_sql", "get_worksheet_selection", "propose_sql_edit"}
 
 
-async def test_every_workspace_scoped_tool_asks_for_a_workspace():
+async def test_every_data_tool_asks_for_a_workspace():
     tools = await _tools()
-    for name, tool in tools.items():
-        if name == "list_workspaces":
-            continue
-        assert "workspace" in tool.input_schema["required"], name
+    for name in WORKSPACE_SCOPED:
+        assert "workspace" in tools[name].input_schema["required"], name
+
+
+async def test_the_documentation_tools_are_not_workspace_scoped():
+    """`docs/` is the same public content for every caller.
+
+    Asking for a workspace would imply the pages differ by one, and would make
+    a product question fail for someone with no workspace membership at all.
+    """
+    tools = await _tools()
+    for name in DOCS_TOOLS:
+        assert "workspace" not in (tools[name].input_schema.get("properties") or {}), name
 
 
 async def test_read_only_tools_say_so():
@@ -65,6 +83,35 @@ async def test_read_only_tools_say_so():
         if name == "run_sql":
             continue
         assert tool.annotations.read_only_hint is True, name
+
+
+async def test_the_documentation_tools_are_withheld_without_a_corpus(monkeypatch, tmp_path):
+    """A tool in the schema is a tool the agent will call.
+
+    Left registered on a deployment whose docs are missing, they would answer
+    "not available" once per turn and teach the agent nothing it can act on —
+    so they are withheld, exactly as the assistant withholds its own.
+    """
+    monkeypatch.setattr(settings, "assistant_docs_dir", tmp_path / "absent")
+    assert set(await _tools()) == DATA_TOOLS
+
+
+async def test_the_documentation_tools_follow_the_assistant_switch(monkeypatch):
+    """One deployment-wide decision about whether AI may read the shipped docs.
+
+    Two switches meaning almost the same thing is a setting an operator cannot
+    reason about, so `ASSISTANT_DOCS_ENABLED=false` withholds them here too.
+    """
+    monkeypatch.setattr(settings, "assistant_docs_enabled", False)
+    assert set(await _tools()) == DATA_TOOLS
+
+
+async def test_the_instructions_only_mention_docs_tools_that_exist(monkeypatch):
+    """Telling an agent to call a tool it has not been given wastes a turn."""
+    assert "search_docs" in (build_server().instructions or "")
+
+    monkeypatch.setattr(settings, "assistant_docs_enabled", False)
+    assert "search_docs" not in (build_server().instructions or "")
 
 
 async def test_run_sql_advertises_the_deployments_write_policy(monkeypatch):
@@ -183,6 +230,26 @@ async def test_a_write_is_refused_over_the_wire(mcp_client: AsyncClient, db_sess
     assert resp.status_code == 200, resp.text
     assert "read-only" in resp.text
     assert "MCP_ALLOW_WRITES" in resp.text
+
+
+async def test_a_documentation_page_comes_back_over_the_wire(mcp_client: AsyncClient, auth):
+    """The docs tools take no workspace, but still need a valid token.
+
+    They read public content, so there is no grant to check — but they sit
+    behind the same front door, and an anonymous caller must not reach them.
+    """
+    headers, body = call_tool("read_doc_page", {"path": "concepts/mcp-server.md"})
+    resp = await mcp_client.post(MCP_PATH, headers={**headers, **auth}, json=body)
+
+    assert resp.status_code == 200, resp.text
+    result = resp.json()["result"]
+    assert result["isError"] is False
+    # An unparameterised `dict` return carries no structured content, so the
+    # text block is what the agent actually reads.
+    assert "Model Context Protocol" in result["content"][0]["text"]
+
+    anonymous = await mcp_client.post(MCP_PATH, headers=headers, json=body)
+    assert anonymous.status_code == 401
 
 
 async def test_an_unknown_tool_is_reported_as_unknown(mcp_client: AsyncClient, auth):

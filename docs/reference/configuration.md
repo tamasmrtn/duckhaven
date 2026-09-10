@@ -242,7 +242,7 @@ supplied here or via the provider's own standard environment variable (`ANTHROPI
 | `ASSISTANT_RESULT_ROW_CAP` | `100` | Max rows of a query result fed into model context (the full result is still available in the UI). |
 | `ASSISTANT_RESULT_BYTE_CAP` | `32768` | Max bytes of a result sample fed into model context. |
 | `ASSISTANT_TRACE_INCLUDE_CONTENT` | `true` | When [tracing](../operations/tracing.md#the-ai-assistant) is enabled, record the turn's content (prompt, generated SQL, tool arguments, result samples) on spans. Set `false` to keep only structure — roles, token usage, tool names, timing, status — out of the trace backend. No effect when tracing is off. |
-| `ASSISTANT_DOCS_ENABLED` | `true` | Whether the assistant knows what DuckHaven is — the curated [product-knowledge section](../concepts/assistant.md#product-knowledge) and page index in its instructions, plus the `read_doc_page` tool. Set `false` to restore exactly the instructions and tool set it had before, at the cost of an assistant that answers product questions from general knowledge of other platforms. |
+| `ASSISTANT_DOCS_ENABLED` | `true` | Whether the assistant knows what DuckHaven is — the curated [product-knowledge section](../concepts/assistant.md#product-knowledge) and page index in its instructions, plus the `read_doc_page` tool. Set `false` to restore exactly the instructions and tool set it had before, at the cost of an assistant that answers product questions from general knowledge of other platforms. Despite the name this is deployment-wide: it also withholds the documentation tools from the [MCP server](../concepts/mcp-server.md#documentation-lookup). |
 | `ASSISTANT_DOCS_DIR` | `/app/docs` | Where the documentation pages live. The image copies `docs/` here; point it at the repository's `docs/` when running from a source checkout (`make dev-api` does). If the directory is absent, the page list is left out of the assistant's instructions and the documentation tools are withheld — it behaves as a deployment without the feature rather than offering pages it cannot open. |
 | `ASSISTANT_DOCS_MAX_PAGE_CHARS` | `20000` | Largest page the assistant reads in one call (~5k tokens). The longest few pages exceed it and come back cut off, with a marker stating how much was withheld and a link to the full page, so the assistant does not report a truncated page as silence. |
 | `ASSISTANT_DOCS_SEARCH_LIMIT` | `5` | Default number of pages `search_docs` returns. The assistant may ask for between 1 and 10; anything outside that is clamped. |
@@ -268,9 +268,12 @@ beyond a trusted network behind [TLS](../deployment/reverse-proxy-tls.md).
 | `MCP_RESULT_ROW_CAP` | `100` | Max rows returned to the agent in one call. The rest is paged with `get_query_result`, so a `SELECT *` over a large table cannot fill the agent's context in one go. |
 | `MCP_RESULT_BYTE_CAP` | `32768` | Max bytes of a result sample returned in one call; trims below the row cap when rows are wide. |
 
-Origin checking reuses `CORS_ORIGINS`: a request carrying an `Origin` header not on that list is refused with 403,
-which is what stops a web page you visit from driving a DuckHaven server on your network. Ordinary MCP clients send no
-`Origin` and are unaffected.
+Two settings from other sections also apply here. Origin checking reuses `CORS_ORIGINS`: a request carrying an
+`Origin` header not on that list is refused with 403, which is what stops a web page you visit from driving a
+DuckHaven server on your network — ordinary MCP clients send no `Origin` and are unaffected. And
+`ASSISTANT_DOCS_ENABLED` governs the `search_docs` / `read_doc_page` tools here as well as in the assistant panel: it
+is the deployment's single decision about whether AI may read the shipped documentation, so setting it `false`
+withholds them from both. They are withheld automatically when `ASSISTANT_DOCS_DIR` holds no corpus.
 
 ### Observability
 

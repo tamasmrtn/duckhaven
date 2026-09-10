@@ -180,6 +180,105 @@ async def test_a_sql_guard_rejection_keeps_its_message(gateways):
     assert "ATTACH is denied" in str(exc.value)
 
 
+# --- documentation tools ------------------------------------------------------
+
+
+async def test_read_doc_page_returns_a_shipped_page():
+    page = await tools.read_doc_page("concepts/mcp-server.md")
+    assert page["path"] == "concepts/mcp-server.md"
+    assert "Model Context Protocol" in page["text"]
+    assert page["version"] == settings.app_version
+
+
+async def test_read_doc_page_suggests_near_misses():
+    """An unknown path is a guess, not a fault, so it comes back correctable.
+
+    Failing bare would leave the agent to guess again from the same information.
+    """
+    with pytest.raises(ToolError) as exc:
+        await tools.read_doc_page("concepts/mcp.md")
+    assert "Closest indexed paths" in str(exc.value)
+    assert "concepts/mcp-server.md" in str(exc.value)
+
+
+async def test_read_doc_page_cannot_escape_the_docs_tree():
+    """The index is an allowlist, which is the security boundary as much as the
+    usability one — no traversal reaches a file outside `docs/`."""
+    for path in ("../api/src/api/config.py", "/etc/passwd", "concepts/../../README.md"):
+        with pytest.raises(ToolError):
+            await tools.read_doc_page(path)
+
+
+async def test_read_doc_page_needs_no_authenticated_call():
+    """It reads files off disk, so it touches neither the gateway nor a session.
+
+    Called here with no request context at all: anything that reached for the
+    caller's loopback client would raise instead of returning a page.
+    """
+    assert (await tools.read_doc_page("concepts/mcp-server.md"))["title"]
+
+
+async def test_search_docs_clamps_its_limit(monkeypatch):
+    """The agent picks the limit, so the tool owns the bound rather than trusting it."""
+    seen: list[int] = []
+
+    async def fake_search(db, query, *, limit):
+        seen.append(limit)
+        return []
+
+    monkeypatch.setattr(tools, "search_pages", fake_search)
+    monkeypatch.setattr(tools, "async_session_factory", _NullSessionFactory())
+
+    for asked, expected in ((0, 1), (-5, 1), (5, 5), (50, 10)):
+        await tools.search_docs("time travel", limit=asked)
+    assert seen == [1, 1, 5, 10]
+
+
+async def test_search_docs_reports_a_failure_the_agent_can_read(monkeypatch):
+    """A ToolError keeps its message; anything else is replaced with a generic one."""
+
+    async def boom(db, query, *, limit):
+        raise RuntimeError("relation docs_pages does not exist")
+
+    monkeypatch.setattr(tools, "search_pages", boom)
+    monkeypatch.setattr(tools, "async_session_factory", _NullSessionFactory())
+
+    with pytest.raises(ToolError) as exc:
+        await tools.search_docs("anything")
+    assert "docs_pages does not exist" in str(exc.value)
+
+
+async def test_search_docs_returns_the_running_version(monkeypatch):
+    """The corpus ships in the image, so results describe *this* build.
+
+    An agent that reports what a newer docs site says would describe features
+    the deployment in front of it does not have.
+    """
+
+    async def fake_search(db, query, *, limit):
+        return [{"path": "concepts/mcp-server.md", "title": "MCP server"}]
+
+    monkeypatch.setattr(tools, "search_pages", fake_search)
+    monkeypatch.setattr(tools, "async_session_factory", _NullSessionFactory())
+
+    out = await tools.search_docs("mcp")
+    assert out["version"] == settings.app_version
+    assert out["results"][0]["path"] == "concepts/mcp-server.md"
+
+
+class _NullSessionFactory:
+    """Stands in for the session factory; the search itself is stubbed out."""
+
+    def __call__(self):
+        return self
+
+    async def __aenter__(self):
+        return None
+
+    async def __aexit__(self, *exc):
+        return False
+
+
 # --- the principal a gateway is built for --------------------------------------
 
 

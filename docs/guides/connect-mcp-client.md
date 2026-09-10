@@ -102,7 +102,8 @@ curl -sS -X POST https://duckhaven.example.com/mcp \
         "io.modelcontextprotocol/clientCapabilities":{}}}}'
 ```
 
-A healthy server answers with the eleven tool definitions.
+A healthy server answers with its tool definitions — thirteen, or eleven where the deployment has
+[documentation lookup](../concepts/mcp-server.md#documentation-lookup) turned off.
 
 ## Getting more out of it
 
@@ -113,6 +114,9 @@ A healthy server answers with the eleven tool definitions.
   saves it a discovery round-trip.
 - **Scope the token.** For an unattended agent, prefer a service account with membership only in the workspaces it
   needs, rather than your own account's full reach.
+- **Ask it about DuckHaven, not just about your data.** `search_docs` and `read_doc_page` give the agent the
+  documentation for the version you are running, so "how do I read this table as it was last Tuesday?" is answered
+  from DuckHaven's own time-travel syntax rather than from what the model remembers about other warehouses.
 
 ## When something is wrong
 

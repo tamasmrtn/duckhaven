@@ -17,11 +17,25 @@ from httpx import ASGITransport, AsyncClient
 from starlette.applications import Starlette
 from starlette.routing import Route
 
+from api.config import settings
 from api.models.user import User
+from api.services.assistant.knowledge import generate
 from api.services.auth import hash_password
 from api.services.mcp.server import MCP_PATH, build_endpoint
 
 PROTOCOL_VERSION = "2026-07-28"
+
+
+@pytest.fixture(autouse=True)
+def _docs_from_the_checkout(monkeypatch):
+    """Point the docs corpus at ``docs/``, as the image points it at /app/docs.
+
+    Without it the whole file runs in the one state a deployment should never be
+    in — an index that loads with no page bodies behind it — so the documentation
+    tools would be withheld and every assertion about them would pass vacuously.
+    """
+    monkeypatch.setattr(settings, "assistant_docs_dir", generate._repo_root() / "docs")
+
 
 #: The `_meta` block the 2026-07-28 revision requires on every request's params.
 META = {

@@ -31,9 +31,11 @@ of checks is the one every DuckHaven client goes through:
 workspace membership  →  SQL statement allowlist  →  scoped catalog grants  →  DuckDB execution
 ```
 
-None of that enforcement lives in the MCP server. It holds no credentials of its own, has no access to DuckHaven's
-control-plane database, and never talks to DuckDB or [Polaris](catalogs.md) directly — it only calls the same REST
-endpoints the web app calls. The practical consequence: **the MCP server is not a new way in.** Anything an agent can
+None of that enforcement lives in the MCP server. It holds no credentials of its own, and it never reads your data
+except through those REST endpoints — never DuckHaven's control-plane database, never DuckDB, never
+[Polaris](catalogs.md) directly. (The one thing it does read from the database is the documentation corpus, which is
+public content with no grants to enforce; see [Documentation lookup](#documentation-lookup).) The practical
+consequence: **the MCP server is not a new way in.** Anything an agent can
 do through it, the same token could already have done with `curl` against `/api`. Anything that token cannot do, the
 agent cannot do either, however the conversation goes.
 
@@ -63,7 +65,7 @@ to what the agent actually needs.
 
 ## What it can do
 
-Eleven tools, which mirror what the assistant can reach:
+Thirteen tools, which mirror what the assistant can reach. Eleven work with your data:
 
 | Tool | What it does |
 |---|---|
@@ -79,11 +81,42 @@ Eleven tools, which mirror what the assistant can reach:
 | `query_metric` | Answer a question from a curated metric definition, and run it. |
 | `explain_metric` | Explain what a metric means and how it is calculated. |
 
+Two more answer questions about DuckHaven itself:
+
+| Tool | What it does |
+|---|---|
+| `search_docs` | Full-text search across DuckHaven's documentation. |
+| `read_doc_page` | Read one documentation page in full. |
+
 The server also hands the agent a short set of instructions about DuckHaven's own behaviour — that the dialect is DuckDB
 over Iceberg, that tables are addressed as `catalog.schema.table`, that an Iceberg table's columns come from
 `describe_table` rather than `information_schema.columns`, and that the [SQL guard](../reference/sql-support.md) rejects
 disallowed statements before a compute agent sees them. Agents get these wrong from general knowledge of other
 platforms, and a confidently wrong answer is worse than none.
+
+### Documentation lookup
+
+`search_docs` and `read_doc_page` are the same pair the [assistant](assistant.md#product-knowledge) uses, and they
+matter for the same reason: an agent asked "how do I query this table as it was last Tuesday?" will otherwise answer
+from what it knows about Snowflake. These pages ship **inside the image**, so they describe the version you are
+running rather than the latest published docs — which is a feature, since the agent will not offer you something your
+deployment does not have.
+
+They are the one exception to the everything-goes-through-the-REST-API rule, and only because there is nothing for the
+exception to bypass: `docs/` is public content, identical to what the
+[documentation site](https://tamasmrtn.github.io/duckhaven) serves, carrying no grants and no per-workspace
+visibility. `read_doc_page` reads files off disk; `search_docs` runs
+one full-text query and nothing else. They still sit behind the same front door — an anonymous caller cannot reach
+them — and they take no `workspace`, because the pages are the same for everyone.
+
+Search is ordinary lexical full-text, not semantic, so a question sharing no words with the page that answers it can
+miss. When it comes back empty, that is a real answer rather than a failure, and the agent is told to say the
+documentation does not cover the question instead of inventing one.
+
+!!! note "One switch, shared with the assistant"
+    `ASSISTANT_DOCS_ENABLED=false` withholds these two tools here as well as in the assistant panel — it is the
+    deployment's single decision about whether AI may read the shipped documentation. They are also withheld
+    automatically when the corpus is not on disk, so the agent is never offered a tool that cannot answer.
 
 ### Results are sampled, not streamed whole
 
@@ -100,7 +133,8 @@ grants allow.
 - Exceed the token's access. No workspace you are not in, no catalog you were not granted, no exceptions.
 - Bypass the SQL guard. The same statement allowlist that applies to the worksheet applies here.
 - Write, unless an operator has explicitly enabled writes.
-- Reach DuckHaven's control-plane database, Polaris, or a compute agent directly. It only calls the REST API.
+- Reach your data anywhere but through the REST API — not the control-plane database, not Polaris, not a compute
+  agent. Its only direct database access is the documentation full-text index, which holds no customer data.
 - Administer anything. There are no tools for users, tokens, grants, agents, storage backends or catalog creation —
   this is a data surface, not a management one.
 - Edit a worksheet. The assistant's editor tools have no meaning over MCP; there is no editor on the other end.

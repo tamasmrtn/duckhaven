@@ -28,6 +28,7 @@ from mcp.types import ToolAnnotations
 from starlette.types import ASGIApp
 
 from api.config import settings
+from api.services.assistant.knowledge.loader import docs_available
 from api.services.mcp import tools
 from api.services.mcp.auth import PatAuthMiddleware
 
@@ -60,17 +61,39 @@ organization agreed the number means; computing your own from column names
 produces a second, quietly different answer.
 """
 
+DOCS_INSTRUCTIONS = """\
+
+For questions about DuckHaven itself — what a feature does, how to configure it,
+what its limits are — use `search_docs` and `read_doc_page` rather than general
+knowledge of other data platforms. These pages ship with the running deployment,
+so they describe the version in front of you rather than the latest release.
+"""
+
 
 def build_server() -> MCPServer:
     """The MCP server for this deployment, with its tools registered."""
+    read_only = list(tools.READ_TOOLS)
+    instructions = INSTRUCTIONS
+    # Withheld outright rather than left to fail at call time: a tool in the
+    # schema is a tool the agent will reach for, and one that always answers
+    # "not available here" spends a turn teaching it that. Mirrors the
+    # assistant's build_toolset, and shares its switch — ASSISTANT_DOCS_ENABLED
+    # is the deployment's "AI may read the shipped documentation" decision, and
+    # having it mean one thing for the panel and another over MCP would be a
+    # setting an operator cannot reason about. The instructions follow the
+    # tools, so a deployment without them is never told to call them.
+    if settings.assistant_docs_enabled and docs_available():
+        read_only += tools.DOCS_TOOLS
+        instructions += DOCS_INSTRUCTIONS
+
     server = MCPServer(
         "duckhaven",
         title="DuckHaven",
         version=settings.app_version,
-        instructions=INSTRUCTIONS,
+        instructions=instructions,
         website_url=settings.docs_site_url,
     )
-    for tool in tools.READ_TOOLS:
+    for tool in read_only:
         server.tool(
             annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
         )(tool)

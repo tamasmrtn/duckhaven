@@ -349,11 +349,17 @@ app.include_router(agents_ws.router, tags=["agents"])
 # Network-private inter-replica dispatch; never exposed past the internal network.
 app.include_router(internal.router)
 app.mount("/api", api_app)
-# An exact route rather than a mount: Streamable HTTP is one path that accepts
+# Exact routes rather than a mount: Streamable HTTP is one path that accepts
 # POST, and a mount would only match *below* /mcp — redirecting the documented
 # URL to /mcp/, which not every client follows on a POST. Registered before the
 # SPA catch-all below, since Starlette matches routes in order.
-app.router.routes.append(Route(MCP_PATH, endpoint=mcp_asgi_app))
+#
+# The trailing-slash form is registered too, and deliberately: without it the
+# SPA catch-all answers `POST /mcp/` with its own 405 and `GET /mcp/` with
+# index.html, so one stray character turns a working config into a client that
+# reports the server as broken rather than as misaddressed.
+for _mcp_path in (MCP_PATH, f"{MCP_PATH}/"):
+    app.router.routes.append(Route(_mcp_path, endpoint=mcp_asgi_app))
 if settings.static_dir.is_dir():
     app.mount("/", SPAStaticFiles(directory=settings.static_dir, html=True), name="ui")
 

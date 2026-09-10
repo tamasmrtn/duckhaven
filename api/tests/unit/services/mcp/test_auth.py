@@ -105,7 +105,13 @@ async def test_a_foreign_origin_is_forbidden(mcp_client: AsyncClient, auth):
     assert resp.status_code == 403
 
 
-async def test_an_allowed_origin_passes(mcp_client: AsyncClient, auth, monkeypatch):
+async def test_an_allowed_origin_is_not_blocked(mcp_client: AsyncClient, auth, monkeypatch):
+    """The allowlist narrows who is refused; it does not make browsers work.
+
+    A browser-based client would still fail on the unauthenticated preflight and
+    the missing CORS response headers, so this asserts only what the check itself
+    promises — that an allowed origin is not the thing standing in the way.
+    """
     monkeypatch.setattr(settings, "cors_origins", ["http://app.example"])
     resp = await _tools_list(mcp_client, extra={**auth, "Origin": "http://app.example"})
     assert resp.status_code == 200
@@ -150,3 +156,11 @@ async def test_the_endpoint_answers_on_the_documented_path(mcp_client: AsyncClie
     """
     resp = await _tools_list(mcp_client, extra=auth)
     assert resp.status_code == 200
+
+
+async def test_the_endpoint_also_answers_with_a_trailing_slash(mcp_client: AsyncClient, auth):
+    """A misconfigured URL should still work, not look like a broken server."""
+    headers, body = LIST_TOOLS
+    resp = await mcp_client.post(f"{MCP_PATH}/", headers={**headers, **auth}, json=body)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["result"]["tools"]

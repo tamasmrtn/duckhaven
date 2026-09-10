@@ -38,6 +38,10 @@ SCOPE_KEY = "duckhaven.mcp_call"
 #: URL to join relative paths against, exactly as the assistant's runner does.
 LOOPBACK_BASE_URL = "http://mcp.internal"
 
+#: The canonical endpoint path. Duplicated from :mod:`api.services.mcp.server`
+#: rather than imported, because that module imports this one.
+MCP_PATH = "/mcp"
+
 _CHALLENGE = (
     'Bearer realm="DuckHaven", error="invalid_token", '
     'error_description="Supply a DuckHaven personal access token (dh_pat_...) as a bearer token."'
@@ -49,7 +53,6 @@ class McpCall:
     """One authenticated MCP request: who is calling, and the client to call as."""
 
     user_id: str
-    email: str
     client: httpx.AsyncClient
 
 
@@ -100,6 +103,13 @@ class PatAuthMiddleware:
             await _respond(send, 503, "The MCP server is not enabled in this deployment.")
             return
 
+        # The host registers both `/mcp` and `/mcp/` so a stray slash is not
+        # swallowed by the SPA catch-all, but the SDK's app holds a single route
+        # at the canonical path — left as-is, the slashed form reaches it,
+        # matches nothing, and comes back as its router's own 307.
+        if scope["path"] == f"{MCP_PATH}/":
+            scope = {**scope, "path": MCP_PATH}
+
         headers = Headers(scope=scope)
 
         # Spec, Streamable HTTP "Security & Endpoint": servers MUST validate the
@@ -133,9 +143,7 @@ class PatAuthMiddleware:
                 )
                 return
             body: dict[str, Any] = me.json()
-            scope[SCOPE_KEY] = McpCall(
-                user_id=str(body["id"]), email=body.get("email", ""), client=client
-            )
+            scope[SCOPE_KEY] = McpCall(user_id=str(body["id"]), client=client)
             await self.app(scope, receive, send)
 
 

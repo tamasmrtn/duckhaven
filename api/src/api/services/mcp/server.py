@@ -1,14 +1,17 @@
 """Assemble the MCP server and its ASGI endpoint.
 
-Built once at import and mounted by :mod:`api.main` as a single route at ``/mcp``,
-which is all the Streamable HTTP transport needs: one path that accepts POST.
+Built once at import and registered by :mod:`api.main` at ``/mcp``, which is all
+the Streamable HTTP transport needs: one path that accepts POST.
 
 Two wiring details are load-bearing and not obvious:
 
 * The endpoint is a plain ``Route``, not a ``Mount``. Starlette's ``Mount`` only
   matches paths *below* its prefix, so ``POST /mcp`` on a mount would 307 to
   ``/mcp/`` -- a redirect some clients will not follow on a POST, and a URL nobody
-  would think to configure.
+  would think to configure. ``main`` registers the trailing-slash form as a second
+  route so a stray character is not swallowed by the SPA catch-all;
+  :class:`~api.services.mcp.auth.PatAuthMiddleware` normalises it back before the
+  SDK's own single route sees it.
 * ``transport_security`` is passed explicitly. Left unset, the SDK infers
   DNS-rebinding protection from its ``host`` default of ``127.0.0.1`` and rejects
   every request whose ``Host`` header is not localhost -- which is every request to
@@ -30,11 +33,12 @@ from starlette.types import ASGIApp
 from api.config import settings
 from api.services.assistant.knowledge.loader import docs_available
 from api.services.mcp import tools
-from api.services.mcp.auth import PatAuthMiddleware
+from api.services.mcp.auth import MCP_PATH, PatAuthMiddleware
 
-#: The path the endpoint is served at, on the outer app. Also the canonical URI a
-#: client configures: ``https://<host>/mcp``.
-MCP_PATH = "/mcp"
+#: Re-exported: ``MCP_PATH`` is the path the endpoint is served at on the outer
+#: app, and the canonical URI a client configures (``https://<host>/mcp``). It is
+#: defined in :mod:`api.services.mcp.auth`, which cannot import this module.
+__all__ = ["MCP_PATH", "build_endpoint", "build_server", "mcp_asgi_app", "mcp_session_manager"]
 
 INSTRUCTIONS = """\
 DuckHaven is a self-hosted lakehouse: DuckDB compute over Apache Iceberg tables

@@ -88,7 +88,8 @@ async def mcp_client(client: AsyncClient) -> AsyncIterator[AsyncClient]:
     pytest-asyncio finalizes a fixture in a different one than it started.
     """
     server, asgi = build_endpoint()
-    host = Starlette(routes=[Route(MCP_PATH, endpoint=asgi)])
+    # Both forms, as ``api.main`` registers them.
+    host = Starlette(routes=[Route(p, endpoint=asgi) for p in (MCP_PATH, f"{MCP_PATH}/")])
 
     running, stop = asyncio.Event(), asyncio.Event()
 

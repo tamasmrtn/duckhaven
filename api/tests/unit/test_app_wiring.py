@@ -33,6 +33,19 @@ def test_mcp_is_an_exact_route_not_a_mount():
     assert routes[0].app is mcp_asgi_app
 
 
+def test_mcp_also_answers_on_the_trailing_slash_form():
+    """One stray character must not look like a broken server.
+
+    `Route("/mcp")` does not match `/mcp/`, so without this the SPA catch-all
+    takes it: 405 for the POST a client actually makes, and index.html with a
+    200 for a GET. Both read as "the server is there and broken" rather than
+    "the URL has an extra character".
+    """
+    routes = [r for r in app.routes if isinstance(r, Route) and r.path == f"{MCP_PATH}/"]
+    assert len(routes) == 1
+    assert routes[0].app is mcp_asgi_app
+
+
 #: Resolves `POST /mcp` against the real app the way Starlette's router does,
 #: and reports which route wins. Run in a subprocess so `STATIC_DIR` is set
 #: before `api.main` is imported (the SPA mount happens at import time).

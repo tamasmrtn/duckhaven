@@ -851,12 +851,33 @@ def test_a_tool_result_is_not_repeated_across_arms():
 
 
 def test_a_long_tool_result_is_truncated_with_its_size_named():
-    from tests.evals.harness import _summarise_return
+    from tests.evals.harness import _TOOL_RESULT_CHARS, _summarise_return
 
     summarised = _summarise_return({"rows": [{"note": "x" * 4000}]})
 
-    assert len(summarised) < 900
+    # Derived from the cap rather than a literal, so raising it stays a
+    # deliberate one-line change instead of a test failure to be explained away.
+    assert len(summarised) < _TOOL_RESULT_CHARS + 100
     assert "chars]" in summarised
+
+
+async def test_the_judge_can_see_which_producer_asserted_a_lineage_edge():
+    """The cap is what decides whether a data-backed claim looks invented.
+
+    A lineage graph leads with `nodes` and puts `edges` second, so a window that
+    cuts between them hides every operation, staleness flag and provider name —
+    the evidence an answer about lineage rests on. That is not hypothetical: on
+    2026-09-10 `lineage_upstream_of_a_table` was docked a point of faithfulness
+    for naming the producer of a redacted edge, which the tool had returned and
+    the judge could not see.
+    """
+    from tests.evals.fixtures import EvalGateway
+    from tests.evals.harness import _summarise_return
+
+    seen = _summarise_return(await EvalGateway().table_lineage("warehouse", "analytics", "orders"))
+
+    assert "redacted" in seen, "the node the assistant must acknowledge without naming"
+    assert "dbt" in seen, "the producer that asserted the redacted edge"
 
 
 def test_a_case_with_no_pages_is_told_so_even_when_tools_returned_something():

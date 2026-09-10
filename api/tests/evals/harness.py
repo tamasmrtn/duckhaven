@@ -174,9 +174,21 @@ def _render_output(output: Any) -> str:
 
 
 # One tool result, small enough that a dozen of them do not crowd the judge's
-# context out. The head is where a result's shape and first rows are, which is
-# what an answer is checked against.
-_TOOL_RESULT_CHARS = 700
+# context out, large enough to still contain the evidence an answer rests on.
+#
+# 700 was sized for `run_sql`, where the head holds the result's shape and first
+# rows. A lineage graph does not work that way: it leads with `nodes` and puts
+# `edges` — the operation, the staleness, and which producer asserted each
+# relationship — second. At 700 the cut landed mid-`nodes`, so every edge was
+# invisible and an answer correctly naming the producer of one scored as
+# invention. Measured, not theorised: `lineage_upstream_of_a_table` lost a point
+# of faithfulness on 2026-09-10 for a claim that was in the tool result all
+# along, and the judge said so in its reason.
+#
+# Raising it changes what the judge sees, so scores from before this date are
+# not strictly comparable with scores after it — the same caveat `judge.py`
+# makes about changing the judge itself.
+_TOOL_RESULT_CHARS = 1500
 
 
 def _summarise_return(content: object) -> str:

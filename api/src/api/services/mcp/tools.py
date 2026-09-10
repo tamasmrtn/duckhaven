@@ -29,7 +29,7 @@ database access, which is the property that matters.
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from mcp.server.mcpserver import Context
 from mcp.server.mcpserver.exceptions import ToolError
@@ -132,6 +132,67 @@ async def describe_table(
     """
     try:
         return await _gateway(ctx, workspace).describe_table(catalog, schema, table)
+    except GatewayError as exc:
+        raise ToolError(str(exc)) from exc
+
+
+async def get_table_lineage(
+    ctx: Context,
+    workspace: Workspace,
+    catalog: str,
+    schema: str,
+    table: str,
+    direction: Literal["upstream", "downstream", "both"] = "both",
+    depth: int = 2,
+    columns_for: list[str] | None = None,
+) -> dict:
+    """Show what feeds a table and what depends on it.
+
+    Use this before changing or trusting a table: "what breaks if I drop this?",
+    "where does this column come from?", "is this stale?". It answers from what
+    DuckHaven has observed running plus anything imported from dbt — not from
+    reading the SQL yourself.
+
+    Returns `nodes` and `edges` that join on node `key`. Each edge names the
+    `providers` that asserted it, and `stale` means no producer has re-asserted
+    it recently — a statement about confirmation, not about correctness. Nodes
+    carry a signed `distance`: negative upstream of the table you asked about,
+    positive downstream.
+
+    Three things to read carefully rather than skim:
+
+    - A node with `kind: "redacted"` is real lineage you are not granted to see.
+      It keeps its place so the graph's shape and distances stay honest. Say
+      something is there and unnamed; do not report the path as ending.
+    - `truncated: true` means a cap stopped the walk, `columns_truncated: true`
+      that column detail was cut, and `hidden: true` that lineage outside this
+      workspace's catalogs was dropped entirely. Any of them means "there is
+      more", so do not answer "nothing depends on this" from a truncated graph.
+    - An empty graph means nothing has been observed or imported yet, which is
+      not the same as nothing existing. Lineage is built from queries DuckHaven
+      has actually run and from dbt imports.
+
+    Args:
+        catalog: The catalog slug.
+        schema: The schema name.
+        table: The table name.
+        direction: Which way to walk — upstream sources, downstream dependents,
+            or both.
+        depth: How many hops to follow. Keep it small; the graph grows fast.
+        columns_for: Node keys (from a previous call) to attach column-level
+            detail to. Off by default because its size depends on how wide those
+            tables are, not on the graph — so ask for the one node you care
+            about rather than all of them.
+    """
+    try:
+        return await _gateway(ctx, workspace).table_lineage(
+            catalog,
+            schema,
+            table,
+            direction=direction,
+            depth=depth,
+            columns_for=columns_for,
+        )
     except GatewayError as exc:
         raise ToolError(str(exc)) from exc
 
@@ -400,6 +461,7 @@ READ_TOOLS = (
     list_schemas,
     list_tables,
     describe_table,
+    get_table_lineage,
     get_query_result,
     search_semantic,
     get_semantic_model,

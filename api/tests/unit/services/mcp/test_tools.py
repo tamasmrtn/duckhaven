@@ -148,6 +148,7 @@ async def test_every_workspace_scoped_tool_uses_the_workspace_it_was_given(gatew
         tools.list_schemas(ctx(), "sales", "c"),
         tools.list_tables(ctx(), "sales", "c", "s"),
         tools.describe_table(ctx(), "sales", "c", "s", "t"),
+        tools.get_table_lineage(ctx(), "sales", "c", "s", "t"),
         tools.run_sql(ctx(), "sales", "SELECT 1"),
         tools.get_query_result(ctx(), "sales", "q-1"),
         tools.search_semantic(ctx(), "sales", "revenue"),
@@ -187,6 +188,44 @@ async def test_a_sql_guard_rejection_keeps_its_message(gateways):
     with pytest.raises(ToolError) as exc:
         await tools.run_sql(ctx(), "ws", "SELECT 1")
     assert "ATTACH is denied" in str(exc.value)
+
+
+# --- lineage ------------------------------------------------------------------
+
+
+async def test_get_table_lineage_forwards_the_walk_it_was_asked_for(gateways):
+    await tools.get_table_lineage(
+        ctx(),
+        "sales",
+        "warehouse",
+        "public",
+        "orders",
+        direction="downstream",
+        depth=3,
+        columns_for=["k1"],
+    )
+    name, args, kwargs = gateways[0].calls[0]
+    assert name == "table_lineage"
+    assert args == ("warehouse", "public", "orders")
+    assert kwargs == {"direction": "downstream", "depth": 3, "columns_for": ["k1"]}
+
+
+async def test_get_table_lineage_defaults_to_a_shallow_walk_both_ways(gateways):
+    """Depth is the only thing standing between an agent and a graph it cannot
+    read, so the default has to be small rather than whatever the server allows."""
+    await tools.get_table_lineage(ctx(), "sales", "warehouse", "public", "orders")
+    _, _, kwargs = gateways[0].calls[0]
+    assert kwargs == {"direction": "both", "depth": 2, "columns_for": None}
+
+
+async def test_get_table_lineage_surfaces_a_governed_denial(gateways):
+    """Lineage is gated on a metadata-tier grant for the leaf table."""
+    gateways.overrides["table_lineage"] = GatewayError(
+        "Access denied: Not authorized (metadata) on warehouse.public.orders"
+    )
+    with pytest.raises(ToolError) as exc:
+        await tools.get_table_lineage(ctx(), "sales", "warehouse", "public", "orders")
+    assert "Not authorized (metadata) on warehouse.public.orders" in str(exc.value)
 
 
 # --- documentation tools ------------------------------------------------------

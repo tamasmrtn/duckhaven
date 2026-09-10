@@ -205,6 +205,82 @@ class Gateway:
             ],
         }
 
+    async def table_lineage(
+        self,
+        catalog: str,
+        schema: str,
+        table: str,
+        *,
+        direction: str = "both",
+        depth: int = 2,
+        columns_for: list[str] | None = None,
+    ) -> dict:
+        """The bounded lineage graph around a table, trimmed for an agent.
+
+        Passed through rather than reshaped in two respects that matter. A
+        ``redacted`` node keeps its key — a hash, not a name — so the graph keeps
+        its shape and an agent can see that *something* it may not read sits
+        there. And all three truncation flags survive, because a partial graph
+        that looks complete is the one failure this endpoint's own design goes
+        out of its way to prevent.
+
+        What is dropped is the per-provider freshness block: each edge carries a
+        name, two timestamps, an observation count and two more flags per
+        producer, which is most of the payload and answers a question ("should I
+        trust this claim?") that belongs to a person looking at the graph rather
+        than to an agent traversing it. The provider *names* stay, since which
+        producer asserted an edge is the part that changes what an agent says.
+        """
+        params: dict[str, object] = {"direction": direction, "depth": depth}
+        if columns_for:
+            params["columns_for"] = columns_for
+        resp = await self._get(
+            f"/workspaces/{self._ws}/catalogs/{catalog}/schemas/{schema}/tables/{table}/lineage",
+            params=params,
+        )
+        graph = resp.json()
+        return {
+            "root": graph.get("root"),
+            "nodes": [
+                {
+                    key: value
+                    for key, value in (
+                        ("key", n["key"]),
+                        ("kind", n["kind"]),
+                        ("catalog", n.get("catalog")),
+                        ("schema", n.get("schema_name")),
+                        ("table", n.get("table")),
+                        ("system", n.get("system")),
+                        ("distance", n.get("distance")),
+                        ("column_count", n.get("column_count")),
+                    )
+                    # A redacted node carries no names; omitting the empty keys
+                    # says that more plainly than a row of nulls.
+                    if value is not None
+                }
+                for n in graph.get("nodes", [])
+            ],
+            "edges": [
+                {
+                    "source_key": e["source_key"],
+                    "target_key": e["target_key"],
+                    "operation": e.get("operation"),
+                    "confidence": e.get("confidence"),
+                    "stale": e.get("stale", False),
+                    "providers": [p["name"] for p in e.get("providers", [])],
+                    "column_lineage": e.get("column_lineage", "unknown"),
+                    "columns": [
+                        {"source_column": c["source_column"], "target_column": c["target_column"]}
+                        for c in e.get("columns", [])
+                    ],
+                }
+                for e in graph.get("edges", [])
+            ],
+            "truncated": graph.get("truncated", False),
+            "hidden": graph.get("hidden", False),
+            "columns_truncated": graph.get("columns_truncated", False),
+        }
+
     # ── Semantic layer ────────────────────────────────────────────────────────
     async def search_semantic(self, query: str, *, limit: int = 10) -> dict:
         resp = await self._get(

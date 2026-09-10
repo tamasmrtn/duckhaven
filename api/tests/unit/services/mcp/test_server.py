@@ -21,6 +21,7 @@ DATA_TOOLS = {
     "list_schemas",
     "list_tables",
     "describe_table",
+    "get_table_lineage",
     "run_sql",
     "get_query_result",
     "search_semantic",

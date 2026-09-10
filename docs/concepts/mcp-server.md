@@ -65,7 +65,7 @@ to what the agent actually needs.
 
 ## What it can do
 
-Thirteen tools, which mirror what the assistant can reach. Eleven work with your data:
+Fourteen tools. Twelve work with your data:
 
 | Tool | What it does |
 |---|---|
@@ -74,6 +74,7 @@ Thirteen tools, which mirror what the assistant can reach. Eleven work with your
 | `list_schemas` | Schemas in a catalog. |
 | `list_tables` | Tables in a schema. |
 | `describe_table` | A table's columns, types, nullability, row count and size. |
+| `get_table_lineage` | What feeds a table and what depends on it. |
 | `run_sql` | Run a statement and return a capped sample of the result. |
 | `get_query_result` | Page through the rest of a result you produced. |
 | `search_semantic` | Find the curated metrics and dimensions a question is about. |
@@ -81,7 +82,8 @@ Thirteen tools, which mirror what the assistant can reach. Eleven work with your
 | `query_metric` | Answer a question from a curated metric definition, and run it. |
 | `explain_metric` | Explain what a metric means and how it is calculated. |
 
-Two more answer questions about DuckHaven itself:
+Ten of those mirror the assistant's tool set; `list_workspaces` and `get_table_lineage` are additions. Two more
+answer questions about DuckHaven itself:
 
 | Tool | What it does |
 |---|---|
@@ -127,6 +129,26 @@ pages through. This keeps a `SELECT *` over a large table from filling the agent
 Paging is restricted to queries **your own token ran**. The underlying rows endpoint authorizes on workspace membership
 alone, so without that restriction a reader could page a colleague's result set by query id and see more than their own
 grants allow.
+
+### Lineage
+
+`get_table_lineage` answers "what breaks if I change this?" from what DuckHaven has actually observed running, plus
+anything imported from dbt — see [Lineage](lineage.md). It reads only the control plane's own store, with no Polaris
+call and no compute agent, so an agent can reach for it freely.
+
+Two properties make it safe to hand an agent, and both come from the endpoint rather than from anything the MCP server
+adds. A node in a catalog you hold no grant on comes back as `redacted` — keeping its place, its distance and the
+graph's shape, but carrying no names — so the agent learns that something is there without learning what. And every
+cap the walk hits is reported: `truncated`, `columns_truncated`, and `hidden` for lineage outside the workspace's
+catalogs. The tool tells the agent, in as many words, not to answer "nothing depends on this" from a graph carrying
+any of them.
+
+Column-level detail is off unless asked for, per node, because its size depends on how wide those tables are rather
+than on the graph — so the agent names the one node it cares about after seeing the shape.
+
+!!! note "An empty graph is not the same as no lineage"
+    Lineage accumulates from queries DuckHaven runs and from dbt imports. A deployment that has done neither returns
+    an empty graph, and the tool says so rather than implying the table stands alone.
 
 ## What it cannot do
 

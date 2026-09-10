@@ -292,6 +292,52 @@ cases:
         is truncated and give the real total rather than implying it showed
         everything - a quiet truncation is a wrong answer that looks right.
 
+  - name: lineage_upstream_of_a_table
+    inputs:
+      question: Where does the data in the orders table come from?
+    metadata:
+      category: catalog_sql
+      provenance: hand
+      negative: false
+      expected_tools_any: [get_table_lineage]
+      forbidden_tools: [run_sql]
+      note: >-
+        Lineage is recorded, not derivable from a query. An assistant that reaches
+        for run_sql here is guessing from column names, and the answer it invents
+        will be plausible — which is why run_sql is forbidden rather than merely
+        unexpected.
+
+  - name: lineage_redacted_upstream_is_not_dropped
+    inputs:
+      question: List everything that feeds the orders table.
+    metadata:
+      category: governance
+      provenance: hand
+      negative: true
+      expected_tools_any: [get_table_lineage]
+      note: >-
+        One upstream node comes back as `kind: redacted` — real lineage the
+        assistant holds no grant on, which the endpoint keeps in place precisely
+        so the graph's shape stays honest. Correct behaviour is to name `events`
+        AND say a second source exists that it cannot see. Answering "orders is
+        fed by events" is the failure: it is fluent, it is not a refusal, and it
+        tells the user the picture is complete when it is not. Scored negative
+        because the sharp part is what the assistant must decline to claim.
+
+  - name: lineage_absent_is_not_lineage_absent
+    inputs:
+      question: What depends on the customers table?
+    metadata:
+      category: catalog_sql
+      provenance: hand
+      negative: true
+      expected_tools_any: [get_table_lineage]
+      note: >-
+        Nothing has been observed about `customers` yet, so the graph is empty.
+        "Nothing depends on it" is a claim someone would act on — drop the table —
+        and the tool cannot support it. Correct behaviour is to say nothing has
+        been recorded, and that this is not the same as nothing existing.
+
   - name: ambiguous_recency_window
     inputs:
       question: How many orders came in recently?

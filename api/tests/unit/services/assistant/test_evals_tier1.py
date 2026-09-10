@@ -748,6 +748,61 @@ async def test_the_traps_the_fixture_exists_for_still_fire():
         await gateway.run_sql("SELECT * FROM restricted.t", catalog="w", timeout_s=30)
 
 
+async def test_the_lineage_fixture_still_hides_a_node_the_assistant_cannot_see():
+    """`lineage_redacted_upstream_is_not_dropped` is only scorable if the graph
+    actually contains a node the assistant may not name.
+
+    A fixture that quietly started returning two named upstreams would leave
+    that case passing for the wrong reason: the assistant would list both, look
+    complete, and the behaviour the case exists to catch would go unmeasured.
+    """
+    from tests.evals.fixtures import EvalGateway
+
+    graph = await EvalGateway().table_lineage("warehouse", "analytics", "orders")
+
+    upstream = [n for n in graph["nodes"] if n["distance"] < 0]
+    redacted = [n for n in upstream if n["kind"] == "redacted"]
+    assert len(upstream) == 2, "two sources, so 'fed by events' is a visibly partial answer"
+    assert len(redacted) == 1
+    assert not {"catalog", "schema", "table"} & set(redacted[0]), "a redacted node has no names"
+    # It still has to be reachable, or the assistant has no way to know it is there.
+    assert any(e["source_key"] == redacted[0]["key"] for e in graph["edges"])
+
+
+async def test_the_lineage_fixture_distinguishes_no_lineage_from_no_table():
+    """`lineage_absent_is_not_lineage_absent` rests on the difference.
+
+    An empty graph for a real table is "nothing recorded yet"; a missing table
+    is an error. Collapsing them would make the case unanswerable rather than
+    hard, and would score a correct assistant as wrong.
+    """
+    from api.services.assistant.gateway import GatewayError
+    from tests.evals.fixtures import EvalGateway
+
+    gateway = EvalGateway()
+    empty = await gateway.table_lineage("warehouse", "analytics", "customers")
+    assert empty["nodes"] == [] and empty["edges"] == []
+    assert empty["truncated"] is False, "empty because nothing was recorded, not because of a cap"
+
+    with pytest.raises(GatewayError):
+        await gateway.table_lineage("warehouse", "analytics", "shipments")
+
+
+@pytest.mark.parametrize(
+    "direction,distances",
+    [("upstream", {-1, 0}), ("downstream", {0, 1}), ("both", {-1, 0, 1})],
+)
+async def test_the_lineage_fixture_honours_the_direction_it_was_asked_for(direction, distances):
+    """Otherwise an assistant that ignores `direction` scores the same as one
+    that uses it, and the argument stops being worth getting right."""
+    from tests.evals.fixtures import EvalGateway
+
+    graph = await EvalGateway().table_lineage(
+        "warehouse", "analytics", "orders", direction=direction
+    )
+    assert {n["distance"] for n in graph["nodes"]} == distances
+
+
 # ── The judge sees what the answer rested on ──────────────────────────────────
 
 

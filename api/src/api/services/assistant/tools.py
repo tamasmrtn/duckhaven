@@ -85,6 +85,55 @@ async def describe_table(
         raise ModelRetry(str(exc)) from exc
 
 
+async def get_table_lineage(
+    ctx: RunContext[AssistantDeps],
+    catalog: str,
+    schema: str,
+    table: str,
+    direction: str = "both",
+    depth: int = 2,
+) -> dict:
+    """Show what feeds a table and what depends on it.
+
+    Use this for "what breaks if I change this?", "where does this data come
+    from?", "what reads this table?". It answers from lineage DuckHaven observed
+    while running queries, plus anything imported from dbt — not from reading
+    SQL yourself.
+
+    Returns ``nodes`` and ``edges`` that join on node ``key``. Each edge names
+    the ``providers`` that asserted it; ``stale`` means no producer has
+    re-asserted it recently, which is a statement about confirmation rather than
+    about correctness. A node's ``distance`` is signed: negative upstream of the
+    table asked about, positive downstream.
+
+    Read three things carefully rather than skimming them:
+
+    - A node with ``kind: "redacted"`` is real lineage this assistant is not
+      granted to see. It keeps its place so the graph's shape stays honest. Say
+      something is there and unnamed; do not report the path as ending there.
+    - ``truncated``, ``columns_truncated`` and ``hidden`` each mean "there is
+      more than this". Never answer "nothing depends on this" from a graph
+      carrying any of them.
+    - An empty graph means nothing has been observed or imported yet, which is
+      not the same as the table having no relationships.
+
+    Args:
+        catalog: The catalog slug.
+        schema: The schema name.
+        table: The table name.
+        direction: "upstream", "downstream", or "both".
+        depth: How many hops to follow. Keep it small; the graph grows fast.
+    """
+    if direction not in ("upstream", "downstream", "both"):
+        raise ModelRetry("direction must be one of: upstream, downstream, both")
+    try:
+        return await ctx.deps.gateway.table_lineage(
+            catalog, schema, table, direction=direction, depth=depth
+        )
+    except GatewayError as exc:
+        raise ModelRetry(str(exc)) from exc
+
+
 async def run_sql(ctx: RunContext[AssistantDeps], sql: str) -> dict:
     """Run a SQL statement against the governed catalogs and return a result sample.
 
@@ -401,6 +450,7 @@ ALL_TOOLS = [
     list_schemas,
     list_tables,
     describe_table,
+    get_table_lineage,
     run_sql,
     get_query_result,
     get_worksheet_sql,

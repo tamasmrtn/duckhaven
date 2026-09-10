@@ -1,6 +1,9 @@
 """Wiring tests for the outer ASGI app: the REST API is reachable under /api,
 the MCP endpoint sits at /mcp, and the agent WebSocket stays at the root path."""
 
+import os
+import subprocess
+import sys
 from contextlib import asynccontextmanager
 
 from httpx import ASGITransport, AsyncClient
@@ -30,12 +33,49 @@ def test_mcp_is_an_exact_route_not_a_mount():
     assert routes[0].app is mcp_asgi_app
 
 
-def test_mcp_is_registered_before_the_spa_catch_all():
-    """Starlette matches routes in order, so a catch-all registered first wins."""
-    paths = [getattr(r, "path", None) for r in app.routes]
-    assert MCP_PATH in paths
-    if "/" in paths:
-        assert paths.index(MCP_PATH) < paths.index("/")
+#: Resolves `POST /mcp` against the real app the way Starlette's router does,
+#: and reports which route wins. Run in a subprocess so `STATIC_DIR` is set
+#: before `api.main` is imported (the SPA mount happens at import time).
+_RESOLVE_MCP = """
+import os
+from starlette.routing import Match
+from api.config import settings
+from api.main import app
+from api.services.mcp.server import MCP_PATH, mcp_asgi_app
+
+assert settings.static_dir.is_dir(), "the SPA must be mounted for this to mean anything"
+scope = {"type": "http", "method": "POST", "path": MCP_PATH, "root_path": "", "headers": []}
+for route in app.routes:
+    if route.matches(scope)[0] == Match.FULL:
+        print("MCP" if getattr(route, "app", None) is mcp_asgi_app else type(route).__name__)
+        break
+else:
+    print("NO_MATCH")
+"""
+
+
+def test_mcp_is_not_shadowed_by_the_spa_catch_all(tmp_path):
+    """In the image the SPA is mounted at the root and would swallow /mcp.
+
+    Built in a subprocess with `STATIC_DIR` pointed at a stand-in SPA, because
+    the mount happens when `api.main` is imported and only when a built SPA is
+    on disk — true in the image, false in this suite. Importing the app here
+    therefore exercises the one arrangement in which the ordering cannot go
+    wrong, and an in-process check of the route list passes whatever the order.
+
+    Worth a subprocess because the failure is not subtle: with the catch-all
+    first, `POST /mcp` answers 405 and `GET /mcp` returns index.html, so every
+    MCP client sees a server that is plainly there and plainly broken.
+    """
+    (tmp_path / "index.html").write_text("<html></html>")
+    result = subprocess.run(
+        [sys.executable, "-c", _RESOLVE_MCP],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "STATIC_DIR": str(tmp_path)},
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "MCP", result.stdout
 
 
 async def test_api_prefix_routes_reach_routers():

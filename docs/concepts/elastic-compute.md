@@ -50,7 +50,7 @@ Compute can also be started deliberately from the **Compute** section of the nav
 the way you'd start a Databricks cluster. You pick a **named size** (vCPU + memory) and see its **hourly cost** before
 creating it; the agent is provisioned at that size, appears in the list with its cost, and the same
 idle reaper auto-terminates it when it goes quiet. The available sizes and their prices come from the
-control plane (`GET /admin/agents/compute-options`), so cost is shown from one source of truth.
+control plane (`GET /api/admin/agents/compute-options`), so cost is shown from one source of truth.
 
 The same dialog chooses **who can use it** — anyone signed in, or only the people you grant access
 to. That belongs at creation rather than only on the Access tab: an agent created open registers and

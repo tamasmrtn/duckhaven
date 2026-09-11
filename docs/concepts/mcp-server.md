@@ -82,8 +82,8 @@ Fourteen tools. Twelve work with your data:
 | `query_metric` | Answer a question from a curated metric definition, and run it. |
 | `explain_metric` | Explain what a metric means and how it is calculated. |
 
-Ten of those mirror the assistant's tool set; `list_workspaces` and `get_table_lineage` are additions. Two more
-answer questions about DuckHaven itself:
+Eleven of those mirror the assistant's tool set; `list_workspaces` is the addition. Two more answer questions about
+DuckHaven itself:
 
 | Tool | What it does |
 |---|---|

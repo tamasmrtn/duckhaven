@@ -85,7 +85,7 @@ flowchart TB
 
     subgraph cp[Control plane — one Docker Compose stack]
         API["duckhaven-api (FastAPI)<br/>auth · workspaces · queries<br/>DDL · agent registry · audit"]
-        PG[("Postgres 16<br/>app state + Polaris metastore")]
+        PG[("Postgres 18<br/>app state + Polaris metastore")]
         Polaris["Apache Polaris<br/>catalog + credential vendor"]
     end
 
@@ -94,7 +94,7 @@ flowchart TB
         A2["duckhaven-agent<br/>DuckDB engine"]
     end
 
-    subgraph store[Storage backends — one per workspace]
+    subgraph store[Storage backends — one per catalog]
         S[("Object storage / S3 / ADLS Gen 2<br/>Apache Iceberg tables")]
     end
 
@@ -134,8 +134,8 @@ JSON rows. Everything else flows over the agent-initiated socket.
    (users, workspaces, queries, agents). There is no Redis or separate queue
    — query dispatch is a direct push over the agent socket.
 5. **Credentials are short-lived and connection-scoped.** Polaris vends temporary
-   storage credentials per `(agent, workspace)`; the agent applies them as a
-   DuckDB `SECRET` that dies with the per-query connection.
+   storage credentials per catalog, as the agent attaches it; the agent applies
+   them as a DuckDB `SECRET` that dies with the per-query connection.
 6. **The wire contract is shared, not duplicated.** The control↔agent frame
    protocol lives in one package (`shared/`) imported by both sides, so it
    cannot drift.
@@ -189,7 +189,7 @@ Key properties:
 - **The execution profile is captured after the run.** The agent normalizes
   DuckDB's JSON profile (query summary + operator tree) and returns it on the
   `query_done` frame; the API persists it on `Query.profile` and serves it from
-  `GET /queries/{query_id}/profile` for the worksheet's Profile tab. Best-effort, so a
+  `GET /api/queries/{query_id}/profile` for the worksheet's Profile tab. Best-effort, so a
   profiling failure never fails the query.
 - **Results are materialized where they are produced** — Parquet on the
   executing agent. The control plane fetches that Parquet and decodes the
@@ -236,7 +236,7 @@ presents as a Bearer credential when reading result rows.
 |---|---|---|
 | **DuckDB** | The query engine — present *only* on agents. Also used by the control plane as a pure SQL parser. | `agent/.../executor/`, `api/.../services/sql_guard.py` |
 | **Apache Polaris** | Iceberg REST catalog: metadata authority + vendor of short-lived storage credentials (via access delegation). | `api/.../services/polaris.py` |
-| **Storage backends** | Where Iceberg tables physically live (all object storage): `object_store` (bundled MinIO, `httpfs`), S3 (`httpfs`), ADLS Gen 2 (`azure`). One per workspace. | `agent/.../executor/runner.py` (iceberg attach), `StorageBackend` model |
+| **Storage backends** | Where Iceberg tables physically live (all object storage): `object_store` (bundled MinIO, `httpfs`), S3 (`httpfs`), ADLS Gen 2 (`azure`). One per catalog. | `agent/.../executor/runner.py` (iceberg attach), `StorageBackend` model |
 | **Postgres** | State-of-record for DuckHaven entities + the Polaris metastore. | `api/.../db/`, `models/` |
 | **AI model providers (opt-in)** | Backs the AI data assistant: OpenAI, Anthropic, or Mistral SDKs via Pydantic AI, plus any OpenAI-compatible `base_url` (Ollama, vLLM, Azure OpenAI). Config-driven, disabled by default. | `api/.../services/assistant/agent.py` |
 | **Tailscale (operational)** | Recommended private network providing the transport-layer security perimeter. Not a code dependency. | deployment only |
@@ -245,16 +245,20 @@ presents as a Bearer credential when reading result rows.
 
 ## 7. Deployment Architecture
 
-**All-in-one Docker Compose stack** (`deploy/docker-compose.yml`) — six
-services:
+**All-in-one Docker Compose stack** (`deploy/docker-compose.yml`). The six
+services that make up the core stack:
 
 ```
-postgres:16-alpine
-minio                (object store; publishes :9000 API, :9001 console)
-polaris-bootstrap →  apache/polaris:latest  (one-shot realm/principal; storage: S3 → MinIO)
-                     duckhaven-api    (publishes :8000, serves SPA + REST + agent WS)
-                     duckhaven-agent  (bundled compute; dials the API WS)
+postgres           postgres:18-alpine
+minio              (object store; publishes :9000 API, :9001 console)
+polaris-bootstrap  apache/polaris-admin-tool  (one-shot realm/principal; storage: S3 → MinIO)
+polaris            apache/polaris             (pinned via POLARIS_IMAGE_TAG)
+api                duckhaven-api    (publishes :8000, serves SPA + REST + agent WS)
+agent              duckhaven-agent  (bundled compute; dials the API WS)
 ```
+
+The same file also ships an observability trio — `otel-collector`, `tempo` and
+`grafana` — covered in [Distributed tracing](../operations/tracing.md).
 
 `polaris-bootstrap` is the only remaining one-shot — it provisions the Polaris
 realm/principal (the admin tool ships as its own image). Everything else
@@ -325,7 +329,7 @@ it explicitly rather than working around it.
   `agent → shared`. `shared` depends on neither; `api` and `agent` never
   import each other.
 - **I7 — Storage credentials are short-lived and connection-scoped.** Creds
-  are vended per `(agent, workspace)`, applied as a DuckDB `SECRET` on the
+  are vended per catalog on `ATTACH`, applied as a DuckDB `SECRET` on the
   per-query connection, and never written to disk on the agent.
 - **I8 — Data + catalog DDL reach an agent; sandbox escapes do not.**
   `sql_guard` allows `SELECT`/`INSERT`/`UPDATE`/`DELETE`/`MERGE` and
@@ -363,7 +367,7 @@ it explicitly rather than working around it.
 | **Storage backend** | A physical location for Iceberg tables (Object storage, S3, ADLS Gen 2), registered once and referenced by catalogs. |
 | **Catalog-managed table** | An Iceberg table whose commits are arbitrated by Apache Polaris (every Polaris REST table is catalog-managed). |
 | **Bootstrap token** | A single-use credential an operator generates so a new agent can register. Exchanged once for a long-lived agent session token. |
-| **Capabilities** | The document an agent advertises (DuckDB version, loaded extensions, memory ceiling) used to match agents to workspace backends. |
+| **Capabilities** | The document an agent advertises (DuckDB version, loaded extensions, memory ceiling) used to match agents to the backends a workspace's catalogs use. |
 | **Frame** | One JSON message on the control WebSocket: `{type, payload}`, defined in `duckhaven-shared`. |
 | **SQL session** | An agent-held, persistent DuckDB connection the API brokers for an external client so it can run many statements with connection-scoped state. Off by default; see [SQL sessions](sql-sessions.md). |
-| **Vended credentials** | Short-lived storage credentials minted by Apache Polaris per `(agent, workspace)` and applied as a connection-scoped DuckDB `SECRET`. |
+| **Vended credentials** | Short-lived storage credentials minted by Apache Polaris per catalog and applied as a connection-scoped DuckDB `SECRET`. |

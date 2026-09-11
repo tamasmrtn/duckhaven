@@ -54,7 +54,8 @@ Some omissions are deliberate, and knowing them is part of reading the graph cor
 - **`CREATE TABLE` with only a column list.** It declares a shape; it derives nothing.
 - **A table built from itself.** A self-referencing edge carries no information.
 - **Statements DuckHaven cannot parse.** Lineage extraction fails quietly: the query is unaffected and no edge is
-  recorded. The `duckhaven_lineage_extract_failures` metric counts these, so a gap is visible rather than silent.
+  recorded. The `duckhaven_lineage_extract_failures_total` metric counts these, so a gap is visible rather than
+  silent.
 
 ## Why lineage is read from the SQL
 

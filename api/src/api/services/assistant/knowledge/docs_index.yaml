@@ -56,12 +56,11 @@ pages:
 - path: concepts/elastic-compute.md
   title: Elastic compute
   section: Concepts
-  summary: 'By default, agents are static: an operator starts an agent host and it stays running until
-    it is stopped.'
+  summary: Provisioning agents on demand and terminating them when they go idle.
 - path: concepts/storage-backends.md
   title: Storage backends
   section: Concepts
-  summary: A storage backend is a physical location where Iceberg table data lives.
+  summary: Where Iceberg data physically lives, and how credentials reach an agent.
 - path: concepts/query-execution.md
   title: Query execution
   section: Concepts
@@ -69,8 +68,7 @@ pages:
 - path: concepts/sql-sessions.md
   title: SQL sessions
   section: Concepts
-  summary: A SQL session is a persistent database connection that DuckHaven holds open on one agent
-    on your behalf, so a client can run many statements with connection-scoped state —…
+  summary: Persistent connections for dbt, dlt and BI tools, brokered through the API.
 - path: concepts/permissions.md
   title: Permissions
   section: Concepts
@@ -82,28 +80,23 @@ pages:
 - path: concepts/mcp-server.md
   title: MCP server
   section: Concepts
-  summary: DuckHaven speaks the Model Context Protocol, so an AI agent running somewhere else — Claude
-    Code in your terminal, Claude Desktop, Cursor — can work with your data directly.
+  summary: Connecting an AI agent you already use — Claude Code, Cursor — to your data.
 - path: concepts/metadata.md
   title: Metadata
   section: Concepts
-  summary: 'DuckHaven splits its state across two stores, and the split is an architectural invariant:
-    catalog structure lives in Polaris, and DuckHaven''s own entities live in Postgres.'
+  summary: What Polaris owns, what Postgres owns, and the table-metadata sidecar.
 - path: concepts/lineage.md
   title: Lineage
   section: Concepts
-  summary: 'Lineage answers two questions about a table: where did this data come from, and what breaks
-    if I change it.'
+  summary: Where a table's data came from, and what breaks if you change it.
 - path: concepts/semantic-layer.md
   title: Semantic layer
   section: Concepts
-  summary: 'A semantic model records what your business terms mean and how they are calculated: that
-    revenue is the sum of amount over purchase events, excluding test accounts, measured on…'
+  summary: Recording what a business term means so a metric is computed one agreed way.
 - path: concepts/maintenance.md
   title: Lakehouse maintenance
   section: Concepts
-  summary: The maintenance advisor is the DuckHaven service that periodically scans every Iceberg
-    table, computes a health score, and raises recommendations for the maintenance each table…
+  summary: The advisor that scores table health and recommends compaction and cleanup.
 - path: deployment/install.md
   title: Docker Compose
   section: Deployment

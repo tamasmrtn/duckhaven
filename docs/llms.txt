@@ -24,17 +24,17 @@
 - [Catalogs & Polaris](https://tamasmrtn.github.io/duckhaven/concepts/catalogs/): The shared Iceberg catalog governed by Apache Polaris.
 - [Tables & Iceberg](https://tamasmrtn.github.io/duckhaven/concepts/tables/): Iceberg-native tables, snapshots, and time travel.
 - [Agents](https://tamasmrtn.github.io/duckhaven/concepts/agents/): DuckDB compute agents you pick per query.
-- [Elastic compute](https://tamasmrtn.github.io/duckhaven/concepts/elastic-compute/): By default, agents are static: an operator starts an agent host and it stays running until it is stopped.
-- [Storage backends](https://tamasmrtn.github.io/duckhaven/concepts/storage-backends/): A storage backend is a physical location where Iceberg table data lives.
+- [Elastic compute](https://tamasmrtn.github.io/duckhaven/concepts/elastic-compute/): Provisioning agents on demand and terminating them when they go idle.
+- [Storage backends](https://tamasmrtn.github.io/duckhaven/concepts/storage-backends/): Where Iceberg data physically lives, and how credentials reach an agent.
 - [Query execution](https://tamasmrtn.github.io/duckhaven/concepts/query-execution/): Queueing, memory estimation, and concurrency.
-- [SQL sessions](https://tamasmrtn.github.io/duckhaven/concepts/sql-sessions/): A SQL session is a persistent database connection that DuckHaven holds open on one agent on your behalf, so a client can run many statements with connection-scoped state —…
+- [SQL sessions](https://tamasmrtn.github.io/duckhaven/concepts/sql-sessions/): Persistent connections for dbt, dlt and BI tools, brokered through the API.
 - [Permissions](https://tamasmrtn.github.io/duckhaven/concepts/permissions/): Per-workspace access control and audit trail.
 - [AI assistant](https://tamasmrtn.github.io/duckhaven/concepts/assistant/): The governed AI data assistant and how it enforces access.
-- [MCP server](https://tamasmrtn.github.io/duckhaven/concepts/mcp-server/): DuckHaven speaks the Model Context Protocol, so an AI agent running somewhere else — Claude Code in your terminal, Claude Desktop, Cursor — can work with your data directly.
-- [Metadata](https://tamasmrtn.github.io/duckhaven/concepts/metadata/): DuckHaven splits its state across two stores, and the split is an architectural invariant: catalog structure lives in Polaris, and DuckHaven's own entities live in Postgres.
-- [Lineage](https://tamasmrtn.github.io/duckhaven/concepts/lineage/): Lineage answers two questions about a table: where did this data come from, and what breaks if I change it.
-- [Semantic layer](https://tamasmrtn.github.io/duckhaven/concepts/semantic-layer/): A semantic model records what your business terms mean and how they are calculated: that revenue is the sum of amount over purchase events, excluding test accounts, measured on…
-- [Lakehouse maintenance](https://tamasmrtn.github.io/duckhaven/concepts/maintenance/): The maintenance advisor is the DuckHaven service that periodically scans every Iceberg table, computes a health score, and raises recommendations for the maintenance each table…
+- [MCP server](https://tamasmrtn.github.io/duckhaven/concepts/mcp-server/): Connecting an AI agent you already use — Claude Code, Cursor — to your data.
+- [Metadata](https://tamasmrtn.github.io/duckhaven/concepts/metadata/): What Polaris owns, what Postgres owns, and the table-metadata sidecar.
+- [Lineage](https://tamasmrtn.github.io/duckhaven/concepts/lineage/): Where a table's data came from, and what breaks if you change it.
+- [Semantic layer](https://tamasmrtn.github.io/duckhaven/concepts/semantic-layer/): Recording what a business term means so a metric is computed one agreed way.
+- [Lakehouse maintenance](https://tamasmrtn.github.io/duckhaven/concepts/maintenance/): The advisor that scores table health and recommends compaction and cleanup.
 
 ## Deployment
 

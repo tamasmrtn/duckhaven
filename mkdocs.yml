@@ -43,6 +43,13 @@ theme:
       primary: black
       accent: deep purple
 
+# `--strict` promotes warnings to errors, but anchor validation defaults to
+# `info`, which it does not promote — so a link to a heading that has been
+# renamed or removed breaks silently. The docs cross-link heavily by anchor
+# (and the assistant serves these pages at runtime), so make that an error.
+validation:
+  anchors: warn
+
 extra_css:
   - stylesheets/extra.css
 

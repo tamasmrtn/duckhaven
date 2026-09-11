@@ -99,8 +99,8 @@ fields above answer "when did this start, and is it still happening" without a s
 
 ## Freshness
 
-A relationship is **stale** when no producer has re-asserted it within `LINEAGE_STALE_AFTER_DAYS` (30 by default; set
-it to `0` to switch the concept off).
+A relationship is **stale** when no producer has re-asserted it within `LINEAGE_STALE_AFTER_DAYS` (set it to `0` to
+switch the concept off).
 
 Stale means *unconfirmed*, not *wrong*. A table rebuilt once a year has perfectly correct lineage that nothing will
 confirm again for eleven months. What staleness tells you is how recently something vouched for the relationship, which

@@ -237,18 +237,10 @@ Manage this from **Compute → (an agent) → Access**.
 ## Lineage
 
 A [lineage](lineage.md) graph names tables, and a name can reveal more than the rows do — so the graph is filtered on
-the way out, by the same tiers as everything else:
-
-- Tables in catalogs the workspace does not attach are absent from the graph entirely.
-- In a `scoped` catalog, a table the caller holds no tier on is returned as a **restricted node**: it keeps its place
-  and its connections, but carries no catalog, schema, or table name.
-
-Restricted nodes are shown rather than dropped so a partial graph stays distinguishable from a complete one. Importing
-lineage requires `writer` on the target's catalog, and imported names are redacted on read like any other, so an import
-cannot be used to learn names the caller could not otherwise see.
-
-Redaction covers what sits *beside* the node too. An edge normally links to the query that produced it, and that
-query's SQL names every table it touched — so the link is withheld whenever either endpoint of the edge is restricted.
+the way out, by the same tiers as everything else. A table the caller holds no tier on keeps its place in the graph but
+loses its names, and the edge's link to the producing query is withheld with it. See
+[Lineage → Access](lineage.md#access) for how that redaction works and why restricted nodes are shown rather than
+dropped.
 
 ## What is not in scope
 

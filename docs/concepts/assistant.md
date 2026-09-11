@@ -181,9 +181,8 @@ metric and *which* dimensions; DuckHaven generates the SQL from the stored defin
 the correct date column come from what the organization agreed rather than from the model's judgement.
 
 Free SQL is still available and still right for anything the semantic models do not cover. It is not blocked when a
-metric exists — but if a query aggregates a column that a published metric already defines, the result comes back with
-a warning naming that metric, and the bypass is recorded on the tool-call audit row. How often the agreed definitions
-get worked around is therefore a number you can look at rather than a hope.
+metric exists, but bypassing one is [flagged and recorded](semantic-layer.md#how-the-assistant-uses-it), so how often
+the agreed definitions get worked around is a number you can look at rather than a hope.
 
 !!! note "Scope"
     The assistant is a focused v1: single-agent, one conversation turn at a time, no chart generation and no retrieval
@@ -192,3 +191,10 @@ get worked around is therefore a number you can look at rather than a hope.
     Conversation memory is also bounded — only the most recent turns are replayed to the model, so a very long
     conversation gradually forgets its oldest messages; start a new conversation for an unrelated topic. The panel
     shows a small notice once a conversation has crossed that point.
+
+## Related
+
+- [MCP server](mcp-server.md) — the same governance, for an AI agent you already use.
+- [Semantic layer](semantic-layer.md) — the definitions the assistant answers metric questions from.
+- [Permissions](permissions.md) — the grants that bound what it can reach.
+- [Use the AI assistant](../guides/using-the-assistant.md) — turning it on and working with it.

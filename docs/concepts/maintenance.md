@@ -93,8 +93,7 @@ variables.
 
 ## Limitations
 
-- **No in-app apply.** Recommendations are advisory; run the remediation command in an external Iceberg engine. See the
-  recommend-only note above.
+- **No in-app apply.** See the recommend-only note above.
 - **Orphan detection is an estimate.** It compares files listed under a table's data and metadata directories against
   files referenced by the *current* snapshot's metadata. Files referenced only by older snapshots (still valid for
   time travel) can appear orphaned, and there is no age window — DuckDB exposes no file modification time — so these

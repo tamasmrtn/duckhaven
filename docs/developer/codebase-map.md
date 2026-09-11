@@ -7,7 +7,7 @@ It describes *stable structure*, not progress: for what the system is and why,
 see [Architecture](../concepts/architecture.md); for roadmap and milestone
 status see the [README](https://github.com/tamasmrtn/duckhaven#roadmap) and the
 issue tracker. Invariant references below (I1, I2, …) are numbered as in
-[Architectural invariants](../concepts/architecture.md#8-architectural-invariants).
+[Architectural invariants](../concepts/architecture.md#7-architectural-invariants).
 
 ---
 

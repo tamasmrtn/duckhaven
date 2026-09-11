@@ -8,14 +8,9 @@ make a change — see the [Codebase map](../developer/codebase-map.md).
 
 ## 1. Overview
 
-DuckHaven is a **self-hosted, governed DuckDB + Iceberg analytics platform**
-for small teams (2–10 users) that run [DuckDB](https://duckdb.org/) over
+[DuckHaven](what-is-duckhaven.md) runs [DuckDB](https://duckdb.org/) over
 Apache Iceberg tables governed by [Apache Polaris](https://polaris.apache.org/).
-It gives collaborative worksheets, scheduled queries, a governed catalog,
-lakehouse-maintenance advice, per-workspace permissions, and a full audit
-trail — without a cloud warehouse, Kubernetes, or a platform team.
-
-Architecturally, DuckHaven is a **control plane / compute split**:
+Architecturally, it is a **control plane / compute split**:
 
 - The **control plane** (`api/`) is a single FastAPI process. It owns
   identity, workspaces, the catalog/DDL, query state, and the agent
@@ -42,12 +37,9 @@ agent host when you need more compute).
 
 ## 2. Purpose & Philosophy
 
-**Why DuckHaven exists.** Teams that love DuckDB end up sharing `.duckdb`
-files over chat. DuckHaven provides a governed worksheet/collaboration
-experience while keeping data on your own infrastructure, with no SaaS
-lock-in and no opaque billing.
-
-Two ideas shape nearly every design decision:
+For why DuckHaven exists and who it is for, see
+[What is DuckHaven?](what-is-duckhaven.md). Two ideas shape nearly every
+design decision here:
 
 1. **DuckHaven is a dispatcher, not an optimizer.** The user picks the
    engine (agent) per worksheet. There is no distributed query planner and
@@ -116,35 +108,9 @@ JSON rows. Everything else flows over the agent-initiated socket.
 
 ---
 
-## 4. Core Architectural Principles
+## 4. Data Flow & Runtime Behavior
 
-1. **Separation of control and compute.** The control plane orchestrates;
-   agents execute. The control plane process never opens a DuckDB database
-   (it uses DuckDB *only as a SQL parser* — see Invariant I1).
-2. **Agents are cattle that dial home.** An agent needs only a control-plane
-   URL and a bootstrap token. It registers itself, advertises its
-   capabilities, and holds one socket open. The control plane keeps no
-   static inventory of agent addresses.
-3. **Apache Polaris is the source of truth for catalog structure.** Schemas,
-   tables, columns, and table properties live in Polaris, not in Postgres. DuckHaven
-   never shadows catalog *structure* in its own database — it only keeps a
-   supplementary `table_metadata` sidecar for facts Polaris does not track
-   (ownership, last-write provenance, row/size stats).
-4. **Postgres is the single state-of-record for everything DuckHaven owns**
-   (users, workspaces, queries, agents). There is no Redis or separate queue
-   — query dispatch is a direct push over the agent socket.
-5. **Credentials are short-lived and connection-scoped.** Polaris vends temporary
-   storage credentials per catalog, as the agent attaches it; the agent applies
-   them as a DuckDB `SECRET` that dies with the per-query connection.
-6. **The wire contract is shared, not duplicated.** The control↔agent frame
-   protocol lives in one package (`shared/`) imported by both sides, so it
-   cannot drift.
-
----
-
-## 5. Data Flow & Runtime Behavior
-
-### 5.1 Query lifecycle (the primary flow)
+### 4.1 Query lifecycle (the primary flow)
 
 ```mermaid
 sequenceDiagram
@@ -201,7 +167,7 @@ Key properties:
 - **A timeout** is enforced agent-side by the supervisor, also via
   `conn.interrupt()`.
 
-### 5.2 Agent connection lifecycle
+### 4.2 Agent connection lifecycle
 
 ```mermaid
 sequenceDiagram
@@ -230,7 +196,7 @@ presents as a Bearer credential when reading result rows.
 
 ---
 
-## 6. External Integrations
+## 5. External Integrations
 
 | Integration | Role | Boundary in code |
 |---|---|---|
@@ -243,7 +209,7 @@ presents as a Bearer credential when reading result rows.
 
 ---
 
-## 7. Deployment Architecture
+## 6. Deployment Architecture
 
 **All-in-one Docker Compose stack** (`deploy/docker-compose.yml`). The six
 services that make up the core stack:
@@ -286,7 +252,7 @@ bootstrap token. It writes results and mounts under `/var/duckhaven-agent/`.
 
 ---
 
-## 8. Architectural Invariants
+## 7. Architectural Invariants
 
 These are the rules that keep the design coherent. **A change that violates
 one of these is almost certainly wrong** — if you believe you need to, raise
@@ -356,7 +322,7 @@ it explicitly rather than working around it.
 
 ---
 
-## 9. Glossary
+## 8. Glossary
 
 | Term | Meaning |
 |---|---|
@@ -371,3 +337,12 @@ it explicitly rather than working around it.
 | **Frame** | One JSON message on the control WebSocket: `{type, payload}`, defined in `duckhaven-shared`. |
 | **SQL session** | An agent-held, persistent DuckDB connection the API brokers for an external client so it can run many statements with connection-scoped state. Off by default; see [SQL sessions](sql-sessions.md). |
 | **Vended credentials** | Short-lived storage credentials minted by Apache Polaris per catalog and applied as a connection-scoped DuckDB `SECRET`. |
+
+---
+
+## Related
+
+- [What is DuckHaven?](what-is-duckhaven.md) — the product these pieces add up to.
+- [Agents](agents.md) — the unit of compute at the edge of the split.
+- [Query execution](query-execution.md) — the query lifecycle without the code-level detail.
+- [Codebase map](../developer/codebase-map.md) — where each of these lives in the repository.

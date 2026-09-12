@@ -30,20 +30,20 @@ UNSET = _Unset()
 ROLE_ORDER = {"reader": 0, "writer": 1, "owner": 2}
 
 # Backend kind → Polaris storage type. Every backend is object storage:
-# object_store is physically backed by the bundled MinIO bucket (S3); s3 /
-# adls_gen2 are operator-owned external object stores.
+# object_store is physically backed by the bundled object-store bucket (S3);
+# s3 / adls_gen2 are operator-owned external object stores.
 _KIND_TO_STORAGE_TYPE = {
     "object_store": "S3",
     "s3": "S3",
     "adls_gen2": "AZURE",
 }
 
-# Kinds backed by the bundled MinIO bucket. Their root_uri is a prefix label
-# under that bucket rather than a real storage URI.
-_BUNDLED_MINIO_KINDS = {"object_store"}
+# Kinds backed by the bundled bucket. Their root_uri is a prefix label under
+# that bucket rather than a real storage URI.
+_BUNDLED_STORE_KINDS = {"object_store"}
 
 
-def _minio_prefix(root_uri: str) -> str:
+def _bundled_prefix(root_uri: str) -> str:
     """Normalise a local backend's root_uri into a bucket-relative prefix."""
     prefix = root_uri.strip()
     if "://" in prefix:
@@ -87,15 +87,15 @@ def polaris_storage(
 ) -> tuple[str, str, dict | None]:
     """Resolve a backend's (Polaris storage type, base location, extra storage).
 
-    object_store is backed by the bundled MinIO bucket: its root_uri is a
-    prefix label under that bucket and the extra storage config carries the
+    object_store is backed by the bundled bucket: its root_uri is a prefix
+    label under that bucket and the extra storage config carries the
     vended/internal endpoints. s3/adls_gen2 are external stores whose root_uri
     already carries a scheme; their extras (role ARN / tenant id / …) come from
     the backend's per-kind ``config``.
     """
     storage_type = _KIND_TO_STORAGE_TYPE.get(kind, "S3")
-    if kind in _BUNDLED_MINIO_KINDS:
-        prefix = _minio_prefix(root_uri)
+    if kind in _BUNDLED_STORE_KINDS:
+        prefix = _bundled_prefix(root_uri)
         base = f"s3://{settings.s3_bucket}"
         if prefix:
             base = f"{base}/{prefix}"
@@ -110,7 +110,7 @@ def polaris_storage(
 
 
 def default_object_store_backend(name: str, created_by: uuid.UUID) -> StorageBackend:
-    """Build a bundled object-store backend at the MinIO bucket root for a
+    """Build a bundled object-store backend at the bucket root for a
     name-only workspace. root_uri="" keeps the catalog base at the bucket root;
     per-workspace isolation comes from the `/{slug}` scope added in
     ensure_polaris_catalog. The caller adds and flushes the row."""

@@ -136,7 +136,7 @@ def _get_capabilities() -> AgentCapabilities:
     version = duckdb.version()
     # Load the pre-installed query extensions so they are advertised as available.
     # A fresh connection lists only built-ins under `WHERE loaded`; the storage
-    # backends require these (httpfs for S3/MinIO, azure for ADLS, iceberg for
+    # backends require these (httpfs for S3, azure for ADLS, iceberg for
     # the catalog), and dispatch is gated on them being advertised.
     for ext in ("httpfs", "azure", "iceberg"):
         try:

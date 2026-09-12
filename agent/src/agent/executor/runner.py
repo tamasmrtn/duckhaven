@@ -32,7 +32,7 @@ def _configure_external_tls(conn: duckdb.DuckDBPyConnection, *, azure: bool) -> 
 
     DuckDB's statically-linked extensions don't know the distro's CA path, so
     TLS to Azure Blob / S3 fails with an "SSL CA cert" error in a minimal
-    container (plain-HTTP MinIO never hits this). certifi ships a portable
+    container (the plain-HTTP bundled store never hits this). certifi ships a portable
     bundle; point ``ca_cert_file`` at it. The azure extension only honours it
     under the curl transport, so select that too."""
     bundle = certifi.where().replace("'", "''")
@@ -88,7 +88,7 @@ _DEFAULT_NAMESPACE = "analytics"
 
 # Backend kind -> DuckDB storage-IO extension (loaded so DuckDB can read/write
 # the object store with the credentials Polaris vends). Every backend is object
-# storage: object_store is backed by the bundled MinIO (S3) and needs httpfs.
+# storage: object_store is backed by the bundled object store (S3), needing httpfs.
 _BACKEND_IO_EXTENSION: dict[str, str] = {
     "object_store": "httpfs",
     "s3": "httpfs",
@@ -99,7 +99,7 @@ _VENDED_BACKENDS = {"object_store", "s3", "adls_gen2"}
 
 # Substrings that identify a rejected/expired *storage* credential (as opposed to
 # a genuine authz or missing-object error). Polaris vends short-lived STS creds
-# (an hour on the bundled MinIO); once they expire the object store purges the
+# (an hour on the bundled store); once they expire the object store purges the
 # temporary access key and returns "InvalidAccessKeyId" ("...does not exist..."),
 # or "InvalidToken"/"ExpiredToken" for the session token. When we see one of
 # these we re-vend a fresh credential and retry once rather than surfacing a

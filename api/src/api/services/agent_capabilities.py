@@ -7,7 +7,7 @@ extension its storage backend requires.
 """
 
 # Every backend is object storage now: object_store is backed by the bundled
-# MinIO (S3) and so also needs httpfs.
+# the bundled object store (S3) and so also needs httpfs.
 _BACKEND_EXTENSION: dict[str, str] = {
     "object_store": "httpfs",
     "s3": "httpfs",

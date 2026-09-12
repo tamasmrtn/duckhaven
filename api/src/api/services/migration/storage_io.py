@@ -6,7 +6,7 @@ short-lived credentials Polaris vends. This module wraps list/get/put/exists ove
 those, keyed by backend kind, reusing the same vended-credential shapes the
 storage-health check already relies on.
 
-``object_store`` (bundled MinIO) and ``s3`` both use the S3 path; ``adls_gen2``
+``object_store`` (the bundled store) and ``s3`` both use the S3 path; ``adls_gen2``
 uses the Azure Blob path. The cloud SDKs are imported lazily so they load only
 when a migration actually runs. SDK calls are synchronous; callers run them off
 the event loop via ``asyncio.to_thread``.
@@ -68,7 +68,7 @@ def object_size(ctx: StorageContext, uri: str) -> int | None:
     return _adls_size(ctx, uri)
 
 
-# --- S3 / MinIO ---
+# --- S3 ---
 
 
 def _s3_client(ctx: StorageContext):  # noqa: ANN202 - boto3 client is untyped
@@ -100,7 +100,7 @@ def _s3_list(ctx: StorageContext, location: str) -> list[tuple[str, int]]:
     # A directory-style trailing slash: Polaris's vended STS credentials scope
     # s3:ListBucket to an `s3:prefix` StringLike condition of `<location>/*`,
     # which only matches a request prefix that itself ends in "/" — without it
-    # MinIO denies the call outright. It also stops a bare prefix match from
+    # the store denies the call outright. It also stops a bare prefix match from
     # sweeping in a sibling table whose name is a superstring (e.g. "users" vs
     # "users2").
     if not prefix.endswith("/"):

@@ -76,25 +76,26 @@ class Settings(BaseSettings):
     # data access). Defaults to the bootstrap root principal.
     polaris_principal: str = "root"
     polaris_http_timeout_s: float = 10.0
-    # Bundled MinIO object store backing the object_store catalogs. Three tiers,
+    # Bundled object store backing the object_store catalogs. Three tiers,
     # most-internal to most-external: `s3_endpoint_internal` is what Polaris uses
-    # to reach MinIO inside the compose network (and what the agent's httpfs GET
-    # of a presigned staging read reaches); `s3_endpoint` is the agent-facing URL
-    # Polaris vends to DuckDB agents (must be reachable from the agent host);
+    # to reach the store inside the compose network (and what the agent's httpfs
+    # GET of a presigned staging read reaches); `s3_endpoint` is the agent-facing
+    # URL Polaris vends to DuckDB agents (must be reachable from the agent host);
     # `s3_endpoint_public` is the client-facing endpoint used to presign SQL-session
     # staging *upload* (PUT) URLs. Empty -> falls back to `s3_endpoint`. Only
-    # differs in the bundled single-host compose, where the agent reaches MinIO at
-    # `minio:9000` but a dlt client on the host reaches it at `localhost:9000`.
+    # differs in the bundled single-host compose, where the agent reaches the store
+    # at `objectstore:9000` but a dlt client on the host reaches it at
+    # `localhost:9000`.
     s3_endpoint: str = "http://localhost:9000"
-    s3_endpoint_internal: str = "http://minio:9000"
+    s3_endpoint_internal: str = "http://objectstore:9000"
     s3_endpoint_public: str = ""
     s3_region: str = "us-east-1"
     s3_bucket: str = "warehouse"
-    # Static MinIO credentials the API uses to presign staging URLs for the
-    # bundled object_store backend (the MinIO root user/password). Only used for
+    # Static credentials the API uses to presign staging URLs for the bundled
+    # object_store backend (the store's root access key/secret). Only used for
     # presigning; external s3 backends assume their role instead.
-    s3_access_key: str = "minioadmin"
-    s3_secret_key: str = "minioadmin"
+    s3_access_key: str = "duckhaven"
+    s3_secret_key: str = "duckhaven"
     secret_key: str = "change-me-in-production"
     session_max_age_seconds: int = 86400 * 7
     cors_origins: list[str] = ["http://localhost:5173"]
@@ -295,7 +296,7 @@ class Settings(BaseSettings):
     # reachable from the control plane and from nowhere else.
     elastic_docker_network: str = "duckhaven_internal"
     # Host capacity held back from agent sizing, for the control plane and its
-    # dependencies -- on a single box the API, Postgres, Polaris and MinIO share the
+    # dependencies -- on a single box the API, Postgres, Polaris and the object store share the
     # machine an agent is provisioned onto, so offering the whole host as an agent
     # size would let one query starve the stack running it. Subtracted from what
     # `docker info` reports to give the maximum the UI offers.

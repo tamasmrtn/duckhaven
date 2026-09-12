@@ -192,7 +192,7 @@ from the worksheet's engine picker — there is no cost-based routing or query
 planner choosing between them."""
 
 
-# The bundled MinIO object store is the default and needs no explanation; every
+# The bundled object store is the default and needs no explanation; every
 # other backend vends its credentials from somewhere else, which changes what the
 # assistant should say when access fails. Named as an exclusion rather than an
 # allowlist so a backend kind added later gets the paragraph by default.

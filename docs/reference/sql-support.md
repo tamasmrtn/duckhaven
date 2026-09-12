@@ -63,7 +63,10 @@ WHERE catalog_name = 'analytics';
 !!! warning "Not available in a workspace with a scoped catalog"
     Spanning every attachment is also why these views cannot be filtered by grant. They are rejected outright in any
     workspace that has at least one catalog attached in `scoped` mode — including from a worksheet whose active catalog
-    is open, and even with a `table_catalog` filter. See
+    is open, and even with a `table_catalog` filter. The same rejection covers every other way of asking the engine to
+    enumerate: the `info_schema` spelling, any `SHOW` statement, the `duckdb_tables()` / `duckdb_schemas()` /
+    `duckdb_columns()` / `duckdb_views()` / `duckdb_databases()` / `duckdb_constraints()` family, and
+    `PRAGMA show_tables` / `database_list` / `table_info`. See
     [Discovering objects in a scoped catalog](../concepts/permissions.md#discovering-objects-in-a-scoped-catalog).
 
 ### Columns and types: use `DESCRIBE`
@@ -143,7 +146,8 @@ See [Snapshots & time travel](../guides/snapshots-time-travel.md) for more on sn
 
 Anything that could break out of the per-query sandbox is rejected, including:
 
-`ATTACH` / `DETACH`, `COPY` / `EXPORT`, `INSTALL` / `LOAD`, `SET`, `CALL`, `EXPLAIN`, `VACUUM`, and transaction control.
+`ATTACH` / `DETACH`, `COPY` / `EXPORT`, `INSTALL` / `LOAD`, `SET`, `CALL`, `EXPLAIN`, `VACUUM`, `PREPARE` / `EXECUTE`,
+and transaction control.
 
 This includes the configuration-setting form of `PRAGMA` — `PRAGMA <name> = <value>`, which DuckDB treats as a `SET` —
 since it could widen the per-query sandbox. The read-only `PRAGMA`s that return rows are allowed, as described above.

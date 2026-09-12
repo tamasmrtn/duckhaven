@@ -426,9 +426,9 @@ compose stack therefore **bundles MinIO**, and the `object_store` backend
 kind is physically backed by a MinIO bucket: its catalogs use
 `storageType = S3` pointed at MinIO (with the catalog's vended `endpoint` set to
 an externally-reachable URL the agent can reach, and an internal endpoint for
-Polaris itself). Per-workspace isolation comes from a `/{slug}` prefix under the
-shared bucket. The `s3`/`adls_gen2` kinds remain operator-owned external object
-stores.
+Polaris itself). Per-catalog isolation comes from a `/{polaris_name}` prefix under
+the shared bucket, so catalogs sharing a backend never collide. The
+`s3`/`adls_gen2` kinds remain operator-owned external object stores.
 
 ---
 

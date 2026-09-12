@@ -299,7 +299,7 @@ Source of truth: the [Agent reference](agent-reference.md). An agent needs only 
 | `BOOTSTRAP_TOKEN` | Yes | — | One-time bootstrap token from the admin UI. |
 | `RESULTS_DIR` | No | `/var/duckhaven-agent/results` | Directory for materialized query results. |
 | `RESULTS_HTTP_PORT` | No | `8001` | Port for the local HTTP result server. |
-| `MEMORY_LIMIT_BYTES` | No | `6442450944` (6 GB) | Per-query memory ceiling. |
+| `MEMORY_HEADROOM_FRACTION` | No | `0.10` | Fraction of the agent's budget held back from query reservations. The budget itself is read from the container's cgroup (`memory.max`), falling back to host RAM — there is no setting for it, so size the container and the agent follows. |
 | `MAX_CONCURRENCY_PROFILE` | No | `auto` | Reservation sizing: `auto` (EXPLAIN-estimated per query) or a static slot ladder (`single`/`equal_2`/`decaying_2`/`decaying_3`). See [Runbook §6](../operations/runbook.md#6-query-queueing-concurrency). |
 | `PROFILING_ENABLED` | No | `true` | Capture DuckDB's post-execution query profile and return it on `query_done`. Set `false` to disable. |
 | `SESSION_BASELINE_BYTES` | No | `67108864` (64 MB) | What a held [SQL session](../concepts/sql-sessions.md) reserves while idle. Under `auto` each statement grows the reservation to its own estimate and shrinks back here afterwards, so this is a floor, not what the session's queries get. Keeping it small is what leaves headroom to grow into. Clamped to the agent's budget. |
@@ -337,10 +337,10 @@ Best-effort knobs that only apply under the `auto` profile. See
 ### Operator ceilings
 
 Operator-set ceilings that per-query requests cannot exceed — see the
-[Operator runbook](../operations/runbook.md#2-register-two-agents-multi-agent-m4-target).
+[Operator runbook](../operations/runbook.md#2-register-additional-agents).
 
 | Variable | Example | Description |
 |---|---|---|
-| `MAX_MEMORY_LIMIT_GB` | `6` | Hard upper bound on a query's memory limit. |
+| `SESSION_MAX_BUCKET_FRACTION` | `1.0` | Ceiling on how much of the agent's budget one statement may reserve. |
 | `MAX_TIMEOUT_S` | `600` | Hard upper bound on a query's wall-clock timeout. |
 | `RESULT_RETENTION_HOURS` | `24` | How long materialized result Parquet files are kept before the retention sweep removes them. |

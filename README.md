@@ -62,8 +62,7 @@ trail — with data sovereignty, network privacy, and no SaaS lock-in.
 
 - **Browser-based worksheets** — Monaco SQL editor with tabs, catalog-aware
   autocomplete, and a paginated results grid that pages results by row window
-  instead of loading the whole file. Statement-aware Run (Ctrl+Enter runs the
-  statement under the cursor), mid-flight cancel, and CSV export.
+  instead of loading the whole file.
 - **Transparent compute** — You pick the DuckDB agent per query. No opaque
   optimizer, no surprise costs, no hidden resource allocation.
 - **Right-sized memory** — Each query's memory reservation is estimated from
@@ -88,17 +87,11 @@ trail — with data sovereignty, network privacy, and no SaaS lock-in.
   "query at this snapshot" against any point in its history.
 - **Data lineage, down to the column** — See where a table's data came from and
   what was built from it, on a Lineage tab on the table you are already looking
-  at. Derived from the SQL DuckHaven runs — worksheets, scheduled jobs and
-  external tools alike, with no instrumentation — and importable from a tool
-  that already knows, dbt first. Open a table in the graph to see which of its
-  columns feed which downstream ones. Because that tracks values rather than
-  mentions, a source that was only joined against or filtered on reports
-  carrying nothing, which the table-level graph alone cannot tell you.
+  at. Derived from SQL Duckhaven runs or import it from tools you use, currently
+  supporting dbt.
 - **Built-in metadata** — A read-only `information_schema` per catalog for
-  listing schemas and tables (a table's *columns* come from `DESCRIBE` — the
-  Iceberg extension does not populate `information_schema.columns`), plus a
-  Postgres-side sidecar for ownership, last-write provenance, and row/size stats
-  that Polaris does not track.
+  listing schemas and tables plus a Postgres-side sidecar for ownership,
+  last-write provenance, and row/size stats that Polaris does not track.
 
 ### Governance, access & audit
 
@@ -175,6 +168,7 @@ trail — with data sovereignty, network privacy, and no SaaS lock-in.
   holder of a DuckHaven access token, through the same enforcement chokepoints
   as any other client, so it is never a new way in. Read-only by default. See
   [docs/concepts/mcp-server.md](docs/concepts/mcp-server.md).
+
 ### Storage
 
 - **Bring your own storage** — One backend per catalog: bundled object
@@ -270,10 +264,6 @@ docker compose up -d
 docker compose cp api:/var/duckhaven/setup_token ./setup_token && cat ./setup_token
 # open http://<host>:8000 and paste the token into the setup screen
 ```
-
-That is the whole install — no `git clone`, no `.env` editing, no
-`make` on the host. Secrets generate on first boot, migrations apply
-inside the api container, the first admin is created from the browser.
 
 ## Self-hosting docs
 

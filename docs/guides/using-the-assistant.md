@@ -90,9 +90,9 @@ anything that would write data still requires your approval.
 ## Approving a write
 
 If your assistant is configured with write access and it proposes a change to data (an INSERT, UPDATE, DELETE, or a DDL
-statement), the conversation pauses and shows you the exact SQL. Review it and choose **Approve** or **Deny**:
+statement), the conversation pauses and shows you the exact SQL. Review it and choose **Approve & run** or **Deny**:
 
-- **Approve** runs the statement — still subject to the same permission checks as any query.
+- **Approve & run** runs the statement — still subject to the same permission checks as any query.
 - **Deny** tells the assistant not to run it; it will carry on and can explain or try a different approach.
 
 Nothing that changes data runs without your approval.

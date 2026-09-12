@@ -166,7 +166,7 @@ snippets correctly with no extra config.
 
 ## What the agent sees
 
-`POST /admin/agents/bootstrap` reads `X-Forwarded-Proto` / `X-Forwarded-Host`
+`POST /api/admin/agents/bootstrap` reads `X-Forwarded-Proto` / `X-Forwarded-Host`
 (set automatically by Caddy and most other proxies). The compose snippet
 generated in the admin UI uses `wss://duckhaven.example.com/agents/connect`
 when fronted by TLS, `ws://...` otherwise.

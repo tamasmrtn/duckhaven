@@ -57,7 +57,7 @@ by default.
 
 | Span source | What you see |
 |---|---|
-| FastAPI (automatic) | One server span per API request, named by route template. Health probes (`/healthz`, `/readyz`) and `/api/metrics` scrapes are excluded. |
+| FastAPI (automatic) | One server span per API request, named by route template. Health probes (`/api/healthz`, `/api/readyz`) and `/api/metrics` scrapes are excluded. |
 | httpx (automatic) | A client span for every request to Apache Polaris and for cross-replica dispatch forwards, as children of the request that caused them. |
 | SQLAlchemy (automatic) | A span per database statement, with the SQL as an attribute. |
 | `dispatch_query` (manual, api) | Wraps handing a query to an agent over the WebSocket control channel. Its W3C trace context rides inside the `DISPATCH_QUERY` frame so the agent's span below continues the same trace instead of starting a new one. Carries `duckhaven.origin` (`interactive` for a user's query, or the schedule/maintenance origin) so automated runs are distinguishable from clicks. |

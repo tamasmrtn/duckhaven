@@ -97,6 +97,22 @@ before you rely on the upgraded stack.
     Nothing here writes to the old volume, but the copy is the only step between your tables and an empty bucket.
     Take a backup, and keep the old volume until you have confirmed a query reads real data.
 
+### First: update your `.env`
+
+The service is no longer called `minio`, and nothing answers to that name any more. If your `deploy/.env` pins the
+endpoints — many do, because the old `.env.example` suggested it — change them before bringing the stack up:
+
+```diff
+-S3_ENDPOINT=http://minio:9000
+-S3_ENDPOINT_INTERNAL=http://minio:9000
++S3_ENDPOINT=http://objectstore:9000
++S3_ENDPOINT_INTERNAL=http://objectstore:9000
+```
+
+Leaving them unset is also fine — the compose defaults are already correct. Miss this and the stack starts cleanly but
+every catalog created afterwards records an endpoint that does not resolve, and its queries fail to reach storage. The
+bundled backend's **Test access** button in Admin → Storage reports exactly this, so check it after the upgrade.
+
 The copy runs S3-to-S3, with both stores up. Bring the stack up, then run the old store alongside it on a spare port:
 
 ```sh

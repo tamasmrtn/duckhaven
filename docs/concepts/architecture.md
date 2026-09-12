@@ -257,6 +257,12 @@ bootstrap token. It writes results and mounts under `/var/duckhaven-agent/`.
 
 ## 7. Architectural Invariants
 
+Most of the design comes down to a handful of ideas. The control plane
+orchestrates and agents execute. Apache Polaris owns catalog structure,
+while DuckHaven's own entities live in Postgres. Storage credentials are
+short-lived, the wire contract lives in one package, and authorization
+happens before a query ever leaves the API.
+
 These are the rules that keep the design coherent. **A change that violates
 one of these is almost certainly wrong** — if you believe you need to, raise
 it explicitly rather than working around it.

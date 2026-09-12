@@ -13,13 +13,20 @@ port 8000), and a bundled DuckDB agent.
 ## 1. Install
 
 ```bash
-curl -O https://raw.githubusercontent.com/tamasmrtn/duckhaven/main/deploy/docker-compose.yml
+curl -fsSL https://github.com/tamasmrtn/duckhaven/archive/refs/heads/main.tar.gz \
+  | tar xz --strip-components=2 duckhaven-main/deploy
 docker compose up -d
 ```
 
-That is the whole install — no `git clone`, no `.env` editing, no `make` on the host. On first boot the stack
-auto-generates `POSTGRES_PASSWORD`, `SECRET_KEY`, and a one-shot first-admin setup token, and applies the database
-migrations automatically.
+That is the whole install — no `git clone`, no `.env` editing, no `make` on the host. It unpacks the `deploy/`
+directory, because the compose file mounts a few things next to it (the Postgres init script, the Polaris bootstrap
+wrapper, and the collector configs); the compose file alone is not enough to start the stack. On first boot the stack
+generates `SECRET_KEY` and a one-shot first-admin setup token, and applies the database migrations automatically.
+
+!!! warning "Set `POSTGRES_PASSWORD` before exposing anything"
+    Postgres falls back to the default password `duckhaven` when `POSTGRES_PASSWORD` is unset. That is fine on a
+    private box you trust, but it is a published default — set it in the environment before the first boot on
+    anything else.
 
 ## 2. Create the first admin
 

@@ -1,7 +1,7 @@
 # ── Builder ──────────────────────────────────────────────────────────────────
 # -dev keeps a shell for the build; runtime below is distroless. Pinned by
 # digest since :latest rebuilds continuously (tracked by Dependabot).
-FROM cgr.dev/chainguard/python:latest-dev@sha256:de669347e9c1348d3fb952b1ab93738412bd7207769a882701691825741bfce3 AS builder
+FROM cgr.dev/chainguard/python:latest-dev@sha256:b0bc807f4334fea6adaac0f4dfbde255b9938ca957facb26eaed8bb448fce473 AS builder
 USER root
 
 # uv is a build-time tool — copy the pinned binary instead of pip-installing it.
@@ -44,7 +44,7 @@ RUN mkdir -p /var/duckhaven-agent/results
 # ── Runtime ──────────────────────────────────────────────────────────────────
 # Distroless: no shell, package manager, or apt/dpkg — the unfixable
 # OS-package CVEs the old purge-and-upgrade step chased don't exist here.
-FROM cgr.dev/chainguard/python:latest@sha256:1f37785e5cdb70151f36aaa15e1e3cef4571424dbefbf4b0d8a9222535cb13ff AS runtime
+FROM cgr.dev/chainguard/python:latest@sha256:b5decb00aa1cb65ab71bb3f6632a44bb8e6fd8d661de1f0342fd513a06837b9a AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

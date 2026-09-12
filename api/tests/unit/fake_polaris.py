@@ -43,6 +43,7 @@ class FakePolaris:
         self.created_table_bodies: list[dict[str, Any]] = []
         self.created_catalog_args: list[dict[str, Any]] = []
         self.granted_catalogs: list[str] = []
+        self.storage_updates: list[tuple[str, dict[str, Any]]] = []
 
     # --- Catalogs ---
 
@@ -68,7 +69,16 @@ class FakePolaris:
             raise PolarisError("simulated create_catalog failure")
         if name in self.catalogs:
             raise PolarisConflictError(f"catalog {name} already exists")
-        cat = PolarisCatalog(name=name)
+        cat = PolarisCatalog(
+            name=name,
+            entity_version=1,
+            properties={"default-base-location": base_location},
+            storage_config={
+                "storageType": storage_type,
+                "allowedLocations": allowed_locations or [base_location],
+                **(extra_storage or {}),
+            },
+        )
         self.catalogs[name] = cat
         return cat
 
@@ -76,6 +86,21 @@ class FakePolaris:
         if name not in self.catalogs:
             raise PolarisNotFoundError(name)
         return self.catalogs[name]
+
+    async def update_catalog_storage(self, catalog: PolarisCatalog, storage_config: dict) -> None:
+        # Mirrors Polaris's optimistic concurrency: a stale version is refused.
+        current = self.catalogs.get(catalog.name)
+        if current is None:
+            raise PolarisNotFoundError(catalog.name)
+        if catalog.entity_version != current.entity_version:
+            raise PolarisConflictError(f"stale entity version for {catalog.name}")
+        self.storage_updates.append((catalog.name, storage_config))
+        self.catalogs[catalog.name] = current.model_copy(
+            update={
+                "storage_config": storage_config,
+                "entity_version": (current.entity_version or 0) + 1,
+            }
+        )
 
     async def catalog_exists(self, name: str) -> bool:
         return name in self.catalogs

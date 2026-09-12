@@ -5,8 +5,15 @@ live. Admins register backends; each [workspace](../concepts/workspaces.md) bind
 
 ## The bundled object store
 
-Out of the box, name-only workspace creation uses the bundled MinIO object store (`object_store`), isolating each
-workspace under a `/{slug}` prefix. No configuration is required to start.
+Out of the box, name-only workspace creation uses the bundled object store (`object_store`), isolating each
+workspace under a `/{slug}` prefix. No configuration is required to start. The store is
+[RustFS](https://rustfs.com), an Apache-2.0 S3-compatible server, running as the `objectstore` service.
+
+!!! warning "The bundled store is pinned to a release candidate"
+    RustFS has not shipped a GA release yet; DuckHaven pins `1.0.0-rc.6`. The pin is deliberate — upgrades between
+    release candidates have broken deployments upstream — so do not set `OBJECT_STORE_IMAGE_TAG` to `latest`.
+    It replaced MinIO, whose Community Edition was archived in April 2026 and withdrawn from Docker Hub. If you are
+    upgrading an existing deployment, see [Moving off the bundled MinIO](#moving-off-the-bundled-minio) below.
 
 ## Enable external storage types
 
@@ -69,7 +76,7 @@ probe path — the same path agents use. A green result means register → vend 
 result shows a sanitized reason (no secrets). A backend in use by any workspace cannot be deleted.
 
 !!! note "Assume-role validation needs STS"
-    The bundled MinIO has no STS, so the S3 assume-role leg is exercised against LocalStack or a real AWS account (see
+    The bundled store has no STS, so the S3 assume-role leg is exercised against LocalStack or a real AWS account (see
     `make localstack-dev`). Azure has no offline emulator for Entra credential vending, so the ADLS path is validated
     against a real Azure account.
 
@@ -78,3 +85,45 @@ result shows a sanitized reason (no secrets). A backend in use by any workspace 
 When creating a [workspace](../getting-started/first-workspace.md), select the registered backend. Every table in that
 catalog lives under the backend's location. The binding is no longer permanent: an admin can later move a catalog to a
 different backend with a [storage migration](../guides/migrate-catalog-storage.md).
+
+## Moving off the bundled MinIO
+
+Deployments created before the bundled store became RustFS keep their data in the `minio_data` Docker volume. The new
+`objectstore` service uses a **new, empty** volume (`objectstore_data`) and does not read the old one, so after
+upgrading the compose stack your tables are still on disk but the store in front of them is empty. Copy them across
+before you rely on the upgraded stack.
+
+!!! warning "Back up `minio_data` first"
+    Nothing here writes to the old volume, but the copy is the only step between your tables and an empty bucket.
+    Take a backup, and keep the old volume until you have confirmed a query reads real data.
+
+The copy runs S3-to-S3, with both stores up. Bring the stack up, then run the old store alongside it on a spare port:
+
+```sh
+cd deploy
+docker compose up -d                       # starts objectstore and creates the bucket
+
+docker run -d --name dh-minio-old \
+  --network deploy_default -p 9500:9000 \
+  -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
+  -v deploy_minio_data:/data \
+  --entrypoint /bin/sh quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z \
+  -c 'exec minio server /data'
+```
+
+Use the credentials your old stack actually ran with — `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` from your `.env`, or
+`minioadmin` if you never set them. Then mirror the bucket:
+
+```sh
+docker run --rm --network deploy_default rustfs/rc:v0.1.35 sh -c "
+  rc alias set old http://dh-minio-old:9000 minioadmin minioadmin &&
+  rc alias set new http://objectstore:9000 \"\$OBJECT_STORE_ACCESS_KEY\" \"\$OBJECT_STORE_SECRET_KEY\" &&
+  rc mirror old/warehouse new/warehouse"
+```
+
+Confirm a table reads, then remove the old container (`docker rm -f dh-minio-old`). Keep the `minio_data` volume until
+you are satisfied; deleting it is the irreversible step.
+
+Catalogs created before the upgrade still have `http://minio:9000` recorded in Polaris — DuckHaven only writes a
+catalog's storage configuration when it first creates it. The `objectstore` service therefore answers to `minio` as a
+network alias, so those catalogs keep resolving and need no edit.

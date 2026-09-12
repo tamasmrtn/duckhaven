@@ -8,7 +8,8 @@ how the pieces fit together, see [Architecture](../concepts/architecture.md).
 ## 1. Bring up the control plane
 
 The control plane is one `docker compose` stack (`deploy/docker-compose.yml`)
-of nine services: `postgres`, `minio`, `polaris-bootstrap`, `polaris`, `api`,
+of ten services: `postgres`, `objectstore`, `objectstore-bootstrap`,
+`polaris-bootstrap`, `polaris`, `api`,
 `agent`, and the `otel-collector`/`tempo`/`grafana` observability trio. The
 `api` service publishes port `8000` directly on the host. See
 [Install](../deployment/install.md) for a first-time walkthrough.
@@ -112,9 +113,9 @@ gunzip -c <backup>.sql.gz | docker compose -f deploy/docker-compose.yml \
 ### Data DR by backend kind
 
 - `s3` / `adls_gen2`: delegated to the cloud provider's durability.
-- `object_store` (bundled MinIO): **no off-box DR** — the web UI shows a DR
+- `object_store` (the bundled store): **no off-box DR** — the web UI shows a DR
   banner for these backends. Ensure an independent backup of the
-  MinIO bucket.
+  bundled bucket.
 
 ---
 

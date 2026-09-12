@@ -17,7 +17,7 @@ DuckHaven runs as one Docker Compose stack:
 | Service | Role |
 |---|---|
 | `postgres` | Application state and the Polaris metastore |
-| `minio` | Bundled S3-compatible object storage (backs `object_store` catalogs) |
+| `objectstore` | Bundled S3-compatible object storage (backs `object_store` catalogs) |
 | `polaris-bootstrap` | One-shot: provisions the Polaris realm, then exits |
 | `polaris` | Apache Polaris — Iceberg REST catalog and credential vendor |
 | `api` | The control plane: serves the REST API and the web UI on port 8000 |

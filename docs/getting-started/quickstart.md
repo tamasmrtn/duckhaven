@@ -1,7 +1,7 @@
 # Quickstart
 
 Stand up the full DuckHaven control plane with one `docker compose` stack and run your first query. The bundled stack is
-Postgres, Apache Polaris, MinIO (object storage), the DuckHaven API (which serves both the REST API and the web UI on
+Postgres, Apache Polaris, the bundled object store, the DuckHaven API (which serves both the REST API and the web UI on
 port 8000), and a bundled DuckDB agent.
 
 ## Prerequisites

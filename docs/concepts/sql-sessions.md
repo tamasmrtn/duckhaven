@@ -217,8 +217,8 @@ A load then looks like:
    signature.
 
 Because backend-specific signing lives only in the API, the client and agent treat every backend uniformly as opaque
-HTTPS: S3 and the bundled MinIO use SigV4 presigned URLs, Azure ADLS/Blob uses the equivalent SAS URLs. This is why it
-works on the bundled MinIO backend, which has **no STS** — a presigned URL is a signature, not a vended session token,
+HTTPS: S3 and the bundled store use SigV4 presigned URLs, Azure ADLS/Blob uses the equivalent SAS URLs. This is why it
+works on the bundled backend, which has **no STS** — a presigned URL is a signature, not a vended session token,
 so it grants genuinely narrow, time-boxed access there (narrower than the static credentials Polaris would otherwise
 vend). The statement policy admits `read_parquet('https://…')` only when the URL points at the session's own staging
 prefix; arbitrary local-FS or external reads are still rejected. Presigned URLs expire, and a request against a
@@ -271,8 +271,8 @@ the per-statement memory/thread slice, the profiler, and the `SET timezone` the 
 `SANDBOX_DISABLED_FILESYSTEMS` can additionally disable a whole DuckDB filesystem. It is **off by default** because the
 agent reads [staged files](#staging-files-presigned-urls) over presigned HTTP(S) URLs, and disabling `HTTPFileSystem`
 would break that. Set it to `HTTPFileSystem` on a deployment that does not use staging. (Contrary to earlier guidance,
-it does *not* break the bundled Polaris or MinIO: the Iceberg REST client and the S3 filesystem are independent of the
-generic HTTP one.)
+it does *not* break the bundled Polaris or object store: the Iceberg REST client and the S3 filesystem are
+independent of the generic HTTP one.)
 
 ## Observability
 

@@ -172,10 +172,10 @@ trail — with data sovereignty, network privacy, and no SaaS lock-in.
 ### Storage
 
 - **Bring your own storage** — One backend per catalog: bundled object
-  storage (MinIO), AWS S3, or Azure ADLS Gen 2. A workspace reaches storage
+  storage, AWS S3, or Azure ADLS Gen 2. A workspace reaches storage
   through the catalogs it attaches, so one workspace can span several backends.
 - **Live storage migration** — Move a catalog to a different backend after
-  creation (e.g. bundled MinIO → S3, or S3 → ADLS) without losing data or
+  creation (e.g. bundled → S3, or S3 → ADLS) without losing data or
   Iceberg snapshot history, via a checkpointed background migration engine.
 - **Short-lived credentials** — Polaris vends temporary, connection-scoped storage
   credentials per catalog as an agent attaches it (S3 assume-role → STS, ADLS →
@@ -220,7 +220,7 @@ flowchart TB
 
 - The control plane does **not** run DuckDB. Compute lives in agent processes that dial home over WebSocket.
 - Users pick the executing agent per worksheet — transparent compute, no opaque optimizer.
-- Every catalog is bound to one storage backend: bundled object storage (MinIO), S3, or Azure. Workspaces attach
+- Every catalog is bound to one storage backend: bundled object storage, S3, or Azure. Workspaces attach
   catalogs many-to-many, so a workspace can span several backends.
 - Apache Polaris provides table governance and vends short-lived storage credentials per catalog.
 - SQL is allowlisted to data statements
@@ -248,7 +248,7 @@ the UI design system, see [docs/developer/design-system.md](docs/developer/desig
 | Engine | DuckDB ≥ 1.5.5 — present **only** on agents |
 | Catalog | Apache Polaris — catalog + short-lived credential vendor |
 | Storage format | Apache Iceberg, Catalog Commits ON, one backend per catalog |
-| Storage backends | Object storage (bundled MinIO, `httpfs`), S3 (`httpfs`), ADLS Gen 2 (`azure`) |
+| Storage backends | Object storage (bundled RustFS, `httpfs`), S3 (`httpfs`), ADLS Gen 2 (`azure`) |
 | Auth | Local (`bcrypt`), OIDC SSO (`authlib`), LDAP / AD (`ldap3`) with JIT provisioning |
 | Scheduling | Cron-based recurring queries (`croniter`), leader-elected across replicas |
 | Metrics | Optional Prometheus `/metrics` endpoint (`prometheus-client`) |
@@ -270,7 +270,7 @@ docker compose cp api:/var/duckhaven/setup_token ./setup_token && cat ./setup_to
 
 - [Install](docs/deployment/install.md)
 - [Update](docs/deployment/updating.md)
-- [Storage backends (MinIO / S3 / ADLS)](docs/deployment/storage.md)
+- [Storage backends (bundled / S3 / ADLS)](docs/deployment/storage.md)
 - [Single sign-on (OIDC)](docs/guides/connect-idp.md)
 - [LDAP / Active Directory](docs/guides/connect-ldap.md)
 - [Reverse proxy + TLS (Caddy)](docs/deployment/reverse-proxy-tls.md)

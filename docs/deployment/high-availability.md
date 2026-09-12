@@ -72,7 +72,7 @@ docker compose -f deploy/docker-compose.ha.yml --env-file deploy/.env up -d
 ```
 
 This starts: `etcd` + `patroni-1/2` + `pg-haproxy` (HA Postgres), `polaris` +
-`minio`, `api-1` + `api-2`, `caddy` (load balancer on `:8000`), and the bundled
+`objectstore`, `api-1` + `api-2`, `caddy` (load balancer on `:8000`), and the bundled
 `agent`. The API is reachable on `http://localhost:8000`.
 
 ### First-admin onboarding under HA
@@ -219,7 +219,7 @@ the scanner and migrations don't double-run across replicas.
 The bundled agent in `docker-compose.ha.yml` carries the same containment as the
 single-node stack: a read-only root filesystem, dropped capabilities,
 `no-new-privileges`, a process cap, and attachment to the isolated
-`duckhaven_internal` network only — so it can reach Caddy, Polaris, MinIO, and the
+`duckhaven_internal` network only — so it can reach Caddy, Polaris, the object store, and the
 collector, and nothing else. Opting out (for external cloud storage) works the
 same way as on the single-node stack; see
 [Install](./install.md#agent-network-egress) and

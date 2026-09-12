@@ -94,7 +94,9 @@ trail — with data sovereignty, network privacy, and no SaaS lock-in.
   columns feed which downstream ones. Because that tracks values rather than
   mentions, a source that was only joined against or filtered on reports
   carrying nothing, which the table-level graph alone cannot tell you.
-- **Built-in metadata** — A read-only `information_schema` per catalog, plus a
+- **Built-in metadata** — A read-only `information_schema` per catalog for
+  listing schemas and tables (a table's *columns* come from `DESCRIBE` — the
+  Iceberg extension does not populate `information_schema.columns`), plus a
   Postgres-side sidecar for ownership, last-write provenance, and row/size stats
   that Polaris does not track.
 
@@ -175,14 +177,15 @@ trail — with data sovereignty, network privacy, and no SaaS lock-in.
   [docs/concepts/mcp-server.md](docs/concepts/mcp-server.md).
 ### Storage
 
-- **Bring your own storage** — One backend per workspace: bundled object
-  storage (MinIO), AWS S3, or Azure ADLS Gen 2.
+- **Bring your own storage** — One backend per catalog: bundled object
+  storage (MinIO), AWS S3, or Azure ADLS Gen 2. A workspace reaches storage
+  through the catalogs it attaches, so one workspace can span several backends.
 - **Live storage migration** — Move a catalog to a different backend after
   creation (e.g. bundled MinIO → S3, or S3 → ADLS) without losing data or
   Iceberg snapshot history, via a checkpointed background migration engine.
 - **Short-lived credentials** — Polaris vends temporary, connection-scoped storage
-  credentials per query (S3 assume-role → STS, ADLS → Entra-minted SAS). No
-  long-lived secrets ever land on agents.
+  credentials per catalog as an agent attaches it (S3 assume-role → STS, ADLS →
+  Entra-minted SAS). No long-lived secrets ever land on agents.
 - **Self-hosted** — Docker Compose on your network. Your data never leaves your
   infrastructure.
 
@@ -223,8 +226,9 @@ flowchart TB
 
 - The control plane does **not** run DuckDB. Compute lives in agent processes that dial home over WebSocket.
 - Users pick the executing agent per worksheet — transparent compute, no opaque optimizer.
-- Every workspace is bound to exactly one storage backend: bundled object storage (MinIO), S3, or Azure.
-- Apache Polaris provides table governance and vends short-lived storage credentials per query.
+- Every catalog is bound to one storage backend: bundled object storage (MinIO), S3, or Azure. Workspaces attach
+  catalogs many-to-many, so a workspace can span several backends.
+- Apache Polaris provides table governance and vends short-lived storage credentials per catalog.
 - SQL is allowlisted to data statements
   (`SELECT`/`INSERT`/`UPDATE`/`DELETE`/`MERGE`) and catalog DDL
   (`CREATE`/`ALTER`/`DROP`), executed on the agent against the Polaris catalog;
@@ -245,11 +249,11 @@ the UI design system, see [docs/developer/design-system.md](docs/developer/desig
 |---|---|
 | Frontend | React 19 + TypeScript + Vite, Monaco SQL editor, TanStack Router/Query/Table, Radix UI + shadcn/ui + Tailwind |
 | API / control plane | FastAPI (Python 3.14), async; `websockets` for the agent channel |
-| Database | PostgreSQL 16, SQLAlchemy 2.x (async) + Alembic migrations |
+| Database | PostgreSQL 18, SQLAlchemy 2.x (async) + Alembic migrations |
 | Agent | Python 3.14 embedding DuckDB; small HTTP server for result Parquet reads |
-| Engine | DuckDB ≥ 1.5 — present **only** on agents |
+| Engine | DuckDB ≥ 1.5.5 — present **only** on agents |
 | Catalog | Apache Polaris — catalog + short-lived credential vendor |
-| Storage format | Apache Iceberg, Catalog Commits ON, one backend per workspace |
+| Storage format | Apache Iceberg, Catalog Commits ON, one backend per catalog |
 | Storage backends | Object storage (bundled MinIO, `httpfs`), S3 (`httpfs`), ADLS Gen 2 (`azure`) |
 | Auth | Local (`bcrypt`), OIDC SSO (`authlib`), LDAP / AD (`ldap3`) with JIT provisioning |
 | Scheduling | Cron-based recurring queries (`croniter`), leader-elected across replicas |

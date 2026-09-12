@@ -9,7 +9,7 @@ table so DuckDB attach paths have something to read immediately.
 
 Polaris is object-storage only (see ADR 0001); every catalog is S3-backed and
 requires ``POLARIS_S3_BUCKET`` (+ ``POLARIS_S3_ENDPOINT[_INTERNAL]``).
-``make polaris-dev`` provides a local MinIO-backed stack.
+``make polaris-dev`` provides a local object-store-backed stack.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ def env_creds() -> tuple[str, str]:
 
 
 def s3_storage_config(base_location: str) -> dict[str, Any]:
-    """Build an S3 ``storageConfigInfo`` from ``POLARIS_S3_*`` (bundled MinIO)."""
+    """Build an S3 ``storageConfigInfo`` from ``POLARIS_S3_*`` (bundled store)."""
     storage: dict[str, Any] = {
         "storageType": "S3",
         "allowedLocations": [base_location],
@@ -179,7 +179,7 @@ def external_s3_storage_config(
 
     Mirrors ``api.services.workspace._external_extra_storage`` for ``s3``:
     Polaris assumes ``role_arn`` via STS rather than using static keys. Needs a
-    LocalStack-STS or real-AWS endpoint — MinIO has no STS to assume through."""
+    LocalStack-STS or real-AWS endpoint — the bundled store has no STS."""
     storage: dict[str, Any] = {
         "storageType": "S3",
         "allowedLocations": [base_location],

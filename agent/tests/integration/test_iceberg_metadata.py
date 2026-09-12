@@ -1,7 +1,7 @@
 """Agent Iceberg-native metadata probe against a live Polaris + object store.
 
 Opt-in (`-m integration`); requires a live Polaris on object storage (see
-conftest; `make polaris-dev` provides a local MinIO-backed stack). This is the
+conftest; `make polaris-dev` provides a local object-store-backed stack). This is the
 verification gate for the table-detail metadata feature: it confirms that the
 version-sensitive `iceberg_snapshots` / `iceberg_metadata` calls in
 `runner._iceberg_metadata` actually resolve against the agent's DuckDB `iceberg`

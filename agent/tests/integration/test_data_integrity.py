@@ -1,6 +1,6 @@
 """Data-integrity edge cases through the real Iceberg write/read path.
 
-These guard against silent corruption in the agent's DuckDB ↔ Polaris ↔ MinIO
+These guard against silent corruption in the agent's DuckDB ↔ Polaris ↔ object-store
 path: unicode, NULLs, quoting, numeric extremes, and large result sets must all
 round-trip byte-exact through real Parquet/Iceberg storage.
 """

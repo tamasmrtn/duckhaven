@@ -1,7 +1,7 @@
 """Query dispatch → execution → result retrieval across API + agent.
 
 The full keystone path: the API dispatches over the WS control channel, the
-real agent executes against Polaris/MinIO, reports QUERY_DONE, and the API
+real agent executes against Polaris/object storage, reports QUERY_DONE, and the API
 proxies the Parquet result back through ``/queries/{id}/rows``.
 """
 

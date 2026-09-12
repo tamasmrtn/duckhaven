@@ -1,8 +1,8 @@
-"""Presigned staging round-trip against the bundled MinIO (issue #160).
+"""Presigned staging round-trip against the bundled object store (issue #160).
 
 Env-gated on POLARIS_S3_BUCKET (i.e. `make polaris-dev`), like the storage-health
 integration test. External s3 / Azure presigning needs real cloud (STS / AAD) and
-is only unit-tested (MinIO has no STS, Azurite no Entra) — see
+is only unit-tested (the bundled store has no STS, Azurite no Entra) — see
 ``tests/unit/services/test_staging_presign.py``.
 """
 
@@ -29,12 +29,12 @@ def _object_store_catalog() -> SimpleNamespace:
     )
 
 
-async def test_presigned_put_get_roundtrip_on_minio(monkeypatch) -> None:
+async def test_presigned_put_get_roundtrip(monkeypatch) -> None:
     """A presigned PUT uploads bytes and the presigned GET reads them back —
-    proving the real boto3 SigV4 signature is accepted by MinIO end to end."""
+    proving the real boto3 SigV4 signature is accepted by the store end to end."""
     if not os.getenv("POLARIS_S3_BUCKET"):
         pytest.skip("POLARIS_S3_BUCKET not set; skipping staging presign integration test")
-    # The test process reaches MinIO at the external endpoint; the get_url is
+    # The test process reaches the store at the external endpoint; the get_url is
     # normally signed for the in-network agent endpoint, so point that at the same
     # reachable endpoint for the off-network round-trip.
     monkeypatch.setattr(settings, "s3_endpoint_internal", settings.s3_endpoint)

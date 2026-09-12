@@ -1,8 +1,8 @@
 """Per-backend presigning of SQL-session staging URLs (issue #160).
 
 The cloud SDKs are mocked (as ``test_storage_health`` does) so these run without
-real MinIO/AWS/Azure. The integration round-trip lives under
-``tests/integration`` (env-gated, bundled MinIO only).
+a real store/AWS/Azure. The integration round-trip lives under
+``tests/integration`` (env-gated, bundled store only).
 """
 
 import uuid
@@ -20,7 +20,7 @@ def _catalog(kind, root_uri, config=None):
     )
 
 
-# ── S3 / MinIO ────────────────────────────────────────────────────────────────
+# ── S3 ────────────────────────────────────────────────────────────────────────
 
 
 class _FakeS3Client:
@@ -75,7 +75,7 @@ def test_object_store_splits_put_external_get_internal(fake_boto):
     # The client PUTs to the external endpoint; the agent GETs the internal one.
     assert f.put_url.startswith(f"{settings.s3_endpoint}/{settings.s3_bucket}/{prefix}")
     assert f.get_url.startswith(f"{settings.s3_endpoint_internal}/{settings.s3_bucket}/{prefix}")
-    # Two distinct clients (external + internal endpoint), static MinIO creds.
+    # Two distinct clients (external + internal endpoint), static store creds.
     endpoints = {c["endpoint"] for c in fake_boto.clients}
     assert endpoints == {settings.s3_endpoint, settings.s3_endpoint_internal}
     assert fake_boto.clients[0]["creds"]["aws_access_key_id"] == settings.s3_access_key

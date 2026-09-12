@@ -1,7 +1,7 @@
 """Shared fixtures for agent integration tests.
 
 Drives Apache Polaris directly over REST (no dependency on the api
-package) via the repo-root ``dh_testkit.polaris`` helpers, so the agent's
+package) via the repo-root ``testkit.polaris`` helpers, so the agent's
 DuckDB path can be exercised end-to-end. Skipped when POLARIS_BASE_URL is
 unset or the server is unreachable.
 
@@ -9,7 +9,7 @@ Polaris is object-storage only (see ADR 0001). The `polaris_s3_catalog`
 fixture creates an S3-backed catalog and requires POLARIS_S3_BUCKET (+
 POLARIS_S3_ENDPOINT[_INTERNAL]). It supports both reads and `INSERT`, since
 Polaris vends scoped object-store credentials to DuckDB. `make polaris-dev`
-provides a local MinIO-backed stack.
+provides a local object-store-backed stack.
 """
 
 from __future__ import annotations

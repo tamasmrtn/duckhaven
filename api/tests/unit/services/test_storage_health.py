@@ -167,10 +167,10 @@ def test_list_s3_falls_back_to_config_endpoint(monkeypatch):
     storage_health._list_s3(
         "s3://bucket/probe",
         {"s3.access-key-id": "AK", "s3.secret-access-key": "SK"},
-        {"endpoint": "http://minio:9000", "region": "us-east-1"},
+        {"endpoint": "http://s3.internal:9000", "region": "us-east-1"},
     )
 
-    assert captured["client_kwargs"]["endpoint_url"] == "http://minio:9000"
+    assert captured["client_kwargs"]["endpoint_url"] == "http://s3.internal:9000"
     assert captured["client_kwargs"]["region_name"] == "us-east-1"
 
 

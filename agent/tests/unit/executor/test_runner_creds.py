@@ -78,7 +78,7 @@ def fake_conn(monkeypatch: pytest.MonkeyPatch) -> FakeConn:
 
 
 def test_object_store_loads_httpfs_and_vends_credentials(fake_conn: FakeConn, tmp_path: Path):
-    # object_store is backed by the bundled MinIO (S3): it loads httpfs and
+    # object_store is backed by the bundled store (S3): it loads httpfs and
     # uses vended credentials, exactly like the s3 kind.
     runner_module.run_query_sync(
         "SELECT 1",
@@ -95,7 +95,7 @@ def test_object_store_loads_httpfs_and_vends_credentials(fake_conn: FakeConn, tm
     assert any("LOAD httpfs" in c for c in cmds)
     attach_cmd = next(c for c in cmds if c.startswith("ATTACH"))
     assert "ACCESS_DELEGATION_MODE 'vended_credentials'" in attach_cmd
-    # The bundled MinIO is plain HTTP, so no CA bundle is configured.
+    # The bundled store is plain HTTP, so no CA bundle is configured.
     assert not any("ca_cert_file" in c for c in cmds)
 
 

@@ -5,7 +5,7 @@ from api.services.workspace import polaris_storage
 def test_object_store_empty_root_is_bucket_root():
     storage_type, base, extra = polaris_storage("object_store", "")
     assert storage_type == "S3"
-    # The bundled-MinIO bucket root; per-workspace isolation is added later by
+    # The bundled bucket root; per-workspace isolation is added later by
     # ensure_polaris_catalog via the /{slug} scope.
     assert base == f"s3://{settings.s3_bucket}"
     assert extra == {
@@ -28,7 +28,7 @@ def test_s3_kind_without_config_injects_nothing():
     storage_type, base, extra = polaris_storage("s3", "s3://my-bucket/duckhaven/")
     assert storage_type == "S3"
     assert base == "s3://my-bucket/duckhaven"
-    # External operator-owned store: no bundled-MinIO endpoint injected.
+    # External operator-owned store: no bundled endpoint injected.
     assert extra is None
 
 

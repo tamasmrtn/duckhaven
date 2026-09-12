@@ -398,7 +398,7 @@ def _backend_with_host(monkeypatch, ncpu: int, mem_gb: float) -> DockerEngineBac
 
 async def test_capacity_is_the_host_minus_the_reserve(monkeypatch):
     """The whole host is the wrong ceiling on a single box: the API, Postgres,
-    Polaris and MinIO run on the same machine, so offering all of it would let one
+    Polaris and the store run on the same machine, so offering all of it would let one
     query starve the stack serving it."""
     monkeypatch.setattr(settings, "elastic_docker_reserve_cpu", 1.0)
     monkeypatch.setattr(settings, "elastic_docker_reserve_memory_gb", 2.0)

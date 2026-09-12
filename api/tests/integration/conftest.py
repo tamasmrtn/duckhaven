@@ -14,7 +14,7 @@ dev box without `make polaris-dev` / a Postgres service:
 
 Component integration tests run the real ``api_app`` over ASGI transport
 (fast, in-process — no agent WebSocket is involved at this layer) against real
-Postgres + real Polaris + the bundled MinIO. No FakePolaris, no SQLite.
+Postgres + real Polaris + the bundled object store. No FakePolaris, no SQLite.
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ def polaris_base_url() -> str:
 
 @pytest.fixture(scope="session", autouse=True)
 def _align_s3_settings() -> None:
-    """Point the API's S3 settings at the test MinIO so workspace creation
+    """Point the API's S3 settings at the test store so workspace creation
     provisions catalogs Polaris can actually reach. Derived from the same
     POLARIS_S3_* env the Polaris fixtures use; no-op when unset."""
     if bucket := os.getenv("POLARIS_S3_BUCKET"):
@@ -93,7 +93,7 @@ async def polaris(polaris_base_url: str) -> AsyncIterator[PolarisClient]:
 
 @pytest.fixture
 def s3_catalog_storage() -> tuple[str, dict]:
-    """(bucket base, *extra* storageConfigInfo) for a bundled-MinIO (S3) catalog.
+    """(bucket base, *extra* storageConfigInfo) for a bundled-store (S3) catalog.
 
     Returns only the backend-specific keys (region/endpoint/...) that
     ``PolarisClient.create_catalog`` merges on top of the storageType +
@@ -114,7 +114,7 @@ def s3_catalog_storage() -> tuple[str, dict]:
 async def unique_catalog(
     polaris: PolarisClient, s3_catalog_storage: tuple[str, dict]
 ) -> AsyncIterator[str]:
-    """Create a uniquely-named S3 (bundled MinIO) catalog; tear it down on exit."""
+    """Create a uniquely-named S3 (bundled store) catalog; tear it down on exit."""
     bucket, extra = s3_catalog_storage
     name = f"dh_it_{uuid4().hex[:12]}"
     base = f"{bucket}/{name}"

@@ -1,9 +1,9 @@
 """Regression coverage for the directory-style listing prefix.
 
-Polaris vends MinIO/S3 STS credentials scoped to an ``s3:prefix`` StringLike
+Polaris vends S3 STS credentials scoped to an ``s3:prefix`` StringLike
 condition of ``<table-location>/*`` (see ``docker exec`` inspection during
 manual testing): the request's ``Prefix`` must itself end in "/" to satisfy
-that condition, or MinIO denies ``ListObjectsV2`` outright even though
+that condition, or the store denies ``ListObjectsV2`` outright even though
 Get/PutObject on the same location succeed. A bare prefix would also risk
 sweeping in a sibling table whose name is a superstring (e.g. "users" vs
 "users2")."""

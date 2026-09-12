@@ -1,8 +1,8 @@
-"""DML roundtrips against a live Polaris + MinIO Iceberg table.
+"""DML roundtrips against a live Polaris + object-store Iceberg table.
 
 Beyond the existing CREATE/INSERT/SELECT smoke (`test_create_table.py`), this
 covers the mutation surface: UPDATE/DELETE and multi-statement bodies, writing
-real Iceberg snapshots to MinIO via vended credentials.
+real Iceberg snapshots to the store via vended credentials.
 
 DuckDB's Iceberg write support is evolving and row-level UPDATE/DELETE against a
 REST catalog may be unavailable in a given DuckDB build. Such cases are

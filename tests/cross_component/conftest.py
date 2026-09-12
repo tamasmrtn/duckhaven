@@ -1,5 +1,5 @@
 """Cross-component (Layer 2) harness: real API + real agent over the live
-WebSocket control channel, against real Postgres + Polaris + MinIO.
+WebSocket control channel, against real Postgres + Polaris + object store.
 
 Unlike the per-service integration suites this boots both processes for real:
 

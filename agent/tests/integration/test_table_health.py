@@ -1,7 +1,7 @@
 """Agent maintenance health probe against a live Polaris + object store.
 
 Opt-in (`-m integration`); requires a live Polaris on object storage (see
-conftest; `make polaris-dev` provides a local MinIO-backed stack). This is the
+conftest; `make polaris-dev` provides a local object-store-backed stack). This is the
 verification gate for the maintenance advisor's data source: it confirms that
 ``runner.collect_table_health`` resolves the version-sensitive
 ``iceberg_snapshots`` / ``iceberg_metadata`` / ``glob`` calls against the agent's

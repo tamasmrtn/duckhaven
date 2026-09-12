@@ -18,7 +18,7 @@ async def test_vended_credentials_enable_object_store_write(
     polaris_s3_catalog, attach_factory
 ) -> None:
     """With ACCESS_DELEGATION_MODE 'vended_credentials', DuckDB receives scoped
-    creds from Polaris and can write + read MinIO-backed Iceberg data."""
+    creds from Polaris and can write + read object-store-backed Iceberg data."""
     catalog, ns = polaris_s3_catalog
     conn = attach_factory(catalog, ns, delegation="vended_credentials")
     conn.execute("INSERT INTO events VALUES (1, 'vended')")
@@ -41,12 +41,12 @@ async def test_without_delegation_object_store_is_unreadable(
     polaris_s3_catalog, attach_factory
 ) -> None:
     """With delegation 'none' Polaris vends nothing and the agent holds no S3
-    secret, so reading MinIO-backed data fails rather than silently returning
+    secret, so reading object-store-backed data fails rather than silently returning
     wrong/empty results."""
     catalog, ns = polaris_s3_catalog
     with pytest.raises(duckdb.Error):
         conn = attach_factory(catalog, ns, delegation="none")
-        # The read forces metadata/data fetches from MinIO without credentials.
+        # The read forces metadata/data fetches from the store without credentials.
         conn.execute("INSERT INTO events VALUES (1, 'x')")
         conn.execute("SELECT * FROM events").fetchall()
 

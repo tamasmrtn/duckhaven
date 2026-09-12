@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from api.config import settings
 from api.models.storage_backend import StorageBackend
 from api.services import storage_health
 from api.services.polaris import PolarisBadRequestError
@@ -28,11 +29,43 @@ def _fake_polaris() -> AsyncMock:
     return polaris
 
 
-async def test_object_store_passes_without_polaris():
+async def test_object_store_lists_the_bundled_bucket_without_polaris(monkeypatch):
+    """The bundled store is probed directly — no throwaway catalog, no vending."""
     polaris = AsyncMock()
+    seen: dict = {}
+
+    def _fake_list(location, creds, config):
+        seen["location"] = location
+        seen["creds"] = creds
+        return 7
+
+    monkeypatch.setattr(storage_health, "_list_s3", _fake_list)
+
     result = await storage_health.validate_backend(polaris, _backend("object_store", None))
+
     assert result.valid is True
+    assert "7 object" in result.detail
     polaris.create_catalog.assert_not_called()
+    # Lists the bucket root with a trailing slash, using the API's own static
+    # credentials against the in-network endpoint (not the vended one).
+    assert seen["location"] == f"s3://{settings.s3_bucket}/"
+    assert seen["creds"]["s3.endpoint"] == settings.s3_endpoint_internal
+    assert seen["creds"]["s3.access-key-id"] == settings.s3_access_key
+    assert seen["creds"].get("s3.session-token") is None
+
+
+async def test_object_store_unreachable_bucket_is_invalid(monkeypatch):
+    """A store that is down, or a bucket that was never created, reads as invalid."""
+
+    def _boom(*_a, **_k):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(storage_health, "_list_s3", _boom)
+
+    result = await storage_health.validate_backend(AsyncMock(), _backend("object_store", None))
+
+    assert result.valid is False
+    assert "connection refused" in result.detail
 
 
 async def test_s3_valid_lists_and_cleans_up(monkeypatch):
@@ -134,10 +167,10 @@ def test_list_s3_falls_back_to_config_endpoint(monkeypatch):
     storage_health._list_s3(
         "s3://bucket/probe",
         {"s3.access-key-id": "AK", "s3.secret-access-key": "SK"},
-        {"endpoint": "http://minio:9000", "region": "us-east-1"},
+        {"endpoint": "http://s3.internal:9000", "region": "us-east-1"},
     )
 
-    assert captured["client_kwargs"]["endpoint_url"] == "http://minio:9000"
+    assert captured["client_kwargs"]["endpoint_url"] == "http://s3.internal:9000"
     assert captured["client_kwargs"]["region_name"] == "us-east-1"
 
 

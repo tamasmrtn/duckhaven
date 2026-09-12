@@ -75,7 +75,7 @@ function AgentRow({ agent, backend }: { agent: Agent; backend?: BackendKind }) {
           </span>
         )}
         {["s3", "adls_gen2", "object_store"].map((ext) => {
-          // object_store is MinIO-backed (S3), so it also needs httpfs.
+          // object_store is the bundled S3 store, so it also needs httpfs.
           const extensions = agent.capabilities?.extensions ?? [];
           const supported =
             ext === "adls_gen2"

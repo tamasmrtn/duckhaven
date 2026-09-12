@@ -21,11 +21,12 @@ That trade is rarely revisited once it is made. DuckHaven is the argument that y
 ## What you get
 
 Data arrives through it and leaves through it. Tables are Iceberg, governed by Polaris, sitting on object storage you
-own — bundled MinIO, S3, or ADLS Gen 2 — and a catalog can move between backends without losing a snapshot. Compute is
-DuckDB [agents](agents.md) you choose per query, which can scale to zero between runs. Access is governed down to the
-table, with single sign-on, machine identities, and a record of who ran what. And the layers that usually get skipped
-on a self-hosted stack are in the box: column-level [lineage](lineage.md), a [semantic layer](semantic-layer.md), a
-[maintenance advisor](maintenance.md), and [governed access for AI agents](mcp-server.md).
+own — the bundled object store, S3, or ADLS Gen 2 — and a catalog can move between backends without losing a snapshot.
+Compute is DuckDB [agents](agents.md) you choose per query, which can scale to zero between runs. Access is governed
+down to the table, with single sign-on, machine identities, and a record of who ran what. And the layers that usually
+get skipped on a self-hosted stack are in the box: column-level [lineage](lineage.md), a
+[semantic layer](semantic-layer.md), a [maintenance advisor](maintenance.md), and
+[governed access for AI agents](mcp-server.md).
 
 Everything runs on your network. Nothing phones home.
 

@@ -28,7 +28,7 @@ agent host when you need more compute).
 | Control plane | One `docker compose` stack: Postgres + Apache Polaris + the API |
 | Compute | 1..N DuckDB **agents** on separate hosts |
 | Engines | DuckDB only (heterogeneous versions allowed) |
-| Storage | Apache Iceberg on Object storage (bundled MinIO) / S3 / ADLS Gen 2 (one backend per catalog) |
+| Storage | Apache Iceberg on Object storage (bundled RustFS) / S3 / ADLS Gen 2 (one backend per catalog) |
 | Catalog & credentials | Apache Polaris — table governance + short-lived credential vending |
 | Frontend | React SPA — SQL worksheets (no notebooks) |
 | Network | Private only (Tailscale recommended); no public ingress |
@@ -205,7 +205,7 @@ presents as a Bearer credential when reading result rows.
 |---|---|---|
 | **DuckDB** | The query engine — present *only* on agents. Also used by the control plane as a pure SQL parser. | `agent/.../executor/`, `api/.../services/sql_guard.py` |
 | **Apache Polaris** | Iceberg REST catalog: metadata authority + vendor of short-lived storage credentials (via access delegation). | `api/.../services/polaris.py` |
-| **Storage backends** | Where Iceberg tables physically live (all object storage): `object_store` (bundled MinIO, `httpfs`), S3 (`httpfs`), ADLS Gen 2 (`azure`). One per catalog. | `agent/.../executor/runner.py` (iceberg attach), `StorageBackend` model |
+| **Storage backends** | Where Iceberg tables physically live (all object storage): `object_store` (the bundled store, `httpfs`), S3 (`httpfs`), ADLS Gen 2 (`azure`). One per catalog. | `agent/.../executor/runner.py` (iceberg attach), `StorageBackend` model |
 | **Postgres** | State-of-record for DuckHaven entities + the Polaris metastore. | `api/.../db/`, `models/` |
 | **AI model providers (opt-in)** | Backs the AI data assistant: OpenAI, Anthropic, or Mistral SDKs via Pydantic AI, plus any OpenAI-compatible `base_url` (Ollama, vLLM, Azure OpenAI). Config-driven, disabled by default. | `api/.../services/assistant/agent.py` |
 | **Tailscale (operational)** | Recommended private network providing the transport-layer security perimeter. Not a code dependency. | deployment only |
@@ -214,30 +214,34 @@ presents as a Bearer credential when reading result rows.
 
 ## 6. Deployment Architecture
 
-**All-in-one Docker Compose stack** (`deploy/docker-compose.yml`). The six
+**All-in-one Docker Compose stack** (`deploy/docker-compose.yml`). The seven
 services that make up the core stack:
 
 ```
-postgres           postgres:18-alpine
-minio              (object store; publishes :9000 API, :9001 console)
-polaris-bootstrap  apache/polaris-admin-tool  (one-shot realm/principal; storage: S3 → MinIO)
-polaris            apache/polaris             (pinned via POLARIS_IMAGE_TAG)
-api                duckhaven-api    (publishes :8000, serves SPA + REST + agent WS)
-agent              duckhaven-agent  (bundled compute; dials the API WS)
+postgres               postgres:18-alpine
+objectstore            rustfs/rustfs  (object store; publishes :9000 API, :9001 console)
+objectstore-bootstrap  rustfs/rc      (one-shot; creates the warehouse bucket)
+polaris-bootstrap      apache/polaris-admin-tool  (one-shot realm/principal; storage: S3)
+polaris                apache/polaris             (pinned via POLARIS_IMAGE_TAG)
+api                    duckhaven-api    (publishes :8000, serves SPA + REST + agent WS)
+agent                  duckhaven-agent  (bundled compute; dials the API WS)
 ```
 
 The same file also ships an observability trio — `otel-collector`, `tempo` and
 `grafana` — covered in [Distributed tracing](../operations/tracing.md).
 
-`polaris-bootstrap` is the only remaining one-shot — it provisions the Polaris
-realm/principal (the admin tool ships as its own image). Everything else
-self-prepares: the API's own entrypoint (`api.entrypoint`) generates the secret
-key + setup token on first boot and applies migrations; the API seeds the agent bootstrap token on
-startup; `minio` pre-creates the warehouse bucket in its entrypoint; Postgres
-creates the dedicated `polaris` DB via an initdb script. MinIO's `:9000`
-endpoint must be reachable by remote agents (the URL Polaris vends to DuckDB),
-so it is published and configured via `S3_ENDPOINT` (default `http://minio:9000`
-for the bundled agent). `api` is published directly on `:8000` over the private
+Two one-shots run before the services that need them. `polaris-bootstrap`
+provisions the Polaris realm/principal (the admin tool ships as its own image),
+and `objectstore-bootstrap` creates the warehouse bucket — the store writes
+through an erasure backend, so a bucket has to be created over the S3 API rather
+than by making a directory. Both must complete before `polaris` starts.
+Everything else self-prepares: the API's own entrypoint (`api.entrypoint`)
+generates the secret key + setup token on first boot and applies migrations; the
+API seeds the agent bootstrap token on startup; Postgres creates the dedicated
+`polaris` DB via an initdb script. The store's `:9000` endpoint must be reachable
+by remote agents (the URL Polaris vends to DuckDB), so it is published and
+configured via `S3_ENDPOINT` (default `http://objectstore:9000` for the bundled
+agent). `api` is published directly on `:8000` over the private
 network — there is no edge TLS terminator by default; transport security comes
 from the tunnel. Images are built for `linux/amd64,linux/arm64` and published to
 `ghcr.io/tamasmrtn/duckhaven-{api,agent}`.

@@ -4,7 +4,7 @@ from api.services.agent_capabilities import agent_supports_backend, required_ext
 def test_required_extension_mapping():
     assert required_extension("s3") == "httpfs"
     assert required_extension("adls_gen2") == "azure"
-    # object_store is MinIO-backed (S3) and so also needs httpfs.
+    # object_store is the bundled store (S3) and so also needs httpfs.
     assert required_extension("object_store") == "httpfs"
 
 

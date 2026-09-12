@@ -1,7 +1,7 @@
 """Agent `information_schema` metadata surface against a live Polaris catalog.
 
 Opt-in (`-m integration`); requires a live Polaris on object storage (see
-conftest; `make polaris-dev` provides a local MinIO-backed stack). This is the
+conftest; `make polaris-dev` provides a local object-store-backed stack). This is the
 verification gate for the built-in read-only `information_schema` feature: it
 confirms what the live collision check could not (the dev catalog was empty) —
 that DuckDB's native, global `information_schema` views *populate* for an

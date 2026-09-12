@@ -81,7 +81,7 @@ so widening the proxy cannot land unnoticed.
 
 Provisioned agents join `duckhaven_internal`, the same isolated network the static agent already
 sits on alone. It is declared `internal: true`, so an agent has no route off the host: it reaches
-the API, Polaris, MinIO and the OTLP collector, and nothing else. No ports are published, so an
+the API, Polaris, the object store and the OTLP collector, and nothing else. No ports are published, so an
 agent's result server is reachable from the control plane and from nowhere else.
 
 That is the single-host equivalent of the Azure design's delegated subnet and its network security
@@ -120,7 +120,7 @@ max vCPU  = host vCPU   - ELASTIC_DOCKER_RESERVE_CPU
 max GiB   = host memory - ELASTIC_DOCKER_RESERVE_MEMORY_GB
 ```
 
-The reserve exists because a single-host deployment runs the API, Postgres, Polaris and MinIO on
+The reserve exists because a single-host deployment runs the API, Postgres, Polaris and the object store on
 the same machine every agent lands on. Offering the whole host as an agent size would let one
 query starve the stack serving it. Both floors are 1, so a small machine still offers a usable
 size.

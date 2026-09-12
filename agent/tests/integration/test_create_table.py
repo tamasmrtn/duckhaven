@@ -1,7 +1,7 @@
 """Agent DuckDB ↔ Polaris read/attach + write path over the Iceberg REST catalog.
 
 Opt-in (`-m integration`); requires a live Polaris on object storage (see
-conftest; `make polaris-dev` provides a local MinIO-backed stack). Validates
+conftest; `make polaris-dev` provides a local object-store-backed stack). Validates
 attaching the catalog, resolving the (non-`main`) namespace, loading a
 REST-created table's schema, reading it, and the full INSERT roundtrip.
 

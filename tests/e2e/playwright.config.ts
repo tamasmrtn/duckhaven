@@ -4,7 +4,7 @@ import { ADMIN_STORAGE_STATE, BASE_URL } from "./helpers";
 
 /**
  * End-to-end suite for the full DuckHaven compose stack (web + API + agent +
- * Postgres + Polaris + MinIO), served same-origin at BASE_URL. Bring the stack
+ * Postgres + Polaris + object store), served same-origin at BASE_URL. Bring the
  * up first (`make compose-up`) and provide the first-boot setup token via
  * DH_SETUP_TOKEN; `global-setup.ts` then guarantees an admin + the analytics
  * workspace exist before any spec runs.

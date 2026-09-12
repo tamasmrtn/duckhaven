@@ -398,7 +398,7 @@ async def test_close_session(
 
 
 def _patch_presign(monkeypatch):
-    """Patch the presign service so the router test needs no real MinIO/boto3."""
+    """Patch the presign service so the router test needs no real store/boto3."""
     from datetime import UTC, datetime
 
     from api.routers import sql_sessions
@@ -412,7 +412,7 @@ def _patch_presign(monkeypatch):
                 name=n,
                 key=f"s3://warehouse/_staging/{session_id}/{n}",
                 put_url=f"http://localhost:9000/warehouse/_staging/{session_id}/{n}?put",
-                get_url=f"http://minio:9000/warehouse/_staging/{session_id}/{n}?get",
+                get_url=f"http://objectstore:9000/warehouse/_staging/{session_id}/{n}?get",
             )
             for n in names
         ]
@@ -447,7 +447,7 @@ async def test_staging_files_success(
     assert [f["name"] for f in body["files"]] == ["orders.parquet", "items.parquet"]
     first = body["files"][0]
     assert first["put_url"].startswith("http://localhost:9000/")
-    assert first["get_url"].startswith("http://minio:9000/")
+    assert first["get_url"].startswith("http://objectstore:9000/")
     assert str(session.id) in first["key"]
     assert body["expires_at"].startswith("2026-07-18")
 

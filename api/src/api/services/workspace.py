@@ -15,7 +15,13 @@ from api.models.query import Query, SavedQuery, Schedule
 from api.models.sql_session import SqlSession
 from api.models.storage_backend import StorageBackend
 from api.models.workspace import Workspace, WorkspaceMember
-from api.services.polaris import PolarisClient, PolarisConflictError
+from api.services.polaris import (
+    PolarisCatalog,
+    PolarisClient,
+    PolarisConflictError,
+    PolarisError,
+    PolarisNotFoundError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,20 +36,20 @@ UNSET = _Unset()
 ROLE_ORDER = {"reader": 0, "writer": 1, "owner": 2}
 
 # Backend kind → Polaris storage type. Every backend is object storage:
-# object_store is physically backed by the bundled MinIO bucket (S3); s3 /
-# adls_gen2 are operator-owned external object stores.
+# object_store is physically backed by the bundled object-store bucket (S3);
+# s3 / adls_gen2 are operator-owned external object stores.
 _KIND_TO_STORAGE_TYPE = {
     "object_store": "S3",
     "s3": "S3",
     "adls_gen2": "AZURE",
 }
 
-# Kinds backed by the bundled MinIO bucket. Their root_uri is a prefix label
-# under that bucket rather than a real storage URI.
-_BUNDLED_MINIO_KINDS = {"object_store"}
+# Kinds backed by the bundled bucket. Their root_uri is a prefix label under
+# that bucket rather than a real storage URI.
+_BUNDLED_STORE_KINDS = {"object_store"}
 
 
-def _minio_prefix(root_uri: str) -> str:
+def _bundled_prefix(root_uri: str) -> str:
     """Normalise a local backend's root_uri into a bucket-relative prefix."""
     prefix = root_uri.strip()
     if "://" in prefix:
@@ -87,15 +93,15 @@ def polaris_storage(
 ) -> tuple[str, str, dict | None]:
     """Resolve a backend's (Polaris storage type, base location, extra storage).
 
-    object_store is backed by the bundled MinIO bucket: its root_uri is a
-    prefix label under that bucket and the extra storage config carries the
+    object_store is backed by the bundled bucket: its root_uri is a prefix
+    label under that bucket and the extra storage config carries the
     vended/internal endpoints. s3/adls_gen2 are external stores whose root_uri
     already carries a scheme; their extras (role ARN / tenant id / …) come from
     the backend's per-kind ``config``.
     """
     storage_type = _KIND_TO_STORAGE_TYPE.get(kind, "S3")
-    if kind in _BUNDLED_MINIO_KINDS:
-        prefix = _minio_prefix(root_uri)
+    if kind in _BUNDLED_STORE_KINDS:
+        prefix = _bundled_prefix(root_uri)
         base = f"s3://{settings.s3_bucket}"
         if prefix:
             base = f"{base}/{prefix}"
@@ -110,7 +116,7 @@ def polaris_storage(
 
 
 def default_object_store_backend(name: str, created_by: uuid.UUID) -> StorageBackend:
-    """Build a bundled object-store backend at the MinIO bucket root for a
+    """Build a bundled object-store backend at the bucket root for a
     name-only workspace. root_uri="" keeps the catalog base at the bucket root;
     per-workspace isolation comes from the `/{slug}` scope added in
     ensure_polaris_catalog. The caller adds and flushes the row."""
@@ -220,6 +226,42 @@ async def get_workspace(db: AsyncSession, slug_or_id: str) -> Workspace | None:
 DEFAULT_SCHEMA = "analytics"
 
 
+_BUNDLED_ENDPOINT_KEYS = ("endpoint", "endpointInternal")
+
+
+async def _reconcile_bundled_endpoints(
+    polaris: PolarisClient, existing: PolarisCatalog, extra_storage: dict | None
+) -> None:
+    """Bring an existing bundled catalog's stored endpoints back in line with config.
+
+    Polaris records a catalog's storage config once, at creation, and vends it to
+    DuckDB from then on. For the bundled store that config is derived entirely
+    from ``settings``, so an operator who changes ``S3_ENDPOINT`` — or who moves
+    the store to a different service name — leaves every existing catalog vending
+    an address that no longer resolves. Reconciling here means the next browse
+    heals it.
+
+    Only the two endpoint keys are touched, and only when they actually differ, so
+    this neither rewrites a hand-edited Polaris config nor burns an entity version
+    on every browse. External backends are skipped: their endpoints come from the
+    operator's own per-backend config, not from ours.
+    """
+    if not extra_storage or existing.entity_version is None:
+        return
+    desired = {k: extra_storage[k] for k in _BUNDLED_ENDPOINT_KEYS if k in extra_storage}
+    if not desired or all(existing.storage_config.get(k) == v for k, v in desired.items()):
+        return
+    try:
+        await polaris.update_catalog_storage(existing, {**existing.storage_config, **desired})
+    except PolarisError:
+        # A concurrent update (409) or a Polaris that refuses the edit must not
+        # break browsing: the catalog still works at its recorded endpoint if that
+        # endpoint still resolves, and the next browse retries.
+        logger.warning(
+            "Could not reconcile storage endpoints for catalog %r", existing.name, exc_info=True
+        )
+
+
 async def ensure_polaris_catalog(
     polaris: PolarisClient,
     polaris_name: str,
@@ -238,9 +280,16 @@ async def ensure_polaris_catalog(
     originating workspace slug, so the location stays byte-identical (no Polaris
     rename). Idempotent: any PolarisConflictError from create is treated as
     success. Used by the catalog-create path and as a self-heal for browsing.
+
+    An existing bundled catalog also has its endpoints reconciled — see
+    ``_reconcile_bundled_endpoints``.
     """
     scoped_location = f"{base_location.rstrip('/')}/{polaris_name}"
-    if not await polaris.catalog_exists(polaris_name):
+    try:
+        existing = await polaris.get_catalog(polaris_name)
+    except PolarisNotFoundError:
+        existing = None
+    if existing is None:
         try:
             await polaris.create_catalog(
                 polaris_name,
@@ -250,6 +299,8 @@ async def ensure_polaris_catalog(
             )
         except PolarisConflictError:
             pass
+    else:
+        await _reconcile_bundled_endpoints(polaris, existing, extra_storage)
     # Wire data-access grants so the agent's DuckDB can read/write tables.
     await polaris.ensure_catalog_access(polaris_name)
     try:

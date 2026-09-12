@@ -27,7 +27,10 @@ with (DEPLOY / "docker-compose.ha.yml").open() as f:
 COMPOSE_FILES = (("dev", DEV), ("ha", HA))
 
 # Everything the agent must be able to reach must share its isolated network.
-AGENT_PEERS = {"dev": ("api", "polaris", "minio"), "ha": ("caddy", "polaris", "minio")}
+AGENT_PEERS = {
+    "dev": ("api", "polaris", "objectstore"),
+    "ha": ("caddy", "polaris", "objectstore"),
+}
 
 
 def test_internal_network_declared_in_both_files():

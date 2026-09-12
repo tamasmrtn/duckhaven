@@ -48,7 +48,7 @@ async def workspace(db_session, user: User):
 
 @pytest_asyncio.fixture
 async def agent(db_session):
-    # All backends (object_store is MinIO-backed) require httpfs.
+    # All backends (object_store is the bundled S3 store) require httpfs.
     a = Agent(name="test-agent", status="healthy", capabilities={"extensions": ["httpfs"]})
     db_session.add(a)
     await db_session.commit()

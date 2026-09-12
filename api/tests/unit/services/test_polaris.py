@@ -68,13 +68,13 @@ async def test_create_catalog_sends_storage_config(polaris: PolarisClient) -> No
         "ws_alpha",
         storage_type="S3",
         base_location="s3://warehouse/ws_alpha",
-        extra_storage={"endpoint": "http://minio:9000", "pathStyleAccess": True},
+        extra_storage={"endpoint": "http://objectstore:9000", "pathStyleAccess": True},
     )
     assert cat.name == "ws_alpha"
     sent = route.calls.last.request.content
     assert b'"storageType":"S3"' in sent.replace(b" ", b"")
     assert b"s3://warehouse/ws_alpha" in sent
-    assert b"http://minio:9000" in sent
+    assert b"http://objectstore:9000" in sent
     # Catalogs are created DuckHaven-owned with drop-with-purge enabled.
     assert b"polaris.config.drop-with-purge.enabled" in sent
 

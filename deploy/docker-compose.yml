@@ -22,34 +22,70 @@ services:
       timeout: 5s
       retries: 5
 
-  # Bundled S3-compatible object store. Backs the object_store catalogs (and is
-  # the storage Polaris vends credentials for). Its :9000 endpoint must be
-  # reachable by remote agents — that is the URL Polaris vends to DuckDB, set
-  # via S3_ENDPOINT (defaults to the in-network minio:9000; set to the host's
-  # address when running agents on other hosts). The entrypoint pre-creates the
-  # warehouse bucket as a top-level directory (MinIO registers it as a bucket),
-  # folding in the former minio-bootstrap one-shot.
-  minio:
-    image: ${MINIO_IMAGE:-quay.io/minio/minio}:${MINIO_IMAGE_TAG:-RELEASE.2025-09-07T16-13-09Z}
+  # Bundled S3-compatible object store (RustFS). Backs the object_store catalogs
+  # (and is the storage Polaris vends credentials for). Its :9000 endpoint must
+  # be reachable by remote agents — that is the URL Polaris vends to DuckDB, set
+  # via S3_ENDPOINT (defaults to the in-network objectstore:9000; set to the
+  # host's address when running agents on other hosts). The warehouse bucket is
+  # created by the objectstore-bootstrap one-shot below.
+  objectstore:
+    image: ${OBJECT_STORE_IMAGE:-rustfs/rustfs}:${OBJECT_STORE_IMAGE_TAG:-1.0.0-rc.6}
     restart: unless-stopped
     # Joins the agent's isolated network in addition to `default`, so the
     # agent can reach it while this service keeps its own outbound access.
     networks:
       - default
       - duckhaven_internal
-    entrypoint:
-      - /bin/sh
-      - -c
-      - mkdir -p "/data/${S3_BUCKET:-warehouse}" && exec minio server /data --console-address ":9001"
     ports:
       - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      S3_BUCKET: ${S3_BUCKET:-warehouse}
+      RUSTFS_ACCESS_KEY: ${OBJECT_STORE_ACCESS_KEY:-duckhaven}
+      RUSTFS_SECRET_KEY: ${OBJECT_STORE_SECRET_KEY:-duckhaven}
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: ":9000"
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_CONSOLE_ADDRESS: ":9001"
+      RUSTFS_REGION: ${S3_REGION:-us-east-1}
+      # RustFS defaults NEWLY created buckets to `relaxed`, which skips the
+      # xl.meta and inline-object fsyncs. A bundled store is force-stopped
+      # constantly (compose down, Ctrl-C, OOM kill), so hold it at `strict`:
+      # every acknowledged write is on disk before the 200.
+      RUSTFS_NEW_BUCKET_DURABILITY_MODE: strict
     volumes:
-      - minio_data:/data
+      - objectstore_data:/data
+    healthcheck:
+      # /health/ready reports storage + IAM + lock quorum. The S3 data plane
+      # answers 503 until all three are up, so gating the dependants on this
+      # removes the startup race the old (healthcheck-free) service had.
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/health/ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+
+  # One-shot: create the warehouse bucket. The store writes through an erasure
+  # backend (xl.meta), so a top-level directory is not a bucket — the bucket has
+  # to be created over the S3 API. RustFS has no env for this (rustfs#2179 was
+  # closed as out of scope); their own `rc` CLI is the documented answer.
+  # Idempotent: `rc ls` succeeds only when the bucket already exists, so
+  # re-running `up`/`start` is a no-op.
+  objectstore-bootstrap:
+    image: rustfs/rc:${OBJECT_STORE_CLI_IMAGE_TAG:-v0.1.35}
+    depends_on:
+      objectstore:
+        condition: service_healthy
+    environment:
+      S3_BUCKET: ${S3_BUCKET:-warehouse}
+      OBJECT_STORE_ACCESS_KEY: ${OBJECT_STORE_ACCESS_KEY:-duckhaven}
+      OBJECT_STORE_SECRET_KEY: ${OBJECT_STORE_SECRET_KEY:-duckhaven}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        rc alias set dh http://objectstore:9000
+        "$$OBJECT_STORE_ACCESS_KEY" "$$OBJECT_STORE_SECRET_KEY" &&
+        { rc ls "dh/$$S3_BUCKET" >/dev/null 2>&1 || rc mb "dh/$$S3_BUCKET"; }
+    restart: "no"
 
   # One-shot: create Polaris's relational-jdbc schema + root principal in the
   # dedicated `polaris` database. Idempotent: the wrapper treats the admin
@@ -93,8 +129,8 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
-      minio:
-        condition: service_started
+      objectstore-bootstrap:
+        condition: service_completed_successfully
       otel-collector:
         condition: service_started
     environment:
@@ -110,21 +146,22 @@ services:
       QUARKUS_OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       QUARKUS_OTEL_RESOURCE_ATTRIBUTES: service.name=polaris
       # Polaris signs/vends S3 credentials using these to reach the bundled
-      # MinIO. ALLOW_INSECURE_STORAGE_TYPES is needed for a custom http endpoint.
-      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
-      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      # object store. ALLOW_INSECURE_STORAGE_TYPES is needed for a custom http
+      # endpoint.
+      AWS_ACCESS_KEY_ID: ${OBJECT_STORE_ACCESS_KEY:-duckhaven}
+      AWS_SECRET_ACCESS_KEY: ${OBJECT_STORE_SECRET_KEY:-duckhaven}
       AWS_REGION: ${S3_REGION:-us-east-1}
       polaris.features."ALLOW_INSECURE_STORAGE_TYPES": "true"
-      # S3 backs the bundled MinIO and external AWS S3; AZURE enables external
-      # ADLS Gen2 backends. The credentials above are only used to reach MinIO;
-      # external backends vend their own short-lived creds via assume-role /
-      # managed-identity configured on the storage backend.
+      # S3 backs the bundled object store and external AWS S3; AZURE enables
+      # external ADLS Gen2 backends. The credentials above only reach the
+      # bundled store; external backends vend their own short-lived creds via
+      # assume-role / managed-identity configured on the storage backend.
       polaris.features."SUPPORTED_CATALOG_STORAGE_TYPES": "[\"S3\",\"AZURE\"]"
       # Service principal Polaris uses to mint ADLS Gen2 SAS tokens for any
       # adls_gen2 backend. The per-backend config only carries the tenant id;
       # these instance-level creds (Azure DefaultAzureCredential chain) are what
       # actually let Polaris consent and vend a scoped SAS. Leave all empty to
-      # keep ADLS vending disabled (bundled S3/MinIO still works).
+      # keep ADLS vending disabled (the bundled S3 store still works).
       AZURE_TENANT_ID: ${AZURE_TENANT_ID:-}
       AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-}
       AZURE_CLIENT_SECRET: ${AZURE_CLIENT_SECRET:-}
@@ -132,7 +169,7 @@ services:
       # GovCloud, a VPC STS endpoint). Intentionally NOT given an empty default:
       # an empty AWS_ENDPOINT_URL_STS makes the AWS SDK build an STS client with
       # no protocol ("protocol must not be null"), which breaks credential
-      # vending for the bundled MinIO catalog (role-less S3, no STS). Leaving it
+      # vending for the bundled catalog (role-less S3, no STS). Leaving it
       # unset lets Polaris vend static creds directly. To use a custom STS
       # endpoint, add `AWS_ENDPOINT_URL_STS: <url>` here.
       polaris.readiness.ignore-severe-issues: "true"
@@ -168,24 +205,24 @@ services:
       POLARIS_REALM: ${POLARIS_REALM:-POLARIS}
       POLARIS_CLIENT_ID: ${POLARIS_CLIENT_ID:-root}
       POLARIS_CLIENT_SECRET: ${POLARIS_CLIENT_SECRET:-s3cr3t}
-      # Bundled MinIO backing object_store catalogs. S3_ENDPOINT is vended to
-      # agents; it defaults to the in-network minio:9000 so the bundled agent
-      # works out of the box. Set it to a host-reachable address when running
-      # agents on other hosts. S3_ENDPOINT_INTERNAL is what Polaris uses inside
-      # the compose network.
-      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
-      S3_ENDPOINT_INTERNAL: ${S3_ENDPOINT_INTERNAL:-http://minio:9000}
+      # Bundled object store backing object_store catalogs. S3_ENDPOINT is
+      # vended to agents; it defaults to the in-network objectstore:9000 so the
+      # bundled agent works out of the box. Set it to a host-reachable address
+      # when running agents on other hosts. S3_ENDPOINT_INTERNAL is what Polaris
+      # uses inside the compose network.
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://objectstore:9000}
+      S3_ENDPOINT_INTERNAL: ${S3_ENDPOINT_INTERNAL:-http://objectstore:9000}
       # Client-facing endpoint for SQL-session staging uploads. The agent reads
-      # staged files at the in-network S3_ENDPOINT (minio:9000); a dlt client on
-      # the host uploads via this one. Set it to the box's reachable address when
-      # running dlt from another host.
+      # staged files at the in-network S3_ENDPOINT (objectstore:9000); a dlt
+      # client on the host uploads via this one. Set it to the box's reachable
+      # address when running dlt from another host.
       S3_ENDPOINT_PUBLIC: ${S3_ENDPOINT_PUBLIC:-http://localhost:9000}
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_BUCKET: ${S3_BUCKET:-warehouse}
-      # MinIO credentials the API uses to presign SQL-session staging URLs for the
-      # bundled object_store backend (external s3 backends assume their role).
-      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
-      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      # Bundled-store credentials the API uses to presign SQL-session staging
+      # URLs for the object_store backend (external s3 backends assume a role).
+      S3_ACCESS_KEY: ${OBJECT_STORE_ACCESS_KEY:-duckhaven}
+      S3_SECRET_KEY: ${OBJECT_STORE_SECRET_KEY:-duckhaven}
       # AAD identity for user-delegation SAS on external adls_gen2 staging (same
       # instance creds Polaris uses; leave empty to keep ADLS staging disabled).
       AZURE_TENANT_ID: ${AZURE_TENANT_ID:-}
@@ -285,8 +322,8 @@ services:
       - ALL
     pids_limit: 512
     # Egress restriction: the agent is on the isolated network ONLY, so it can
-    # reach api/polaris/minio/otel-collector and nothing else. See the networks
-    # block at the bottom of this file.
+    # reach api/polaris/objectstore/otel-collector and nothing else. See the
+    # networks block at the bottom of this file.
     networks:
       - duckhaven_internal
     depends_on:
@@ -304,7 +341,7 @@ services:
       RESULTS_HTTP_HOST: 0.0.0.0
       # DuckDB filesystem sandbox. Off by default because the agent reads
       # presigned staging URLs over http(s) — disabling HTTPFileSystem breaks
-      # SQL-session staging. (It does NOT break the bundled Polaris/MinIO: the
+      # SQL-session staging. (It does NOT break the bundled Polaris/store: the
       # iceberg REST client and S3FileSystem are independent of it.) Set to
       # "HTTPFileSystem" on a deployment that does not use staging.
       SANDBOX_DISABLED_FILESYSTEMS: ${SANDBOX_DISABLED_FILESYSTEMS:-}
@@ -378,7 +415,7 @@ services:
 volumes:
   postgres_data:
   api_data:
-  minio_data:
+  objectstore_data:
   agent_results:
   tempo_data:
 
@@ -391,7 +428,7 @@ volumes:
 # session statement. The API statement policy rejects such a statement first;
 # this is the second layer the design called for, enforced by the kernel rather
 # than by a parser. The agent is the only service placed on this network alone;
-# api/polaris/minio/otel-collector join it *in addition to* `default`, so they
+# api/polaris/objectstore/otel-collector join it *in addition to* `default`, so they
 # keep the outbound access they legitimately need (OIDC, external object stores,
 # image-side calls) and stay reachable from the agent.
 #

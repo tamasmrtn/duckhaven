@@ -11,6 +11,7 @@ from httpx import AsyncClient
 from api.models.catalog_migration import CatalogMigration, CatalogMigrationEvent
 from api.models.storage_backend import StorageBackend
 from api.models.user import User
+from api.services import storage_health
 from api.services.auth import hash_password
 
 
@@ -39,6 +40,18 @@ async def _target_backend(db_session, owner) -> StorageBackend:
     return backend
 
 
+@pytest.fixture(autouse=True)
+def reachable_bundled_store(monkeypatch):
+    """Stand in for the preflight reachability check on the bundled store.
+
+    Starting a migration validates the *target* backend, and for a bundled
+    object_store that is now a real LIST against the bucket rather than an
+    unconditional pass — so every test here would otherwise try to reach a
+    store that does not exist.
+    """
+    monkeypatch.setattr(storage_health, "_list_s3", lambda *a, **k: 0)
+
+
 async def test_start_migration(auth_client, owner, db_session):
     _, catalog = await seed_workspace(db_session, user_id=owner.id, slug="dev", name="Dev")
     target = await _target_backend(db_session, owner)
@@ -51,6 +64,27 @@ async def test_start_migration(auth_client, owner, db_session):
     body = resp.json()
     assert body["status"] == "pending"
     assert body["target_storage_backend_id"] == str(target.id)
+
+
+async def test_start_migration_rejects_unreachable_target(
+    auth_client, owner, db_session, monkeypatch
+):
+    """A bundled target that cannot be reached fails preflight instead of
+    starting a migration that would copy into nothing."""
+
+    def _boom(*_a, **_k):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(storage_health, "_list_s3", _boom)
+    _, catalog = await seed_workspace(db_session, user_id=owner.id, slug="dev", name="Dev")
+    target = await _target_backend(db_session, owner)
+
+    resp = await auth_client.post(
+        f"/catalogs/{catalog.id}/migrations",
+        json={"target_storage_backend_id": str(target.id)},
+    )
+    assert resp.status_code == 422
+    assert "not usable" in resp.json()["message"]
 
 
 async def test_start_same_backend_rejected(auth_client, owner, db_session):

@@ -1,7 +1,7 @@
 """Agent Iceberg time-travel ("query at this snapshot") against live Polaris.
 
 Opt-in (`-m integration`); requires a live Polaris on object storage (see
-conftest; `make polaris-dev` provides a local MinIO-backed stack). This is the
+conftest; `make polaris-dev` provides a local object-store-backed stack). This is the
 verification gate for the snapshot-history "Query at this snapshot" feature: it
 confirms DuckDB's `AT (VERSION => …)` / `AT (TIMESTAMP => …)` clause resolves a
 *past* table state over the agent's attached REST catalog — the same path a

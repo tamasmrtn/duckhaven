@@ -1,7 +1,7 @@
 """Agent DDL/DML execution against a live Polaris (Iceberg REST) catalog.
 
 Opt-in (`-m integration`); requires a live Polaris on object storage (see
-conftest; `make polaris-dev` provides a local MinIO-backed stack). Drives the
+conftest; `make polaris-dev` provides a local object-store-backed stack). Drives the
 real runner (`run_query_sync`) — the same code the control plane dispatches to —
 so it validates both the SELECT-vs-side-effecting branch and that DuckDB's
 `iceberg` extension actually executes CREATE / ALTER / DROP against the REST

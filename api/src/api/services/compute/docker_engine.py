@@ -226,7 +226,7 @@ class DockerEngineBackend:
     async def capacity(self) -> tuple[float, float] | None:
         """The host's usable capacity, less what the control plane needs to keep.
 
-        On a single box the API, Postgres, Polaris and MinIO run on the same machine
+        On a single box the API, Postgres, Polaris and the object store run on the same
         an agent is provisioned onto, so the honest ceiling is not the whole host --
         offering it would let one query starve the stack serving it. The reserve is
         configurable because how much the rest of the stack needs depends on what

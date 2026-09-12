@@ -44,18 +44,18 @@ x-api-base: &api-base
     POLARIS_REALM: ${POLARIS_REALM:-POLARIS}
     POLARIS_CLIENT_ID: ${POLARIS_CLIENT_ID:-root}
     POLARIS_CLIENT_SECRET: ${POLARIS_CLIENT_SECRET:-s3cr3t}
-    S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
-    S3_ENDPOINT_INTERNAL: ${S3_ENDPOINT_INTERNAL:-http://minio:9000}
+    S3_ENDPOINT: ${S3_ENDPOINT:-http://objectstore:9000}
+    S3_ENDPOINT_INTERNAL: ${S3_ENDPOINT_INTERNAL:-http://objectstore:9000}
     # Client-facing endpoint for SQL-session staging uploads; the agent reads
-    # staged files at the in-network S3_ENDPOINT (minio:9000). Set it to the box's
-    # reachable address when running dlt from another host.
+    # staged files at the in-network S3_ENDPOINT (objectstore:9000). Set it to
+    # the box's reachable address when running dlt from another host.
     S3_ENDPOINT_PUBLIC: ${S3_ENDPOINT_PUBLIC:-http://localhost:9000}
     S3_REGION: ${S3_REGION:-us-east-1}
     S3_BUCKET: ${S3_BUCKET:-warehouse}
-    # MinIO credentials the API uses to presign SQL-session staging URLs for the
-    # bundled object_store backend (external s3 backends assume their role).
-    S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
-    S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    # Bundled-store credentials the API uses to presign SQL-session staging URLs
+    # for the object_store backend (external s3 backends assume their role).
+    S3_ACCESS_KEY: ${OBJECT_STORE_ACCESS_KEY:-duckhaven}
+    S3_SECRET_KEY: ${OBJECT_STORE_SECRET_KEY:-duckhaven}
     # AAD identity for user-delegation SAS on external adls_gen2 staging (same
     # instance creds Polaris uses; leave empty to keep ADLS staging disabled).
     AZURE_TENANT_ID: ${AZURE_TENANT_ID:-}
@@ -159,24 +159,52 @@ services:
       - ./ha/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
 
   # ── Object store + Polaris (unchanged from the single-node stack) ────────────
-  minio:
-    image: ${MINIO_IMAGE:-quay.io/minio/minio}:${MINIO_IMAGE_TAG:-RELEASE.2025-09-07T16-13-09Z}
+  # Publishes no ports here: in the HA topology only caddy faces the host, and
+  # the store is reached in-network. See the single-node file for the rationale
+  # behind each setting.
+  objectstore:
+    image: ${OBJECT_STORE_IMAGE:-rustfs/rustfs}:${OBJECT_STORE_IMAGE_TAG:-1.0.0-rc.6}
     restart: unless-stopped
     # Joins the agent's isolated network in addition to `default`, so the
     # agent can reach it while this service keeps its own outbound access.
     networks:
       - default
       - duckhaven_internal
-    entrypoint:
-      - /bin/sh
-      - -c
-      - mkdir -p "/data/${S3_BUCKET:-warehouse}" && exec minio server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      S3_BUCKET: ${S3_BUCKET:-warehouse}
+      RUSTFS_ACCESS_KEY: ${OBJECT_STORE_ACCESS_KEY:-duckhaven}
+      RUSTFS_SECRET_KEY: ${OBJECT_STORE_SECRET_KEY:-duckhaven}
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: ":9000"
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_CONSOLE_ADDRESS: ":9001"
+      RUSTFS_REGION: ${S3_REGION:-us-east-1}
+      RUSTFS_NEW_BUCKET_DURABILITY_MODE: strict
     volumes:
-      - minio_data:/data
+      - objectstore_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/health/ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+
+  # One-shot bucket creation; see the single-node file for why RustFS needs it.
+  objectstore-bootstrap:
+    image: rustfs/rc:${OBJECT_STORE_CLI_IMAGE_TAG:-v0.1.35}
+    depends_on:
+      objectstore:
+        condition: service_healthy
+    environment:
+      S3_BUCKET: ${S3_BUCKET:-warehouse}
+      OBJECT_STORE_ACCESS_KEY: ${OBJECT_STORE_ACCESS_KEY:-duckhaven}
+      OBJECT_STORE_SECRET_KEY: ${OBJECT_STORE_SECRET_KEY:-duckhaven}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        rc alias set dh http://objectstore:9000
+        "$$OBJECT_STORE_ACCESS_KEY" "$$OBJECT_STORE_SECRET_KEY" &&
+        { rc ls "dh/$$S3_BUCKET" >/dev/null 2>&1 || rc mb "dh/$$S3_BUCKET"; }
+    restart: "no"
 
   polaris-bootstrap:
     image: apache/polaris-admin-tool:${POLARIS_IMAGE_TAG:-1.7.0}
@@ -219,8 +247,8 @@ services:
     depends_on:
       polaris-bootstrap:
         condition: service_completed_successfully
-      minio:
-        condition: service_started
+      objectstore-bootstrap:
+        condition: service_completed_successfully
       otel-collector:
         condition: service_started
     environment:
@@ -235,8 +263,8 @@ services:
       QUARKUS_OTEL_SDK_DISABLED: "false"
       QUARKUS_OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       QUARKUS_OTEL_RESOURCE_ATTRIBUTES: service.name=polaris
-      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
-      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      AWS_ACCESS_KEY_ID: ${OBJECT_STORE_ACCESS_KEY:-duckhaven}
+      AWS_SECRET_ACCESS_KEY: ${OBJECT_STORE_SECRET_KEY:-duckhaven}
       AWS_REGION: ${S3_REGION:-us-east-1}
       polaris.features."ALLOW_INSECURE_STORAGE_TYPES": "true"
       polaris.features."SUPPORTED_CATALOG_STORAGE_TYPES": "[\"S3\",\"AZURE\"]"
@@ -312,7 +340,7 @@ services:
       - ALL
     pids_limit: 512
     # Egress restriction: the agent is on the isolated network ONLY, so it can
-    # reach caddy/api/polaris/minio/otel-collector and nothing else. See the
+    # reach caddy/api/polaris/objectstore/otel-collector and nothing else. See the
     # networks block at the bottom of this file.
     networks:
       - duckhaven_internal
@@ -372,7 +400,7 @@ volumes:
   patroni2_data:
   api1_data:
   api2_data:
-  minio_data:
+  objectstore_data:
   agent_results:
   caddy_data:
   caddy_config:

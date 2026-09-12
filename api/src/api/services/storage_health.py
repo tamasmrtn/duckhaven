@@ -1,8 +1,14 @@
-"""Validate that an external storage backend's vended credentials reach storage.
+"""Validate that a storage backend actually reaches storage.
 
-The check provisions a throwaway Polaris catalog from the backend's config and
-creates a tiny Iceberg table — forcing Polaris to assume the role / consent the
-app and write metadata to the operator's storage. It then asks Polaris to vend
+The bundled ``object_store`` is checked directly: the API LISTs its bucket with
+the static credentials it is configured with, which is the same key Polaris
+vends there. That catches a store that is down, a bucket that was never
+created, and a mis-set credential.
+
+For an external backend the check provisions a throwaway Polaris catalog from
+the backend's config and creates a tiny Iceberg table — forcing Polaris to
+assume the role / consent the app and write metadata to the operator's
+storage. It then asks Polaris to vend
 short-lived scoped client credentials (the same path agents use) and uses them
 to LIST the probe location from the API. Any failure surfaces as
 ``valid=False`` with a sanitized detail; everything is cleaned up best-effort.
@@ -17,6 +23,7 @@ import logging
 import uuid
 from urllib.parse import urlparse
 
+from api.config import settings
 from api.models.storage_backend import StorageBackend
 from api.schemas.storage_backend import StorageBackendHealth
 from api.services.polaris import PolarisClient, PolarisError
@@ -42,11 +49,14 @@ def _short(exc: object) -> str:
 
 
 async def validate_backend(polaris: PolarisClient, backend: StorageBackend) -> StorageBackendHealth:
-    """Validate external storage access end to end. object_store always passes."""
+    """Validate storage access end to end.
+
+    The bundled ``object_store`` takes the short path below: it has no role to
+    assume and no app to consent, so provisioning a throwaway catalog would
+    prove nothing the LIST does not.
+    """
     if backend.kind == "object_store":
-        return StorageBackendHealth(
-            valid=True, detail="Bundled object store; no external credentials to validate."
-        )
+        return _validate_bundled()
 
     storage_type, base_location, extra = polaris_storage(
         backend.kind, backend.root_uri, backend.config
@@ -104,6 +114,33 @@ async def _cleanup(polaris: PolarisClient, catalog: str) -> None:
         await polaris.delete_catalog(catalog)
     except PolarisError:
         pass
+
+
+def _validate_bundled() -> StorageBackendHealth:
+    """LIST the bundled bucket with the API's own static credentials.
+
+    There is no credential vending to exercise here — Polaris hands the bundled
+    store the same static key the API holds — so the honest check is simply
+    whether that key reaches the bucket. A failure means the store is down, the
+    bucket was never created, or the configured key is wrong; all three are
+    invisible to the operator today.
+    """
+    creds = {
+        "s3.endpoint": settings.s3_endpoint_internal,
+        "s3.access-key-id": settings.s3_access_key,
+        "s3.secret-access-key": settings.s3_secret_key,
+        "client.region": settings.s3_region,
+    }
+    try:
+        count = _list_s3(f"s3://{settings.s3_bucket}/", creds, {})
+    except Exception as exc:  # noqa: BLE001 - any SDK/transport failure is "unhealthy"
+        logger.warning("Bundled object store health check failed: %s", exc)
+        return StorageBackendHealth(
+            valid=False, detail=f"Could not reach the bundled bucket: {_short(exc)}"
+        )
+    return StorageBackendHealth(
+        valid=True, detail=f"Reached the bundled bucket ({count} object(s) at its root)."
+    )
 
 
 def _list_prefix(kind: str, location: str, creds: dict, config: dict) -> int:

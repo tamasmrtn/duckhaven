@@ -9,8 +9,8 @@ config), so both client and agent stay backend-agnostic and speak opaque HTTPS.
 
 Per backend kind:
 
-- ``object_store`` (bundled MinIO): SigV4 presigned URLs with the static MinIO
-  credentials the API is configured with. MinIO has no STS, so a presigned URL
+- ``object_store`` (the bundled store): SigV4 presigned URLs with the static
+  credentials the API is configured with. It has no STS, so a presigned URL
   (single key, time-boxed) is the only genuinely *scoped* access available — and
   narrower than the broad static creds Polaris otherwise vends there. Because
   SigV4 signs the host+port, the ``put_url`` is signed for the client-facing
@@ -97,7 +97,7 @@ def staging_read_prefixes(catalog: Catalog, session_id: uuid.UUID) -> list[str]:
     return []
 
 
-# ── S3 / MinIO ────────────────────────────────────────────────────────────────
+# ── S3 ────────────────────────────────────────────────────────────────────────
 
 
 def _s3_bucket_key(uri: str) -> tuple[str, str]:
@@ -123,7 +123,8 @@ def _s3_client(endpoint: str, region: str, creds: dict[str, str]):  # noqa: ANN2
     from botocore.config import Config
 
     # Force path-style so the presigned URL host is deterministically the endpoint
-    # host (MinIO requires it anyway); this lets the statement policy compute a
+    # host (the bundled store requires it anyway); this lets the statement policy
+    # compute a
     # matching prefix without guessing virtual-host form.
     return boto3.client(
         "s3",

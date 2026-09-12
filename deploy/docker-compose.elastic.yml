@@ -119,7 +119,7 @@ services:
       ELASTIC_DEFAULT_CPU: ${ELASTIC_DEFAULT_CPU:-2}
       ELASTIC_DEFAULT_MEMORY_GB: ${ELASTIC_DEFAULT_MEMORY_GB:-4}
       # Held back from agent sizing for the rest of the stack: the API, Postgres,
-      # Polaris and MinIO share this machine with every agent provisioned onto it,
+      # Polaris and the object store share this machine with every agent provisioned onto it,
       # so the maximum offered is the host minus this, not the whole host.
       ELASTIC_DOCKER_RESERVE_CPU: ${ELASTIC_DOCKER_RESERVE_CPU:-1}
       ELASTIC_DOCKER_RESERVE_MEMORY_GB: ${ELASTIC_DOCKER_RESERVE_MEMORY_GB:-2}

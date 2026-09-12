@@ -10,7 +10,7 @@ plus the ``catalog_grants`` ACL, not on the Polaris token's identity.
 
 Deferred (env-gated integration tests): minting a distinct Polaris principal per
 DuckHaven principal, and true short-lived STS credentials for the staging prefix
-(the bundled MinIO backend has no STS — staging scoping there is the unique prefix
+(the bundled backend has no STS — staging scoping there is the unique prefix
 plus the statement policy that a ``COPY`` may only touch it).
 """
 

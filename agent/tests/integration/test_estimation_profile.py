@@ -1,7 +1,7 @@
 """Cost estimation + post-execution profiling through the real Iceberg path.
 
 The unit tests cover the estimator/profiler against local DuckDB tables; these
-exercise them against a *real* attached Polaris/MinIO catalog, so the EXPLAIN
+exercise them against a *real* attached Polaris/object-store catalog, so the EXPLAIN
 estimate and the post-execution profile are produced over the same object-store
 read path the agent uses in production (format drift or attach regressions
 break this).

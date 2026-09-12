@@ -173,12 +173,12 @@ disabled before a query is even sent.
 
 `deploy/docker-compose.yml` defines the all-in-one stack:
 `postgres` → `polaris-bootstrap` (one-shot schema + root principal) →
-`polaris` → `api` → `agent`, plus `minio` for object storage.
+`polaris` → `api` → `agent`, plus `objectstore` for object storage.
 The API's own entrypoint (`api/src/api/entrypoint.py`) generates the first-boot
 secrets (including the one-shot admin setup token), runs Alembic migrations,
 then starts uvicorn; the API
-also seeds the agent bootstrap token on startup. `minio` pre-creates the
-warehouse bucket in its own entrypoint. Remote agents can still be deployed
+also seeds the agent bootstrap token on startup. The `objectstore-bootstrap`
+one-shot creates the warehouse bucket. Remote agents can still be deployed
 per host against the same control plane. `scripts/` holds operator helpers
 (`pg-backup.sh`, `assistant-mine-feedback.py`, `wait-for-stack.sh`).
 
@@ -414,7 +414,7 @@ sets the working catalog with `USE <catalog>.<schema>`
 vends short-lived, scoped storage credentials to DuckDB on attach via access
 delegation (`ACCESS_DELEGATION_MODE 'vended_credentials'`).
 
-**Storage policy — object storage only (MinIO bundled).** Every workspace
+**Storage policy — object storage only (one bundled).** Every workspace
 catalog is backed by **S3-compatible object storage**; there is no Polaris FILE
 storage. This is forced by DuckHaven's control-plane/compute-split topology:
 DuckDB can only read **and write** Iceberg tables through the REST catalog when
@@ -422,9 +422,9 @@ storage is S3-compatible, because Polaris must vend scoped credentials the
 remote agent uses. FILE storage cannot support writes across the
 Polaris-container / remote-agent boundary (Polaris creates table directories as
 its container user; the agent gets permission denied), so it was removed. The
-compose stack therefore **bundles MinIO**, and the `object_store` backend
-kind is physically backed by a MinIO bucket: its catalogs use
-`storageType = S3` pointed at MinIO (with the catalog's vended `endpoint` set to
+compose stack therefore **bundles an S3-compatible store** (RustFS), and the
+`object_store` backend kind is physically backed by a bucket in it: its catalogs
+use `storageType = S3` pointed at that store (with the catalog's vended `endpoint` set to
 an externally-reachable URL the agent can reach, and an internal endpoint for
 Polaris itself). Per-catalog isolation comes from a `/{polaris_name}` prefix under
 the shared bucket, so catalogs sharing a backend never collide. The
@@ -467,7 +467,7 @@ the *categories* a contributor should be aware of.
   (operator-owned external object stores) still need their Polaris
   `storageConfigInfo` credential wiring (role ARN / tenant) completed in
   `services/workspace.polaris_storage`. Their write paths are validated behind
-  opt-in/env-gated integration tests. The bundled-MinIO `object_store` path
+  opt-in/env-gated integration tests. The bundled `object_store` path
   is fully wired (see §7).
 - **DuckDB-iceberg DDL coverage.** `DROP` now purges (catalogs enable
   drop-with-purge and grant full ownership), but the breadth of `CREATE`/`ALTER`

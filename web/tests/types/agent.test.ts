@@ -31,7 +31,7 @@ describe('agentSupportsBackend()', () => {
     expect(agentSupportsBackend(makeAgent(['httpfs']), 'adls_gen2')).toBe(false)
   })
 
-  it('object_store requires httpfs (MinIO-backed)', () => {
+  it('object_store requires httpfs (bundled S3 store)', () => {
     expect(agentSupportsBackend(makeAgent([]), 'object_store')).toBe(false)
     expect(agentSupportsBackend(makeAgent(['httpfs', 'azure']), 'object_store')).toBe(true)
   })

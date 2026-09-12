@@ -76,6 +76,12 @@ class PolarisColumn(_PolarisModel):
 
 class PolarisCatalog(_PolarisModel):
     name: str
+    # Populated by get_catalog; create_catalog returns the name only. entity_version
+    # is Polaris's optimistic-concurrency token — an update carrying a stale one is
+    # refused with 409.
+    entity_version: int | None = None
+    properties: dict[str, Any] = {}
+    storage_config: dict[str, Any] = {}
 
 
 class PolarisSchema(_PolarisModel):
@@ -353,7 +359,36 @@ class PolarisClient:
         self._raise_for_status(resp)
         body = resp.json()
         # Management API returns the catalog object directly.
-        return PolarisCatalog(name=body.get("name", name))
+        return PolarisCatalog(
+            name=body.get("name", name),
+            entity_version=body.get("entityVersion"),
+            properties=body.get("properties") or {},
+            storage_config=body.get("storageConfigInfo") or {},
+        )
+
+    async def update_catalog_storage(
+        self, catalog: PolarisCatalog, storage_config: dict[str, Any]
+    ) -> None:
+        """Replace an existing catalog's ``storageConfigInfo``.
+
+        ``properties`` must be echoed back: Polaris *replaces* rather than merges
+        them, so omitting the key silently drops `default-base-location` and the
+        drop-with-purge flag. ``currentEntityVersion`` is optimistic concurrency —
+        a stale value is refused with 409 rather than clobbering a concurrent edit.
+        """
+        body = {
+            "currentEntityVersion": catalog.entity_version,
+            "properties": catalog.properties,
+            "storageConfigInfo": storage_config,
+        }
+        resp = await self._send(
+            "update_catalog",
+            "PUT",
+            f"{self.MGMT_PATH}/catalogs/{catalog.name}",
+            json=body,
+            headers=await self._auth_headers(),
+        )
+        self._raise_for_status(resp)
 
     async def catalog_exists(self, name: str) -> bool:
         try:

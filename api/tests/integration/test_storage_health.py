@@ -9,7 +9,7 @@ Two lanes, both env-gated:
 - **Assume-role lane** (DH_TEST_S3_ROLE_ARN + DH_TEST_S3_ROOT_URI, a LocalStack
   STS / real-AWS setup): the positive test registers a backend with a real role
   ARN and asserts the vended credentials reach the bucket. Skips otherwise,
-  because MinIO has no STS to assume a role through.
+  because the bundled store has no STS to assume a role through.
 """
 
 from __future__ import annotations

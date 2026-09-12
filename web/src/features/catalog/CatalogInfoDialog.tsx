@@ -12,7 +12,7 @@ import type { Catalog } from "@/types/catalog";
 
 // Friendly labels for the backend kinds, shared with the tree indicator tooltip.
 export const BACKEND_LABELS: Record<string, string> = {
-  object_store: "Object storage (MinIO)",
+  object_store: "Object storage (bundled)",
   s3: "AWS S3",
   adls_gen2: "Azure ADLS Gen2",
 };

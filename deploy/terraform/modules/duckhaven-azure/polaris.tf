@@ -261,8 +261,8 @@ resource "azurerm_container_app" "polaris" {
         value = "true"
       }
 
-      # Only AZURE. The bundled MinIO/S3 path does not exist in this deployment, so no
-      # AWS credentials and no ALLOW_INSECURE_STORAGE_TYPES.
+      # Only AZURE. The bundled object store / S3 path does not exist in this
+      # deployment, so no AWS credentials and no ALLOW_INSECURE_STORAGE_TYPES.
       #
       # This one cannot go through an environment variable at all: the property key
       # contains dots and quotes (polaris.features."SUPPORTED_CATALOG_STORAGE_TYPES"),

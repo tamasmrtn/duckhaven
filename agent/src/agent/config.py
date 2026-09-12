@@ -145,10 +145,11 @@ class Settings(BaseSettings):
     #
     # DEFAULT EMPTY / OFF, but NOT for the reason previously recorded here.
     # Re-verified empirically on DuckDB 1.5.4 against the bundled stack:
-    #   - Disabling HTTPFileSystem does NOT break plain-HTTP Polaris or MinIO. The
+    #   - Disabling HTTPFileSystem does NOT break plain-HTTP Polaris or the
     #     iceberg REST client and S3FileSystem are independent of HTTPFileSystem:
     #     ATTACH over `http://polaris:8181` and SELECT from an Iceberg table on
-    #     MinIO both still work. (The older comment claiming otherwise was wrong.)
+    #     bundled store both still work. (The older comment claiming otherwise
+    #     was wrong.)
     #   - It DOES break presigned-URL staging (#160/#169): the agent reads staged
     #     files via `read_parquet('http(s)://…?X-Amz-…')`, which is HTTPFileSystem.
     #     That is the real reason this ships off — a shipped feature depends on it.

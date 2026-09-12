@@ -6,7 +6,7 @@ Provisions two S3-backed catalogs, multi-attaches both under their own aliases
 fully-qualified `catalog.schema.table` references across catalogs.
 
 Polaris is object-storage only; requires POLARIS_BASE_URL + POLARIS_S3_BUCKET
-(`make polaris-dev` provides a local MinIO-backed stack). Skipped otherwise.
+(`make polaris-dev` provides a local object-store-backed stack). Skipped otherwise.
 """
 
 from __future__ import annotations

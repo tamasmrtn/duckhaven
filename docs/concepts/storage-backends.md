@@ -16,7 +16,7 @@ remote [agent](agents.md) uses, which rules out local-file storage across the co
 
 | Kind | Physical location | Required extension |
 |---|---|---|
-| `object_store` | Bundled MinIO bucket, under the prefix the backend was registered with | `httpfs` |
+| `object_store` | Bundled object-store bucket, under the prefix the backend was registered with | `httpfs` |
 | `s3` | External, operator-owned S3 bucket | `httpfs` |
 | `adls_gen2` | Azure Data Lake Storage Gen 2 | `azure` |
 

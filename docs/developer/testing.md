@@ -14,7 +14,7 @@ DuckHaven has a layered test architecture so each change can be verified at the 
 ## Running tests
 
 ```bash
-make test               # API + agent + web unit/component tests
+make test               # API + agent + web + deploy + shared unit/component tests
 make test-api           # API unit tests (coverage >= 80%)
 make test-agent         # Agent unit tests (coverage >= 75%)
 make test-web           # Web tests

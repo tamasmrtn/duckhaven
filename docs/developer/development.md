@@ -13,7 +13,7 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/tmrtn/duckhaven.git
+git clone https://github.com/tamasmrtn/duckhaven.git
 cd duckhaven
 
 # Install all dependencies
@@ -112,27 +112,23 @@ Migrations live in `api/alembic/versions/`.
 
 ## Container images
 
-Both published images (`duckhaven-api`, `duckhaven-agent`) are built from
-`python:3.14-slim` in two stages: a builder that resolves dependencies with `uv`
-into `/app/.venv`, and a runtime stage that copies only that virtualenv. The API
-image adds a third stage that builds the SPA with `node:24-alpine`.
+Both published images (`duckhaven-api`, `duckhaven-agent`) are built on
+Chainguard's distroless Python, pinned by digest, in two stages: a builder
+(`latest-dev`, which has a shell and `uv`) that resolves dependencies into
+`/app/.venv`, and a runtime stage (`latest`) that copies only that virtualenv.
+The API image adds a third stage that builds the SPA with `node:26-alpine`.
 
-The runtime stage is hardened in one `RUN` layer. It drops `pip`, purges
-`perl-base`, applies any Debian updates published since the base tag, and
-creates the unprivileged `duckhaven` user that the container runs as.
+The runtime image has **no shell, no package manager, and no apt/dpkg**, and
+runs as UID/GID `65532`. That is the whole hardening story now — as the
+Dockerfile puts it, "the unfixable OS-package CVEs the old purge-and-upgrade
+step chased don't exist here." An earlier iteration of these images was built
+on `python:3.14-slim` and spent a `RUN` layer dropping `pip` and purging
+`perl-base` to get the CVE count down; distroless removed the need for it.
 
-Purging `perl-base` deserves an explanation, because it is unusual. Debian marks
-the package `Essential`, so removing it needs
-`dpkg --purge --force-remove-essential`. Nothing in either image depends on it —
-neither application calls Perl, and no other installed package declares it as a
-dependency — but it carries eight of the base image's CRITICAL and HIGH CVEs,
-none of which have a fix available upstream. Purging it takes the images from
-three CRITICAL and fourteen HIGH findings down to zero CRITICAL and nine HIGH.
-`apt` continues to work normally afterwards. The nine remaining HIGH findings
-are in `openssl`, `ncurses`, `gzip` and `libacl1`; they are likewise unfixable
-today and are tracked by the weekly Trivy scan in `.github/workflows/security.yml`.
-
-If you shell into a running container, expect no `pip` and no `perl`.
+One consequence worth knowing before you try: you cannot `docker exec` a shell
+into a running container. See
+[Debugging a running container](../operations/runbook.md) for the `docker debug`
+route and the `-dev` tag.
 
 ### Building locally
 

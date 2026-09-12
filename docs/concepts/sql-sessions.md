@@ -15,6 +15,9 @@ inbound agent port is ever opened.
     deploying the hardened agent** (see [Sandboxing](#sandboxing) below): turning sessions on also enables the broader
     statement policy, so the container hardening must be in place first.
 
+This page names the settings that shape a session's behaviour but not their values;
+[Configuration](../reference/configuration.md#sql-sessions) carries the current default for each one.
+
 ## Lifecycle
 
 1. **Open** — `POST /api/workspaces/{workspace}/sql/sessions`. The API picks the agent (an explicit `agent_id`, or an
@@ -39,15 +42,15 @@ which sits awkwardly with a synchronous open, so the open call lets the caller c
 ends.
 
 The session is written **`pending`** — no agent holds it yet — compute is started, and the call
-blocks. `SQL_SESSION_WAIT_TIMEOUT_S` (default 45 seconds) is the budget, and it is deliberately one
-number for every backend: nothing a client sees depends on whether the deployment provisions Docker
-containers or Azure container groups.
+blocks. `SQL_SESSION_WAIT_TIMEOUT_S` is the budget, and it is deliberately one number for every
+backend: nothing a client sees depends on whether the deployment provisions Docker containers or
+Azure container groups.
 
 Two request fields shape it:
 
 | Field | Meaning |
 | --- | --- |
-| `wait_timeout_s` | How long to block. Omit for the server default; `0` never blocks. Capped by `SQL_SESSION_MAX_WAIT_TIMEOUT_S` (default 120s). |
+| `wait_timeout_s` | How long to block. Omit for the server default; `0` never blocks. Capped by `SQL_SESSION_MAX_WAIT_TIMEOUT_S`. |
 | `on_wait_timeout` | `cancel` (default) or `continue` — what happens when the budget runs out. |
 
 And the answers:
@@ -75,22 +78,23 @@ signal that the server supports the contract; nothing needs to negotiate a versi
     in seconds (the Docker backend) are already covered by the default budget.
 
 A session that stays `pending` because compute never arrives at all is failed by the elastic reaper
-at `ELASTIC_PROVISIONING_DEADLINE_S` (default 5 minutes), with close reason `provisioning_timeout`.
+at `ELASTIC_PROVISIONING_DEADLINE_S`, with close reason `provisioning_timeout`.
 
 Naming an idle-terminated elastic agent explicitly starts *that* agent and parks the session for it,
-rather than failing — see [Starting for a SQL session](elastic-compute.md#starting-for-a-sql-session).
+rather than failing — see
+[Starting a terminated agent by naming it](elastic-compute.md#starting-a-terminated-agent-by-naming-it).
 
 ## Statement delivery and deadlines
 
-A statement's own execution timeout (`timeout_s` on the request, 600s default) is enforced by the agent around
-execution, but that alone can't bound a statement whose dispatch frame never arrives — nothing would ever revisit a row
-that stays `queued`. Two server-side deadlines close that gap:
+A statement's own execution timeout (`timeout_s` on the request) is enforced by the agent around execution, but that
+alone can't bound a statement whose dispatch frame never arrives — nothing would ever revisit a row that stays
+`queued`. Two server-side deadlines close that gap:
 
-- **Ack deadline** (`SQL_STATEMENT_ACK_DEADLINE_S`, default 15s) — the agent acknowledges receipt of a statement before
-  doing anything else, flipping the row `queued` → `running`. A row still `queued` past this deadline never reached the
+- **Ack deadline** (`SQL_STATEMENT_ACK_DEADLINE_S`) — the agent acknowledges receipt of a statement before doing
+  anything else, flipping the row `queued` → `running`. A row still `queued` past this deadline never reached the
   agent and is failed with `agent did not ack statement`.
-- **Timeout + grace** (`SQL_STATEMENT_TIMEOUT_GRACE_S`, default 30s on top of the statement's own `timeout_s`) — a
-  `running` statement past this bound should have already been resolved by the agent's own timeout; reaching here means
+- **Timeout + grace** (`SQL_STATEMENT_TIMEOUT_GRACE_S`, on top of the statement's own `timeout_s`) — a `running`
+  statement past this bound should have already been resolved by the agent's own timeout; reaching here means
   its reply is gone too, and it is failed with `statement exceeded timeout`.
 
 A statement that fails this way is **never automatically retried**: if the original frame actually did reach the agent
@@ -113,27 +117,25 @@ that agent's admission budget just like a running query — long-lived sessions 
 interactive queries.
 
 Under the default `auto` profile that reservation is not one fixed size. A session holds a small **idle baseline**
-(`SESSION_BASELINE_BYTES`, 64 MB by default) between statements, and each statement it runs is sized to its own
-workload: the agent estimates the statement from its `EXPLAIN` plan, grows the session's reservation to fit, runs it,
-and shrinks straight back to the baseline. A heavy query gets the memory it needs without a one-off heavy query pinning
-that memory for the rest of the session's life.
+(`SESSION_BASELINE_BYTES`) between statements, and each statement it runs is sized to its own workload: the agent
+estimates the statement from its `EXPLAIN` plan, grows the session's reservation to fit, runs it, and shrinks straight
+back to the baseline. A heavy query gets the memory it needs without a one-off heavy query pinning that memory for the
+rest of the session's life.
 
 Growth is bounded by what the agent can actually spare at that moment. If the budget is tight the statement gets
 whatever is free and runs at that size — slower, possibly spilling to disk, but never blocked and never at the expense
 of another session's memory. `SESSION_MAX_BUCKET_FRACTION` caps how much of the agent one statement may take.
 
-On top of that required size, a statement is also lent whatever memory the agent has idle, up to
-`ELASTIC_CEILING_FRACTION` of its budget and never more than an even share of it between the open sessions. That lent
-memory is what DuckDB uses to cache the Parquet files it reads from object storage, so a session that queries the same
-tables repeatedly — a `dbt` run, an analyst iterating on a query — does not fetch and decompress the same data over and
-over. Unlike the required part, it is **kept** across statements rather than handed back, because dropping it would
-throw the cache away between every statement.
+On top of that required size, a statement is lent whatever memory the agent has idle, which DuckDB spends on caching
+the Parquet files it reads — the **elastic memory** described under
+[what a query is actually given](query-execution.md#what-a-query-is-actually-given), bounded here by
+`ELASTIC_CEILING_FRACTION` and by an even share between the open sessions.
 
-How much a session keeps does not depend on what it last ran: an idle session settles at the same share whether its
-previous statement was trivial or the heaviest thing the agent can execute. It stays revocable throughout — if another
-session needs those bytes the agent reclaims them, so a session sitting idle with a warm cache never makes anyone wait.
-A statement that still cannot get a workable share waits its turn; see
-[what a query is actually given](query-execution.md#what-a-query-is-actually-given).
+One thing differs for a session: the lent memory is **kept** across statements rather than handed back, because
+dropping it would throw the cache away between every statement. So a session querying the same tables repeatedly — a
+`dbt` run, an analyst iterating on a query — does not re-fetch and re-decompress the same data. How much it keeps does
+not depend on what it last ran; an idle session settles at the same share either way. It stays revocable throughout, so
+a session sitting idle with a warm cache never makes anyone wait.
 
 Because the idle baseline is small, sessions-per-agent is bounded by the baseline rather than by peak query size:
 roughly the memory budget divided by `SESSION_BASELINE_BYTES` (about 56 on a 4 GB agent at the default). Opens beyond
@@ -148,10 +150,10 @@ something a longer timeout fixes.
     also means no other query can run until it closes.
 
 To keep a crashed client from pinning an agent forever, a background reaper closes sessions that have been **idle** past
-`SQL_SESSION_IDLE_TIMEOUT_S` (default 15 minutes) or have run longer than `SQL_SESSION_MAX_LIFETIME_S` (default 4
-hours). A session that never finishes opening — the agent's acknowledgement is lost, so its row is stuck `opening` — is
-reaped once it is older than `SQL_SESSION_OPENING_DEADLINE_S` (default 2 minutes, and must exceed the open timeout), so
-a slot the agent did manage to reserve is never stranded. That deadline runs from when an agent was actually told to
+`SQL_SESSION_IDLE_TIMEOUT_S` or have run longer than `SQL_SESSION_MAX_LIFETIME_S`. A session that never finishes
+opening — the agent's acknowledgement is lost, so its row is stuck `opening` — is reaped once it is older than
+`SQL_SESSION_OPENING_DEADLINE_S` (which must exceed the open timeout), so a slot the agent did manage to reserve is
+never stranded. That deadline runs from when an agent was actually told to
 open the session, not from when the client asked, so a session that first waited out a [cold start](#cold-start) still
 gets its full budget. Reaping a session this way also reaches an open the agent had **started but not finished** —
 one still queued for capacity, or still building its connection — so the reservation it was holding comes back rather
@@ -340,3 +342,10 @@ plan for the table to grow with your session volume.
 
 Sessions are for tool connections, not a second interactive UI: the DuckHaven worksheet still uses the one-shot query
 path. Sessions also do not add cross-agent transactions — each session is one connection on one agent.
+
+## Related
+
+- [Query execution](query-execution.md) — the one-shot path sessions sit alongside.
+- [Elastic compute](elastic-compute.md) — starting compute for a session that finds none.
+- [Read the session audit trail](../guides/session-audit.md) — the Connections screen.
+- [Configuration](../reference/configuration.md#sql-sessions) — every setting named on this page.

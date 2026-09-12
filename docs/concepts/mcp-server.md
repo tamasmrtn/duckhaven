@@ -24,12 +24,8 @@ account by an administrator. Every tool call the agent makes is then performed *
 DuckHaven's own REST API, exactly as if that person had clicked through the web app.
 
 So the agent sees the workspaces you are a member of and no others; reads the catalogs, schemas and tables your
-[grants](permissions.md) allow and no others; and its queries appear in the query history attributed to you. The order
-of checks is the one every DuckHaven client goes through:
-
-```
-workspace membership  →  SQL statement allowlist  →  scoped catalog grants  →  DuckDB execution
-```
+[grants](permissions.md) allow and no others; and its queries appear in the query history attributed to you. Each call
+runs the [same chain of checks, in the same order](assistant.md#how-governance-works), as every other DuckHaven client.
 
 None of that enforcement lives in the MCP server. It holds no credentials of its own, and it never reads your data
 except through those REST endpoints — never DuckHaven's control-plane database, never DuckDB, never
@@ -37,11 +33,8 @@ except through those REST endpoints — never DuckHaven's control-plane database
 public content with no grants to enforce; see [Documentation lookup](#documentation-lookup).) The practical
 consequence: **the MCP server is not a new way in.** Anything an agent can
 do through it, the same token could already have done with `curl` against `/api`. Anything that token cannot do, the
-agent cannot do either, however the conversation goes.
-
-That also bounds the damage from a *prompt injection* — a hostile string in a table cell that talks the agent into
-running something it shouldn't. The worst outcome is something the token was already permitted to do, and it is
-recorded against the token's owner.
+agent cannot do either, however the conversation goes — which is also what bounds a
+[prompt injection](assistant.md#how-governance-works) to what the token was already permitted to do.
 
 !!! note "It differs from the assistant here"
     The assistant acts as one fixed `Assistant` service account, which an administrator grants access to centrally. The
@@ -82,8 +75,8 @@ Fourteen tools. Twelve work with your data:
 | `query_metric` | Answer a question from a curated metric definition, and run it. |
 | `explain_metric` | Explain what a metric means and how it is calculated. |
 
-Ten of those mirror the assistant's tool set; `list_workspaces` and `get_table_lineage` are additions. Two more
-answer questions about DuckHaven itself:
+Eleven of those mirror the assistant's tool set; `list_workspaces` is the addition. Two more answer questions about
+DuckHaven itself:
 
 | Tool | What it does |
 |---|---|
@@ -98,22 +91,18 @@ platforms, and a confidently wrong answer is worse than none.
 
 ### Documentation lookup
 
-`search_docs` and `read_doc_page` are the same pair the [assistant](assistant.md#product-knowledge) uses, and they
-matter for the same reason: an agent asked "how do I query this table as it was last Tuesday?" will otherwise answer
-from what it knows about Snowflake. These pages ship **inside the image**, so they describe the version you are
-running rather than the latest published docs — which is a feature, since the agent will not offer you something your
-deployment does not have.
+`search_docs` and `read_doc_page` are the same pair the assistant uses, and they behave identically here — the pages
+ship inside the image, search is lexical rather than semantic, and an empty result is reported as "the documentation
+does not cover this" rather than improvised around. [Product knowledge](assistant.md#product-knowledge) covers all of
+that. They matter for the same reason too: an agent asked "how do I query this table as it was last Tuesday?" will
+otherwise answer from what it knows about Snowflake.
 
-They are the one exception to the everything-goes-through-the-REST-API rule, and only because there is nothing for the
-exception to bypass: `docs/` is public content, identical to what the
+Two things are specific to MCP. These tools are the one exception to the everything-goes-through-the-REST-API rule,
+and only because there is nothing for the exception to bypass: `docs/` is public content, identical to what the
 [documentation site](https://tamasmrtn.github.io/duckhaven) serves, carrying no grants and no per-workspace
-visibility. `read_doc_page` reads files off disk; `search_docs` runs
-one full-text query and nothing else. They still sit behind the same front door — an anonymous caller cannot reach
-them — and they take no `workspace`, because the pages are the same for everyone.
-
-Search is ordinary lexical full-text, not semantic, so a question sharing no words with the page that answers it can
-miss. When it comes back empty, that is a real answer rather than a failure, and the agent is told to say the
-documentation does not cover the question instead of inventing one.
+visibility. `read_doc_page` reads files off disk; `search_docs` runs one full-text query and nothing else. And they
+still sit behind the same front door — an anonymous caller cannot reach them — while taking no `workspace` argument,
+because the pages are the same for everyone.
 
 !!! note "One switch, shared with the assistant"
     `ASSISTANT_DOCS_ENABLED=false` withholds these two tools here as well as in the assistant panel — it is the
@@ -122,7 +111,7 @@ documentation does not cover the question instead of inventing one.
 
 ### Results are sampled, not streamed whole
 
-`run_sql` returns at most `MCP_RESULT_ROW_CAP` rows (100 by default), trimmed further if they exceed
+`run_sql` returns at most `MCP_RESULT_ROW_CAP` rows, trimmed further if they exceed
 `MCP_RESULT_BYTE_CAP`. The rest is not lost: the result carries a `query_id` and a `cursor` that `get_query_result`
 pages through. This keeps a `SELECT *` over a large table from filling the agent's context in one call.
 
@@ -186,3 +175,10 @@ Two things follow from being reachable over the network:
     server: DuckHaven issues its own access tokens, and the MCP endpoint accepts one directly rather than brokering a
     third-party one, so an MCP client's "sign in with the server" flow does not apply here — configure the token
     yourself. Writes have no approval step, which is why they are off by default rather than gated.
+
+## Related
+
+- [Connect an MCP client](../guides/connect-mcp-client.md) — the setup walkthrough.
+- [AI assistant](assistant.md) — the same governance, pointed inward.
+- [Service accounts & tokens](../guides/service-accounts.md) — issuing the token a client authenticates with.
+- [Permissions](permissions.md) — what a token can reach.

@@ -135,3 +135,10 @@ rather than the query's.
     values arrive as JSON numbers and lose precision at the extremes — the type tells you what the column *is*, but
     exact decimal round-tripping is not yet available. `column_schema` is `null` for statements that produce no result
     grid (DDL and DML) and for queries run by an agent older than this feature.
+
+## Related
+
+- [Agents](agents.md) — the compute a query is dispatched to.
+- [SQL sessions](sql-sessions.md) — the persistent-connection path for external tools.
+- [Read query profiles](../guides/query-profiles.md) — reading what a run actually did.
+- [Scaling compute](../operations/scaling.md) — sizing and concurrency profiles.

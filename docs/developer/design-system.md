@@ -338,7 +338,7 @@ Notes:
   opens a popover for memory/timeout overrides). The selector itself
   shows agent name + DuckDB version + per-query memory ceiling. Health
   dot to the left. If the agent is missing the extension required for
-  this workspace's backend (D17), the option is dimmed with a "missing
+  this workspace's backend, the option is dimmed with a "missing
   `azure` extension" tooltip — the user *can* still pick it but Run will
   fail-fast with the same message inline.
 - **Run button**: the only place yellow appears in this screen. ⌘↵
@@ -346,7 +346,7 @@ Notes:
 - **Results** are tabs *under* the editor when a statement produces
   multiple result sets (rare in DuckDB but possible with multi-statement
   scripts). One result tab per statement. Pagination is cursor-based and
-  fetched on-demand (D5).
+  fetched on-demand.
 - **Status bar** is the persistent reminder of *which compute against
   which storage* the user is using. This is the answer to "wait, where am
   I running this?" — a question Databricks/Snowflake users ask multiple
@@ -370,7 +370,7 @@ Notes:
 └──────────────────────────────────────────┘
 ```
 
-The capability advertisement (D17) is rendered as compact backend tags
+The capability advertisement is rendered as compact backend tags
 under each agent — `✓` available, `✗` missing extension. The
 incompatible row is selectable (for SELECT-against-other-backend cases
 the architecture allows) but a warning banner appears in the editor if
@@ -413,8 +413,10 @@ sample rows, or metadata.
 Notes:
 
 - **Breadcrumb is clickable** all the way up. ⌘-click to open in a new tab.
-- **No edit-schema UI in MVP** — DuckDB's UC extension can't ALTER (D8).
-  The pencil icon top-right opens "Rename / Drop", that's it.
+- **No edit-schema form** — the pencil icon top-right opens "Rename / Drop".
+  Column changes are offered as generated `ALTER TABLE` SQL dropped into a
+  worksheet (`worksheetSql.ts`) rather than applied from a dialog, so what
+  the engine supports is visible before it runs.
 - **Sample rows** uses the worksheet's last-selected agent; if none, the
   first healthy agent compatible with this workspace's backend.
 

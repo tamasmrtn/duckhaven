@@ -16,7 +16,7 @@ remote [agent](agents.md) uses, which rules out local-file storage across the co
 
 | Kind | Physical location | Required extension |
 |---|---|---|
-| `object_store` | Bundled MinIO bucket (per-workspace `/{slug}` prefix) | `httpfs` |
+| `object_store` | Bundled MinIO bucket, under the prefix the backend was registered with | `httpfs` |
 | `s3` | External, operator-owned S3 bucket | `httpfs` |
 | `adls_gen2` | Azure Data Lake Storage Gen 2 | `azure` |
 
@@ -42,4 +42,4 @@ reaches DuckDB.
 ## Related
 
 - [Configure storage](../deployment/storage.md) — register and bind a backend.
-- [Workspaces](workspaces.md) — how a workspace pins to a backend.
+- [Catalogs & Polaris](catalogs.md) — how a catalog binds to a backend, and how a workspace reaches it.

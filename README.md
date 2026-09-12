@@ -62,8 +62,7 @@ trail — with data sovereignty, network privacy, and no SaaS lock-in.
 
 - **Browser-based worksheets** — Monaco SQL editor with tabs, catalog-aware
   autocomplete, and a paginated results grid that pages results by row window
-  instead of loading the whole file. Statement-aware Run (Ctrl+Enter runs the
-  statement under the cursor), mid-flight cancel, and CSV export.
+  instead of loading the whole file.
 - **Transparent compute** — You pick the DuckDB agent per query. No opaque
   optimizer, no surprise costs, no hidden resource allocation.
 - **Right-sized memory** — Each query's memory reservation is estimated from
@@ -88,15 +87,11 @@ trail — with data sovereignty, network privacy, and no SaaS lock-in.
   "query at this snapshot" against any point in its history.
 - **Data lineage, down to the column** — See where a table's data came from and
   what was built from it, on a Lineage tab on the table you are already looking
-  at. Derived from the SQL DuckHaven runs — worksheets, scheduled jobs and
-  external tools alike, with no instrumentation — and importable from a tool
-  that already knows, dbt first. Open a table in the graph to see which of its
-  columns feed which downstream ones. Because that tracks values rather than
-  mentions, a source that was only joined against or filtered on reports
-  carrying nothing, which the table-level graph alone cannot tell you.
-- **Built-in metadata** — A read-only `information_schema` per catalog, plus a
-  Postgres-side sidecar for ownership, last-write provenance, and row/size stats
-  that Polaris does not track.
+  at. Derived from SQL Duckhaven runs or import it from tools you use, currently
+  supporting dbt.
+- **Built-in metadata** — A read-only `information_schema` per catalog for
+  listing schemas and tables plus a Postgres-side sidecar for ownership,
+  last-write provenance, and row/size stats that Polaris does not track.
 
 ### Governance, access & audit
 
@@ -173,16 +168,18 @@ trail — with data sovereignty, network privacy, and no SaaS lock-in.
   holder of a DuckHaven access token, through the same enforcement chokepoints
   as any other client, so it is never a new way in. Read-only by default. See
   [docs/concepts/mcp-server.md](docs/concepts/mcp-server.md).
+
 ### Storage
 
-- **Bring your own storage** — One backend per workspace: bundled object
-  storage (MinIO), AWS S3, or Azure ADLS Gen 2.
+- **Bring your own storage** — One backend per catalog: bundled object
+  storage (MinIO), AWS S3, or Azure ADLS Gen 2. A workspace reaches storage
+  through the catalogs it attaches, so one workspace can span several backends.
 - **Live storage migration** — Move a catalog to a different backend after
   creation (e.g. bundled MinIO → S3, or S3 → ADLS) without losing data or
   Iceberg snapshot history, via a checkpointed background migration engine.
 - **Short-lived credentials** — Polaris vends temporary, connection-scoped storage
-  credentials per query (S3 assume-role → STS, ADLS → Entra-minted SAS). No
-  long-lived secrets ever land on agents.
+  credentials per catalog as an agent attaches it (S3 assume-role → STS, ADLS →
+  Entra-minted SAS). No long-lived secrets ever land on agents.
 - **Self-hosted** — Docker Compose on your network. Your data never leaves your
   infrastructure.
 
@@ -223,8 +220,9 @@ flowchart TB
 
 - The control plane does **not** run DuckDB. Compute lives in agent processes that dial home over WebSocket.
 - Users pick the executing agent per worksheet — transparent compute, no opaque optimizer.
-- Every workspace is bound to exactly one storage backend: bundled object storage (MinIO), S3, or Azure.
-- Apache Polaris provides table governance and vends short-lived storage credentials per query.
+- Every catalog is bound to one storage backend: bundled object storage (MinIO), S3, or Azure. Workspaces attach
+  catalogs many-to-many, so a workspace can span several backends.
+- Apache Polaris provides table governance and vends short-lived storage credentials per catalog.
 - SQL is allowlisted to data statements
   (`SELECT`/`INSERT`/`UPDATE`/`DELETE`/`MERGE`) and catalog DDL
   (`CREATE`/`ALTER`/`DROP`), executed on the agent against the Polaris catalog;
@@ -245,11 +243,11 @@ the UI design system, see [docs/developer/design-system.md](docs/developer/desig
 |---|---|
 | Frontend | React 19 + TypeScript + Vite, Monaco SQL editor, TanStack Router/Query/Table, Radix UI + shadcn/ui + Tailwind |
 | API / control plane | FastAPI (Python 3.14), async; `websockets` for the agent channel |
-| Database | PostgreSQL 16, SQLAlchemy 2.x (async) + Alembic migrations |
+| Database | PostgreSQL 18, SQLAlchemy 2.x (async) + Alembic migrations |
 | Agent | Python 3.14 embedding DuckDB; small HTTP server for result Parquet reads |
-| Engine | DuckDB ≥ 1.5 — present **only** on agents |
+| Engine | DuckDB ≥ 1.5.5 — present **only** on agents |
 | Catalog | Apache Polaris — catalog + short-lived credential vendor |
-| Storage format | Apache Iceberg, Catalog Commits ON, one backend per workspace |
+| Storage format | Apache Iceberg, Catalog Commits ON, one backend per catalog |
 | Storage backends | Object storage (bundled MinIO, `httpfs`), S3 (`httpfs`), ADLS Gen 2 (`azure`) |
 | Auth | Local (`bcrypt`), OIDC SSO (`authlib`), LDAP / AD (`ldap3`) with JIT provisioning |
 | Scheduling | Cron-based recurring queries (`croniter`), leader-elected across replicas |
@@ -267,10 +265,6 @@ docker compose up -d
 docker compose cp api:/var/duckhaven/setup_token ./setup_token && cat ./setup_token
 # open http://<host>:8000 and paste the token into the setup screen
 ```
-
-That is the whole install — no `git clone`, no `.env` editing, no
-`make` on the host. Secrets generate on first boot, migrations apply
-inside the api container, the first admin is created from the browser.
 
 ## Self-hosting docs
 

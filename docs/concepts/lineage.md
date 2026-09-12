@@ -54,7 +54,8 @@ Some omissions are deliberate, and knowing them is part of reading the graph cor
 - **`CREATE TABLE` with only a column list.** It declares a shape; it derives nothing.
 - **A table built from itself.** A self-referencing edge carries no information.
 - **Statements DuckHaven cannot parse.** Lineage extraction fails quietly: the query is unaffected and no edge is
-  recorded. The `duckhaven_lineage_extract_failures` metric counts these, so a gap is visible rather than silent.
+  recorded. The `duckhaven_lineage_extract_failures_total` metric counts these, so a gap is visible rather than
+  silent.
 
 ## Why lineage is read from the SQL
 
@@ -98,8 +99,8 @@ fields above answer "when did this start, and is it still happening" without a s
 
 ## Freshness
 
-A relationship is **stale** when no producer has re-asserted it within `LINEAGE_STALE_AFTER_DAYS` (30 by default; set
-it to `0` to switch the concept off).
+A relationship is **stale** when no producer has re-asserted it within `LINEAGE_STALE_AFTER_DAYS` (set it to `0` to
+switch the concept off).
 
 Stale means *unconfirmed*, not *wrong*. A table rebuilt once a year has perfectly correct lineage that nothing will
 confirm again for eleven months. What staleness tells you is how recently something vouched for the relationship, which

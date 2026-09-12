@@ -1,20 +1,24 @@
 # DuckHaven — Operator Runbook
 
-Operational procedures for the single control-plane box plus its agents.
-Companion to `ARCHITECTURE.md` (§5 storage layout, §12 deployment, D14/D18).
+Operational procedures for the single control-plane box plus its agents. For
+how the pieces fit together, see [Architecture](../concepts/architecture.md).
 
 ---
 
 ## 1. Bring up the control plane
 
-The control plane is one `docker compose` stack (`deploy/docker-compose.yml`:
-`postgres`, `polaris`, `api`). The `api` service publishes port `8000`
-directly on the host.
+The control plane is one `docker compose` stack (`deploy/docker-compose.yml`)
+of nine services: `postgres`, `minio`, `polaris-bootstrap`, `polaris`, `api`,
+`agent`, and the `otel-collector`/`tempo`/`grafana` observability trio. The
+`api` service publishes port `8000` directly on the host. See
+[Install](../deployment/install.md) for a first-time walkthrough.
 
-1. (Optional) create `deploy/.env`. Defaults work — `POSTGRES_PASSWORD` and
-   `SECRET_KEY` are generated on first boot and persisted to the `secrets`
-   docker volume. Set values in `.env` only if you need to override them
-   (e.g. pinning a release tag):
+1. (Optional) create `deploy/.env`. Defaults work — `SECRET_KEY` is generated
+   on first boot and persisted under `/var/duckhaven/secrets` in the `api_data`
+   volume. `POSTGRES_PASSWORD` is **not** generated; it falls back to the
+   literal `duckhaven`, so set it here on anything but a private box you trust.
+   Set values in `.env` only if you need to override them (e.g. pinning a
+   release tag):
 
    ```sh
    DUCKHAVEN_IMAGE_TAG=v1.2.3
@@ -28,28 +32,28 @@ directly on the host.
    `docker compose -f deploy/docker-compose.yml cp api:/var/duckhaven/setup_token ./setup_token && cat ./setup_token`.
 4. Open `http://<host>:8000` and create the first admin from the setup
    screen using the token.
-5. The API listens on port `8000` on the Tailscale address only. There is no
-   public ingress; the Tailscale/WireGuard tunnel encrypts the wire.
+5. The API publishes port `8000` on the host. It speaks plain HTTP, so keep it
+   on a private network — a Tailscale/WireGuard tunnel, or a
+   [TLS reverse proxy](../deployment/reverse-proxy-tls.md) if it must be
+   reachable more widely.
 
 ---
 
-## 2. Register two agents (multi-agent M4 target)
+## 2. Register additional agents
 
-Agents dial home with a one-time bootstrap token (D14); the control plane never
+Agents dial home with a one-time bootstrap token; the control plane never
 initiates connections.
 
 For **each** agent host:
 
-1. In the admin UI (**Compute → Generate bootstrap**) or via
-   `SESSION_COOKIE=<cookie> scripts/gen-token.sh`, mint a bootstrap token
-   (single-use, 24 h).
+1. In the admin UI, mint a bootstrap token from **Compute → Generate
+   bootstrap** (single-use, 24 h).
 2. On the agent host, build/pull the agent image and set its `.env`:
 
    ```sh
    CONTROL_PLANE_URL=ws://<control-plane-tailscale>:8000/agents/connect
    BOOTSTRAP_TOKEN=<token-from-step-1>
-   # Operator ceilings (non-overridable by per-query requests, G-D2-b):
-   MAX_MEMORY_LIMIT_GB=6
+   # Operator ceilings (non-overridable by per-query requests):
    MAX_TIMEOUT_S=600
    RESULT_RETENTION_HOURS=24
    ```
@@ -58,7 +62,7 @@ For **each** agent host:
    for a long-lived `agent_session` credential, advertises its capabilities,
    and holds the WebSocket open.
 4. Confirm both agents show **green** with fresh "last ping" in **Admin →
-   Agents** (capabilities re-advertise on every heartbeat, G-D17-a).
+   Agents** (capabilities re-advertise on every heartbeat).
 
 Repeat so at least two agents are registered (e.g. one S3-capable, one local).
 
@@ -73,23 +77,23 @@ Repeat so at least two agents are registered (e.g. one S3-capable, one local).
      counts per agent; **History** records agent/user/duration/rows).
    - Picking an agent that lacks the workspace backend's extension fails fast
      with an inline "missing `<ext>` extension" error (server-side check,
-     G-D17-b).
+     re-advertise on every heartbeat).
    - A query that exceeds its timeout is interrupted on the agent and reported
-     as `failed` (status "timeout"), not left running (G-D2-a).
+     as `failed` (status "timeout"), not left running.
 3. Result range-reads are proxied with the agent's session bearer; a result
    that has aged past `RESULT_RETENTION_HOURS` is swept on the agent and the
-   query is re-runnable from saved SQL (G-D5-a).
+   query is re-runnable from saved SQL.
 
 ---
 
-## 4. Backups & disaster recovery (D18)
+## 4. Backups & disaster recovery
 
-### Schedule nightly Postgres backups (G-D18-a)
+### Schedule nightly Postgres backups
 
-`scripts/pg-backup.sh` dumps the DuckHaven app state + UC metastore.
+`scripts/pg-backup.sh` dumps the DuckHaven app state and the Polaris metastore.
 
 ```sh
-# Point backups at a SECOND disk / NAS mount, not the data disk (G-D18-b):
+# Point backups at a SECOND disk / NAS mount, not the data disk:
 sudo cp deploy/systemd/duckhaven-backup.{service,timer} /etc/systemd/system/
 # Edit WorkingDirectory and DUCKHAVEN_BACKUP_DIR in the .service first.
 sudo systemctl enable --now duckhaven-backup.timer
@@ -109,14 +113,14 @@ gunzip -c <backup>.sql.gz | docker compose -f deploy/docker-compose.yml \
 
 - `s3` / `adls_gen2`: delegated to the cloud provider's durability.
 - `object_store` (bundled MinIO): **no off-box DR** — the web UI shows a DR
-  banner for these backends (G-D18-c). Ensure an independent backup of the
+  banner for these backends. Ensure an independent backup of the
   MinIO bucket.
 
 ---
 
 ## 5. Tailscale outage
 
-Tailscale is the only network path (R9). If it is down the platform is
+Where Tailscale is the only network path, if it is down the platform is
 unreachable. Document the agents' and control plane's static Tailscale IPs so
 operators can confirm reachability; agents auto-reconnect (5 s backoff) once the
 tailnet recovers.
@@ -218,7 +222,7 @@ per-query problems like `out_of_memory`. See [Monitoring](monitoring.md).
 
 After a query finishes, the agent captures DuckDB's per-operator execution
 profile and ships it (KB-sized) to the control plane, where it is stored on the
-query and served from `GET /queries/{query_id}/profile`. There are two ways to view it:
+query and served from `GET /api/queries/{query_id}/profile`. There are two ways to view it:
 
 - **Worksheet → Profile tab** — an inline summary + collapsible operator tree
   for a quick glance at the query you just ran, with an **Open full profile**

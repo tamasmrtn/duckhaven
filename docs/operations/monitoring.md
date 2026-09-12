@@ -97,7 +97,7 @@ re-exports the same data the admin console shows — live agent utilization, the
 log, and the maintenance scanner — plus standard HTTP, database-pool, and process telemetry,
 so you can alert on saturation and failure rates instead of polling the REST API.
 
-The endpoint is **unauthenticated**, exactly like `/healthz` and `/readyz`: Prometheus
+The endpoint is **unauthenticated**, exactly like `/api/healthz` and `/api/readyz`: Prometheus
 scrapers carry no session cookie, and DuckHaven already assumes no public ingress. Keep it on
 the internal network. Set `METRICS_ENABLED=false` (see the
 [configuration reference](../reference/configuration.md#observability)) to remove it entirely.

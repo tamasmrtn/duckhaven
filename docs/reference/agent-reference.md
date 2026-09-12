@@ -19,7 +19,7 @@ runs DuckDB.
 | `BOOTSTRAP_TOKEN` | Yes | — | One-time bootstrap token from admin UI |
 | `RESULTS_DIR` | No | `/var/duckhaven-agent/results` | Directory for materialized query results |
 | `RESULTS_HTTP_PORT` | No | `8001` | Port for the local HTTP result server |
-| `MEMORY_LIMIT_BYTES` | No | `6442450944` (6 GB) | Per-query memory ceiling |
+| `MEMORY_HEADROOM_FRACTION` | No | `0.10` | Fraction of the budget held back from reservations. The budget is read from the cgroup, not configured |
 | `MAX_CONCURRENCY_PROFILE` | No | `auto` | Reservation sizing: `auto` (EXPLAIN-estimated per query) or a static slot ladder (`single`/`equal_2`/`decaying_2`/`decaying_3`). See [Runbook §6](../operations/runbook.md#6-query-queueing-concurrency). |
 | `PROFILING_ENABLED` | No | `true` | Capture DuckDB's post-execution query profile and return it on `query_done`. Set `false` to disable. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | No | — | OTLP (http/protobuf) endpoint to export traces to. Unset/empty disables tracing entirely. See [Distributed tracing](../operations/tracing.md). |
@@ -71,7 +71,8 @@ You can run multiple agents on the same host or different hosts. Each agent:
 
 - Needs its own `RESULTS_DIR` (or will overwrite another agent's results).
 - Needs its own `BOOTSTRAP_TOKEN` (each token is single-use).
-- Should have sufficient memory for its `MEMORY_LIMIT_BYTES` plus OS overhead.
+- Sizing the container sizes the agent: it reads its budget from the cgroup's
+  `memory.max`, so give it the memory you want queries to use, plus OS overhead.
 
 Example: two agents on one host with Docker Compose:
 

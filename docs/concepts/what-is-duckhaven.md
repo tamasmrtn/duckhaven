@@ -1,36 +1,42 @@
 # What is DuckHaven?
 
-DuckHaven is a **self-hosted, governed DuckDB + Iceberg analytics platform** for small teams (roughly 2–10 users). It
-started as collaborative browser worksheets over [DuckDB](https://duckdb.org/) and Apache Iceberg tables governed by
-[Apache Polaris](https://polaris.apache.org/), and grew to cover the lifecycle around them: scheduled queries, an
-advisory lakehouse maintenance scanner, single sign-on, per-workspace permissions, fine-grained access grants, machine
-auth, a governed AI data assistant, and a full audit trail — without a cloud warehouse, Kubernetes, or a platform
-team.
+DuckHaven is a self-hosted data lakehouse. Your data, your hardware, your bill.
+
+The pieces were already open. [Apache Iceberg](https://iceberg.apache.org/) brought a transactional table format.
+[Apache Polaris](https://polaris.apache.org/) brought a catalog that governs those tables and vends short-lived storage
+credentials. [DuckDB](https://duckdb.org/) was already quick enough that most teams never need a cluster. What nobody
+had built was the part that holds the three together — something that knows who your users are, what they may touch,
+which engine runs their query, and what happened afterwards.
+
+That's DuckHaven. One Docker Compose stack, and those three projects become a system a team can actually work in.
 
 ## The problem it solves
 
-Teams that love DuckDB end up sharing `.duckdb` files over chat. DuckHaven provides the worksheet and collaboration
-experience of MotherDuck or Databricks while keeping data on your own infrastructure — no SaaS lock-in, no opaque
-billing, and no surprise costs.
+Running a lakehouse has usually meant adopting somebody else's. The open components are all there, but wiring them into
+something you'd let colleagues loose on is a platform project most teams cannot justify — so they rent Snowflake's or
+Databricks' instead, and hand over the data and the bill along with it.
+
+That trade is rarely revisited once it is made. DuckHaven is the argument that you do not have to make it.
 
 ## What you get
 
-- **Browser worksheets** — a Monaco SQL editor with tabs, a results grid, and CSV export.
-- **A shared catalog** — browse schemas and tables, with sample rows and Iceberg snapshot history.
-- **Governed workspaces** — per-workspace roles, scoped catalog/schema/table grants, service-account machine auth,
-  single sign-on (OIDC/LDAP), and a complete audit log of who ran what.
-- **AI assistant** — an opt-in, governed chat assistant that browses the catalog, writes and runs SQL, and proposes
-  worksheet edits under the same enforcement as a human user.
-- **Transparent compute** — you pick the DuckDB [agent](agents.md) per query; nothing is hidden behind an optimizer.
-- **Scheduled queries** — run saved queries on a cron schedule, with per-schedule run history.
-- **Lakehouse maintenance** — a background advisor scores catalog health and recommends compaction and cleanup.
-- **Self-hosting** — one Docker Compose stack on your own network.
+Data arrives through it and leaves through it. Tables are Iceberg, governed by Polaris, sitting on object storage you
+own — bundled MinIO, S3, or ADLS Gen 2 — and a catalog can move between backends without losing a snapshot. Compute is
+DuckDB [agents](agents.md) you choose per query, which can scale to zero between runs. Access is governed down to the
+table, with single sign-on, machine identities, and a record of who ran what. And the layers that usually get skipped
+on a self-hosted stack are in the box: column-level [lineage](lineage.md), a [semantic layer](semantic-layer.md), a
+[maintenance advisor](maintenance.md), and [governed access for AI agents](mcp-server.md).
+
+Everything runs on your network. Nothing phones home.
 
 ## Who it is for
 
-DuckHaven targets a homelab or a small team that wants collaborative, governed SQL over DuckDB on its own
-infrastructure. It is intentionally **not** a Spark/Databricks replacement, a notebook platform, or an
-internet-exposed service — see [Architecture](architecture.md) for the explicit non-goals.
+Teams that want their lakehouse to be theirs — a homelab running on one box, or a company that would rather not put its
+data in someone else's account. The deployment grows with you: start with the bundled agent, add hosts when queries
+outgrow them, turn on [elastic compute](elastic-compute.md) when you would rather not pay for idle ones.
+
+It is deliberately **not** a Spark replacement or a notebook platform, and it is not built to face the public internet.
+[Architecture](architecture.md) lists the boundaries in full.
 
 ## Where to go next
 

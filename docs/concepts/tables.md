@@ -40,3 +40,10 @@ you open a worksheet pinned to a past snapshot using DuckDB's time-travel syntax
 The catalog browser can preview sample rows (capped, run as an internal query excluded from history) and shows
 agent-computed row counts and size, plus Iceberg facts like the latest snapshot and whether delete files are present.
 See [Metadata](metadata.md).
+
+## Related
+
+- [Catalogs & Polaris](catalogs.md) — the catalog a table lives in.
+- [Metadata](metadata.md) — the per-table facts DuckHaven records alongside Polaris.
+- [Snapshots & time travel](../guides/snapshots-time-travel.md) — querying a past snapshot.
+- [SQL support](../reference/sql-support.md) — what `CREATE`/`ALTER` and `DESCRIBE` do here.

@@ -50,50 +50,33 @@ Compute can also be started deliberately from the **Compute** section of the nav
 the way you'd start a Databricks cluster. You pick a **named size** (vCPU + memory) and see its **hourly cost** before
 creating it; the agent is provisioned at that size, appears in the list with its cost, and the same
 idle reaper auto-terminates it when it goes quiet. The available sizes and their prices come from the
-control plane (`GET /admin/agents/compute-options`), so cost is shown from one source of truth.
+control plane (`GET /api/admin/agents/compute-options`), so cost is shown from one source of truth.
 
 The same dialog chooses **who can use it** — anyone signed in, or only the people you grant access
-to. That belongs at creation rather than only on the Access tab: an agent created open registers and
-begins accepting work immediately, so narrowing it afterwards leaves a window where anyone could have
-run on it. See [Per-agent access](permissions.md#per-agent-access).
-
-### Starting for an interactive run
-
-Naming a specific elastic agent that has been idle-terminated starts it too, rather than failing.
-The run is parked `queued` with no agent — exactly what the worksheet already shows for a pool run
-during a cold start — and dispatches to that agent when it dials home. This is the same reasoning as
-the scheduled case below: the reaper tore the agent down *because* nothing was using it, so refusing
-the next run would make an idle-terminated agent permanently unusable.
-
-Starting an agent this way needs only the `use` tier on it, the tier that lets you target it at all.
-Sending work is dispatch, not a lifecycle operation: you choose neither the agent's size nor when it
-stops, and the idle reaper takes it back down on its own clock. Restarting an agent deliberately,
-with no work to justify it, still needs `operate`. See
+to. Deciding that at creation rather than on the Access tab afterwards matters; see
 [Per-agent access](permissions.md#per-agent-access).
 
-### Starting for a SQL session
+### Starting a terminated agent by naming it
 
-A [SQL session](sql-sessions.md) — how dbt, dlt and BI tools connect — starts compute the same way,
-with one difference that follows from its contract: a session open is *synchronous*. It has to hand
-back a session the caller can immediately run statements on, so it cannot simply park and answer.
+Naming a specific elastic agent the reaper has torn down **starts it** rather than
+failing. The work is parked `queued` with no agent — exactly what the worksheet already
+shows for a pool run during a cold start — and dispatches to that agent when it dials
+home.
 
-Instead the session is written **`pending`** (no agent yet), compute is started, and the open call
-waits. What happens when the wait runs out is the client's choice, and is described in full under
-[Cold start](sql-sessions.md#cold-start). The important part here: giving up abandons the *session*,
-never the compute that is starting — so an immediate retry lands on the agent already coming up
-rather than paying for a second cold start.
+It has to work this way. The reaper terminated the agent *because* nothing was using it,
+so refusing the next run would make an idle-terminated agent permanently unusable — and
+for a [schedule](../guides/schedule-queries.md) bound to one, every run would fail on the
+consequence of the previous one succeeding.
 
-Naming a terminated elastic agent works for sessions too, on the same `use` tier as above.
+This needs only the `use` tier: sending work is dispatch, not a lifecycle operation.
+Restarting an agent deliberately, with no work to justify it, still needs `operate`; see
+[Per-agent access](permissions.md#per-agent-access).
 
-### Starting for a scheduled run
-
-A [schedule](../guides/schedule-queries.md) bound to a specific elastic agent
-restarts it when it finds it terminated, then parks the run `queued` until it dials
-home — the same park-and-bind path a pool run takes during a cold start, but keyed
-on the agent the schedule names rather than on a pool key. Without it an idle
-timeout would make an elastic agent permanently unusable for unattended work: the
-reaper tears it down *because* nothing is using it between runs, so every run would
-fail on the consequence of the previous one succeeding.
+**A [SQL session](sql-sessions.md)** — how dbt, dlt and BI tools connect — is the one case
+that cannot simply park and answer, because a session open is *synchronous*: it has to hand
+back something the caller can immediately run statements on. It therefore blocks while
+compute starts, and the caller chooses how that wait ends — see
+[Cold start](sql-sessions.md#cold-start).
 
 ### Scaling in
 

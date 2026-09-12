@@ -7,7 +7,7 @@ It describes *stable structure*, not progress: for what the system is and why,
 see [Architecture](../concepts/architecture.md); for roadmap and milestone
 status see the [README](https://github.com/tamasmrtn/duckhaven#roadmap) and the
 issue tracker. Invariant references below (I1, I2, …) are numbered as in
-[Architectural invariants](../concepts/architecture.md#8-architectural-invariants).
+[Architectural invariants](../concepts/architecture.md#7-architectural-invariants).
 
 ---
 
@@ -180,7 +180,7 @@ then starts uvicorn; the API
 also seeds the agent bootstrap token on startup. `minio` pre-creates the
 warehouse bucket in its own entrypoint. Remote agents can still be deployed
 per host against the same control plane. `scripts/` holds operator helpers
-(`pg-backup.sh`, `gen-token.sh`).
+(`pg-backup.sh`, `assistant-mine-feedback.py`, `wait-for-stack.sh`).
 
 ---
 
@@ -426,9 +426,9 @@ compose stack therefore **bundles MinIO**, and the `object_store` backend
 kind is physically backed by a MinIO bucket: its catalogs use
 `storageType = S3` pointed at MinIO (with the catalog's vended `endpoint` set to
 an externally-reachable URL the agent can reach, and an internal endpoint for
-Polaris itself). Per-workspace isolation comes from a `/{slug}` prefix under the
-shared bucket. The `s3`/`adls_gen2` kinds remain operator-owned external object
-stores.
+Polaris itself). Per-catalog isolation comes from a `/{polaris_name}` prefix under
+the shared bucket, so catalogs sharing a backend never collide. The
+`s3`/`adls_gen2` kinds remain operator-owned external object stores.
 
 ---
 

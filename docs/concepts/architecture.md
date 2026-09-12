@@ -59,8 +59,11 @@ design decision here:
 - **Not a notebook platform.** SQL worksheets only.
 - **Not internet-exposed.** The private network (Tailscale/WireGuard) is the
   security perimeter; the API speaks plain HTTP behind it.
-- **Not authoritative storage and not an ingestion engine.** Source data
-  lives in the backends; external tools (PyIceberg, Spark) write it.
+- **Not an extraction tool.** DuckHaven has no source connectors and does not
+  pull from operational systems. Data does load *through* it — a
+  [SQL session](sql-sessions.md) stages Parquet to object storage and issues a
+  `COPY`, which is how the `dlt` destination works — and external engines
+  (PyIceberg, Spark) can still write to the backends directly.
 - **No cross-workspace joins, no row/column security** in the current scope.
   Permissions are workspace-level. (DDL and destructive DML — `CREATE`/`ALTER`/
   `DROP`, `UPDATE`/`DELETE`/`MERGE` — *are* supported; see Invariant I8.)

@@ -101,7 +101,7 @@ polaris-dev:
 	docker rm -f dh-polaris-dev dh-minio-dev >/dev/null 2>&1 || true
 	docker run -d --name dh-minio-dev --network dh-polaris-net -p 9000:9000 \
 		-e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
-		minio/minio server /data
+		quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
 	@echo "Waiting for MinIO..."
 	@for i in $$(seq 1 20); do \
 		curl -sf http://localhost:9000/minio/health/live >/dev/null 2>&1 && break; sleep 1; \

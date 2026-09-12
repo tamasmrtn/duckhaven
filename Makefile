@@ -73,7 +73,7 @@ test-integration-agent:
 	  rc=$$?; if [ $$rc -ne 0 ] && [ $$rc -ne 5 ]; then exit $$rc; fi
 
 # Cross-component (Layer 2): boots the real API + agent over the live control
-# channel. Needs Postgres + Polaris + MinIO (DATABASE_URL, POLARIS_BASE_URL,
+# channel. Needs Postgres + Polaris + the object store (DATABASE_URL, POLARIS_BASE_URL,
 # POLARIS_S3_*); skips cleanly when unset.
 test-cross-component:
 	@uv run pytest tests/cross_component/ -v -m cross_component; \
@@ -87,33 +87,36 @@ test-e2e:
 	cd tests/e2e && npm ci && npx playwright install --with-deps chromium && npx playwright test
 
 # ── Local Polaris (for integration tests) ─────────────────────────────────────
-# Spins up MinIO + Apache Polaris-on-S3 (in-memory persistence). Object storage
-# is the only storage DuckHaven uses: Polaris vends scoped credentials so the
-# agent's DuckDB can read AND write Iceberg tables. Override the bucket or image
-# tag if needed. QUARKUS_OTEL_SDK_DISABLED stays true here (unlike the compose
-# stacks): this dev flow runs no OTel collector, so exporting would only spam
-# connection errors.
+# Spins up the bundled object store + Apache Polaris-on-S3 (in-memory
+# persistence). Object storage is the only storage DuckHaven uses: Polaris vends
+# scoped credentials so the agent's DuckDB can read AND write Iceberg tables.
+# Override the bucket or image tag if needed. QUARKUS_OTEL_SDK_DISABLED stays
+# true here (unlike the compose stacks): this dev flow runs no OTel collector,
+# so exporting would only spam connection errors.
 POLARIS_IMAGE_TAG ?= 1.7.0
 POLARIS_S3_BUCKET ?= warehouse
+# Keep in step with OBJECT_STORE_IMAGE_TAG in deploy/docker-compose.yml.
+OBJECT_STORE_IMAGE_TAG ?= 1.0.0-rc.6
 
 polaris-dev:
 	docker network create dh-polaris-net >/dev/null 2>&1 || true
-	docker rm -f dh-polaris-dev dh-minio-dev >/dev/null 2>&1 || true
-	docker run -d --name dh-minio-dev --network dh-polaris-net -p 9000:9000 \
-		-e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
-		quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
-	@echo "Waiting for MinIO..."
-	@for i in $$(seq 1 20); do \
-		curl -sf http://localhost:9000/minio/health/live >/dev/null 2>&1 && break; sleep 1; \
+	docker rm -f dh-polaris-dev dh-objectstore-dev >/dev/null 2>&1 || true
+	docker run -d --name dh-objectstore-dev --network dh-polaris-net -p 9000:9000 \
+		-e RUSTFS_ACCESS_KEY=duckhaven -e RUSTFS_SECRET_KEY=duckhaven \
+		-e RUSTFS_VOLUMES=/data -e RUSTFS_ADDRESS=":9000" -e RUSTFS_REGION=us-east-1 \
+		rustfs/rustfs:$(OBJECT_STORE_IMAGE_TAG)
+	@echo "Waiting for the object store..."
+	@for i in $$(seq 1 30); do \
+		curl -sf http://localhost:9000/health/ready >/dev/null 2>&1 && break; sleep 1; \
 	done
 	docker run --rm --network dh-polaris-net \
-		-e AWS_ACCESS_KEY_ID=minioadmin -e AWS_SECRET_ACCESS_KEY=minioadmin -e AWS_REGION=us-east-1 \
-		amazon/aws-cli:2.34.48 --endpoint-url http://dh-minio-dev:9000 s3 mb s3://$(POLARIS_S3_BUCKET) || true
+		-e AWS_ACCESS_KEY_ID=duckhaven -e AWS_SECRET_ACCESS_KEY=duckhaven -e AWS_REGION=us-east-1 \
+		amazon/aws-cli:2.34.48 --endpoint-url http://dh-objectstore-dev:9000 s3 mb s3://$(POLARIS_S3_BUCKET) || true
 	docker run -d --name dh-polaris-dev --network dh-polaris-net \
 		-p 8181:8181 -p 8182:8182 \
 		-e POLARIS_BOOTSTRAP_CREDENTIALS=POLARIS,root,s3cr3t \
 		-e POLARIS_REALM_CONTEXT_REALMS=POLARIS \
-		-e AWS_REGION=us-east-1 -e AWS_ACCESS_KEY_ID=minioadmin -e AWS_SECRET_ACCESS_KEY=minioadmin \
+		-e AWS_REGION=us-east-1 -e AWS_ACCESS_KEY_ID=duckhaven -e AWS_SECRET_ACCESS_KEY=duckhaven \
 		-e QUARKUS_OTEL_SDK_DISABLED=true \
 		-e 'polaris.features."SUPPORTED_CATALOG_STORAGE_TYPES"=["S3"]' \
 		-e 'polaris.features."ALLOW_INSECURE_STORAGE_TYPES"=true' \
@@ -125,20 +128,21 @@ polaris-dev:
 		sleep 2; \
 	done
 	@echo ""
-	@echo "Polaris (S3/MinIO) ready on :8181. Run integration tests with:"
+	@echo "Polaris (S3) ready on :8181. Run integration tests with:"
 	@echo "  POLARIS_BASE_URL=http://localhost:8181 POLARIS_CLIENT_ID=root POLARIS_CLIENT_SECRET=s3cr3t \\"
 	@echo "  POLARIS_S3_BUCKET=s3://$(POLARIS_S3_BUCKET) POLARIS_S3_ENDPOINT=http://localhost:9000 \\"
-	@echo "  POLARIS_S3_ENDPOINT_INTERNAL=http://dh-minio-dev:9000 make test-integration"
+	@echo "  POLARIS_S3_ENDPOINT_INTERNAL=http://dh-objectstore-dev:9000 make test-integration"
 
-# Backwards-compatible alias for the now-default MinIO+S3 stack.
+# Backwards-compatible alias for the now-default object-store + S3 stack.
 polaris-dev-s3: polaris-dev
 
 polaris-dev-down:
-	docker rm -f dh-polaris-dev dh-minio-dev >/dev/null 2>&1 || true
+	docker rm -f dh-polaris-dev dh-objectstore-dev >/dev/null 2>&1 || true
 
 # ── LocalStack (S3 + STS) for the external assume-role health/vending tests ───
-# MinIO has no STS, so the external `s3` path (Polaris assumes an IAM role to
-# vend creds) can only be exercised against LocalStack or real AWS. This brings
+# The bundled store has no STS, so the external `s3` path (Polaris assumes an
+# IAM role to vend creds) can only be exercised against LocalStack or real AWS.
+# This brings
 # up LocalStack and seeds a role + bucket; point `make polaris-dev` at it by
 # setting POLARIS_S3_ENDPOINT(_INTERNAL) to the LocalStack URL, then run the
 # tests with the printed DH_TEST_S3_* env. See docs/operations/storage-maintenance.md.

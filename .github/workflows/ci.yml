@@ -41,7 +41,7 @@ jobs:
             # The assistant ships a generated index of docs/, so a docs-only PR
             # can break the drift gate. Its own output rather than folding into
             # `python`: that one also gates the integration and cross-component
-            # jobs, and a Markdown typo does not need Postgres, Polaris and MinIO.
+            # jobs, and a Markdown typo does not need Postgres, Polaris and storage.
             docs:
               - 'docs/**'
               - 'mkdocs.yml'
@@ -162,11 +162,11 @@ jobs:
       POLARIS_BASE_URL: http://localhost:8181
       POLARIS_CLIENT_ID: root
       POLARIS_CLIENT_SECRET: s3cr3t
-      # DuckDB (in-process) reaches MinIO at the vended endpoint on localhost;
-      # Polaris (in the dh-polaris-net network started by `make polaris-dev`)
-      # reaches MinIO at the dh-minio-dev container name.
+      # DuckDB (in-process) reaches the object store at the vended endpoint on
+      # localhost; Polaris (in the dh-polaris-net network started by
+      # `make polaris-dev`) reaches it at the dh-objectstore-dev container name.
       POLARIS_S3_ENDPOINT: http://localhost:9000
-      POLARIS_S3_ENDPOINT_INTERNAL: http://dh-minio-dev:9000
+      POLARIS_S3_ENDPOINT_INTERNAL: http://dh-objectstore-dev:9000
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
@@ -176,9 +176,9 @@ jobs:
       - name: Run migrations
         run: uv run alembic upgrade head
         working-directory: api
-      # Object storage only: stands up MinIO + Polaris-on-S3 so the INSERT
+      # Object storage only: stands up the store + Polaris-on-S3 so the INSERT
       # roundtrip runs (Polaris vends scoped credentials to DuckDB).
-      - name: Start Polaris + MinIO (S3)
+      - name: Start Polaris + object store (S3)
         run: make polaris-dev
       - name: Component integration tests (API + agent)
         env:
@@ -210,14 +210,14 @@ jobs:
       POLARIS_CLIENT_ID: root
       POLARIS_CLIENT_SECRET: s3cr3t
       POLARIS_S3_ENDPOINT: http://localhost:9000
-      POLARIS_S3_ENDPOINT_INTERNAL: http://dh-minio-dev:9000
+      POLARIS_S3_ENDPOINT_INTERNAL: http://dh-objectstore-dev:9000
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
       - run: uv sync --dev
-      - name: Start Polaris + MinIO (S3)
+      - name: Start Polaris + object store (S3)
         run: make polaris-dev
       # Boots the real API + agent over the live control channel; the harness
       # applies migrations and creates the first admin itself.

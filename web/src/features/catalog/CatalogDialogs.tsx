@@ -30,7 +30,7 @@ import {
 import type { AccessMode } from "@/types/grant";
 import { cn } from "@/utils";
 
-// External, operator-owned stores. Bundled object storage (MinIO) is offered as
+// External, operator-owned stores. The bundled object storage is offered as
 // an explicit choice and maps to omitting the backend (auto-provisioned).
 const EXTERNAL_KINDS = ["s3", "adls_gen2"] as const;
 type ExternalKind = (typeof EXTERNAL_KINDS)[number];
@@ -156,7 +156,7 @@ export function CreateCatalogDialog({
               onChange={(e) => setBackendChoice(e.target.value)}
               className="h-9 w-full rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 text-sm"
             >
-              <option value={BUNDLED}>Bundled object storage (MinIO)</option>
+              <option value={BUNDLED}>Bundled object storage</option>
               {backends
                 .filter((b) => b.kind !== "object_store")
                 .map((b) => (

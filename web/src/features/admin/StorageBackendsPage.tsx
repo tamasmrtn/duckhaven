@@ -34,7 +34,7 @@ import type {
 import { cn, plural } from "@/utils";
 
 const KIND_LABELS: Record<BackendKind, string> = {
-  object_store: "Object storage (MinIO)",
+  object_store: "Object storage (bundled)",
   s3: "S3",
   adls_gen2: "ADLS Gen 2",
 };
@@ -211,7 +211,7 @@ function RegisterWizard({
               />
               {kind === "object_store" && (
                 <p className="text-2xs text-text-tertiary">
-                  Leave blank to use the bundled MinIO bucket root. A value is a
+                  Leave blank to use the bundled bucket root. A value is a
                   prefix label within that bucket.
                 </p>
               )}
@@ -322,10 +322,9 @@ function RegisterWizard({
 
             {kind === "object_store" && (
               <p className="text-sm text-text-secondary">
-                No credential needed — object storage is the bundled MinIO
-                object store, which Polaris accesses with the stack&apos;s
-                configured credentials. The Root URI is a prefix label within
-                that bucket.
+                No credential needed — this is the bundled object store, which
+                Polaris accesses with the stack&apos;s configured credentials.
+                The Root URI is a prefix label within that bucket.
               </p>
             )}
 
@@ -500,8 +499,8 @@ export function StorageBackendsPage() {
         <Banner className="mx-6 mt-3">
           <ShieldAlert className="size-3.5 text-[var(--brand-orange)]" />
           <span>
-            Object storage backends are stored in the bundled MinIO object store
-            on the control-plane host — no off-box disaster recovery by default.
+            Object storage backends are stored in the bundled object store on
+            the control-plane host — no off-box disaster recovery by default.
             Ensure off-box backups (see the runbook).
           </span>
         </Banner>

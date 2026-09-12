@@ -73,4 +73,41 @@ describe('StorageBackendsPage health check', () => {
       expect(row.querySelector('.lucide-shield-check')).toBeInTheDocument(),
     )
   })
+
+  it('offers the health check on the bundled backend too', async () => {
+    // The bundled store used to render a dash here, so a store that was down
+    // or a bucket that was never created was invisible to the operator.
+    server.use(
+      http.get('/api/admin/storage-backends', () =>
+        HttpResponse.json([
+          {
+            id: 'sb-bundled',
+            name: 'bundled',
+            kind: 'object_store',
+            root_uri: '',
+            config: null,
+            workspace_count: 0,
+            created_by: 'u-1',
+            created_at: new Date().toISOString(),
+          },
+        ]),
+      ),
+      http.post('/api/admin/storage-backends/sb-bundled/health', () =>
+        HttpResponse.json({
+          valid: false,
+          detail: 'Could not reach the bundled bucket: connection refused',
+        }),
+      ),
+    )
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: STORAGE_ROUTE })
+
+    const row = (await screen.findByText('bundled')).closest('tr')!
+    await user.click(within(row).getByRole('button', { name: /test access/i }))
+
+    // An invalid result renders the failure shield icon in the row.
+    await waitFor(() =>
+      expect(row.querySelector('.lucide-shield-x')).toBeInTheDocument(),
+    )
+  })
 })

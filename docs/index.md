@@ -1,5 +1,5 @@
 ---
-title: Self-hosted analytics platform for DuckDB teams
+title: A self-hosted data lakehouse for DuckDB
 template: home.html
 hide:
   - navigation

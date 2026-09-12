@@ -1,10 +1,9 @@
 site_name: DuckHaven
 site_description: >-
-  Self-hosted, governed DuckDB + Iceberg analytics platform for small teams —
-  collaborative worksheets, scoped access grants, service-account machine auth,
-  an AI data assistant, scheduled queries, catalog governance via Apache
-  Polaris, lakehouse maintenance, and multi-agent compute, on your own
-  infrastructure.
+  A self-hosted data lakehouse built on DuckDB, Apache Iceberg and Apache
+  Polaris — collaborative worksheets, a governed catalog, elastic compute,
+  column-level lineage, a semantic layer, scoped access grants, single sign-on,
+  and governed AI access, on your own infrastructure.
 site_url: https://tamasmrtn.github.io/duckhaven/
 repo_url: https://github.com/tamasmrtn/duckhaven
 repo_name: tamasmrtn/duckhaven

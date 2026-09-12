@@ -1,17 +1,7 @@
 # Operator scripts
 
-DuckHaven ships a few small helper scripts under `scripts/` for operators. There is no separate `duckhaven` CLI — these
-are the supported command-line helpers.
-
-## `gen-token.sh` — mint an agent bootstrap token
-
-Generates a one-time [bootstrap token](../deployment/add-agent.md) via the API, as an alternative to the admin UI.
-
-```bash
-SESSION_COOKIE=<your session cookie> ./scripts/gen-token.sh
-```
-
-`API_URL` defaults to `http://localhost:8000`. The token is printed as JSON.
+DuckHaven ships a few small helper scripts under `scripts/` for operators — things that run on the box itself, next to
+Docker and Postgres. For everything that goes through the API, use the [`dh` CLI](cli.md) instead.
 
 ## `pg-backup.sh` — back up Postgres
 

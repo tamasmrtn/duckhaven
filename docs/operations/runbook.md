@@ -46,9 +46,8 @@ initiates connections.
 
 For **each** agent host:
 
-1. In the admin UI (**Compute → Generate bootstrap**) or via
-   `SESSION_COOKIE=<cookie> scripts/gen-token.sh`, mint a bootstrap token
-   (single-use, 24 h).
+1. In the admin UI, mint a bootstrap token from **Compute → Generate
+   bootstrap** (single-use, 24 h).
 2. On the agent host, build/pull the agent image and set its `.env`:
 
    ```sh

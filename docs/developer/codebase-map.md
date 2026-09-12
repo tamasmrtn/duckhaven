@@ -180,7 +180,7 @@ then starts uvicorn; the API
 also seeds the agent bootstrap token on startup. `minio` pre-creates the
 warehouse bucket in its own entrypoint. Remote agents can still be deployed
 per host against the same control plane. `scripts/` holds operator helpers
-(`pg-backup.sh`, `gen-token.sh`).
+(`pg-backup.sh`, `assistant-mine-feedback.py`, `wait-for-stack.sh`).
 
 ---
 

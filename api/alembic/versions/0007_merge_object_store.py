@@ -17,7 +17,7 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     # local_fs and nas were always functionally identical: both prefix labels
-    # under the bundled MinIO bucket. Collapse them into one honest kind.
+    # under the bundled object-store bucket. Collapse them into one honest kind.
     # root_uri is left untouched so each workspace's Polaris base location is
     # byte-for-byte stable.
     op.execute(

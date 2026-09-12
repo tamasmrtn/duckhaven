@@ -6,8 +6,8 @@ worse, as silently wrong data. These tests skip all of that and check the six
 behaviours DuckDB's httpfs actually depends on, against whatever store the
 deployment bundles.
 
-They exist because the bundled store was swapped from MinIO to RustFS while
-RustFS was still pre-GA. The specific hazards each case covers:
+They exist because the bundled store is swapped out from time to time, and the
+current one is pinned to a pre-GA release. The specific hazards each case covers:
 
 - A ranged read that is short, truncated or mis-bounded corrupts a Parquet read
   rather than failing it. DuckDB issues a HEAD for ``Accept-Ranges`` and then a

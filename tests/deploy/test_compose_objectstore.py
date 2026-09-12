@@ -1,17 +1,14 @@
 """Bundled object-store wiring in the compose files.
 
-The bundled store (RustFS) replaced MinIO, and three things about that swap are
-easy to regress silently and expensive to discover at runtime:
+Two things about the bundled store are easy to regress silently in the manifest
+and expensive to discover at runtime:
 
 1. The store must have a healthcheck and the services that need it must wait for
-   it. RustFS answers 503 on the S3 plane until storage, IAM and lock quorum are
-   all up, so starting Polaris against a merely-running container races.
-2. Buckets can no longer be created by making a directory — RustFS stores through
-   its erasure backend — so the bootstrap one-shot must exist and must complete
+   it. It answers 503 on the S3 plane until storage, IAM and lock quorum are all
+   up, so starting Polaris against a merely-running container races.
+2. Buckets cannot be created by making a directory — the store writes through an
+   erasure backend — so the bootstrap one-shot must exist and must complete
    before Polaris starts.
-3. The `minio` network alias must survive. Catalogs created before the swap have
-   `http://minio:9000` persisted in their Polaris storageConfigInfo, and
-   ensure_polaris_catalog never rewrites an existing catalog's storage config.
 
 Scope note: this asserts the *manifest*, like test_compose_sandbox.py. That the
 store actually serves those endpoints is covered by the integration suite.
@@ -71,12 +68,12 @@ def test_bootstrap_waits_for_health_and_does_not_restart(name, compose):
 
 
 @pytest.mark.parametrize(("name", "compose"), COMPOSE_FILES)
-def test_legacy_minio_alias_is_kept_on_both_networks(name, compose):
-    """Catalogs created before the swap resolve the store as `minio`, and the
-    agent only joins duckhaven_internal — so one network is not enough."""
+def test_object_store_is_reachable_from_the_agent_network(name, compose):
+    """The agent joins duckhaven_internal alone, so the store has to be on it as
+    well as on default — one network is not enough."""
     networks = compose["services"]["objectstore"]["networks"]
     for net in ("default", "duckhaven_internal"):
-        assert "minio" in networks[net]["aliases"], f"{name}:{net}"
+        assert net in networks, f"{name}:{net}"
 
 
 @pytest.mark.parametrize(("name", "compose"), COMPOSE_FILES)
@@ -87,8 +84,9 @@ def test_new_buckets_are_held_at_strict_durability(name, compose):
     assert env["RUSTFS_NEW_BUCKET_DURABILITY_MODE"] == "strict", name
 
 
-def test_no_service_still_named_minio():
-    """The rename is only complete if nothing answers to the old name."""
+def test_the_object_store_is_named_for_what_it_is():
+    """Naming the service after a vendor is what made the last swap a repo-wide
+    sweep; the next one should be an image-tag change."""
     for name, compose in COMPOSE_FILES:
-        assert "minio" not in compose["services"], name
-        assert "minio_data" not in (compose.get("volumes") or {}), name
+        assert "objectstore" in compose["services"], name
+        assert "objectstore_data" in (compose.get("volumes") or {}), name

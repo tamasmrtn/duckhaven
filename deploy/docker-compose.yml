@@ -33,19 +33,9 @@ services:
     restart: unless-stopped
     # Joins the agent's isolated network in addition to `default`, so the
     # agent can reach it while this service keeps its own outbound access.
-    #
-    # The `minio` alias is for catalogs created before this service was RustFS:
-    # ensure_polaris_catalog only creates catalogs that do not yet exist, so
-    # their storageConfigInfo still carries http://minio:9000 and Polaris vends
-    # that endpoint to DuckDB. Both networks need it — the agent joins only
-    # duckhaven_internal.
     networks:
-      default:
-        aliases:
-          - minio
-      duckhaven_internal:
-        aliases:
-          - minio
+      - default
+      - duckhaven_internal
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -74,12 +64,12 @@ services:
       retries: 20
       start_period: 15s
 
-  # One-shot: create the warehouse bucket. RustFS stores through its erasure
-  # backend (xl.meta), so — unlike MinIO's filesystem layout — a top-level
-  # directory is not a bucket and the bucket must be created over the S3 API.
-  # RustFS has no env for this (rustfs#2179 was closed as out of scope); their
-  # own `rc` CLI is the documented answer. Idempotent: `rc ls` succeeds only
-  # when the bucket already exists, so re-running `up`/`start` is a no-op.
+  # One-shot: create the warehouse bucket. The store writes through an erasure
+  # backend (xl.meta), so a top-level directory is not a bucket — the bucket has
+  # to be created over the S3 API. RustFS has no env for this (rustfs#2179 was
+  # closed as out of scope); their own `rc` CLI is the documented answer.
+  # Idempotent: `rc ls` succeeds only when the bucket already exists, so
+  # re-running `up`/`start` is a no-op.
   objectstore-bootstrap:
     image: rustfs/rc:${OBJECT_STORE_CLI_IMAGE_TAG:-v0.1.35}
     depends_on:

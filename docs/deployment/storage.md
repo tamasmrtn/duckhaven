@@ -124,6 +124,6 @@ docker run --rm --network deploy_default rustfs/rc:v0.1.35 sh -c "
 Confirm a table reads, then remove the old container (`docker rm -f dh-minio-old`). Keep the `minio_data` volume until
 you are satisfied; deleting it is the irreversible step.
 
-Catalogs created before the upgrade still have `http://minio:9000` recorded in Polaris — DuckHaven only writes a
-catalog's storage configuration when it first creates it. The `objectstore` service therefore answers to `minio` as a
-network alias, so those catalogs keep resolving and need no edit.
+Catalogs created before the upgrade have the old endpoint recorded in Polaris, which is what Polaris vends to DuckDB.
+You do not need to edit them: DuckHaven reconciles a catalog's stored endpoints with the configured ones the next time
+the catalog is browsed, so each one heals itself on first use.

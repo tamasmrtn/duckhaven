@@ -428,13 +428,9 @@ function Checkbox({
   );
 }
 
-function HealthCell({ id, kind }: { id: string; kind: BackendKind }) {
+function HealthCell({ id }: { id: string }) {
   const check = useCheckStorageBackendHealth();
   const [result, setResult] = useState<StorageBackendHealth | null>(null);
-
-  if (kind === "object_store") {
-    return <span className="text-xs text-text-tertiary">—</span>;
-  }
 
   async function run() {
     try {
@@ -557,7 +553,7 @@ export function StorageBackendsPage() {
                     {b.root_uri}
                   </td>
                   <td className="px-4 py-2">
-                    <HealthCell id={b.id} kind={b.kind} />
+                    <HealthCell id={b.id} />
                   </td>
                   <td className="px-4 py-2 text-xs text-text-secondary font-tabular">
                     {b.workspace_count} ws

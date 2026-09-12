@@ -13,13 +13,20 @@ DuckHaven API (which serves both the REST API and the web UI on port 8000). No
 ## Install
 
 ```bash
-curl -O https://raw.githubusercontent.com/tamasmrtn/duckhaven/main/deploy/docker-compose.yml
+curl -fsSL https://github.com/tamasmrtn/duckhaven/archive/refs/heads/main.tar.gz \
+  | tar xz --strip-components=2 duckhaven-main/deploy
 docker compose up -d
 ```
 
-On first boot the stack auto-generates `POSTGRES_PASSWORD`, `SECRET_KEY`, and
-a one-shot first-admin setup token, and applies Alembic migrations
-automatically. No `.env` editing required.
+On first boot the stack generates `SECRET_KEY` and a one-shot first-admin
+setup token, and applies Alembic migrations automatically. No `.env` editing
+required.
+
+!!! warning "Set `POSTGRES_PASSWORD` before exposing anything"
+    Postgres falls back to the default password `duckhaven` when
+    `POSTGRES_PASSWORD` is unset — a published default, not a generated one.
+    Set it in the environment before the first boot on any deployment that is
+    not a private box you trust.
 
 ## Create the first admin
 

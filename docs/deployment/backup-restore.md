@@ -2,8 +2,9 @@
 
 DuckHaven's only durable state is the Postgres volume (`postgres_data`),
 which holds users, workspaces, saved queries, audit log, agent registrations,
-and the Polaris metastore (in the dedicated `polaris` database). The `secrets` volume holds `SECRET_KEY` and
-`POSTGRES_PASSWORD`; you need both volumes to restore a working install.
+and the Polaris metastore (in the dedicated `polaris` database). The `api_data` volume holds the generated
+`SECRET_KEY` (under `/var/duckhaven/secrets`); you need both volumes to restore a working install. Losing
+`SECRET_KEY` invalidates every session and access token, so back it up with the database, not after it.
 
 Table data lives on your **storage backends** (bundled object storage, S3,
 ADLS) — back those up via their own tooling.
@@ -24,13 +25,16 @@ docker compose exec postgres pg_dump -U duckhaven polaris | gzip > polaris-$(dat
 
 ### Secrets
 
+`SECRET_KEY` lives inside the `api_data` volume, so archive that volume:
+
 ```bash
-docker run --rm -v deploy_secrets:/secrets -v "$PWD":/out alpine \
-    tar czf /out/duckhaven-secrets-$(date +%F).tgz -C /secrets .
+docker run --rm -v deploy_api_data:/data -v "$PWD":/out alpine \
+    tar czf /out/duckhaven-api-data-$(date +%F).tgz -C /data .
 ```
 
-(Replace `deploy_secrets` with the actual volume name from `docker volume ls`
-if the compose project isn't named `deploy`.)
+(Replace `deploy_api_data` with the actual volume name from `docker volume ls`
+if the compose project isn't named `deploy`. There is no separate `secrets`
+volume — naming one creates an empty volume and archives nothing.)
 
 ## Restore
 
@@ -48,9 +52,9 @@ docker compose up -d
 ### Secrets (restore)
 
 ```bash
-docker volume create deploy_secrets
-docker run --rm -v deploy_secrets:/secrets -v "$PWD":/in alpine \
-    tar xzf /in/duckhaven-secrets-2026-03-05.tgz -C /secrets
+docker volume create deploy_api_data
+docker run --rm -v deploy_api_data:/data -v "$PWD":/in alpine \
+    tar xzf /in/duckhaven-api-data-2026-03-05.tgz -C /data
 ```
 
 ## Postgres major-version upgrade

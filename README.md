@@ -261,7 +261,8 @@ the UI design system, see [docs/developer/design-system.md](docs/developer/desig
 ## Quickstart
 
 ```bash
-curl -O https://raw.githubusercontent.com/tamasmrtn/duckhaven/main/deploy/docker-compose.yml
+curl -fsSL https://github.com/tamasmrtn/duckhaven/archive/refs/heads/main.tar.gz \
+  | tar xz --strip-components=2 duckhaven-main/deploy
 docker compose up -d
 docker compose cp api:/var/duckhaven/setup_token ./setup_token && cat ./setup_token
 # open http://<host>:8000 and paste the token into the setup screen

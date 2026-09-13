@@ -77,6 +77,16 @@ QUERY_ROWS_DECODE = Histogram(
     buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5),
 )
 
+QUERY_ROWS_PROXY = Histogram(
+    "duckhaven_query_rows_proxy_seconds",
+    "Time for the control plane to fetch one result page from the agent.",
+    ["replica_id"],
+    # The API -> agent hop, which is the other half of serving a result page and was
+    # the only part of it with no instrument. Same buckets as the decode it pairs
+    # with, so the two can be read against each other.
+    buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5),
+)
+
 HTTP_REQUESTS = Counter(
     "duckhaven_http_requests",
     "HTTP requests served by the REST API.",
@@ -86,6 +96,12 @@ HTTP_DURATION = Histogram(
     "duckhaven_http_request_duration_seconds",
     "HTTP request latency of the REST API.",
     ["replica_id", "method", "route"],
+    # Explicit, and weighted toward the low millisecond range. The prometheus_client
+    # default starts at 5ms and jumps 10 -> 25 -> 50, which cannot resolve anything
+    # about a request that costs ~19ms in total: every interesting movement lands
+    # inside one bucket. Most routes here answer in single-digit milliseconds and the
+    # work is to shave milliseconds off them, so the resolution has to be there.
+    buckets=(0.001, 0.0025, 0.005, 0.0075, 0.01, 0.015, 0.02, 0.03, 0.05, 0.1, 0.25, 1, 5),
 )
 
 POLARIS_REQUESTS = Counter(
@@ -240,6 +256,16 @@ def record_rows_decode(seconds: float, fmt: str = "json") -> None:
     links) is measured against today's JSON decode rather than replacing it.
     """
     QUERY_ROWS_DECODE.labels(settings.replica_id, fmt).observe(seconds)
+
+
+def record_rows_proxy(seconds: float) -> None:
+    """Time spent fetching one result page from the agent, including connection setup.
+
+    Separate from the decode it precedes: they have different causes and different
+    fixes, and reporting them together hid that one of them builds a fresh HTTP
+    client per call.
+    """
+    QUERY_ROWS_PROXY.labels(settings.replica_id).observe(seconds)
 
 
 def record_statement_policy_rejection(rule: str) -> None:

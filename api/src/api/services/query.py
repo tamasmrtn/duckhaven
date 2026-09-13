@@ -4,6 +4,7 @@ import datetime as dt
 import logging
 import os
 import tempfile
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -20,6 +21,7 @@ from api.metrics import (
     record_query_queue_rejection,
     record_query_queue_wait,
     record_query_submitted,
+    record_rows_proxy,
     record_sql_statement,
 )
 from api.models.agent import Agent
@@ -383,8 +385,16 @@ async def proxy_rows(
     headers: dict[str, str] = {}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    async with httpx.AsyncClient() as client:
-        return await client.get(url, params=params, headers=headers)
+    # Timed here rather than at the call sites so all three of them (the rows route,
+    # the table sample, the SQL-metadata reader) are covered by one instrument, and
+    # so the measurement includes building the client -- which is the part worth
+    # watching, since a fresh one is constructed per call.
+    started = time.perf_counter()
+    try:
+        async with httpx.AsyncClient() as client:
+            return await client.get(url, params=params, headers=headers)
+    finally:
+        record_rows_proxy(time.perf_counter() - started)
 
 
 async def agent_session_token(db: AsyncSession, agent_id: uuid.UUID) -> str | None:

@@ -35,6 +35,9 @@ _TERMINAL = ("closed", "expired", "failed")
 # States the open call is still waiting on: `pending` (compute starting, no agent
 # bound yet) and `opening` (bound, awaiting the agent's ack).
 _WAITING = ("pending", "opening")
+# A statement's non-terminal states, the ones a completion wait sits through.
+# Mirrors the SQL connector's own `_PENDING`, which drives its poll loop.
+_STATEMENT_PENDING = ("queued", "running")
 
 
 def _catalog_descriptors(catalogs: list[Catalog]) -> list[dict[str, object]]:
@@ -279,3 +282,59 @@ async def await_session_open(
         if session.status not in _WAITING:
             break
     return session
+
+
+async def await_query_done(
+    db: AsyncSession,
+    query: Query,
+    timeout_s: float,
+    poll_interval_s: float = 0.05,
+    poll_max_s: float = 0.5,
+) -> Query:
+    """Block until the statement reaches a terminal state, or ``timeout_s`` runs out.
+
+    The sibling of :func:`await_session_open`, for the other thing a client would
+    otherwise sit and poll for. On timeout the row is left alone and the caller
+    hands it back for the client to poll — a statement is never cancelled for
+    outliving a wait.
+
+    **Woken by the completion event, not by the poll.** QUERY_DONE arrives on the
+    agent's WebSocket, so this process already learns of completion the moment it
+    happens; ``query.completion_waiter`` turns that into an event and each sleep
+    below ends early on it. Polling alone would have been a mistake worth naming:
+    the first cut of this did exactly that, and a benchmark showed statement wall
+    times quantised onto *this* function's backoff grid — the same staircase the
+    wait exists to remove, moved from the client to the server and, for a statement
+    landing just past a step, worse than before.
+
+    The poll remains as the backstop for the case the event cannot cover: the
+    agent's socket owned by another replica, or a statement failed by the reaper
+    rather than by the agent. It backs off because in those cases it may run for
+    the whole budget.
+
+    ``await_session_open``'s connection discipline applies and matters more here,
+    since this waits on every statement rather than only a cold start: the
+    transaction is rolled back before each sleep so the pooled connection goes back
+    for the duration. Holding it would cap concurrent statements at ``db_pool_size
+    + db_max_overflow`` and deadlock a `dbt run` with more threads than that.
+    """
+    from api.services.query import completion_waiter
+
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + timeout_s
+    interval = poll_interval_s
+    with completion_waiter(query.id) as done:
+        while True:
+            await db.refresh(query)
+            if query.status not in _STATEMENT_PENDING:
+                break
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break
+            # After the read, not before it: `refresh` opens a transaction, and
+            # leaving it open across the wait is what pins the pooled connection.
+            await db.rollback()
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(done.wait(), timeout=min(interval, remaining))
+            interval = min(poll_max_s, interval * 1.5)
+    return query

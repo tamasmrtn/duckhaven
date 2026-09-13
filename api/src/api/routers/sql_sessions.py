@@ -490,14 +490,22 @@ async def get_session(
 async def run_statement(
     session_id: uuid.UUID,
     body: SqlStatementCreate,
+    response: Response,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> Query:
-    """Run a statement on this session's DuckDB connection. 202 with a query id.
+    """Run a statement on this session's DuckDB connection. 200 if it finished
+    within `wait_timeout_s`, 202 with a query id if it is still running.
 
     Unlike `POST /workspaces/{workspace}/queries`, this reuses one held connection, so
     temp tables, `SET`s and attached catalogs persist between statements. 409 if
-    the session is not open."""
+    the session is not open.
+
+    The call blocks for up to `wait_timeout_s` (server default
+    `SQL_STATEMENT_WAIT_TIMEOUT_S`, `0` to never block) so a client learns the
+    statement finished when it does, instead of on its own next poll. A statement
+    that outlives the budget comes back 202 and is polled through
+    `GET /queries/{id}` as before — it is never cancelled for outrunning a wait."""
     _require_enabled()
     session = await _load_session(db, session_id, user)
     if session.status != "open":
@@ -582,6 +590,20 @@ async def run_statement(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Agent not connected"
         )
+
+    wait_s = (
+        settings.sql_statement_wait_timeout_s
+        if body.wait_timeout_s is None
+        else body.wait_timeout_s
+    )
+    if wait_s > 0:
+        await session_service.await_query_done(db, query, wait_s)
+    if query.status not in ("queued", "running"):
+        # Finished inside the budget: answer 200 with the terminal row rather than
+        # the decorator's 202, which promises a result that has not happened yet.
+        # A failed statement is still a completed one -- the error is on the row,
+        # and the client reads it exactly where it would have after polling.
+        response.status_code = status.HTTP_200_OK
     return query
 
 

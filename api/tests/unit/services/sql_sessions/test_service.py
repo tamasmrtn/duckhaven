@@ -250,3 +250,186 @@ async def test_await_session_open_releases_the_connection_between_polls(db_engin
         await sampler
 
     assert not any(in_transaction), "the poll held a transaction open between polls"
+
+
+async def test_await_query_done_returns_when_the_statement_finishes(db_engine):
+    """The wait must sit through `queued` *and* `running`. A statement is dispatched
+    queued and only becomes running on the agent's ack, so returning at the first
+    non-queued row would hand back a statement that has not executed yet.
+
+    Nothing here calls ``signal_completion``, so this is also the coverage for the
+    poll backstop — the path taken when the agent's socket is owned by another
+    replica, or a statement is failed by the reaper rather than by the agent."""
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.services.sql_sessions.service import await_query_done
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    async with factory() as db:
+        session = await _open_session(db)
+        q = Query(
+            workspace_id=session.workspace_id,
+            agent_id=session.agent_id,
+            sql="select 1",
+            status="queued",
+            session_id=session.id,
+        )
+        db.add(q)
+        await db.commit()
+        query_id = q.id
+
+    async def advance():
+        # Both transitions land in a *different* DB session, exactly as the
+        # STATEMENT_ACK and QUERY_DONE handlers do on the websocket receive loop.
+        await asyncio.sleep(0.05)
+        async with factory() as other:
+            row = await other.get(Query, query_id)
+            row.status = "running"
+            await other.commit()
+        await asyncio.sleep(0.05)
+        async with factory() as other:
+            row = await other.get(Query, query_id)
+            row.status = "done"
+            row.duration_ms = 42
+            await other.commit()
+
+    async with factory() as db:
+        query = await db.get(Query, query_id)
+        mover = asyncio.create_task(advance())
+        await await_query_done(db, query, timeout_s=5.0)
+        await mover
+
+    assert query.status == "done"
+    assert query.duration_ms == 42
+
+
+async def test_await_query_done_leaves_a_slow_statement_running(db_engine):
+    """A statement that outlives the budget is handed back untouched, for the client
+    to poll. Cancelling it -- the other thing a wait could do on expiry -- would
+    destroy work the client can still collect."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.services.sql_sessions.service import await_query_done
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    async with factory() as db:
+        session = await _open_session(db)
+        q = Query(
+            workspace_id=session.workspace_id,
+            agent_id=session.agent_id,
+            sql="select 1",
+            status="running",
+            session_id=session.id,
+        )
+        db.add(q)
+        await db.commit()
+        query_id = q.id
+
+    async with factory() as db:
+        query = await db.get(Query, query_id)
+        await await_query_done(db, query, timeout_s=0.3)
+        assert query.status == "running"
+
+    async with factory() as db:
+        assert (await db.get(Query, query_id)).status == "running"
+
+
+async def test_await_query_done_releases_the_connection_between_polls(db_engine):
+    """The wait must not hold its pooled connection idle-in-transaction. This one
+    runs on every statement rather than only on a cold start, so holding would cap
+    concurrent statements at `db_pool_size + db_max_overflow` and deadlock a dbt run
+    with more threads than that."""
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.services.sql_sessions.service import await_query_done
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    async with factory() as db:
+        session = await _open_session(db)
+        q = Query(
+            workspace_id=session.workspace_id,
+            agent_id=session.agent_id,
+            sql="select 1",
+            status="running",
+            session_id=session.id,
+        )
+        db.add(q)
+        await db.commit()
+        query_id = q.id
+
+    in_transaction: list[bool] = []
+
+    async with factory() as db:
+        query = await db.get(Query, query_id)
+
+        async def sample():
+            # Sample well after the first poll, so a transaction opened by `refresh`
+            # and never ended would still be open here.
+            for _ in range(5):
+                await asyncio.sleep(0.15)
+                in_transaction.append(db.in_transaction())
+
+        sampler = asyncio.create_task(sample())
+        await await_query_done(db, query, timeout_s=1.0)
+        await sampler
+
+    assert not any(in_transaction), "the wait held a transaction open between polls"
+
+
+async def test_await_query_done_returns_on_the_completion_event_not_the_poll(db_engine):
+    """The wait must be woken by QUERY_DONE, not discover it on its own backoff.
+
+    Regression test for the first cut of this, which only polled: a benchmark found
+    statement wall times quantised onto this function's backoff grid -- the client's
+    poll staircase moved to the server, and for a statement landing just past a step,
+    slower than before the wait existed.
+
+    The event fires 100ms in, by which point the backstop poll has backed off past
+    its 50ms opening interval. Returning inside 100ms + slack, rather than on the
+    next grid point, is what says the event did it.
+    """
+    import asyncio
+    import time
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.services.query import signal_completion
+    from api.services.sql_sessions.service import await_query_done
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    async with factory() as db:
+        session = await _open_session(db)
+        q = Query(
+            workspace_id=session.workspace_id,
+            agent_id=session.agent_id,
+            sql="select 1",
+            status="running",
+            session_id=session.id,
+        )
+        db.add(q)
+        await db.commit()
+        query_id = q.id
+
+    async def finish():
+        await asyncio.sleep(0.1)
+        async with factory() as other:
+            row = await other.get(Query, query_id)
+            row.status = "done"
+            await other.commit()
+        # Exactly the order handle_agent_frame uses: commit, then wake.
+        signal_completion(query_id)
+
+    async with factory() as db:
+        query = await db.get(Query, query_id)
+        started = time.monotonic()
+        mover = asyncio.create_task(finish())
+        await await_query_done(db, query, timeout_s=5.0, poll_interval_s=0.05, poll_max_s=5.0)
+        elapsed = time.monotonic() - started
+        await mover
+
+    assert query.status == "done"
+    assert elapsed < 0.4, f"woke on the poll grid, not the event ({elapsed:.3f}s)"

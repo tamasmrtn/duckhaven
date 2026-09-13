@@ -216,6 +216,19 @@ class Settings(BaseSettings):
     # Fallback budget for statements with no recorded timeout_s (rows predating
     # the column). Mirrors the agent's own default.
     sql_statement_default_timeout_s: float = 600.0
+    # How long the statement endpoints hold a request waiting for the statement to
+    # finish, so a client learns of completion when it happens rather than on its
+    # next poll. Measured: a client polling on its own backoff observed a 646ms
+    # statement at 812ms and spent four round trips doing it; roughly half of
+    # DuckHaven's per-statement overhead was the client sleeping (#289).
+    #
+    # Much shorter than sql_session_wait_timeout_s on purpose — that one waits on a
+    # cold container start, this one on a statement whose median is under a second.
+    # 10s also sits well inside the 60s idle default of nginx and most load
+    # balancers, so no proxy in front of the API has to be retuned for it.
+    sql_statement_wait_timeout_s: float = 10.0
+    # Ceiling on what a client may ask for via `wait_timeout_s`.
+    sql_statement_max_wait_timeout_s: float = 60.0
 
     # ── Elastic compute (scale-to-zero agents) ────────────────────────────────
     # OFF by default: an operator enables it to let the control plane provision

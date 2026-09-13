@@ -30,7 +30,8 @@ This page names the settings that shape a session's behaviour but not their valu
    connection. A statement is recorded as an ordinary query row — `queued`, then `running` once the agent acknowledges
    receipt, then a terminal `done`/`failed` — so you poll and fetch it through the same
    `GET /api/queries/{query_id}` and `/rows` endpoints as any query, and it appears in the
-   audit history tagged to its session.
+   audit history tagged to its session. Most statements never need that poll, because the call
+   [waits for them to finish](#waiting-for-a-statement) first.
 3. **Close** — `DELETE /api/sql/sessions/{session_id}`. The agent drops the connection and
    frees the compute slot it held.
 
@@ -83,6 +84,47 @@ at `ELASTIC_PROVISIONING_DEADLINE_S`, with close reason `provisioning_timeout`.
 Naming an idle-terminated elastic agent explicitly starts *that* agent and parks the session for it,
 rather than failing — see
 [Starting a terminated agent by naming it](elastic-compute.md#starting-a-terminated-agent-by-naming-it).
+
+## Waiting for a statement
+
+Running a statement is asynchronous underneath: the API hands it to the agent over a WebSocket and
+the agent reports back when it is done. A client could discover that by polling
+`GET /api/queries/{query_id}`, but polling means sleeping, and sleeping means learning late — a
+client backing off between polls routinely spent longer waiting to *notice* a statement had
+finished than the statement took to run.
+
+So the submit call waits for it. `POST /api/sql/sessions/{session_id}/statements` holds the response
+for up to `SQL_STATEMENT_WAIT_TIMEOUT_S` (10 seconds by default), and answers as soon as the
+statement reaches a terminal state:
+
+| Outcome | Status | Body |
+| --- | --- | --- |
+| Finished within the budget | `200` | The finished statement — `done` or `failed`, with its timings |
+| Still running when the budget ran out | `202` | The statement as it stands, to poll as before |
+
+A `failed` statement still answers `200`: it *completed*, and its error is on the row, exactly where
+a polling client would have read it. `202` means only "not finished yet".
+
+Per request, `wait_timeout_s` overrides the budget — `0` never blocks and reproduces the older
+behaviour of always answering `202`. It is capped by `SQL_STATEMENT_MAX_WAIT_TIMEOUT_S`; asking for
+more is a `422`.
+
+Nothing about this is required of a client. One that ignores the field and polls anyway still works;
+it just finds the statement already finished on its first look. And a statement that outlives the
+budget is never cancelled for it — cancelling work the client can still collect would be the wrong
+trade.
+
+!!! warning "Set the budget above your statements, or set it to zero"
+    A budget most statements *outlive* is worse than no wait at all: the call is held for the
+    whole budget, the statement is handed back still running, and the client polls for it anyway
+    — so you pay the hold and keep the polling. Measured at 48-way concurrency, a 1-second budget
+    ran **27% slower** than `0`. The 10-second default clears ordinary interactive statements
+    comfortably; if yours routinely run longer, raise it rather than leaving it just under them.
+
+For that longer tail, `GET /api/queries/{query_id}` takes the same `wait_timeout_s` as a query
+parameter, so a client following a slow statement can keep waiting rather than fall back to
+sleeping. It is **opt-in and defaults to `0`** there, because that route is also what the worksheet
+refreshes several times a second and what the audit history reads; neither wants a held request.
 
 ## Statement delivery and deadlines
 

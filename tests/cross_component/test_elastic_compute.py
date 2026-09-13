@@ -152,7 +152,9 @@ async def test_session_cold_start_opens_when_compute_arrives(
     stmt = await elastic_client.post(
         f"/api/sql/sessions/{session['id']}/statements", json={"sql": "SELECT 42 AS answer"}
     )
-    assert stmt.status_code == 202, stmt.text
+    # 200 (finished inside the statement wait) or 202 (still running) -- the poll
+    # below is what decides the outcome.
+    assert stmt.status_code in (200, 202), stmt.text
     done = await _poll(lambda: _finished(elastic_client, stmt.json()["id"]), timeout=90.0)
     assert done is not None and done["status"] == "done", done
     rows = (await elastic_client.get(f"/api/queries/{stmt.json()['id']}/rows")).json()

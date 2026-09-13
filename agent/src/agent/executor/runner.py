@@ -70,6 +70,30 @@ _PROFILE_METRICS = (
 )
 _PROFILE_SETTINGS_JSON = json.dumps({m: "true" for m in _PROFILE_METRICS})
 
+
+def _engine_major() -> int:
+    """Major version of the DuckDB *engine*, read from `version()`.
+
+    Deliberately not `duckdb.__version__`: the 2.0 preview wheels were published
+    on PyPI as `1.6.0.devN` for months while the engine underneath already
+    reported `v2.0.0-alphaN`, so the packaging version cannot be trusted to
+    select behaviour.
+    """
+    with duckdb.connect() as conn:
+        return int(conn.execute("select version()").fetchone()[0].lstrip("v").split(".")[0])
+
+
+# DuckDB 2.0 removed `custom_profiling_settings` (a deprecation warning in
+# alpha38615, an "unrecognized configuration parameter" by alpha41344) in favour
+# of `tracked_metrics`, which is VARCHAR[] rather than a JSON string.
+_PROFILE_USES_TRACKED_METRICS = _engine_major() >= 2
+# `tracked_metrics` takes *glob patterns over the 2.0 grouped metric names*
+# ("A list of metric glob patterns to enable for collection (e.g.
+# ['query.*', 'optimizer.*'])"), not 1.5.5's flat uppercase names. Passing the
+# old names is accepted silently and matches nothing, which disables profiling
+# entirely with no error — so these four groups, not _PROFILE_METRICS.
+_PROFILE_METRIC_GLOBS = "['query.*', 'system.*', 'io.*', 'operator.*']"
+
 # Fixed identifier for the per-connection iceberg OAuth2 secret. Each catalog is
 # ATTACHed under its own slug alias (multi-attach), not a single fixed alias.
 _ICEBERG_SECRET = "dh_iceberg"
@@ -464,20 +488,27 @@ def _attach_catalogs(
     # calling inject_trace_context() here would silently see no active span.
     # None when no SDK is configured or no span was active: DuckDB behaves
     # exactly as before.
+    # CREATE SECRET does not accept bind parameters on DuckDB 2.0 ("Not
+    # implemented Error: Unrecognized expression type PARAMETER") — the same
+    # restriction ATTACH has always had, see the comment below. Inline escaped
+    # literals instead; 1.5.5 accepts them too, so this is version-agnostic.
     if trace_headers:
+        headers_map = ", ".join(
+            f"'{k.replace(chr(39), chr(39) * 2)}': '{v.replace(chr(39), chr(39) * 2)}'"
+            for k, v in trace_headers.items()
+        )
+        scope = endpoint.replace("'", "''")
         conn.execute(
             f"CREATE OR REPLACE SECRET {_TRACE_HEADERS_SECRET} "
-            "(TYPE HTTP, EXTRA_HTTP_HEADERS ?, SCOPE ?)",
-            [trace_headers, endpoint],
+            f"(TYPE HTTP, EXTRA_HTTP_HEADERS MAP {{{headers_map}}}, SCOPE '{scope}')"
         )
+    client_id = str(polaris["client_id"]).replace("'", "''")
+    client_secret = str(polaris["client_secret"]).replace("'", "''")
+    oauth_uri = f"{endpoint}/api/catalog/v1/oauth/tokens".replace("'", "''")
     conn.execute(
         f"CREATE SECRET {_ICEBERG_SECRET} "
-        "(TYPE ICEBERG, CLIENT_ID ?, CLIENT_SECRET ?, OAUTH2_SERVER_URI ?)",
-        [
-            polaris["client_id"],
-            polaris["client_secret"],
-            f"{endpoint}/api/catalog/v1/oauth/tokens",
-        ],
+        f"(TYPE ICEBERG, CLIENT_ID '{client_id}', CLIENT_SECRET '{client_secret}', "
+        f"OAUTH2_SERVER_URI '{oauth_uri}')"
     )
     # ATTACH does not accept bind parameters, so inline the warehouse name, alias
     # and endpoint as quoted literals (quotes escaped). None are user-supplied SQL
@@ -548,7 +579,13 @@ _ALLOWED_CONFIGS = (
     "TimeZone",
     "enable_profiling",
     "profiling_output",
-    "custom_profiling_settings",
+) + (
+    # The profiling-settings option is named differently per major version and
+    # each build rejects the other's name. This must be exact, not a union:
+    # `SET allowed_configs` rejects the *whole list* if it names an option this
+    # build doesn't know, and when that fails `SET lock_configuration=true` is
+    # never reached — the sandbox fails open with only a logged warning.
+    ("tracked_metrics",) if _PROFILE_USES_TRACKED_METRICS else ("custom_profiling_settings",)
 )
 
 
@@ -795,7 +832,10 @@ def _run_one_statement(
             if enable_profiling:
                 conn.execute("PRAGMA enable_profiling='json'")
                 conn.execute(f"PRAGMA profiling_output='{profile_path}'")
-                conn.execute(f"PRAGMA custom_profiling_settings='{_PROFILE_SETTINGS_JSON}'")
+                if _PROFILE_USES_TRACKED_METRICS:
+                    conn.execute(f"SET tracked_metrics = {_PROFILE_METRIC_GLOBS}")
+                else:
+                    conn.execute(f"PRAGMA custom_profiling_settings='{_PROFILE_SETTINGS_JSON}'")
             # Materialize through the relational API rather than a string-built
             # `COPY ({sql}) TO …`. `COPY`'s source may only be a table name or a
             # query, so every other shape `_is_single_select` admits — `DESCRIBE`,

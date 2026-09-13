@@ -164,12 +164,67 @@ def parse_explain(physical_plan: list[dict[str, Any]] | dict[str, Any]) -> Norma
     return _walk(root, _explain_fields)
 
 
+def _flatten_duckdb2_profile(profile: dict[str, Any]) -> dict[str, Any]:
+    """Map DuckDB 2.0's grouped profile onto the 1.5.x flat shape.
+
+    2.0 regroups the query-level metrics under ``query``/``system``/``io`` and
+    renames every operator field (``operator_type`` -> ``type``,
+    ``operator_timing`` -> ``timing``, ``operator_cardinality`` ->
+    ``intermediate_rows``), and roots the tree at ``operator`` (a list) rather
+    than ``children``. Normalizing here keeps the rest of this module — and
+    everything downstream that reads ``QuerySummary`` — version-agnostic.
+    """
+    query = profile.get("query") or {}
+    system = profile.get("system") or {}
+    io = profile.get("io") or {}
+
+    def _rename_node(node: dict[str, Any]) -> dict[str, Any]:
+        out = dict(node)
+        out["operator_type"] = node.get("type", "")
+        out["operator_name"] = node.get("type", "")
+        out["operator_timing"] = node.get("timing")
+        out["operator_cardinality"] = node.get("intermediate_rows")
+        out["operator_rows_scanned"] = node.get("rows_scanned")
+        out["result_set_size"] = node.get("intermediate_size_bytes")
+        out["children"] = [_rename_node(c) for c in node.get("children") or []]
+        return out
+
+    root = profile.get("operator")
+    if isinstance(root, list):
+        root_nodes = [_rename_node(n) for n in root]
+    elif isinstance(root, dict):
+        root_nodes = [_rename_node(root)]
+    else:
+        root_nodes = []
+
+    return {
+        # 2.0 reports seconds for these, same unit as 1.5.x.
+        "cpu_time": query.get("cpu_time"),
+        "latency": query.get("total_time"),
+        "rows_returned": query.get("total_rows_scanned"),
+        "result_set_size": query.get("total_intermediate_size_bytes"),
+        "system_peak_buffer_memory": system.get("peak_buffer_memory"),
+        "system_peak_temp_dir_size": system.get("peak_temp_dir_size"),
+        "total_memory_allocated": system.get("total_memory_allocated"),
+        "blocked_thread_time": system.get("blocked_thread_time"),
+        "total_bytes_read": io.get("total_bytes_read"),
+        "total_bytes_written": io.get("total_bytes_written"),
+        "children": root_nodes,
+    }
+
+
 def parse_profile(profile: dict[str, Any]) -> tuple[QuerySummary, NormalizedNode]:
     """Parse the DuckDB JSON profile into a query summary + operator tree.
 
     The profile root (QUERY_ROOT) carries the query-level metrics and has no
     ``operator_type``; the executed plan begins at its single child.
     """
+
+    # 2.0's grouped shape has none of 1.5.x's top-level keys; detect it by its
+    # own marker groups rather than by a version string, so a profile captured
+    # by one agent version can still be parsed by another.
+    if "operator" in profile and ("query" in profile or "system" in profile):
+        profile = _flatten_duckdb2_profile(profile)
 
     def _num(key: str) -> float:
         val = profile.get(key)

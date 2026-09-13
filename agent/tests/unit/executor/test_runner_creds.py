@@ -122,8 +122,12 @@ def test_s3_loads_httpfs_and_vends_credentials(fake_conn: FakeConn, tmp_path: Pa
     secret_cmd, secret_params = next(
         c for c in fake_conn.commands if c[0].startswith("CREATE SECRET")
     )
-    assert "OAUTH2_SERVER_URI ?" in secret_cmd
-    assert secret_params == ["root", "s3cr3t", "http://polaris:8181/api/catalog/v1/oauth/tokens"]
+    # Inlined as escaped literals rather than bound — see the trace-headers
+    # test below for why (DuckDB 2.0 rejects PARAMETER in CREATE SECRET).
+    assert not secret_params
+    assert "CLIENT_ID 'root'" in secret_cmd
+    assert "CLIENT_SECRET 's3cr3t'" in secret_cmd
+    assert "OAUTH2_SERVER_URI 'http://polaris:8181/api/catalog/v1/oauth/tokens'" in secret_cmd
 
 
 def test_adls_loads_azure_and_vends_credentials(fake_conn: FakeConn, tmp_path: Path):
@@ -246,10 +250,16 @@ def test_attach_creates_trace_headers_secret_when_span_active(fake_conn: FakeCon
         if c[0].startswith(f"CREATE OR REPLACE SECRET {runner_module._TRACE_HEADERS_SECRET}")
     )
     assert "TYPE HTTP" in secret_cmd
-    assert "EXTRA_HTTP_HEADERS ?" in secret_cmd
-    headers, scope = secret_params
-    assert headers == {"traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"}
-    assert scope == "http://polaris:8181"
+    # Inlined as a MAP literal rather than bound: DuckDB 2.0 rejects bind
+    # parameters in CREATE SECRET ("Unrecognized expression type PARAMETER"),
+    # the same restriction ATTACH has always had. 1.5.5 accepts the literal
+    # form too, so there is no version branch here.
+    assert not secret_params
+    assert (
+        "EXTRA_HTTP_HEADERS MAP {'traceparent': "
+        "'00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01'}" in secret_cmd
+    )
+    assert "SCOPE 'http://polaris:8181'" in secret_cmd
 
 
 def test_no_active_span_means_no_trace_headers_secret(fake_conn: FakeConn, tmp_path: Path):

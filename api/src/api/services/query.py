@@ -13,7 +13,9 @@ from typing import Any
 import duckdb
 import httpx
 import sqlalchemy as sa
+from fastapi import HTTPException, status
 from opentelemetry import trace
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.metrics import (
@@ -21,6 +23,7 @@ from api.metrics import (
     record_query_queue_rejection,
     record_query_queue_wait,
     record_query_submitted,
+    record_rows_decode,
     record_rows_proxy,
     record_sql_statement,
 )
@@ -30,6 +33,7 @@ from api.models.query import Query
 from api.models.table_metadata import TableMetadata
 from api.models.user import Credential
 from api.models.workspace import Workspace
+from api.schemas.query import RowsPageOut
 from api.services import agent_access
 from api.services import grants as grant_service
 from api.services.agent_capabilities import agent_supports_backend
@@ -395,6 +399,83 @@ async def proxy_rows(
             return await client.get(url, params=params, headers=headers)
     finally:
         record_rows_proxy(time.perf_counter() - started)
+
+
+async def fetch_result_page(
+    db: AsyncSession, query: Query, *, limit: int, offset: int = 0
+) -> RowsPageOut:
+    """One page of a finished query's rows, fetched from the agent holding them.
+
+    Extracted from the rows route so the statement endpoint can serve the *first*
+    page inline, saving a client round trip, without either path drifting from the
+    other: both call this, so retention 410s, the elastic address resolution and
+    the old-agent offset fallback behave identically wherever rows come from.
+
+    Results live on the agent, not the control plane, so this is a proxied fetch and
+    it can fail for reasons the query itself did not — the agent reaped, its result
+    swept by retention. Those surface as HTTPException, which the rows route returns
+    as-is and the statement route treats as "no inline page, let the client ask".
+
+    Assumes the caller has already established that ``query`` is done, belongs to a
+    workspace the caller may read, and has a ``result_path``.
+    """
+    agent = (await db.execute(select(Agent).where(Agent.id == query.agent_id))).scalar_one_or_none()
+
+    if agent is not None and agent.provider is not None:
+        from api.services.compute.service import ensure_result_host, record_activity
+
+        # An elastic agent's address is assigned after its instance is created, so it
+        # can be unknown at registration time. Resolve it on first use, when the cloud
+        # is certain to be able to answer.
+        if agent.result_host is None:
+            await ensure_result_host(db, agent)
+
+        # Reading results counts as using the agent. The idle clock otherwise only
+        # advanced on dispatch, so a user who ran a query and came back later to scroll
+        # found the agent reaped and the result Parquet gone with its container --
+        # results are held on the agent, not by the control plane.
+        await record_activity(db, agent.id)
+        await db.commit()
+
+    if agent is None or agent.result_host is None or agent.result_port is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Agent result endpoint unavailable",
+        )
+
+    token = await agent_session_token(db, query.agent_id)
+    try:
+        upstream = await proxy_rows(agent, query, row_offset=offset, row_limit=limit, token=token)
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Agent result endpoint unavailable",
+        ) from exc
+    if upstream.status_code == 404:
+        # The result file was swept by retention while the user was paging.
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="Result no longer available")
+    if upstream.status_code != 200:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to fetch results from agent"
+        )
+
+    # When the agent sliced the window (X-DH-Row-Offset present) the body already
+    # starts at the requested rows, so decode at offset 0. An older agent that
+    # ignored the params returns the whole file -- fall back to decoding at offset.
+    decode_offset = 0 if "X-DH-Row-Offset" in upstream.headers else offset
+    started = time.monotonic()
+    rows, columns = decode_parquet_page(upstream.content, limit, decode_offset)
+    record_rows_decode(time.monotonic() - started)
+
+    total = query.row_count or 0
+    next_offset = offset + limit
+    return RowsPageOut(
+        rows=rows,
+        columns=columns,
+        cursor=str(next_offset) if next_offset < total else None,
+        total=total,
+        column_schema=query.result_schema,
+    )
 
 
 async def agent_session_token(db: AsyncSession, agent_id: uuid.UUID) -> str | None:

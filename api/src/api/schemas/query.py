@@ -38,6 +38,18 @@ class ColumnSchemaOut(BaseModel):
     type: str
 
 
+class RowsPageOut(BaseModel):
+    rows: list[dict[str, Any]]
+    columns: list[str]
+    cursor: str | None
+    total: int
+    # The columns' types, as the executing agent reported them. Additive: `columns`
+    # keeps its names-only shape for clients already in the field. Null for DDL/DML
+    # and for runs by an agent older than this field. Values are still JSON-encoded,
+    # so DECIMAL and HUGEINT arrive as floats regardless of what this says.
+    column_schema: list[ColumnSchemaOut] | None = None
+
+
 class QueryOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -76,6 +88,15 @@ class QueryOut(BaseModel):
     column_schema: list[ColumnSchemaOut] | None = Field(
         default=None, validation_alias=AliasChoices("column_schema", "result_schema")
     )
+    # The first page of rows, when the caller asked for it on a statement submit
+    # (`first_page_limit`). Null everywhere else, including every list endpoint that
+    # returns QueryOut -- it is only ever populated by the statement route, and only
+    # for a query that produced a result file.
+    #
+    # It exists to save a round trip: a client that has the first page does not need
+    # to call GET /queries/{id}/rows at all, which is otherwise mandatory just to
+    # learn the result's column names.
+    first_page: RowsPageOut | None = None
     started_at: datetime
     # When the agent admitted the run and began executing it. With started_at
     # (submission) this splits the run's wall-clock into queue wait and execution,
@@ -83,18 +104,6 @@ class QueryOut(BaseModel):
     # started, and for rows written before it was recorded.
     running_at: datetime | None = None
     finished_at: datetime | None
-
-
-class RowsPageOut(BaseModel):
-    rows: list[dict[str, Any]]
-    columns: list[str]
-    cursor: str | None
-    total: int
-    # The columns' types, as the executing agent reported them. Additive: `columns`
-    # keeps its names-only shape for clients already in the field. Null for DDL/DML
-    # and for runs by an agent older than this field. Values are still JSON-encoded,
-    # so DECIMAL and HUGEINT arrive as floats regardless of what this says.
-    column_schema: list[ColumnSchemaOut] | None = None
 
 
 class SqlFunctionOut(BaseModel):

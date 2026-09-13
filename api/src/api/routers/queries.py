@@ -1,10 +1,8 @@
 import logging
-import time
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
 from fastapi import Query as QueryParam
 from opentelemetry import trace
@@ -13,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
 from api.deps import get_current_user, get_db
-from api.metrics import record_rows_decode
 from api.models.agent import Agent
 from api.models.query import Query, SavedQuery
 from api.models.user import User
@@ -638,69 +635,11 @@ async def get_query_rows(
     if query.agent_id is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No results available")
 
-    agent_result = await db.execute(select(Agent).where(Agent.id == query.agent_id))
-    agent = agent_result.scalar_one_or_none()
-
-    if agent is not None and agent.provider is not None:
-        from api.services.compute.service import ensure_result_host, record_activity
-
-        # An elastic agent's address is assigned after its instance is created, so it
-        # can be unknown at registration time. Resolve it on first use, when the cloud
-        # is certain to be able to answer.
-        if agent.result_host is None:
-            await ensure_result_host(db, agent)
-
-        # Reading results counts as using the agent. The idle clock otherwise only
-        # advanced on dispatch, so a user who ran a query and came back later to scroll
-        # found the agent reaped and the result Parquet gone with its container --
-        # results are held on the agent, not by the control plane.
-        await record_activity(db, agent.id)
-        await db.commit()
-
-    if agent is None or agent.result_host is None or agent.result_port is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Agent result endpoint unavailable",
-        )
-
-    token = await query_service.agent_session_token(db, query.agent_id)
-
-    offset = int(cursor) if cursor and cursor.isdigit() else 0
-    try:
-        upstream = await query_service.proxy_rows(
-            agent, query, row_offset=offset, row_limit=limit, token=token
-        )
-    except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Agent result endpoint unavailable",
-        ) from exc
-    if upstream.status_code == 404:
-        # The result file was swept by retention while the user was paging.
-        raise HTTPException(status_code=status.HTTP_410_GONE, detail="Result no longer available")
-    if upstream.status_code != 200:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to fetch results from agent"
-        )
-    # When the agent sliced the window (X-DH-Row-Offset present) the body already
-    # starts at the requested rows, so decode at offset 0. An older agent that
-    # ignored the params returns the whole file — fall back to decoding at offset.
-    decode_offset = 0 if "X-DH-Row-Offset" in upstream.headers else offset
-    started = time.monotonic()
-    rows, columns = query_service.decode_parquet_page(upstream.content, limit, decode_offset)
-    record_rows_decode(time.monotonic() - started)
     trace.get_current_span().set_attribute(
         "duckhaven.result_schema", query.result_schema is not None
     )
-    total = query.row_count or 0
-    next_offset = offset + limit
-    next_cursor = str(next_offset) if next_offset < total else None
-    return RowsPageOut(
-        rows=rows,
-        columns=columns,
-        cursor=next_cursor,
-        total=total,
-        column_schema=query.result_schema,
+    return await query_service.fetch_result_page(
+        db, query, limit=limit, offset=int(cursor) if cursor and cursor.isdigit() else 0
     )
 
 

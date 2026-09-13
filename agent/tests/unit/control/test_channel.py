@@ -2390,3 +2390,51 @@ async def test_exec_statement_returns_to_baseline_when_the_statement_fails(tmp_p
     assert Frame.model_validate_json(ws.sent[-1]).payload["status"] == "failed"
     assert state.reservation.memory_bytes == baseline
     await session.remove("s1", admission)
+
+
+async def test_a_timed_out_waiter_takes_back_budget_instead_of_running_at_baseline(monkeypatch):
+    """A waiter surrenders its whole grant before parking. If the wait then times
+    out, it must re-take whatever is free rather than execute on the bare 64 MiB
+    baseline it just gave up.
+
+    Regression test for the only failure left in a 792-statement concurrent run
+    once object-store connection reuse was fixed: one q21 waited 26s here, exited
+    on the timeout path, and died with "failed to allocate 16.0 KiB (63.8 MiB/64.0
+    MiB used)". Failing to reach the admission *floor* is not a reason to run on
+    64 MiB when far more than that is sitting unused.
+    """
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    ch, state = _session_state(admission, 64 * 1024**2)
+    state.conn = _RecordingConn()
+
+    # Another session is executing and holds most of the budget, so waiting looks
+    # worthwhile and the deadlock guard stays quiet -- but it never finishes, so
+    # the wait times out. It leaves a real slice of the budget free: not enough to
+    # reach the floor for a 700 MiB estimate, but far more than the baseline.
+    hog = admission._try_admit(  # noqa: SLF001
+        ReservationRequest(memory_bytes=int(admission.budget_bytes * 0.55), threads=1)
+    )
+    assert hog is not None
+    busy = session.SessionState(
+        session_id="busy-forever",
+        conn=_RecordingConn(),
+        reservation=hog,
+        opened_at=0.0,
+        last_active_at=0.0,
+    )
+    session.register(busy)
+
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: 700 * 1024**2)
+    # Collapse the wait so the timeout path is what we exercise.
+    monkeypatch.setattr(ch_module.settings, "statement_admission_wait_s", 0.2)
+
+    async with busy.lock:
+        async with state.lock:
+            await ch._resize_for_statement(state, "SELECT 1", admission, 30.0)
+
+    assert state.reservation.memory_bytes > 64 * 1024**2, (
+        "timed-out waiter executed on the idle baseline it had surrendered "
+        f"({state.reservation.memory_bytes} bytes)"
+    )

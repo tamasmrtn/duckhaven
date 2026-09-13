@@ -544,5 +544,18 @@ client following a statement that outran the budget on submit. It is opt-in and 
 there — that route also serves the worksheet's status polling and the audit history, and neither
 should hold a request open.
 
-`API_VERSION` is **unchanged**: the field is optional, an older server ignores it, and a client that
-never sends it sees the previous always-202 behaviour.
+### First page of rows on the statement response
+
+| Field | Default | Meaning |
+|---|---|---|
+| `first_page_limit` | unset (no page) | Return this many result rows on the response itself, as `first_page`. Capped at 200; above that is **422**. |
+
+`first_page` has the same shape as `GET /api/queries/{query_id}/rows` returns, `cursor` included,
+so a result larger than the page continues from it. It is absent for DDL/DML, which finish without
+a result file, and absent when the rows could not be fetched — the statement still succeeded, and
+the rows endpoint reports the reason.
+
+Together with the wait above, a statement whose result fits in that page costs **one** HTTP call.
+
+`API_VERSION` is **unchanged**: both fields are optional, an older server ignores them, and a client
+that never sends them sees the previous always-202 behaviour.

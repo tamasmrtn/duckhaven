@@ -548,7 +548,7 @@ should hold a request open.
 
 | Field | Default | Meaning |
 |---|---|---|
-| `first_page_limit` | unset (no page) | Return this many result rows on the response itself, as `first_page`. Capped at 200; above that is **422**. |
+| `first_page_limit` | server default (`SQL_STATEMENT_FIRST_PAGE_LIMIT`, 200 rows) | Result rows to return on the response itself, as `first_page`. `0` opts out. Above the 200 cap is **422**. |
 
 `first_page` has the same shape as `GET /api/queries/{query_id}/rows` returns, `cursor` included,
 so a result larger than the page continues from it. It is absent for DDL/DML, which finish without

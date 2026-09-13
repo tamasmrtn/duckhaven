@@ -133,22 +133,19 @@ For a client that is going to read them immediately that is a wasted round trip 
 is not optional, because the column names arrive with the rows, so even a client that only
 wants to know the result's shape has to make it.
 
-Pass `first_page_limit` on the statement and the response carries the first page itself:
-
-```json
-{"sql": "SELECT * FROM orders LIMIT 10", "first_page_limit": 10}
-```
-
-The answer then has a `first_page` alongside the usual fields, in the same shape the rows
+So the response carries the first page itself, as `first_page`, in the same shape the rows
 endpoint returns. A statement whose result fits in that page costs **one** HTTP call
 instead of two.
 
-Opt-in rather than automatic, because rows are not always wanted — a dbt or dlt statement
-whose result nobody reads would pay to serialize it — and because the serialization would
-land on the latency path the [completion wait](#waiting-for-a-statement) exists to clear.
-It is capped (200 rows) for the same reason: this saves a round trip on rows you are about
-to read, it is not a bulk transport. A larger result carries a `cursor` in its first page
-and pages from there as normal.
+This is on by default (`SQL_STATEMENT_FIRST_PAGE_LIMIT`, 200 rows) because the round trip
+it removes is paid by every client, including ones that will never know the field exists.
+A request can ask for a different number, or `0` to opt out — worth doing for a caller that
+will not read the rows at all, since the page is serialized onto the same response the
+[completion wait](#waiting-for-a-statement) exists to keep short.
+
+It is capped for the same reason: this saves a round trip on rows you are about to read, it
+is not a bulk transport. A larger result carries a `cursor` in its first page and pages
+from there as normal.
 
 `first_page` is absent for DDL and DML, which finish without a result file, and absent if
 the rows could not be fetched — the statement still succeeded, and asking the rows

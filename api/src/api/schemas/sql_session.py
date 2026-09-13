@@ -73,9 +73,10 @@ class SqlSessionSummaryOut(SqlSessionOut):
     statement_count: int = 0
 
 
-# Ceiling on an inlined first page. A statement response is not a paging surface:
-# the point is to save a round trip on the rows a client reads immediately, not to
-# become a bulk transport. A client wanting more pages still pages.
+# Ceiling on an inlined first page, whatever a request or the server default asks
+# for. A statement response is not a paging surface: the point is to save a round
+# trip on the rows a client reads immediately, not to become a bulk transport. A
+# client wanting more pages still pages.
 MAX_FIRST_PAGE_LIMIT = 200
 
 
@@ -92,15 +93,15 @@ class SqlStatementCreate(BaseModel):
     # running perfectly well, because the client's patience expired, would destroy
     # work the client can still collect by polling.
     wait_timeout_s: float | None = Field(default=None, ge=0)
-    # Ask for the first page of rows on the response, so a client that is about to
-    # fetch them anyway does not need a second call. Omit (the default) and the
-    # response carries no rows, exactly as before.
+    # How many result rows to return on the response itself, sparing the caller the
+    # second call to GET /queries/{id}/rows. None takes the server default
+    # (sql_statement_first_page_limit, on); 0 opts out and answers without rows, which
+    # is what this endpoint did before the field existed.
     #
-    # Opt-in rather than always-on, because the rows are not always wanted: a dbt or
-    # dlt statement whose result nobody reads would pay to serialize it, and the
-    # serialization lands on the very latency path the completion wait cleared.
-    # Bounded well below the paging route's own 1000 for the same reason.
-    first_page_limit: int | None = Field(default=None, ge=1, le=MAX_FIRST_PAGE_LIMIT)
+    # A caller that will not read the rows -- or will read far fewer than the server
+    # default -- should say so: the page is serialized onto the same response the
+    # completion wait exists to keep short.
+    first_page_limit: int | None = Field(default=None, ge=0, le=MAX_FIRST_PAGE_LIMIT)
 
     @model_validator(mode="after")
     def _validate_wait(self) -> SqlStatementCreate:

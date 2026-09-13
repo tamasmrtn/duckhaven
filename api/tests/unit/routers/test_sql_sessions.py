@@ -1226,11 +1226,47 @@ async def test_statement_inlines_the_first_page_when_asked(
     assert body["first_page"]["columns"] == ["n"]
 
 
-async def test_statement_omits_the_first_page_unless_asked(
+async def test_statement_inlines_the_first_page_by_default(
     authed_client, db_session, workspace, agent, user, enabled, monkeypatch
 ):
-    """Opt-in: a caller that never asks pays nothing, and the response is the shape
-    it has always been."""
+    """On without being asked. The round trip this removes is paid by every client,
+    including ones that will never send the field -- the CLI, and anything written
+    against the API directly."""
+    from api.schemas.query import RowsPageOut
+    from api.services import query as query_service
+
+    session = await _open_session_row(db_session, workspace, agent, user)
+    asked: list[int] = []
+
+    async def fake_exec(db, sess, query, timeout_s):
+        query.status = "done"
+        query.row_count = 1
+        query.result_path = "/results/x.parquet"
+        await db.commit()
+        return True
+
+    async def fake_page(db, query, *, limit, offset=0):
+        asked.append(limit)
+        return RowsPageOut(rows=[{"n": 1}], columns=["n"], cursor=None, total=1)
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+    monkeypatch.setattr(query_service, "fetch_result_page", fake_page)
+    monkeypatch.setattr(settings, "sql_statement_wait_timeout_s", 5.0)
+    monkeypatch.setattr(settings, "sql_statement_first_page_limit", 50)
+
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements", json={"sql": "SELECT 1 AS n"}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["first_page"]["rows"] == [{"n": 1}]
+    assert asked == [50], "did not use the server's configured page size"
+
+
+async def test_first_page_limit_zero_opts_out(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    """0 is the escape hatch for a caller that will not read the rows, and the
+    pre-inline behaviour. It is also the control arm for measuring the change."""
     from api.services import query as query_service
 
     session = await _open_session_row(db_session, workspace, agent, user)
@@ -1242,14 +1278,15 @@ async def test_statement_omits_the_first_page_unless_asked(
         return True
 
     async def boom(*a, **k):  # pragma: no cover - must not be reached
-        raise AssertionError("fetched a page nobody asked for")
+        raise AssertionError("fetched a page the caller opted out of")
 
     monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
     monkeypatch.setattr(query_service, "fetch_result_page", boom)
     monkeypatch.setattr(settings, "sql_statement_wait_timeout_s", 5.0)
 
     resp = await authed_client.post(
-        f"/sql/sessions/{session.id}/statements", json={"sql": "SELECT 1 AS n"}
+        f"/sql/sessions/{session.id}/statements",
+        json={"sql": "SELECT 1 AS n", "first_page_limit": 0},
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["first_page"] is None
@@ -1313,7 +1350,7 @@ async def test_statement_does_not_inline_a_page_for_ddl(
 
     resp = await authed_client.post(
         f"/sql/sessions/{session.id}/statements",
-        json={"sql": "CREATE TABLE t AS SELECT 1", "first_page_limit": 25},
+        json={"sql": "CREATE TABLE t AS SELECT 1"},
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["first_page"] is None

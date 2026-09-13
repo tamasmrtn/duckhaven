@@ -609,8 +609,15 @@ async def run_statement(
         # and the client reads it exactly where it would have after polling.
         response.status_code = status.HTTP_200_OK
 
+    # On unless the caller opts out with 0: the round trip this removes is paid by
+    # every client, including ones that will never send the field.
+    first_page_limit = (
+        settings.sql_statement_first_page_limit
+        if body.first_page_limit is None
+        else body.first_page_limit
+    )
     if (
-        body.first_page_limit is not None
+        first_page_limit > 0
         and query.status == "done"
         # DDL/DML finishes without a result file; there is no page to inline and the
         # rows route reports the same thing as an empty page.
@@ -619,7 +626,7 @@ async def run_statement(
         out = QueryOut.model_validate(query, from_attributes=True)
         try:
             out.first_page = await query_service.fetch_result_page(
-                db, query, limit=body.first_page_limit
+                db, query, limit=first_page_limit
             )
         except HTTPException:
             # The statement succeeded; only its rows are momentarily unreachable

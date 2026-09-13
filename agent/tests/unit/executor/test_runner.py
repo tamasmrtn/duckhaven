@@ -711,3 +711,43 @@ def test_a_select_is_not_cheap():
     from agent.executor.runner import is_cheap_statement
 
     assert not is_cheap_statement("SELECT 1")
+
+
+def test_open_and_attach_enables_httpfs_connection_caching(monkeypatch):
+    """Without this, DuckDB dials a fresh TCP connection per object and leaves it
+    in TIME_WAIT. An SF10 Iceberg scan is ~500 objects, so concurrent readers burn
+    the container's whole ephemeral port range and every later connect fails with
+    "Could not connect to server" -- measured at 18/54 statements surviving three
+    18-way rounds, against 54/54 with caching on.
+
+    Asserted on the SQL rather than on behaviour because the failure needs a real
+    object store and tens of thousands of sockets to reproduce.
+    """
+    from agent.executor import runner as runner_module
+
+    executed: list[str] = []
+
+    class FakeConn:
+        def execute(self, sql, *args, **kwargs):
+            executed.append(sql)
+            return self
+
+        def fetchall(self):
+            return []
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(runner_module.duckdb, "connect", lambda *a, **k: FakeConn())
+
+    runner_module.open_and_attach(
+        catalogs=[{"slug": "c", "backend": {"kind": "object_store", "root_uri": "s3://b"}}],
+        active_catalog="c",
+        polaris=None,
+    )
+
+    assert any("httpfs_connection_caching" in s and "true" in s.lower() for s in executed), executed
+    # Only after httpfs is loaded -- the setting belongs to that extension.
+    load_at = next(i for i, s in enumerate(executed) if s.strip() == "LOAD httpfs")
+    set_at = next(i for i, s in enumerate(executed) if "httpfs_connection_caching" in s)
+    assert set_at > load_at

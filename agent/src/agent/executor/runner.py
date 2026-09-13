@@ -188,6 +188,31 @@ def _safe_install_load(conn: duckdb.DuckDBPyConnection, name: str) -> bool:
         return False
 
 
+def _enable_connection_caching(conn: duckdb.DuckDBPyConnection) -> None:
+    """Reuse HTTP connections to object storage instead of dialing one per request.
+
+    `httpfs_connection_caching` defaults to **false**, so DuckDB opens a fresh TCP
+    connection for every object it reads and leaves it in TIME_WAIT. A scan of one
+    SF10 Iceberg table is ~500 objects, so a burst of concurrent reads exhausts the
+    container's entire ephemeral port range (32768-60999, 28,232 ports) in seconds.
+    Every connection then fails with EADDRNOTAVAIL, which DuckDB surfaces as
+    "Could not connect to server" — and because the throw can land on a background
+    thread with nothing to catch it, it can take the whole agent process down via
+    std::terminate.
+
+    Measured, 18 concurrent readers x 3 rounds against the bundled store: 18/54
+    statements succeeded with 28,231 sockets in TIME_WAIT; with caching on, 54/54
+    and 108. At 32 concurrent x 5 rounds, 160/160.
+
+    `http_keep_alive` alone does not do this — it governs the header, while this
+    governs whether the client is kept at all.
+    """
+    try:
+        conn.execute("SET httpfs_connection_caching = true")
+    except Exception as exc:  # noqa: BLE001 - older httpfs may not know the setting
+        logger.warning("Could not enable httpfs connection caching: %s", exc)
+
+
 def _iceberg_metadata(
     conn: duckdb.DuckDBPyConnection, catalog: str, schema: str, table: str
 ) -> dict[str, Any]:
@@ -647,7 +672,9 @@ def open_and_attach(
     backend_kinds = {(cat.get("backend") or {}).get("kind") for cat in catalogs}
     for kind in backend_kinds:
         if (io_ext := _BACKEND_IO_EXTENSION.get(kind or "")) is not None:
-            _safe_install_load(conn, io_ext)
+            if _safe_install_load(conn, io_ext) and io_ext == "httpfs":
+                # Only meaningful once httpfs is loaded; it owns the setting.
+                _enable_connection_caching(conn)
     # External cloud backends (s3/adls_gen2) talk HTTPS and need a CA bundle the
     # statically-linked extensions can't find on their own.
     if backend_kinds - {None, "object_store"}:

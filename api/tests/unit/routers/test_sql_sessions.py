@@ -1187,3 +1187,183 @@ async def test_statement_wait_returns_200_for_a_failed_statement(
     assert resp.status_code == 200, resp.text
     assert resp.json()["status"] == "failed"
     assert resp.json()["error"] == "Binder Error: boom"
+
+
+async def test_statement_inlines_the_first_page_when_asked(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    """The whole point: a client that gets its rows on the submit response does not
+    have to call GET /queries/{id}/rows, which is otherwise mandatory even for a
+    SELECT 1 just to learn the column names."""
+    from api.schemas.query import RowsPageOut
+    from api.services import query as query_service
+
+    session = await _open_session_row(db_session, workspace, agent, user)
+
+    async def fake_exec(db, sess, query, timeout_s):
+        query.status = "done"
+        query.row_count = 1
+        query.result_path = "/results/x.parquet"
+        await db.commit()
+        return True
+
+    async def fake_page(db, query, *, limit, offset=0):
+        assert limit == 25
+        return RowsPageOut(rows=[{"n": 1}], columns=["n"], cursor=None, total=1, column_schema=None)
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+    monkeypatch.setattr(query_service, "fetch_result_page", fake_page)
+    monkeypatch.setattr(settings, "sql_statement_wait_timeout_s", 5.0)
+
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements",
+        json={"sql": "SELECT 1 AS n", "first_page_limit": 25},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "done"
+    assert body["first_page"]["rows"] == [{"n": 1}]
+    assert body["first_page"]["columns"] == ["n"]
+
+
+async def test_statement_inlines_the_first_page_by_default(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    """On without being asked. The round trip this removes is paid by every client,
+    including ones that will never send the field -- the CLI, and anything written
+    against the API directly."""
+    from api.schemas.query import RowsPageOut
+    from api.services import query as query_service
+
+    session = await _open_session_row(db_session, workspace, agent, user)
+    asked: list[int] = []
+
+    async def fake_exec(db, sess, query, timeout_s):
+        query.status = "done"
+        query.row_count = 1
+        query.result_path = "/results/x.parquet"
+        await db.commit()
+        return True
+
+    async def fake_page(db, query, *, limit, offset=0):
+        asked.append(limit)
+        return RowsPageOut(rows=[{"n": 1}], columns=["n"], cursor=None, total=1)
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+    monkeypatch.setattr(query_service, "fetch_result_page", fake_page)
+    monkeypatch.setattr(settings, "sql_statement_wait_timeout_s", 5.0)
+    monkeypatch.setattr(settings, "sql_statement_first_page_limit", 50)
+
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements", json={"sql": "SELECT 1 AS n"}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["first_page"]["rows"] == [{"n": 1}]
+    assert asked == [50], "did not use the server's configured page size"
+
+
+async def test_first_page_limit_zero_opts_out(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    """0 is the escape hatch for a caller that will not read the rows, and the
+    pre-inline behaviour. It is also the control arm for measuring the change."""
+    from api.services import query as query_service
+
+    session = await _open_session_row(db_session, workspace, agent, user)
+
+    async def fake_exec(db, sess, query, timeout_s):
+        query.status = "done"
+        query.result_path = "/results/x.parquet"
+        await db.commit()
+        return True
+
+    async def boom(*a, **k):  # pragma: no cover - must not be reached
+        raise AssertionError("fetched a page the caller opted out of")
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+    monkeypatch.setattr(query_service, "fetch_result_page", boom)
+    monkeypatch.setattr(settings, "sql_statement_wait_timeout_s", 5.0)
+
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements",
+        json={"sql": "SELECT 1 AS n", "first_page_limit": 0},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["first_page"] is None
+
+
+async def test_statement_still_succeeds_when_the_first_page_cannot_be_fetched(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    """The statement ran. If its rows are momentarily unreachable -- agent reaped,
+    result swept -- that is a fetch problem, not a statement problem, and turning it
+    into one would fail a statement whose work is done and still collectable."""
+    from fastapi import HTTPException
+
+    from api.services import query as query_service
+
+    session = await _open_session_row(db_session, workspace, agent, user)
+
+    async def fake_exec(db, sess, query, timeout_s):
+        query.status = "done"
+        query.result_path = "/results/x.parquet"
+        await db.commit()
+        return True
+
+    async def unavailable(*a, **k):
+        raise HTTPException(status_code=503, detail="Agent result endpoint unavailable")
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+    monkeypatch.setattr(query_service, "fetch_result_page", unavailable)
+    monkeypatch.setattr(settings, "sql_statement_wait_timeout_s", 5.0)
+
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements",
+        json={"sql": "SELECT 1 AS n", "first_page_limit": 25},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "done"
+    assert resp.json()["first_page"] is None
+
+
+async def test_statement_does_not_inline_a_page_for_ddl(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    """DDL/DML finishes without a result file, so there is nothing to inline and no
+    agent call to make for it."""
+    from api.services import query as query_service
+
+    session = await _open_session_row(db_session, workspace, agent, user)
+
+    async def fake_exec(db, sess, query, timeout_s):
+        query.status = "done"
+        query.result_path = None
+        await db.commit()
+        return True
+
+    async def boom(*a, **k):  # pragma: no cover - must not be reached
+        raise AssertionError("asked the agent for rows a DDL statement never wrote")
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+    monkeypatch.setattr(query_service, "fetch_result_page", boom)
+    monkeypatch.setattr(settings, "sql_statement_wait_timeout_s", 5.0)
+
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements",
+        json={"sql": "CREATE TABLE t AS SELECT 1"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["first_page"] is None
+
+
+async def test_first_page_limit_above_the_cap_is_rejected(
+    authed_client, db_session, workspace, agent, user, enabled
+):
+    """A statement response is not a bulk transport; the cap is what keeps it from
+    becoming one."""
+    session = await _open_session_row(db_session, workspace, agent, user)
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements",
+        json={"sql": "SELECT 1", "first_page_limit": 5000},
+    )
+    assert resp.status_code == 422, resp.text

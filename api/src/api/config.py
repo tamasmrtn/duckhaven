@@ -229,6 +229,16 @@ class Settings(BaseSettings):
     sql_statement_wait_timeout_s: float = 10.0
     # Ceiling on what a client may ask for via `wait_timeout_s`.
     sql_statement_max_wait_timeout_s: float = 60.0
+    # Rows returned on the statement response itself, so a client that reads its
+    # result does not need a second call to GET /queries/{id}/rows. That call is
+    # otherwise unavoidable rather than optional: the column names arrive with the
+    # rows, so even a client that only wants the result's shape has to make it.
+    #
+    # On by default, because the round trip it removes is paid by every client
+    # including ones that will never know the field exists. A request may still ask
+    # for a different number, or 0 to opt out. Bounded because a statement response
+    # is not a bulk transport -- a result larger than this pages from here as usual.
+    sql_statement_first_page_limit: int = 200
 
     # ── Elastic compute (scale-to-zero agents) ────────────────────────────────
     # OFF by default: an operator enables it to let the control plane provision

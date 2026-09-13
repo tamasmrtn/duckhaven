@@ -126,6 +126,31 @@ parameter, so a client following a slow statement can keep waiting rather than f
 sleeping. It is **opt-in and defaults to `0`** there, because that route is also what the worksheet
 refreshes several times a second and what the audit history reads; neither wants a held request.
 
+### Getting the rows with the answer
+
+A statement's rows normally come from a second call, `GET /api/queries/{query_id}/rows`.
+For a client that is going to read them immediately that is a wasted round trip — and it
+is not optional, because the column names arrive with the rows, so even a client that only
+wants to know the result's shape has to make it.
+
+So the response carries the first page itself, as `first_page`, in the same shape the rows
+endpoint returns. A statement whose result fits in that page costs **one** HTTP call
+instead of two.
+
+This is on by default (`SQL_STATEMENT_FIRST_PAGE_LIMIT`, 200 rows) because the round trip
+it removes is paid by every client, including ones that will never know the field exists.
+A request can ask for a different number, or `0` to opt out — worth doing for a caller that
+will not read the rows at all, since the page is serialized onto the same response the
+[completion wait](#waiting-for-a-statement) exists to keep short.
+
+It is capped for the same reason: this saves a round trip on rows you are about to read, it
+is not a bulk transport. A larger result carries a `cursor` in its first page and pages
+from there as normal.
+
+`first_page` is absent for DDL and DML, which finish without a result file, and absent if
+the rows could not be fetched — the statement still succeeded, and asking the rows
+endpoint directly reports why.
+
 ## Statement delivery and deadlines
 
 A statement's own execution timeout (`timeout_s` on the request) is enforced by the agent around execution, but that

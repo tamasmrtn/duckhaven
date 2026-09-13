@@ -13,6 +13,7 @@ them through the existing ``GET /queries/{id}`` (+ ``/rows``).
 
 import asyncio
 import contextlib
+import logging
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated
@@ -40,6 +41,7 @@ from api.schemas.sql_session import (
     StagingFilesCreate,
     StagingFilesOut,
 )
+from api.services import query as query_service
 from api.services import session_credentials, staging_presign
 from api.services import statement_policy as policy
 from api.services.agent_access import assert_agent_tier
@@ -65,6 +67,8 @@ from api.services.workspace import (
 )
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 def _require_enabled() -> None:
@@ -493,7 +497,7 @@ async def run_statement(
     response: Response,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> Query:
+) -> Query | QueryOut:
     """Run a statement on this session's DuckDB connection. 200 if it finished
     within `wait_timeout_s`, 202 with a query id if it is still running.
 
@@ -604,6 +608,34 @@ async def run_statement(
         # A failed statement is still a completed one -- the error is on the row,
         # and the client reads it exactly where it would have after polling.
         response.status_code = status.HTTP_200_OK
+
+    # On unless the caller opts out with 0: the round trip this removes is paid by
+    # every client, including ones that will never send the field.
+    first_page_limit = (
+        settings.sql_statement_first_page_limit
+        if body.first_page_limit is None
+        else body.first_page_limit
+    )
+    if (
+        first_page_limit > 0
+        and query.status == "done"
+        # DDL/DML finishes without a result file; there is no page to inline and the
+        # rows route reports the same thing as an empty page.
+        and query.result_path is not None
+    ):
+        out = QueryOut.model_validate(query, from_attributes=True)
+        try:
+            out.first_page = await query_service.fetch_result_page(
+                db, query, limit=first_page_limit
+            )
+        except HTTPException:
+            # The statement succeeded; only its rows are momentarily unreachable
+            # (agent reaped, result swept). Hand back the query without a page and
+            # let the client ask for rows itself, where it gets the real status
+            # code. Failing the whole call here would turn a fetch problem into a
+            # statement problem, which it is not.
+            logger.warning("Could not inline the first page for statement %s", query.id)
+        return out
     return query
 
 

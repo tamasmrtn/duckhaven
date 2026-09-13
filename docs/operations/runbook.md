@@ -293,3 +293,44 @@ running container. `docker compose exec api sh` (or `bash`) no longer works. Wha
   the cost of not being the exact production image.
 - **Everything else** (logs, health, resource usage, process list) needs no workaround — those all operate from
   outside the container via the Docker API, not by execing into it.
+
+## 10. "Could not connect to server" from the object store under concurrency
+
+A burst of concurrent queries fails with DuckDB errors naming the object store:
+
+```
+IO Error: Could not connect to server error for HTTP GET to
+'http://objectstore:9000/warehouse/.../metadata/....avro'
+```
+
+**Check the object store last, not first.** This error usually means the *agent* ran out of
+outbound TCP ports, not that storage is down. The signature is distinctive:
+
+- The store answers fine from elsewhere — `curl http://<store>:9000/health/ready` from the
+  host returns 200 throughout, and its own logs record nothing.
+- Failures are **all-or-nothing per burst** rather than scattered, and the *first* burst
+  after an idle period succeeds while later ones fail.
+- It clears on its own after roughly a minute with no intervention.
+- In the worst case the agent container restarts, because the IO exception can escape on a
+  thread with nothing to catch it and abort the process.
+
+Confirm it by counting sockets in the agent's network namespace:
+
+```sh
+docker exec <agent-container> python3 -c "
+n=0
+for f in ('/proc/net/tcp','/proc/net/tcp6'):
+    for line in open(f).read().splitlines()[1:]:
+        if line.split()[3]=='06': n+=1
+print('TIME_WAIT:', n)
+print('port range:', open('/proc/sys/net/ipv4/ip_local_port_range').read().strip())"
+```
+
+A `TIME_WAIT` count at or near the width of the port range (the default 32768–60999 gives
+28,232) is the diagnosis: every port is spent and `connect()` is returning EADDRNOTAVAIL.
+
+**Fix.** Agents reuse object-store connections (`httpfs_connection_caching`) — see
+[Connection reuse](../concepts/storage-backends.md#connection-reuse) — which holds the
+socket count in the hundreds. If you hit this, you are running an agent image built before
+that landed, or a custom image that opens its own DuckDB connections without it. Rebuild or
+enable the setting; widening the port range only moves the cliff.

@@ -242,6 +242,8 @@ against the old schema may see one it was not expecting:
   replace.
 - `POST .../saved-queries` returns **200** when it overwrites a query of the same name, **201** when it creates one.
 - `POST .../sql/sessions` returns **202** when `on_wait_timeout=continue` and compute is still starting.
+- `POST .../sql/sessions/{session_id}/statements` returns **200** when the statement finished inside
+  its [completion wait](#waiting-for-a-statement), **202** when it is still running.
 
 ### Search
 
@@ -523,3 +525,24 @@ already starting.
 `API_VERSION` is deliberately **unchanged**: both fields are optional, an older server ignores them,
 and a client that never sends them sees exactly the previous 201/503 behaviour. A **202** on this
 route is itself the signal that a server supports the contract, so nothing needs to negotiate.
+
+## Waiting for a statement
+
+`POST /api/sql/sessions/{session_id}/statements` holds its response until the statement finishes, so
+a client learns of completion when it happens rather than on its next poll.
+
+| Field | Default | Meaning |
+|---|---|---|
+| `wait_timeout_s` | server default (`SQL_STATEMENT_WAIT_TIMEOUT_S`, 10s) | How long to block waiting for the statement. `0` never blocks. Above `SQL_STATEMENT_MAX_WAIT_TIMEOUT_S` is **422**. |
+
+**200** carries the finished statement (`done` *or* `failed` — a failed statement still completed,
+and its error is on the row). **202** means it is still running; poll `GET /api/queries/{query_id}`
+as before. A statement is never cancelled for outliving the wait.
+
+`GET /api/queries/{query_id}` accepts the same `wait_timeout_s` as a **query parameter**, for a
+client following a statement that outran the budget on submit. It is opt-in and defaults to `0`
+there — that route also serves the worksheet's status polling and the audit history, and neither
+should hold a request open.
+
+`API_VERSION` is **unchanged**: the field is optional, an older server ignores it, and a client that
+never sends it sees the previous always-202 behaviour.

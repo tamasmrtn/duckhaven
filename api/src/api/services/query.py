@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import datetime as dt
 import logging
 import os
@@ -47,6 +48,37 @@ from duckhaven_shared.telemetry import inject_trace_context
 
 logger = logging.getLogger(__name__)
 _tracer = trace.get_tracer("duckhaven.api")
+
+# Requests waiting for a statement to finish, by query id (see
+# sql_sessions.service.await_query_done). QUERY_DONE arrives on the agent's
+# WebSocket, so completion is an *event* this process already observes -- a waiter
+# that polled for it instead would rediscover the very staircase the wait exists to
+# remove, just at a finer granularity.
+#
+# In-process only, and deliberately: it is an optimisation over the waiter's own
+# backstop poll, not a mechanism the correctness depends on. When the agent's socket
+# is owned by another replica nothing here fires and the waiter falls back to
+# polling, which is what it would have done anyway.
+_completion_waiters: dict[uuid.UUID, asyncio.Event] = {}
+
+
+@contextlib.contextmanager
+def completion_waiter(query_id: uuid.UUID):
+    """Register an event fired when ``query_id`` reaches a terminal state here."""
+    event = asyncio.Event()
+    _completion_waiters[query_id] = event
+    try:
+        yield event
+    finally:
+        _completion_waiters.pop(query_id, None)
+
+
+def signal_completion(query_id: uuid.UUID) -> None:
+    """Wake anything waiting on ``query_id``. Called after the status is committed,
+    so a woken waiter's next read is guaranteed to see the terminal row."""
+    event = _completion_waiters.get(query_id)
+    if event is not None:
+        event.set()
 
 
 class AgentUnavailable(ValueError):
@@ -207,6 +239,9 @@ async def handle_agent_frame(db: AsyncSession, frame: Frame, polaris=None) -> No
             )
         )
         await db.commit()
+        # Before the stats/lineage work below, which is deliberately not on the
+        # client's critical path: the row is terminal and committed as of here.
+        signal_completion(query_id)
         query = await db.get(Query, query_id)
         if query is not None and query.origin is None:
             record_query_completion(

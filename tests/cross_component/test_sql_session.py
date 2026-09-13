@@ -29,9 +29,14 @@ async def _open(api_client, workspace: str, agent_id: str) -> dict:
 
 
 async def _exec(api_client, session_id: str, sql: str) -> dict:
-    """Submit a statement and poll the underlying query row to a terminal state."""
+    """Submit a statement and poll the underlying query row to a terminal state.
+
+    200 or 202: the submit call waits for the statement, so it answers 200 with the
+    finished row when it lands inside the budget and 202 while it is still running.
+    Either way the poll below is what decides the outcome.
+    """
     created = await api_client.post(f"/api/sql/sessions/{session_id}/statements", json={"sql": sql})
-    assert created.status_code == 202, created.text
+    assert created.status_code in (200, 202), created.text
     query_id = created.json()["id"]
     deadline = asyncio.get_event_loop().time() + 60.0
     while asyncio.get_event_loop().time() < deadline:
@@ -212,10 +217,18 @@ async def test_close_frees_slot_for_reuse(api_client, workspace, spawn_agent) ->
 
 
 async def _submit(api_client, session_id: str, sql: str, **body) -> str:
+    """Submit a statement and return its id.
+
+    Either status is correct: the call waits up to `SQL_STATEMENT_WAIT_TIMEOUT_S`
+    for the statement, so it answers **200** with the finished row when it lands
+    inside that budget and **202** when it is still running. Tests that need the
+    statement to still be in flight pass `wait_timeout_s=0` rather than relying on
+    it being slow enough to outrun the wait.
+    """
     resp = await api_client.post(
         f"/api/sql/sessions/{session_id}/statements", json={"sql": sql, **body}
     )
-    assert resp.status_code == 202, resp.text
+    assert resp.status_code in (200, 202), resp.text
     return resp.json()["id"]
 
 
@@ -246,8 +259,10 @@ async def test_statement_ack_marks_running_over_the_real_channel(
     on its way to `done`. That transition is what lets the server tell "never
     arrived" apart from "still working"."""
     session = await _open(api_client, workspace, healthy_agent["id"])
-    # Long enough that the statement is observably mid-flight.
-    query_id = await _submit(api_client, session["id"], _SLOW_SQL)
+    # Long enough that the statement is observably mid-flight, and `wait_timeout_s=0`
+    # so the submit call hands it back running instead of waiting it out -- the
+    # `running` transition is the whole point of this test.
+    query_id = await _submit(api_client, session["id"], _SLOW_SQL, wait_timeout_s=0)
 
     running = await _poll_until(
         api_client, query_id, lambda b: b["status"] in ("running", "done", "failed"), 30.0
@@ -275,7 +290,8 @@ async def test_close_session_interrupts_in_flight_statement_without_blocking_oth
     and an unrelated concurrent session on the same agent must not stall behind
     it."""
     session_a = await _open(api_client, workspace, healthy_agent["id"])
-    slow_id = await _submit(api_client, session_a["id"], _SLOW_SQL)
+    # `wait_timeout_s=0`: the close has to land on a statement still in flight.
+    slow_id = await _submit(api_client, session_a["id"], _SLOW_SQL, wait_timeout_s=0)
     await _poll_until(api_client, slow_id, lambda b: b["status"] == "running", 20.0)
 
     start = asyncio.get_event_loop().time()
@@ -340,7 +356,9 @@ ch._handle_exec_statement = _drop_first
     agent_id = await _wait_new_agent_id(api_client, before)
 
     session = await _open(api_client, workspace, agent_id)
-    lost = await _submit(api_client, session["id"], "SELECT 1 AS n")
+    # `wait_timeout_s=0`: this statement's frame is deliberately dropped, so it never
+    # completes. Waiting on it would just burn the budget before the same 202.
+    lost = await _submit(api_client, session["id"], "SELECT 1 AS n", wait_timeout_s=0)
 
     # Bounded in seconds by the ack deadline + a reaper tick, not by the client.
     failed = await _poll_until(api_client, lost, lambda b: b["status"] == "failed", 120.0)
@@ -367,7 +385,8 @@ async def test_agent_disconnect_resolves_in_flight_statements(
     agent_id = await _wait_new_agent_id(api_client, before)
     session = await _open(api_client, workspace, agent_id)
 
-    query_id = await _submit(api_client, session["id"], _SLOW_SQL)
+    # `wait_timeout_s=0` so the submit returns while the statement is still running.
+    query_id = await _submit(api_client, session["id"], _SLOW_SQL, wait_timeout_s=0)
     # Wait for the ack (queued -> running), so the kill lands on a statement
     # confirmed in flight rather than possibly racing its initial submit.
     await _poll_until(api_client, query_id, lambda b: b["status"] == "running", 20.0)

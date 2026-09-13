@@ -664,7 +664,17 @@ async def _resize_for_statement(
         await state.apply_resize(state.reservation.total_bytes)
         if not await admission.await_growth(max(0, floor - baseline), remaining):
             # Timed out, or the watchdog released us because nothing was left to
-            # wait for. Either way there is no point going round again.
+            # wait for. Either way there is no point going round again — but we
+            # gave our whole grant back before parking, so leaving now would run
+            # the statement on the bare idle baseline. Take back whatever is free
+            # first: failing to reach the *floor* is not a reason to execute on
+            # 64 MiB when more than that is sitting unused.
+            #
+            # Measured: one q21 in a 22-way SF10 burst waited 26s here, exited on
+            # this path, and died with "failed to allocate 16.0 KiB (63.8 MiB/64.0
+            # MiB used)" — the sole failure left in 792 statements once object-store
+            # connection reuse was fixed.
+            await _size_once()
             break
 
     state.admission_wait_ms = (time.monotonic() - started) * 1000

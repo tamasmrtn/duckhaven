@@ -39,6 +39,26 @@ DuckDB `SECRET` that dies with the per-query connection. No long-lived storage s
 assumption / SAS minting happens server-side in Polaris, and only the resulting scoped, expiring credential ever
 reaches DuckDB.
 
+## Connection reuse
+
+An agent reads table data straight from object storage over HTTP, and a single scan of a
+large table touches hundreds of objects — one Iceberg table at TPC-H SF10 is around 500
+Parquet and metadata files. DuckDB's HTTP layer does **not** reuse connections by default,
+so each of those objects would cost its own TCP connection, and each finished connection
+would sit in the kernel's `TIME_WAIT` state for a minute afterwards.
+
+That is fast enough to run a container out of outbound ports. The Linux default range is
+about 28,000, and a handful of concurrent readers can burn through all of them in seconds;
+every connection after that fails until the backlog drains. The agent therefore turns
+`httpfs_connection_caching` on for every connection it opens, which keeps the count of
+sockets in the hundreds rather than the tens of thousands.
+
+!!! note "Why it is worth stating"
+    Before this was enabled, a burst of concurrent readers looked like a *storage* outage —
+    DuckDB reports the exhausted-port error as `Could not connect to server`, naming the
+    object store, which is the one component that was working fine. If you see that error
+    on a self-built agent image, check this setting before you check your storage.
+
 ## Related
 
 - [Configure storage](../deployment/storage.md) — register and bind a backend.

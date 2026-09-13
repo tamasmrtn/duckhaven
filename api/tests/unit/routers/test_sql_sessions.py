@@ -67,6 +67,11 @@ async def connected_agent(agent: Agent):
 @pytest.fixture
 def enabled(monkeypatch):
     monkeypatch.setattr(settings, "sql_sessions_enabled", True)
+    # No completion wait by default. These tests dispatch through a `fake_exec` that
+    # never moves the row off `queued`, so the real default would make every one of
+    # them sit out the full budget. The wait's own behaviour is covered explicitly by
+    # the tests that set it, and end to end by test_service.py's await_query_done set.
+    monkeypatch.setattr(settings, "sql_statement_wait_timeout_s", 0.0)
 
 
 async def _open_session_row(db, workspace, agent, user, *, status="open") -> SqlSession:
@@ -1072,3 +1077,113 @@ async def test_no_agent_with_elastic_disabled_still_503s(authed_client, workspac
     resp = await authed_client.post(f"/workspaces/{workspace.slug}/sql/sessions", json={})
     assert resp.status_code == 503
     assert resp.json()["message"] == "No connected agent available"
+
+
+async def test_statement_wait_returns_200_when_it_finishes_in_time(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    """A statement that lands inside the budget comes back 200 with the terminal
+    row, so the client never polls at all. 202 would promise a result that has
+    already happened."""
+    session = await _open_session_row(db_session, workspace, agent, user)
+
+    async def fake_exec(db, sess, query, timeout_s):
+        # Stand in for the agent's QUERY_DONE, which in production is applied by
+        # the websocket receive loop in its own DB session.
+        query.status = "done"
+        query.duration_ms = 7
+        query.row_count = 1
+        await db.commit()
+        return True
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+    monkeypatch.setattr(settings, "sql_statement_wait_timeout_s", 5.0)
+
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements", json={"sql": "SELECT 1"}
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "done"
+    assert body["duration_ms"] == 7
+
+
+async def test_statement_wait_expiry_returns_202_still_running(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    """Outliving the budget is not a failure: the statement is left running and
+    handed back for the client to poll, exactly as before the wait existed."""
+    session = await _open_session_row(db_session, workspace, agent, user)
+
+    async def fake_exec(db, sess, query, timeout_s):
+        return True
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements",
+        json={"sql": "SELECT 1", "wait_timeout_s": 0.2},
+    )
+    assert resp.status_code == 202, resp.text
+    assert resp.json()["status"] == "queued"
+    query = await db_session.get(Query, uuid.UUID(resp.json()["id"]))
+    assert query.status == "queued"
+
+
+async def test_statement_wait_zero_answers_immediately(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    """`0` opts out of the hold entirely -- the pre-wait behaviour, and the control
+    arm for measuring the change."""
+    session = await _open_session_row(db_session, workspace, agent, user)
+
+    async def fake_exec(db, sess, query, timeout_s):
+        return True
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+    monkeypatch.setattr(settings, "sql_statement_wait_timeout_s", 30.0)
+
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements",
+        json={"sql": "SELECT 1", "wait_timeout_s": 0},
+    )
+    assert resp.status_code == 202, resp.text
+
+
+async def test_statement_wait_above_the_cap_is_rejected(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    """The cap bounds how long a client can make the API hold a request open."""
+    session = await _open_session_row(db_session, workspace, agent, user)
+    monkeypatch.setattr(settings, "sql_statement_max_wait_timeout_s", 30.0)
+
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements",
+        json={"sql": "SELECT 1", "wait_timeout_s": 31.0},
+    )
+    assert resp.status_code == 422, resp.text
+
+
+async def test_statement_wait_returns_200_for_a_failed_statement(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    """A statement that failed inside the budget is still a *completed* one. The
+    error travels on the row, where the client would have read it after polling --
+    answering 202 would send it back to poll a statement that is already over."""
+    session = await _open_session_row(db_session, workspace, agent, user)
+
+    async def fake_exec(db, sess, query, timeout_s):
+        query.status = "failed"
+        query.error = "Binder Error: boom"
+        await db.commit()
+        return True
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+    monkeypatch.setattr(settings, "sql_statement_wait_timeout_s", 5.0)
+
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements", json={"sql": "SELECT nope"}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "failed"
+    assert resp.json()["error"] == "Binder Error: boom"

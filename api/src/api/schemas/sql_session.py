@@ -76,6 +76,27 @@ class SqlSessionSummaryOut(SqlSessionOut):
 class SqlStatementCreate(BaseModel):
     sql: str
     timeout_s: float = 600.0
+    # How long the call may block waiting for the statement to finish. None takes
+    # the server default (sql_statement_wait_timeout_s); 0 never blocks and answers
+    # 202 immediately, which is what this endpoint did before the field existed.
+    # Capped by sql_statement_max_wait_timeout_s.
+    #
+    # Unlike the session-open call there is no `on_wait_timeout`: a statement whose
+    # wait runs out is always handed back for polling. Cancelling a query that is
+    # running perfectly well, because the client's patience expired, would destroy
+    # work the client can still collect by polling.
+    wait_timeout_s: float | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _validate_wait(self) -> SqlStatementCreate:
+        if (
+            self.wait_timeout_s is not None
+            and self.wait_timeout_s > settings.sql_statement_max_wait_timeout_s
+        ):
+            raise ValueError(
+                f"wait_timeout_s must be at most {settings.sql_statement_max_wait_timeout_s}"
+            )
+        return self
 
 
 class StagingFilesCreate(BaseModel):

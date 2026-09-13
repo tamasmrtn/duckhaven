@@ -629,6 +629,91 @@ async def test_get_query_not_found(authed_client: AsyncClient):
     assert resp.status_code == 404
 
 
+async def test_get_query_does_not_wait_by_default(
+    authed_client: AsyncClient, workspace: Workspace, connected_agent, db_session
+):
+    """The hold is opt-in. This is also the worksheet's poll route (every ~300ms
+    while a query runs) and the history's read route; a hold by default would leave
+    every open browser tab occupying a request and a pooled DB connection."""
+    import time
+
+    agent, _ = connected_agent
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(agent.id)},
+    )
+    query_id = resp.json()["id"]
+
+    started = time.monotonic()
+    resp = await authed_client.get(f"/queries/{query_id}")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "queued"
+    assert time.monotonic() - started < 0.5
+
+
+async def test_get_query_wait_holds_until_the_query_finishes(
+    authed_client: AsyncClient, workspace: Workspace, connected_agent, db_session
+):
+    """`wait_timeout_s` lets a client following a statement that outlived the wait on
+    submit block for the rest of it, instead of falling back to a sleep grid."""
+    import asyncio
+
+    from api.models.query import Query
+
+    agent, _ = connected_agent
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(agent.id)},
+    )
+    query_id = resp.json()["id"]
+
+    async def finish():
+        await asyncio.sleep(0.1)
+        row = await db_session.get(Query, uuid.UUID(query_id))
+        row.status = "done"
+        row.duration_ms = 5
+        await db_session.commit()
+
+    mover = asyncio.create_task(finish())
+    resp = await authed_client.get(f"/queries/{query_id}", params={"wait_timeout_s": 5})
+    await mover
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "done"
+
+
+async def test_get_query_wait_expiry_returns_the_running_row(
+    authed_client: AsyncClient, workspace: Workspace, connected_agent, db_session
+):
+    """Expiry is not an error -- the caller gets the row as it stands and polls on."""
+    agent, _ = connected_agent
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(agent.id)},
+    )
+    query_id = resp.json()["id"]
+
+    resp = await authed_client.get(f"/queries/{query_id}", params={"wait_timeout_s": 0.2})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "queued"
+
+
+async def test_get_query_wait_above_the_cap_is_rejected(
+    authed_client: AsyncClient, workspace: Workspace, connected_agent, db_session, monkeypatch
+):
+    from api.config import settings
+
+    agent, _ = connected_agent
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(agent.id)},
+    )
+    query_id = resp.json()["id"]
+    monkeypatch.setattr(settings, "sql_statement_max_wait_timeout_s", 30.0)
+
+    resp = await authed_client.get(f"/queries/{query_id}", params={"wait_timeout_s": 31})
+    assert resp.status_code == 422
+
+
 async def test_get_query_profile_returns_persisted(
     authed_client: AsyncClient, workspace: Workspace, agent: Agent, db_session
 ):

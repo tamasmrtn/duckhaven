@@ -35,6 +35,9 @@ _TERMINAL = ("closed", "expired", "failed")
 # States the open call is still waiting on: `pending` (compute starting, no agent
 # bound yet) and `opening` (bound, awaiting the agent's ack).
 _WAITING = ("pending", "opening")
+# A statement's non-terminal states, the ones a completion wait sits through.
+# Mirrors the SQL connector's own `_PENDING`, which drives its poll loop.
+_STATEMENT_PENDING = ("queued", "running")
 
 
 def _catalog_descriptors(catalogs: list[Catalog]) -> list[dict[str, object]]:
@@ -279,3 +282,43 @@ async def await_session_open(
         if session.status not in _WAITING:
             break
     return session
+
+
+async def await_query_done(
+    db: AsyncSession,
+    query: Query,
+    timeout_s: float,
+    poll_interval_s: float = 0.05,
+    poll_max_s: float = 0.5,
+) -> Query:
+    """Block until the statement reaches a terminal state, or ``timeout_s`` runs out.
+
+    The sibling of :func:`await_session_open`, for the other thing a client would
+    otherwise sit and poll for. QUERY_DONE is applied by the agent's WebSocket
+    receive loop in its own DB session, so — exactly as there — this polls *this*
+    session's view rather than waiting on an in-process signal, and the rollback
+    below is what makes the other session's commit visible under read-committed.
+
+    The same connection discipline applies and matters more here, because a
+    statement wait is the common case rather than the cold-start one: the
+    transaction is rolled back before each sleep so the pooled connection goes back
+    for the duration. Holding it would cap concurrent statements at ``db_pool_size
+    + db_max_overflow`` and deadlock a `dbt run` with more threads than that.
+
+    The cadence is tighter than the session variant's (50ms opening, 500ms ceiling
+    against 100ms/1s): these are Postgres round trips on an already-warm
+    connection, not a container start, and the whole point of the wait is that the
+    client learns of completion promptly. On timeout the row is left alone and the
+    caller hands it back for the client to poll — a statement is never cancelled
+    for outliving a wait.
+    """
+    deadline = asyncio.get_event_loop().time() + timeout_s
+    interval = poll_interval_s
+    while asyncio.get_event_loop().time() < deadline:
+        await db.rollback()
+        await asyncio.sleep(interval)
+        interval = min(poll_max_s, interval * 1.5)
+        await db.refresh(query)
+        if query.status not in _STATEMENT_PENDING:
+            break
+    return query

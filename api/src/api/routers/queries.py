@@ -41,6 +41,7 @@ from api.services.permissions import Permission
 from api.services.rbac import has_permission
 from api.services.sql_classify import STATEMENT_TYPES
 from api.services.sql_guard import SQLNotAllowed, assert_allowed, is_read_only
+from api.services.sql_sessions import service as sql_session_service
 from api.services.workspace import (
     assert_workspace_member,
     get_workspace,
@@ -539,6 +540,7 @@ async def list_workspace_queries(
 @router.get("/queries/{query_id}", response_model=QueryOut)
 async def get_query(
     query_id: uuid.UUID,
+    wait_timeout_s: float = QueryParam(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> Query:
@@ -546,12 +548,27 @@ async def get_query(
 
     Addressed globally rather than under its workspace: the id is unique, and the
     submitter already holds it. Any member of the query's workspace may read it,
-    which is what makes the history an audit trail."""
+    which is what makes the history an audit trail.
+
+    Pass `wait_timeout_s` to hold the response until the query reaches a terminal
+    state, for a client following a statement that outlived the wait on submit.
+    It is **opt-in and defaults to 0** deliberately: this is also the route the
+    worksheet refreshes several times a second and the history reads, and neither
+    wants a held request. Capped by `SQL_STATEMENT_MAX_WAIT_TIMEOUT_S`."""
     result = await db.execute(select(Query).where(Query.id == query_id))
     query = result.scalar_one_or_none()
     if query is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     await assert_workspace_member(db, query.workspace_id, user.id)
+    if wait_timeout_s > 0:
+        if wait_timeout_s > settings.sql_statement_max_wait_timeout_s:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"wait_timeout_s must be at most {settings.sql_statement_max_wait_timeout_s}"
+                ),
+            )
+        await sql_session_service.await_query_done(db, query, wait_timeout_s)
     return query
 
 

@@ -40,7 +40,7 @@ dependencies = [
     # transitively today via other tooling; declared explicitly because the import
     # path is a runtime feature, not a dev convenience.
     "pyyaml>=6.0",
-    "pydantic-ai-slim[anthropic,mistral,openai]>=2.40.0",
+    "pydantic-ai-slim[anthropic,mistral,openai]>=2.42.0",
     # Official Model Context Protocol SDK, for the governed MCP server mounted at
     # /mcp (see api/src/api/services/mcp/). Only the server half is used; the
     # client half and its httpx2 dependency come along with the distribution.

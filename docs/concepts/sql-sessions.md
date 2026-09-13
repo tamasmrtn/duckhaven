@@ -114,6 +114,13 @@ it just finds the statement already finished on its first look. And a statement 
 budget is never cancelled for it — cancelling work the client can still collect would be the wrong
 trade.
 
+!!! warning "Set the budget above your statements, or set it to zero"
+    A budget most statements *outlive* is worse than no wait at all: the call is held for the
+    whole budget, the statement is handed back still running, and the client polls for it anyway
+    — so you pay the hold and keep the polling. Measured at 48-way concurrency, a 1-second budget
+    ran **27% slower** than `0`. The 10-second default clears ordinary interactive statements
+    comfortably; if yours routinely run longer, raise it rather than leaving it just under them.
+
 For that longer tail, `GET /api/queries/{query_id}` takes the same `wait_timeout_s` as a query
 parameter, so a client following a slow statement can keep waiting rather than fall back to
 sleeping. It is **opt-in and defaults to `0`** there, because that route is also what the worksheet

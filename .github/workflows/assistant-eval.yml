@@ -33,8 +33,9 @@ on:
         default: https://ollama.com/v1
 
   # A weekly run gives a trend line rather than isolated readings. Left commented
-  # because the cost is a decision, not a default — price 84 assistant runs plus
-  # 84 judge calls against your own provider before enabling it.
+  # because the cost is a decision, not a default — price 90 assistant runs plus
+  # 180 judge calls (absolute, sampled twice) or 90 + 90 (pairwise) against your
+  # own provider before enabling it.
   # schedule:
   #   - cron: '0 9 * * 1'
 

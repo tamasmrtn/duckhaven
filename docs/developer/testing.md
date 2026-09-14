@@ -66,13 +66,27 @@ knowledge producing a more confident answer is the failure being tested.
 |---|---|---|---|---|
 | 1a | Metric correctness, case-set validity, arm configuration, judge arithmetic | `make test-api` | none | free |
 | 1b | Retrieval: recall@5 and MRR over the docs corpus | `make test-integration-api` (needs Postgres) | none | free |
-| 2 absolute | Faithfulness and answer relevancy against thresholds | `make eval-judged` | 30 runs + 60 judge calls | **~$3.40** |
-| 2 pairwise | Which of two arms is better | `make eval-compare` | 60 runs + 60 judge calls | **~$6.40** |
+| 2 absolute | Faithfulness, answer relevancy, and pass^k against thresholds | `make eval-judged` | 90 runs + 180 judge calls (45 cases, sampled twice) | **~$10** |
+| 2 pairwise | Which of two arms is better | `make eval-compare` | 90 runs + 90 judge calls | **~$6.40** |
 
 Tiers 1a and 1b need no provider key and run on every pull request. Tier 2 runs on demand only — there is no cron —
 so it costs nothing when idle. Figures assume Claude Sonnet at \$3/M input and \$15/M output, and roughly four model
 requests per case at 6k input and 400 output tokens each; check them against your own provider before enabling
-anything on a schedule. A weekly absolute run would be about \$15/month.
+anything on a schedule. A weekly absolute run would be about \$43/month.
+
+**Every case is sampled twice and the headline reliability number is pass^k.** The assistant's temperature is not
+pinned, so a single sample per case makes the run-level gate a coin flip on whichever cases sit near it: repeated runs
+of the same arm and judge observed 27 of 42 cases changing faithfulness score, with one case moving between 1 and 5.
+pass^k — from tau-bench (arXiv:2406.12045) — asks the deployment-relevant question: *did every sample of this case
+score well?* A user asks a question once and gets one answer; nobody resamples and keeps the best, so the harness does
+not report pass@k ("at least one sample passed"), which would reward exactly the high-variance behaviour the gate
+exists to catch. A sample passes when faithfulness **and** relevancy are at least 4 on the 1–5 scale; on a case that
+retrieves no documentation, where faithfulness is the wrong question and is never gated, relevancy alone decides.
+The run passes when pass^2 is at least 0.9 — at 45 cases that tolerates four unlucky cases and still names a run
+whose answers are not reliably good. Sampling shares retrieval and corpus state between samples, so pass^k is treated
+as an empirical measurement of what happened, not derived from an independence assumption. Every sample is kept in
+the report, with its scores and whether it passed, so a case that failed one of two is checkable. Cases run
+concurrently (bounded by the harness), so a sampled run stays near the length of the old single-sample one.
 
 **The judge is pinned and its identity is recorded in every report.** An unpinned judge silently invalidates
 comparison against older runs: a faithfulness score that drops from 4.3 to 4.0 could mean the assistant got worse or
@@ -83,8 +97,8 @@ answers are swapped. Judges systematically prefer whichever answer they see firs
 rate, which is larger than most effects worth measuring. Disagreements become ties and are counted as the *flip rate*;
 a run whose flip rate exceeds 25% is reported as inconclusive however decisive its headline looks.
 
-A single faithfulness score of 1 on a negative case fails the run outright, regardless of the mean. That one case is
-what the tier exists to catch, and an average is exactly the wrong way to look at it.
+A single faithfulness score of 1 on a negative case — on any sample — fails the run outright, regardless of the mean.
+That one case is what the tier exists to catch, and an average is exactly the wrong way to look at it.
 
 An **arm** is a named configuration of the assistant — which model, whether product knowledge is on, what the
 workspace has — defined in `api/tests/evals/arms.yaml`. Arms configure the real `build_instructions` and
@@ -140,8 +154,8 @@ them is the knowledge — which is what makes a win attributable.
 make eval-compare ARM_A=with-docs ARM_B=baseline
 ```
 
-Read `by_category` rather than only the headline. 18 of the 30 cases are `product_knowledge` or `unanswerable`, where
-documentation should decide the answer; the other 12 exercise catalog browsing, semantic routing and governance, where
+Read `by_category` rather than only the headline. 24 of the 45 cases are `product_knowledge` or `unanswerable`, where
+documentation should decide the answer; the other 21 exercise catalog browsing, semantic routing and governance, where
 both arms should behave identically and ties are the correct result.
 
 Reports land in `api/tests/evals/reports/` (gitignored — a run's numbers belong in the pull request that cites

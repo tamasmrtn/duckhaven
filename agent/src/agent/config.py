@@ -119,6 +119,21 @@ class Settings(BaseSettings):
     estimate_cache_ttl_s: float = 300.0
     estimate_cache_max_entries: int = 512
     estimate_fallback_bucket: str = "M"
+    # Once a statement shape has run, size the next one of the same shape from the
+    # memory it measured instead of the EXPLAIN estimate (see
+    # executor.grant_feedback). The estimate overshoots real peaks by 5-11x, and
+    # because the estimate picks the concurrency bucket, that overshoot is paid in
+    # concurrency: on SF10 TPC-H it put every query in the same bucket regardless
+    # of whether it needed 183 MB or 2.8 GB. Turn it off to size purely from the
+    # plan, which is the behaviour before this existed.
+    grant_feedback_enabled: bool = True
+    # Margin applied to the largest remembered peak. A measurement still needs
+    # headroom — data grows between runs, and a shape covers every statement with
+    # the same text, not the same data. 1.5 matches `estimate_safety_multiplier`
+    # deliberately: the argument for a margin is the same, only the number being
+    # padded is trustworthy. Shares the estimate cache's TTL and cap, because a
+    # measurement goes stale for exactly the reason an estimate does.
+    grant_feedback_safety_multiplier: float = 1.5
 
     # How far the revocable "elastic" cache grant may top a statement up, as a
     # fraction of the agent's budget. A statement is grown to this fraction *if*

@@ -27,6 +27,7 @@ from agent.executor.admission import (
 )
 from agent.executor.estimate_cache import EstimateCache, EstimateKey
 from agent.executor.estimator import bucket_for, estimate_memory_bytes
+from agent.executor.grant_feedback import GrantFeedback
 from agent.executor.runner import (
     _is_single_select,
     apply_memory_limit,
@@ -181,6 +182,15 @@ async def _send_failed(ws, query_id: str, error: str) -> None:
 # the catalogs, not on who asked. See executor.estimate_cache.
 _estimates = EstimateCache(
     ttl_s=settings.estimate_cache_ttl_s, max_entries=settings.estimate_cache_max_entries
+)
+
+# What those shapes actually used once they ran, which beats the estimate by 5-11x
+# on real queries. Keyed the same way and invalidated alongside it. See
+# executor.grant_feedback.
+_grants = GrantFeedback(
+    ttl_s=settings.estimate_cache_ttl_s,
+    max_entries=settings.estimate_cache_max_entries,
+    safety=settings.grant_feedback_safety_multiplier,
 )
 
 # Estimates currently occupying a worker in that pool, including any abandoned by
@@ -562,7 +572,7 @@ async def _discard_open(conn, session_id: str, reservation, admission: Admission
 
 async def _resize_for_statement(
     state, sql: str, admission: Admission, timeout_s: float = 0.0
-) -> None:
+) -> EstimateKey | None:
     """Grow a session's reservation to fit the statement it is about to run.
 
     The session holds only its idle baseline between statements, so this is where
@@ -581,9 +591,13 @@ async def _resize_for_statement(
     file cache, without which every Iceberg scan re-reads its Parquet from object
     storage — and it costs other tenants nothing, because admission takes it back
     the moment someone needs the bytes.
+
+    Returns the key this statement was sized under, so the caller can record what
+    it actually used against the same shape (see ``grant_feedback``). ``None``
+    when nothing was sized and there is nothing to learn.
     """
     if not admission.is_auto:
-        return
+        return None
     if not _is_single_select(sql) and not is_cheap_statement(sql):
         # DDL/DML can change what a plan would bind to, so every remembered
         # estimate is now suspect — cheaper and far easier to reason about than
@@ -592,6 +606,7 @@ async def _resize_for_statement(
         # the key, and a client that opens each session with a `USE` would
         # otherwise clear the cache before it could ever be used.
         _estimates.invalidate_all()
+        _grants.invalidate_all()
 
     key = EstimateKey(catalogs=frozenset(state.catalogs), schema=state.schema, sql=sql)
     hit, estimate = _estimates.get(key)
@@ -608,6 +623,19 @@ async def _resize_for_statement(
             what=f"session {state.session_id}",
         )
         _estimates.put(key, estimate)
+
+    if settings.grant_feedback_enabled:
+        # A measurement beats the plan wherever one exists. Nothing is needed here
+        # to protect the statements that must *not* be sized this way, because
+        # only a materialized SELECT is ever profiled and so only a materialized
+        # SELECT is ever recorded (see `_record_grant_feedback`): DDL/DML has
+        # already dropped the entry on the line above, and `USE`/`SET` never had
+        # one. That leaves a SELECT whose EXPLAIN failed as the sole shape that is
+        # unestimable *and* measured — and for that one a real peak is a better
+        # size than `estimate_fallback_bucket`, which is a guess for DDL.
+        measured = _grants.suggest(key)
+        if measured is not None:
+            estimate = measured
 
     request = _statement_reservation_request(
         estimate, admission, state.reservation.memory_bytes, sql
@@ -688,6 +716,7 @@ async def _resize_for_statement(
         )
     # `state.memory_bytes`/`.threads` derive live from `state.reservation`, so
     # the runner picks up this total automatically when it runs the statement.
+    return key
 
 
 async def _shrink_to_baseline(state, admission: Admission) -> None:
@@ -732,6 +761,29 @@ async def _shrink_to_baseline(state, admission: Admission) -> None:
     await admission.apply_pending_resizes(exclude=state.reservation)
 
 
+def _record_grant_feedback(key: EstimateKey, profile: dict | None) -> None:
+    """Teach the next statement of this shape what this one used.
+
+    Caller has already established that the peak is this statement's own rather
+    than a watermark delta. Everything else is read from the profile, which is
+    absent when profiling is off or capture failed, and for any statement that
+    wrote no result. That absence is what keeps DDL/DML and ``USE``/``SET`` out of
+    the store entirely, which is in turn why the read side needs no guard of its
+    own — nothing that must be sized from the fallback bucket is ever measured.
+    """
+    if not profile:
+        return
+    summary = profile.get("summary") or {}
+    peak = int(summary.get("peak_memory_bytes") or 0)
+    granted = int(summary.get("reserved_memory_bytes") or 0)
+    _grants.observe(
+        key,
+        peak_bytes=peak,
+        granted_bytes=granted,
+        spilled=bool(summary.get("spill_bytes")),
+    )
+
+
 async def _handle_exec_statement(
     ws, payload: dict, results_dir: Path, admission: Admission
 ) -> None:
@@ -762,7 +814,18 @@ async def _handle_exec_statement(
         async with state.lock:
             # Inside the lock: the size applies to this statement only, and the
             # session runs one statement at a time.
-            await _resize_for_statement(state, sql, admission, timeout_s)
+            estimate_key = await _resize_for_statement(state, sql, admission, timeout_s)
+            # `peak_memory_bytes` is only this statement's own peak if nothing has
+            # raised the connection's watermark yet; after that the runner reports
+            # a delta (see `runner._apply_watermarks`). Read it before the run,
+            # because the run is what moves it.
+            #
+            # Tracks profiled statements only, so a DDL earlier in the session can
+            # leave DuckDB's real watermark above this dict's. The peak then reads
+            # high rather than low, which over-grants — the direction that was
+            # already the status quo — and the DDL has invalidated the shape's
+            # feedback anyway, so it cannot compound.
+            peak_is_this_statements = not state.watermarks.get("peak_memory_bytes")
             # A statement that waited for admission budget already spent part of
             # its declared timeout doing so; without subtracting that, it gets a
             # second, fresh full window here, and can run up to 2x its declared
@@ -807,6 +870,10 @@ async def _handle_exec_statement(
                             lambda: state.conn,
                             what=f"refresh_schema {state.session_id}",
                         )
+            # Only on the success path: `stats` is unbound if the statement raised,
+            # and a statement that failed measured nothing worth remembering.
+            if estimate_key is not None and peak_is_this_statements:
+                _record_grant_feedback(estimate_key, stats["profile"])
         done_payload: dict[str, object] = {
             "query_id": statement_id,
             "status": "done",

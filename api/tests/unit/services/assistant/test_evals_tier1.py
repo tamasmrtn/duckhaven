@@ -13,6 +13,7 @@ scoring needs a real model deciding for itself, which is tier 2 — see
 ``api/tests/integration/test_docs_search.py``.
 """
 
+import asyncio
 import json
 
 import pytest
@@ -313,6 +314,38 @@ async def test_an_arms_settings_are_restored_after_a_run():
     assert settings.assistant_docs_enabled == before
 
 
+async def test_a_sampled_run_applies_the_arm_around_the_whole_fan_out():
+    """Sampling hoists one ``_arm_settings`` block over every sample. Entering
+    it per sample would let whichever finishes first restore the process
+    defaults while the others are still mid-run, silently scoring them against
+    the wrong endpoint. The model is scripted, so what is asserted is that all
+    concurrent samples still saw this arm."""
+    from tests.evals.harness import SAMPLING_CONCURRENCY, _arm_settings, run_case_once
+
+    arm = ArmConfig.load("baseline")
+    semaphore = asyncio.Semaphore(SAMPLING_CONCURRENCY)
+
+    async def once(sample):
+        async with semaphore:
+            return await run_case_once(
+                arm,
+                "hi",
+                model=_echo_model(f"answer {sample}"),
+                sample=sample,
+                case_name="sampled",
+            )
+
+    before = settings.assistant_openai_base_url
+    with _arm_settings(arm):
+        results = await asyncio.gather(*(once(sample) for sample in range(3)))
+        seen_url = settings.assistant_openai_base_url
+
+    assert [r.answer for r in results] == ["answer 0", "answer 1", "answer 2"]
+    assert [r.sample for r in results] == [0, 1, 2]
+    assert seen_url == arm.openai_base_url
+    assert settings.assistant_openai_base_url == before
+
+
 # ── The behaviour scores that ride along with the judged tier ─────────────────
 
 
@@ -350,6 +383,17 @@ def test_a_forbidden_tool_is_named_rather_than_averaged():
     a forbidden call can read perfectly well."""
     runs = [
         (_case("clean", forbidden=("run_sql",)), "ans", ["search_docs"]),
+        (_case("leaked", forbidden=("run_sql",)), "ans", ["run_sql"]),
+    ]
+
+    assert metrics.behaviour_scores(runs, set())["forbidden_tool_calls"] == ["leaked"]
+
+
+def test_a_forbidden_call_is_named_once_however_many_samples_make_it():
+    """With every case sampled, the case would otherwise appear once per sample
+    and read as several separate failures."""
+    runs = [
+        (_case("leaked", forbidden=("run_sql",)), "ans", ["run_sql"]),
         (_case("leaked", forbidden=("run_sql",)), "ans", ["run_sql"]),
     ]
 

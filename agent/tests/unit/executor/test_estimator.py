@@ -90,3 +90,21 @@ def test_bucket_for_huge_estimate_caps_at_xl():
     _, frac, label = bucket_for(BUDGET * 100, BUDGET, BUCKET_FRACTIONS)
     assert label == "XL"
     assert frac == 1.0
+
+
+def test_no_bucket_below_the_top_serializes_the_agent():
+    """Every rung except the largest must admit at least two statements.
+
+    The ladder decides concurrency, not just memory: a rung at 2/3 of the budget
+    admits exactly one statement, which is what XL already means, so it costs two
+    thirds of the agent and buys nothing. It also puts a cliff directly above M —
+    an estimate one byte past M went from 3-way concurrency to 1-way, and on a
+    22-way SF10 burst that serialized every statement behind it.
+    """
+    ladder = sorted(BUCKET_FRACTIONS.items(), key=lambda kv: kv[1])
+    for label, frac in ladder[:-1]:
+        assert int(1 // frac) >= 2, f"bucket {label} ({frac}) admits only one statement"
+    # And no step may cost more than half the concurrency of the one below it.
+    concurrency = [int(1 // frac) for _, frac in ladder]
+    for below, above in zip(concurrency[1:], concurrency[:-1], strict=True):
+        assert below * 2 >= above, f"concurrency falls {above} -> {below} in one step"

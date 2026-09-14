@@ -257,6 +257,15 @@ services:
       MCP_QUERY_TIMEOUT_S: ${MCP_QUERY_TIMEOUT_S:-120.0}
       MCP_RESULT_ROW_CAP: ${MCP_RESULT_ROW_CAP:-100}
       MCP_RESULT_BYTE_CAP: ${MCP_RESULT_BYTE_CAP:-32768}
+      # SQL sessions (the dbt/dlt session layer, and what the SQL connector
+      # talks to). OFF by default, matching the API's own default: the session
+      # surface carries a relaxed statement policy, so an operator enables it
+      # only once the hardened agent is deployed (sandbox-before-relaxed-policy).
+      # Without this the session endpoints 404 with "SQL sessions are not
+      # enabled", which is the only symptom a client sees.
+      SQL_SESSIONS_ENABLED: ${SQL_SESSIONS_ENABLED:-false}
+      SQL_SESSION_IDLE_TIMEOUT_S: ${SQL_SESSION_IDLE_TIMEOUT_S:-900}
+      SQL_SESSION_MAX_LIFETIME_S: ${SQL_SESSION_MAX_LIFETIME_S:-14400}
       # OIDC / SSO (optional). Empty by default -> SSO off, local login only.
       # OIDC_PROVIDERS is a JSON list of providers (one button each); see
       # docs/guides/connect-idp.md. The OIDC_* fields below are a single-provider

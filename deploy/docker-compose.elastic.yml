@@ -108,12 +108,21 @@ services:
       ELASTIC_PROVIDER: docker
       ELASTIC_DOCKER_HOST: tcp://docker-socket-proxy:2375
       ELASTIC_DOCKER_NETWORK: duckhaven_internal
-      # The image provisioned agents run. Pinned to the same tag as the rest of
+      # The image provisioned agents run. Defaults to the same tag as the rest of
       # the stack so an elastic agent is never a different version to a static one.
-      AGENT_IMAGE: ghcr.io/tamasmrtn/duckhaven-agent:${DUCKHAVEN_IMAGE_TAG:-latest}
+      # AGENT_IMAGE overrides it outright, for the one case where running a
+      # *different* agent build than the API is the point — benchmarking or
+      # qualifying a new DuckDB version on otherwise-identical infrastructure.
+      AGENT_IMAGE: ${AGENT_IMAGE:-ghcr.io/tamasmrtn/duckhaven-agent:${DUCKHAVEN_IMAGE_TAG:-latest}}
       # Where a provisioned agent dials home. Elastic provisioning has no HTTP
       # request to derive this from, so it must be stated.
       ELASTIC_CONTROL_PLANE_URL: ws://api:8000/agents/connect
+      # Extra environment applied to every provisioned agent, as a JSON object.
+      # A static agent's environment is written by whoever runs it; a provisioned
+      # one gets only what the backend sets, so anything an operator tuned on a
+      # static agent (SANDBOX_DISABLED_FILESYSTEMS is the realistic case) has no
+      # other way across. Empty by default.
+      ELASTIC_AGENT_ENV: ${ELASTIC_AGENT_ENV:-{}}
       # Size used when nothing names one -- pool-triggered provisioning. The admin
       # UI picks explicitly per agent, bounded by this host's real capacity.
       ELASTIC_DEFAULT_CPU: ${ELASTIC_DEFAULT_CPU:-2}

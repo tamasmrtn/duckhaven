@@ -11,7 +11,9 @@ distinguishes them.
 
 from __future__ import annotations
 
+import math
 import os
+from collections import defaultdict
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Literal
@@ -113,13 +115,31 @@ genuine tie on style or length."""
 MIN_FAITHFULNESS = 4.2
 MIN_RELEVANCY = 4.0
 
+# How many times each case is run in the absolute tier. The assistant's
+# temperature is not pinned, so one sample per case makes the gate a coin flip
+# on the cases that sit near it; k samples turn that into a measurement. Two
+# captures most of the variance reduction at half the cost of three.
+SAMPLES_PER_CASE = 2
+
+# What one *sample* must clear for its case to count as passing. The run-level
+# means are continuous; pass^k needs a binary, and this is the cut. 4 is the
+# rubric's own line between "a claim the reader could act on" and a minor
+# unsupported detail, so it is the scale's judgement rather than a chosen bar.
+MIN_SAMPLE_FAITHFULNESS = 4.0
+MIN_SAMPLE_RELEVANCY = 4.0
+
+# The share of cases that must pass every sample. At 45 cases a single failure
+# costs 0.022, so 0.9 tolerates four unlucky cases and still names a run whose
+# answers are not reliably good.
+MIN_PASS_K = 0.9
+
 
 @lru_cache(maxsize=1)
 def judge_model() -> Any:
     """The judge, constructed the same way the product constructs a model.
 
-    Cached: a judged run makes 168 calls, and building a provider per call leaves
-    that many connection pools open.
+    Cached: a sampled judged run makes hundreds of calls, and building a
+    provider per call leaves that many connection pools open.
 
     A bare string works for a hosted provider; an OpenAI-compatible endpoint
     needs a real client, and passing the string through would silently score
@@ -180,6 +200,20 @@ class CaseScore:
     answer: str = ""
     tools_called: tuple[str, ...] = ()
     doc_paths: tuple[str, ...] = ()
+    # Which repetition produced this score. The report keeps every sample, so a
+    # case that failed one of two is checkable rather than a mystery.
+    sample: int = 0
+
+    def passes(self) -> bool:
+        """Whether this one sample meets its own pass bar.
+
+        Ungrounded cases are judged on relevancy alone: faithfulness is
+        groundedness in retrieved context, and the harness already refuses to
+        let a case with no context be failed for having none.
+        """
+        if self.relevancy < MIN_SAMPLE_RELEVANCY:
+            return False
+        return self.faithfulness >= MIN_SAMPLE_FAITHFULNESS if self.grounded else True
 
 
 def _context(case: Case, result: RunResult) -> str:
@@ -189,7 +223,7 @@ def _context(case: Case, result: RunResult) -> str:
     return _pairwise_context(case, result)
 
 
-async def score_absolute(case: Case, result: RunResult) -> CaseScore:
+async def score_absolute(case: Case, result: RunResult, *, sample: int = 0) -> CaseScore:
     """Faithfulness and answer relevancy, scored separately.
 
     Two calls rather than one: a combined prompt lets a judge average them, and
@@ -216,6 +250,7 @@ async def score_absolute(case: Case, result: RunResult) -> CaseScore:
         answer=result.answer,
         tools_called=tuple(result.tools_called),
         doc_paths=tuple(result.doc_paths),
+        sample=sample,
     )
 
 
@@ -266,38 +301,77 @@ def resolve_pair(shown_a_first: str, shown_b_first: str) -> tuple[str, bool]:
     return "tie", flipped
 
 
-def summarise_scores(scores: list[CaseScore]) -> dict:
-    """Means per slice, plus the negative cases that failed outright.
+def pass_hat_k(passes: list[bool], k: int) -> float:
+    """The draw-without-replacement estimate that all k samples pass.
+
+    ``C(c, k) / C(n, k)`` — the unbiased estimator from tau-bench
+    (arXiv:2406.12045). With exactly k samples it is all-or-nothing, which is
+    the deployment-relevant question: a user asks once and gets one answer.
+    """
+    n = len(passes)
+    if n < k:
+        raise ValueError(f"pass^{k} needs at least {k} samples, got {n}")
+    return math.comb(sum(passes), k) / math.comb(n, k)
+
+
+def summarise_scores(scores: list[CaseScore], *, k: int = SAMPLES_PER_CASE) -> dict:
+    """Means per slice, pass^k per case, and the failures that name themselves.
+
+    ``scores`` holds every sample of every case, not one row per case. Means
+    are taken per case and then across cases, so a case sampled twice does not
+    count twice. pass^k is computed per case over that case's samples and
+    averaged across cases — the tau-bench macro structure.
 
     One faithfulness score of 1 on a negative case fails the run regardless of
     the mean: that case is what this tier exists to catch, and an average is
-    exactly the wrong way to look at it. That check spans every negative case —
-    most of them name no documentation, and they are the ones most likely to
-    invent a feature.
+    exactly the wrong way to look at it. With sampling, "one sample
+    confabulated" is the same failure, and averaging across samples would hide
+    it. The check spans every negative case — most of them name no
+    documentation, and they are the ones most likely to invent a feature.
 
     The faithfulness *mean* is narrower. It covers only the cases that name
     documentation, because faithfulness measures whether an answer is supported
-    by retrieved context and 23 of the 42 cases retrieve none: they ask whether
+    by retrieved context and 26 of the 45 cases retrieve none: they ask whether
     the assistant routed to the semantic layer, refused a write, or resisted an
     injection. Scoring those on groundedness averaged a real signal together with
-    a meaningless one — adding tool results to the context moved 22 of 42 cases
-    for a net 0.14 on the headline, which is what an incoherent mean looks like.
-    They are gated on the behaviour metrics and relevancy instead, and their
-    faithfulness is still reported, unaggregated, as a diagnostic.
+    a meaningless one. They are gated on the behaviour metrics, relevancy, and
+    their pass^k instead, and their faithfulness is still reported, per case, as
+    a diagnostic.
     """
 
     def mean(values: list[float]) -> float:
         return round(sum(values) / len(values), 3) if values else 0.0
 
-    by_category: dict[str, list[float]] = {}
-    by_provenance: dict[str, list[float]] = {}
+    grouped: dict[str, list[CaseScore]] = defaultdict(list)
     for score in scores:
-        by_category.setdefault(score.category, []).append(score.faithfulness)
-        by_provenance.setdefault(score.provenance, []).append(score.faithfulness)
+        grouped[score.case].append(score)
 
-    grounded = [s for s in scores if s.grounded]
-    behavioural = [s for s in scores if not s.grounded]
-    confabulated = [s.case for s in scores if s.negative and s.faithfulness <= 1.0]
+    def case_mean(samples: list[CaseScore], field: str) -> float:
+        return sum(getattr(s, field) for s in samples) / len(samples)
+
+    by_category: dict[str, list[float]] = defaultdict(list)
+    by_provenance: dict[str, list[float]] = defaultdict(list)
+    for samples in grouped.values():
+        by_category[samples[0].category].append(case_mean(samples, "faithfulness"))
+        by_provenance[samples[0].provenance].append(case_mean(samples, "faithfulness"))
+
+    grounded = [s for s in grouped.values() if s[0].grounded]
+    behavioural = [s for s in grouped.values() if not s[0].grounded]
+    confabulated = sorted(
+        {
+            score.case
+            for samples in grouped.values()
+            for score in samples
+            if score.negative and score.faithfulness <= 1.0
+        }
+    )
+    case_passes = {
+        case: pass_hat_k([s.passes() for s in samples], k) for case, samples in grouped.items()
+    }
+    failures = sorted(case for case, rate in case_passes.items() if rate < 1.0)
+    pass_k = mean(list(case_passes.values()))
+    faithful_mean = mean([case_mean(s, "faithfulness") for s in grounded])
+    relevancy_mean = mean([case_mean(s, "relevancy") for s in grouped.values()])
     return {
         "outcomes": [
             {
@@ -305,8 +379,10 @@ def summarise_scores(scores: list[CaseScore]) -> dict:
                 "category": s.category,
                 "provenance": s.provenance,
                 "negative": s.negative,
+                "sample": s.sample,
                 "faithfulness": s.faithfulness,
                 "relevancy": s.relevancy,
+                "passed": s.passes(),
                 "reason": s.reason,
                 "tools_called": list(s.tools_called),
                 "doc_paths": list(s.doc_paths),
@@ -314,22 +390,31 @@ def summarise_scores(scores: list[CaseScore]) -> dict:
             }
             for s in scores
         ],
-        "cases": len(scores),
-        # Over the grounded cases only. `faithfulness_cases` travels with it so a
-        # mean over nineteen is never read as a mean over forty-two.
-        "faithfulness": mean([s.faithfulness for s in grounded]),
+        "cases": len(grouped),
+        # Over the grounded cases only, case by case rather than sample by
+        # sample. `faithfulness_cases` travels with it so a mean over nineteen
+        # is never read as a mean over forty-five.
+        "faithfulness": faithful_mean,
         "faithfulness_cases": len(grounded),
         # Reported, never gated: there is no retrieved context on these to be
         # faithful to. A low number here is a prompt to go and read the answers.
-        "faithfulness_ungrounded": mean([s.faithfulness for s in behavioural]),
+        "faithfulness_ungrounded": mean([case_mean(s, "faithfulness") for s in behavioural]),
         "faithfulness_ungrounded_cases": len(behavioural),
-        "relevancy": mean([s.relevancy for s in scores]),
-        "faithfulness_by_category": {k: mean(v) for k, v in sorted(by_category.items())},
-        "faithfulness_by_provenance": {k: mean(v) for k, v in sorted(by_provenance.items())},
+        "relevancy": relevancy_mean,
+        "faithfulness_by_category": {k_: mean(v) for k_, v in sorted(by_category.items())},
+        "faithfulness_by_provenance": {k_: mean(v) for k_, v in sorted(by_provenance.items())},
+        # pass^k: the share of cases whose every sample passed. `failed_cases`
+        # names the rest, because "a case failed at 1.0" is a capability gap or
+        # bad luck, and re-running is how the difference is measured.
+        "k": k,
+        "pass_k": pass_k,
+        "pass_k_cases": len(grouped),
+        "failed_cases": failures,
         "confabulated_on_negative_cases": confabulated,
         "passed": (
-            mean([s.faithfulness for s in grounded]) >= MIN_FAITHFULNESS
-            and mean([s.relevancy for s in scores]) >= MIN_RELEVANCY
+            faithful_mean >= MIN_FAITHFULNESS
+            and relevancy_mean >= MIN_RELEVANCY
+            and pass_k >= MIN_PASS_K
             and not confabulated
         ),
     }

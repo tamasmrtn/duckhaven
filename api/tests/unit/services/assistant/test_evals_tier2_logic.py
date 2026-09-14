@@ -162,6 +162,7 @@ def _score(
     faithfulness,
     relevancy=5.0,
     *,
+    sample=0,
     negative=False,
     category="product_knowledge",
     grounded=True,
@@ -175,6 +176,7 @@ def _score(
         faithfulness=faithfulness,
         relevancy=relevancy,
         reason="",
+        sample=sample,
     )
 
 
@@ -184,7 +186,7 @@ def test_one_confabulation_on_a_negative_case_fails_the_run():
     scores = [_score(f"good{i}", 5.0) for i in range(20)]
     scores.append(_score("invented", 1.0, negative=True))
 
-    summary = summarise_scores(scores)
+    summary = summarise_scores(scores, k=1)
 
     assert summary["faithfulness"] > judge.MIN_FAITHFULNESS
     assert summary["confabulated_on_negative_cases"] == ["invented"]
@@ -192,19 +194,19 @@ def test_one_confabulation_on_a_negative_case_fails_the_run():
 
 
 def test_a_low_faithfulness_mean_fails_the_run():
-    summary = summarise_scores([_score("a", 3.0), _score("b", 3.0)])
+    summary = summarise_scores([_score("a", 3.0), _score("b", 3.0)], k=1)
 
     assert summary["passed"] is False
 
 
 def test_a_healthy_run_passes():
-    summary = summarise_scores([_score("a", 5.0), _score("b", 4.5)])
+    summary = summarise_scores([_score("a", 5.0), _score("b", 4.5)], k=1)
 
     assert summary["passed"] is True
 
 
 def test_scores_are_reported_by_category_and_provenance():
-    summary = summarise_scores([_score("a", 5.0), _score("b", 3.0, category="governance")])
+    summary = summarise_scores([_score("a", 5.0), _score("b", 3.0, category="governance")], k=1)
 
     assert summary["faithfulness_by_category"] == {"governance": 3.0, "product_knowledge": 5.0}
     assert summary["faithfulness_by_provenance"] == {"hand": 4.0}
@@ -263,7 +265,7 @@ def test_the_summary_keeps_what_each_case_actually_did():
         )
     ]
 
-    outcome = judge.summarise_scores(scores)["outcomes"][0]
+    outcome = judge.summarise_scores(scores, k=1)["outcomes"][0]
 
     assert outcome["case"] == "revenue_by_region"
     assert outcome["tools_called"] == ["search_semantic", "query_metric"]
@@ -278,7 +280,7 @@ def test_the_faithfulness_mean_covers_only_grounded_cases():
     meaningless one."""
     scores = [_score("doc", 5.0), _score("behaviour", 1.0, grounded=False)]
 
-    summary = judge.summarise_scores(scores)
+    summary = judge.summarise_scores(scores, k=1)
 
     assert summary["faithfulness"] == 5.0
     assert summary["faithfulness_cases"] == 1
@@ -292,7 +294,7 @@ def test_an_ungrounded_case_cannot_fail_the_faithfulness_threshold():
         _score(f"behaviour{i}", 1.0, grounded=False) for i in range(20)
     ]
 
-    assert judge.summarise_scores(scores)["passed"] is True
+    assert judge.summarise_scores(scores, k=1)["passed"] is True
 
 
 def test_confabulation_still_spans_every_negative_case():
@@ -303,7 +305,126 @@ def test_confabulation_still_spans_every_negative_case():
         _score("invented", 1.0, negative=True, grounded=False, category="unanswerable")
     ]
 
+    summary = judge.summarise_scores(scores, k=1)
+
+    assert summary["confabulated_on_negative_cases"] == ["invented"]
+    assert summary["passed"] is False
+
+
+# ── pass^k: the reliability of a case, not its best sample ────────────────────
+
+
+def test_pass_hat_k_matches_the_tau_bench_estimator():
+    """C(c, k) / C(n, k), the draw-without-replacement estimate that all k
+    samples pass. The paper's own example: 4 of 5 passing, k=3 -> 4/10."""
+    assert judge.pass_hat_k([True] * 5, 1) == 1.0
+    assert judge.pass_hat_k([True, True, True, True, False], 3) == pytest.approx(0.4)
+
+
+def test_pass_hat_k_needs_at_least_k_samples():
+    with pytest.raises(ValueError, match="at least 2 samples"):
+        judge.pass_hat_k([True], 2)
+
+
+def test_a_case_passes_only_when_every_sample_scored_well():
+    """A user asks once and gets one answer; nobody resamples and keeps the
+    best. One 3 in two is a case that is not reliably good."""
+    reliable = [_score("reliable", 5.0, sample=0), _score("reliable", 4.0, sample=1)]
+    unreliable = [_score("flaky", 5.0, sample=0), _score("flaky", 3.0, sample=1)]
+
+    summary = judge.summarise_scores([*reliable, *unreliable])
+
+    assert summary["pass_k"] == 0.5
+    assert summary["failed_cases"] == ["flaky"]
+    assert [o["passed"] for o in summary["outcomes"]] == [True, True, True, False]
+
+
+def test_pass_k_below_the_bar_fails_the_run_even_with_a_good_mean():
+    """This is the point of the metric: a run whose mean is healthy but whose
+    answers are only usually good is not a passing run."""
+    scores = [_score(f"good{i}", 5.0, sample=sample) for i in range(8) for sample in range(2)]
+    scores += [_score("flaky_a", 5.0, sample=0), _score("flaky_a", 3.0, sample=1)]
+    scores += [_score("flaky_b", 5.0, sample=0), _score("flaky_b", 3.0, sample=1)]
+
+    summary = judge.summarise_scores(scores)
+
+    assert summary["faithfulness"] >= judge.MIN_FAITHFULNESS
+    assert summary["relevancy"] >= judge.MIN_RELEVANCY
+    assert summary["pass_k"] == 0.8
+    assert summary["passed"] is False
+
+
+def test_the_pass_k_bar_is_the_gate_at_exactly_nine_in_ten():
+    scores = [_score(f"good{i}", 5.0, sample=sample) for i in range(9) for sample in range(2)]
+    scores += [_score("flaky", 5.0, sample=0), _score("flaky", 3.0, sample=1)]
+
+    summary = judge.summarise_scores(scores)
+
+    assert summary["pass_k"] == 0.9
+    assert summary["passed"] is True
+
+
+def test_an_ungrounded_sample_passes_on_relevancy_alone():
+    """Faithfulness is groundedness in retrieved context. A case with no context
+    is gated on relevancy and behaviour, never on having failed to be grounded
+    in documentation that does not exist."""
+    scores = [
+        _score("no_docs", 1.0, relevancy=5.0, grounded=False, sample=sample) for sample in range(2)
+    ]
+
+    summary = judge.summarise_scores(scores)
+
+    assert summary["pass_k"] == 1.0
+    assert summary["faithfulness_ungrounded"] == 1.0
+
+
+def test_a_grounded_sample_needs_both_dimensions():
+    faithful_but_off_topic = [
+        _score("off", 5.0, relevancy=2.0, sample=sample) for sample in range(2)
+    ]
+
+    summary = judge.summarise_scores(faithful_but_off_topic)
+
+    assert summary["pass_k"] == 0.0
+
+
+def test_one_confabulating_sample_fails_the_run():
+    """Averaging across samples would hide the one sample that invented a
+    feature; the hard gate is per sample on purpose."""
+    scores = [_score("good", 5.0, sample=sample) for sample in range(2)]
+    scores += [
+        _score("invented", 5.0, sample=0, negative=True),
+        _score("invented", 1.0, sample=1, negative=True),
+    ]
+
     summary = judge.summarise_scores(scores)
 
     assert summary["confabulated_on_negative_cases"] == ["invented"]
     assert summary["passed"] is False
+
+
+def test_the_means_do_not_count_a_sampled_case_twice():
+    """Case-level means and pass^k are macro; a case sampled twice must weigh
+    the same as one sampled once, or the sampled cases rewrite the headline."""
+    scores = [
+        _score("twice", 5.0, sample=0),
+        _score("twice", 5.0, sample=1),
+        _score("once", 1.0, sample=0, grounded=False),
+    ]
+
+    summary = judge.summarise_scores(scores, k=1)
+
+    assert summary["cases"] == 2
+    assert summary["faithfulness"] == 5.0
+
+
+def test_the_report_keeps_every_sample_beside_its_case():
+    """A case that failed one of two must be checkable: the report carries both
+    scores, which sample produced them, and whether each passed."""
+    scores = [_score("case_a", 5.0, sample=0), _score("case_a", 2.0, sample=1)]
+
+    outcomes = judge.summarise_scores(scores)["outcomes"]
+
+    assert [o["sample"] for o in outcomes] == [0, 1]
+    assert [o["faithfulness"] for o in outcomes] == [5.0, 2.0]
+    assert [o["passed"] for o in outcomes] == [True, False]

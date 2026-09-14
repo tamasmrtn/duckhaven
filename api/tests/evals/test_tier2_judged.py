@@ -7,10 +7,18 @@ Costs money, needs a provider key, and is in no CI gate.
 The regression and reporting mode: scores tracked over time against thresholds.
 To ask whether a *change* helped, use pairwise — more sensitive to a small real
 difference than watching a mean wobble.
+
+Each case is sampled ``SAMPLES_PER_CASE`` times, because the assistant's
+temperature is not pinned and one sample makes the gate a coin flip on the cases
+near it. The headline reliability number is **pass^k**: the share of cases whose
+every sample scored well. Nobody resamples a production answer and keeps the
+best, so "all k succeeded" is the deployment-relevant question — not "at least
+one did", which is pass@k and rewards variance.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from datetime import UTC, datetime
@@ -22,12 +30,21 @@ from api.config import settings
 from api.services.assistant.knowledge import generate
 from api.services.assistant.knowledge.loader import load_index
 from tests.evals.fixtures import EvalGateway
-from tests.evals.harness import ArmConfig, docs_search_backend, run_case
+from tests.evals.harness import (
+    SAMPLING_CONCURRENCY,
+    ArmConfig,
+    _arm_settings,
+    docs_search_backend,
+    retrying,
+    run_case_once,
+)
 from tests.evals.judge import (
     JUDGE_MODEL,
     JUDGE_SETTINGS,
     MIN_FAITHFULNESS,
+    MIN_PASS_K,
     MIN_RELEVANCY,
+    SAMPLES_PER_CASE,
     score_absolute,
     summarise_scores,
 )
@@ -60,20 +77,48 @@ def _real_models_allowed(monkeypatch):
 async def test_absolute_scores_meet_their_thresholds():
     arm = ArmConfig.load(os.getenv("ASSISTANT_EVAL_ARM", "with-docs"))
     cases = load_cases()
+    semaphore = asyncio.Semaphore(SAMPLING_CONCURRENCY)
+
+    async def one(case, sample, docs_search):
+        """One sample of one case: run it, then score it. Both retried."""
+        async with semaphore:
+            result = await retrying(
+                lambda: run_case_once(
+                    arm,
+                    case.question,
+                    gateway=EvalGateway(can_write=arm.workspace.get("can_write", False)),
+                    docs_search=docs_search,
+                    case_name=case.name,
+                    sample=sample,
+                )
+            )
+            score = await retrying(lambda: score_absolute(case, result, sample=sample))
+        return case, result, score
 
     scores = []
     runs = []
     async with docs_search_backend() as docs_search:
-        for case in cases:
-            result = await run_case(
-                arm,
-                case.question,
-                gateway=EvalGateway(can_write=arm.workspace.get("can_write", False)),
-                docs_search=docs_search,
-                case_name=case.name,
-            )
+        # One `_arm_settings` block around the whole fan-out. Every task here
+        # patches the same arm, so there is nothing to race on; the guard is
+        # against entering it per task, which would let whichever finishes
+        # first restore settings the other tasks still need. A TaskGroup, not a
+        # bare gather, so a failure cancels the rest before the block restores
+        # anything.
+        with _arm_settings(arm):
+            tasks = []
+            # Flattened so the semaphore bounds the whole run: a task per
+            # (case, sample), not one long case at a time.
+            async with asyncio.TaskGroup() as group:
+                for case in cases:
+                    for sample in range(SAMPLES_PER_CASE):
+                        tasks.append(group.create_task(one(case, sample, docs_search)))
+        # Order is fixed after the fan-out so the report stays comparable
+        # between runs however the tasks interleaved.
+        for case, result, score in sorted(
+            (task.result() for task in tasks), key=lambda item: (item[0].name, item[2].sample)
+        ):
             runs.append((case, result.answer, result.tools_called))
-            scores.append(await score_absolute(case, result))
+            scores.append(score)
 
     summary = summarise_scores(scores)
     # Free, deterministic, and computed from what the run already collected — so
@@ -95,7 +140,7 @@ async def test_absolute_scores_meet_their_thresholds():
 
     # Reported before asserting, so a failing run still leaves a usable report.
     assert not summary["confabulated_on_negative_cases"], (
-        "the assistant answered a negative case confidently: "
+        "the assistant answered a negative case confidently, on at least one sample: "
         f"{summary['confabulated_on_negative_cases']}"
     )
     # A governance failure, not a rate to average: one forbidden call is a case
@@ -106,6 +151,10 @@ async def test_absolute_scores_meet_their_thresholds():
     )
     assert summary["faithfulness"] >= MIN_FAITHFULNESS
     assert summary["relevancy"] >= MIN_RELEVANCY
+    assert summary["pass_k"] >= MIN_PASS_K, (
+        f"pass^{summary['k']} was {summary['pass_k']}: "
+        f"{len(summary['failed_cases'])} cases failed a sample: {summary['failed_cases']}"
+    )
     # tool_choice and refusal_rate_on_negative_cases are reported, not gated:
     # nothing has measured them yet, and a bar set from a guess either passes
     # meaninglessly or fails a run nobody can fix. Set them from the first run.

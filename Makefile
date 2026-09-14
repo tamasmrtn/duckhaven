@@ -244,9 +244,11 @@ eval-synth:
 	  ASSISTANT_API_KEY=$$ASSISTANT_EVAL_API_KEY PYTHONPATH=api \
 	  uv run --package duckhaven-api python -m tests.evals.synth $(ARGS)
 
-# Tier 2, absolute: faithfulness and answer relevancy against thresholds. This is
-# the regression and reporting mode. ~$3.40 per run at 30 cases on a hosted
-# provider; see docs/developer/testing.md before enabling it on a schedule.
+# Tier 2, absolute: faithfulness, answer relevancy and pass^k against
+# thresholds. This is the regression and reporting mode. Each case is sampled
+# twice and the run gates on pass^2 >= 0.9; ~$10 per run at 45 cases on a
+# hosted provider. See docs/developer/testing.md before enabling it on a
+# schedule.
 #
 # ASSISTANT_EVAL_API_KEY is the gate and the key. It reaches an OpenAI-compatible
 # endpoint (Ollama, vLLM) as ASSISTANT_API_KEY; a hosted provider reads its own

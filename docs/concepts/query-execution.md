@@ -42,10 +42,42 @@ A reservation has two parts, and they answer different questions.
 what the admission gate blocks on, and it is never taken away once granted. The sum of every running query's required
 memory always stays inside the agent's budget; that is the guarantee that stops the agent being OOM-killed.
 
+Required memory is **capped** (`SESSION_MAX_BUCKET_FRACTION`, a third of the budget by default), and the cap is about
+concurrency rather than safety. An estimate is a guess made before the query runs, and cardinality estimates are
+routinely out by an order of magnitude; letting one claim most of the budget means everything else queues behind a
+number that may be wrong. Capping it guarantees at least three statements can run at once. It does not cap what a
+query *uses* — elastic memory below still lends it whatever is free — so on an idle agent a heavy query gets the same
+memory it always did. It only stops one query's guess from serializing the agent.
+
 Estimates are remembered across sessions, keyed by the query text together with the catalogs and schema it binds
 against, so the same query is planned once rather than once per session. Estimating is also bounded: if DuckDB takes
 too long to plan a query, the agent stops waiting and sizes it from a default instead. That costs the agent a little
 capacity, so it is reported as `duckhaven_agent_estimates_abandoned` in [monitoring](../operations/monitoring.md).
+
+#### Learning from what a query actually used
+
+The plan-based estimate is deliberately pessimistic: it assumes every blocking operator in the plan holds its full
+estimated row count at once. On a TPC-H run at scale factor 10 that came out **five to eleven times** the memory the
+queries really used — one of them reserved 9.8 GB to peak at 875 MB. Because the estimate picks the bucket, and the
+bucket decides how many queries fit at once, that overshoot is paid in concurrency by everything else on the agent.
+
+So the agent measures. Once a query has run, its observed peak memory is remembered against the same key as its
+estimate, and the next query of that shape is sized from the measurement instead of the plan — the approach SQL Server
+calls *memory grant feedback*. A margin is added on top (`GRANT_FEEDBACK_SAFETY_MULTIPLIER`), because a shape covers
+every query with that text and not every run sees the same data. If a query spilled to disk, its grant was too small
+rather than its peak informative, so the agent remembers the grant and the margin pushes the next run into a larger
+bucket; that is the only way a remembered size grows.
+
+Measurements expire on the same schedule as estimates, and any DDL or DML drops them outright — a write changes how
+much data the next query of that shape will hold. Only queries that return a result set are measured, so `CREATE
+TABLE`/`INSERT` and session commands like `USE` keep their existing sizing. Set `GRANT_FEEDBACK_ENABLED=false` to size
+purely from the plan.
+
+!!! note "Sessions that run many statements learn less"
+    DuckDB reports peak memory as a high-water mark for the whole connection rather than per statement, so the agent
+    can only trust the figure for the first query that runs on a connection. A client that opens a session per query
+    — which is where this pathology showed up — measures every one; a long-lived session measures its first statement
+    and then relies on what other sessions have already learned.
 
 **Elastic memory** is spare budget *lent* to a query on top of that. DuckDB's memory limit does not only cap operator
 memory — it also sizes the cache DuckDB keeps of the Parquet files it has read from object storage. A query sized to

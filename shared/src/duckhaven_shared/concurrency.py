@@ -32,11 +32,28 @@ DEFAULT_PROFILE = "auto"
 # T-shirt buckets for the ``auto`` profile, as fractions of the agent's memory
 # budget. An estimate snaps UP to the smallest bucket that fits (see
 # ``agent.executor.estimator.bucket_for``).
+#
+# Read the ladder as how many statements of that size fit at once, because that is
+# what it decides:
+#
+#     XS 1/12 -> 12    S 1/6 -> 6    M 1/3 -> 3    L 1/2 -> 2    XL 1/1 -> 1
+#
+# L was 2/3, which admits exactly **one** statement — the same concurrency as XL,
+# for two thirds of the budget. That made the rung above M a cliff from 3-way to
+# 1-way, and a query whose estimate overshot M by a byte serialized the whole
+# agent behind it. Measured on a 22-way SF10 burst of TPC-H q18, whose estimate
+# lands just past M: every statement queued, 13 of 25 waited out the full
+# admission budget, and the median wait was 282 s for a query that executes in
+# 1.5 s. At 1/2 that rung admits two, so the ladder degrades 12-6-3-2-1 with no
+# step worse than halving.
+#
+# Nothing between 1/2 and 1/1 is worth a rung: any size above half the budget
+# admits one statement, so it would cost memory without buying concurrency.
 BUCKET_FRACTIONS: dict[str, float] = {
     "XS": 1 / 12,
     "S": 1 / 6,
     "M": 1 / 3,
-    "L": 2 / 3,
+    "L": 1 / 2,
     "XL": 1.0,
 }
 

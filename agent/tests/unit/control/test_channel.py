@@ -10,6 +10,8 @@ from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags, set_s
 
 from agent.control import session
 from agent.executor.admission import Admission, ReservationRequest
+from agent.executor.estimate_cache import EstimateKey
+from agent.executor.estimator import bucket_for
 from duckhaven_shared.concurrency import BUCKET_FRACTIONS
 from duckhaven_shared.protocol import Frame, FrameType
 from duckhaven_shared.schemas import AgentCapabilities
@@ -31,11 +33,15 @@ def _clear_sessions():
     ch_module._estimates.invalidate_all()
     ch_module._estimates_in_flight = 0
     ch_module._estimates_abandoned = 0
+    # Same for the measured-grant feedback: a peak recorded by one test would
+    # otherwise size the next test's statement.
+    ch_module._grants.invalidate_all()
     yield
     session._sessions.clear()
     ch_module._opening.clear()
     ch_module._abandoned.clear()
     ch_module._estimates.invalidate_all()
+    ch_module._grants.invalidate_all()
 
 
 def _admission(profile: str = "single", **kwargs) -> Admission:
@@ -2337,6 +2343,189 @@ async def test_ddl_invalidates_estimates_but_use_does_not(monkeypatch):
     assert calls.count("SELECT 1") == 2, "DDL did not invalidate the cache"
 
 
+async def test_a_measured_peak_beats_the_estimate(monkeypatch):
+    """The point of the whole mechanism: the estimator overshoots real peaks by
+    5-11x, and because the estimate picks the bucket, that is paid in concurrency.
+    Once the shape has run, its measurement must win."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    ch, state = _session_state(admission, 64 * 1024**2)
+    state.catalogs, state.schema = frozenset({"tpch"}), "sf10"
+    # Overshoots the whole 1 GiB budget, as the real estimator does.
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: 8 * 1024**3)
+
+    await ch._resize_for_statement(state, "SELECT sum(x) FROM big", admission)
+    guessed = state.reservation.memory_bytes
+    await ch._shrink_to_baseline(state, admission)
+
+    # What it actually used: a twelfth of the budget, well under what it was given.
+    ch._grants.observe(
+        EstimateKey(catalogs=frozenset({"tpch"}), schema="sf10", sql="SELECT sum(x) FROM big"),
+        peak_bytes=1024**3 // 24,
+        granted_bytes=guessed,
+        spilled=False,
+    )
+    await ch._resize_for_statement(state, "SELECT sum(x) FROM big", admission)
+
+    assert state.reservation.memory_bytes < guessed, "kept sizing from the estimate"
+
+
+async def test_an_unmeasured_shape_still_uses_the_estimate(monkeypatch):
+    """The fallback has to stay intact: a query nobody has run yet must be sized
+    from its plan, not from nothing."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    ch, state = _session_state(admission, 64 * 1024**2)
+    state.catalogs, state.schema = frozenset({"tpch"}), "sf10"
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: 8 * 1024**3)
+
+    await ch._resize_for_statement(state, "SELECT sum(x) FROM big", admission)
+
+    expected, _, _ = bucket_for(8 * 1024**3, admission.budget_bytes, BUCKET_FRACTIONS)
+    clamp = int(ch.settings.session_max_bucket_fraction * admission.budget_bytes)
+    assert state.reservation.memory_bytes == min(expected, clamp)
+
+
+async def test_a_statement_that_writes_no_result_is_never_measured(tmp_path, monkeypatch):
+    """The invariant the read side leans on. Only a materialized SELECT is
+    profiled, so only a materialized SELECT is recorded — which is what keeps
+    DDL/DML and `USE`/`SET` on `estimate_fallback_bucket` instead of being talked
+    down to a peak that means nothing for them."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    await ch_module._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
+    state = session.get("s1")
+    state.catalogs, state.schema = frozenset({"tpch"}), "sf10"
+
+    for sql in ("CREATE TABLE feedback_t (i INT)", "SET threads = 2"):
+        ws = _FakeWS()
+        await ch_module._handle_exec_statement(
+            ws, {"session_id": "s1", "query_id": "q", "sql": sql}, tmp_path, admission
+        )
+        # These have no profile at all, so the recorder must not reach into one.
+        # A failure also arrives as QUERY_DONE (see `_send_failed`), so the status
+        # is what says whether the statement survived.
+        statuses = [Frame.model_validate_json(m).payload.get("status") for m in ws.sent]
+        assert "done" in statuses, f"{sql!r} failed: {ws.sent}"
+        key = EstimateKey(catalogs=frozenset({"tpch"}), schema="sf10", sql=sql)
+        assert ch_module._grants.suggest(key) is None, f"measured {sql!r}"
+
+
+async def test_ddl_drops_measurements_too_not_just_estimates(monkeypatch):
+    """A measurement goes stale for a stronger reason than an estimate does: the
+    DDL/DML that changed what the plan binds to also changed how much data the
+    query will hold. Keeping the old peak would size the next run from the table
+    as it was before the write."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    ch, state = _session_state(admission, 64 * 1024**2)
+    state.catalogs, state.schema = frozenset({"tpch"}), "sf10"
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: 8 * 1024**3)
+    sql = "SELECT sum(x) FROM big"
+    key = EstimateKey(catalogs=frozenset({"tpch"}), schema="sf10", sql=sql)
+    ch._grants.observe(key, peak_bytes=1024**3 // 24, granted_bytes=8 * 1024**3, spilled=False)
+
+    await ch._resize_for_statement(state, "INSERT INTO big VALUES (1)", admission)
+
+    assert ch._grants.suggest(key) is None, "kept a peak measured before the write"
+
+
+async def test_the_kill_switch_restores_estimate_only_sizing(monkeypatch):
+    """A mechanism that changes memory grants needs an off switch an operator can
+    reach when it is the thing being debugged."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    ch, state = _session_state(admission, 64 * 1024**2)
+    state.catalogs, state.schema = frozenset({"tpch"}), "sf10"
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: 8 * 1024**3)
+    sql = "SELECT sum(x) FROM big"
+    ch._grants.observe(
+        EstimateKey(catalogs=frozenset({"tpch"}), schema="sf10", sql=sql),
+        peak_bytes=1024**3 // 24,
+        granted_bytes=8 * 1024**3,
+        spilled=False,
+    )
+    monkeypatch.setattr(ch.settings, "grant_feedback_enabled", False)
+
+    await ch._resize_for_statement(state, sql, admission)
+
+    expected, _, _ = bucket_for(8 * 1024**3, admission.budget_bytes, BUCKET_FRACTIONS)
+    clamp = int(ch.settings.session_max_bucket_fraction * admission.budget_bytes)
+    assert state.reservation.memory_bytes == min(expected, clamp), "feedback applied anyway"
+
+
+async def test_a_statement_teaches_the_next_one_what_it_used(tmp_path, monkeypatch):
+    """End to end through the real handler on a real connection: the recording is
+    wired to statement completion, so testing the store alone would not catch it
+    being unhooked."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    await ch_module._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
+    state = session.get("s1")
+    state.catalogs, state.schema = frozenset({"tpch"}), "sf10"
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: 8 * 1024**3)
+
+    sql = "SELECT 1"
+    await ch_module._handle_exec_statement(
+        _FakeWS(), {"session_id": "s1", "query_id": "q1", "sql": sql}, tmp_path, admission
+    )
+
+    key = EstimateKey(catalogs=frozenset({"tpch"}), schema="sf10", sql=sql)
+    assert ch_module._grants.suggest(key) is not None, "nothing was learned from the run"
+
+
+async def test_a_watermark_delta_is_not_mistaken_for_a_peak(tmp_path, monkeypatch):
+    """`peak_memory_bytes` is a connection-lifetime high-water mark that the runner
+    turns into "how much this statement raised the bar" (`runner._apply_watermarks`).
+    That equals the statement's own peak only on a connection that has not run a
+    profiled statement yet; after that it is a lower bound, and reads 0 for
+    anything that stays under an earlier peak. Learning from one would size the
+    shape from a number that is not its memory use."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    await ch_module._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
+    state = session.get("s1")
+    state.catalogs, state.schema = frozenset({"tpch"}), "sf10"
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: 8 * 1024**3)
+
+    # A fixed, plainly non-zero delta, so the assertion turns on the gate rather
+    # than on how much buffer memory a trivial SELECT happens to touch.
+    async def _fake_run(sql, path, timeout_s, **kwargs):
+        return {
+            "row_count": 1,
+            "duration_ms": 1.0,
+            "result_bytes": 0,
+            "wrote_result": True,
+            "result_schema": None,
+            "profile": {
+                "summary": {
+                    "peak_memory_bytes": 100 * 1024**2,
+                    "spill_bytes": 0,
+                    "reserved_memory_bytes": kwargs["memory_bytes"],
+                }
+            },
+        }
+
+    monkeypatch.setattr(ch_module, "run_statement", _fake_run)
+    # Something heavier already ran on this connection.
+    state.watermarks["peak_memory_bytes"] = 900 * 1024**2
+
+    sql = "SELECT 2"
+    await ch_module._handle_exec_statement(
+        _FakeWS(), {"session_id": "s1", "query_id": "q1", "sql": sql}, tmp_path, admission
+    )
+
+    key = EstimateKey(catalogs=frozenset({"tpch"}), schema="sf10", sql=sql)
+    assert ch_module._grants.suggest(key) is None, "learned from a watermark delta"
+
+
 async def test_exec_statement_sizes_the_session_to_the_statement(tmp_path, monkeypatch):
     """End to end through the real handler, on a real connection: the wiring from
     EXEC_STATEMENT to the estimator is the thing that was missing, so testing
@@ -2438,3 +2627,37 @@ async def test_a_timed_out_waiter_takes_back_budget_instead_of_running_at_baseli
         "timed-out waiter executed on the idle baseline it had surrendered "
         f"({state.reservation.memory_bytes} bytes)"
     )
+
+
+async def test_a_huge_estimate_cannot_require_the_whole_agent():
+    """An over-estimate must not be able to serialize the agent behind it.
+
+    Cardinality estimates are routinely out by an order of magnitude, so the
+    reservation derived from one is not trustworthy enough to hand a statement the
+    whole budget *before it has run*. Measured on a 22-way SF10 burst of TPC-H q18:
+    its estimate claimed a rung that admits one statement, all 22 serialized, and
+    the median admission wait was 282 s for a statement that executes in 1.5 s and
+    whose real peak is under a fifth of the budget.
+
+    This bounds what a statement **waits for**, not what it uses -- `_elastic_target`
+    tops the grant back up whenever budget is free (asserted below), so an idle
+    agent still hands a heavy statement everything.
+    """
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    budget = admission.budget_bytes
+    baseline = 64 * 1024**2
+    cap = int(ch_module.settings.session_max_bucket_fraction * budget)
+
+    # An estimate far above the whole budget still requires no more than the cap.
+    req = ch_module._statement_reservation_request(budget * 10, admission, baseline)
+    assert req is not None
+    assert req.memory_bytes == cap
+    assert budget // req.memory_bytes >= 3, "fewer than three statements can run at once"
+
+    # The cap is on the *requirement*: what is free is still offered on top, so the
+    # statement's actual ceiling is unchanged on an idle agent.
+    elastic = ch_module._elastic_target(admission, req.memory_bytes)
+    ceiling = int(ch_module.settings.elastic_ceiling_fraction * budget)
+    assert req.memory_bytes + elastic == ceiling

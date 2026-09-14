@@ -90,6 +90,10 @@ class RunResult:
     # Pages `search_docs` put in front of the model. It can cite one without
     # opening it, and a citation the judge cannot place reads as invention.
     searched_paths: list[str] = field(default_factory=list)
+    # Which repetition of the case this is when an arm is sampled more than
+    # once. Answers differ between samples because the assistant's temperature
+    # is not pinned, and pass^k is measured over exactly that variation.
+    sample: int = 0
 
     @property
     def cited_paths(self) -> list[str]:
@@ -235,34 +239,65 @@ async def run_case(
     gateway: Any = None,
     docs_search: Any = None,
     case_name: str = "",
+    sample: int = 0,
 ) -> RunResult:
-    """Run one question under one arm and record what the assistant did."""
+    """Run one question under one arm and record what the assistant did.
+
+    Applies the arm itself, so a call is safe on its own. A sampled run hoists
+    one ``_arm_settings`` block around the whole fan-out and calls
+    ``run_case_once`` instead: ``_arm_settings`` restores process globals in its
+    ``finally``, so overlapping calls would let the first to finish reset
+    settings the others still need.
+    """
     with _arm_settings(arm):
-        deps = deps_for(arm, gateway=gateway, docs_search=docs_search)
-        agent = build_agent(arm, model=model)
-        instructions = build_instructions(_FakeCtx(deps))
-        try:
-            result = await agent.run(
-                question,
-                deps=deps,
-                # Production's ceiling. Without it a looping model runs unbounded
-                # on somebody's quota.
-                usage_limits=UsageLimits(request_limit=settings.assistant_request_limit),
-            )
-        except UsageLimitExceeded:
-            # Recorded rather than raised: one looping case must not discard the
-            # other forty-one, and "it never finished" is a result worth scoring.
-            return RunResult(
-                arm=arm.name,
-                case=case_name,
-                answer=(
-                    "[no answer: the assistant reached its step limit of "
-                    f"{settings.assistant_request_limit} model requests for this turn]"
-                ),
-                tools_called=[],
-                doc_paths=[],
-                instructions=instructions,
-            )
+        return await run_case_once(
+            arm,
+            question,
+            model=model,
+            gateway=gateway,
+            docs_search=docs_search,
+            case_name=case_name,
+            sample=sample,
+        )
+
+
+async def run_case_once(
+    arm: ArmConfig,
+    question: str,
+    *,
+    model: Any = None,
+    gateway: Any = None,
+    docs_search: Any = None,
+    case_name: str = "",
+    sample: int = 0,
+) -> RunResult:
+    """One assistant run, with the arm's settings already applied."""
+    deps = deps_for(arm, gateway=gateway, docs_search=docs_search)
+    agent = build_agent(arm, model=model)
+    instructions = build_instructions(_FakeCtx(deps))
+    try:
+        result = await agent.run(
+            question,
+            deps=deps,
+            # Production's ceiling. Without it a looping model runs unbounded
+            # on somebody's quota.
+            usage_limits=UsageLimits(request_limit=settings.assistant_request_limit),
+        )
+    except UsageLimitExceeded:
+        # Recorded rather than raised: one looping case must not discard the
+        # other forty-one, and "it never finished" is a result worth scoring.
+        return RunResult(
+            arm=arm.name,
+            case=case_name,
+            answer=(
+                "[no answer: the assistant reached its step limit of "
+                f"{settings.assistant_request_limit} model requests for this turn]"
+            ),
+            tools_called=[],
+            doc_paths=[],
+            instructions=instructions,
+            sample=sample,
+        )
 
     tools_called: list[str] = []
     doc_paths: list[str] = []
@@ -299,7 +334,14 @@ async def run_case(
         instructions=instructions,
         tool_results=tool_results,
         searched_paths=searched_paths,
+        sample=sample,
     )
+
+
+# How many assistant runs may be in flight at once within one arm. Bounded
+# because a judged run fans out: k samples per case, and an unbounded gather
+# would put every case's assistant and judge calls on the wire at the same time.
+SAMPLING_CONCURRENCY = 4
 
 
 class _FakeCtx:
@@ -312,8 +354,8 @@ class _FakeCtx:
 async def retrying(call, *, attempts: int = 4, base_delay: float = 2.0):
     """Retry one model call through a transient provider failure.
 
-    A judged run is 168 sequential calls over half an hour, so a network fault
-    somewhere in it is normal; discarding the whole run over one is not.
+    A sampled judged run makes hundreds of calls, so a network fault somewhere
+    in it is normal; discarding the whole run over one is not.
 
     Structured output that fails to validate is also retried — the expected
     failure with a smaller open model. Every retry prints its exception type, so

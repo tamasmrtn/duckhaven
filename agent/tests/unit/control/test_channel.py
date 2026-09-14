@@ -2438,3 +2438,37 @@ async def test_a_timed_out_waiter_takes_back_budget_instead_of_running_at_baseli
         "timed-out waiter executed on the idle baseline it had surrendered "
         f"({state.reservation.memory_bytes} bytes)"
     )
+
+
+async def test_a_huge_estimate_cannot_require_the_whole_agent():
+    """An over-estimate must not be able to serialize the agent behind it.
+
+    Cardinality estimates are routinely out by an order of magnitude, so the
+    reservation derived from one is not trustworthy enough to hand a statement the
+    whole budget *before it has run*. Measured on a 22-way SF10 burst of TPC-H q18:
+    its estimate claimed a rung that admits one statement, all 22 serialized, and
+    the median admission wait was 282 s for a statement that executes in 1.5 s and
+    whose real peak is under a fifth of the budget.
+
+    This bounds what a statement **waits for**, not what it uses -- `_elastic_target`
+    tops the grant back up whenever budget is free (asserted below), so an idle
+    agent still hands a heavy statement everything.
+    """
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    budget = admission.budget_bytes
+    baseline = 64 * 1024**2
+    cap = int(ch_module.settings.session_max_bucket_fraction * budget)
+
+    # An estimate far above the whole budget still requires no more than the cap.
+    req = ch_module._statement_reservation_request(budget * 10, admission, baseline)
+    assert req is not None
+    assert req.memory_bytes == cap
+    assert budget // req.memory_bytes >= 3, "fewer than three statements can run at once"
+
+    # The cap is on the *requirement*: what is free is still offered on top, so the
+    # statement's actual ceiling is unchanged on an idle agent.
+    elastic = ch_module._elastic_target(admission, req.memory_bytes)
+    ceiling = int(ch_module.settings.elastic_ceiling_fraction * budget)
+    assert req.memory_bytes + elastic == ceiling

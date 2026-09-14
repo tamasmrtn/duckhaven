@@ -42,6 +42,13 @@ A reservation has two parts, and they answer different questions.
 what the admission gate blocks on, and it is never taken away once granted. The sum of every running query's required
 memory always stays inside the agent's budget; that is the guarantee that stops the agent being OOM-killed.
 
+Required memory is **capped** (`SESSION_MAX_BUCKET_FRACTION`, a third of the budget by default), and the cap is about
+concurrency rather than safety. An estimate is a guess made before the query runs, and cardinality estimates are
+routinely out by an order of magnitude; letting one claim most of the budget means everything else queues behind a
+number that may be wrong. Capping it guarantees at least three statements can run at once. It does not cap what a
+query *uses* — elastic memory below still lends it whatever is free — so on an idle agent a heavy query gets the same
+memory it always did. It only stops one query's guess from serializing the agent.
+
 Estimates are remembered across sessions, keyed by the query text together with the catalogs and schema it binds
 against, so the same query is planned once rather than once per session. Estimating is also bounded: if DuckDB takes
 too long to plan a query, the agent stops waiting and sizes it from a default instead. That costs the agent a little

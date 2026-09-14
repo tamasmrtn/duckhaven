@@ -58,10 +58,27 @@ class Settings(BaseSettings):
     # sessions committed a 4 GB agent's entire budget and no statement could ever
     # grow. Clamped to the agent's budget.
     session_baseline_bytes: int = 64 * 1024 * 1024
-    # Ceiling on how far one session statement may grow, as a fraction of the
-    # agent's budget. 1.0 lets a single heavy statement use the whole agent when
-    # nothing else is running; lower it to keep more in reserve for other tenants.
-    session_max_bucket_fraction: float = 1.0
+    # Ceiling on the reservation one session statement may *require*, as a fraction
+    # of the agent's budget. This bounds what a statement waits for at admission,
+    # not what it ends up using: `_elastic_target` tops a grant back up to
+    # `elastic_ceiling_fraction` whenever the budget is free, so on an idle agent a
+    # heavy statement still gets the whole agent either way.
+    #
+    # What it does bound is how few statements can run at once. At 1.0 a single
+    # over-estimate could require the entire budget and serialize everything behind
+    # it; at 1/3 at least three statements always fit. Cardinality estimates are
+    # commonly out by an order of magnitude, so the requirement derived from one
+    # should not be able to monopolize an agent — Impala reached the same
+    # conclusion and added MAX_MEM_ESTIMATE_FOR_ADMISSION for it (IMPALA-6847).
+    #
+    # Measured, 22-way SF10 burst of TPC-H q18: the estimate snapped to a rung
+    # admitting one statement, so all 22 serialized, 13 of 25 waited out the full
+    # 300 s admission budget, and the median wait was 282 s for a statement whose
+    # execution takes 1.5 s and whose real peak is under a fifth of the budget.
+    #
+    # Raise it to let one statement claim more before it is admitted; lower it to
+    # favour concurrency over any single statement's guaranteed memory.
+    session_max_bucket_fraction: float = 1 / 3
     # How long a session open may sit in the admission queue before it is failed.
     # Unlike a query (``queued_timeout_s = 0``, wait indefinitely), an open races
     # the control plane's own ``SQL_SESSION_OPENING_DEADLINE_S``: waiting past it

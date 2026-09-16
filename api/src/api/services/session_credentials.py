@@ -133,6 +133,21 @@ def build_storage_block(backend: StorageBackend, data_path: str) -> dict[str, ob
     return _s3_storage_block(backend, data_path)
 
 
+def _duckdb_endpoint(url: str) -> tuple[str, bool]:
+    """Split an endpoint URL into DuckDB's ``(host[:port], use_ssl)`` form.
+
+    DuckDB's S3 secret wants a bare host, not a URL: handing it
+    ``http://localhost:4566`` produces requests to ``https://http://localhost…``.
+    An empty endpoint means real AWS, which is HTTPS.
+    """
+    if not url:
+        return "", True
+    parsed = urlparse(url)
+    if not parsed.netloc:  # already bare, e.g. "objectstore:9000"
+        return url, False
+    return parsed.netloc, parsed.scheme == "https"
+
+
 def _s3_storage_block(backend: StorageBackend, data_path: str) -> dict[str, object]:
     config = backend.config or {}
     block: dict[str, object] = {
@@ -144,17 +159,15 @@ def _s3_storage_block(backend: StorageBackend, data_path: str) -> dict[str, obje
         "url_style": "path" if backend.kind == "object_store" else "vhost",
     }
     if backend.kind == "object_store":
-        endpoint = settings.s3_endpoint
-        parsed = urlparse(endpoint)
+        endpoint, use_ssl = _duckdb_endpoint(settings.s3_endpoint)
         block.update(
             {
                 "key_id": settings.s3_access_key,
                 "secret": settings.s3_secret_key,
                 "session_token": "",
                 "region": settings.s3_region,
-                # DuckDB wants host[:port], not a scheme.
-                "endpoint": parsed.netloc or endpoint,
-                "use_ssl": parsed.scheme == "https",
+                "endpoint": endpoint,
+                "use_ssl": use_ssl,
             }
         )
         return block
@@ -170,14 +183,19 @@ def _s3_storage_block(backend: StorageBackend, data_path: str) -> dict[str, obje
     if config.get("external_id"):
         assume_kwargs["ExternalId"] = config["external_id"]
     creds = boto3.client("sts").assume_role(**assume_kwargs)["Credentials"]
+    # Same normalization as the bundled path: a backend may carry a custom
+    # endpoint (an S3-compatible store, a VPC endpoint, LocalStack in tests),
+    # and passing the URL through unchanged makes DuckDB request
+    # `https://http://host/...`.
+    endpoint, use_ssl = _duckdb_endpoint(config.get("endpoint") or "")
     block.update(
         {
             "key_id": creds["AccessKeyId"],
             "secret": creds["SecretAccessKey"],
             "session_token": creds["SessionToken"],
             "region": config.get("region") or settings.s3_region,
-            "endpoint": config.get("endpoint") or "",
-            "use_ssl": True,
+            "endpoint": endpoint,
+            "use_ssl": use_ssl,
         }
     )
     if config.get("path_style_access"):

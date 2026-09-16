@@ -69,6 +69,12 @@ credentials expiring within the hour; for ADLS Gen 2, a user-delegation SAS. For
 store's static key, scoped to the catalog's own prefix — weaker than what Polaris vends, and worth knowing if that
 matters to you.
 
+!!! note "How far each backend has been exercised"
+    The bundled object store and external S3 are verified end to end — external S3 against a real STS `AssumeRole`,
+    including writing Parquet and purging it on drop. **ADLS Gen 2 is implemented but has not been run against a real
+    storage account**, because there is no local substitute (Azurite has no Entra, so no user-delegation SAS). Treat a
+    DuckLake catalog on ADLS as untested until you have tried it on a non-production account.
+
 ## Back up the catalog database
 
 A DuckLake table's schema, snapshots and file list live **only** in the `ducklake` database. A backup without it leaves

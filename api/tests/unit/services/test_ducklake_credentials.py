@@ -15,6 +15,7 @@ from api.config import settings
 from api.models.catalog import KIND_DUCKLAKE, Catalog
 from api.models.storage_backend import StorageBackend
 from api.services.session_credentials import (
+    _duckdb_endpoint,
     build_ducklake_meta_block,
     build_storage_block,
     ducklake_data_path,
@@ -175,3 +176,94 @@ def test_a_backend_with_no_base_location_is_an_error_not_a_bad_path():
     )
     with pytest.raises(ValueError, match="no base location"):
         ducklake_data_path(_catalog("raw", backend))
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("http://objectstore:9000", ("objectstore:9000", False)),
+        ("https://store.example.com", ("store.example.com", True)),
+        ("http://localhost:4566", ("localhost:4566", False)),
+        # Already bare — left alone rather than mangled.
+        ("objectstore:9000", ("objectstore:9000", False)),
+        # Empty means real AWS, which is HTTPS.
+        ("", ("", True)),
+    ],
+)
+def test_endpoint_is_reduced_to_what_duckdb_wants(url, expected):
+    """DuckDB's S3 secret takes a bare host, not a URL. Passing a URL through
+    makes it request `https://http://host/...` — which is exactly what an
+    external S3 backend with a custom endpoint used to do, until a run against
+    LocalStack surfaced it."""
+    assert _duckdb_endpoint(url) == expected
+
+
+def test_external_s3_with_a_custom_endpoint_is_usable(monkeypatch):
+    """The regression. Any S3-compatible store, VPC endpoint or test double
+    carries a custom endpoint, and it must reach DuckDB in a form it accepts."""
+    import boto3
+
+    monkeypatch.setattr(
+        boto3,
+        "client",
+        lambda *a, **k: type(
+            "S",
+            (),
+            {
+                "assume_role": lambda self, **kw: {
+                    "Credentials": {
+                        "AccessKeyId": "a",
+                        "SecretAccessKey": "b",
+                        "SessionToken": "c",
+                    }
+                }
+            },
+        )(),
+    )
+    backend = StorageBackend(
+        kind="s3",
+        name="localstack",
+        root_uri="s3://bucket/lake",
+        config={
+            "role_arn": "arn:x",
+            "region": "us-east-1",
+            "endpoint": "http://localhost:4566",
+            "path_style_access": True,
+        },
+    )
+    block = build_storage_block(backend, "s3://bucket/lake/raw/")
+    assert block["endpoint"] == "localhost:4566"
+    assert block["use_ssl"] is False
+    assert block["url_style"] == "path"
+
+
+def test_real_aws_s3_stays_on_https():
+    """No endpoint means AWS, and downgrading that to plain HTTP would be a
+    silent security regression."""
+    import boto3
+
+    original = boto3.client
+
+    class _Sts:
+        def assume_role(self, **kw):
+            return {
+                "Credentials": {
+                    "AccessKeyId": "a",
+                    "SecretAccessKey": "b",
+                    "SessionToken": "c",
+                }
+            }
+
+    boto3.client = lambda *a, **k: _Sts()
+    try:
+        backend = StorageBackend(
+            kind="s3",
+            name="aws",
+            root_uri="s3://bucket/lake",
+            config={"role_arn": "arn:x", "region": "eu-west-1"},
+        )
+        block = build_storage_block(backend, "s3://bucket/lake/raw/")
+        assert block["endpoint"] == ""
+        assert block["use_ssl"] is True
+    finally:
+        boto3.client = original

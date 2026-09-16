@@ -113,6 +113,31 @@ Within DuckHaven specifically:
 - **`information_schema` does not work** against an attached DuckLake catalog, exactly as it does not for an attached
   Iceberg catalog. Use `DESCRIBE`.
 
+## Converting an existing Iceberg catalog
+
+**Not supported.** There is no way to turn an existing Iceberg catalog into a DuckLake one, in DuckHaven or outside it.
+
+DuckDB's `iceberg_to_ducklake()` is designed for exactly this — a metadata-only copy that carries snapshot history
+across without moving a byte of Parquet — but at the versions DuckHaven ships (DuckLake 1.0 on DuckDB 1.5.5) it
+refuses to run:
+
+```text
+Invalid Input Error: 'iceberg_to_ducklake' only support version 0.4 currently, detected '1.0' instead
+```
+
+This is an upstream limitation, tracked as [duckdb/ducklake#1278](https://github.com/duckdb/ducklake/issues/1278).
+When it is fixed, conversion becomes worth building; until then anything DuckHaven offered would be a hand-rolled
+reimplementation that loses the snapshot history, which is most of the point.
+
+To move data between kinds today, create the new catalog and copy with SQL:
+
+```sql
+CREATE TABLE lake.analytics.events AS SELECT * FROM raw.analytics.events;
+```
+
+That rewrites the data and starts fresh history. Verify it, then drop the source catalog — which purges its files, so
+be sure first.
+
 ## Governance is unchanged
 
 Everything DuckHaven enforces, it enforces the same way for both kinds, because none of it depends on the table format:

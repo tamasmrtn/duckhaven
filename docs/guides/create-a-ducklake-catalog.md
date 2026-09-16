@@ -100,6 +100,13 @@ representation. Use a supported type, or put the table in an Iceberg catalog.
 
 **A catalog shows no schemas** — it has never been attached by an agent. Run any query against it.
 
+## Moving an existing Iceberg catalog here
+
+You cannot convert one. `iceberg_to_ducklake()` — the metadata-only path that would carry snapshot history across —
+does not support DuckLake 1.0 yet ([upstream issue](https://github.com/duckdb/ducklake/issues/1278)). Copying with
+`CREATE TABLE … AS SELECT` works and rewrites the data, starting fresh history. See
+[DuckLake](../concepts/ducklake.md#converting-an-existing-iceberg-catalog).
+
 ## Related
 
 - [DuckLake](../concepts/ducklake.md) — the concept and its limits.

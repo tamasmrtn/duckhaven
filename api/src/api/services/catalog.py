@@ -17,12 +17,23 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from api.models.catalog import KIND_ICEBERG_POLARIS, Catalog, WorkspaceCatalog
+from api.config import settings
+from api.models.catalog import (
+    KIND_DUCKLAKE,
+    KIND_ICEBERG_POLARIS,
+    Catalog,
+    WorkspaceCatalog,
+)
 from api.models.maintenance import MaintenanceRecommendation, TableHealthSample
 from api.models.storage_backend import StorageBackend
 from api.models.table_metadata import TableMetadata
 from api.models.workspace import Workspace
-from api.services.catalog_backends import CatalogBackendError, backend_for
+from api.services.catalog_backends import (
+    CatalogBackendError,
+    backend_for,
+    capabilities_for,
+)
+from api.services.catalog_backends.ducklake import metadata_schema_for
 from api.services.polaris import PolarisClient
 from api.services.workspace import validate_catalog_slug
 
@@ -36,12 +47,35 @@ async def create_catalog(
     name: str,
     backend: StorageBackend,
     created_by: uuid.UUID,
+    kind: str = KIND_ICEBERG_POLARIS,
 ) -> Catalog:
-    """Provision a new catalog's Polaris catalog + default namespace and persist
-    its record. A catalog has a single identifier-safe ``name`` that doubles as
-    its slug and Polaris name. Rolls back the pg row if Polaris provisioning
+    """Provision a new catalog in its metastore and persist its record.
+
+    A catalog has a single identifier-safe ``name`` that doubles as its slug and,
+    for an Iceberg catalog, its Polaris name; a DuckLake catalog derives its
+    metadata schema from the same name. Rolls back the pg row if provisioning
     fails (D7)."""
     validate_catalog_slug(name)
+    if kind == KIND_DUCKLAKE and not settings.ducklake_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "error": "ducklake_disabled",
+                "detail": (
+                    "DuckLake catalogs are not enabled on this deployment. "
+                    "Set DUCKLAKE_ENABLED=true (see docs/deployment/ducklake.md)."
+                ),
+            },
+        )
+    supported = capabilities_for(kind).supported_storage_kinds
+    if backend.kind not in supported:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"A {kind} catalog cannot use a {backend.kind} storage backend. "
+                f"Supported: {', '.join(supported)}."
+            ),
+        )
     existing = await db.execute(select(Catalog).where(Catalog.slug == name))
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(
@@ -51,8 +85,10 @@ async def create_catalog(
     catalog = Catalog(
         slug=name,
         name=name,
-        kind=KIND_ICEBERG_POLARIS,
-        polaris_name=name,
+        kind=kind,
+        # Exactly one identity per kind, per ck_catalogs_kind_identity.
+        polaris_name=name if kind == KIND_ICEBERG_POLARIS else None,
+        metadata_schema=(metadata_schema_for(name) if kind == KIND_DUCKLAKE else None),
         storage_backend_id=backend.id,
         created_by=created_by,
     )
@@ -170,9 +206,14 @@ async def drop_catalog(db: AsyncSession, polaris: PolarisClient, *, catalog: Cat
             ),
         )
     # Tear down the catalog in its own metastore, reclaiming data files. What
-    # that means is kind-specific (Polaris needs its namespaces and roles removed
-    # in order; DuckLake needs its snapshots expired and its schema dropped), so
-    # it lives behind the backend rather than here.
+    # that means is kind-specific (Polaris purges its namespaces and roles in
+    # order; DuckLake deletes its object-storage prefix and drops its metadata
+    # schema), so it lives behind the backend rather than here.
+    #
+    # The storage backend is loaded first because the DuckLake teardown needs it
+    # to find the prefix, and touching a lazy relationship inside async code
+    # raises MissingGreenlet rather than loading it.
+    await db.refresh(catalog, attribute_names=["storage_backend"])
     try:
         await backend_for(catalog, polaris=polaris).deprovision(catalog)
     except CatalogBackendError as exc:

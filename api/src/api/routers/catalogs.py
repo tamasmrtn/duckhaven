@@ -23,7 +23,12 @@ from api.models.catalog_grant import CatalogGrant
 from api.models.catalog_migration import CatalogMigration
 from api.models.storage_backend import StorageBackend
 from api.models.user import User
-from api.schemas.catalog_mgmt import CatalogAttachRequest, CatalogCreate, CatalogOut
+from api.schemas.catalog_mgmt import (
+    CatalogAttachRequest,
+    CatalogCapabilitiesOut,
+    CatalogCreate,
+    CatalogOut,
+)
 from api.schemas.catalog_migration import (
     CatalogMigrationEventOut,
     CatalogMigrationOut,
@@ -33,6 +38,7 @@ from api.schemas.catalog_migration import (
 )
 from api.schemas.page import Page
 from api.services import catalog as catalog_service
+from api.services.catalog_backends import CatalogBackendError, capabilities_for
 from api.services.migration import service as migration_service
 from api.services.paging import paginate
 from api.services.permissions import Permission
@@ -83,6 +89,25 @@ async def _binding_count(db: AsyncSession, catalog_id: uuid.UUID) -> int:
     )
 
 
+def _capabilities_out(kind: str) -> CatalogCapabilitiesOut | None:
+    """This kind's capabilities, or None for a kind this build does not know.
+
+    None rather than a raise: a catalog row written by a newer version must not
+    make the whole listing 500.
+    """
+    try:
+        caps = capabilities_for(kind)
+    except CatalogBackendError:
+        return None
+    return CatalogCapabilitiesOut(
+        snapshot_granularity=caps.snapshot_granularity,
+        supports_storage_migration=caps.supports_storage_migration,
+        maintenance_executable=caps.maintenance_executable,
+        external_engine_readable=caps.external_engine_readable,
+        supported_storage_kinds=list(caps.supported_storage_kinds),
+    )
+
+
 def _catalog_out(
     catalog: Catalog,
     *,
@@ -97,6 +122,7 @@ def _catalog_out(
         kind=catalog.kind,
         polaris_name=catalog.polaris_name,
         metadata_schema=catalog.metadata_schema,
+        capabilities=_capabilities_out(catalog.kind),
         storage_backend_id=catalog.storage_backend_id,
         storage_backend_kind=catalog.storage_backend.kind,
         storage_backend_name=catalog.storage_backend.name,
@@ -188,7 +214,7 @@ async def create_workspace_catalog(
             )
 
     catalog = await catalog_service.create_catalog(
-        db, polaris, name=body.name, backend=backend, created_by=user.id
+        db, polaris, name=body.name, backend=backend, created_by=user.id, kind=body.kind
     )
     link = await catalog_service.attach_catalog(
         db,

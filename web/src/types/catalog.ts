@@ -1,3 +1,5 @@
+import type { BackendKind } from "./storage-backend";
+
 export interface TableColumn {
   position: number;
   name: string;
@@ -14,6 +16,22 @@ export interface TableColumn {
 //   ducklake        — DuckLake tables catalogued in Postgres, data in Parquet.
 export type CatalogKind = "iceberg_polaris" | "ducklake";
 
+// What a catalog's kind can do. Surfaced by the API so the UI never switches on
+// `kind` itself — a third kind then changes one mapping server-side rather than
+// every place that asks "is this DuckLake?".
+export interface CatalogCapabilities {
+  // "table" for Iceberg; "catalog" for DuckLake, whose snapshots are commits
+  // against the whole catalog rather than one table.
+  snapshot_granularity: "table" | "catalog";
+  supports_storage_migration: boolean;
+  // Whether DuckDB itself can run this kind's compaction / snapshot expiry.
+  maintenance_executable: boolean;
+  // Whether engines other than DuckDB can read these tables. False for DuckLake
+  // — the trade-off a user makes when choosing it.
+  external_engine_readable: boolean;
+  supported_storage_kinds: BackendKind[];
+}
+
 export interface Catalog {
   id: string;
   slug: string;
@@ -23,6 +41,7 @@ export interface Catalog {
   // Postgres schema holding this catalog's ducklake_* tables.
   polaris_name: string | null;
   metadata_schema?: string | null;
+  capabilities?: CatalogCapabilities | null;
   storage_backend_id: string;
   storage_backend_kind: string;
   // Backend display name + root URI (where this catalog's data lives). Optional

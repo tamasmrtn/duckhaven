@@ -123,3 +123,65 @@ async def test_deprovision_removes_the_schema(catalog):
         assert found.scalar_one_or_none() is None
     # Re-provision so the fixture's teardown has something to drop.
     await backend.provision(catalog)
+
+
+# --- Through the HTTP API ---------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_ducklake_catalog_through_the_api(admin_client, workspace_factory):
+    """The whole point: an operator can create one, and it comes back describing
+    itself honestly."""
+    ws = await workspace_factory()
+    slug = f"api_{uuid.uuid4().hex[:8]}"
+    resp = await admin_client.post(
+        f"/workspaces/{ws['slug']}/catalogs", json={"name": slug, "kind": "ducklake"}
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["kind"] == "ducklake"
+    assert body["metadata_schema"] == f"cat_{slug}"
+    # Exactly one identity, per ck_catalogs_kind_identity.
+    assert body["polaris_name"] is None
+    caps = body["capabilities"]
+    assert caps["snapshot_granularity"] == "catalog"
+    assert caps["external_engine_readable"] is False
+    assert caps["maintenance_executable"] is True
+
+    # And it is droppable, which also purges its prefix and schema.
+    detach = await admin_client.delete(f"/workspaces/{ws['slug']}/catalogs/{slug}")
+    assert detach.status_code == 204, detach.text
+    drop = await admin_client.delete(f"/catalogs/{body['id']}")
+    assert drop.status_code == 204, drop.text
+
+
+@pytest.mark.asyncio
+async def test_creating_a_ducklake_catalog_is_refused_when_disabled(
+    admin_client, workspace_factory
+):
+    ws = await workspace_factory()
+    original = settings.ducklake_enabled
+    settings.ducklake_enabled = False
+    try:
+        resp = await admin_client.post(
+            f"/workspaces/{ws['slug']}/catalogs",
+            json={"name": f"off_{uuid.uuid4().hex[:6]}", "kind": "ducklake"},
+        )
+        assert resp.status_code == 422
+        assert "DUCKLAKE_ENABLED" in resp.text
+    finally:
+        settings.ducklake_enabled = original
+
+
+@pytest.mark.asyncio
+async def test_an_iceberg_catalog_still_reports_its_own_kind(admin_client, workspace_factory):
+    """Regression guard: the default path is untouched and self-describing."""
+    ws = await workspace_factory()
+    slug = f"ice_{uuid.uuid4().hex[:8]}"
+    resp = await admin_client.post(f"/workspaces/{ws['slug']}/catalogs", json={"name": slug})
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["kind"] == "iceberg_polaris"
+    assert body["polaris_name"] == slug
+    assert body["metadata_schema"] is None
+    assert body["capabilities"]["external_engine_readable"] is True

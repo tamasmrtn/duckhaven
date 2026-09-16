@@ -16,6 +16,13 @@ function out(c: (typeof CATALOGS)[number]): Catalog {
     kind: c.kind,
     polaris_name: c.polaris_name,
     metadata_schema: c.metadata_schema ?? null,
+    capabilities: c.capabilities ?? {
+      snapshot_granularity: "table" as const,
+      supports_storage_migration: true,
+      maintenance_executable: false,
+      external_engine_readable: true,
+      supported_storage_kinds: ["object_store", "s3", "adls_gen2"] as const,
+    },
     storage_backend_id: c.storage_backend_id,
     storage_backend_kind: c.storage_backend_kind,
     storage_backend_name: c.storage_backend_name,

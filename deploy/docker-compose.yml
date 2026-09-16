@@ -9,18 +9,37 @@ services:
       # polaris and api services via compose interpolation so they all agree;
       # override in .env for a non-default deployment.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-duckhaven}
+      # Read by postgres-init/20-create-ducklake-db.sh to set the password on the
+      # restricted `ducklake_agent` role. Must match the api service's value.
+      DUCKLAKE_AGENT_PASSWORD: ${DUCKLAKE_AGENT_PASSWORD:-ducklake}
     volumes:
       # Postgres 18's official image moved to a version-specific data
       # subdirectory under a single /var/lib/postgresql mount (unlike 16's
       # /var/lib/postgresql/data), to support `pg_upgrade --link`.
       - postgres_data:/var/lib/postgresql
-      # Creates the dedicated `polaris` database on first init.
+      # Creates the dedicated `polaris` and `ducklake` databases on first init,
+      # and the restricted `ducklake_agent` role. Only runs on an empty data dir
+      # — use scripts/enable-ducklake.sh on an existing deployment.
       - ./postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U duckhaven"]
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      # Postgres joins the isolated network so DuckDB agents can reach the
+      # DuckLake catalog database. Unlike Iceberg — where Polaris vends storage
+      # credentials and the agent never touches a database — DuckLake's client
+      # *is* the catalog client, so it needs a Postgres login.
+      #
+      # What keeps that acceptable is postgres-init/20-create-ducklake-db.sh:
+      # agents authenticate as `ducklake_agent`, which has CONNECT on `ducklake`
+      # only, and PUBLIC's default CONNECT on `duckhaven` (users, password
+      # hashes, session tokens) and `polaris` is revoked. Widening that role, or
+      # handing agents the `duckhaven` credential, undoes the isolation this
+      # network was drawn for.
+      - default
+      - duckhaven_internal
 
   # Bundled S3-compatible object store (RustFS). Backs the object_store catalogs
   # (and is the storage Polaris vends credentials for). Its :9000 endpoint must
@@ -257,6 +276,23 @@ services:
       MCP_QUERY_TIMEOUT_S: ${MCP_QUERY_TIMEOUT_S:-120.0}
       MCP_RESULT_ROW_CAP: ${MCP_RESULT_ROW_CAP:-100}
       MCP_RESULT_BYTE_CAP: ${MCP_RESULT_BYTE_CAP:-32768}
+      # DuckLake (experimental, opt-in): a second catalog kind keeping catalog
+      # metadata in Postgres and data in Parquet. Off by default; Iceberg +
+      # Polaris stays the default kind. See docs/concepts/ducklake.md.
+      #
+      # Two credentials, deliberately different: the API connects as the owner
+      # (DDL on metadata schemas, GRANTs, metadata reads), agents connect as the
+      # restricted `ducklake_agent` role. They must never be the same login.
+      DUCKLAKE_ENABLED: ${DUCKLAKE_ENABLED:-false}
+      DUCKLAKE_DATABASE_URL: postgresql+asyncpg://duckhaven:${POSTGRES_PASSWORD:-duckhaven}@postgres:5432/ducklake
+      DUCKLAKE_AGENT_HOST: ${DUCKLAKE_AGENT_HOST:-postgres}
+      DUCKLAKE_AGENT_PORT: ${DUCKLAKE_AGENT_PORT:-5432}
+      DUCKLAKE_AGENT_DATABASE: ${DUCKLAKE_AGENT_DATABASE:-ducklake}
+      DUCKLAKE_AGENT_USER: ${DUCKLAKE_AGENT_USER:-ducklake_agent}
+      DUCKLAKE_AGENT_PASSWORD: ${DUCKLAKE_AGENT_PASSWORD:-ducklake}
+      SQL_SESSIONS_ENABLED: ${SQL_SESSIONS_ENABLED:-false}
+      SQL_SESSION_IDLE_TIMEOUT_S: ${SQL_SESSION_IDLE_TIMEOUT_S:-900}
+      SQL_SESSION_MAX_LIFETIME_S: ${SQL_SESSION_MAX_LIFETIME_S:-14400}
       # OIDC / SSO (optional). Empty by default -> SSO off, local login only.
       # OIDC_PROVIDERS is a JSON list of providers (one button each); see
       # docs/guides/connect-idp.md. The OIDC_* fields below are a single-provider

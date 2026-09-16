@@ -157,6 +157,17 @@ services:
         condition: service_started
     volumes:
       - ./ha/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    # Joins the agent's isolated network so DuckDB agents can reach the DuckLake
+    # catalog database through the same leader-follower proxy the API uses. In
+    # this topology the agent never addresses a Patroni node directly, so a
+    # failover moves DuckLake's catalog connection with everything else.
+    #
+    # The isolation this relies on is the same as the single-node stack's:
+    # agents authenticate as `ducklake_agent`, which has CONNECT on the
+    # `ducklake` database only. See deploy/postgres-init/20-create-ducklake-db.sh.
+    networks:
+      - default
+      - duckhaven_internal
 
   # ── Object store + Polaris (unchanged from the single-node stack) ────────────
   # Publishes no ports here: in the HA topology only caddy faces the host, and

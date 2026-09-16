@@ -533,9 +533,11 @@ def _attach_ducklake(conn: duckdb.DuckDBPyConnection, cat: dict[str, Any]) -> No
     if store:
         _create_storage_secret(conn, slug, store)
 
-    # ATTACH takes no bind parameters, so these are inlined as quoted literals.
-    # None are user-supplied: the slug is validated `^[a-z][a-z0-9_]*$` by the
-    # control plane, and data_path / metadata_schema are derived from it there.
+    # ATTACH takes no bind parameters, so these are inlined as quoted literals,
+    # and the `''` escaping below is what makes that safe — not their provenance.
+    # `data_path` in particular is built from the storage backend's `root_uri`,
+    # which an operator supplies through the admin API. Do not remove the
+    # escaping on the belief that these values are trusted.
     data_path = str(cat["data_path"]).replace("'", "''")
     metadata_schema = str(cat["metadata_schema"]).replace("'", "''")
     database = str(meta["database"]).replace("'", "''")
@@ -831,6 +833,18 @@ def open_and_attach(
         for ext in _CATALOG_KIND_EXTENSIONS.get(catalog_kind, ()):
             if ext not in loaded and _safe_install_load(conn, ext):
                 loaded.add(ext)
+    # An extension that failed to load makes its kind unattachable. Drop those
+    # catalogs rather than letting them into `_attach_catalogs`, where the
+    # iceberg secret is created outside the per-catalog guard — one failed
+    # `iceberg` load would otherwise take the DuckLake attaches down with it.
+    catalogs = [
+        cat
+        for cat in catalogs
+        if all(
+            ext in loaded
+            for ext in _CATALOG_KIND_EXTENSIONS.get(cat.get("kind", "iceberg_polaris"), ())
+        )
+    ]
     if KIND_DUCKLAKE in catalog_kinds:
         _configure_ducklake(conn)
 

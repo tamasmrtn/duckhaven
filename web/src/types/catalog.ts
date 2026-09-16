@@ -8,11 +8,21 @@ export interface TableColumn {
 // A decoupled catalog (data domain) attached to a workspace. The same catalog
 // can be attached to multiple workspaces (M:N) — `attached_workspaces` counts
 // them, which gates the drop affordance.
+// Where a catalog keeps its metadata. Orthogonal to the storage backend: a
+// catalog of either kind can sit on object_store, s3 or adls_gen2.
+//   iceberg_polaris — Apache Iceberg tables in an Apache Polaris catalog.
+//   ducklake        — DuckLake tables catalogued in Postgres, data in Parquet.
+export type CatalogKind = "iceberg_polaris" | "ducklake";
+
 export interface Catalog {
   id: string;
   slug: string;
   name: string;
-  polaris_name: string;
+  kind: CatalogKind;
+  // Exactly one of these is set, per `kind`: the Polaris warehouse name, or the
+  // Postgres schema holding this catalog's ducklake_* tables.
+  polaris_name: string | null;
+  metadata_schema?: string | null;
   storage_backend_id: string;
   storage_backend_kind: string;
   // Backend display name + root URI (where this catalog's data lives). Optional

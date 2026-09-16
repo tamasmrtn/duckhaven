@@ -7,6 +7,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from api.models.catalog import KIND_ICEBERG_POLARIS
 from api.schemas.grant import AccessMode
 
 
@@ -35,7 +36,14 @@ class CatalogOut(BaseModel):
     id: uuid.UUID
     slug: str
     name: str
-    polaris_name: str
+    # Where this catalog's metadata lives: "iceberg_polaris" or "ducklake".
+    # Orthogonal to storage_backend_kind below — a catalog of either kind can
+    # sit on any storage backend.
+    kind: str = KIND_ICEBERG_POLARIS
+    # Exactly one of these is set, per the catalog's kind: the Polaris warehouse
+    # name, or the Postgres schema holding its ducklake_* tables.
+    polaris_name: str | None = None
+    metadata_schema: str | None = None
     storage_backend_id: uuid.UUID
     storage_backend_kind: str
     storage_backend_name: str

@@ -216,6 +216,7 @@ describe("CatalogTree", () => {
             id: "cat-scoped",
             slug: "acme_analytics",
             name: "acme_analytics",
+            kind: "iceberg_polaris" as const,
             polaris_name: "acme_analytics",
             storage_backend_kind: "s3",
             is_default: true,

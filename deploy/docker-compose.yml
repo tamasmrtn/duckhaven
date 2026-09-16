@@ -27,17 +27,9 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      # Postgres joins the isolated network so DuckDB agents can reach the
-      # DuckLake catalog database. Unlike Iceberg — where Polaris vends storage
-      # credentials and the agent never touches a database — DuckLake's client
-      # *is* the catalog client, so it needs a Postgres login.
-      #
-      # What keeps that acceptable is postgres-init/20-create-ducklake-db.sh:
-      # agents authenticate as `ducklake_agent`, which has CONNECT on `ducklake`
-      # only, and PUBLIC's default CONNECT on `duckhaven` (users, password
-      # hashes, session tokens) and `polaris` is revoked. Widening that role, or
-      # handing agents the `duckhaven` credential, undoes the isolation this
-      # network was drawn for.
+      # Joins the agent network so DuckDB agents can reach the DuckLake catalog
+      # database. Safe only because of the role isolation in
+      # postgres-init/20-create-ducklake-db.sh — read it before changing either.
       - default
       - duckhaven_internal
 
@@ -284,7 +276,7 @@ services:
       # (DDL on metadata schemas, GRANTs, metadata reads), agents connect as the
       # restricted `ducklake_agent` role. They must never be the same login.
       DUCKLAKE_ENABLED: ${DUCKLAKE_ENABLED:-false}
-      DUCKLAKE_DATABASE_URL: postgresql+asyncpg://duckhaven:${POSTGRES_PASSWORD:-duckhaven}@postgres:5432/ducklake
+      DUCKLAKE_DATABASE_URL: ${DUCKLAKE_DATABASE_URL:-postgresql+asyncpg://duckhaven:${POSTGRES_PASSWORD:-duckhaven}@postgres:5432/ducklake}
       DUCKLAKE_AGENT_HOST: ${DUCKLAKE_AGENT_HOST:-postgres}
       DUCKLAKE_AGENT_PORT: ${DUCKLAKE_AGENT_PORT:-5432}
       DUCKLAKE_AGENT_DATABASE: ${DUCKLAKE_AGENT_DATABASE:-ducklake}

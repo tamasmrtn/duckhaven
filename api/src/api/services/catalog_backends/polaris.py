@@ -47,7 +47,6 @@ POLARIS_CAPABILITIES = CatalogCapabilities(
     # can all read these tables.
     external_engine_readable=True,
     supported_storage_kinds=("object_store", "s3", "adls_gen2"),
-    unsupported_column_types=frozenset(),
 )
 
 # The small set of allowed scalar types, as Iceberg primitive type strings.
@@ -159,8 +158,17 @@ class PolarisCatalogBackend:
             raise _translate(exc) from exc
         return CatalogSchemaInfo.model_validate(created.model_dump())
 
-    async def delete_schema(self, catalog: Catalog, name: str, ctx: WriteContext) -> None:
+    async def delete_schema(
+        self, catalog: Catalog, name: str, ctx: WriteContext, *, cascade: bool = False
+    ) -> None:
         try:
+            if cascade:
+                # Polaris refuses to delete a namespace that still holds tables,
+                # so empty it first. Drop-with-purge, so the files go too.
+                for table in await self._polaris.list_tables(catalog.polaris_name, name):
+                    await self._polaris.delete_table(
+                        catalog.polaris_name, name, table.name, purge=True
+                    )
             await self._polaris.delete_schema(catalog.polaris_name, name)
         except PolarisError as exc:
             raise _translate(exc) from exc

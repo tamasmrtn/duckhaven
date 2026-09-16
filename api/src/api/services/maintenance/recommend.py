@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from api.models.catalog import KIND_DUCKLAKE, KIND_ICEBERG_POLARIS
 from api.services.maintenance.scoring import _human_bytes
 
 #: Severity order, most severe first. Ranked rather than compared as a string:
@@ -252,7 +253,7 @@ def generate(
     metrics: dict[str, Any],
     thresholds: dict[str, float],
     history: list[dict[str, Any]] | None = None,
-    catalog_kind: str = "iceberg_polaris",
+    catalog_kind: str = KIND_ICEBERG_POLARIS,
 ) -> list[dict[str, Any]]:
     """All recommendations a single table's latest sample warrants, worst first.
 
@@ -268,6 +269,6 @@ def generate(
         _investigate_growth(metrics, thresholds, history),
     ]
     recs = [r for r in out if r is not None]
-    if catalog_kind == "ducklake":
+    if catalog_kind == KIND_DUCKLAKE:
         recs = [r for r in (_for_ducklake(r) for r in recs) if r is not None]
     return sorted(recs, key=lambda r: SEVERITY_RANK.get(r["severity"], 9))

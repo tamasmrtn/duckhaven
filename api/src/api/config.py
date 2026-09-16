@@ -80,11 +80,9 @@ class Settings(BaseSettings):
     # its own `ducklake` database rather than in a catalog service. Off by
     # default; Iceberg + Polaris stays the default kind.
     ducklake_enabled: bool = False
-    # Two credentials on purpose. The API connects as the owner to create each
-    # catalog's metadata schema, grant on it, and read metadata back. Agents
-    # connect as a restricted role that can reach the `ducklake` database and
-    # nothing else (see deploy/postgres-init/20-create-ducklake-db.sh). Handing
-    # agents the owner credential would give them the control-plane database.
+    # Two credentials on purpose: the API is the owner, agents get a role
+    # confined to the `ducklake` database. See
+    # deploy/postgres-init/20-create-ducklake-db.sh.
     ducklake_database_url: str = "postgresql+asyncpg://duckhaven:duckhaven@localhost:5432/ducklake"
     # Connection details vended to an agent per dispatch. Never written to the
     # agent's config or disk — the closest this design gets to keeping I7's

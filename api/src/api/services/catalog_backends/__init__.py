@@ -6,34 +6,22 @@ create this schema, drop that table. Those questions have the same shape whether
 the answer comes from an Apache Polaris REST catalog or from a DuckLake catalog's
 ``ducklake_*`` tables, so they belong behind one interface.
 
-**Nothing else does.** In particular this seam deliberately excludes:
-
-- *Query execution* — already indirect. The control plane sends SQL text and a
-  list of catalogs to attach; only the agent's ``_attach_catalogs`` branches.
-- *Credential vending* — the two models are not variants of one idea. Polaris
-  vends per-table on ``loadTable``; DuckLake needs a storage secret *and* a
-  database secret, both minted by DuckHaven. One method covering both would have
-  the contract "returns something, meaning depends". It lives in
-  ``services/session_credentials.py``, which already names itself that seam.
-- *Maintenance verbs* — ``rewrite_data_files`` and ``ducklake_merge_adjacent_files``
-  are not one operation spelled two ways: DuckDB cannot execute the first and can
-  execute the second. Hiding that erases the only real capability difference.
-- *Storage migration* — Iceberg needs metadata-tree path rewriting; DuckLake's
-  relative paths need a copy and one ``data_path`` update. Different algorithms.
-
-If a future change wants a method here for something that is not catalog
-metadata, that is the signal the abstraction is drifting.
+Catalog metadata only. Credential vending lives in
+``services/session_credentials.py``, maintenance verbs in
+``services/maintenance/recommend.py``, and storage migration in
+``services/migration/`` — each because the two kinds differ there in substance
+rather than in spelling. A method here for anything that is not catalog metadata
+is the signal this is drifting.
 
 Shape follows the house registry pattern (``services/compute/backends.py``,
-``services/lineage/providers``), with a ``Protocol`` rather than bare duck typing
-because this surface is nine methods rather than one function — the condition
-``services/compute/__init__.py`` names for extracting one.
+``services/lineage/providers``). The ``Protocol`` is documentation of the whole
+surface in one place; it is not enforced at runtime or by a type checker.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -153,9 +141,6 @@ class CatalogCapabilities:
     # trade-off a user makes when choosing a kind.
     external_engine_readable: bool = True
     supported_storage_kinds: tuple[str, ...] = ("object_store", "s3", "adls_gen2")
-    # Column types this kind cannot represent, rejected at the API rather than
-    # left to fail mid-DDL on an agent.
-    unsupported_column_types: frozenset[str] = frozenset()
 
 
 @dataclass
@@ -173,7 +158,6 @@ class WriteContext:
     db: AsyncSession
 
 
-@runtime_checkable
 class CatalogBackend(Protocol):
     """Catalog-metadata operations, per catalog kind."""
 
@@ -195,7 +179,16 @@ class CatalogBackend(Protocol):
         self, catalog: Catalog, name: str, ctx: WriteContext
     ) -> CatalogSchemaInfo: ...
 
-    async def delete_schema(self, catalog: Catalog, name: str, ctx: WriteContext) -> None: ...
+    async def delete_schema(
+        self, catalog: Catalog, name: str, ctx: WriteContext, *, cascade: bool = False
+    ) -> None:
+        """Drop the schema, and with ``cascade`` the tables inside it.
+
+        The backend owns *how*: Polaris refuses to delete a non-empty namespace
+        so its adapter empties it first, while DuckLake does it in one statement.
+        The caller should not have to know which.
+        """
+        ...
 
     async def list_tables(self, catalog: Catalog, schema: str) -> list[CatalogTableInfo]: ...
 

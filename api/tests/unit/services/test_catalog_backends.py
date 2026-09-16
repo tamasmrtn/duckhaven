@@ -41,10 +41,23 @@ def test_iceberg_catalog_resolves_to_the_polaris_backend():
     assert backend.kind == KIND_ICEBERG_POLARIS
 
 
-def test_polaris_backend_satisfies_the_protocol():
-    """A runtime check, so a method added to the Protocol without an
-    implementation fails here rather than at the first request that needs it."""
-    assert isinstance(PolarisCatalogBackend(object()), CatalogBackend)
+def test_both_backends_implement_every_protocol_method():
+    """Catches a method added to the Protocol without an implementation.
+
+    Compares the method *names* only — that is all a Protocol can be checked
+    against without a type checker, so a changed signature or a sync/async
+    mismatch still gets through here.
+    """
+    from api.services.catalog_backends.ducklake import DuckLakeCatalogBackend
+
+    required = {
+        name
+        for name in dir(CatalogBackend)
+        if not name.startswith("_") and callable(getattr(CatalogBackend, name, None))
+    }
+    for impl in (PolarisCatalogBackend, DuckLakeCatalogBackend):
+        missing = required - {n for n in dir(impl) if not n.startswith("_")}
+        assert not missing, f"{impl.__name__} is missing {sorted(missing)}"
 
 
 def test_iceberg_catalog_without_a_client_is_refused():
@@ -97,8 +110,6 @@ def test_ducklake_catalog_resolves_to_the_ducklake_backend():
     backend = backend_for(_catalog(kind=KIND_DUCKLAKE), polaris=None)
     assert isinstance(backend, DuckLakeCatalogBackend)
     assert backend.kind == KIND_DUCKLAKE
-    # Needs no Polaris client at all, which is the point of the whole exercise.
-    assert isinstance(backend, CatalogBackend)
 
 
 def test_ducklake_capabilities_state_the_trade_off():
@@ -112,4 +123,3 @@ def test_ducklake_capabilities_state_the_trade_off():
     assert caps.maintenance_executable is True
     # Iceberg's path-rewriting migration engine does not apply here.
     assert caps.supports_storage_migration is False
-    assert "ARRAY" in caps.unsupported_column_types

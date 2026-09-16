@@ -1,4 +1,3 @@
-import type { CatalogKind } from "./catalog";
 import type { BackendKind } from "./storage-backend";
 
 export type AgentStatus = "healthy" | "unavailable" | "degraded";
@@ -229,54 +228,4 @@ export function agentSupportsBackend(agent: Agent, kind: BackendKind): boolean {
   // the bundled store (S3) and needs httpfs, just like s3.
   if (kind === "adls_gen2") return extensions.includes("azure");
   return extensions.includes("httpfs");
-}
-
-// The extensions a catalog kind needs, independent of its storage backend.
-// Mirrors api/services/agent_capabilities.py — keep the two in step.
-//
-// Note "postgres_scanner", not "postgres": DuckDB installs the extension under
-// the latter name and advertises it under the former, and this matches what an
-// agent advertises.
-const CATALOG_KIND_EXTENSIONS: Record<CatalogKind, string[]> = {
-  iceberg_polaris: ["iceberg"],
-  ducklake: ["ducklake", "postgres_scanner"],
-};
-
-export function agentSupportsCatalogKind(
-  agent: Agent,
-  kind: CatalogKind,
-): boolean {
-  if (!agent.capabilities) return false;
-  const { extensions } = agent.capabilities;
-  return (CATALOG_KIND_EXTENSIONS[kind] ?? []).every((ext) =>
-    extensions.includes(ext),
-  );
-}
-
-// An agent must satisfy both axes to serve a catalog: the kind's extensions and
-// its storage backend's.
-export function agentSupportsCatalog(
-  agent: Agent,
-  kind: CatalogKind,
-  backend: BackendKind,
-): boolean {
-  return (
-    agentSupportsCatalogKind(agent, kind) &&
-    agentSupportsBackend(agent, backend)
-  );
-}
-
-// The extension name to name in a "missing extension" message, or null when the
-// agent has everything this catalog needs.
-export function missingCatalogExtension(
-  agent: Agent,
-  kind: CatalogKind,
-  backend: BackendKind,
-): string | null {
-  const extensions = agent.capabilities?.extensions ?? [];
-  const needed = [
-    ...(CATALOG_KIND_EXTENSIONS[kind] ?? []),
-    backend === "adls_gen2" ? "azure" : "httpfs",
-  ];
-  return needed.find((ext) => !extensions.includes(ext)) ?? null;
 }

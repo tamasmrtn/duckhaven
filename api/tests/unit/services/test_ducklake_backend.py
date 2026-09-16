@@ -12,10 +12,13 @@ import pytest
 from api.config import settings
 from api.models.catalog import KIND_DUCKLAKE, Catalog
 from api.services.catalog_backends import (
+    CatalogBackendConflict,
     CatalogBackendError,
+    CatalogBackendNotFound,
     CatalogBackendUnavailable,
 )
 from api.services.catalog_backends.ducklake import (
+    _TYPE_TO_DUCKDB,
     DUCKLAKE_CAPABILITIES,
     DuckLakeCatalogBackend,
     _is_missing_relation,
@@ -82,14 +85,27 @@ async def test_deprovisioning_a_catalog_with_no_schema_is_a_no_op():
     )
 
 
+def _dbapi_error(sqlstate: str | None) -> Exception:
+    """A SQLAlchemy-shaped wrapper around a driver error carrying a SQLSTATE."""
+    orig = type("PGError", (Exception,), {"sqlstate": sqlstate})()
+    return type("DBAPIError", (Exception,), {"orig": orig})()
+
+
 def test_missing_relation_is_recognised_but_other_failures_are_not():
-    """A never-attached catalog reads as empty; a real failure must still raise."""
-    assert _is_missing_relation(Exception("asyncpg.exceptions.UndefinedTableError: nope")) is True
-    assert (
-        _is_missing_relation(Exception("asyncpg.exceptions.InvalidSchemaNameError: nope")) is True
-    )
+    """A never-attached catalog reads as empty; a real failure must still raise.
+
+    Keyed on SQLSTATE rather than the driver's exception repr, which is not part
+    of asyncpg's contract — matching the repr would silently become "502 on every
+    browse" if it changed.
+    """
+    assert _is_missing_relation(_dbapi_error("42P01")) is True  # undefined_table
+    assert _is_missing_relation(_dbapi_error("3F000")) is True  # invalid_schema_name
+    assert _is_missing_relation(_dbapi_error("42501")) is False  # insufficient_privilege
+    assert _is_missing_relation(_dbapi_error(None)) is False
     assert _is_missing_relation(Exception("connection refused")) is False
-    assert _is_missing_relation(Exception("permission denied for schema cat_raw")) is False
+    # A driver exception raised directly, not wrapped.
+    bare = type("PGError", (Exception,), {"sqlstate": "42P01"})()
+    assert _is_missing_relation(bare) is True
 
 
 def test_capabilities_are_stated_honestly():
@@ -100,17 +116,12 @@ def test_capabilities_are_stated_honestly():
     assert caps.supports_storage_migration is False
 
 
-def test_unsupported_column_types_match_the_ducklake_specification():
-    """Rejected at the API so a create fails with a clear message rather than
-    mid-DDL on an agent. Source: ducklake.select unsupported-features list."""
-    assert DUCKLAKE_CAPABILITIES.unsupported_column_types == frozenset(
-        {"ARRAY", "ENUM", "UNION", "VARINT", "BITSTRING"}
-    )
-    # Everything DuckHaven's create-table dialog offers must be representable.
+def test_every_offered_column_type_is_representable_in_ducklake():
+    """The reason no type check is needed on the create path: AllowedColumnType
+    is a Literal of eight scalars and DuckLake can represent all of them."""
     from api.schemas.catalog import AllowedColumnType
 
-    offered = set(AllowedColumnType.__args__)
-    assert not (offered & DUCKLAKE_CAPABILITIES.unsupported_column_types)
+    assert set(AllowedColumnType.__args__) <= set(_TYPE_TO_DUCKDB)
 
 
 # --- DDL generation ---------------------------------------------------------
@@ -203,14 +214,11 @@ async def test_drop_statements(recording):
 
 
 @pytest.mark.asyncio
-async def test_unsupported_column_types_are_refused_before_dispatch(recording):
-    """Rejected at the API with a clear message rather than mid-DDL on an agent."""
-    from api.services.catalog_backends import CatalogBackendBadRequest
-
-    spec = type("Spec", (), {"name": "c", "type": "ARRAY", "nullable": True})()
-    with pytest.raises(CatalogBackendBadRequest, match="ARRAY"):
-        await DuckLakeCatalogBackend().create_table(_catalog(), "s", "t", [spec], _ctx())
-    assert recording.sql == []
+async def test_cascade_drops_a_schema_in_one_statement(recording):
+    """Each DuckLake DDL is a round-trip to an agent, so dropping a 50-table
+    schema table by table would be 50 sequential dispatches on one request."""
+    await DuckLakeCatalogBackend().delete_schema(_catalog(), "staging", _ctx(), cascade=True)
+    assert recording.sql == ['DROP SCHEMA "raw"."staging" CASCADE']
 
 
 @pytest.mark.asyncio
@@ -222,17 +230,101 @@ async def test_no_agent_explains_why_one_is_needed(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("error", "expected_name"),
+    ("error", "expected"),
     [
-        ("Schema with name staging already exists", "CatalogBackendConflict"),
-        ("Table with name orders does not exist", "CatalogBackendNotFound"),
-        ("connection reset by peer", "CatalogBackendUnavailable"),
+        ("Schema with name staging already exists", CatalogBackendConflict),
+        ("Table with name orders does not exist", CatalogBackendNotFound),
+        ("connection reset by peer", CatalogBackendUnavailable),
     ],
 )
-async def test_agent_failures_map_to_the_seam_vocabulary(monkeypatch, error, expected_name):
+async def test_agent_failures_map_to_the_seam_vocabulary(monkeypatch, error, expected):
     """So a DuckLake DDL failure produces the same HTTP status a Polaris one
     would: 409 for a conflict, 404 for a missing object, 502 otherwise."""
     _patch_query_service(monkeypatch, _RecordingQueryService(status="failed", error=error))
-    with pytest.raises(Exception) as excinfo:
+    with pytest.raises(expected):
         await DuckLakeCatalogBackend().create_schema(_catalog(), "staging", _ctx())
-    assert type(excinfo.value).__name__ == expected_name
+
+
+# --- Snapshot derivation and the purge contract -----------------------------
+
+
+class _FakeRows:
+    """Stands in for the catalog database, capturing the SQL it is asked for."""
+
+    def __init__(self, rows: list) -> None:
+        self.rows, self.sql = rows, []
+
+    async def __call__(self, catalog, sql, params):  # noqa: ANN001
+        self.sql.append(" ".join(sql.split()))
+        return self.rows
+
+
+@pytest.mark.asyncio
+async def test_snapshot_derivation_covers_files_deletes_and_the_table_itself():
+    """A DuckLake snapshot is a catalog commit, so a table's history is derived.
+    Each source alone misses real history: without ducklake_table a table created
+    empty has none, and without ducklake_delete_file a delete is invisible."""
+    from datetime import UTC, datetime
+
+    backend = DuckLakeCatalogBackend()
+    rows = _FakeRows(
+        [
+            (7, datetime(2026, 9, 1, 12, 0, tzinfo=UTC), 2),
+            (4, datetime(2026, 8, 1, 12, 0, tzinfo=UTC), 1),
+        ]
+    )
+    backend._rows = rows  # type: ignore[method-assign]
+    got = await backend.list_snapshots(_catalog(), "analytics", "t")
+
+    sql = rows.sql[0]
+    assert "ducklake_table" in sql
+    assert "ducklake_data_file" in sql
+    assert "ducklake_delete_file" in sql
+    # Newest first, and only the newest is current.
+    assert [s.snapshot_id for s in got] == [7, 4]
+    assert [s.is_current for s in got] == [True, False]
+    # Labelled for what these actually are.
+    assert all(s.granularity == "catalog" for s in got)
+
+
+@pytest.mark.asyncio
+async def test_a_table_with_no_history_returns_nothing_rather_than_failing():
+    backend = DuckLakeCatalogBackend()
+    backend._rows = _FakeRows([])  # type: ignore[method-assign]
+    assert await backend.list_snapshots(_catalog(), "analytics", "t") == []
+
+
+def test_naive_snapshot_timestamps_are_read_as_utc():
+    """`.timestamp()` on a naive datetime reads it as *local* time, which would
+    shift every snapshot by the server's UTC offset."""
+    from datetime import UTC, datetime
+
+    from api.services.catalog_backends.ducklake import _epoch_ms
+
+    aware = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+    naive = datetime(2026, 9, 1, 12, 0)
+    assert _epoch_ms(naive) == _epoch_ms(aware)
+
+
+@pytest.mark.asyncio
+async def test_a_purge_failure_never_blocks_the_drop(monkeypatch, caplog):
+    """Best-effort by contract: a storage failure must leave orphaned objects and
+    a loud log, not a catalog that can never be dropped."""
+    import api.services.catalog_backends.ducklake as mod
+    import api.services.session_credentials as creds
+
+    def _boom(*a, **k):
+        raise RuntimeError("object store unreachable")
+
+    monkeypatch.setattr(mod, "_purge_s3_prefix", _boom)
+    # `_purge_data` imports these lazily, so they are patched at their source.
+    monkeypatch.setattr(creds, "build_storage_block", lambda *a, **k: {"type": "s3"})
+    monkeypatch.setattr(creds, "ducklake_data_path", lambda c: "s3://w/raw/")
+
+    from api.models.storage_backend import StorageBackend
+
+    cat = _catalog()
+    cat.storage_backend = StorageBackend(kind="object_store", name="b", root_uri="")
+    with caplog.at_level("WARNING"):
+        await DuckLakeCatalogBackend()._purge_data(cat)
+    assert "orphaned" in caplog.text

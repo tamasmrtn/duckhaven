@@ -1,16 +1,9 @@
 """DuckLake's Postgres wiring in the compose files and the init script.
 
-DuckLake has no credential vendor in front of its catalog: the DuckDB agent *is*
-the catalog client, so it needs a Postgres login and a network path to Postgres.
-That is a real widening of what a contained agent can reach, and the only thing
-that makes it acceptable is the `ducklake_agent` role — CONNECT on `ducklake`
-alone, with PUBLIC's default CONNECT on `duckhaven` revoked.
-
 Scope note, matching test_compose_sandbox.py: this asserts the *manifest* and the
-*script text*. Whether Postgres actually refuses the connection is proved by
+*script text*. That Postgres actually refuses the connection is proved by
 api/tests/integration/test_ducklake_roles.py against a live server. What CI
-guarantees here is that the wiring cannot silently regress — the revokes being
-dropped, or agents being handed the `duckhaven` credential.
+guarantees here is that the wiring cannot silently regress.
 """
 
 from pathlib import Path
@@ -78,8 +71,11 @@ def test_api_gets_the_owner_credential_and_the_agent_role_separately():
     the owner, agents get the restricted role. Collapsing them into one would
     hand agents the control-plane database."""
     env = DEV["services"]["api"]["environment"]
-    assert "duckhaven:" in env["DUCKLAKE_DATABASE_URL"]
-    assert env["DUCKLAKE_DATABASE_URL"].endswith("/ducklake")
+    # Overridable, but the default points the API at the ducklake database as
+    # the owner.
+    url = env["DUCKLAKE_DATABASE_URL"]
+    assert "duckhaven:" in url
+    assert url.rstrip("}").endswith("/ducklake")
     assert "ducklake_agent" in env["DUCKLAKE_AGENT_USER"]
     assert "duckhaven" not in env["DUCKLAKE_AGENT_USER"]
 

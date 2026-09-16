@@ -82,13 +82,22 @@ async def create_catalog(
             status_code=status.HTTP_409_CONFLICT, detail=f"Catalog '{name}' already taken"
         )
 
+    try:
+        metadata_schema = metadata_schema_for(name) if kind == KIND_DUCKLAKE else None
+    except CatalogBackendError as exc:
+        # A name too long for a Postgres identifier is the caller's problem, not
+        # an upstream failure — without this it surfaces as a 502.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from exc
+
     catalog = Catalog(
         slug=name,
         name=name,
         kind=kind,
         # Exactly one identity per kind, per ck_catalogs_kind_identity.
         polaris_name=name if kind == KIND_ICEBERG_POLARIS else None,
-        metadata_schema=(metadata_schema_for(name) if kind == KIND_DUCKLAKE else None),
+        metadata_schema=metadata_schema,
         storage_backend_id=backend.id,
         created_by=created_by,
     )

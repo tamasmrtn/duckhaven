@@ -1,15 +1,9 @@
 """The DuckLake agent role reaches its own database and nothing else.
 
-This is the test that makes the rest of DuckLake support acceptable. Agents need
-a Postgres login because DuckLake has no credential vendor in front of its
-catalog, and `postgres` therefore joins the isolated `duckhaven_internal`
-network. The whole safety argument rests on `ducklake_agent` being unable to
-open the `duckhaven` database, which holds users, password hashes and session
-tokens.
-
-`tests/deploy/test_compose_ducklake.py` asserts the REVOKEs are *written*. This
-asserts Postgres actually *enforces* them, which is a different claim and the
-one that matters. Env-gated on a live server whose init scripts have run.
+`tests/deploy/test_compose_ducklake.py` asserts the REVOKEs are *written*; this
+asserts Postgres enforces them, which is the claim that matters. Env-gated on a
+live server whose init scripts have run. See
+deploy/postgres-init/20-create-ducklake-db.sh.
 """
 
 from __future__ import annotations

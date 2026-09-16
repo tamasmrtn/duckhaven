@@ -10,9 +10,10 @@ They are checked separately because they vary separately: a DuckLake catalog on
 ADLS needs ``ducklake`` + ``postgres_scanner`` + ``azure``, and an Iceberg
 catalog on the same backend needs ``iceberg`` + ``azure``.
 
-Mirrors the client-side check in `web/src/components/app/AgentPicker.tsx`
-so a non-web client cannot dispatch a workspace to an agent that lacks the
-extension its catalogs require.
+The storage-backend half is mirrored client-side in
+`web/src/components/app/AgentPicker.tsx` so the picker greys out an agent the
+API would refuse. The catalog-kind half is enforced here only — the picker does
+not yet know about catalog kinds.
 """
 
 # Every backend is object storage now: object_store is backed by the
@@ -23,21 +24,15 @@ _BACKEND_EXTENSION: dict[str, str] = {
     "adls_gen2": "azure",
 }
 
-# Extensions *gated at dispatch* per catalog kind.
+# Extensions gated at dispatch, per catalog kind.
 #
-# `iceberg_polaris` is deliberately empty even though attaching a Polaris catalog
-# plainly needs the `iceberg` extension. That requirement has never been gated —
-# only the storage backend's extension was — and every agent has loaded iceberg
-# since `_get_capabilities` existed, so nothing has ever hit it. Starting to
-# enforce it here would newly refuse any agent whose advertised set is missing or
-# stale, which is a behaviour change about Iceberg rather than about DuckLake and
-# belongs in its own change.
+# `iceberg_polaris` is empty on purpose: that requirement has never been gated,
+# and enforcing it now would refuse agents with a stale advertised set. Separate
+# change.
 #
-# Note the spelling: `INSTALL postgres` / `LOAD postgres` is the *install* name,
-# but DuckDB reports the loaded extension as `postgres_scanner` — which is what
-# an agent advertises and therefore what must be matched here. Requiring
-# "postgres" would refuse every DuckLake dispatch with a misleading error.
-# Verified against DuckDB 1.5.5.
+# `postgres_scanner`, not `postgres`: DuckDB installs the extension under the
+# latter name and advertises it under the former, and this matches what an agent
+# advertises. Verified on DuckDB 1.5.5.
 _CATALOG_KIND_EXTENSIONS: dict[str, tuple[str, ...]] = {
     "iceberg_polaris": (),
     "ducklake": ("ducklake", "postgres_scanner"),

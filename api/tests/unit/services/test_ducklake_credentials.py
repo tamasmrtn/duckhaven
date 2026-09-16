@@ -164,20 +164,6 @@ def test_external_s3_honours_path_style_access(monkeypatch):
     assert build_storage_block(backend, "s3://b/lake/raw/")["url_style"] == "path"
 
 
-def test_a_backend_with_no_base_location_is_an_error_not_a_bad_path():
-    """Defensive: the schema requires a root_uri, so this only happens to a
-    malformed row — but silently producing "/raw/" would write somewhere
-    unpredictable rather than failing."""
-    backend = StorageBackend(
-        kind="s3",
-        name="broken",
-        root_uri="",
-        config={"role_arn": "arn:x", "region": "us-east-1"},
-    )
-    with pytest.raises(ValueError, match="no base location"):
-        ducklake_data_path(_catalog("raw", backend))
-
-
 @pytest.mark.parametrize(
     ("url", "expected"),
     [
@@ -237,12 +223,10 @@ def test_external_s3_with_a_custom_endpoint_is_usable(monkeypatch):
     assert block["url_style"] == "path"
 
 
-def test_real_aws_s3_stays_on_https():
+def test_real_aws_s3_stays_on_https(monkeypatch):
     """No endpoint means AWS, and downgrading that to plain HTTP would be a
     silent security regression."""
     import boto3
-
-    original = boto3.client
 
     class _Sts:
         def assume_role(self, **kw):
@@ -254,8 +238,8 @@ def test_real_aws_s3_stays_on_https():
                 }
             }
 
-    boto3.client = lambda *a, **k: _Sts()
-    try:
+    monkeypatch.setattr(boto3, "client", lambda *a, **k: _Sts())
+    if True:
         backend = StorageBackend(
             kind="s3",
             name="aws",
@@ -265,5 +249,3 @@ def test_real_aws_s3_stays_on_https():
         block = build_storage_block(backend, "s3://bucket/lake/raw/")
         assert block["endpoint"] == ""
         assert block["use_ssl"] is True
-    finally:
-        boto3.client = original

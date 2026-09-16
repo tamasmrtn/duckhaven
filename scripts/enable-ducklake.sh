@@ -26,7 +26,6 @@ if [ -z "$AGENT_PASSWORD" ]; then
 fi
 
 docker compose -f "$COMPOSE_FILE" exec -T \
-    -e DUCKLAKE_AGENT_PASSWORD="$AGENT_PASSWORD" \
     postgres psql -v ON_ERROR_STOP=1 --username duckhaven --dbname duckhaven \
     -v agent_password="$AGENT_PASSWORD" <<-'EOSQL'
 	SELECT 'CREATE DATABASE ducklake'

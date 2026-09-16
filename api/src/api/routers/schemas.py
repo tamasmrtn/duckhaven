@@ -40,8 +40,6 @@ from api.services import query as query_service
 from api.services.catalog_backends import (
     CatalogBackend,
     CatalogBackendConflict,
-    CatalogBackendError,
-    CatalogBackendNotFound,
     CatalogTableInfo,
     SnapshotInfo,
     WriteContext,
@@ -275,13 +273,13 @@ def target_catalog(
 
 
 def _backend(catalog: Catalog, polaris: PolarisClient) -> CatalogBackend:
-    """The metadata backend serving this catalog, chosen by its kind."""
-    try:
-        return backend_for(catalog, polaris=polaris)
-    except CatalogBackendError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
-        ) from exc
+    """The metadata backend serving this catalog, chosen by its kind.
+
+    Failures propagate: the app-level handler maps them to a status with the
+    reason attached. Catching here to raise a 500 gave the same exception two
+    different statuses depending on which call site produced it.
+    """
+    return backend_for(catalog, polaris=polaris)
 
 
 async def _ensure_catalog(db: AsyncSession, polaris: PolarisClient, catalog: Catalog) -> None:
@@ -427,10 +425,7 @@ async def drop_schema(
         db, target.workspace.id, cat, user.id, schema=schema, table=None, need="writer"
     )
     backend = _backend(cat, polaris)
-    try:
-        tables = await backend.list_tables(cat, schema)
-    except CatalogBackendNotFound as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
+    tables = await backend.list_tables(cat, schema)
     if tables and not cascade:
         names = ", ".join(t.name for t in tables)
         raise HTTPException(
@@ -440,13 +435,13 @@ async def drop_schema(
                 "Pass cascade=true to drop them too."
             ),
         )
+    # One call, not one per table: how a schema's contents are removed is the
+    # backend's business (Polaris must empty the namespace first; DuckLake does
+    # it in a single statement). Dropping table by table made a 50-table schema
+    # 50 sequential agent round-trips on the DuckLake path.
+    await backend.delete_schema(cat, schema, _write_ctx(target, user, db), cascade=cascade)
     for t in tables:
-        await backend.delete_table(cat, schema, t.name, _write_ctx(target, user, db))
         await _delete_table_meta(db, cat.id, schema, t.name)
-    try:
-        await backend.delete_schema(cat, schema, _write_ctx(target, user, db))
-    except CatalogBackendNotFound as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
     # Drop dangling grants for the schema and every table that was under it.
     await grant_service.delete_schema_grants(db, cat.id, schema)
     await lineage_ingest.delete_schema_lineage(db, cat.id, schema)
@@ -498,10 +493,7 @@ async def get_table(
     await grant_service.enforce_leaf(
         db, target.workspace.id, cat, user.id, schema=schema, table=table, need="metadata"
     )
-    try:
-        t = await _backend(cat, polaris).get_table(cat, schema, table)
-    except CatalogBackendNotFound as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
+    t = await _backend(cat, polaris).get_table(cat, schema, table)
     # The one place DuckHaven reliably holds a table's Iceberg identity without
     # asking for it, so it is where a rename gets noticed and the lineage that
     # would otherwise be orphaned is moved across. A no-op — and no write — once
@@ -571,10 +563,7 @@ async def list_snapshots(
     await grant_service.enforce_leaf(
         db, target.workspace.id, cat, user.id, schema=schema, table=table, need="metadata"
     )
-    try:
-        snapshots = await _backend(cat, polaris).list_snapshots(cat, schema, table)
-    except CatalogBackendNotFound as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
+    snapshots = await _backend(cat, polaris).list_snapshots(cat, schema, table)
     return [_snapshot_to_out(s) for s in snapshots]
 
 
@@ -689,10 +678,7 @@ async def drop_table(
     await grant_service.enforce_leaf(
         db, target.workspace.id, cat, user.id, schema=schema, table=table, need="writer"
     )
-    try:
-        await _backend(cat, polaris).delete_table(cat, schema, table, _write_ctx(target, user, db))
-    except CatalogBackendNotFound as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
+    await _backend(cat, polaris).delete_table(cat, schema, table, _write_ctx(target, user, db))
     await _delete_table_meta(db, cat.id, schema, table)
     await grant_service.delete_table_grants(db, cat.id, schema, table)
     await lineage_ingest.delete_table_lineage(db, cat.id, schema, table)
@@ -732,10 +718,7 @@ async def sample_table(
     await grant_service.enforce_leaf(
         db, workspace.id, cat, user.id, schema=schema, table=table, need="reader"
     )
-    try:
-        await _backend(cat, polaris).get_table(cat, schema, table)
-    except CatalogBackendNotFound as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
+    await _backend(cat, polaris).get_table(cat, schema, table)
 
     agent = await query_service.pick_agent_for(db, workspace, principal_id=user.id)
     if agent is None:
@@ -790,10 +773,7 @@ async def recount_table(
     await grant_service.enforce_leaf(
         db, workspace.id, cat, user.id, schema=schema, table=table, need="reader"
     )
-    try:
-        await _backend(cat, polaris).get_table(cat, schema, table)
-    except CatalogBackendNotFound as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
+    await _backend(cat, polaris).get_table(cat, schema, table)
 
     agent = await query_service.pick_agent_for(db, workspace, principal_id=user.id)
     if agent is None:

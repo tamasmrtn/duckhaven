@@ -26,6 +26,7 @@ from api.models.catalog import Catalog, WorkspaceCatalog
 from api.models.maintenance import MaintenancePolicy, TableHealthSample
 from api.models.query import Query
 from api.models.workspace import Workspace
+from api.services.catalog_backends import CatalogBackendError, backend_for
 from api.services.maintenance.policy import get_or_create_policy
 from api.services.polaris import PolarisClient, PolarisError
 from api.services.query import dispatch_query, pick_agent_for
@@ -144,20 +145,24 @@ async def _enumerate_catalog(polaris: PolarisClient, catalog: Catalog) -> list[t
 
     Enumeration is a per-catalog ``list_schemas`` + ``list_tables`` round-trip;
     caching it keeps the scan cycle cheap on large deployments. New tables appear
-    within the TTL; a Polaris error invalidates the entry so a transient failure
-    doesn't pin a stale list.
+    within the TTL; an error invalidates the entry so a transient failure doesn't
+    pin a stale list.
+
+    Goes through the catalog's own backend rather than straight to Polaris, so a
+    DuckLake catalog is enumerated too — calling Polaris with its (null) warehouse
+    name would have failed and silently skipped it from every scan.
     """
     now = datetime.now(tz=UTC)
     cached = _enumeration_cache.get(catalog.slug)
     if cached is not None and now - cached[0] < _ENUMERATION_TTL:
         return cached[1]
     try:
+        backend = backend_for(catalog, polaris=polaris)
         out: list[tuple[str, str]] = []
-        schemas = await polaris.list_schemas(catalog.polaris_name)
-        for schema in schemas:
-            tables = await polaris.list_tables(catalog.polaris_name, schema.name)
+        for schema in await backend.list_schemas(catalog):
+            tables = await backend.list_tables(catalog, schema.name)
             out.extend((schema.name, t.name) for t in tables)
-    except PolarisError as exc:
+    except (CatalogBackendError, PolarisError) as exc:
         _enumeration_cache.pop(catalog.slug, None)
         logger.warning("Maintenance scan: enumerate failed for %s: %s", catalog.slug, exc)
         return []

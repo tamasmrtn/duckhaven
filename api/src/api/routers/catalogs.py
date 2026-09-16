@@ -17,8 +17,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from api.config import settings
 from api.deps import get_current_user, get_db, get_polaris_client
-from api.models.catalog import Catalog, WorkspaceCatalog
+from api.models.catalog import (
+    KIND_DUCKLAKE,
+    KIND_ICEBERG_POLARIS,
+    Catalog,
+    WorkspaceCatalog,
+)
 from api.models.catalog_grant import CatalogGrant
 from api.models.catalog_migration import CatalogMigration
 from api.models.storage_backend import StorageBackend
@@ -27,6 +33,7 @@ from api.schemas.catalog_mgmt import (
     CatalogAttachRequest,
     CatalogCapabilitiesOut,
     CatalogCreate,
+    CatalogKindOut,
     CatalogOut,
 )
 from api.schemas.catalog_migration import (
@@ -132,6 +139,40 @@ def _catalog_out(
         attached_workspaces=attached_workspaces,
         access_mode=access_mode,
     )
+
+
+_KIND_LABELS = {
+    KIND_ICEBERG_POLARIS: "Apache Iceberg + Polaris",
+    KIND_DUCKLAKE: "DuckLake",
+}
+
+
+@router.get("/catalog-kinds", response_model=list[CatalogKindOut])
+async def list_catalog_kinds(_: User = Depends(get_current_user)) -> list[CatalogKindOut]:
+    """The catalog kinds this deployment can create, with their capabilities.
+
+    Iceberg is listed first because it is the default. DuckLake is listed even
+    when disabled, with the reason — hiding it entirely would leave an operator
+    who read the docs wondering where it went.
+    """
+    out: list[CatalogKindOut] = []
+    for kind in (KIND_ICEBERG_POLARIS, KIND_DUCKLAKE):
+        available = kind != KIND_DUCKLAKE or settings.ducklake_enabled
+        out.append(
+            CatalogKindOut(
+                kind=kind,
+                label=_KIND_LABELS[kind],
+                available=available,
+                unavailable_reason=(
+                    None
+                    if available
+                    else "Not enabled on this deployment (set DUCKLAKE_ENABLED=true)."
+                ),
+                # Never None here: both kinds are known to this build.
+                capabilities=_capabilities_out(kind),  # type: ignore[arg-type]
+            )
+        )
+    return out
 
 
 @router.get("/catalogs", response_model=list[CatalogOut])

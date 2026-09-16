@@ -36,6 +36,41 @@ function out(c: (typeof CATALOGS)[number]): Catalog {
 export const catalogHandlers = [
   http.get("/api/catalogs", () => HttpResponse.json(CATALOGS.map(out))),
 
+  // The kinds this deployment offers. DuckLake is present but unavailable by
+  // default, mirroring DUCKLAKE_ENABLED=false — so the dev UI shows the same
+  // single-kind create dialog a fresh install does.
+  http.get("/api/catalog-kinds", () =>
+    HttpResponse.json([
+      {
+        kind: "iceberg_polaris",
+        label: "Apache Iceberg + Polaris",
+        available: true,
+        unavailable_reason: null,
+        capabilities: {
+          snapshot_granularity: "table",
+          supports_storage_migration: true,
+          maintenance_executable: false,
+          external_engine_readable: true,
+          supported_storage_kinds: ["object_store", "s3", "adls_gen2"],
+        },
+      },
+      {
+        kind: "ducklake",
+        label: "DuckLake",
+        available: false,
+        unavailable_reason:
+          "Not enabled on this deployment (set DUCKLAKE_ENABLED=true).",
+        capabilities: {
+          snapshot_granularity: "catalog",
+          supports_storage_migration: false,
+          maintenance_executable: true,
+          external_engine_readable: false,
+          supported_storage_kinds: ["object_store", "s3", "adls_gen2"],
+        },
+      },
+    ]),
+  ),
+
   http.get("/api/workspaces/:ws/catalogs", ({ params }) => {
     const ws = findWorkspace(params.ws as string);
     if (!ws) return httpError(404, "Workspace not found");

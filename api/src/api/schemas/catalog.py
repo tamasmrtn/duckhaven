@@ -112,3 +112,8 @@ class SnapshotOut(BaseModel):
     total_records: int | None = None
     added_data_files: int | None = None
     total_data_files: int | None = None
+    # "table" for Iceberg, whose snapshots belong to one table. "catalog" for
+    # DuckLake, whose snapshots are commits against the whole catalog — what is
+    # listed for a table is then the subset that changed it, and the UI has to
+    # be able to say so rather than implying a per-table lineage.
+    granularity: str = "table"

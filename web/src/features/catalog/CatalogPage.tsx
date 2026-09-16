@@ -54,13 +54,23 @@ const TABLE_DETAIL_TABS = [
   "permissions",
 ] as const;
 
-/** Iceberg-native facts for the table-detail header: format version, current
+/** Catalog-native facts for the table-detail header: table format, current
  * snapshot, data-file count, and a has-deletes badge. Renders nothing when no
- * Iceberg metadata has been captured yet. */
-function IcebergMetaLine({ table }: { table: CatalogTable }) {
+ * metadata has been captured yet.
+ *
+ * `format_version` is an Iceberg concept with no DuckLake equivalent, so the
+ * API sends null for a DuckLake table and the format is named from the table's
+ * own `format` instead of being assumed. */
+function TableMetaLine({ table }: { table: CatalogTable }) {
   const parts: string[] = [];
-  if (table.format_version != null)
+  if (table.format_version != null) {
     parts.push(`Iceberg v${table.format_version}`);
+  } else if (table.format) {
+    parts.push(
+      table.format.charAt(0).toUpperCase() +
+        table.format.slice(1).toLowerCase(),
+    );
+  }
   if (table.snapshot_id) parts.push(`snapshot ${table.snapshot_id}`);
   if (table.data_file_count != null)
     parts.push(`${formatNumber(table.data_file_count)} files`);
@@ -154,9 +164,18 @@ function TableDetail({
                 />
               )}
               <span className="text-xs text-text-secondary">
-                {tableData.format} · Catalog Commits{" "}
-                {tableData.catalog_commits ? "ON" : "OFF"} ·{" "}
-                {formatNumber(tableData.row_count)} rows ·{" "}
+                {tableData.format}
+                {/* "Catalog Commits" is Iceberg vocabulary — a DuckLake table
+                    has no equivalent, so the API sends no format_version for
+                    one and the phrase is omitted rather than shown as OFF,
+                    which would read as a missing feature. */}
+                {tableData.format_version != null && (
+                  <>
+                    {" · Catalog Commits "}
+                    {tableData.catalog_commits ? "ON" : "OFF"}
+                  </>
+                )}{" "}
+                · {formatNumber(tableData.row_count)} rows ·{" "}
                 {formatBytes(tableData.size_bytes)}
               </span>
             </div>
@@ -168,7 +187,7 @@ function TableDetail({
                 by {tableData.last_write_by} ({tableData.last_write_agent})
               </p>
             )}
-            <IcebergMetaLine table={tableData} />
+            <TableMetaLine table={tableData} />
           </div>
           <div className="flex gap-2">
             <Button

@@ -56,6 +56,25 @@ class CatalogCapabilitiesOut(BaseModel):
     supported_storage_kinds: list[str]
 
 
+class CatalogKindOut(BaseModel):
+    """One catalog kind this deployment can offer, for the create flow.
+
+    Served because the UI has to describe a kind — including the honest
+    trade-off in ``external_engine_readable`` — *before* any catalog of that
+    kind exists, and hardcoding those facts client-side would let them drift
+    from the backend that actually implements them.
+    """
+
+    kind: str
+    label: str
+    # False when the kind exists but this deployment has it switched off, so the
+    # UI can show it greyed with a reason rather than hiding it and leaving an
+    # operator wondering where it went.
+    available: bool
+    unavailable_reason: str | None = None
+    capabilities: CatalogCapabilitiesOut
+
+
 class CatalogOut(BaseModel):
     id: uuid.UUID
     slug: str

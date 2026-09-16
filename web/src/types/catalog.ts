@@ -104,4 +104,18 @@ export interface TableSnapshot {
   total_records: number | null;
   added_data_files: number | null;
   total_data_files: number | null;
+  // "table" for Iceberg. "catalog" for DuckLake, whose snapshots are commits
+  // against the whole catalog — these are the ones that changed this table.
+  granularity?: "table" | "catalog";
+}
+
+// One catalog kind this deployment can create, as served by GET /catalog-kinds.
+// The capability facts come from the backend that implements them, so the create
+// dialog cannot describe a kind in a way the server would contradict.
+export interface CatalogKindOption {
+  kind: CatalogKind;
+  label: string;
+  available: boolean;
+  unavailable_reason: string | null;
+  capabilities: CatalogCapabilities;
 }

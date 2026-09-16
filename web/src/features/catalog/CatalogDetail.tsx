@@ -8,6 +8,7 @@ import { PermissionsPanel } from "@/features/catalog/PermissionsPanel";
 import { backendLabel } from "@/features/catalog/CatalogInfoDialog";
 import { formatBytes } from "@/utils";
 import type { BackendKind } from "@/types/storage-backend";
+import { catalogKindLabel, tableFormatLabel } from "./catalogKind";
 
 function fmtNum(n: number | null | undefined) {
   return n == null ? "—" : n.toLocaleString();
@@ -77,8 +78,12 @@ export function CatalogDetail({
   const cat = catalogs?.find((c) => c.slug === catalog);
   const { data: schemas, isLoading } = useSchemas(ws, catalog);
 
+  // Both kinds scope their storage per catalog, but under different names: an
+  // Iceberg catalog's base location is keyed by its Polaris warehouse name, a
+  // DuckLake catalog's data path by its slug.
+  const locationKey = cat ? (cat.polaris_name ?? cat.slug) : "";
   const baseLocation = cat
-    ? `${(cat.storage_backend_root_uri || "").replace(/\/$/, "")}/${cat.polaris_name}`.replace(
+    ? `${(cat.storage_backend_root_uri || "").replace(/\/$/, "")}/${locationKey}`.replace(
         /^\//,
         "",
       )
@@ -150,7 +155,20 @@ export function CatalogDetail({
                 Catalog
               </p>
               <MetaRow label="Name" value={cat?.name ?? catalog} />
-              <MetaRow label="Polaris name" value={cat?.polaris_name ?? "—"} />
+              <MetaRow label="Kind" value={catalogKindLabel(cat?.kind)} />
+              {/* Each kind names its metadata store differently — a Polaris
+                  warehouse, or a Postgres schema — so label the row for what it
+                  actually is rather than always saying "Polaris name". */}
+              <MetaRow
+                label={
+                  cat?.kind === "ducklake" ? "Metadata schema" : "Polaris name"
+                }
+                value={cat?.metadata_schema ?? cat?.polaris_name ?? "—"}
+              />
+              <MetaRow
+                label="Table format"
+                value={tableFormatLabel(cat?.kind)}
+              />
               <MetaRow
                 label="Storage backend"
                 value={

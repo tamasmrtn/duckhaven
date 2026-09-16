@@ -226,6 +226,7 @@ def _snapshot_to_out(snap: SnapshotInfo) -> SnapshotOut:
         total_records=_snapshot_metric(snap.summary, "total-records"),
         added_data_files=_snapshot_metric(snap.summary, "added-data-files"),
         total_data_files=_snapshot_metric(snap.summary, "total-data-files"),
+        granularity=snap.granularity,
     )
 
 

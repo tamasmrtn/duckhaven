@@ -26,10 +26,8 @@ from api.models.table_metadata import TableMetadata
 from api.models.user import User
 from api.models.workspace import Workspace
 from api.schemas.catalog import (
-    AllowedColumnType,
     CatalogSchemaCreate,
     CatalogSchemaOut,
-    ColumnSpec,
     SnapshotOut,
     TableColumnOut,
     TableCreate,
@@ -39,21 +37,23 @@ from api.schemas.lineage import LineageGraphOut
 from api.schemas.query import RowsPageOut
 from api.services import grants as grant_service
 from api.services import query as query_service
+from api.services.catalog_backends import (
+    CatalogBackend,
+    CatalogBackendConflict,
+    CatalogBackendError,
+    CatalogBackendNotFound,
+    CatalogTableInfo,
+    SnapshotInfo,
+    WriteContext,
+    backend_for,
+)
 from api.services.lineage import graph as lineage_graph
 from api.services.lineage import ingest as lineage_ingest
-from api.services.polaris import (
-    PolarisClient,
-    PolarisConflictError,
-    PolarisNotFoundError,
-    PolarisSnapshot,
-    PolarisTable,
-)
+from api.services.polaris import PolarisClient
 from api.services.semantic import impact as semantic_impact
 from api.services.workspace import (
     assert_workspace_member,
-    ensure_polaris_catalog,
     get_workspace,
-    polaris_storage,
     resolve_catalog,
     resolve_workspace_catalogs,
 )
@@ -149,31 +149,8 @@ async def _delete_table_meta(
         await db.delete(existing)
 
 
-# Map the small set of allowed scalar types to Iceberg primitive type strings.
-_TYPE_TO_ICEBERG: dict[AllowedColumnType, str] = {
-    "INTEGER": "int",
-    "BIGINT": "long",
-    "DOUBLE": "double",
-    "VARCHAR": "string",
-    "BOOLEAN": "boolean",
-    "DATE": "date",
-    "TIMESTAMP": "timestamp",
-    "DECIMAL": "decimal(38,9)",
-}
-
-
-def _column_for_iceberg(spec: ColumnSpec, field_id: int) -> dict[str, object]:
-    """Build an Iceberg schema field. Field ids are 1-based and unique."""
-    return {
-        "id": field_id,
-        "name": spec.name,
-        "required": not spec.nullable,
-        "type": _TYPE_TO_ICEBERG[spec.type],
-    }
-
-
 def _table_to_out(
-    table: PolarisTable,
+    table: CatalogTableInfo,
     catalog: Catalog,
     workspace_id: uuid.UUID,
     meta: _TableMeta | None = None,
@@ -234,7 +211,7 @@ def _snapshot_metric(summary: dict[str, str], key: str) -> int | None:
         return None
 
 
-def _snapshot_to_out(snap: PolarisSnapshot) -> SnapshotOut:
+def _snapshot_to_out(snap: SnapshotInfo) -> SnapshotOut:
     return SnapshotOut(
         snapshot_id=str(snap.snapshot_id),
         parent_snapshot_id=(
@@ -258,6 +235,16 @@ class _Target:
 
     workspace: Workspace
     catalog: Catalog
+
+
+def _write_ctx(target: _Target, user: User) -> WriteContext:
+    """What a metadata write needs beyond its arguments.
+
+    Polaris ignores all of it; a DuckLake write is SQL that has to run on an
+    agent, under a user, in a workspace — so it is passed explicitly rather than
+    a backend reaching into request state.
+    """
+    return WriteContext(workspace_id=target.workspace.id, user=user)
 
 
 def target_catalog(
@@ -286,23 +273,24 @@ def target_catalog(
     return _dep
 
 
+def _backend(catalog: Catalog, polaris: PolarisClient) -> CatalogBackend:
+    """The metadata backend serving this catalog, chosen by its kind."""
+    try:
+        return backend_for(catalog, polaris=polaris)
+    except CatalogBackendError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+        ) from exc
+
+
 async def _ensure_catalog(db: AsyncSession, polaris: PolarisClient, catalog: Catalog) -> None:
-    backend = catalog.storage_backend
-    if backend is None:
+    """Self-heal on browse: make sure the catalog exists in its metastore."""
+    if catalog.storage_backend is None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Catalog points to a missing storage backend",
         )
-    storage_type, base_location, extra_storage = polaris_storage(
-        backend.kind, backend.root_uri, backend.config
-    )
-    await ensure_polaris_catalog(
-        polaris,
-        catalog.polaris_name,
-        storage_type=storage_type,
-        base_location=base_location,
-        extra_storage=extra_storage,
-    )
+    await _backend(catalog, polaris).ensure(catalog)
 
 
 # --- Handlers (registered against the catalog-scoped router below) ---
@@ -321,7 +309,7 @@ async def list_schemas(
     existence of what it hides."""
     cat = target.catalog
     await _ensure_catalog(db, polaris, cat)
-    schemas = await polaris.list_schemas(cat.polaris_name)
+    schemas = await _backend(cat, polaris).list_schemas(cat)
     if await grant_service.is_scoped(db, target.workspace.id, cat):
         visible = await grant_service.visible_schemas(
             db, target.workspace.id, cat, user.id, [s.name for s in schemas]
@@ -354,8 +342,8 @@ async def create_schema(
     )
     await _ensure_catalog(db, polaris, cat)
     try:
-        sc = await polaris.create_schema(cat.polaris_name, body.name)
-    except PolarisConflictError as exc:
+        sc = await _backend(cat, polaris).create_schema(cat, body.name, _write_ctx(target, user))
+    except CatalogBackendConflict as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return CatalogSchemaOut(
         name=sc.name,
@@ -375,9 +363,10 @@ async def refresh_table_stats(
     workspace, cat = target.workspace, target.catalog
 
     missing: list[tuple[str, str]] = []
-    for s in await polaris.list_schemas(cat.polaris_name):
+    backend = _backend(cat, polaris)
+    for s in await backend.list_schemas(cat):
         meta = await _load_table_meta(db, cat.id, s.name)
-        for t in await polaris.list_tables(cat.polaris_name, s.name):
+        for t in await backend.list_tables(cat, s.name):
             m = meta.get(t.name)
             if m is None or m.row_count is None:
                 missing.append((s.name, t.name))
@@ -435,9 +424,10 @@ async def drop_schema(
     await grant_service.enforce_leaf(
         db, target.workspace.id, cat, user.id, schema=schema, table=None, need="writer"
     )
+    backend = _backend(cat, polaris)
     try:
-        tables = await polaris.list_tables(cat.polaris_name, schema)
-    except PolarisNotFoundError as exc:
+        tables = await backend.list_tables(cat, schema)
+    except CatalogBackendNotFound as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
     if tables and not cascade:
         names = ", ".join(t.name for t in tables)
@@ -449,11 +439,11 @@ async def drop_schema(
             ),
         )
     for t in tables:
-        await polaris.delete_table(cat.polaris_name, schema, t.name, purge=True)
+        await backend.delete_table(cat, schema, t.name, _write_ctx(target, user))
         await _delete_table_meta(db, cat.id, schema, t.name)
     try:
-        await polaris.delete_schema(cat.polaris_name, schema)
-    except PolarisNotFoundError as exc:
+        await backend.delete_schema(cat, schema, _write_ctx(target, user))
+    except CatalogBackendNotFound as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
     # Drop dangling grants for the schema and every table that was under it.
     await grant_service.delete_schema_grants(db, cat.id, schema)
@@ -480,7 +470,7 @@ async def list_tables(
     writer, row count -- so rendering a table list costs one request, not one per
     table."""
     cat = target.catalog
-    tables = await polaris.list_tables(cat.polaris_name, schema)
+    tables = await _backend(cat, polaris).list_tables(cat, schema)
     if await grant_service.is_scoped(db, target.workspace.id, cat):
         visible = await grant_service.visible_tables(
             db, target.workspace.id, cat, user.id, schema, [t.name for t in tables]
@@ -507,8 +497,8 @@ async def get_table(
         db, target.workspace.id, cat, user.id, schema=schema, table=table, need="metadata"
     )
     try:
-        t = await polaris.get_table(cat.polaris_name, schema, table)
-    except PolarisNotFoundError as exc:
+        t = await _backend(cat, polaris).get_table(cat, schema, table)
+    except CatalogBackendNotFound as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
     # The one place DuckHaven reliably holds a table's Iceberg identity without
     # asking for it, so it is where a rename gets noticed and the lineage that
@@ -580,8 +570,8 @@ async def list_snapshots(
         db, target.workspace.id, cat, user.id, schema=schema, table=table, need="metadata"
     )
     try:
-        snapshots = await polaris.list_snapshots(cat.polaris_name, schema, table)
-    except PolarisNotFoundError as exc:
+        snapshots = await _backend(cat, polaris).list_snapshots(cat, schema, table)
+    except CatalogBackendNotFound as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
     return [_snapshot_to_out(s) for s in snapshots]
 
@@ -652,17 +642,12 @@ async def create_table(
     await grant_service.enforce_leaf(
         db, target.workspace.id, cat, user.id, schema=schema, table=body.name, need="writer"
     )
-    columns = [_column_for_iceberg(spec, idx + 1) for idx, spec in enumerate(body.columns)]
-
     await _ensure_catalog(db, polaris, cat)
     try:
-        t = await polaris.create_table(
-            catalog=cat.polaris_name,
-            schema=schema,
-            name=body.name,
-            columns=columns,
+        t = await _backend(cat, polaris).create_table(
+            cat, schema, body.name, body.columns, _write_ctx(target, user)
         )
-    except PolarisConflictError as exc:
+    except CatalogBackendConflict as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
     db.add(
@@ -703,8 +688,8 @@ async def drop_table(
         db, target.workspace.id, cat, user.id, schema=schema, table=table, need="writer"
     )
     try:
-        await polaris.delete_table(cat.polaris_name, schema, table, purge=True)
-    except PolarisNotFoundError as exc:
+        await _backend(cat, polaris).delete_table(cat, schema, table, _write_ctx(target, user))
+    except CatalogBackendNotFound as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
     await _delete_table_meta(db, cat.id, schema, table)
     await grant_service.delete_table_grants(db, cat.id, schema, table)
@@ -746,8 +731,8 @@ async def sample_table(
         db, workspace.id, cat, user.id, schema=schema, table=table, need="reader"
     )
     try:
-        await polaris.get_table(cat.polaris_name, schema, table)
-    except PolarisNotFoundError as exc:
+        await _backend(cat, polaris).get_table(cat, schema, table)
+    except CatalogBackendNotFound as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
 
     agent = await query_service.pick_agent_for(db, workspace, principal_id=user.id)
@@ -804,8 +789,8 @@ async def recount_table(
         db, workspace.id, cat, user.id, schema=schema, table=table, need="reader"
     )
     try:
-        await polaris.get_table(cat.polaris_name, schema, table)
-    except PolarisNotFoundError as exc:
+        await _backend(cat, polaris).get_table(cat, schema, table)
+    except CatalogBackendNotFound as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
 
     agent = await query_service.pick_agent_for(db, workspace, principal_id=user.id)

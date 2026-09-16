@@ -55,6 +55,12 @@ from api.services.agent_dispatch import drain_local_agents
 from api.services.assistant.identity import ASSISTANT_EMAIL
 from api.services.assistant.knowledge.sync import sync_corpus
 from api.services.bootstrap import ensure_assistant_service_account, seed_agent_bootstrap_token
+from api.services.catalog_backends import (
+    CatalogBackendBadRequest,
+    CatalogBackendConflict,
+    CatalogBackendError,
+    CatalogBackendNotFound,
+)
 from api.services.mcp.server import MCP_PATH, mcp_asgi_app, mcp_session_manager
 from api.services.oidc import register_oidc
 from api.services.polaris import (
@@ -270,6 +276,24 @@ async def _polaris_error_handler(_: Request, exc: PolarisError) -> JSONResponse:
         code = status.HTTP_404_NOT_FOUND
     elif isinstance(exc, PolarisBadRequestError):
         code = status.HTTP_422_UNPROCESSABLE_CONTENT
+    else:
+        code = status.HTTP_502_BAD_GATEWAY
+    return JSONResponse(status_code=code, content=error_body(code, str(exc)))
+
+
+# The same mapping for a catalog-metadata failure, which is what a route sees now
+# that catalog reads/writes go through `services/catalog_backends` rather than
+# straight to Polaris. Registered separately (rather than sharing a base class
+# with PolarisError) because a DuckLake failure is not a Polaris failure, and
+# collapsing them would make the handler lie about where the error came from.
+@api_app.exception_handler(CatalogBackendError)
+async def _catalog_backend_error_handler(_: Request, exc: CatalogBackendError) -> JSONResponse:
+    if isinstance(exc, CatalogBackendNotFound):
+        code = status.HTTP_404_NOT_FOUND
+    elif isinstance(exc, CatalogBackendBadRequest):
+        code = status.HTTP_422_UNPROCESSABLE_CONTENT
+    elif isinstance(exc, CatalogBackendConflict):
+        code = status.HTTP_409_CONFLICT
     else:
         code = status.HTTP_502_BAD_GATEWAY
     return JSONResponse(status_code=code, content=error_body(code, str(exc)))

@@ -88,6 +88,22 @@ def _api_env(db_url: str, setup_token_file: Path) -> dict[str, str]:
             "SQL_SESSIONS_ENABLED": "true",
         }
     )
+    # DuckLake, when the harness is pointed at a catalog database. Off (and its
+    # tests skipped) otherwise, so the suite still runs against a stack that has
+    # only Polaris. The agent role's details come from the same environment the
+    # DuckLake integration tests use.
+    if ducklake_url := os.getenv("DUCKLAKE_DATABASE_URL"):
+        env.update(
+            {
+                "DUCKLAKE_ENABLED": "true",
+                "DUCKLAKE_DATABASE_URL": ducklake_url,
+                "DUCKLAKE_AGENT_HOST": os.getenv("DUCKLAKE_AGENT_HOST", "127.0.0.1"),
+                "DUCKLAKE_AGENT_PORT": os.getenv("DUCKLAKE_AGENT_PORT", "5432"),
+                "DUCKLAKE_AGENT_DATABASE": os.getenv("DUCKLAKE_AGENT_DATABASE", "ducklake"),
+                "DUCKLAKE_AGENT_USER": os.getenv("DUCKLAKE_AGENT_USER", "ducklake_agent"),
+                "DUCKLAKE_AGENT_PASSWORD": os.getenv("DUCKLAKE_AGENT_PASSWORD", ""),
+            }
+        )
     if endpoint := os.getenv("POLARIS_S3_ENDPOINT"):
         env["S3_ENDPOINT"] = endpoint
     if internal := os.getenv("POLARIS_S3_ENDPOINT_INTERNAL"):

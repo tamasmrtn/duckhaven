@@ -224,7 +224,7 @@ def backend_for(catalog: Catalog, *, polaris: PolarisClient | None = None) -> Ca
     it keeps an unused kind's dependencies (and its import cost) out of a process
     that never touches it.
     """
-    from api.models.catalog import KIND_ICEBERG_POLARIS
+    from api.models.catalog import KIND_DUCKLAKE, KIND_ICEBERG_POLARIS
 
     if catalog.kind == KIND_ICEBERG_POLARIS:
         from api.services.catalog_backends.polaris import PolarisCatalogBackend
@@ -235,6 +235,11 @@ def backend_for(catalog: Catalog, *, polaris: PolarisClient | None = None) -> Ca
             )
         return PolarisCatalogBackend(polaris)
 
+    if catalog.kind == KIND_DUCKLAKE:
+        from api.services.catalog_backends.ducklake import DuckLakeCatalogBackend
+
+        return DuckLakeCatalogBackend()
+
     raise CatalogBackendUnavailable(f"Unsupported catalog kind: {catalog.kind!r}")
 
 
@@ -244,10 +249,14 @@ def capabilities_for(kind: str) -> CatalogCapabilities:
     Used by the create flow, which has to describe a kind before a catalog of
     that kind exists.
     """
-    from api.models.catalog import KIND_ICEBERG_POLARIS
+    from api.models.catalog import KIND_DUCKLAKE, KIND_ICEBERG_POLARIS
 
     if kind == KIND_ICEBERG_POLARIS:
         from api.services.catalog_backends.polaris import POLARIS_CAPABILITIES
 
         return POLARIS_CAPABILITIES
+    if kind == KIND_DUCKLAKE:
+        from api.services.catalog_backends.ducklake import DUCKLAKE_CAPABILITIES
+
+        return DUCKLAKE_CAPABILITIES
     raise CatalogBackendUnavailable(f"Unsupported catalog kind: {kind!r}")

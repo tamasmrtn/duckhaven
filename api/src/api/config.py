@@ -76,6 +76,29 @@ class Settings(BaseSettings):
     # data access). Defaults to the bootstrap root principal.
     polaris_principal: str = "root"
     polaris_http_timeout_s: float = 10.0
+    # DuckLake (the second catalog kind) keeps catalog metadata in SQL tables in
+    # its own `ducklake` database rather than in a catalog service. Off by
+    # default; Iceberg + Polaris stays the default kind.
+    ducklake_enabled: bool = False
+    # Two credentials on purpose. The API connects as the owner to create each
+    # catalog's metadata schema, grant on it, and read metadata back. Agents
+    # connect as a restricted role that can reach the `ducklake` database and
+    # nothing else (see deploy/postgres-init/20-create-ducklake-db.sh). Handing
+    # agents the owner credential would give them the control-plane database.
+    ducklake_database_url: str = "postgresql+asyncpg://duckhaven:duckhaven@localhost:5432/ducklake"
+    # Connection details vended to an agent per dispatch. Never written to the
+    # agent's config or disk — the closest this design gets to keeping I7's
+    # "no long-lived secrets on agents".
+    ducklake_agent_host: str = "postgres"
+    ducklake_agent_port: int = 5432
+    ducklake_agent_database: str = "ducklake"
+    ducklake_agent_user: str = "ducklake_agent"
+    ducklake_agent_password: str = ""
+    # DuckLake catalog options applied at provisioning. Inlining keeps small
+    # writes out of object storage (they land in the catalog database instead);
+    # target file size drives compaction.
+    ducklake_data_inlining_row_limit: int = 10
+    ducklake_target_file_size_mb: int = 512
     # Bundled object store backing the object_store catalogs. Three tiers,
     # most-internal to most-external: `s3_endpoint_internal` is what Polaris uses
     # to reach the store inside the compose network (and what the agent's httpfs

@@ -91,8 +91,25 @@ def test_iceberg_capabilities_are_honest():
     assert set(caps.supported_storage_kinds) == {"object_store", "s3", "adls_gen2"}
 
 
-def test_ducklake_is_not_servable_yet():
-    """Until the DuckLake backend lands, its kind resolves to a clear refusal
-    rather than an ImportError."""
-    with pytest.raises(CatalogBackendUnavailable, match=KIND_DUCKLAKE):
-        backend_for(_catalog(kind=KIND_DUCKLAKE), polaris=object())
+def test_ducklake_catalog_resolves_to_the_ducklake_backend():
+    from api.services.catalog_backends.ducklake import DuckLakeCatalogBackend
+
+    backend = backend_for(_catalog(kind=KIND_DUCKLAKE), polaris=None)
+    assert isinstance(backend, DuckLakeCatalogBackend)
+    assert backend.kind == KIND_DUCKLAKE
+    # Needs no Polaris client at all, which is the point of the whole exercise.
+    assert isinstance(backend, CatalogBackend)
+
+
+def test_ducklake_capabilities_state_the_trade_off():
+    caps = capabilities_for(KIND_DUCKLAKE)
+    # A DuckLake snapshot is a commit against the catalog, not one table.
+    assert caps.snapshot_granularity == "catalog"
+    # The cost: no other engine can open these tables. This is what the create
+    # dialog has to tell the user before they choose.
+    assert caps.external_engine_readable is False
+    # The win: DuckDB can actually run this kind's maintenance.
+    assert caps.maintenance_executable is True
+    # Iceberg's path-rewriting migration engine does not apply here.
+    assert caps.supports_storage_migration is False
+    assert "ARRAY" in caps.unsupported_column_types

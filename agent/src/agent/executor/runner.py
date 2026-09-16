@@ -97,6 +97,28 @@ _BACKEND_IO_EXTENSION: dict[str, str] = {
 # All backends are object storage, so all get vended credentials from Polaris.
 _VENDED_BACKENDS = {"object_store", "s3", "adls_gen2"}
 
+# Catalog kind -> the extensions needed to attach it, independent of where its
+# bytes live. Mirrors api/services/agent_capabilities.py, which gates dispatch on
+# the agent advertising these; note `postgres` is the INSTALL name (it advertises
+# itself as `postgres_scanner`).
+_CATALOG_KIND_EXTENSIONS: dict[str, tuple[str, ...]] = {
+    "iceberg_polaris": ("iceberg",),
+    "ducklake": ("ducklake", "postgres"),
+}
+KIND_DUCKLAKE = "ducklake"
+
+
+# Per-connection secret names for a DuckLake catalog. Suffixed with the catalog
+# slug because a workspace can attach several DuckLake catalogs at once, each
+# with its own storage scope.
+def _meta_secret(slug: str) -> str:
+    return f"dh_dl_meta_{slug}"
+
+
+def _storage_secret(slug: str) -> str:
+    return f"dh_dl_store_{slug}"
+
+
 # Substrings that identify a rejected/expired *storage* credential (as opposed to
 # a genuine authz or missing-object error). Polaris vends short-lived STS creds
 # (an hour on the bundled store); once they expire the object store purges the
@@ -462,6 +484,111 @@ def _orphan_estimate(
     return out
 
 
+def _configure_ducklake(conn: duckdb.DuckDBPyConnection) -> None:
+    """Pin DuckLake's conflict-retry behaviour rather than inheriting defaults.
+
+    DuckLake detects a write conflict by primary-key collision on the next
+    snapshot id, then retries automatically when the two changesets do not
+    logically conflict. These are the extension's own defaults, set explicitly so
+    the behaviour is stated in one place and does not move under us on an
+    extension bump.
+
+    Set here, before `_apply_sandbox` locks the configuration, and deliberately
+    NOT added to `_ALLOWED_CONFIGS`: a user statement must not be able to change
+    how its own writes retry.
+    """
+    for name, value in (
+        ("ducklake_max_retry_count", "10"),
+        ("ducklake_retry_backoff", "1.5"),
+        ("ducklake_retry_wait_ms", "100"),
+    ):
+        try:
+            conn.execute(f"SET {name} = {value}")
+        except Exception as exc:  # noqa: BLE001 - an older extension may not know it
+            logger.warning("Could not set %s: %s", name, exc)
+
+
+def _attach_ducklake(conn: duckdb.DuckDBPyConnection, cat: dict[str, Any]) -> None:
+    """ATTACH one DuckLake catalog, with the credentials the API vended for it.
+
+    Unlike the Iceberg path, nothing here is fetched by DuckDB: the control plane
+    minted both the Postgres credential for the catalog metadata and the
+    object-store credential for the data path, and they arrive in the dispatch
+    payload. Both become per-connection secrets and die with the connection.
+
+    The Postgres credential goes in a secret rather than inline in the ATTACH
+    string specifically so it cannot surface in a DuckDB error message or log
+    line — DuckLake reports a failed attach by echoing the connection string.
+    """
+    slug = cat["slug"]
+    alias = slug.replace('"', '""')
+    meta = cat.get("meta") or {}
+    store = cat.get("storage") or {}
+
+    conn.execute(
+        f"CREATE OR REPLACE SECRET {_meta_secret(slug)} "
+        "(TYPE POSTGRES, HOST ?, PORT ?, DATABASE ?, USER ?, PASSWORD ?)",
+        [meta["host"], int(meta["port"]), meta["database"], meta["user"], meta["password"]],
+    )
+    if store:
+        _create_storage_secret(conn, slug, store)
+
+    # ATTACH takes no bind parameters, so these are inlined as quoted literals.
+    # None are user-supplied: the slug is validated `^[a-z][a-z0-9_]*$` by the
+    # control plane, and data_path / metadata_schema are derived from it there.
+    data_path = str(cat["data_path"]).replace("'", "''")
+    metadata_schema = str(cat["metadata_schema"]).replace("'", "''")
+    database = str(meta["database"]).replace("'", "''")
+    host = str(meta["host"]).replace("'", "''")
+    port = int(meta["port"])
+    dsn = f"ducklake:postgres:dbname={database} host={host} port={port}"
+    conn.execute(
+        f"ATTACH '{dsn}' AS \"{alias}\" ("
+        f"DATA_PATH '{data_path}', METADATA_SCHEMA '{metadata_schema}', "
+        f"META_SECRET '{_meta_secret(slug)}', CREATE_IF_NOT_EXISTS true)"
+    )
+    # The catalog's default namespace, to match the Iceberg path's `analytics`.
+    # Created here rather than at provisioning because it needs the extension:
+    # the control plane makes the Postgres schema, the extension makes the
+    # DuckLake structure inside it. Idempotent, so this is the same self-heal
+    # `ensure_polaris_catalog` performs on browse.
+    schema = (cat.get("default_schema") or _DEFAULT_NAMESPACE).replace('"', '""')
+    conn.execute(f'CREATE SCHEMA IF NOT EXISTS "{alias}"."{schema}"')
+
+
+def _create_storage_secret(
+    conn: duckdb.DuckDBPyConnection, slug: str, store: dict[str, Any]
+) -> None:
+    """The object-store secret for a DuckLake catalog, scoped to its own prefix.
+
+    SCOPE is not decoration: a workspace attaches every catalog it has onto one
+    connection, so without it one catalog's credential would serve another's
+    data path.
+    """
+    name = _storage_secret(slug)
+    if store.get("type") == "azure":
+        conn.execute(
+            f"CREATE OR REPLACE SECRET {name} "
+            "(TYPE AZURE, PROVIDER config, CONNECTION_STRING ?, ACCOUNT_NAME ?)",
+            [store["connection_string"], store["account_name"]],
+        )
+        return
+    conn.execute(
+        f"CREATE OR REPLACE SECRET {name} (TYPE S3, PROVIDER config, KEY_ID ?, SECRET ?, "
+        "SESSION_TOKEN ?, REGION ?, ENDPOINT ?, URL_STYLE ?, USE_SSL ?, SCOPE ?)",
+        [
+            store.get("key_id", ""),
+            store.get("secret", ""),
+            store.get("session_token", ""),
+            store.get("region", ""),
+            store.get("endpoint", ""),
+            store.get("url_style", "path"),
+            bool(store.get("use_ssl", False)),
+            store.get("scope", ""),
+        ],
+    )
+
+
 def _attach_catalogs(
     conn: duckdb.DuckDBPyConnection,
     *,
@@ -470,16 +597,25 @@ def _attach_catalogs(
     polaris: dict[str, Any],
     trace_headers: dict[str, str] | None = None,
 ) -> None:
-    """Create the iceberg OAuth2 secret and ATTACH every catalog (multi-attach).
+    """ATTACH every catalog bound to the workspace (multi-attach), by kind.
 
     Each catalog is attached under its slug alias so the user's SQL can address
-    `catalog.schema.table` and join across catalogs; the active catalog is then
-    `USE`d so unqualified names resolve. DuckDB exchanges the client credentials
-    for a token itself; with `vended_credentials` Polaris also vends scoped
-    storage creds on access. Per-catalog ATTACH is best-effort: one bad catalog
-    is logged and skipped rather than failing the whole query.
+    `catalog.schema.table` and join across catalogs — including across *kinds*;
+    the active catalog is then `USE`d so unqualified names resolve. Per-catalog
+    ATTACH is best-effort: one bad catalog is logged and skipped rather than
+    failing the whole query.
+
+    Iceberg catalogs: DuckDB exchanges the client credentials for a token itself,
+    and with `vended_credentials` Polaris also vends scoped storage creds on
+    access. DuckLake catalogs: both credentials come from the payload — see
+    `_attach_ducklake`.
     """
-    endpoint = str(polaris["endpoint"]).rstrip("/")
+    # A DuckLake-only workspace gets no Polaris block at all, so nothing here may
+    # assume one exists — reading it unconditionally made a Polaris-free
+    # deployment attach nothing at all, silently, via the outer best-effort
+    # handler.
+    has_iceberg = any(c.get("kind", "iceberg_polaris") != KIND_DUCKLAKE for c in catalogs)
+    endpoint = str(polaris.get("endpoint", "")).rstrip("/")
     # `trace_headers` carries the caller's active span (handle_dispatch, or
     # duckdb.execute for static profiles) onto every DuckDB-issued request to
     # Polaris, so Polaris's spans join this query's trace instead of starting
@@ -489,21 +625,25 @@ def _attach_catalogs(
     # calling inject_trace_context() here would silently see no active span.
     # None when no SDK is configured or no span was active: DuckDB behaves
     # exactly as before.
-    if trace_headers:
+    if trace_headers and endpoint:
         conn.execute(
             f"CREATE OR REPLACE SECRET {_TRACE_HEADERS_SECRET} "
             "(TYPE HTTP, EXTRA_HTTP_HEADERS ?, SCOPE ?)",
             [trace_headers, endpoint],
         )
-    conn.execute(
-        f"CREATE SECRET {_ICEBERG_SECRET} "
-        "(TYPE ICEBERG, CLIENT_ID ?, CLIENT_SECRET ?, OAUTH2_SERVER_URI ?)",
-        [
-            polaris["client_id"],
-            polaris["client_secret"],
-            f"{endpoint}/api/catalog/v1/oauth/tokens",
-        ],
-    )
+    # Only when there is an Iceberg catalog to authenticate for. A DuckLake-only
+    # workspace must not need Polaris credentials to be configured at all — that
+    # is what makes a Polaris-free deployment possible.
+    if has_iceberg:
+        conn.execute(
+            f"CREATE SECRET {_ICEBERG_SECRET} "
+            "(TYPE ICEBERG, CLIENT_ID ?, CLIENT_SECRET ?, OAUTH2_SERVER_URI ?)",
+            [
+                polaris["client_id"],
+                polaris["client_secret"],
+                f"{endpoint}/api/catalog/v1/oauth/tokens",
+            ],
+        )
     # ATTACH does not accept bind parameters, so inline the warehouse name, alias
     # and endpoint as quoted literals (quotes escaped). None are user-supplied SQL
     # (slug/polaris_name come from the control plane; endpoint from agent config).
@@ -511,18 +651,21 @@ def _attach_catalogs(
     active = None
     for cat in catalogs:
         slug = cat["slug"]
-        kind = (cat.get("backend") or {}).get("kind")
-        delegation = "vended_credentials" if kind in _VENDED_BACKENDS else "none"
-        wh = str(cat["polaris_name"]).replace("'", "''")
-        alias = slug.replace('"', '""')
+        backend_kind = (cat.get("backend") or {}).get("kind")
         try:
-            conn.execute(
-                f"ATTACH '{wh}' AS \"{alias}\" "
-                f"(TYPE ICEBERG, SECRET {_ICEBERG_SECRET}, ENDPOINT '{cat_endpoint}', "
-                f"ACCESS_DELEGATION_MODE '{delegation}')"
-            )
+            if cat.get("kind") == KIND_DUCKLAKE:
+                _attach_ducklake(conn, cat)
+            else:
+                delegation = "vended_credentials" if backend_kind in _VENDED_BACKENDS else "none"
+                wh = str(cat["polaris_name"]).replace("'", "''")
+                alias = slug.replace('"', '""')
+                conn.execute(
+                    f"ATTACH '{wh}' AS \"{alias}\" "
+                    f"(TYPE ICEBERG, SECRET {_ICEBERG_SECRET}, ENDPOINT '{cat_endpoint}', "
+                    f"ACCESS_DELEGATION_MODE '{delegation}')"
+                )
         except Exception as exc:  # noqa: BLE001 - one bad catalog must not fail the query
-            logger.warning("Polaris ATTACH failed for catalog %s: %s", slug, exc)
+            logger.warning("ATTACH failed for catalog %s: %s", slug, exc)
             continue
         if slug == active_catalog:
             active = cat
@@ -679,17 +822,29 @@ def open_and_attach(
     # statically-linked extensions can't find on their own.
     if backend_kinds - {None, "object_store"}:
         _configure_external_tls(conn, azure="adls_gen2" in backend_kinds)
-    if catalogs and polaris and _safe_install_load(conn, "iceberg"):
+
+    # The union across catalog kinds, so a workspace mixing an Iceberg catalog
+    # and a DuckLake one loads both sets and can join across them.
+    catalog_kinds = {cat.get("kind", "iceberg_polaris") for cat in catalogs}
+    loaded: set[str] = set()
+    for catalog_kind in catalog_kinds:
+        for ext in _CATALOG_KIND_EXTENSIONS.get(catalog_kind, ()):
+            if ext not in loaded and _safe_install_load(conn, ext):
+                loaded.add(ext)
+    if KIND_DUCKLAKE in catalog_kinds:
+        _configure_ducklake(conn)
+
+    if catalogs and (polaris or KIND_DUCKLAKE in catalog_kinds):
         try:
             _attach_catalogs(
                 conn,
                 catalogs=catalogs,
                 active_catalog=active_catalog,
-                polaris=polaris,
+                polaris=polaris or {},
                 trace_headers=trace_headers,
             )
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Polaris ATTACH failed: %s", exc)
+            logger.warning("Catalog ATTACH failed: %s", exc)
     # Apply the sandbox last: the IO extensions are loaded and catalogs are
     # attached, so disabling a filesystem (and locking the configuration) here
     # only constrains subsequent user-statement access, not the trusted

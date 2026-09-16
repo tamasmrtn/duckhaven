@@ -28,13 +28,13 @@ from api.metrics import (
     record_sql_statement,
 )
 from api.models.agent import Agent
-from api.models.catalog import Catalog
+from api.models.catalog import KIND_DUCKLAKE, Catalog
 from api.models.query import Query
 from api.models.table_metadata import TableMetadata
 from api.models.user import Credential
 from api.models.workspace import Workspace
 from api.schemas.query import RowsPageOut
-from api.services import agent_access
+from api.services import agent_access, session_credentials
 from api.services import grants as grant_service
 from api.services.agent_capabilities import agent_supports_backend
 from api.services.agent_dispatch import (
@@ -98,6 +98,40 @@ class AgentUnavailable(ValueError):
     """
 
 
+def _catalog_attach(catalog: Catalog) -> dict[str, object]:
+    """One catalog's entry in the DISPATCH_QUERY payload.
+
+    Iceberg catalogs carry no credentials: DuckDB authenticates to Polaris from
+    the agent's own config and Polaris vends storage creds on attach. DuckLake
+    catalogs carry both, because nothing else will mint them — a Postgres block
+    for the catalog metadata and an object-store block for the data path, each
+    scoped to this catalog and living only for this query's connection.
+    """
+    entry: dict[str, object] = {
+        "slug": catalog.slug,
+        "kind": catalog.kind,
+        "polaris_name": catalog.polaris_name or "",
+        "backend": {
+            "kind": catalog.storage_backend.kind,
+            "root_uri": catalog.storage_backend.root_uri,
+        },
+        "default_schema": DEFAULT_SCHEMA,
+    }
+    if catalog.kind != KIND_DUCKLAKE:
+        return entry
+
+    data_path = session_credentials.ducklake_data_path(catalog)
+    entry.update(
+        {
+            "data_path": data_path,
+            "metadata_schema": catalog.metadata_schema,
+            "meta": session_credentials.build_ducklake_meta_block(),
+            "storage": session_credentials.build_storage_block(catalog.storage_backend, data_path),
+        }
+    )
+    return entry
+
+
 async def dispatch_query(
     db: AsyncSession,
     query: Query,
@@ -124,8 +158,10 @@ async def dispatch_query(
 
     # Eager multi-attach: the agent ATTACHes every catalog bound to the
     # workspace (each under its slug) and `USE`s the active one for unqualified
-    # names. The control plane vends nothing — the agent's own config supplies
-    # the Polaris endpoint + client creds.
+    # names. For Iceberg catalogs the control plane vends nothing — the agent's
+    # own config supplies the Polaris endpoint + client creds, and Polaris vends
+    # storage creds on attach. DuckLake has no such vendor, so its catalogs
+    # carry API-minted credentials in the payload (see `_catalog_attach`).
     if active_catalog is None:
         default = await get_default_catalog(db, workspace.id)
         active_catalog = default.slug if default is not None else catalogs[0].slug
@@ -145,18 +181,7 @@ async def dispatch_query(
         "sql": query.sql,
         "timeout_s": timeout_s,
         "active_catalog": active_catalog,
-        "catalogs": [
-            {
-                "slug": c.slug,
-                "polaris_name": c.polaris_name,
-                "backend": {
-                    "kind": c.storage_backend.kind,
-                    "root_uri": c.storage_backend.root_uri,
-                },
-                "default_schema": DEFAULT_SCHEMA,
-            }
-            for c in catalogs
-        ],
+        "catalogs": [_catalog_attach(c) for c in catalogs],
     }
     if stats_for is not None:
         # Ask the agent to also compute true table stats for this table.

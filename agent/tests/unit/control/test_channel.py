@@ -111,9 +111,13 @@ def test_get_capabilities_loads_and_advertises_query_extensions(monkeypatch):
 
     caps = ch_module._get_capabilities()
 
-    assert loaded == ["httpfs", "azure", "iceberg"]
+    # Both axes: storage backends need httpfs/azure, catalog kinds need iceberg
+    # (Polaris) and ducklake + postgres (DuckLake). Dispatch is gated on these
+    # being advertised, so a missing one makes those catalogs undispatchable.
+    assert loaded == ["httpfs", "azure", "iceberg", "ducklake", "postgres"]
     assert "httpfs" in caps.extensions
     assert "iceberg" in caps.extensions
+    assert "ducklake" in caps.extensions
 
 
 def test_get_capabilities_reports_detected_cpu(monkeypatch):

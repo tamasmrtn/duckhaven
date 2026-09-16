@@ -172,6 +172,7 @@ async def test_create_query_dispatches(
     assert frame["payload"]["catalogs"] == [
         {
             "slug": "test_ws",
+            "kind": "iceberg_polaris",
             "polaris_name": "test-ws",
             "backend": {"kind": "object_store", "root_uri": "/tmp/test"},
             "default_schema": "analytics",
@@ -183,9 +184,14 @@ async def test_create_query_dispatches(
 async def test_dispatch_payload_carries_backend_and_no_credentials(
     authed_client: AsyncClient, db_session, user: User, connected_agent
 ):
-    """The dispatch frame carries the catalog descriptors (each with its backend)
-    but no storage credentials or catalog endpoint — the agent attaches Polaris
-    from its own config and Polaris vends storage creds on attach."""
+    """The dispatch frame carries the catalog descriptors (each with its kind and
+    backend) but, for an Iceberg catalog, no storage credentials and no catalog
+    endpoint — the agent attaches Polaris from its own config and Polaris vends
+    storage creds on attach.
+
+    This stays true now that DuckLake catalogs *do* carry vended credentials:
+    the credential blocks are populated per kind, and an Iceberg catalog must
+    keep carrying none."""
     import json
 
     agent, mock_ws = connected_agent
@@ -212,12 +218,17 @@ async def test_dispatch_payload_carries_backend_and_no_credentials(
     assert payload["catalogs"] == [
         {
             "slug": "s3_cat",
+            "kind": "iceberg_polaris",
             "polaris_name": "s3-ws",
             "backend": {"kind": "s3", "root_uri": "/tmp/test"},
             "default_schema": "analytics",
         }
     ]
     assert "storage_credentials" not in payload
+    # The DuckLake credential blocks must stay absent for an Iceberg catalog:
+    # Polaris vends its storage creds, so the control plane mints nothing.
+    assert "meta" not in payload["catalogs"][0]
+    assert "storage" not in payload["catalogs"][0]
 
 
 async def test_dispatch_rejects_agent_missing_extension(

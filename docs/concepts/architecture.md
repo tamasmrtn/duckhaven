@@ -28,8 +28,8 @@ agent host when you need more compute).
 | Control plane | One `docker compose` stack: Postgres + Apache Polaris + the API |
 | Compute | 1..N DuckDB **agents** on separate hosts |
 | Engines | DuckDB only (heterogeneous versions allowed) |
-| Storage | Apache Iceberg on Object storage (bundled RustFS) / S3 / ADLS Gen 2 (one backend per catalog) |
-| Catalog & credentials | Apache Polaris — table governance + short-lived credential vending |
+| Storage | Object storage (bundled RustFS) / S3 / ADLS Gen 2 — one backend per catalog |
+| Catalog kinds | Apache Iceberg + Polaris (default), or [DuckLake](ducklake.md) on PostgreSQL (opt-in) |
 | Frontend | React SPA — SQL worksheets (no notebooks) |
 | Network | Private only (Tailscale recommended); no public ingress |
 
@@ -287,9 +287,12 @@ it explicitly rather than working around it.
   dependency (creating/terminating the *container* that runs an agent), which is
   not an I2 violation: the provisioned agent still dials home, and the control
   plane never opens the agent's control channel.
-- **I3 — Apache Polaris owns catalog metadata; Postgres owns DuckHaven
-  entities.** Never persist catalog *structure* (schemas, tables, columns) into
-  Postgres or treat DuckHaven's database as a catalog cache. Postgres may hold
+- **I3 — The catalog's metastore owns catalog metadata; DuckHaven's own schema
+  owns DuckHaven entities.** Never persist catalog *structure* (schemas, tables,
+  columns) into DuckHaven's schema or treat it as a catalog cache. The metastore
+  is Polaris for an `iceberg_polaris` catalog and the `ducklake` database for a
+  [`ducklake`](ducklake.md) one — still not a cache: those tables belong to the
+  DuckLake spec, in a database Alembic never touches. Postgres may hold
   a supplementary `table_metadata` sidecar — ownership, last-write provenance,
   and row/size stats that Polaris does not track — keyed by `catalog_id` + the
   Polaris schema/table name. The `catalog_grants` ACL is the same shape: rows
@@ -307,15 +310,20 @@ it explicitly rather than working around it.
 - **I6 — Dependency direction is one-way:** `api → shared` and
   `agent → shared`. `shared` depends on neither; `api` and `agent` never
   import each other.
-- **I7 — Storage credentials are short-lived and connection-scoped.** Creds
-  are vended per catalog on `ATTACH`, applied as a DuckDB `SECRET` on the
-  per-query connection, and never written to disk on the agent.
+- **I7 — Storage credentials are connection-scoped and never written to agent
+  disk.** Vended per catalog on `ATTACH` as a DuckDB `SECRET` — by Polaris for an
+  Iceberg catalog, by the control plane for a [DuckLake](ducklake.md) one, which
+  has no vendor. *Short-lived* is **deliberately relaxed** for DuckLake:
+  see [why](../deployment/ducklake.md#why-the-isolation-matters).
 - **I8 — Data + catalog DDL reach an agent; sandbox escapes do not.**
   `sql_guard` allows `SELECT`/`INSERT`/`UPDATE`/`DELETE`/`MERGE` and
-  `CREATE`/`ALTER`/`DROP`, executed on the agent against the attached Polaris
-  REST catalog, and rejects anything that could break out of the per-query
+  `CREATE`/`ALTER`/`DROP`, executed on the agent against the attached catalogs,
+  and rejects anything that could break out of the per-query
   sandbox (`ATTACH`/`DETACH`, `COPY`/`EXPORT`, `INSTALL`/`LOAD`, `SET`/`PRAGMA`,
-  `CALL`, `VACUUM`, transaction control). Only a single `SELECT` is materialized
+  `CALL`, `VACUUM`, transaction control). Type is not the only gate: both paths
+  also refuse statements opening a foreign database (`postgres_query`) or
+  touching DuckLake's `__ducklake_metadata_*` catalog. Only a single `SELECT` is
+  materialized
   to Parquet; other statements run directly and return no result grid. Structured
   catalog DDL (create/drop schema, create/drop table) is **also** exposed as REST
   endpoints driving the catalog UI; ALTER from the UI is generated as SQL and run
@@ -342,8 +350,9 @@ it explicitly rather than working around it.
 | **Control plane** | The `duckhaven-api` process (with Postgres + Polaris). Orchestrates; never runs DuckDB queries. |
 | **Agent** | A `duckhaven-agent` process embedding DuckDB, running on its own host, dialing home over WebSocket. The unit of compute. |
 | **Workspace** | A governance + collaboration boundary. Attaches one or more catalogs (M:N); one is the default. |
-| **Catalog** | A decoupled data domain: its own Apache Polaris catalog + storage backend, attachable to many workspaces. |
-| **Storage backend** | A physical location for Iceberg tables (Object storage, S3, ADLS Gen 2), registered once and referenced by catalogs. |
+| **Catalog** | A decoupled data domain: one catalog kind + one storage backend, attachable to many workspaces. |
+| **Catalog kind** | A catalog's metadata store and table format as one choice: `iceberg_polaris` or `ducklake`. Orthogonal to the storage backend. |
+| **Storage backend** | A physical location for table data (Object storage, S3, ADLS Gen 2), registered once and referenced by catalogs. |
 | **Catalog-managed table** | An Iceberg table whose commits are arbitrated by Apache Polaris (every Polaris REST table is catalog-managed). |
 | **Bootstrap token** | A single-use credential an operator generates so a new agent can register. Exchanged once for a long-lived agent session token. |
 | **Capabilities** | The document an agent advertises (DuckDB version, loaded extensions, memory ceiling) used to match agents to the backends a workspace's catalogs use. |

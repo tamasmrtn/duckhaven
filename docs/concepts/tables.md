@@ -1,11 +1,15 @@
 # Tables & Iceberg
 
-Every table DuckHaven creates is an [Apache Iceberg](https://iceberg.apache.org/) table, catalog-managed by
-[Polaris](catalogs.md). Iceberg gives DuckHaven snapshots, schema evolution, and time-travel queries out of the box.
+Every table in an Iceberg [catalog](catalogs.md) is an [Apache Iceberg](https://iceberg.apache.org/) table,
+catalog-managed by Polaris. Iceberg gives DuckHaven snapshots, schema evolution, and time-travel queries out of the
+box.
+
+This page describes the default catalog kind. A table in a [DuckLake](ducklake.md) catalog is a DuckLake table
+instead — same Parquet underneath, different metadata and a few different limits.
 
 ## Creating tables
 
-Tables can be created two ways, both backed by Polaris:
+Tables can be created two ways, whichever kind the catalog is:
 
 - **From the catalog UI** — a dialog where you specify columns and types.
 - **From SQL** — a `CREATE TABLE` statement run through a worksheet against the attached catalog.

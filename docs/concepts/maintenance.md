@@ -13,6 +13,20 @@ rewrites, and orphan cleanup. It runs as a background loop in the control plane 
     now and will add in-app apply once the extension supports these operations natively. Every recommendation includes
     the equivalent command to run in an external Iceberg engine.
 
+## What it can recommend, per catalog kind
+
+The findings are the same for both [catalog kinds](catalogs.md#catalog-kinds) — too many small files is too many small
+files — but the fix is not. DuckDB's `ducklake` extension can run compaction, snapshot expiry and orphan cleanup; its
+`iceberg` extension cannot run Iceberg's equivalents, which is why every recommendation for an Iceberg table names an
+external engine.
+
+A [DuckLake](ducklake.md) catalog's recommendations therefore name `ducklake_*` commands DuckDB can run, with two
+differences worth knowing: snapshot expiry is catalog-level only (DuckLake's `expire_older_than` has global scope), and
+manifest rewrites do not apply at all, because manifests are an Iceberg structure with no DuckLake counterpart.
+
+!!! note "Advisory either way, for now"
+    DuckHaven names the command and the tool; it does not run either. That is true for both kinds in this release.
+
 ## Health score
 
 Each scanned table gets a score from **0 to 100**, grouped into three bands:

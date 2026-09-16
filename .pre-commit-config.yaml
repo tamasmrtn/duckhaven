@@ -3,9 +3,14 @@ repos:
     rev: v5.0.0
     hooks:
       - id: check-yaml
-        # mkdocs.yml uses Python-object YAML tags (!!python/name:...) that the
-        # safe loader can't construct; mkdocs validates it on build instead.
-        exclude: ^mkdocs\.yml$
+        # Two files use YAML tags this generic safe loader can't construct, and
+        # each is validated by the tool that defines them instead:
+        #   mkdocs.yml                        !!python/name:...  -> mkdocs build
+        #   docker-compose.ducklake-only.yml  !override          -> compose config
+        # `!override` is how Compose replaces an inherited `depends_on` rather
+        # than merging into it; tests/deploy/test_compose_ducklake.py parses the
+        # file with a loader that understands it.
+        exclude: ^(mkdocs\.yml|deploy/docker-compose\.ducklake-only\.yml)$
       - id: check-toml
       - id: check-json
       - id: check-merge-conflict

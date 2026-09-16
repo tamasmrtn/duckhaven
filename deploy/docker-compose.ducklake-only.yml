@@ -1,0 +1,35 @@
+# DuckLake-only overlay: the same stack without Apache Polaris.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.ducklake-only.yml up -d
+#
+# A DuckLake catalog keeps its metadata in the `ducklake` database and needs no
+# catalog service, so a deployment that uses only DuckLake catalogs does not need
+# Polaris at all. That takes the stack from ten services to eight.
+#
+# Only use this where there are NO Iceberg catalogs. Removing Polaris makes any
+# existing Iceberg catalog unreadable until it is brought back — the data is
+# untouched, but nothing can resolve its metadata.
+#
+# Compose cannot delete a service an earlier file defined, so `polaris` and
+# `polaris-bootstrap` are neutralised by moving them into a profile that is never
+# activated — the same technique docker-compose.elastic.yml uses on the static
+# agent. `depends_on` entries naming them are dropped alongside, or compose would
+# still pull them in.
+services:
+  polaris:
+    profiles: [iceberg]
+
+  polaris-bootstrap:
+    profiles: [iceberg]
+
+  api:
+    environment:
+      DUCKLAKE_ENABLED: "true"
+    # `depends_on` is *merged* across compose files, not replaced, so the base
+    # file's dependency on Polaris survives an override that simply restates the
+    # list — and a dependency on a service held in an inactive profile is an
+    # error. `!reset` drops the inherited map first. Postgres is then the only
+    # remaining hard dependency.
+    depends_on: !override
+      postgres:
+        condition: service_healthy

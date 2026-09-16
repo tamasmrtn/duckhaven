@@ -124,3 +124,46 @@ def test_capability_matcher_expects_the_advertised_postgres_name():
 
     assert "postgres_scanner" in required_catalog_extensions("ducklake")
     assert "postgres" not in required_catalog_extensions("ducklake")
+
+
+# --- The DuckLake-only overlay ----------------------------------------------
+
+
+class _ComposeLoader(yaml.SafeLoader):
+    """SafeLoader that tolerates Compose's merge tags (`!override`, `!reset`).
+
+    They are directives to Compose about how to combine files, not data; for
+    asserting the resulting shape we only need the value they carry.
+    """
+
+
+_ComposeLoader.add_multi_constructor(
+    "!", lambda loader, suffix, node: loader.construct_mapping(node, deep=True)
+)
+
+with (DEPLOY / "docker-compose.ducklake-only.yml").open() as f:
+    DUCKLAKE_ONLY = yaml.load(f, Loader=_ComposeLoader)  # noqa: S506 - restricted loader
+
+
+def test_ducklake_only_overlay_neutralises_polaris():
+    """The operator payoff: a deployment using only DuckLake catalogs needs no
+    catalog service. Compose cannot delete a service an earlier file defined, so
+    both are moved into a profile that is never activated."""
+    for service in ("polaris", "polaris-bootstrap"):
+        assert DUCKLAKE_ONLY["services"][service]["profiles"] == ["iceberg"], service
+
+
+def test_ducklake_only_overlay_drops_the_polaris_dependency():
+    """`depends_on` is merged across compose files rather than replaced, so an
+    override that simply restates the list leaves the inherited Polaris entry —
+    and depending on a service in an inactive profile is a hard error. The
+    override tag is what actually removes it."""
+    api = DUCKLAKE_ONLY["services"]["api"]
+    assert "polaris" not in (api.get("depends_on") or {})
+    assert "postgres" in (api.get("depends_on") or {})
+
+
+def test_ducklake_only_overlay_turns_the_feature_on():
+    """Selecting the overlay without enabling the only kind it supports would
+    produce a stack that can create no catalogs at all."""
+    assert DUCKLAKE_ONLY["services"]["api"]["environment"]["DUCKLAKE_ENABLED"] == "true"

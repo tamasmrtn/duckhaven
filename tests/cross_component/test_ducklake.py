@@ -22,6 +22,7 @@ import os
 import uuid
 
 import pytest
+import pytest_asyncio
 
 pytestmark = pytest.mark.cross_component
 
@@ -45,9 +46,27 @@ async def _run(api_client, workspace: str, agent_id: str, sql: str) -> dict:
     raise AssertionError(f"query {query_id} did not finish in time")
 
 
-@pytest.fixture
-def slug() -> str:
-    return f"dl_{uuid.uuid4().hex[:8]}"
+@pytest_asyncio.fixture
+async def slug(api_client, workspace):
+    """A unique catalog name, whose catalog is dropped on teardown.
+
+    Unlike a Polaris catalog, a DuckLake catalog's metadata schema lives in the
+    catalog database and outlives the workspace — `delete_workspace` deliberately
+    never touches catalog rows. Without this, every run would leave another
+    `cat_*` schema behind, the same accumulation `workspace_factory` avoids for
+    Polaris. Dropping also purges the catalog's object-storage prefix.
+    """
+    name = f"dl_{uuid.uuid4().hex[:8]}"
+    yield name
+
+    listed = await api_client.get("/api/catalogs")
+    if listed.status_code != 200:
+        return
+    match = next((c for c in listed.json() if c["slug"] == name), None)
+    if match is None:
+        return
+    await api_client.delete(f"/api/workspaces/{workspace}/catalogs/{name}")
+    await api_client.delete(f"/api/catalogs/{match['id']}")
 
 
 async def _make_ducklake(api_client, workspace: str, slug: str) -> dict:

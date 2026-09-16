@@ -29,8 +29,11 @@ def test_cloud_backend_requires_extension():
 
 
 def test_catalog_kind_extension_mapping():
-    assert required_catalog_extensions("iceberg_polaris") == ("iceberg",)
     assert required_catalog_extensions("ducklake") == ("ducklake", "postgres_scanner")
+    # Iceberg is deliberately ungated: that requirement predates this axis and
+    # has never been enforced, so starting now would be a change about Iceberg,
+    # not about DuckLake. See the mapping's comment.
+    assert required_catalog_extensions("iceberg_polaris") == ()
     # An unknown kind requires nothing: the control plane decides what it can
     # provision, and a capability check is the wrong place to discover it
     # disagrees with the database.
@@ -54,7 +57,12 @@ def test_ducklake_needs_both_of_its_extensions():
 
 
 def test_an_iceberg_only_agent_still_serves_iceberg():
-    """The regression guard: adding the second axis must not narrow the first."""
+    """The regression guard: adding the second axis must not narrow the first.
+
+    Deliberately uses an agent advertising only `httpfs` for the object_store
+    case, because that is what a long-running deployment's agents actually
+    advertise and refusing them would be a regression, not a fix."""
+    assert agent_supports_catalog({"extensions": ["httpfs"]}, "iceberg_polaris", "object_store")
     legacy = {"extensions": ["httpfs", "azure", "iceberg"]}
     assert agent_supports_catalog(legacy, "iceberg_polaris", "object_store") is True
     assert agent_supports_catalog(legacy, "iceberg_polaris", "s3") is True

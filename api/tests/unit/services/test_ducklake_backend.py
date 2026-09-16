@@ -111,3 +111,128 @@ def test_unsupported_column_types_match_the_ducklake_specification():
 
     offered = set(AllowedColumnType.__args__)
     assert not (offered & DUCKLAKE_CAPABILITIES.unsupported_column_types)
+
+
+# --- DDL generation ---------------------------------------------------------
+# DuckLake DDL runs on an agent, so what is asserted here is the SQL the backend
+# emits and how it classifies the agent's answer. The statements are executed for
+# real against a live catalog in the integration suite.
+
+
+class _RecordingQueryService:
+    """Stands in for services.query, capturing the dispatched SQL."""
+
+    def __init__(self, status: str = "done", error: str | None = None, agent: object = True):
+        self.sql: list[str] = []
+        self.origin: list[str | None] = []
+        self._status, self._error, self._agent = status, error, agent
+
+    async def pick_agent_for(self, db, workspace, *, principal_id=None):  # noqa: ANN001
+        return self._agent
+
+    async def run_sync_query(self, db, **kwargs):  # noqa: ANN001
+        self.sql.append(kwargs["sql"])
+        self.origin.append(kwargs.get("origin"))
+        return type("Q", (), {"status": self._status, "error": self._error})()
+
+
+def _patch_query_service(monkeypatch, svc: _RecordingQueryService) -> _RecordingQueryService:
+    """`_run_ddl` does `from api.services import query`, which resolves the
+    attribute on the package — so that is what has to be replaced."""
+    import api.services
+
+    monkeypatch.setattr(api.services, "query", svc, raising=False)
+    return svc
+
+
+@pytest.fixture
+def recording(monkeypatch):
+    return _patch_query_service(monkeypatch, _RecordingQueryService())
+
+
+def _ctx():
+    from api.services.catalog_backends import WriteContext
+
+    return WriteContext(workspace=object(), user=type("U", (), {"id": "u1"})(), db=object())
+
+
+@pytest.mark.asyncio
+async def test_create_schema_sql(recording):
+    await DuckLakeCatalogBackend().create_schema(_catalog(), "staging", _ctx())
+    assert recording.sql == [
+        'CREATE SCHEMA "cat_raw_slug_placeholder"."staging"'.replace(
+            "cat_raw_slug_placeholder", "raw"
+        )
+    ]
+    # Metadata DDL is kept out of the user's query history.
+    assert recording.origin == ["metadata"]
+
+
+@pytest.mark.asyncio
+async def test_create_table_sql_carries_types_and_nullability(recording):
+    from api.schemas.catalog import ColumnSpec
+
+    backend = DuckLakeCatalogBackend()
+    columns = [
+        ColumnSpec(name="id", type="BIGINT", nullable=False),
+        ColumnSpec(name="label", type="VARCHAR", nullable=True),
+        ColumnSpec(name="amount", type="DECIMAL", nullable=True),
+    ]
+
+    # get_table is called afterwards to read the result back; short-circuit it.
+    async def _get_table(*a, **k):
+        return None
+
+    backend.get_table = _get_table  # type: ignore[method-assign]
+    await backend.create_table(_catalog(), "staging", "orders", columns, _ctx())
+    assert recording.sql == [
+        'CREATE TABLE "raw"."staging"."orders" '
+        '("id" BIGINT NOT NULL, "label" VARCHAR, "amount" DECIMAL(38,9))'
+    ]
+
+
+@pytest.mark.asyncio
+async def test_drop_statements(recording):
+    backend = DuckLakeCatalogBackend()
+    await backend.delete_table(_catalog(), "staging", "orders", _ctx())
+    await backend.delete_schema(_catalog(), "staging", _ctx())
+    assert recording.sql == [
+        'DROP TABLE "raw"."staging"."orders"',
+        'DROP SCHEMA "raw"."staging"',
+    ]
+
+
+@pytest.mark.asyncio
+async def test_unsupported_column_types_are_refused_before_dispatch(recording):
+    """Rejected at the API with a clear message rather than mid-DDL on an agent."""
+    from api.services.catalog_backends import CatalogBackendBadRequest
+
+    spec = type("Spec", (), {"name": "c", "type": "ARRAY", "nullable": True})()
+    with pytest.raises(CatalogBackendBadRequest, match="ARRAY"):
+        await DuckLakeCatalogBackend().create_table(_catalog(), "s", "t", [spec], _ctx())
+    assert recording.sql == []
+
+
+@pytest.mark.asyncio
+async def test_no_agent_explains_why_one_is_needed(monkeypatch):
+    _patch_query_service(monkeypatch, _RecordingQueryService(agent=None))
+    with pytest.raises(CatalogBackendUnavailable, match="runs on an agent"):
+        await DuckLakeCatalogBackend().create_schema(_catalog(), "staging", _ctx())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "expected_name"),
+    [
+        ("Schema with name staging already exists", "CatalogBackendConflict"),
+        ("Table with name orders does not exist", "CatalogBackendNotFound"),
+        ("connection reset by peer", "CatalogBackendUnavailable"),
+    ],
+)
+async def test_agent_failures_map_to_the_seam_vocabulary(monkeypatch, error, expected_name):
+    """So a DuckLake DDL failure produces the same HTTP status a Polaris one
+    would: 409 for a conflict, 404 for a missing object, 502 otherwise."""
+    _patch_query_service(monkeypatch, _RecordingQueryService(status="failed", error=error))
+    with pytest.raises(Exception) as excinfo:
+        await DuckLakeCatalogBackend().create_schema(_catalog(), "staging", _ctx())
+    assert type(excinfo.value).__name__ == expected_name

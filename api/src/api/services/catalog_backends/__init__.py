@@ -32,15 +32,17 @@ because this surface is nine methods rather than one function — the condition
 
 from __future__ import annotations
 
-import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from sqlalchemy.ext.asyncio import AsyncSession
+
     from api.models.catalog import Catalog
     from api.models.user import User
+    from api.models.workspace import Workspace
     from api.services.polaris import PolarisClient
 
 
@@ -166,9 +168,9 @@ class WriteContext:
     state.
     """
 
-    workspace_id: uuid.UUID
+    workspace: Workspace
     user: User
-    agent_id: uuid.UUID | None = None
+    db: AsyncSession
 
 
 @runtime_checkable

@@ -45,7 +45,7 @@ from api.services import query as query_service
 from api.services import session_credentials, staging_presign
 from api.services import statement_policy as policy
 from api.services.agent_access import assert_agent_tier
-from api.services.agent_capabilities import agent_supports_backend, required_extension
+from api.services.agent_capabilities import agent_supports_catalog, missing_extension
 from api.services.agent_dispatch import is_agent_connected
 from api.services.compute import service as compute_service
 from api.services.grants import GrantDenied, assert_query_access
@@ -196,13 +196,14 @@ async def open_session(
         await assert_agent_tier(db, user, agent, "use")
         if await is_agent_connected(db, agent.id):
             for catalog in catalogs:
-                if not agent_supports_backend(agent.capabilities, catalog.storage_backend.kind):
-                    ext = required_extension(catalog.storage_backend.kind)
+                backend_kind = catalog.storage_backend.kind
+                if not agent_supports_catalog(agent.capabilities, catalog.kind, backend_kind):
+                    missing = missing_extension(agent.capabilities, catalog.kind, backend_kind)
                     raise HTTPException(
                         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                         detail={
                             "error": "agent_incompatible",
-                            "detail": f"Agent '{agent.name}' is missing the '{ext}' extension.",
+                            "detail": f"Agent '{agent.name}' is missing the '{missing}' extension.",
                         },
                     )
         elif _is_restartable_elastic(agent):

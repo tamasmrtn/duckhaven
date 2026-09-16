@@ -29,12 +29,15 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from api.config import settings
 from api.services.catalog_backends import (
+    CatalogBackendBadRequest,
+    CatalogBackendConflict,
     CatalogBackendError,
     CatalogBackendNotFound,
     CatalogBackendUnavailable,
@@ -221,14 +224,24 @@ class DuckLakeCatalogBackend:
         await self.ensure(catalog)
 
     async def deprovision(self, catalog: Catalog) -> None:
-        """Drop the catalog's metadata schema.
+        """Drop the catalog: reclaim its data files, then its metadata schema.
 
-        Note what this does *not* do: reclaim the Parquet in object storage. That
-        needs `ducklake_expire_snapshots` + `ducklake_cleanup_old_files` on an
-        agent, which is the drop-with-purge equivalent and is wired in with the
-        rest of the agent-dispatched operations. Dropping the schema first would
-        destroy the file list those calls need, so the order matters.
+        This is the drop-with-purge the Polaris backend gets from Polaris. It is
+        done by deleting the catalog's object-storage prefix rather than by
+        running ``ducklake_expire_snapshots`` + ``ducklake_cleanup_old_files`` on
+        an agent, for a reason worth stating: ``drop_catalog`` refuses while the
+        catalog is attached to any workspace, so by the time this runs there is
+        no workspace to dispatch against and no way to ATTACH it. The prefix is
+        owned outright by this catalog (``ducklake_data_path`` scopes it per
+        slug), so deleting it is both safe and complete.
+
+        Data first, then metadata: the prefix is derived from the catalog row,
+        not from the metadata tables, but dropping the schema first would leave
+        nothing to retry against if the delete fails halfway.
         """
+        if catalog.storage_backend is not None:
+            await self._purge_data(catalog)
+
         schema = catalog.metadata_schema
         if not schema:
             return
@@ -239,6 +252,30 @@ class DuckLakeCatalogBackend:
             raise CatalogBackendUnavailable(
                 f"Could not drop the DuckLake metadata schema: {exc}"
             ) from exc
+
+    async def _purge_data(self, catalog: Catalog) -> None:
+        """Delete everything under the catalog's data path.
+
+        Best-effort: a storage failure must not leave the catalog half-dropped
+        and un-droppable. It is logged loudly instead, because the consequence is
+        orphaned objects an operator has to clean up, not lost data.
+        """
+        from api.services.session_credentials import build_storage_block, ducklake_data_path
+
+        try:
+            data_path = ducklake_data_path(catalog)
+            block = build_storage_block(catalog.storage_backend, data_path)
+            if block.get("type") == "azure":
+                _purge_azure_prefix(block, data_path)
+            else:
+                _purge_s3_prefix(block, data_path)
+        except Exception as exc:  # noqa: BLE001 - never block the drop
+            logger.warning(
+                "Could not purge data for DuckLake catalog %s; objects may be orphaned "
+                "under its prefix and need manual cleanup: %s",
+                catalog.slug,
+                exc,
+            )
 
     # --- Metadata reads -----------------------------------------------------
 
@@ -397,17 +434,57 @@ class DuckLakeCatalogBackend:
         ]
 
     # --- Metadata writes (dispatched to an agent) ---------------------------
+    #
+    # DuckLake commits through its DuckDB extension's transaction protocol.
+    # There is no REST endpoint to call and no safe way to write the catalog
+    # tables directly, so DDL is generated here and executed on an agent through
+    # the same fabric the maintenance scanner uses for health probes. Rows are
+    # tagged origin="metadata" so they stay out of the user's query history.
+
+    async def _run_ddl(self, catalog: Catalog, sql: str, ctx: WriteContext, *, what: str) -> None:
+        from api.services import query as query_service
+
+        agent = await query_service.pick_agent_for(ctx.db, ctx.workspace, principal_id=ctx.user.id)
+        if agent is None:
+            raise CatalogBackendUnavailable(
+                f"No compatible agent is connected to {what}. A DuckLake catalog's DDL "
+                "runs on an agent, because only the DuckLake extension can commit it."
+            )
+        query = await query_service.run_sync_query(
+            ctx.db,
+            workspace=ctx.workspace,
+            agent=agent,
+            user_id=ctx.user.id,
+            sql=sql,
+            origin="metadata",
+            active_catalog=catalog.slug,
+            timeout_s=60.0,
+        )
+        if query.status != "done":
+            detail = query.error or f"statement {query.status}"
+            if "already exists" in detail.lower():
+                raise CatalogBackendConflict(detail)
+            if "does not exist" in detail.lower() or "not found" in detail.lower():
+                raise CatalogBackendNotFound(detail)
+            raise CatalogBackendUnavailable(f"Could not {what}: {detail}")
 
     async def create_schema(
         self, catalog: Catalog, name: str, ctx: WriteContext
     ) -> CatalogSchemaInfo:
-        raise CatalogBackendUnavailable(
-            "Creating a DuckLake schema requires a connected agent; not yet wired."
+        await self._run_ddl(
+            catalog,
+            f"CREATE SCHEMA {_quote(catalog.slug)}.{_quote(name)}",
+            ctx,
+            what=f"create schema {name!r}",
         )
+        return CatalogSchemaInfo(name=name, catalog_name=catalog.slug)
 
     async def delete_schema(self, catalog: Catalog, name: str, ctx: WriteContext) -> None:
-        raise CatalogBackendUnavailable(
-            "Dropping a DuckLake schema requires a connected agent; not yet wired."
+        await self._run_ddl(
+            catalog,
+            f"DROP SCHEMA {_quote(catalog.slug)}.{_quote(name)}",
+            ctx,
+            what=f"drop schema {name!r}",
         )
 
     async def create_table(
@@ -418,15 +495,36 @@ class DuckLakeCatalogBackend:
         columns: list[ColumnSpec],
         ctx: WriteContext,
     ) -> CatalogTableInfo:
-        raise CatalogBackendUnavailable(
-            "Creating a DuckLake table requires a connected agent; not yet wired."
+        unsupported = [
+            c.type for c in columns if c.type in DUCKLAKE_CAPABILITIES.unsupported_column_types
+        ]
+        if unsupported:
+            raise CatalogBackendBadRequest(
+                f"DuckLake cannot represent column type(s): {', '.join(sorted(set(unsupported)))}."
+            )
+        defs = ", ".join(
+            f"{_quote(c.name)} {_TYPE_TO_DUCKDB[c.type]}" + ("" if c.nullable else " NOT NULL")
+            for c in columns
         )
+        await self._run_ddl(
+            catalog,
+            f"CREATE TABLE {_quote(catalog.slug)}.{_quote(schema)}.{_quote(name)} ({defs})",
+            ctx,
+            what=f"create table {schema}.{name}",
+        )
+        # Read the created table back rather than synthesising it, so the caller
+        # gets the catalog's own view (table_uuid especially, which the metadata
+        # sidecar records as this table's identity at birth).
+        return await self.get_table(catalog, schema, name)
 
     async def delete_table(
         self, catalog: Catalog, schema: str, name: str, ctx: WriteContext
     ) -> None:
-        raise CatalogBackendUnavailable(
-            "Dropping a DuckLake table requires a connected agent; not yet wired."
+        await self._run_ddl(
+            catalog,
+            f"DROP TABLE {_quote(catalog.slug)}.{_quote(schema)}.{_quote(name)}",
+            ctx,
+            what=f"drop table {schema}.{name}",
         )
 
 
@@ -473,3 +571,44 @@ def _is_missing_relation(exc: Exception) -> bool:
     """
     text_ = str(exc)
     return "UndefinedTableError" in text_ or "InvalidSchemaNameError" in text_
+
+
+def _purge_s3_prefix(block: dict[str, Any], data_path: str) -> None:
+    """Delete every object under an s3:// prefix, in batches of 1000."""
+    import boto3
+    from botocore.config import Config
+
+    parsed = urlparse(data_path)
+    bucket, prefix = parsed.netloc, parsed.path.lstrip("/")
+    endpoint = str(block.get("endpoint") or "")
+    if endpoint and "://" not in endpoint:
+        endpoint = f"{'https' if block.get('use_ssl') else 'http'}://{endpoint}"
+    client = boto3.client(
+        "s3",
+        endpoint_url=endpoint or None,
+        region_name=str(block.get("region") or "") or None,
+        aws_access_key_id=str(block.get("key_id") or "") or None,
+        aws_secret_access_key=str(block.get("secret") or "") or None,
+        aws_session_token=str(block.get("session_token") or "") or None,
+        config=Config(
+            s3={"addressing_style": "path" if block.get("url_style") == "path" else "auto"}
+        ),
+    )
+    paginator = client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        keys = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
+        if keys:
+            client.delete_objects(Bucket=bucket, Delete={"Objects": keys})
+
+
+def _purge_azure_prefix(block: dict[str, Any], data_path: str) -> None:
+    """Delete every blob under an abfss:// prefix."""
+    from azure.storage.blob import BlobServiceClient
+
+    parsed = urlparse(data_path)
+    container = parsed.username or parsed.netloc.split("@")[0]
+    prefix = parsed.path.lstrip("/")
+    service = BlobServiceClient.from_connection_string(str(block["connection_string"]))
+    client = service.get_container_client(container)
+    for blob in client.list_blobs(name_starts_with=prefix):
+        client.delete_blob(blob.name)

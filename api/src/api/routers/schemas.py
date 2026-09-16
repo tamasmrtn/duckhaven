@@ -237,14 +237,14 @@ class _Target:
     catalog: Catalog
 
 
-def _write_ctx(target: _Target, user: User) -> WriteContext:
+def _write_ctx(target: _Target, user: User, db: AsyncSession) -> WriteContext:
     """What a metadata write needs beyond its arguments.
 
     Polaris ignores all of it; a DuckLake write is SQL that has to run on an
     agent, under a user, in a workspace — so it is passed explicitly rather than
     a backend reaching into request state.
     """
-    return WriteContext(workspace_id=target.workspace.id, user=user)
+    return WriteContext(workspace=target.workspace, user=user, db=db)
 
 
 def target_catalog(
@@ -342,7 +342,8 @@ async def create_schema(
     )
     await _ensure_catalog(db, polaris, cat)
     try:
-        sc = await _backend(cat, polaris).create_schema(cat, body.name, _write_ctx(target, user))
+        ctx = _write_ctx(target, user, db)
+        sc = await _backend(cat, polaris).create_schema(cat, body.name, ctx)
     except CatalogBackendConflict as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return CatalogSchemaOut(
@@ -439,10 +440,10 @@ async def drop_schema(
             ),
         )
     for t in tables:
-        await backend.delete_table(cat, schema, t.name, _write_ctx(target, user))
+        await backend.delete_table(cat, schema, t.name, _write_ctx(target, user, db))
         await _delete_table_meta(db, cat.id, schema, t.name)
     try:
-        await backend.delete_schema(cat, schema, _write_ctx(target, user))
+        await backend.delete_schema(cat, schema, _write_ctx(target, user, db))
     except CatalogBackendNotFound as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
     # Drop dangling grants for the schema and every table that was under it.
@@ -645,7 +646,7 @@ async def create_table(
     await _ensure_catalog(db, polaris, cat)
     try:
         t = await _backend(cat, polaris).create_table(
-            cat, schema, body.name, body.columns, _write_ctx(target, user)
+            cat, schema, body.name, body.columns, _write_ctx(target, user, db)
         )
     except CatalogBackendConflict as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
@@ -688,7 +689,7 @@ async def drop_table(
         db, target.workspace.id, cat, user.id, schema=schema, table=table, need="writer"
     )
     try:
-        await _backend(cat, polaris).delete_table(cat, schema, table, _write_ctx(target, user))
+        await _backend(cat, polaris).delete_table(cat, schema, table, _write_ctx(target, user, db))
     except CatalogBackendNotFound as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
     await _delete_table_meta(db, cat.id, schema, table)

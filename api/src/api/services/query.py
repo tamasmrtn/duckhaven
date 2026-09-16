@@ -36,7 +36,7 @@ from api.models.workspace import Workspace
 from api.schemas.query import RowsPageOut
 from api.services import agent_access, session_credentials
 from api.services import grants as grant_service
-from api.services.agent_capabilities import agent_supports_backend
+from api.services.agent_capabilities import agent_supports_catalog
 from api.services.agent_dispatch import (
     connected_agent_ids,
     is_agent_connected,
@@ -568,7 +568,13 @@ async def pick_agent_for(
     if not connected:
         return None
     catalogs = await resolve_workspace_catalogs(db, workspace.id)
-    kinds = {c.storage_backend.kind for c in catalogs} or {"object_store"}
+    # Both axes: the agent must have the extension every catalog's *storage*
+    # backend needs and the ones every catalog's *kind* needs. Checking storage
+    # alone would route a DuckLake workspace to an Iceberg-only agent, whose
+    # attach then fails best-effort and reports "catalog does not exist".
+    pairs = {(c.kind, c.storage_backend.kind) for c in catalogs} or {
+        ("iceberg_polaris", "object_store")
+    }
     agents = list(
         (await db.execute(sa.select(Agent).where(Agent.id.in_([uuid.UUID(c) for c in connected]))))
         .scalars()
@@ -577,7 +583,10 @@ async def pick_agent_for(
     if principal_id is not None:
         agents = await agent_access.usable_agents(db, principal_id, agents)
     for agent in agents:
-        if all(agent_supports_backend(agent.capabilities, kind) for kind in kinds):
+        if all(
+            agent_supports_catalog(agent.capabilities, catalog_kind, backend_kind)
+            for catalog_kind, backend_kind in pairs
+        ):
             return agent
     return None
 

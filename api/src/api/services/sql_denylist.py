@@ -9,6 +9,9 @@ being harmless the moment it loads ``postgres`` for DuckLake:
 - ``SELECT * FROM postgres_query('__ducklake_metadata_raw', '<anything>')`` is a
   plain ``SELECT`` to both gates, and runs arbitrary SQL against the catalog
   database as the agent's Postgres role. Verified reachable on DuckDB 1.5.5.
+- ``SELECT * FROM ducklake_cleanup_old_files('raw', cleanup_all => true)`` deletes
+  data files. DuckDB dispatches table functions from ``FROM`` as well as ``CALL``,
+  so a maintenance verb reaches both gates as a plain ``SELECT``.
 - DuckLake exposes its own catalog tables as ``__ducklake_metadata_<alias>``.
   ``duckdb_databases()`` does not list it, but
   ``UPDATE __ducklake_metadata_raw.cat_raw.ducklake_data_file SET record_count = 0``
@@ -56,6 +59,24 @@ DENIED_FUNCTIONS = frozenset(
 # begin with an underscore and this prefix cannot collide with a real name.
 DUCKLAKE_METADATA_PREFIX = "__ducklake_metadata_"
 
+# DuckLake's maintenance verbs. `ducklake_cleanup_old_files(cat, cleanup_all =>
+# true)` deletes data files and `ducklake_expire_snapshots` destroys time
+# travel — and DuckDB dispatches table functions from `FROM`, not only `CALL`,
+# so both arrive at the gates as a plain `SELECT`. Verified executing that way
+# on DuckDB 1.5.5.
+#
+# That would let any workspace reader run the operations DuckHaven deliberately
+# does not run itself: the maintenance advisor recommends and never rewrites, and
+# `applicable_in_app` is False precisely because executing them needs an
+# authorization and audit design that does not exist yet.
+#
+# Denied by prefix rather than by name, so a verb added in a future extension
+# version is refused by default instead of silently becoming reachable. It costs
+# users nothing: the read-only surface is spelled as a method on the attached
+# catalog (`my_lake.snapshots()`, `my_lake.table_changes(...)`), which carries no
+# prefix, and time travel is `AT (VERSION => n)`, which is not a function at all.
+DUCKLAKE_FUNCTION_PREFIX = "ducklake_"
+
 
 class ForeignAccessDenied(Exception):
     """A statement reaches a foreign database or DuckLake's internal metadata.
@@ -77,6 +98,15 @@ def _deny_function(name: str) -> ForeignAccessDenied:
     )
 
 
+def _deny_maintenance(name: str) -> ForeignAccessDenied:
+    return ForeignAccessDenied(
+        f"{name}() is not permitted: DuckLake maintenance rewrites or deletes data, "
+        "and DuckHaven does not run it from user SQL. Use the Lakehouse health page "
+        "to see what a catalog needs.",
+        "ducklake_maintenance_function",
+    )
+
+
 def _deny_metadata(ref: str) -> ForeignAccessDenied:
     return ForeignAccessDenied(
         f"{ref!r} is DuckLake's internal catalog metadata and is not queryable. "
@@ -88,8 +118,13 @@ def _deny_metadata(ref: str) -> ForeignAccessDenied:
 def check_statement(stmt: exp.Expression) -> None:
     """Raise :class:`ForeignAccessDenied` if ``stmt`` touches a denied name."""
     for node in stmt.find_all(exp.Anonymous):
-        if isinstance(node.this, str) and node.this.lower() in DENIED_FUNCTIONS:
-            raise _deny_function(node.this.lower())
+        if not isinstance(node.this, str):
+            continue
+        name = node.this.lower()
+        if name in DENIED_FUNCTIONS:
+            raise _deny_function(name)
+        if name.startswith(DUCKLAKE_FUNCTION_PREFIX):
+            raise _deny_maintenance(name)
 
     # Check every part of every table reference, not just the catalog: a
     # three-part `cat.schema.table` puts the catalog in `.catalog`, but `USE cat`
@@ -128,5 +163,9 @@ def _check_lexically(sql: str) -> None:
     for name in DENIED_FUNCTIONS:
         if name in lowered:
             raise _deny_function(name)
+    # Checked before the metadata prefix, which also starts with "ducklake_"
+    # once its leading underscores are stripped — the more specific message wins.
     if DUCKLAKE_METADATA_PREFIX in lowered:
         raise _deny_metadata(DUCKLAKE_METADATA_PREFIX + "*")
+    if DUCKLAKE_FUNCTION_PREFIX in lowered:
+        raise _deny_maintenance(DUCKLAKE_FUNCTION_PREFIX + "*")

@@ -37,6 +37,16 @@ DENIED = [
     # Two-part (metadata catalog in the `db` slot) and bare (the `name` slot).
     "SELECT * FROM __ducklake_metadata_raw.ducklake_table",
     "SELECT * FROM __ducklake_metadata_raw",
+    # DuckLake maintenance verbs. Destructive, and reachable from `FROM` as a
+    # plain SELECT — verified executing that way on DuckDB 1.5.5.
+    "SELECT * FROM ducklake_cleanup_old_files('raw', cleanup_all => true)",
+    "SELECT * FROM ducklake_expire_snapshots('raw', versions => [2])",
+    "SELECT * FROM ducklake_merge_adjacent_files('raw')",
+    "SELECT * FROM ducklake_rewrite_data_files('raw', 't')",
+    "SELECT * FROM ducklake_add_data_files('raw', 't', 's3://attacker/x.parquet')",
+    # Denied by prefix, so a verb added in a future extension version is refused
+    # by default rather than silently becoming reachable.
+    "SELECT * FROM ducklake_some_future_verb('raw')",
     # Case must not be an escape.
     "SELECT * FROM POSTGRES_QUERY('m', 'SELECT 1')",
     "SELECT * FROM __DUCKLAKE_METADATA_RAW.cat_raw.ducklake_table",
@@ -51,6 +61,13 @@ ALLOWED = [
     "CREATE TABLE ducklake_table (x INT)",
     "SELECT * FROM raw.analytics.ducklake_data_file",
     "SELECT * FROM t AT (VERSION => 3)",
+    # The read-only DuckLake surface is spelled as a method on the attached
+    # catalog, which carries no `ducklake_` prefix. Denying the verbs must not
+    # cost users their history.
+    "SELECT * FROM dl.snapshots()",
+    "SELECT * FROM raw.table_changes('t', 1, 2)",
+    # A user table that merely starts with the prefix is not a function.
+    "SELECT * FROM analytics.ducklake_report",
 ]
 
 
@@ -77,7 +94,20 @@ def test_statement_policy_rejects(sql: str) -> None:
     """The SQL-session path rejects the same corpus, with a rule slug."""
     with pytest.raises(StatementNotAllowed) as excinfo:
         assert_statement_allowed(sql, staging_prefixes=_STAGING, managed_catalogs=_MANAGED)
-    assert excinfo.value.rule in {"foreign_database_function", "ducklake_metadata_access"}
+    assert excinfo.value.rule in {
+        "foreign_database_function",
+        "ducklake_metadata_access",
+        "ducklake_maintenance_function",
+    }
+
+
+def test_maintenance_denial_has_its_own_rule() -> None:
+    """Separate from the foreign-database rule so the rejection metric can tell
+    "tried to run maintenance" from "tried to reach another database"."""
+    with pytest.raises(ForeignAccessDenied) as exc:
+        check_sql("SELECT * FROM ducklake_cleanup_old_files('raw', cleanup_all => true)")
+    assert exc.value.rule == "ducklake_maintenance_function"
+    assert "does not run it from user SQL" in str(exc.value)
 
 
 def test_rules_are_distinct() -> None:

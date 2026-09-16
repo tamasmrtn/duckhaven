@@ -25,6 +25,9 @@ with (DEPLOY / "docker-compose.yml").open() as f:
 with (DEPLOY / "docker-compose.ha.yml").open() as f:
     HA = yaml.safe_load(f)
 
+AGENT_DOCKERFILE = (ROOT / "agent" / "Dockerfile").read_text()
+CHANNEL = (ROOT / "agent" / "src" / "agent" / "control" / "channel.py").read_text()
+
 INIT_SQL = (DEPLOY / "postgres-init" / "20-create-ducklake-db.sh").read_text()
 ENABLE_SQL = (ROOT / "scripts" / "enable-ducklake.sh").read_text()
 
@@ -97,3 +100,27 @@ def test_backups_cover_the_ducklake_catalog():
     backup = (ROOT / "scripts" / "pg-backup.sh").read_text()
     assert "ducklake" in backup
     assert "pg_database WHERE datname = 'ducklake'" in backup
+
+
+def test_agent_image_bakes_the_ducklake_extensions():
+    """Not an optimisation: the agent runs on an `internal: true` network and
+    cannot reach extensions.duckdb.org, so an extension that is not baked is an
+    extension it can never have."""
+    for ext in ("ducklake", "postgres"):
+        assert f"'{ext}'" in AGENT_DOCKERFILE, ext
+
+
+def test_agent_advertises_the_ducklake_extensions():
+    """Dispatch is gated on the advertised set, so baking without loading here
+    would make every DuckLake catalog undispatchable."""
+    for ext in ("ducklake", "postgres"):
+        assert f'"{ext}"' in CHANNEL, ext
+
+
+def test_capability_matcher_expects_the_advertised_postgres_name():
+    """DuckDB installs `postgres` and advertises `postgres_scanner`. The image
+    installs the first; the matcher must expect the second."""
+    from api.services.agent_capabilities import required_catalog_extensions
+
+    assert "postgres_scanner" in required_catalog_extensions("ducklake")
+    assert "postgres" not in required_catalog_extensions("ducklake")

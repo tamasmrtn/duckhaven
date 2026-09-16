@@ -61,6 +61,7 @@ from api.services.catalog_backends import (
     CatalogBackendError,
     CatalogBackendNotFound,
 )
+from api.services.catalog_backends.ducklake import dispose_engine as dispose_ducklake_engine
 from api.services.mcp.server import MCP_PATH, mcp_asgi_app, mcp_session_manager
 from api.services.oidc import register_oidc
 from api.services.polaris import (
@@ -195,6 +196,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
         await app.state.polaris_client.aclose()
+        # The DuckLake catalog engine is a module-level singleton (see
+        # catalog_backends.ducklake.get_engine); drain its pool here too.
+        await dispose_ducklake_engine()
 
 
 logger = logging.getLogger(__name__)

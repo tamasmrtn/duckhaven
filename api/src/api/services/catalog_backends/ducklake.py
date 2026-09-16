@@ -27,7 +27,9 @@ Versioning note: every metadata table is versioned by a half-open
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -36,7 +38,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from api.config import settings
 from api.services.catalog_backends import (
-    CatalogBackendBadRequest,
     CatalogBackendConflict,
     CatalogBackendError,
     CatalogBackendNotFound,
@@ -71,10 +72,6 @@ DUCKLAKE_CAPABILITIES = CatalogCapabilities(
     # other engine can open a DuckLake table today.
     external_engine_readable=False,
     supported_storage_kinds=("object_store", "s3", "adls_gen2"),
-    # DuckLake cannot represent these. Rejected at the API so a create fails with
-    # a clear message rather than mid-DDL on an agent.
-    # https://ducklake.select/docs/stable/duckdb/unsupported_features
-    unsupported_column_types=frozenset({"ARRAY", "ENUM", "UNION", "VARINT", "BITSTRING"}),
 )
 
 # DuckLake's own type spelling, which is what ducklake_column stores. Mapped to
@@ -118,7 +115,8 @@ def get_engine() -> AsyncEngine:
 
     Module-level and lazily built, rather than created in the app lifespan and
     threaded through every call site, because `backend_for` is reached from
-    routers that have no handle on app state. `dispose_engine` closes it.
+    routers that have no handle on app state. The lifespan calls
+    `dispose_engine` on shutdown.
     """
     global _engine
     if _engine is None:
@@ -264,11 +262,11 @@ class DuckLakeCatalogBackend:
 
         try:
             data_path = ducklake_data_path(catalog)
-            block = build_storage_block(catalog.storage_backend, data_path)
-            if block.get("type") == "azure":
-                _purge_azure_prefix(block, data_path)
-            else:
-                _purge_s3_prefix(block, data_path)
+            block = await asyncio.to_thread(build_storage_block, catalog.storage_backend, data_path)
+            purge = _purge_azure_prefix if block.get("type") == "azure" else _purge_s3_prefix
+            # Paginated deletes over a large prefix, on a thread: inline they
+            # would stall the whole API process for the length of the drop.
+            await asyncio.to_thread(purge, block, data_path)
         except Exception as exc:  # noqa: BLE001 - never block the drop
             logger.warning(
                 "Could not purge data for DuckLake catalog %s; objects may be orphaned "
@@ -425,7 +423,7 @@ class DuckLakeCatalogBackend:
         return [
             SnapshotInfo(
                 snapshot_id=int(r[0]),
-                timestamp_ms=int(r[1].timestamp() * 1000),
+                timestamp_ms=_epoch_ms(r[1]),
                 schema_id=int(r[2]) if r[2] is not None else None,
                 is_current=r[0] == newest,
                 granularity="catalog",
@@ -479,10 +477,20 @@ class DuckLakeCatalogBackend:
         )
         return CatalogSchemaInfo(name=name, catalog_name=catalog.slug)
 
-    async def delete_schema(self, catalog: Catalog, name: str, ctx: WriteContext) -> None:
+    async def delete_schema(
+        self, catalog: Catalog, name: str, ctx: WriteContext, *, cascade: bool = False
+    ) -> None:
+        """Drop the schema, optionally with its tables in the same statement.
+
+        ``cascade`` matters here in a way it does not for Polaris: each DuckLake
+        DDL is a round-trip to an agent, so dropping a 50-table schema table by
+        table is 50 sequential dispatches holding one HTTP request open. DuckDB
+        does it in one.
+        """
+        suffix = " CASCADE" if cascade else ""
         await self._run_ddl(
             catalog,
-            f"DROP SCHEMA {_quote(catalog.slug)}.{_quote(name)}",
+            f"DROP SCHEMA {_quote(catalog.slug)}.{_quote(name)}{suffix}",
             ctx,
             what=f"drop schema {name!r}",
         )
@@ -495,13 +503,9 @@ class DuckLakeCatalogBackend:
         columns: list[ColumnSpec],
         ctx: WriteContext,
     ) -> CatalogTableInfo:
-        unsupported = [
-            c.type for c in columns if c.type in DUCKLAKE_CAPABILITIES.unsupported_column_types
-        ]
-        if unsupported:
-            raise CatalogBackendBadRequest(
-                f"DuckLake cannot represent column type(s): {', '.join(sorted(set(unsupported)))}."
-            )
+        # No type check here: ColumnSpec.type is AllowedColumnType, a Literal of
+        # eight scalars, every one of which DuckLake can represent. The types it
+        # cannot (ARRAY, ENUM, UNION, …) are unreachable through this API.
         defs = ", ".join(
             f"{_quote(c.name)} {_TYPE_TO_DUCKDB[c.type]}" + ("" if c.nullable else " NOT NULL")
             for c in columns
@@ -520,6 +524,16 @@ class DuckLakeCatalogBackend:
     async def delete_table(
         self, catalog: Catalog, schema: str, name: str, ctx: WriteContext
     ) -> None:
+        """Drop the table. Its Parquet is NOT reclaimed here.
+
+        The Polaris sibling passes ``purge=True`` and gets its files back
+        immediately. DuckLake keeps the files so the table stays reachable
+        through time travel, and reclaims them only when the snapshots that
+        reference it are expired and `ducklake_cleanup_old_files` runs — which
+        the maintenance advisor recommends and DuckHaven does not yet execute.
+        Until then the objects remain under the catalog's prefix, and dropping
+        the whole catalog purges them.
+        """
         await self._run_ddl(
             catalog,
             f"DROP TABLE {_quote(catalog.slug)}.{_quote(schema)}.{_quote(name)}",
@@ -563,14 +577,35 @@ def _table_info(
     )
 
 
+# 42P01 undefined_table, 3F000 invalid_schema_name.
+_MISSING_RELATION_SQLSTATES = frozenset({"42P01", "3F000"})
+
+
+def _epoch_ms(value: datetime) -> int:
+    """Epoch milliseconds from a snapshot timestamp.
+
+    ``ducklake_snapshot.snapshot_time`` is TIMESTAMPTZ per the spec, but a
+    driver or a hand-made schema can still hand back a naive datetime, and
+    ``.timestamp()`` would then read it as *local* time and shift every snapshot
+    by the server's UTC offset. Assume UTC when the tzinfo is missing.
+    """
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return int(value.timestamp() * 1000)
+
+
 def _is_missing_relation(exc: Exception) -> bool:
     """True when the failure is "that table/schema does not exist".
 
-    Matched on the SQLSTATE that asyncpg surfaces in the message rather than by
-    importing asyncpg here: 42P01 undefined_table, 3F000 invalid_schema_name.
+    Reads the driver's SQLSTATE off the wrapped exception rather than matching
+    its ``repr``: the repr is not part of asyncpg's contract, and if it changed
+    this would silently turn into a 502 on every browse.
     """
-    text_ = str(exc)
-    return "UndefinedTableError" in text_ or "InvalidSchemaNameError" in text_
+    for candidate in (getattr(exc, "orig", None), exc):
+        sqlstate = getattr(candidate, "sqlstate", None)
+        if sqlstate in _MISSING_RELATION_SQLSTATES:
+            return True
+    return False
 
 
 def _purge_s3_prefix(block: dict[str, Any], data_path: str) -> None:

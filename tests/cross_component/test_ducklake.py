@@ -265,3 +265,55 @@ async def test_iceberg_and_ducklake_join_in_one_query(
     assert joined["status"] == "done", joined
     rows = (await api_client.get(f"/api/queries/{joined['id']}/rows")).json()
     assert rows["rows"] == [{"c": 50}]
+
+
+async def test_a_ducklake_catalog_works_in_a_held_sql_session(
+    api_client, workspace, healthy_agent, slug
+) -> None:
+    """The regression that survived sixteen commits.
+
+    The session path described a catalog with the four Iceberg-era fields, so a
+    DuckLake catalog was attached as Iceberg with a null warehouse name, failed,
+    and was swallowed by the agent's best-effort per-catalog handler. Nothing
+    reported it. Both paths now share one descriptor.
+    """
+    await _make_ducklake(api_client, workspace, slug)
+    await _run(
+        api_client,
+        workspace,
+        healthy_agent["id"],
+        f"CREATE TABLE {slug}.analytics.held AS SELECT i AS id FROM range(500) r(i)",
+    )
+
+    opened = await api_client.post(
+        f"/api/workspaces/{workspace}/sql/sessions", json={"agent_id": healthy_agent["id"]}
+    )
+    assert opened.status_code in (200, 201), opened.text
+    session_id = opened.json()["id"]
+
+    deadline = asyncio.get_event_loop().time() + 60.0
+    while asyncio.get_event_loop().time() < deadline:
+        state = (await api_client.get(f"/api/sql/sessions/{session_id}")).json()
+        if state["status"] not in ("pending", "opening"):
+            break
+        await asyncio.sleep(0.5)
+    assert state["status"] == "open", state
+
+    try:
+        stmt = await api_client.post(
+            f"/api/sql/sessions/{session_id}/statements",
+            json={"sql": f"SELECT count(*) AS c FROM {slug}.analytics.held"},
+        )
+        assert stmt.status_code in (200, 201, 202), stmt.text
+        query_id = stmt.json()["id"]
+        deadline = asyncio.get_event_loop().time() + 60.0
+        while asyncio.get_event_loop().time() < deadline:
+            body = (await api_client.get(f"/api/queries/{query_id}")).json()
+            if body["status"] in ("done", "failed", "cancelled"):
+                break
+            await asyncio.sleep(0.5)
+        assert body["status"] == "done", body
+        rows = (await api_client.get(f"/api/queries/{query_id}/rows")).json()
+        assert rows["rows"] == [{"c": 500}]
+    finally:
+        await api_client.delete(f"/api/sql/sessions/{session_id}")

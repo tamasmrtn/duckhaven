@@ -8,13 +8,10 @@ Polaris identity (and real STS-scoped staging credentials) plugs into. Governanc
 today rests on the API's per-statement authorization (``grants.assert_query_access``)
 plus the ``catalog_grants`` ACL, not on the Polaris token's identity.
 
-It is also where DuckLake's credentials come from, and there it is not just a
-hook but the whole mechanism. An Iceberg catalog gets its storage credentials
-from Polaris at ATTACH time, so the control plane vends nothing. DuckLake has no
-credential vendor: the agent connects to the catalog database and to object
-storage itself. Both credentials are therefore minted here and travel in the
-dispatch payload — never written to the agent's config or disk, which is the
-closest this design gets to preserving I7.
+DuckLake's credentials come from here too, and there it is the whole mechanism
+rather than a hook: DuckLake has no credential vendor, so both the catalog
+database login and the object-store credential are minted here and travel in the
+dispatch payload, never reaching the agent's config or disk.
 
 Deferred (env-gated integration tests): minting a distinct Polaris principal per
 DuckHaven principal, and true short-lived STS credentials for the staging prefix
@@ -24,14 +21,17 @@ plus the statement policy that a ``COPY`` may only touch it).
 
 from __future__ import annotations
 
+import asyncio
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse
 
 from api.config import settings
 from api.models import Catalog
+from api.models.catalog import KIND_DUCKLAKE
 from api.models.storage_backend import StorageBackend
-from api.services.workspace import polaris_storage
+from api.services.workspace import DEFAULT_SCHEMA, polaris_storage
 
 # How long a vended DuckLake storage credential is good for. Long enough that a
 # slow query does not lose its credential mid-scan, short enough that a leaked
@@ -242,3 +242,79 @@ def _adls_storage_block(data_path: str) -> dict[str, object]:
         "account_name": account,
         "connection_string": f"BlobEndpoint={account_url};SharedAccessSignature={sas}",
     }
+
+
+# Minted storage blocks, keyed by catalog id, with the time they go stale.
+# Credentials live an hour (`DUCKLAKE_CREDENTIAL_TTL`); re-minting a little early
+# keeps a long query from losing its credential mid-scan.
+_storage_cache: dict[uuid.UUID, tuple[float, dict[str, object]]] = {}
+_STORAGE_CACHE_TTL_S = DUCKLAKE_CREDENTIAL_TTL.total_seconds() - 600
+
+
+def reset_storage_cache() -> None:
+    """Drop every cached credential. For tests, and for a settings change."""
+    _storage_cache.clear()
+
+
+async def _storage_block(catalog: Catalog, data_path: str) -> dict[str, object]:
+    """The catalog's storage credential, minted at most once per TTL.
+
+    Minting is a network round-trip for the external backends — an STS
+    ``AssumeRole``, or an Entra user-delegation key — and this runs on the query
+    dispatch path, so doing it inline would block the event loop on every query
+    against a DuckLake catalog. It goes to a thread, and the result is cached so
+    a busy workspace is not re-minting per query.
+
+    The bundled store reads settings and touches no network, so it skips both.
+    """
+    backend = catalog.storage_backend
+    if backend.kind == "object_store":
+        return build_storage_block(backend, data_path)
+
+    now = time.monotonic()
+    cached = _storage_cache.get(catalog.id)
+    if cached is not None and now < cached[0]:
+        return cached[1]
+    block = await asyncio.to_thread(build_storage_block, backend, data_path)
+    _storage_cache[catalog.id] = (now + _STORAGE_CACHE_TTL_S, block)
+    return block
+
+
+async def build_catalog_attach(catalog: Catalog) -> dict[str, object]:
+    """Everything an agent needs to ATTACH one catalog.
+
+    The single description of a catalog on the wire, used by both dispatch paths
+    — one-shot queries and held SQL sessions. They drifted apart once already:
+    the session path kept emitting the four Iceberg-era fields, so a DuckLake
+    catalog was attached as Iceberg with a null warehouse name, failed, and was
+    swallowed by the agent's best-effort per-catalog handler. Silently.
+
+    Iceberg catalogs carry no credentials: DuckDB authenticates to Polaris from
+    the agent's own config and Polaris vends storage creds on attach. DuckLake
+    catalogs carry both, because nothing else will mint them — a Postgres block
+    for the catalog metadata and an object-store block for the data path, each
+    scoped to this catalog and living only for this connection.
+    """
+    entry: dict[str, object] = {
+        "slug": catalog.slug,
+        "kind": catalog.kind,
+        "polaris_name": catalog.polaris_name or "",
+        "backend": {
+            "kind": catalog.storage_backend.kind,
+            "root_uri": catalog.storage_backend.root_uri,
+        },
+        "default_schema": DEFAULT_SCHEMA,
+    }
+    if catalog.kind != KIND_DUCKLAKE:
+        return entry
+
+    data_path = ducklake_data_path(catalog)
+    entry.update(
+        {
+            "data_path": data_path,
+            "metadata_schema": catalog.metadata_schema,
+            "meta": build_ducklake_meta_block(),
+            "storage": await _storage_block(catalog, data_path),
+        }
+    )
+    return entry

@@ -332,18 +332,21 @@ async def _upsert_table_stats(db: AsyncSession, query_id: uuid.UUID, frame: Fram
     if size_bytes is not None:
         existing.size_bytes = size_bytes
 
-    # Iceberg-native metadata from the agent probe (each field best-effort).
-    iceberg = frame.payload.get("iceberg")
-    if iceberg:
-        if iceberg.get("snapshot_id") is not None:
-            existing.snapshot_id = iceberg["snapshot_id"]
-        snapshot_at = iceberg.get("snapshot_at")
+    # Format-native metadata from the agent probe (each field best-effort). The
+    # agent probes whichever format the target catalog actually is and names the
+    # block after it, so an agent that predates catalog kinds still sends
+    # "iceberg" and still means the same four fields.
+    native = frame.payload.get("iceberg") or frame.payload.get("ducklake")
+    if native:
+        if native.get("snapshot_id") is not None:
+            existing.snapshot_id = native["snapshot_id"]
+        snapshot_at = native.get("snapshot_at")
         if snapshot_at is not None:
             existing.snapshot_at = datetime.fromisoformat(snapshot_at)
-        if iceberg.get("data_file_count") is not None:
-            existing.data_file_count = iceberg["data_file_count"]
-        if iceberg.get("has_deletes") is not None:
-            existing.has_deletes = iceberg["has_deletes"]
+        if native.get("data_file_count") is not None:
+            existing.data_file_count = native["data_file_count"]
+        if native.get("has_deletes") is not None:
+            existing.has_deletes = native["has_deletes"]
     await db.commit()
 
 

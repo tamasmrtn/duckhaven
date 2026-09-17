@@ -42,7 +42,8 @@ you open a worksheet pinned to a past snapshot using DuckDB's time-travel syntax
 ## Sample rows and stats
 
 The catalog browser can preview sample rows (capped, run as an internal query excluded from history) and shows
-agent-computed row counts and size, plus Iceberg facts like the latest snapshot and whether delete files are present.
+agent-computed row counts and size, plus format-native facts: the data-file count and whether delete files
+are present for either kind, and the latest snapshot for Iceberg tables.
 See [Metadata](metadata.md).
 
 ## Related

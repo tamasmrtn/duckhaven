@@ -305,6 +305,108 @@ def test_iceberg_metadata_best_effort_on_failure():
     }
 
 
+def test_ducklake_metadata_counts_files_and_deletes():
+    """The DuckLake probe reads both counts out of one ducklake_list_files pass."""
+    from agent.executor.runner import _ducklake_metadata
+
+    class FakeConn:
+        def execute(self, sql, params=None):
+            assert "ducklake_list_files" in sql
+            assert params == ["cat", "events", "analytics"]
+            self._row = (5, True)
+            return self
+
+        def fetchone(self):
+            return self._row
+
+    meta = _ducklake_metadata(FakeConn(), "cat", "analytics", "events")
+    assert meta["data_file_count"] == 5
+    assert meta["has_deletes"] is True
+    # A DuckLake snapshot is a catalog commit, not a table one — never faked.
+    assert meta["snapshot_id"] is None
+    assert meta["snapshot_at"] is None
+
+
+def test_ducklake_metadata_best_effort_on_failure():
+    """A probe failure degrades to all-null rather than failing the query."""
+    from agent.executor.runner import _ducklake_metadata
+
+    class BoomConn:
+        def execute(self, sql, params=None):
+            raise RuntimeError("no such function: ducklake_list_files")
+
+    assert _ducklake_metadata(BoomConn(), "cat", "analytics", "events") == {
+        "snapshot_id": None,
+        "snapshot_at": None,
+        "data_file_count": None,
+        "has_deletes": None,
+    }
+
+
+def test_catalog_kind_resolves_by_slug():
+    """The probe picks its format from the target catalog, not the workspace."""
+    from agent.executor.runner import _catalog_kind
+
+    catalogs = [
+        {"slug": "berg", "kind": "iceberg_polaris"},
+        {"slug": "lake", "kind": "ducklake"},
+        {"slug": "legacy"},
+    ]
+    assert _catalog_kind(catalogs, "lake") == "ducklake"
+    assert _catalog_kind(catalogs, "berg") == "iceberg_polaris"
+    # An attach entry from an agent-era before catalog kinds, and a slug that
+    # is not attached at all, both mean Iceberg.
+    assert _catalog_kind(catalogs, "legacy") == "iceberg_polaris"
+    assert _catalog_kind(catalogs, "absent") == "iceberg_polaris"
+
+
+def test_stats_for_skips_the_iceberg_probe_on_a_ducklake_catalog(tmp_path):
+    """A DuckLake table must not be probed with iceberg_snapshots/iceberg_metadata.
+
+    It fails with "is not an Iceberg table" on every field, which left the
+    table-detail file counts empty and logged two warnings per probed table.
+    """
+    result_path = tmp_path / "out.parquet"
+
+    def seed(conn):
+        conn.execute("CREATE TABLE main.events AS SELECT * FROM range(3) t(id)")
+
+    stats = _run(
+        "SELECT * FROM main.events",
+        result_path,
+        catalogs=[{"slug": "memory", "kind": "ducklake"}],
+        polaris={"endpoint": "http://polaris:8181/api/catalog"},
+        stats_for={"catalog": "memory", "schema": "main", "table": "events"},
+        on_connect=seed,
+    )
+    # The row count is format-agnostic and still lands.
+    assert stats["table_row_count"] == 3
+    assert "iceberg" not in stats
+    # The DuckLake probe ran. There is no real DuckLake attached here, so it
+    # degrades to all-null — the point is which probe was chosen.
+    assert "ducklake" in stats
+
+
+def test_stats_for_uses_the_iceberg_probe_on_an_iceberg_catalog(tmp_path):
+    """The Iceberg path is unchanged: same probe, same payload key."""
+    result_path = tmp_path / "out.parquet"
+
+    def seed(conn):
+        conn.execute("CREATE TABLE main.events AS SELECT * FROM range(3) t(id)")
+
+    stats = _run(
+        "SELECT * FROM main.events",
+        result_path,
+        catalogs=[{"slug": "memory", "kind": "iceberg_polaris"}],
+        polaris={"endpoint": "http://polaris:8181/api/catalog"},
+        stats_for={"catalog": "memory", "schema": "main", "table": "events"},
+        on_connect=seed,
+    )
+    assert stats["table_row_count"] == 3
+    assert "iceberg" in stats
+    assert "ducklake" not in stats
+
+
 def test_select_captures_normalized_profile(tmp_path):
     """A materialized SELECT returns a normalized profile: query summary with
     latency + peak memory, and an operator tree with actual cardinalities."""

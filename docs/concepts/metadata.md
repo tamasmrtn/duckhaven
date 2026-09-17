@@ -17,7 +17,9 @@ schema/table name:
 
 - **Ownership** and **last-write provenance** (who wrote a table last, when, and from which agent).
 - **Agent-computed stats** — row count and size in bytes.
-- **Iceberg facts** mirrored for display — latest snapshot id and whether delete files are present.
+- **Table-format facts** mirrored for display — the data-file count and whether delete files are present, for
+  both Iceberg and [DuckLake](ducklake.md) tables, plus the latest snapshot id for Iceberg. A DuckLake snapshot
+  is a commit against the whole catalog rather than one table, so there is no per-table id to mirror.
 
 The sidecar is populated when a table is created and refreshed when sample/stats run. Polaris always remains the source
 of truth for catalog structure — the sidecar never becomes a catalog cache.

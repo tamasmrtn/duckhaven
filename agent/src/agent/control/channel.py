@@ -1101,7 +1101,11 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
             }
             done_payload["table_row_count"] = stats.get("table_row_count")
             done_payload["table_size_bytes"] = stats.get("table_size_bytes")
+            # Whichever table format the runner actually probed. Only one of
+            # these is ever set, named after the format so neither block can be
+            # mistaken for the other; the control plane reads either.
             done_payload["iceberg"] = stats.get("iceberg")
+            done_payload["ducklake"] = stats.get("ducklake")
         if health_for:
             done_payload["health"] = stats.get("health")
         done = Frame(type=FrameType.QUERY_DONE, payload=done_payload)

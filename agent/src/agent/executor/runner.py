@@ -294,6 +294,61 @@ def _iceberg_metadata(
     return meta
 
 
+def _ducklake_metadata(
+    conn: duckdb.DuckDBPyConnection,
+    catalog: str,
+    schema: str,
+    table: str,
+) -> dict[str, Any]:
+    """Best-effort DuckLake-native metadata for a table in the attached catalog.
+
+    The DuckLake counterpart of `_iceberg_metadata`. `ducklake_list_files`
+    returns one row per current data file with that file's delete file (if any)
+    alongside it, so one query answers both counts. The catalog must already be
+    ATTACHed (under its slug alias).
+
+    Two fields are deliberately left None rather than faked:
+
+    - `snapshot_id`/`snapshot_at`, because a DuckLake snapshot is a commit
+      against the whole *catalog*, not against one table. There is no per-table
+      snapshot to report. The control plane derives which catalog snapshots
+      touched a table from the `ducklake_*` tables directly.
+
+    `has_deletes` means what it means on the Iceberg path — the table carries
+    delete *files*, which is what a rewrite-delete-files recommendation acts on.
+    A small DELETE is inlined into the catalog database
+    (`ducklake_inlined_delete_<table_id>`) and writes no file, so it reads as
+    False here; verified on DuckLake 1.0, where a 3-row DELETE inlined and a
+    larger one produced a file.
+    """
+    meta: dict[str, Any] = {
+        "snapshot_id": None,
+        "snapshot_at": None,
+        "data_file_count": None,
+        "has_deletes": None,
+    }
+    try:
+        row = conn.execute(
+            "SELECT count(*), coalesce(bool_or(delete_file IS NOT NULL), false) "
+            "FROM ducklake_list_files(?, ?, schema => ?)",
+            [catalog, table, schema],
+        ).fetchone()
+        if row:
+            meta["data_file_count"] = row[0]
+            meta["has_deletes"] = bool(row[1])
+    except Exception as exc:  # noqa: BLE001 - metadata is best-effort
+        logger.warning("ducklake_list_files failed for %s.%s: %s", schema, table, exc)
+    return meta
+
+
+def _catalog_kind(catalogs: list[dict[str, Any]], slug: str | None) -> str:
+    """The catalog kind of an attached catalog, by its slug alias."""
+    for cat in catalogs:
+        if cat.get("slug") == slug:
+            return str(cat.get("kind") or "iceberg_polaris")
+    return "iceberg_polaris"
+
+
 def _iceberg_columns(conn: duckdb.DuckDBPyConnection, ident: str) -> list[str]:
     """Column names exposed by ``iceberg_metadata`` for this extension version."""
     return [
@@ -1146,10 +1201,18 @@ def run_query_sync(
                     )
                     result["table_row_count"] = None
                 result["table_size_bytes"] = None
-                # Iceberg-native metadata for the table-detail page. Only
+                # Table-format-native metadata for the table-detail page. Only
                 # meaningful when a catalog is attached; best-effort throughout.
-                if catalogs and polaris:
-                    result["iceberg"] = _iceberg_metadata(conn, catalog, schema, table)
+                #
+                # Dispatched on the *target* catalog's kind: running the iceberg
+                # probe against a DuckLake table fails with "is not an Iceberg
+                # table" for every field, which left the row/file counts empty
+                # and logged two warnings per probed table.
+                if catalogs:
+                    if _catalog_kind(catalogs, catalog) == KIND_DUCKLAKE:
+                        result["ducklake"] = _ducklake_metadata(conn, catalog, schema, table)
+                    elif polaris:
+                        result["iceberg"] = _iceberg_metadata(conn, catalog, schema, table)
 
         # Maintenance health probe: richer Iceberg metrics on the same attached
         # connection. Driven by the scanner; best-effort throughout.

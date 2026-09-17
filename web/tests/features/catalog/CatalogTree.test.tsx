@@ -404,4 +404,61 @@ describe("CatalogTree", () => {
 
     await waitFor(() => expect(probed).toBe(true));
   });
+
+  it("probes every attached catalog, not just the workspace default", async () => {
+    const probed: string[] = [];
+    server.use(
+      http.post(
+        "/api/workspaces/:ws/catalogs/:catalog/refresh-stats",
+        ({ params }) => {
+          probed.push(params.catalog as string);
+          return HttpResponse.json({ probed: 1 });
+        },
+      ),
+    );
+    renderTree(() => {});
+    await screen.findByRole("button", { name: /events/i });
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /refresh catalog/i }),
+    );
+
+    // `acme_analytics` is the workspace default and `curated` is attached but
+    // not default. The button used to resolve a single default catalog, so
+    // `curated`'s tables kept showing no row count however often it was
+    // pressed — the endpoint was never called for them.
+    await waitFor(() =>
+      expect([...probed].sort()).toEqual(["acme_analytics", "curated"]),
+    );
+  });
+
+  it("keeps probing the other catalogs when one of them fails", async () => {
+    const probed: string[] = [];
+    server.use(
+      http.post(
+        "/api/workspaces/:ws/catalogs/:catalog/refresh-stats",
+        ({ params }) => {
+          const catalog = params.catalog as string;
+          // A catalog can fail on its own — no agent that can serve its kind,
+          // say — and that must not abandon its siblings.
+          if (catalog === "acme_analytics") {
+            return HttpResponse.json(
+              { detail: "No compatible agent is connected." },
+              { status: 503 },
+            );
+          }
+          probed.push(catalog);
+          return HttpResponse.json({ probed: 1 });
+        },
+      ),
+    );
+    renderTree(() => {});
+    await screen.findByRole("button", { name: /events/i });
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /refresh catalog/i }),
+    );
+
+    await waitFor(() => expect(probed).toEqual(["curated"]));
+  });
 });

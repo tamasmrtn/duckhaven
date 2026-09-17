@@ -690,20 +690,20 @@ export function CatalogTree({
   const [createSchemaOpen, setCreateSchemaOpen] = useState(false);
   const [attachCatalogOpen, setAttachCatalogOpen] = useState(false);
   const { data: catalogs, isLoading } = useCatalogs(ws);
-  // Refreshing stats is catalog-scoped. It used to reach the workspace's
-  // default catalog implicitly through the default-catalog shim; with the shim
-  // gone the target is named, and it is the same catalog the shim resolved to.
-  const defaultCatalog = catalogs?.find((c) => c.is_default) ?? catalogs?.[0];
-  const refreshStats = useRefreshCatalogStats(ws, defaultCatalog?.slug ?? "");
+  const refreshStats = useRefreshCatalogStats(ws);
 
   // Probe row counts for any tables that lack one, then re-read the tree on
-  // settle.
+  // settle. This button is workspace-wide, so it probes every attached
+  // catalog: the endpoint is catalog-scoped, and a catalog it is not called
+  // for keeps showing no row counts at all.
   async function handleRefresh() {
-    if (!defaultCatalog) return;
-    try {
-      await refreshStats.mutateAsync();
-    } catch {
+    const slugs = catalogs?.map((c) => c.slug) ?? [];
+    if (slugs.length === 0) return;
+    const { failed } = await refreshStats.mutateAsync(slugs);
+    if (failed.length === slugs.length) {
       toast.error("Couldn't refresh row counts — no agent connected.");
+    } else if (failed.length > 0) {
+      toast.error(`Couldn't refresh row counts for ${failed.join(", ")}.`);
     }
   }
 

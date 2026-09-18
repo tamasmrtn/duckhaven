@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.models.catalog import Catalog, WorkspaceCatalog
 from api.models.catalog_migration import CatalogMigration, CatalogMigrationEvent
 from api.models.storage_backend import StorageBackend
+from api.services.catalog_backends import capabilities_for
 from api.services.migration import ACTIVE_STATUSES, STATUS_CUTOVER, TERMINAL_STATUSES
 from api.services.polaris import PolarisClient
 from api.services.storage_health import validate_backend
@@ -58,6 +59,21 @@ async def start_migration(
 ) -> CatalogMigration:
     """Validate and create a migration record (the runner picks it up). Refuses a
     no-op target, a second concurrent migration, or an unreachable target."""
+    # Migration is an Iceberg algorithm: it stands up a shadow Polaris catalog
+    # and rewrites the absolute URIs in each table's metadata tree. A DuckLake
+    # catalog has neither -- its paths are relative and its metadata is rows in
+    # Postgres -- so running this against one would build a shadow catalog for a
+    # NULL polaris_name and copy nothing. Refused here and not only in the
+    # migrations page's source picker, because the capability is the API's to
+    # enforce.
+    if not capabilities_for(catalog.kind).supports_storage_migration:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Storage migration is not supported for {catalog.kind} catalogs. "
+                "Copy the data into a new catalog on the target backend instead."
+            ),
+        )
     if target_backend.id == catalog.storage_backend_id:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

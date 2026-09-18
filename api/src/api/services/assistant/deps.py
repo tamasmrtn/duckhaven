@@ -50,6 +50,11 @@ class AssistantDeps:
     # ("object_store" | "s3" | "adls_gen2"). Drives the external-storage
     # paragraph; the bundled object store alone adds nothing.
     storage_kinds: tuple[str, ...] | None = None
+    # The distinct catalog kinds attached to this workspace ("iceberg_polaris" |
+    # "ducklake"). Drives the DuckLake paragraph; an Iceberg-only workspace adds
+    # nothing, which is what keeps the resident prompt the size it has always
+    # been for the deployments that have no DuckLake catalog.
+    catalog_kinds: tuple[str, ...] | None = None
     # Deployment-level toggles, carried here with the workspace's own state so
     # build_instructions stays a pure function of its RunContext rather than
     # reading module-level settings behind the caller's back.

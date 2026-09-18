@@ -170,6 +170,18 @@ class Gateway:
         kinds = {c.get("storage_backend_kind") for c in resp.json()}
         return tuple(sorted(k for k in kinds if k))
 
+    async def catalog_kinds(self) -> tuple[str, ...]:
+        """Distinct catalog kinds attached to this workspace.
+
+        Prompt context, for the same reason as `storage_kinds`: what the
+        assistant must know before it names a snapshot function or an
+        information_schema workaround, without paying for it in a tool result
+        on every browse.
+        """
+        resp = await self._get(f"/workspaces/{self._ws}/catalogs")
+        kinds = {c.get("kind") for c in resp.json()}
+        return tuple(sorted(k for k in kinds if k))
+
     async def count_agents(self) -> int:
         """How many compute agents are connected and dispatchable right now.
 

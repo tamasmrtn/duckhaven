@@ -461,4 +461,46 @@ describe("CatalogTree", () => {
 
     await waitFor(() => expect(probed).toEqual(["curated"]));
   });
+  it("badges a DuckLake catalog and leaves Iceberg unmarked", async () => {
+    // Without this the tree showed only a storage icon, so an operator could
+    // not tell which of their catalogs was DuckLake. Iceberg stays unbadged on
+    // purpose: it is the default kind, and badging it would mark every row of
+    // an Iceberg-only deployment to say nothing.
+    server.use(
+      http.get("/api/workspaces/:ws/catalogs", () =>
+        HttpResponse.json([
+          {
+            id: "cat-1",
+            slug: "acme_analytics",
+            name: "acme-analytics",
+            kind: "iceberg_polaris",
+            storage_backend_kind: "s3",
+            is_default: true,
+            access_mode: "open",
+          },
+          {
+            id: "cat-lake",
+            slug: "lake",
+            name: "Lake",
+            kind: "ducklake",
+            storage_backend_kind: "object_store",
+            is_default: false,
+            access_mode: "open",
+          },
+        ]),
+      ),
+    );
+    renderTree(() => {});
+
+    const lake = await screen.findByRole("button", { name: /^lake/i });
+    expect(lake).toHaveTextContent("DuckLake");
+
+    // The Iceberg row carries no kind badge at all. Asserting only the absence
+    // of "DuckLake" is not enough: a nullish-coalescing slip rendered the raw
+    // "iceberg_polaris" here and still passed that weaker check.
+    const iceberg = screen.getByRole("button", { name: /^acme_analytics/i });
+    expect(iceberg).not.toHaveTextContent("DuckLake");
+    expect(iceberg).not.toHaveTextContent("iceberg_polaris");
+    expect(iceberg).not.toHaveTextContent("Iceberg");
+  });
 });

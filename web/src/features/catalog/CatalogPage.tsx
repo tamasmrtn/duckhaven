@@ -28,6 +28,7 @@ import {
   selectTemplate,
   stashWorksheetSql,
 } from "@/features/catalog/worksheetSql";
+import { tableFormatDisplay } from "@/features/catalog/catalogKind";
 import { formatBytes } from "@/utils";
 import {
   recordRecentlyViewed,
@@ -66,10 +67,7 @@ function TableMetaLine({ table }: { table: CatalogTable }) {
   if (table.format_version != null) {
     parts.push(`Iceberg v${table.format_version}`);
   } else if (table.format) {
-    parts.push(
-      table.format.charAt(0).toUpperCase() +
-        table.format.slice(1).toLowerCase(),
-    );
+    parts.push(tableFormatDisplay(table.format));
   }
   if (table.snapshot_id) parts.push(`snapshot ${table.snapshot_id}`);
   if (table.data_file_count != null)
@@ -164,7 +162,7 @@ function TableDetail({
                 />
               )}
               <span className="text-xs text-text-secondary">
-                {tableData.format}
+                {tableFormatDisplay(tableData.format)}
                 {/* "Catalog Commits" is Iceberg vocabulary — a DuckLake table
                     has no equivalent, so the API sends no format_version for
                     one and the phrase is omitted rather than shown as OFF,

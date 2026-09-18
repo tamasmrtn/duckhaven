@@ -35,8 +35,10 @@ The create dialog says so at the moment you choose. It is repeated here because 
 - **Faster browsing.** Listing schemas, tables and columns is a SQL query against Postgres, with no REST round-trip
   and no agent involved. A DuckLake catalog can be browsed even when no [agent](agents.md) is connected.
 - **Maintenance that can actually run.** DuckDB's `ducklake` extension performs compaction, snapshot expiry and orphan
-  cleanup. Its `iceberg` extension cannot, which is why DuckHaven's
-  [maintenance advisor](maintenance.md) only ever recommends for Iceberg tables.
+  cleanup; its `iceberg` extension cannot. The [maintenance advisor](maintenance.md) scans both kinds, and a DuckLake
+  table's recommendations name a `ducklake_*` command DuckDB itself can run rather than an external engine. Its health
+  numbers are also cheaper and exact: file sizes are columns in the catalog database, so there are no Parquet footers
+  to read.
 
     !!! note "Still advisory in this release"
         DuckHaven names the command a DuckLake catalog needs and tells you DuckDB can run it, but does not run it for

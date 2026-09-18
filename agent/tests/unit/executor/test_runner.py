@@ -305,6 +305,133 @@ def test_iceberg_metadata_best_effort_on_failure():
     }
 
 
+def test_ducklake_health_reports_file_and_snapshot_metrics():
+    """The DuckLake health probe fills the same keys the Iceberg one does."""
+    from agent.executor.runner import collect_ducklake_table_health
+
+    class FakeConn:
+        def execute(self, sql, params=None):
+            if "ducklake_snapshots" in sql:
+                self._row = (19, 19, 0.4571759)
+            elif "ducklake_list_files" in sql:
+                # 5 files, 2.2 GB total, 444 MB average, 1 under target.
+                self._row = (5, 2223533507, 444706701, 1)
+            else:  # pragma: no cover - the probe issues only these two
+                raise AssertionError(sql)
+            return self
+
+        def fetchone(self):
+            return self._row
+
+    health = collect_ducklake_table_health(
+        FakeConn(), "lake", "sf10", "lineitem", target_file_bytes=128 * 1024**2
+    )
+    assert health["snapshot_count"] == 19
+    assert health["snapshot_id"] == 19
+    assert health["oldest_snapshot_age_days"] == 0.4572
+    assert health["data_file_count"] == 5
+    assert health["total_data_bytes"] == 2223533507
+    assert health["avg_file_bytes"] == 444706701
+    assert health["small_file_ratio"] == 0.2
+    # No DuckLake counterpart: metadata is Postgres rows, not objects. Left None
+    # so the manifest-rewrite recommendation drops out instead of prescribing a
+    # command that does not exist.
+    assert health["manifest_count"] is None
+    assert health["metadata_bytes"] is None
+    # Orphans are deep-tier only and need the metadata schema.
+    assert health["orphan_file_count"] is None
+
+
+def test_ducklake_health_is_best_effort_per_field():
+    """One failing probe costs its own fields, not the whole sample."""
+    from agent.executor.runner import collect_ducklake_table_health
+
+    class HalfBrokenConn:
+        def execute(self, sql, params=None):
+            if "ducklake_snapshots" in sql:
+                raise RuntimeError("no such function: ducklake_snapshots")
+            self._row = (3, 300, 100, 0)
+            return self
+
+        def fetchone(self):
+            return self._row
+
+    health = collect_ducklake_table_health(
+        HalfBrokenConn(), "lake", "analytics", "events", target_file_bytes=1024
+    )
+    assert health["snapshot_count"] is None
+    assert health["data_file_count"] == 3
+    assert health["small_file_ratio"] == 0.0
+
+
+def test_ducklake_health_counts_orphans_exactly_on_the_deep_tier():
+    """DuckLake schedules superseded files for deletion, so the count is exact."""
+    from agent.executor.runner import collect_ducklake_table_health
+
+    class FakeConn:
+        def execute(self, sql, params=None):
+            if "ducklake_snapshots" in sql:
+                self._row = (2, 2, 1.0)
+            elif "ducklake_list_files" in sql:
+                self._row = (4, 4000, 1000, 0)
+            elif "ducklake_files_scheduled_for_deletion" in sql:
+                assert "__ducklake_metadata_lake" in sql
+                assert params == ["analytics", "events"]
+                self._row = (3,)
+            else:  # pragma: no cover
+                raise AssertionError(sql)
+            return self
+
+        def fetchone(self):
+            return self._row
+
+    health = collect_ducklake_table_health(
+        FakeConn(),
+        "lake",
+        "analytics",
+        "events",
+        target_file_bytes=128 * 1024**2,
+        metadata_schema="cat_lake",
+        include_orphans=True,
+    )
+    assert health["orphan_file_count"] == 3
+    # The deletion table carries no size column, so bytes come from the live
+    # average; the count is the exact part.
+    assert health["orphan_bytes"] == 3000
+
+
+def test_health_probe_picks_the_probe_for_the_catalogs_kind(tmp_path, monkeypatch):
+    """A DuckLake table must not be health-probed with the Iceberg functions.
+
+    Doing so produced an all-null sample for every DuckLake table, and therefore
+    no maintenance recommendations at all. It must also not require a Polaris
+    block, which a DuckLake-only workspace has none of.
+    """
+    from agent.executor import runner as runner_module
+
+    calls: list[str] = []
+
+    def fake_ducklake(conn, catalog, schema, table, **kwargs):
+        calls.append("ducklake")
+        return {"catalog": catalog, "schema": schema, "table": table, "data_file_count": 5}
+
+    def fake_iceberg(conn, catalog, schema, table, **kwargs):
+        calls.append("iceberg")
+        return {"catalog": catalog, "schema": schema, "table": table}
+
+    monkeypatch.setattr(runner_module, "collect_ducklake_table_health", fake_ducklake)
+    monkeypatch.setattr(runner_module, "collect_table_health", fake_iceberg)
+    stats = _run(
+        "SELECT 1",
+        tmp_path / "out.parquet",
+        catalogs=[{"slug": "memory", "kind": "ducklake", "metadata_schema": "cat_memory"}],
+        health_for={"catalog": "memory", "schema": "main", "table": "events"},
+    )
+
+    assert calls == ["ducklake"]
+    assert stats["health"]["data_file_count"] == 5
+
+
 def test_ducklake_metadata_counts_files_and_deletes():
     """The DuckLake probe reads both counts out of one ducklake_list_files pass."""
     from agent.executor.runner import _ducklake_metadata

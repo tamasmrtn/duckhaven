@@ -349,6 +349,15 @@ def _catalog_kind(catalogs: list[dict[str, Any]], slug: str | None) -> str:
     return "iceberg_polaris"
 
 
+def _catalog_metadata_schema(catalogs: list[dict[str, Any]], slug: str | None) -> str | None:
+    """The Postgres schema holding a DuckLake catalog's own tables, by slug."""
+    for cat in catalogs:
+        if cat.get("slug") == slug:
+            value = cat.get("metadata_schema")
+            return str(value) if value else None
+    return None
+
+
 def _iceberg_columns(conn: duckdb.DuckDBPyConnection, ident: str) -> list[str]:
     """Column names exposed by ``iceberg_metadata`` for this extension version."""
     return [
@@ -467,6 +476,151 @@ def collect_table_health(
     if include_orphans and live_paths:
         health.update(_orphan_estimate(conn, live_paths, manifests, health.get("avg_file_bytes")))
     return health
+
+
+def collect_ducklake_table_health(
+    conn: duckdb.DuckDBPyConnection,
+    catalog: str,
+    schema: str,
+    table: str,
+    *,
+    target_file_bytes: int,
+    metadata_schema: str | None = None,
+    include_orphans: bool = False,
+) -> dict[str, Any]:
+    """Best-effort health metrics for one table in an attached DuckLake catalog.
+
+    The DuckLake counterpart of `collect_table_health`, returning the same keys
+    so scoring and the recommendation engine stay format-neutral. Three notes on
+    where it differs, all of them in DuckLake's favour or unavoidable:
+
+    - **File sizes are exact and free.** They are columns in the catalog, so
+      there is no Parquet-footer sampling and no `include_orphans` gate on the
+      size distribution -- the Iceberg path reads one footer per file on the deep
+      tier because its extension does not expose the size.
+    - **Snapshot metrics are catalog-scoped**, because a DuckLake snapshot is a
+      commit against the whole catalog. Every table in a catalog therefore
+      reports the same snapshot count and age. That is the honest number and the
+      right input here: the expiry rule scores on the *oldest snapshot's age*,
+      and `ducklake_expire_snapshots` is catalog-level only, so the metric and
+      the remediation are at the same grain.
+    - **Manifests and metadata bytes have no counterpart.** DuckLake keeps its
+      metadata as rows in Postgres, not as objects in the store, so both stay
+      None -- which is also what makes the manifest-rewrite recommendation drop
+      out for DuckLake rather than prescribe a command that does not exist.
+
+    Every timestamp is reduced to a number in SQL rather than fetched as a
+    Python datetime: `ducklake_snapshots.snapshot_time` is TIMESTAMPTZ, and
+    DuckDB's Python client needs `pytz` to convert one, which the agent image
+    does not carry.
+    """
+    health: dict[str, Any] = {
+        "catalog": catalog,
+        "schema": schema,
+        "table": table,
+        "snapshot_count": None,
+        "snapshot_id": None,
+        "oldest_snapshot_age_days": None,
+        "data_file_count": None,
+        "manifest_count": None,
+        "total_data_bytes": None,
+        "avg_file_bytes": None,
+        "small_file_ratio": None,
+        "metadata_bytes": None,
+        "orphan_file_count": None,
+        "orphan_bytes": None,
+    }
+
+    try:
+        row = conn.execute(
+            "SELECT count(*)::BIGINT, max(snapshot_id)::BIGINT, "
+            "max(date_diff('second', snapshot_time, now())) / 86400.0 "
+            "FROM ducklake_snapshots(?)",
+            [catalog],
+        ).fetchone()
+        if row and row[0]:
+            health["snapshot_count"] = int(row[0])
+            health["snapshot_id"] = int(row[1]) if row[1] is not None else None
+            if row[2] is not None:
+                health["oldest_snapshot_age_days"] = round(float(row[2]), 4)
+    except Exception as exc:  # noqa: BLE001 - metadata is best-effort
+        logger.warning("ducklake_snapshots failed for %s.%s: %s", schema, table, exc)
+
+    try:
+        row = conn.execute(
+            "SELECT count(*)::BIGINT, "
+            "sum(data_file_size_bytes)::BIGINT, "
+            "avg(data_file_size_bytes)::BIGINT, "
+            "count(*) FILTER (WHERE data_file_size_bytes < ?)::BIGINT "
+            "FROM ducklake_list_files(?, ?, schema => ?)",
+            [target_file_bytes, catalog, table, schema],
+        ).fetchone()
+        if row:
+            count = int(row[0])
+            health["data_file_count"] = count
+            if count:
+                health["total_data_bytes"] = int(row[1]) if row[1] is not None else None
+                health["avg_file_bytes"] = int(row[2]) if row[2] is not None else None
+                health["small_file_ratio"] = round(int(row[3]) / count, 4)
+    except Exception as exc:  # noqa: BLE001 - metadata is best-effort
+        logger.warning("ducklake_list_files failed for %s.%s: %s", schema, table, exc)
+
+    if include_orphans and metadata_schema:
+        health.update(
+            _ducklake_orphans(
+                conn,
+                catalog,
+                schema,
+                table,
+                metadata_schema=metadata_schema,
+                avg_file_bytes=health.get("avg_file_bytes"),
+            )
+        )
+    return health
+
+
+def _ducklake_orphans(
+    conn: duckdb.DuckDBPyConnection,
+    catalog: str,
+    schema: str,
+    table: str,
+    *,
+    metadata_schema: str,
+    avg_file_bytes: int | None,
+) -> dict[str, Any]:
+    """Files this table has superseded and DuckLake has scheduled for deletion.
+
+    Exact, unlike the Iceberg path's glob-diff estimate: DuckLake records every
+    superseded file in `ducklake_files_scheduled_for_deletion` when a snapshot
+    expires, so there is a list to count rather than a directory to compare
+    against. It therefore has no false positives from in-flight writes.
+
+    The table carries no size column, so bytes are still approximated from the
+    live average -- the count is the exact part.
+
+    Reached through `__ducklake_metadata_<alias>`, the catalog database as DuckDB
+    exposes it. That name is denied to *user* SQL (see api sql_denylist) because
+    it is writable; this is the agent's own read on the trusted path.
+    """
+    out: dict[str, Any] = {"orphan_file_count": None, "orphan_bytes": None}
+    meta = f'"__ducklake_metadata_{catalog}"."{metadata_schema}"'
+    try:
+        row = conn.execute(
+            f"SELECT count(*)::BIGINT FROM {meta}.ducklake_files_scheduled_for_deletion f "
+            f"JOIN {meta}.ducklake_data_file d ON d.data_file_id = f.data_file_id "
+            f"JOIN {meta}.ducklake_table t ON t.table_id = d.table_id "
+            f"JOIN {meta}.ducklake_schema s ON s.schema_id = t.schema_id "
+            "WHERE s.schema_name = ? AND t.table_name = ?",
+            [schema, table],
+        ).fetchone()
+        if row is not None:
+            count = int(row[0])
+            out["orphan_file_count"] = count
+            if avg_file_bytes is not None:
+                out["orphan_bytes"] = count * int(avg_file_bytes)
+    except Exception as exc:  # noqa: BLE001 - orphan detail is best-effort
+        logger.warning("ducklake orphan scan failed for %s.%s: %s", schema, table, exc)
+    return out
 
 
 # Bound the per-file footer reads on the deep tier: a very wide table (100k+
@@ -1214,22 +1368,43 @@ def run_query_sync(
                     elif polaris:
                         result["iceberg"] = _iceberg_metadata(conn, catalog, schema, table)
 
-        # Maintenance health probe: richer Iceberg metrics on the same attached
+        # Maintenance health probe: richer metrics on the same attached
         # connection. Driven by the scanner; best-effort throughout.
-        if health_for and catalogs and polaris:
+        #
+        # Dispatched on the target catalog's kind, and no longer gated on a
+        # Polaris block: a DuckLake catalog needs none, and requiring one left
+        # every DuckLake table with an all-null health sample and therefore no
+        # maintenance recommendations at all.
+        if health_for and catalogs:
             catalog = health_for.get("catalog")
             schema = health_for.get("schema")
             table = health_for.get("table")
             if catalog and schema and table:
+                is_ducklake = _catalog_kind(catalogs, catalog) == KIND_DUCKLAKE
                 try:
-                    result["health"] = collect_table_health(
-                        conn,
-                        catalog,
-                        schema,
-                        table,
-                        target_file_bytes=int(health_for.get("target_file_bytes", 128 * 1024**2)),
-                        include_orphans=bool(health_for.get("include_orphans", False)),
-                    )
+                    if is_ducklake:
+                        result["health"] = collect_ducklake_table_health(
+                            conn,
+                            catalog,
+                            schema,
+                            table,
+                            target_file_bytes=int(
+                                health_for.get("target_file_bytes", 128 * 1024**2)
+                            ),
+                            metadata_schema=_catalog_metadata_schema(catalogs, catalog),
+                            include_orphans=bool(health_for.get("include_orphans", False)),
+                        )
+                    elif polaris:
+                        result["health"] = collect_table_health(
+                            conn,
+                            catalog,
+                            schema,
+                            table,
+                            target_file_bytes=int(
+                                health_for.get("target_file_bytes", 128 * 1024**2)
+                            ),
+                            include_orphans=bool(health_for.get("include_orphans", False)),
+                        )
                 except Exception as exc:  # noqa: BLE001 - health probe is best-effort
                     logger.warning("Health probe failed for %s.%s: %s", schema, table, exc)
         return result

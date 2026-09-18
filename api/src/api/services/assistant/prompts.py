@@ -78,7 +78,7 @@ About DuckHaven, the product you run inside:
   The dialect is DuckDB's. Address tables as catalog.schema.table; an unqualified
   schema.table resolves against the worksheet's active catalog.
 - Get a table's columns and types with describe_table, or DESCRIBE in SQL. Do not
-  use information_schema.columns: for Iceberg tables it returns one placeholder
+  use information_schema.columns: in an attached catalog it returns one placeholder
   row (column "__", type UNKNOWN) instead of the real columns, and inside a SQL
   session it is worse than empty — correct for tables already touched in that
   session, placeholders for the rest. This is a known DuckDB limitation, not
@@ -203,6 +203,23 @@ _BUNDLED_STORAGE = frozenset({"object_store"})
 SYSTEM_PROMPT = BASE_PROMPT
 
 
+DUCKLAKE_PROMPT = """\
+
+This workspace has at least one DuckLake catalog, which differs from Iceberg:
+- Its tables are Parquet with the catalog in Postgres. list_catalogs reports each
+  catalog's kind, so check it before saying anything kind-specific. A workspace
+  can attach both kinds and join across them in one query.
+- Snapshot history is <catalog>.snapshots(), not iceberg_snapshots(...). A
+  DuckLake snapshot is a commit against the whole catalog rather than one table,
+  so call it a catalog snapshot and imply no per-table lineage. Time travel is
+  the same AT clause as Iceberg.
+- Every ducklake_*() function is rejected by the statement guard, maintenance
+  verbs included, as is any __ducklake_metadata_* reference. Do not propose one.
+- DuckLake is readable by DuckDB only. If asked about reading this data from
+  Spark, Trino or PyIceberg, say plainly that those cannot open a DuckLake
+  catalog."""
+
+
 def _semantic_block(deps: AssistantDeps) -> str | None:
     summary = getattr(deps, "semantic_summary", None)
     if not summary:
@@ -217,6 +234,14 @@ def _storage_block(deps: AssistantDeps) -> str | None:
     return STORAGE_PROMPT.format(kinds=", ".join(kinds))
 
 
+def _ducklake_block(deps: AssistantDeps) -> str | None:
+    # PRODUCT_PROMPT describes the default Iceberg shape; this adds where
+    # DuckLake differs. Iceberg-only deployments pay nothing.
+    if "ducklake" not in (deps.catalog_kinds or ()):
+        return None
+    return DUCKLAKE_PROMPT
+
+
 def _elastic_block(deps: AssistantDeps) -> str | None:
     return ELASTIC_PROMPT if deps.elastic_enabled else None
 
@@ -229,7 +254,13 @@ def _fleet_block(deps: AssistantDeps) -> str | None:
     return FLEET_PROMPT
 
 
-_INJECTORS = (_semantic_block, _storage_block, _elastic_block, _fleet_block)
+_INJECTORS = (
+    _semantic_block,
+    _storage_block,
+    _ducklake_block,
+    _elastic_block,
+    _fleet_block,
+)
 
 
 def _docs_index_block() -> str | None:

@@ -17,6 +17,7 @@ from api.services.assistant.knowledge.loader import load_index
 from api.services.assistant.prompts import (
     BASE_PROMPT,
     DOCS_INDEX_PROMPT,
+    DUCKLAKE_PROMPT,
     ELASTIC_PROMPT,
     FLEET_PROMPT,
     MAX_SUMMARY_LINE_CHARS,
@@ -244,9 +245,30 @@ def test_each_resident_block_is_within_budget():
     assert len(DOCS_INDEX_PROMPT.format(index=load_index().prompt_block)) <= 3_800
 
 
+def test_the_ducklake_block_is_injected_only_where_ducklake_exists():
+    """Injected only where DuckLake exists. The resident block describes the
+    Iceberg shape, so without this the assistant tells the user to call
+    iceberg_snapshots() on a table where that fails.
+    """
+    iceberg_only = build_instructions(ctx(catalog_kinds=("iceberg_polaris",)))
+    assert "<catalog>.snapshots()" not in iceberg_only
+
+    with_ducklake = build_instructions(ctx(catalog_kinds=("iceberg_polaris", "ducklake")))
+    assert "<catalog>.snapshots()" in with_ducklake
+    assert "ducklake_*() function is rejected" in with_ducklake
+    # The interoperability limit cannot be discovered by trying it.
+    assert "readable by DuckDB only" in with_ducklake
+
+    # Unknown or absent kinds add nothing rather than erroring.
+    assert build_instructions(ctx()) == iceberg_only
+
+
 def test_the_conditional_blocks_stay_small():
     assert len(SEMANTIC_PROMPT) <= 1_800
     assert len(STORAGE_PROMPT) + len(ELASTIC_PROMPT) + len(FLEET_PROMPT) <= 1_000
+    # DuckLake's differences from the Iceberg shape PRODUCT_PROMPT describes.
+    # Conditional, so an Iceberg-only deployment keeps its prompt size.
+    assert len(DUCKLAKE_PROMPT) <= 1_000
 
 
 def test_the_semantic_summary_is_bounded_however_the_workspace_is_named():
@@ -258,20 +280,26 @@ def test_the_semantic_summary_is_bounded_however_the_workspace_is_named():
 
 
 def test_the_assembled_instructions_are_within_budget():
-    """~2,400 tokens for a bare workspace; ~3,650 for the largest a workspace can
-    make its own, which is the number the input window has to hold."""
+    """~2,400 tokens for a bare workspace; ~3,900 for the largest a workspace can
+    make its own, which is the number the input window has to hold.
+
+    Raised from 14,800 by the DuckLake block (890 chars), which a workspace turns
+    on by attaching a DuckLake catalog. The ceiling has to be measured with every
+    conditional block on, or it describes a prompt the product does not produce.
+    """
     assert len(build_instructions(ctx())) <= 10_000
 
     everything = build_instructions(
         ctx(
             semantic_summary=WORST_CASE_SUMMARY,
             storage_kinds=("s3", "adls_gen2"),
+            catalog_kinds=("iceberg_polaris", "ducklake"),
             elastic_enabled=True,
             agent_count=3,
         )
     )
 
-    assert len(everything) <= 14_800
+    assert len(everything) <= 15_700
 
 
 def test_the_product_block_names_the_v1_scope_limits():

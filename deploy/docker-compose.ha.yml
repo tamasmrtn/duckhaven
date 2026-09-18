@@ -157,6 +157,12 @@ services:
         condition: service_started
     volumes:
       - ./ha/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    # Joins the agent network so DuckDB agents reach the DuckLake catalog
+    # through the same failover proxy the API uses. Role isolation as in
+    # postgres-init/20-create-ducklake-db.sh.
+    networks:
+      - default
+      - duckhaven_internal
 
   # ── Object store + Polaris (unchanged from the single-node stack) ────────────
   # Publishes no ports here: in the HA topology only caddy faces the host, and

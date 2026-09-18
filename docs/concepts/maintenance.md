@@ -1,7 +1,8 @@
 # Lakehouse maintenance
 
-The **maintenance advisor** is the DuckHaven service that periodically scans every Iceberg table, computes a health
-score, and raises recommendations for the maintenance each table needs — compaction, snapshot expiration, manifest
+The **maintenance advisor** is the DuckHaven service that periodically scans every table in every catalog — both
+[catalog kinds](catalogs.md#catalog-kinds) — computes a health score, and raises recommendations for the maintenance
+each table needs — compaction, snapshot expiration, manifest
 rewrites, and orphan cleanup. It runs as a background loop in the control plane and is configured in
 **Admin → Maintenance**; the loop itself is gated by an
 [environment flag](../reference/configuration.md#maintenance-advisor).
@@ -12,6 +13,25 @@ rewrites, and orphan cleanup. It runs as a background loop in the control plane 
     remove orphans. Rather than add a second write engine (Spark, PyIceberg) to the stack, DuckHaven ships the advisor
     now and will add in-app apply once the extension supports these operations natively. Every recommendation includes
     the equivalent command to run in an external Iceberg engine.
+
+## What it can recommend, per catalog kind
+
+The findings are the same for both [catalog kinds](catalogs.md#catalog-kinds) — too many small files is too many small
+files — but the fix is not. DuckDB's `ducklake` extension can run compaction, snapshot expiry and orphan cleanup; its
+`iceberg` extension cannot run Iceberg's equivalents, which is why every recommendation for an Iceberg table names an
+external engine.
+
+A [DuckLake](ducklake.md) catalog's recommendations therefore name `ducklake_*` commands DuckDB can run, with two
+differences worth knowing: snapshot expiry is catalog-level only (DuckLake's `expire_older_than` has global scope), and
+manifest rewrites do not apply at all, because manifests are an Iceberg structure with no DuckLake counterpart.
+
+Snapshot metrics for a DuckLake table are **catalog-scoped**, because a DuckLake snapshot is a commit against the
+whole catalog rather than one table. Every table in a DuckLake catalog therefore reports the same snapshot count and
+age. That is the honest number and the right one here: the expiry rule scores on the oldest snapshot's age, and
+`ducklake_expire_snapshots` is catalog-level anyway, so the metric and the fix are at the same grain.
+
+!!! note "Advisory either way, for now"
+    DuckHaven names the command and the tool; it does not run either. That is true for both kinds in this release.
 
 ## Health score
 
@@ -68,7 +88,8 @@ the DuckDB `iceberg` extension over the attached Polaris catalog. To bound cost 
 - **Cadence** — `off`, `hourly`, or `daily`, set by policy.
 - **Incremental** — tables whose current snapshot is unchanged since the last sample are skipped.
 - **Two-tier** — the cheap metadata probe runs every due cycle; the expensive orphan/`glob` scan runs on a slower
-  cadence (weekly by default).
+  cadence (weekly by default). For a DuckLake catalog the cheap tier already carries exact sizes, so only its orphan
+  count waits for the slow tier.
 - **Budget** — at most `max_tables_per_cycle` tables per cycle, covered round-robin so no single cycle scans everything.
 
 A cycle with no connected agent is skipped, not failed. Per-table probe failures degrade that table's affected metrics
@@ -98,9 +119,12 @@ variables.
   files referenced by the *current* snapshot's metadata. Files referenced only by older snapshots (still valid for
   time travel) can appear orphaned, and there is no age window — DuckDB exposes no file modification time — so these
   recommendations are flagged low confidence and are an estimate to investigate, never an instruction to delete.
-- **File sizes are estimated on the deep tier.** DuckDB's `iceberg` extension does not expose a data-file size column,
-  so the deep scan reads Parquet footers to size files; on very wide tables it samples a bounded subset and scales the
-  total, so the small-file ratio and average are estimates.
+- **File sizes are estimated on the deep tier, for Iceberg.** DuckDB's `iceberg` extension does not expose a data-file
+  size column, so the deep scan reads Parquet footers to size files; on very wide tables it samples a bounded subset and
+  scales the total, so the small-file ratio and average are estimates. A [DuckLake](ducklake.md) catalog has no such
+  limit — file sizes are columns in its catalog database, so its sizes and small-file ratio are exact and available on
+  the cheap tier, and its orphan count is the exact list of files DuckLake has scheduled for deletion rather than a
+  `glob` comparison.
 - **Single scanner per cluster.** Only one scan cycle runs at a time across the whole deployment. With multiple API
   replicas the loop coordinates through a Postgres advisory lock (leader election), so it is safe to leave
   `MAINTENANCE_SCANNER_ENABLED` on every replica — exactly one wins each tick. See

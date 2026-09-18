@@ -207,6 +207,80 @@ async def test_query_done_upserts_table_stats(db_session):
     assert meta.size_bytes is None
 
 
+async def test_query_done_upserts_stats_from_the_ducklake_probe(db_session):
+    """The agent names the probe block after the format, so a DuckLake table's
+    file count must not be dropped for arriving under a different key."""
+    ws, catalog = await _make_workspace(db_session)
+    query = Query(workspace_id=ws.id, sql="SELECT 1", status="running", origin="sample")
+    db_session.add(query)
+    await db_session.commit()
+    await db_session.refresh(query)
+
+    frame = Frame(
+        type=FrameType.QUERY_DONE,
+        payload={
+            "query_id": str(query.id),
+            "status": "done",
+            "stats_table": {"catalog": catalog.slug, "schema": "main", "table": "events"},
+            "table_row_count": 42,
+            "ducklake": {
+                "snapshot_id": None,
+                "snapshot_at": None,
+                "data_file_count": 5,
+                "has_deletes": True,
+            },
+        },
+    )
+    await query_service.handle_agent_frame(db_session, frame)
+
+    meta = (
+        await db_session.execute(
+            select(TableMetadata).where(
+                TableMetadata.catalog_id == catalog.id,
+                TableMetadata.schema_name == "main",
+                TableMetadata.table_name == "events",
+            )
+        )
+    ).scalar_one()
+    assert meta.row_count == 42
+    assert meta.data_file_count == 5
+    assert meta.has_deletes is True
+    # Left None, not faked: a DuckLake snapshot is catalog-wide.
+    assert meta.snapshot_id is None
+
+
+async def test_query_done_still_reads_the_iceberg_key(db_session):
+    """An agent that predates catalog kinds still sends "iceberg"."""
+    ws, catalog = await _make_workspace(db_session)
+    query = Query(workspace_id=ws.id, sql="SELECT 1", status="running", origin="sample")
+    db_session.add(query)
+    await db_session.commit()
+    await db_session.refresh(query)
+
+    frame = Frame(
+        type=FrameType.QUERY_DONE,
+        payload={
+            "query_id": str(query.id),
+            "status": "done",
+            "stats_table": {"catalog": catalog.slug, "schema": "main", "table": "events"},
+            "iceberg": {"data_file_count": 481, "has_deletes": False},
+        },
+    )
+    await query_service.handle_agent_frame(db_session, frame)
+
+    meta = (
+        await db_session.execute(
+            select(TableMetadata).where(
+                TableMetadata.catalog_id == catalog.id,
+                TableMetadata.schema_name == "main",
+                TableMetadata.table_name == "events",
+            )
+        )
+    ).scalar_one()
+    assert meta.data_file_count == 481
+    assert meta.has_deletes is False
+
+
 async def test_query_done_persists_profile(db_session):
     ws, _catalog = await _make_workspace(db_session)
     query = Query(workspace_id=ws.id, sql="SELECT 1", status="running")

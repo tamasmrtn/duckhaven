@@ -28,6 +28,7 @@ import {
   selectTemplate,
   stashWorksheetSql,
 } from "@/features/catalog/worksheetSql";
+import { tableFormatDisplay } from "@/features/catalog/catalogKind";
 import { formatBytes } from "@/utils";
 import {
   recordRecentlyViewed,
@@ -42,9 +43,8 @@ function formatNumber(n: number | null) {
   return n.toLocaleString();
 }
 
-// Table-detail tab ids, so an unrecognized ?tab= (a stale link, a hand-edited
-// URL) falls back to Sample instead of leaving Radix's controlled Tabs with no
-// matching trigger — which renders a blank content pane.
+// Table-detail tab ids, so an unrecognized ?tab= falls back to Sample instead
+// of leaving Radix's controlled Tabs with no matching trigger.
 const TABLE_DETAIL_TABS = [
   "sample",
   "history",
@@ -54,13 +54,16 @@ const TABLE_DETAIL_TABS = [
   "permissions",
 ] as const;
 
-/** Iceberg-native facts for the table-detail header: format version, current
- * snapshot, data-file count, and a has-deletes badge. Renders nothing when no
- * Iceberg metadata has been captured yet. */
-function IcebergMetaLine({ table }: { table: CatalogTable }) {
+/** Catalog-native facts for the table-detail header. Renders nothing when no
+ * metadata has been captured yet. `format_version` is Iceberg-only; the API
+ * sends null for DuckLake, so the format is named from `table.format`. */
+function TableMetaLine({ table }: { table: CatalogTable }) {
   const parts: string[] = [];
-  if (table.format_version != null)
+  if (table.format_version != null) {
     parts.push(`Iceberg v${table.format_version}`);
+  } else if (table.format) {
+    parts.push(tableFormatDisplay(table.format));
+  }
   if (table.snapshot_id) parts.push(`snapshot ${table.snapshot_id}`);
   if (table.data_file_count != null)
     parts.push(`${formatNumber(table.data_file_count)} files`);
@@ -154,9 +157,18 @@ function TableDetail({
                 />
               )}
               <span className="text-xs text-text-secondary">
-                {tableData.format} · Catalog Commits{" "}
-                {tableData.catalog_commits ? "ON" : "OFF"} ·{" "}
-                {formatNumber(tableData.row_count)} rows ·{" "}
+                {tableFormatDisplay(tableData.format)}
+                {/* "Catalog Commits" is Iceberg vocabulary — a DuckLake table
+                    has no equivalent, so the API sends no format_version for
+                    one and the phrase is omitted rather than shown as OFF,
+                    which would read as a missing feature. */}
+                {tableData.format_version != null && (
+                  <>
+                    {" · Catalog Commits "}
+                    {tableData.catalog_commits ? "ON" : "OFF"}
+                  </>
+                )}{" "}
+                · {formatNumber(tableData.row_count)} rows ·{" "}
                 {formatBytes(tableData.size_bytes)}
               </span>
             </div>
@@ -168,7 +180,7 @@ function TableDetail({
                 by {tableData.last_write_by} ({tableData.last_write_agent})
               </p>
             )}
-            <IcebergMetaLine table={tableData} />
+            <TableMetaLine table={tableData} />
           </div>
           <div className="flex gap-2">
             <Button

@@ -66,6 +66,25 @@ async def test_start_migration(auth_client, owner, db_session):
     assert body["target_storage_backend_id"] == str(target.id)
 
 
+async def test_start_migration_refuses_a_ducklake_catalog(auth_client, owner, db_session):
+    """Storage migration rewrites Iceberg metadata trees and would build a shadow
+    catalog for a NULL polaris_name. The page filters these out of its picker;
+    the API must refuse them too."""
+    _, catalog = await seed_workspace(db_session, user_id=owner.id, slug="dl", name="DL")
+    catalog.kind = "ducklake"
+    catalog.polaris_name = None
+    catalog.metadata_schema = "cat_dl"
+    await db_session.commit()
+    target = await _target_backend(db_session, owner)
+
+    resp = await auth_client.post(
+        f"/catalogs/{catalog.id}/migrations",
+        json={"target_storage_backend_id": str(target.id)},
+    )
+    assert resp.status_code == 422, resp.text
+    assert "not supported for ducklake" in resp.json()["message"].lower()
+
+
 async def test_start_migration_rejects_unreachable_target(
     auth_client, owner, db_session, monkeypatch
 ):

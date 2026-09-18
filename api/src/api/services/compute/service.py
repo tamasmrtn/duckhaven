@@ -542,7 +542,7 @@ async def bind_pending_sessions(db: AsyncSession, agent: Agent) -> int:
     failure isolation, as in ``bind_queued_work``.
     """
     # Lazy imports break the compute <-> sql_sessions import cycle at module load.
-    from api.services.agent_capabilities import agent_supports_backend
+    from api.services.agent_capabilities import agent_supports_catalog
     from api.services.sql_sessions.service import dispatch_open_session
 
     pending = (
@@ -578,7 +578,8 @@ async def bind_pending_sessions(db: AsyncSession, agent: Agent) -> int:
             if pool_keys[session.workspace_id] != agent.pool_key:
                 continue
         elif agent.capabilities is not None and not all(
-            agent_supports_backend(agent.capabilities, c.storage_backend.kind) for c in catalogs
+            agent_supports_catalog(agent.capabilities, c.kind, c.storage_backend.kind)
+            for c in catalogs
         ):
             # Only reject an agent we *know* cannot serve the workspace. The open call
             # could not check at all -- a row that failed while provisioning carries no

@@ -94,3 +94,53 @@ def test_rewrite_manifests_needs_data_files():
     assert recommend.generate({"manifest_count": 50}, T) == []
     recs = recommend.generate({"manifest_count": 50, "data_file_count": 100}, T)
     assert "rewrite_manifests" in _kinds(recs)
+
+
+# --- Per-kind remediation ---------------------------------------------------
+# The findings are format-neutral; the fix is not. DuckDB can run DuckLake's
+# maintenance and cannot run Iceberg's.
+
+
+def _small_files_metrics() -> dict:
+    return {"small_file_ratio": 0.9, "data_file_count": 400}
+
+
+def test_iceberg_remediation_is_unchanged():
+    recs = recommend.generate(_small_files_metrics(), T)
+    compact = next(r for r in recs if r["kind"] == "compact_small_files")
+    assert "rewrite_data_files" in compact["remediation"]["command"]
+    assert compact["remediation"]["tool"] == "Spark / external Iceberg engine"
+    assert compact["remediation"]["applicable_in_app"] is False
+
+
+def test_ducklake_remediation_names_commands_duckdb_can_run():
+    recs = recommend.generate(_small_files_metrics(), T, catalog_kind="ducklake")
+    compact = next(r for r in recs if r["kind"] == "compact_small_files")
+    assert "ducklake_merge_adjacent_files" in compact["remediation"]["command"]
+    assert compact["remediation"]["tool"] == "DuckDB (ducklake extension)"
+
+
+def test_ducklake_snapshot_expiry_is_catalog_level():
+    """`expire_older_than` has global scope, so the command cannot name a table."""
+    metrics = {"snapshot_count": 500, "oldest_snapshot_age_days": 400}
+    recs = recommend.generate(metrics, T, catalog_kind="ducklake")
+    expire = next((r for r in recs if r["kind"] == "expire_snapshots"), None)
+    assert expire is not None
+    command = expire["remediation"]["command"]
+    assert "ducklake_expire_snapshots" in command
+    assert "<schema>" not in command and "<table>" not in command
+
+
+def test_manifest_rewrites_are_dropped_for_ducklake():
+    """No DuckLake counterpart, so it is dropped rather than given a fake command."""
+    metrics = {"manifest_count": 5000, "data_file_count": 10}
+    iceberg = recommend.generate(metrics, T)
+    ducklake = recommend.generate(metrics, T, catalog_kind="ducklake")
+    assert any(r["kind"] == "rewrite_manifests" for r in iceberg)
+    assert not any(r["kind"] == "rewrite_manifests" for r in ducklake)
+
+
+def test_ducklake_still_advises_rather_than_applying():
+    """DuckDB can run these, but DuckHaven does not yet; this flag flips when it does."""
+    recs = recommend.generate(_small_files_metrics(), T, catalog_kind="ducklake")
+    assert all(r["remediation"]["applicable_in_app"] is False for r in recs)

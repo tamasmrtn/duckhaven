@@ -1,9 +1,10 @@
 """Catalog lifecycle: create, attach/detach, drop.
 
-A catalog is a decoupled, first-class entity (its own Polaris catalog + storage
+A catalog is a decoupled, first-class entity (one catalog kind + one storage
 backend) bound to workspaces M:N via ``WorkspaceCatalog``. Authorization is the
 caller's responsibility (routers gate on workspace role); this layer owns the
-Polaris provisioning + the single-default-per-workspace invariant.
+single-default-per-workspace invariant and defers provisioning to the catalog's
+own backend (``services/catalog_backends``).
 """
 
 from __future__ import annotations
@@ -16,17 +17,25 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from api.models.catalog import Catalog, WorkspaceCatalog
+from api.config import settings
+from api.models.catalog import (
+    KIND_DUCKLAKE,
+    KIND_ICEBERG_POLARIS,
+    Catalog,
+    WorkspaceCatalog,
+)
 from api.models.maintenance import MaintenanceRecommendation, TableHealthSample
 from api.models.storage_backend import StorageBackend
 from api.models.table_metadata import TableMetadata
 from api.models.workspace import Workspace
-from api.services.polaris import PolarisClient, PolarisError, PolarisNotFoundError
-from api.services.workspace import (
-    ensure_polaris_catalog,
-    polaris_storage,
-    validate_catalog_slug,
+from api.services.catalog_backends import (
+    CatalogBackendError,
+    backend_for,
+    capabilities_for,
 )
+from api.services.catalog_backends.ducklake import metadata_schema_for
+from api.services.polaris import PolarisClient
+from api.services.workspace import validate_catalog_slug
 
 logger = logging.getLogger(__name__)
 
@@ -38,43 +47,70 @@ async def create_catalog(
     name: str,
     backend: StorageBackend,
     created_by: uuid.UUID,
+    kind: str = KIND_ICEBERG_POLARIS,
 ) -> Catalog:
-    """Provision a new catalog's Polaris catalog + default namespace and persist
-    its record. A catalog has a single identifier-safe ``name`` that doubles as
-    its slug and Polaris name. Rolls back the pg row if Polaris provisioning
-    fails (D7)."""
+    """Provision a new catalog in its metastore and persist its record.
+
+    ``name`` doubles as the slug and, per kind, the Polaris name or metadata
+    schema. No row is written if provisioning fails (D7)."""
     validate_catalog_slug(name)
+    if kind == KIND_DUCKLAKE and not settings.ducklake_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "error": "ducklake_disabled",
+                "detail": (
+                    "DuckLake catalogs are not enabled on this deployment. "
+                    "Set DUCKLAKE_ENABLED=true (see docs/deployment/ducklake.md)."
+                ),
+            },
+        )
+    supported = capabilities_for(kind).supported_storage_kinds
+    if backend.kind not in supported:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"A {kind} catalog cannot use a {backend.kind} storage backend. "
+                f"Supported: {', '.join(supported)}."
+            ),
+        )
     existing = await db.execute(select(Catalog).where(Catalog.slug == name))
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=f"Catalog '{name}' already taken"
         )
 
-    storage_type, base_location, extra_storage = polaris_storage(
-        backend.kind, backend.root_uri, backend.config
-    )
     try:
-        await ensure_polaris_catalog(
-            polaris,
-            name,
-            storage_type=storage_type,
-            base_location=base_location,
-            extra_storage=extra_storage,
-        )
-    except PolarisError as exc:
-        logger.warning("Polaris provisioning failed for catalog=%s: %s", name, exc)
+        metadata_schema = metadata_schema_for(name) if kind == KIND_DUCKLAKE else None
+    except CatalogBackendError as exc:
+        # A name too long for a Postgres identifier is the caller's error, not
+        # an upstream failure; without this it would surface as a 502.
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Polaris provisioning failed: {exc}",
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
         ) from exc
 
     catalog = Catalog(
         slug=name,
         name=name,
-        polaris_name=name,
+        kind=kind,
+        # Exactly one identity per kind, per ck_catalogs_kind_identity.
+        polaris_name=name if kind == KIND_ICEBERG_POLARIS else None,
+        metadata_schema=metadata_schema,
         storage_backend_id=backend.id,
         created_by=created_by,
     )
+    # Provision before flush so a failure leaves no row behind (D7); the unsaved
+    # object carries everything the backend needs.
+    catalog.storage_backend = backend
+    try:
+        await backend_for(catalog, polaris=polaris).provision(catalog)
+    except CatalogBackendError as exc:
+        logger.warning("Catalog provisioning failed for catalog=%s: %s", name, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Catalog provisioning failed: {exc}",
+        ) from exc
+
     db.add(catalog)
     await db.flush()
     return catalog
@@ -175,27 +211,15 @@ async def drop_catalog(db: AsyncSession, polaris: PolarisClient, *, catalog: Cat
                 "Detach it everywhere before dropping."
             ),
         )
-    # Polaris refuses to delete a catalog that still holds namespaces, so purge
-    # its tables + schemas first (drop-with-purge reclaims data files), then the
-    # catalog. Best-effort on NotFound so a partially-provisioned catalog still
-    # drops cleanly.
+    # Kind-specific teardown lives behind the backend. Load the storage backend
+    # first: touching a lazy relationship in async code raises MissingGreenlet.
+    await db.refresh(catalog, attribute_names=["storage_backend"])
     try:
-        for schema in await polaris.list_schemas(catalog.polaris_name):
-            for table in await polaris.list_tables(catalog.polaris_name, schema.name):
-                await polaris.delete_table(
-                    catalog.polaris_name, schema.name, table.name, purge=True
-                )
-            await polaris.delete_schema(catalog.polaris_name, schema.name)
-        # Polaris also refuses to drop a catalog that still has custom catalog
-        # roles, so remove the RW role this catalog was created with.
-        await polaris.delete_catalog_access(catalog.polaris_name)
-        await polaris.delete_catalog(catalog.polaris_name)
-    except PolarisNotFoundError:
-        pass
-    except PolarisError as exc:
+        await backend_for(catalog, polaris=polaris).deprovision(catalog)
+    except CatalogBackendError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Polaris catalog deletion failed: {exc}",
+            detail=f"Catalog deletion failed: {exc}",
         ) from exc
 
     # Drop the catalog's control-plane sidecars (intrinsic per-catalog rows).

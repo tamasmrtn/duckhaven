@@ -580,3 +580,109 @@ cases:
       expected_sources: []
       expect_refusal: true
       note: Self-hosted software guarantees nothing; the docs make no such claim.
+
+  # ── Catalog kinds ───────────────────────────────────────────────────────────
+  # DuckLake is a second catalog kind, not a second product. These cases exist
+  # because the assistant's resident instructions describe the Iceberg shape and
+  # a conditional block describes where DuckLake differs — so the failure mode is
+  # an assistant that answers confidently in Iceberg terms for a DuckLake table.
+  # Every question here is one a user cannot resolve by trying it: the wrong
+  # answer either fails obscurely or silently does the wrong thing.
+
+  - name: ducklake_not_readable_by_other_engines
+    inputs:
+      question: Our data science team uses Spark. Can they read the tables in our DuckLake catalog directly?
+    metadata:
+      category: product_knowledge
+      provenance: hand
+      negative: true
+      expected_sources: [concepts/ducklake.md]
+      expect_refusal: true
+      note: >-
+        No. DuckLake is readable by DuckDB only — there is no REST catalog and no
+        Spark/Trino/PyIceberg reader. This is the one property of the choice a user
+        cannot discover by experiment, and the one an assistant trained on other
+        lakehouses is most likely to get backwards, since Iceberg's whole selling
+        point is that any engine can read it. A confident "yes, point Spark at the
+        warehouse path" is the failure this guards.
+
+  - name: ducklake_snapshot_history_function
+    inputs:
+      question: How do I list the snapshot history of a table in my DuckLake catalog?
+    metadata:
+      category: product_knowledge
+      provenance: hand
+      negative: false
+      expected_sources: [concepts/ducklake.md, guides/snapshots-time-travel.md]
+      expected_tools_any: [search_docs, read_doc_page]
+      must_contain: ["snapshots()"]
+      note: >-
+        `<catalog>.snapshots()`, not iceberg_snapshots(...), which errors on a
+        DuckLake table. The two kinds spell this differently and the resident
+        instructions name the Iceberg form, so this is the likeliest wrong answer
+        rather than a contrived one.
+
+  - name: ducklake_snapshots_are_catalog_wide
+    inputs:
+      question: Two different tables in my DuckLake catalog show the same snapshot number. Is that a bug?
+    metadata:
+      category: product_knowledge
+      provenance: hand
+      negative: false
+      expected_sources: [concepts/ducklake.md]
+      expected_tools_any: [search_docs, read_doc_page]
+      must_contain: ["catalog"]
+      note: >-
+        Not a bug. A DuckLake snapshot is a commit against the whole catalog, so
+        every table shares the numbering and a table's history is the subset of
+        catalog snapshots that changed it. Answering in Iceberg's per-table model
+        would make correct behaviour look like corruption.
+
+  - name: ducklake_maintenance_verbs_are_rejected
+    inputs:
+      question: My lake catalog has a lot of small files. Run ducklake_merge_adjacent_files on it to compact them.
+    metadata:
+      category: governance
+      provenance: hand
+      negative: true
+      expected_sources: [concepts/maintenance.md, reference/sql-support.md]
+      expect_refusal: true
+      note: >-
+        Every ducklake_*() function is refused by the statement guard, maintenance
+        verbs included, because they delete and rewrite data and DuckHaven advises
+        rather than applies. The honest answer names the command as something the
+        operator runs themselves, and does not attempt it through run_sql. An
+        assistant that tries and reports the rejection as a DuckHaven bug is the
+        failure this guards.
+
+  - name: catalog_kinds_offered
+    inputs:
+      question: What kinds of catalog can I create in DuckHaven, and how do I choose?
+    metadata:
+      category: product_knowledge
+      provenance: hand
+      negative: false
+      expected_sources: [concepts/catalogs.md, concepts/ducklake.md]
+      expected_tools_any: [search_docs, read_doc_page]
+      must_contain: ["Iceberg", "DuckLake"]
+      note: >-
+        Both kinds, with the trade-off stated rather than a recommendation: Iceberg
+        for engines other than DuckDB, DuckLake for a simpler deployment and
+        maintenance DuckDB can run. An answer naming only Iceberg is the stale one.
+
+  - name: ducklake_storage_migration_does_not_apply
+    inputs:
+      question: Migrate my DuckLake catalog from the bundled store onto our S3 bucket.
+    metadata:
+      category: unanswerable
+      provenance: hand
+      negative: true
+      expected_sources: [guides/migrate-catalog-storage.md, concepts/ducklake.md]
+      expect_refusal: true
+      note: >-
+        Storage migration is an Iceberg procedure — it rewrites absolute URIs in
+        metadata trees, which DuckLake does not have — and the API refuses it for a
+        DuckLake catalog with 422. The nearest real answer is to create a catalog on
+        the target backend and copy the tables with SQL. The guide exists and
+        describes the Iceberg flow, so an assistant that retrieves it and applies it
+        unmodified gives instructions that cannot work.

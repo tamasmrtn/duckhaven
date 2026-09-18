@@ -69,7 +69,7 @@ async def record_health_sample(db: AsyncSession, query: Query, health: dict[str,
     db.add(sample)
 
     history = await _growth_history(db, catalog.id, schema, table)
-    recs = recommend.generate(health, thresholds, history=history)
+    recs = recommend.generate(health, thresholds, history=history, catalog_kind=catalog.kind)
     await _sync_recommendations(db, query.workspace_id, catalog.id, schema, table, recs)
     await db.commit()
 

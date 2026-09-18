@@ -5,6 +5,16 @@ created, but it is not permanent. An admin can **migrate** a catalog to a differ
 bundled object store onto a corporate S3 bucket, or from S3 to Azure ADLS Gen 2 — preserving all data and full Iceberg
 snapshot history. This guide covers the operator workflow.
 
+## Iceberg catalogs only
+
+Migration is an Iceberg procedure: it stands up a shadow Polaris catalog and rewrites the absolute URIs inside every
+table's metadata tree. A [DuckLake](../concepts/ducklake.md) catalog has neither — its file paths are relative and its
+metadata is rows in Postgres — so there is nothing for this runner to rewrite.
+
+DuckLake catalogs are therefore left out of the migration source picker, and the API refuses a migration request for one
+with **422**. To move a DuckLake catalog's data, create a new catalog on the target backend and copy the tables into it
+with SQL.
+
 ## Who can migrate
 
 Starting a migration requires the catalog's **creator** or an admin with the **catalogs** permission — the same gate as

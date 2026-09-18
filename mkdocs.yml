@@ -103,8 +103,9 @@ nav:
       - What is DuckHaven?: concepts/what-is-duckhaven.md
       - Architecture: concepts/architecture.md
       - Workspaces: concepts/workspaces.md
-      - Catalogs & Polaris: concepts/catalogs.md
+      - Catalogs: concepts/catalogs.md
       - Tables & Iceberg: concepts/tables.md
+      - DuckLake: concepts/ducklake.md
       - Agents: concepts/agents.md
       - Elastic compute: concepts/elastic-compute.md
       - Storage backends: concepts/storage-backends.md
@@ -123,6 +124,7 @@ nav:
       - Elastic compute on a single Docker host: deployment/homelab-elastic-setup.md
       - Elastic compute on Azure: deployment/azure-elastic-setup.md
       - Configure storage: deployment/storage.md
+      - Enable DuckLake: deployment/ducklake.md
       - Reverse proxy & TLS: deployment/reverse-proxy-tls.md
       - High availability: deployment/high-availability.md
       - Azure with Terraform: deployment/azure-terraform.md
@@ -131,6 +133,7 @@ nav:
   - Guides:
       - Run queries: guides/run-queries.md
       - Manage catalogs: guides/manage-catalogs.md
+      - Create a DuckLake catalog: guides/create-a-ducklake-catalog.md
       - Migrate a catalog's storage: guides/migrate-catalog-storage.md
       - Snapshots & time travel: guides/snapshots-time-travel.md
       - Read query profiles: guides/query-profiles.md

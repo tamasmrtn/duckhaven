@@ -34,9 +34,9 @@ from api.models.table_metadata import TableMetadata
 from api.models.user import Credential
 from api.models.workspace import Workspace
 from api.schemas.query import RowsPageOut
-from api.services import agent_access
+from api.services import agent_access, session_credentials
 from api.services import grants as grant_service
-from api.services.agent_capabilities import agent_supports_backend
+from api.services.agent_capabilities import agent_supports_catalog
 from api.services.agent_dispatch import (
     connected_agent_ids,
     is_agent_connected,
@@ -45,7 +45,6 @@ from api.services.agent_dispatch import (
 from api.services.migration.service import workspace_has_active_migration
 from api.services.sql_guard import is_read_only
 from api.services.workspace import (
-    DEFAULT_SCHEMA,
     get_default_catalog,
     resolve_workspace_catalogs,
 )
@@ -123,9 +122,9 @@ async def dispatch_query(
         raise ValueError("Workspace has no catalogs attached")
 
     # Eager multi-attach: the agent ATTACHes every catalog bound to the
-    # workspace (each under its slug) and `USE`s the active one for unqualified
-    # names. The control plane vends nothing — the agent's own config supplies
-    # the Polaris endpoint + client creds.
+    # workspace under its slug and `USE`s the active one. Iceberg needs no
+    # vended credentials; DuckLake catalogs carry API-minted ones (see
+    # `build_catalog_attach`).
     if active_catalog is None:
         default = await get_default_catalog(db, workspace.id)
         active_catalog = default.slug if default is not None else catalogs[0].slug
@@ -145,18 +144,7 @@ async def dispatch_query(
         "sql": query.sql,
         "timeout_s": timeout_s,
         "active_catalog": active_catalog,
-        "catalogs": [
-            {
-                "slug": c.slug,
-                "polaris_name": c.polaris_name,
-                "backend": {
-                    "kind": c.storage_backend.kind,
-                    "root_uri": c.storage_backend.root_uri,
-                },
-                "default_schema": DEFAULT_SCHEMA,
-            }
-            for c in catalogs
-        ],
+        "catalogs": [await session_credentials.build_catalog_attach(c) for c in catalogs],
     }
     if stats_for is not None:
         # Ask the agent to also compute true table stats for this table.
@@ -293,7 +281,7 @@ async def _record_lineage(db: AsyncSession, query: Query, polaris=None) -> None:
         schemas = None
         if polaris is not None:
             context = await workspace_catalog_context(db, query.workspace_id)
-            schemas = CatalogSchemaLookup(polaris, {c.id: c.polaris_name for c in context.catalogs})
+            schemas = CatalogSchemaLookup(polaris, {c.id: c for c in context.catalogs})
         await record_execution_lineage(db, query, schemas=schemas)
         await db.commit()
     except Exception:
@@ -342,18 +330,19 @@ async def _upsert_table_stats(db: AsyncSession, query_id: uuid.UUID, frame: Fram
     if size_bytes is not None:
         existing.size_bytes = size_bytes
 
-    # Iceberg-native metadata from the agent probe (each field best-effort).
-    iceberg = frame.payload.get("iceberg")
-    if iceberg:
-        if iceberg.get("snapshot_id") is not None:
-            existing.snapshot_id = iceberg["snapshot_id"]
-        snapshot_at = iceberg.get("snapshot_at")
+    # Format-native metadata from the agent probe, each field best-effort. An
+    # older agent still sends "iceberg" with the same four fields.
+    native = frame.payload.get("iceberg") or frame.payload.get("ducklake")
+    if native:
+        if native.get("snapshot_id") is not None:
+            existing.snapshot_id = native["snapshot_id"]
+        snapshot_at = native.get("snapshot_at")
         if snapshot_at is not None:
             existing.snapshot_at = datetime.fromisoformat(snapshot_at)
-        if iceberg.get("data_file_count") is not None:
-            existing.data_file_count = iceberg["data_file_count"]
-        if iceberg.get("has_deletes") is not None:
-            existing.has_deletes = iceberg["has_deletes"]
+        if native.get("data_file_count") is not None:
+            existing.data_file_count = native["data_file_count"]
+        if native.get("has_deletes") is not None:
+            existing.has_deletes = native["has_deletes"]
     await db.commit()
 
 
@@ -543,7 +532,12 @@ async def pick_agent_for(
     if not connected:
         return None
     catalogs = await resolve_workspace_catalogs(db, workspace.id)
-    kinds = {c.storage_backend.kind for c in catalogs} or {"object_store"}
+    # Both axes: the agent needs the extensions for every catalog's kind *and*
+    # storage backend. Storage alone would route DuckLake to an Iceberg-only
+    # agent, whose attach fails best-effort as "catalog does not exist".
+    pairs = {(c.kind, c.storage_backend.kind) for c in catalogs} or {
+        ("iceberg_polaris", "object_store")
+    }
     agents = list(
         (await db.execute(sa.select(Agent).where(Agent.id.in_([uuid.UUID(c) for c in connected]))))
         .scalars()
@@ -552,7 +546,10 @@ async def pick_agent_for(
     if principal_id is not None:
         agents = await agent_access.usable_agents(db, principal_id, agents)
     for agent in agents:
-        if all(agent_supports_backend(agent.capabilities, kind) for kind in kinds):
+        if all(
+            agent_supports_catalog(agent.capabilities, catalog_kind, backend_kind)
+            for catalog_kind, backend_kind in pairs
+        ):
             return agent
     return None
 

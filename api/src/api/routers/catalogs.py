@@ -17,13 +17,25 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from api.config import settings
 from api.deps import get_current_user, get_db, get_polaris_client
-from api.models.catalog import Catalog, WorkspaceCatalog
+from api.models.catalog import (
+    KIND_DUCKLAKE,
+    KIND_ICEBERG_POLARIS,
+    Catalog,
+    WorkspaceCatalog,
+)
 from api.models.catalog_grant import CatalogGrant
 from api.models.catalog_migration import CatalogMigration
 from api.models.storage_backend import StorageBackend
 from api.models.user import User
-from api.schemas.catalog_mgmt import CatalogAttachRequest, CatalogCreate, CatalogOut
+from api.schemas.catalog_mgmt import (
+    CatalogAttachRequest,
+    CatalogCapabilitiesOut,
+    CatalogCreate,
+    CatalogKindOut,
+    CatalogOut,
+)
 from api.schemas.catalog_migration import (
     CatalogMigrationEventOut,
     CatalogMigrationOut,
@@ -33,6 +45,7 @@ from api.schemas.catalog_migration import (
 )
 from api.schemas.page import Page
 from api.services import catalog as catalog_service
+from api.services.catalog_backends import CatalogBackendError, capabilities_for
 from api.services.migration import service as migration_service
 from api.services.paging import paginate
 from api.services.permissions import Permission
@@ -83,6 +96,23 @@ async def _binding_count(db: AsyncSession, catalog_id: uuid.UUID) -> int:
     )
 
 
+def _capabilities_out(kind: str) -> CatalogCapabilitiesOut | None:
+    """This kind's capabilities, or None for a kind this build does not know.
+
+    None rather than a raise, so a row written by a newer version does not turn
+    the whole listing into a 500.
+    """
+    try:
+        caps = capabilities_for(kind)
+    except CatalogBackendError:
+        return None
+    return CatalogCapabilitiesOut(
+        supports_storage_migration=caps.supports_storage_migration,
+        external_engine_readable=caps.external_engine_readable,
+        supported_storage_kinds=list(caps.supported_storage_kinds),
+    )
+
+
 def _catalog_out(
     catalog: Catalog,
     *,
@@ -94,7 +124,10 @@ def _catalog_out(
         id=catalog.id,
         slug=catalog.slug,
         name=catalog.name,
+        kind=catalog.kind,
         polaris_name=catalog.polaris_name,
+        metadata_schema=catalog.metadata_schema,
+        capabilities=_capabilities_out(catalog.kind),
         storage_backend_id=catalog.storage_backend_id,
         storage_backend_kind=catalog.storage_backend.kind,
         storage_backend_name=catalog.storage_backend.name,
@@ -104,6 +137,38 @@ def _catalog_out(
         attached_workspaces=attached_workspaces,
         access_mode=access_mode,
     )
+
+
+_KIND_LABELS = {
+    KIND_ICEBERG_POLARIS: "Apache Iceberg + Polaris",
+    KIND_DUCKLAKE: "DuckLake",
+}
+
+
+@router.get("/catalog-kinds", response_model=list[CatalogKindOut])
+async def list_catalog_kinds(_: User = Depends(get_current_user)) -> list[CatalogKindOut]:
+    """The catalog kinds this deployment can create, with their capabilities.
+
+    A disabled kind is still listed, with the reason, rather than hidden.
+    """
+    out: list[CatalogKindOut] = []
+    for kind in (KIND_ICEBERG_POLARIS, KIND_DUCKLAKE):
+        available = kind != KIND_DUCKLAKE or settings.ducklake_enabled
+        out.append(
+            CatalogKindOut(
+                kind=kind,
+                label=_KIND_LABELS[kind],
+                available=available,
+                unavailable_reason=(
+                    None
+                    if available
+                    else "Not enabled on this deployment (set DUCKLAKE_ENABLED=true)."
+                ),
+                # Never None here: both kinds are known to this build.
+                capabilities=_capabilities_out(kind),  # type: ignore[arg-type]
+            )
+        )
+    return out
 
 
 @router.get("/catalogs", response_model=list[CatalogOut])
@@ -186,7 +251,7 @@ async def create_workspace_catalog(
             )
 
     catalog = await catalog_service.create_catalog(
-        db, polaris, name=body.name, backend=backend, created_by=user.id
+        db, polaris, name=body.name, backend=backend, created_by=user.id, kind=body.kind
     )
     link = await catalog_service.attach_catalog(
         db,

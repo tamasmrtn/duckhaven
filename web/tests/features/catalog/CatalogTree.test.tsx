@@ -216,6 +216,7 @@ describe("CatalogTree", () => {
             id: "cat-scoped",
             slug: "acme_analytics",
             name: "acme_analytics",
+            kind: "iceberg_polaris" as const,
             polaris_name: "acme_analytics",
             storage_backend_kind: "s3",
             is_default: true,
@@ -402,5 +403,104 @@ describe("CatalogTree", () => {
     );
 
     await waitFor(() => expect(probed).toBe(true));
+  });
+
+  it("probes every attached catalog, not just the workspace default", async () => {
+    const probed: string[] = [];
+    server.use(
+      http.post(
+        "/api/workspaces/:ws/catalogs/:catalog/refresh-stats",
+        ({ params }) => {
+          probed.push(params.catalog as string);
+          return HttpResponse.json({ probed: 1 });
+        },
+      ),
+    );
+    renderTree(() => {});
+    await screen.findByRole("button", { name: /events/i });
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /refresh catalog/i }),
+    );
+
+    // `acme_analytics` is the workspace default and `curated` is attached but
+    // not default. The button used to resolve a single default catalog, so
+    // `curated`'s tables kept showing no row count however often it was
+    // pressed — the endpoint was never called for them.
+    await waitFor(() =>
+      expect([...probed].sort()).toEqual(["acme_analytics", "curated"]),
+    );
+  });
+
+  it("keeps probing the other catalogs when one of them fails", async () => {
+    const probed: string[] = [];
+    server.use(
+      http.post(
+        "/api/workspaces/:ws/catalogs/:catalog/refresh-stats",
+        ({ params }) => {
+          const catalog = params.catalog as string;
+          // A catalog can fail on its own — no agent that can serve its kind,
+          // say — and that must not abandon its siblings.
+          if (catalog === "acme_analytics") {
+            return HttpResponse.json(
+              { detail: "No compatible agent is connected." },
+              { status: 503 },
+            );
+          }
+          probed.push(catalog);
+          return HttpResponse.json({ probed: 1 });
+        },
+      ),
+    );
+    renderTree(() => {});
+    await screen.findByRole("button", { name: /events/i });
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /refresh catalog/i }),
+    );
+
+    await waitFor(() => expect(probed).toEqual(["curated"]));
+  });
+  it("badges a DuckLake catalog and leaves Iceberg unmarked", async () => {
+    // Without this the tree showed only a storage icon, so an operator could
+    // not tell which of their catalogs was DuckLake. Iceberg stays unbadged on
+    // purpose: it is the default kind, and badging it would mark every row of
+    // an Iceberg-only deployment to say nothing.
+    server.use(
+      http.get("/api/workspaces/:ws/catalogs", () =>
+        HttpResponse.json([
+          {
+            id: "cat-1",
+            slug: "acme_analytics",
+            name: "acme-analytics",
+            kind: "iceberg_polaris",
+            storage_backend_kind: "s3",
+            is_default: true,
+            access_mode: "open",
+          },
+          {
+            id: "cat-lake",
+            slug: "lake",
+            name: "Lake",
+            kind: "ducklake",
+            storage_backend_kind: "object_store",
+            is_default: false,
+            access_mode: "open",
+          },
+        ]),
+      ),
+    );
+    renderTree(() => {});
+
+    const lake = await screen.findByRole("button", { name: /^lake/i });
+    expect(lake).toHaveTextContent("DuckLake");
+
+    // The Iceberg row carries no kind badge at all. Asserting only the absence
+    // of "DuckLake" is not enough: a nullish-coalescing slip rendered the raw
+    // "iceberg_polaris" here and still passed that weaker check.
+    const iceberg = screen.getByRole("button", { name: /^acme_analytics/i });
+    expect(iceberg).not.toHaveTextContent("DuckLake");
+    expect(iceberg).not.toHaveTextContent("iceberg_polaris");
+    expect(iceberg).not.toHaveTextContent("Iceberg");
   });
 });

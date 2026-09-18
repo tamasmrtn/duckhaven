@@ -28,7 +28,7 @@ from api.services import query as query_service
 from api.services import query_history
 from api.services import sql_metadata as sql_metadata_service
 from api.services.agent_access import assert_agent_tier, assert_can_assign_agent
-from api.services.agent_capabilities import agent_supports_backend, required_extension
+from api.services.agent_capabilities import agent_supports_catalog, missing_extension
 from api.services.agent_dispatch import is_agent_connected, send_to_agent
 from api.services.compute import service as compute_service
 from api.services.grants import GrantDenied
@@ -131,19 +131,20 @@ async def create_query(
         )
 
     # Every catalog bound to the workspace is attached on each query, so the
-    # agent must support every backend kind across them.
+    # agent must support every catalog's kind *and* every storage backend kind
+    # across them.
     catalogs = await resolve_workspace_catalogs(db, workspace.id)
     for catalog in catalogs:
         kind = catalog.storage_backend.kind
-        if not agent_supports_backend(agent.capabilities, kind):
-            ext = required_extension(kind)
+        if not agent_supports_catalog(agent.capabilities, catalog.kind, kind):
+            missing = missing_extension(agent.capabilities, catalog.kind, kind)
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail={
                     "error": "agent_incompatible",
                     "detail": (
-                        f"Agent '{agent.name}' is missing the '{ext}' extension required "
-                        f"by catalog '{catalog.slug}'s {kind} backend."
+                        f"Agent '{agent.name}' is missing the '{missing}' extension required "
+                        f"by catalog '{catalog.slug}' ({catalog.kind} on {kind})."
                     ),
                 },
             )

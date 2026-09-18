@@ -21,12 +21,14 @@ import { StorageIcon } from "@/components/app/StorageIcon";
 import {
   useAllCatalogs,
   useAttachCatalog,
+  useCatalogKinds,
   useCreateCatalog,
 } from "@/queries/catalogs";
 import {
   useCreateStorageBackend,
   useStorageBackends,
 } from "@/queries/storage-backends";
+import type { CatalogKind } from "@/types/catalog";
 import type { AccessMode } from "@/types/grant";
 import { cn } from "@/utils";
 
@@ -44,6 +46,14 @@ const KIND_URI_PLACEHOLDER: Record<ExternalKind, string> = {
 };
 
 const NAME_RE = /^[a-z][a-z0-9_]*$/;
+
+// Prose only; the capability facts come from the API (`useCatalogKinds`).
+const KIND_BLURB: Record<CatalogKind, string> = {
+  iceberg_polaris:
+    "Tables readable by Spark, Trino, Flink and PyIceberg. Storage credentials are vended per query.",
+  ducklake:
+    "Metadata in Postgres, data in Parquet. Faster browsing and no catalog service to run.",
+};
 const BUNDLED = "__bundled";
 const NEW_BACKEND = "__new";
 
@@ -59,9 +69,15 @@ export function CreateCatalogDialog({
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  // Storage is a first-class choice on every catalog (not hidden behind an
-  // "Advanced" toggle): bundled object storage, an existing backend, or a new
-  // external one.
+  // Hidden when the deployment offers only one kind, so an operator who has not
+  // enabled DuckLake sees no change.
+  const { data: kinds = [] } = useCatalogKinds();
+  const [catalogKind, setCatalogKind] =
+    useState<CatalogKind>("iceberg_polaris");
+  const offerKindChoice = kinds.filter((k) => k.available).length > 1;
+
+  // Storage is a first-class choice on every catalog, not hidden behind an
+  // "Advanced" toggle.
   const { data: backends = [] } = useStorageBackends();
   const createBackend = useCreateStorageBackend();
   const [backendChoice, setBackendChoice] = useState<string>(BUNDLED);
@@ -76,6 +92,7 @@ export function CreateCatalogDialog({
   function reset() {
     setName("");
     setError(null);
+    setCatalogKind("iceberg_polaris");
     setBackendChoice(BUNDLED);
     setKind("s3");
     setBackendName("");
@@ -106,6 +123,7 @@ export function CreateCatalogDialog({
       }
       await create.mutateAsync({
         name: name.trim(),
+        kind: catalogKind,
         storage_backend_id,
         access_mode: accessMode,
       });
@@ -128,8 +146,8 @@ export function CreateCatalogDialog({
         <DialogHeader>
           <DialogTitle>New catalog</DialogTitle>
           <DialogDescription>
-            Create a catalog (its own Polaris catalog + storage) and attach it
-            to this workspace.
+            Create a catalog (its own metadata store + storage) and attach it to
+            this workspace.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3 py-2">
@@ -147,6 +165,44 @@ export function CreateCatalogDialog({
               catalog.schema.table.
             </p>
           </div>
+
+          {offerKindChoice && (
+            <div className="space-y-1.5">
+              <Label>Catalog kind</Label>
+              <div className="space-y-1.5">
+                {kinds.map((k) => (
+                  <button
+                    key={k.kind}
+                    type="button"
+                    disabled={!k.available}
+                    onClick={() => setCatalogKind(k.kind)}
+                    className={cn(
+                      "w-full rounded-md border p-2 text-left text-sm transition-colors",
+                      catalogKind === k.kind
+                        ? "border-[var(--border-strong)] bg-[var(--bg-subtle)]"
+                        : "border-[var(--border-subtle)]",
+                      !k.available && "cursor-not-allowed opacity-50",
+                    )}
+                  >
+                    <span className="font-medium">{k.label}</span>
+                    <span className="mt-0.5 block text-2xs text-text-tertiary">
+                      {k.unavailable_reason ?? KIND_BLURB[k.kind]}
+                    </span>
+                    {/* The trade-off that matters most and cannot be undone
+                        later: say it at the moment of choosing, not only in
+                        the docs. */}
+                    {k.available &&
+                      !k.capabilities.external_engine_readable && (
+                        <span className="mt-1 block text-2xs text-[var(--text-warning,#b45309)]">
+                          Readable by DuckDB only — other engines cannot open
+                          these tables.
+                        </span>
+                      )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="space-y-1.5">
             <Label htmlFor="catalog-backend">Storage backend</Label>

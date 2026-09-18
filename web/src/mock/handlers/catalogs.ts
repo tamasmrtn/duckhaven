@@ -13,7 +13,14 @@ function out(c: (typeof CATALOGS)[number]): Catalog {
     id: c.id,
     slug: c.slug,
     name: c.name,
+    kind: c.kind,
     polaris_name: c.polaris_name,
+    metadata_schema: c.metadata_schema ?? null,
+    capabilities: c.capabilities ?? {
+      supports_storage_migration: true,
+      external_engine_readable: true,
+      supported_storage_kinds: ["object_store", "s3", "adls_gen2"] as const,
+    },
     storage_backend_id: c.storage_backend_id,
     storage_backend_kind: c.storage_backend_kind,
     storage_backend_name: c.storage_backend_name,
@@ -26,6 +33,36 @@ function out(c: (typeof CATALOGS)[number]): Catalog {
 
 export const catalogHandlers = [
   http.get("/api/catalogs", () => HttpResponse.json(CATALOGS.map(out))),
+
+  // Mirrors DUCKLAKE_ENABLED=false: DuckLake is listed but unavailable, so the
+  // dev UI shows the single-kind dialog a fresh install does.
+  http.get("/api/catalog-kinds", () =>
+    HttpResponse.json([
+      {
+        kind: "iceberg_polaris",
+        label: "Apache Iceberg + Polaris",
+        available: true,
+        unavailable_reason: null,
+        capabilities: {
+          supports_storage_migration: true,
+          external_engine_readable: true,
+          supported_storage_kinds: ["object_store", "s3", "adls_gen2"],
+        },
+      },
+      {
+        kind: "ducklake",
+        label: "DuckLake",
+        available: false,
+        unavailable_reason:
+          "Not enabled on this deployment (set DUCKLAKE_ENABLED=true).",
+        capabilities: {
+          supports_storage_migration: false,
+          external_engine_readable: false,
+          supported_storage_kinds: ["object_store", "s3", "adls_gen2"],
+        },
+      },
+    ]),
+  ),
 
   http.get("/api/workspaces/:ws/catalogs", ({ params }) => {
     const ws = findWorkspace(params.ws as string);
@@ -53,7 +90,9 @@ export const catalogHandlers = [
       id: `cat-${body.name}`,
       slug: body.name,
       name: body.name,
+      kind: "iceberg_polaris" as const,
       polaris_name: body.name,
+      metadata_schema: null,
       // Chosen backend, else a bundled object store (matches the API default).
       storage_backend_id: body.storage_backend_id ?? "sb-bundled",
       storage_backend_kind: "object_store" as const,

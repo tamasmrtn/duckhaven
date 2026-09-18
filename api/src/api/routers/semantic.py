@@ -453,9 +453,7 @@ async def publish_model(
     except store.SemanticNotFound as exc:
         raise _not_found(slug) from exc
 
-    report = await validate_model(
-        db, polaris, model, catalog_names={c.id: c.polaris_name for c in ctx.catalogs}
-    )
+    report = await validate_model(db, polaris, model, catalogs={c.id: c for c in ctx.catalogs})
     if not report.ok:
         await db.commit()
         raise HTTPException(
@@ -526,9 +524,7 @@ async def validate(
         )
     except store.SemanticNotFound as exc:
         raise _not_found(slug) from exc
-    report = await validate_model(
-        db, polaris, model, catalog_names={c.id: c.polaris_name for c in ctx.catalogs}
-    )
+    report = await validate_model(db, polaris, model, catalogs={c.id: c for c in ctx.catalogs})
     await db.commit()
     return ValidationReportOut(
         ok=report.ok,

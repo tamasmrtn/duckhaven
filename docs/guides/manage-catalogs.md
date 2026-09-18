@@ -50,7 +50,8 @@ JOIN curated.analytics.users u ON e.user_id = u.id;
 
 Refresh also fills in row counts. A table's row count is measured by an agent and cached; tables created through the
 worksheet (rather than the create-table dialog) start out with no count and show blank in the tree. Refresh probes
-every table that still lacks a count and records the result, so the numbers appear after the next refresh. Tables that
+every table that still lacks a count and records the result, so the numbers appear after the next refresh. It
+covers every catalog bound to the workspace, not only the default one. Tables that
 already have a count are skipped, and the probe needs a connected agent — without one the tree still refreshes but the
 counts stay blank.
 

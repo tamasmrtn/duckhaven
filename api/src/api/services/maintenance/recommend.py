@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from api.models.catalog import KIND_DUCKLAKE, KIND_ICEBERG_POLARIS
 from api.services.maintenance.scoring import _human_bytes
 
 #: Severity order, most severe first. Ranked rather than compared as a string:
@@ -201,12 +202,54 @@ def _investigate_growth(
     )
 
 
+# DuckLake's commands for the shared recommendation kinds. The findings are
+# format-neutral; the fix is not, and DuckDB's ducklake extension can run these.
+# `applicable_in_app` stays False: DuckHaven advises and does not yet apply.
+_DUCKLAKE_REMEDIATION: dict[str, dict[str, str]] = {
+    "compact_small_files": {
+        "command": (
+            "CALL ducklake_merge_adjacent_files('<catalog>', '<table>', schema => '<schema>')"
+        ),
+        "tool": "DuckDB (ducklake extension)",
+    },
+    "expire_snapshots": {
+        # Catalog-level only: `expire_older_than` has global scope.
+        "command": (
+            "CALL ducklake_expire_snapshots('<catalog>', older_than => now() - INTERVAL '7 days')"
+        ),
+        "tool": "DuckDB (ducklake extension)",
+    },
+    "cleanup_orphans": {
+        "command": "CALL ducklake_cleanup_old_files('<catalog>', cleanup_all => true)",
+        "tool": "DuckDB (ducklake extension)",
+    },
+}
+
+# Manifests are Iceberg-only; dropped rather than given a command that does not
+# exist.
+_DUCKLAKE_INAPPLICABLE = {"rewrite_manifests"}
+
+
+def _for_ducklake(rec: dict[str, Any]) -> dict[str, Any] | None:
+    remediation = _DUCKLAKE_REMEDIATION.get(rec["kind"])
+    if remediation is None:
+        if rec["kind"] in _DUCKLAKE_INAPPLICABLE:
+            return None
+        return rec  # e.g. investigate_growth, which prescribes nothing
+    return {**rec, "remediation": {**rec["remediation"], **remediation}}
+
+
 def generate(
     metrics: dict[str, Any],
     thresholds: dict[str, float],
     history: list[dict[str, Any]] | None = None,
+    catalog_kind: str = KIND_ICEBERG_POLARIS,
 ) -> list[dict[str, Any]]:
-    """All recommendations a single table's latest sample warrants, worst first."""
+    """All recommendations a single table's latest sample warrants, worst first.
+
+    ``catalog_kind`` decides only the remediation; the findings come from file
+    and snapshot counts both formats have.
+    """
     out = [
         _compact(metrics, thresholds),
         _expire(metrics, thresholds),
@@ -214,6 +257,7 @@ def generate(
         _cleanup_orphans(metrics, thresholds),
         _investigate_growth(metrics, thresholds, history),
     ]
-    return sorted(
-        (r for r in out if r is not None), key=lambda r: SEVERITY_RANK.get(r["severity"], 9)
-    )
+    recs = [r for r in out if r is not None]
+    if catalog_kind == KIND_DUCKLAKE:
+        recs = [r for r in (_for_ducklake(r) for r in recs) if r is not None]
+    return sorted(recs, key=lambda r: SEVERITY_RANK.get(r["severity"], 9))

@@ -29,6 +29,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlglot import exp
 
+from api.models.catalog import Catalog
 from api.models.semantic import (
     SemanticDataset,
     SemanticDimension,
@@ -36,7 +37,7 @@ from api.models.semantic import (
     SemanticModel,
     SemanticRelationship,
 )
-from api.services.polaris import PolarisError
+from api.services.catalog_backends import CatalogBackendError, backend_for
 from api.services.semantic.model import AGGREGATIONS, TIME_GRAINS
 
 # Thresholds, not limits, and set far below what is technically storable: a small
@@ -104,13 +105,13 @@ async def validate_model(
     polaris,
     model: SemanticModel,
     *,
-    catalog_names: dict[uuid.UUID, str],
+    catalogs: dict[uuid.UUID, Catalog],
 ) -> ValidationReport:
     """Check every binding in a model and persist the outcome per object.
 
-    ``catalog_names`` maps catalog id to its **Polaris** warehouse name, which is
-    what the REST catalog is addressed by — not the DuckHaven slug, which is a
-    display and SQL-alias concern.
+    ``catalogs`` maps catalog id to the catalog itself, so each binding is read
+    through its own kind's backend. (Keying on the Polaris name reported every
+    DuckLake dataset "broken": that name is NULL there.)
     """
     report = ValidationReport(checked_at=datetime.now(UTC))
 
@@ -142,15 +143,17 @@ async def validate_model(
     # ── Datasets: does the physical table still exist? ────────────────────────
     columns_by_dataset: dict[uuid.UUID, set[str]] = {}
     for ds in datasets:
-        polaris_name = catalog_names.get(ds.catalog_id)
-        if polaris_name is None:
+        catalog = catalogs.get(ds.catalog_id)
+        if catalog is None:
             ds.validation_state = "broken"
             ds.validation_detail = "The catalog this dataset binds to is no longer available."
             report.fail("dataset", ds.name, ds.validation_detail)
             continue
         try:
-            table = await polaris.get_table(polaris_name, ds.schema_name, ds.table_name)
-        except PolarisError as exc:
+            table = await backend_for(catalog, polaris=polaris).get_table(
+                catalog, ds.schema_name, ds.table_name
+            )
+        except CatalogBackendError as exc:
             ds.validation_state = "broken"
             ds.validation_detail = (
                 f"{ds.schema_name}.{ds.table_name} could not be read from the catalog: {exc}"

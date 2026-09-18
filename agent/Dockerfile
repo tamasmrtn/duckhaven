@@ -31,11 +31,15 @@ RUN uv sync --frozen --no-dev --no-editable --package duckhaven-agent
 # doesn't pay the download tax and `_get_capabilities` can advertise them on
 # connect (closes G-D17-c). Extensions land in $HOME/.duckdb; HOME is pinned to
 # the runtime user's home so the runtime stage resolves them with no download.
+#
+# Required, not an optimisation, for `ducklake`/`postgres`: the agent runs on an
+# `internal: true` network and cannot reach extensions.duckdb.org. `postgres`
+# installs under that name but is advertised as `postgres_scanner`.
 ENV HOME=/home/duckhaven
 RUN mkdir -p /home/duckhaven && \
     /app/.venv/bin/python -c "import duckdb; c = duckdb.connect(); \
-    [c.execute(f'INSTALL {ext}') for ext in ('httpfs','azure','iceberg')]; \
-    [c.execute(f'LOAD {ext}') for ext in ('httpfs','azure','iceberg')]"
+    [c.execute(f'INSTALL {ext}') for ext in ('httpfs','azure','iceberg','ducklake','postgres')]; \
+    [c.execute(f'LOAD {ext}') for ext in ('httpfs','azure','iceberg','ducklake','postgres')]"
 
 # Pre-created here since the runtime stage has no shell to mkdir/chown in;
 # copied with --chown below.

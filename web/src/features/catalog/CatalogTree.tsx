@@ -53,6 +53,10 @@ import {
   backendLabel,
 } from "@/features/catalog/CatalogInfoDialog";
 import { StorageIcon } from "@/components/app/StorageIcon";
+import {
+  catalogKindBadge,
+  catalogKindLabel,
+} from "@/features/catalog/catalogKind";
 import type { BackendKind } from "@/types/storage-backend";
 import { cn, formatBytes, formatRowCount } from "@/utils";
 import type { Catalog, CatalogTable } from "@/types/catalog";
@@ -184,10 +188,8 @@ function TableNode({
 }: TableNodeProps) {
   const [open, setOpen] = useState(false);
   const [hovered, setHovered] = useState(false);
-  // Columns aren't in the table-list payload (Polaris lists identifiers only),
-  // so fetch the table detail lazily on expand — sharing the detail view's
-  // cache with the hover-preview card below (same query key), so neither
-  // triggers a duplicate fetch if the other already warmed the cache.
+  // Columns are not in the table-list payload, so fetch detail lazily on expand
+  // or hover; the shared query key dedupes the two.
   const { data, isLoading } = useTable(
     ws,
     catalog,
@@ -387,15 +389,13 @@ function SchemaNode({
   );
 }
 
-// The built-in, read-only metadata schema every catalog exposes. It is not a
-// Polaris namespace (so it never comes back from `useSchemas`); it is DuckDB's
-// native, live `information_schema`, surfaced here as a virtual node. The views
-// listed are the ones DuckHaven supports — see docs/reference/sql-support.md.
+// The built-in read-only DuckDB `information_schema`, surfaced as a virtual
+// node. The views listed are the ones DuckHaven supports — see
+// docs/reference/sql-support.md.
 const INFORMATION_SCHEMA = "information_schema";
-// `columns` is deliberately absent: DuckDB cannot introspect the columns of an
-// attached Iceberg relation through it — it returns an `UNKNOWN` placeholder —
-// so offering it here would seed a query that looks broken. Column detail comes
-// from `DESCRIBE`, or from clicking a table (which reads Polaris directly).
+// `columns` is absent deliberately: DuckDB cannot introspect columns through it
+// for an attached Iceberg relation, so it would seed a query that looks broken.
+// Column detail comes from `DESCRIBE` or clicking a table.
 const INFORMATION_SCHEMA_VIEWS = ["schemata", "tables", "views"] as const;
 
 interface InformationSchemaNodeProps {
@@ -404,10 +404,9 @@ interface InformationSchemaNodeProps {
   onMetaViewClick?: (catalog: string, view: string) => void;
 }
 
-// Virtual, read-only `information_schema` node. Always present (never created),
-// never writable — hence the lock icon and the "read-only" badge, and no
-// create/drop affordances. Clicking a view seeds a scoped query when a handler
-// is provided (worksheet sidebar); elsewhere the views are display-only.
+// Virtual, read-only `information_schema` node: always present, never writable.
+// Clicking a view seeds a scoped query when a handler is provided (worksheet
+// sidebar); elsewhere the views are display-only.
 function InformationSchemaNode({
   catalog,
   filter,
@@ -561,6 +560,16 @@ function CatalogNode({
                   className="size-3 text-text-tertiary"
                 />
               </span>
+              {/* Catalog-kind indicator: which table format + metastore this
+                  catalog is. Absent for Iceberg, the default kind. */}
+              {catalogKindBadge(catalog.kind) && (
+                <span
+                  className="ml-1 shrink-0 rounded bg-accent px-1 text-2xs text-text-tertiary"
+                  title={`Catalog: ${catalogKindLabel(catalog.kind)}`}
+                >
+                  {catalogKindBadge(catalog.kind)}
+                </span>
+              )}
               {catalog.access_mode === "scoped" && (
                 <span className="ml-1 rounded bg-accent px-1 text-2xs text-text-tertiary">
                   scoped
@@ -690,20 +699,18 @@ export function CatalogTree({
   const [createSchemaOpen, setCreateSchemaOpen] = useState(false);
   const [attachCatalogOpen, setAttachCatalogOpen] = useState(false);
   const { data: catalogs, isLoading } = useCatalogs(ws);
-  // Refreshing stats is catalog-scoped. It used to reach the workspace's
-  // default catalog implicitly through the default-catalog shim; with the shim
-  // gone the target is named, and it is the same catalog the shim resolved to.
-  const defaultCatalog = catalogs?.find((c) => c.is_default) ?? catalogs?.[0];
-  const refreshStats = useRefreshCatalogStats(ws, defaultCatalog?.slug ?? "");
+  const refreshStats = useRefreshCatalogStats(ws);
 
-  // Probe row counts for any tables that lack one, then re-read the tree on
-  // settle.
+  // Workspace-wide: the refresh endpoint is catalog-scoped, so probe every
+  // attached catalog or siblings keep showing no row counts.
   async function handleRefresh() {
-    if (!defaultCatalog) return;
-    try {
-      await refreshStats.mutateAsync();
-    } catch {
+    const slugs = catalogs?.map((c) => c.slug) ?? [];
+    if (slugs.length === 0) return;
+    const { failed } = await refreshStats.mutateAsync(slugs);
+    if (failed.length === slugs.length) {
       toast.error("Couldn't refresh row counts — no agent connected.");
+    } else if (failed.length > 0) {
+      toast.error(`Couldn't refresh row counts for ${failed.join(", ")}.`);
     }
   }
 

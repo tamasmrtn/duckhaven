@@ -1,5 +1,5 @@
 import { del, get, post, put } from "./client";
-import type { Catalog } from "@/types/catalog";
+import type { Catalog, CatalogKind, CatalogKindOption } from "@/types/catalog";
 import type { AccessMode } from "@/types/grant";
 
 export const catalogsApi = {
@@ -10,10 +10,14 @@ export const catalogsApi = {
   // Every catalog in the deployment — the attach picker's source.
   listAll: () => get<Catalog[]>(`/catalogs`),
 
+  // The kinds this deployment can create, with their capabilities.
+  listKinds: () => get<CatalogKindOption[]>(`/catalog-kinds`),
+
   create: (
     ws: string,
     body: {
       name: string;
+      kind?: CatalogKind;
       storage_backend_id?: string;
       access_mode?: AccessMode;
     },

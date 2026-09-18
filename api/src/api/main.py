@@ -55,6 +55,13 @@ from api.services.agent_dispatch import drain_local_agents
 from api.services.assistant.identity import ASSISTANT_EMAIL
 from api.services.assistant.knowledge.sync import sync_corpus
 from api.services.bootstrap import ensure_assistant_service_account, seed_agent_bootstrap_token
+from api.services.catalog_backends import (
+    CatalogBackendBadRequest,
+    CatalogBackendConflict,
+    CatalogBackendError,
+    CatalogBackendNotFound,
+)
+from api.services.catalog_backends.ducklake import dispose_engine as dispose_ducklake_engine
 from api.services.mcp.server import MCP_PATH, mcp_asgi_app, mcp_session_manager
 from api.services.oidc import register_oidc
 from api.services.polaris import (
@@ -189,6 +196,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
         await app.state.polaris_client.aclose()
+        # Drain the module-level DuckLake engine's pool (see get_engine).
+        await dispose_ducklake_engine()
 
 
 logger = logging.getLogger(__name__)
@@ -270,6 +279,22 @@ async def _polaris_error_handler(_: Request, exc: PolarisError) -> JSONResponse:
         code = status.HTTP_404_NOT_FOUND
     elif isinstance(exc, PolarisBadRequestError):
         code = status.HTTP_422_UNPROCESSABLE_CONTENT
+    else:
+        code = status.HTTP_502_BAD_GATEWAY
+    return JSONResponse(status_code=code, content=error_body(code, str(exc)))
+
+
+# The same mapping for catalog-metadata failures, now that reads and writes go
+# through `services/catalog_backends`. Separate from the Polaris handler because
+# a DuckLake failure is not a Polaris failure.
+@api_app.exception_handler(CatalogBackendError)
+async def _catalog_backend_error_handler(_: Request, exc: CatalogBackendError) -> JSONResponse:
+    if isinstance(exc, CatalogBackendNotFound):
+        code = status.HTTP_404_NOT_FOUND
+    elif isinstance(exc, CatalogBackendBadRequest):
+        code = status.HTTP_422_UNPROCESSABLE_CONTENT
+    elif isinstance(exc, CatalogBackendConflict):
+        code = status.HTTP_409_CONFLICT
     else:
         code = status.HTTP_502_BAD_GATEWAY
     return JSONResponse(status_code=code, content=error_body(code, str(exc)))

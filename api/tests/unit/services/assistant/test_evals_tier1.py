@@ -22,6 +22,7 @@ from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
 from api.config import settings
+from api.services.assistant import prompts
 from api.services.assistant.knowledge import generate
 from api.services.assistant.knowledge.loader import load_index
 from tests.evals import metrics
@@ -272,11 +273,27 @@ async def test_an_arm_changes_which_tools_the_model_is_offered():
 
 def test_the_everything_arm_turns_every_conditional_block_on():
     """It exists so the budget ceiling is measured against the largest prompt the
-    product can actually produce, not the smallest."""
+    product can actually produce, not the smallest.
+
+    Checked against ``_INJECTORS`` rather than a hand-written list of blocks,
+    because a hand-written list is exactly what stops guarding when a block is
+    added: the DuckLake block arrived and this test kept passing while the arm it
+    describes no longer turned everything on.
+    """
+    deps = deps_for(ArmConfig.load("everything"))
+
+    silent = [render.__name__ for render in prompts._INJECTORS if render(deps) is None]
+
+    assert silent == [], f"the everything arm leaves these blocks off: {silent}"
+
+
+def test_the_everything_arm_carries_the_workspace_it_claims_to():
+    """The values behind the blocks, so a typo in arms.yaml is not a silent pass."""
     deps = deps_for(ArmConfig.load("everything"))
 
     assert deps.semantic_summary
     assert deps.storage_kinds == ("s3", "adls_gen2")
+    assert deps.catalog_kinds == ("iceberg_polaris", "ducklake")
     assert deps.elastic_enabled is True
     assert deps.agent_count == 3
 

@@ -120,9 +120,7 @@ async def _build(db, workspace, catalog, *, with_relationship=True, right_key=("
 
 
 async def _run(db, fake_polaris, model, catalog):
-    return await validate_model(
-        db, fake_polaris, model, catalog_names={catalog.id: catalog.polaris_name}
-    )
+    return await validate_model(db, fake_polaris, model, catalogs={catalog.id: catalog})
 
 
 async def test_a_sound_model_validates(db_session, fake_polaris):
@@ -360,3 +358,50 @@ async def test_revalidation_clears_a_previous_failure(db_session, fake_polaris):
     )
 
     assert (await _run(db_session, fake_polaris, model, catalog)).ok
+
+
+async def test_a_ducklake_bound_model_validates(db_session, fake_polaris, monkeypatch):
+    """Bindings were once looked up by ``polaris_name``, NULL for DuckLake, so
+    every such dataset came back "broken" though only the lookup key was wrong.
+    """
+    ws, catalog = await seed_workspace(db_session, user_id=uuid.uuid4())
+    catalog.kind = "ducklake"
+    catalog.polaris_name = None
+    catalog.metadata_schema = "cat_test"
+    await db_session.commit()
+    model = await _build(db_session, ws, catalog)
+
+    def _cols(names):
+        return [
+            (name, "int64" if name.endswith("id") else "varchar", True, i)
+            for i, name in enumerate(names)
+        ]
+
+    async def fake_rows(self, cat, sql, params):  # noqa: ANN001
+        if "ducklake_column" in sql:
+            table = _seen.get("table")
+            names = (
+                [c["name"] for c in ORDER_COLUMNS]
+                if table == "orders"
+                else [c["name"] for c in CUSTOMER_COLUMNS]
+            )
+            return _cols(names)
+        if "ducklake_table" in sql:
+            _seen["table"] = params.get("name")
+            return [(1, "uuid-1", 10, 100)]
+        return []
+
+    _seen: dict[str, str] = {}
+    monkeypatch.setattr(
+        "api.services.catalog_backends.ducklake.DuckLakeCatalogBackend._rows", fake_rows
+    )
+
+    report = await _run(db_session, fake_polaris, model, catalog)
+
+    assert report.ok, report.errors
+    states = (
+        await db_session.execute(
+            select(SemanticDataset.validation_state).where(SemanticDataset.model_id == model.id)
+        )
+    ).scalars()
+    assert set(states) == {"ok"}

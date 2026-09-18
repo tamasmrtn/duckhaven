@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from api.models.catalog import KIND_ICEBERG_POLARIS
 from api.schemas.grant import AccessMode
 
 
@@ -15,8 +17,10 @@ class CatalogCreate(BaseModel):
     # `catalog.schema.table` SQL). Validated against ^[a-z][a-z0-9_]*$ by the
     # service layer.
     name: str = Field(min_length=1, max_length=255)
-    # Storage backend for the new catalog. When omitted a bundled object-store
-    # backend is auto-provisioned.
+    # Defaults to Iceberg + Polaris, so existing clients are unaffected.
+    # "ducklake" requires DUCKLAKE_ENABLED.
+    kind: Literal["iceberg_polaris", "ducklake"] = KIND_ICEBERG_POLARIS
+    # Orthogonal to `kind`; omitted means a bundled object-store backend.
     storage_backend_id: uuid.UUID | None = None
     # Access mode of the attachment this call creates. Settable here so a catalog
     # meant to be scoped never exists in an open state: it would otherwise be
@@ -31,11 +35,41 @@ class CatalogAttachRequest(BaseModel):
     make_default: bool = False
 
 
+class CatalogCapabilitiesOut(BaseModel):
+    """What a catalog's kind can do, so clients never switch on `kind` itself."""
+
+    supports_storage_migration: bool
+    # False for DuckLake — the trade-off a user makes when choosing it.
+    external_engine_readable: bool
+    supported_storage_kinds: list[str]
+
+
+class CatalogKindOut(BaseModel):
+    """One catalog kind this deployment can offer, for the create flow.
+
+    Served so the UI can describe a kind before any catalog of it exists, and so
+    those facts cannot drift from the backend that implements them.
+    """
+
+    kind: str
+    label: str
+    # False when the kind is known but switched off; the UI greys it out with the
+    # reason rather than hiding it.
+    available: bool
+    unavailable_reason: str | None = None
+    capabilities: CatalogCapabilitiesOut
+
+
 class CatalogOut(BaseModel):
     id: uuid.UUID
     slug: str
     name: str
-    polaris_name: str
+    # Orthogonal to storage_backend_kind below.
+    kind: str = KIND_ICEBERG_POLARIS
+    # Exactly one is set, per kind.
+    polaris_name: str | None = None
+    metadata_schema: str | None = None
+    capabilities: CatalogCapabilitiesOut | None = None
     storage_backend_id: uuid.UUID
     storage_backend_kind: str
     storage_backend_name: str

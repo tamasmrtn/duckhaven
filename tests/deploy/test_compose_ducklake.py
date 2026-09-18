@@ -1,9 +1,8 @@
 """DuckLake's Postgres wiring in the compose files and the init script.
 
-Scope note, matching test_compose_sandbox.py: this asserts the *manifest* and the
-*script text*. That Postgres actually refuses the connection is proved by
-api/tests/integration/test_ducklake_roles.py against a live server. What CI
-guarantees here is that the wiring cannot silently regress.
+Asserts the manifest and script text, as test_compose_sandbox.py does; that
+Postgres actually refuses the connection is proved by
+api/tests/integration/test_ducklake_roles.py against a live server.
 """
 
 from pathlib import Path
@@ -30,22 +29,21 @@ def _networks(service: dict) -> list[str]:
 
 
 def test_postgres_joins_the_agent_network():
-    """Without this the agent cannot reach the DuckLake catalog at all."""
+    """Without this the agent cannot reach the catalog."""
     assert "duckhaven_internal" in _networks(DEV["services"]["postgres"])
 
 
 def test_ha_reaches_postgres_through_the_proxy():
-    """Agents must address the leader-follower proxy, not a Patroni node, so a
-    failover moves DuckLake's catalog connection with everything else."""
+    """Agents address the proxy, not a Patroni node, so failover moves the
+    catalog connection with everything else."""
     assert "duckhaven_internal" in _networks(HA["services"]["pg-haproxy"])
     for node in ("patroni-1", "patroni-2"):
         assert "duckhaven_internal" not in _networks(HA["services"][node]), node
 
 
 def test_public_connect_is_revoked_on_the_control_plane_databases():
-    """The load-bearing line. Postgres grants PUBLIC CONNECT on every database by
-    default, so without these REVOKEs `ducklake_agent` reaches `duckhaven` —
-    users, password hashes and session tokens."""
+    """Postgres grants PUBLIC CONNECT by default, so without these REVOKEs
+    `ducklake_agent` reaches `duckhaven`: users, hashes, session tokens."""
     for script in (INIT_SQL, ENABLE_SQL):
         assert "REVOKE CONNECT ON DATABASE duckhaven FROM PUBLIC" in script
         assert "REVOKE CONNECT ON DATABASE polaris FROM PUBLIC" in script
@@ -59,20 +57,18 @@ def test_agent_role_is_granted_only_the_ducklake_database():
 
 
 def test_init_and_enable_scripts_are_idempotent():
-    """Both run against deployments that may already have the role: the init
-    script on a rebuilt data dir, the enable script on every invocation."""
+    """The init script can run on a rebuilt data dir, the enable script on every
+    invocation."""
     for script in (INIT_SQL, ENABLE_SQL):
         assert "WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'ducklake')" in script
         assert "WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'ducklake_agent')" in script
 
 
 def test_api_gets_the_owner_credential_and_the_agent_role_separately():
-    """Two different logins on purpose: the API does DDL and metadata reads as
-    the owner, agents get the restricted role. Collapsing them into one would
-    hand agents the control-plane database."""
+    """The API is the owner; agents get the restricted role. Collapsing them
+    would hand agents the control-plane database."""
     env = DEV["services"]["api"]["environment"]
-    # Overridable, but the default points the API at the ducklake database as
-    # the owner.
+    # Default points the API at the ducklake database as owner.
     url = env["DUCKLAKE_DATABASE_URL"]
     assert "duckhaven:" in url
     assert url.rstrip("}").endswith("/ducklake")
@@ -86,36 +82,33 @@ def test_ducklake_is_off_by_default():
 
 
 def test_postgres_service_can_set_the_agent_role_password():
-    """The init script reads it from the postgres service's own environment."""
+    """Read from the postgres service's own environment."""
     assert "DUCKLAKE_AGENT_PASSWORD" in DEV["services"]["postgres"]["environment"]
 
 
 def test_backups_cover_the_ducklake_catalog():
-    """A DuckLake table's schema, snapshots and file list live only in that
-    database — a backup without it leaves unreadable Parquet."""
+    """Schema, snapshots and file list live only in that database; a backup
+    without it leaves unreadable Parquet."""
     backup = (ROOT / "scripts" / "pg-backup.sh").read_text()
     assert "ducklake" in backup
     assert "pg_database WHERE datname = 'ducklake'" in backup
 
 
 def test_agent_image_bakes_the_ducklake_extensions():
-    """Not an optimisation: the agent runs on an `internal: true` network and
-    cannot reach extensions.duckdb.org, so an extension that is not baked is an
-    extension it can never have."""
+    """The agent is on an `internal: true` network and cannot reach
+    extensions.duckdb.org, so an unbaked extension is one it can never have."""
     for ext in ("ducklake", "postgres"):
         assert f"'{ext}'" in AGENT_DOCKERFILE, ext
 
 
 def test_agent_advertises_the_ducklake_extensions():
-    """Dispatch is gated on the advertised set, so baking without loading here
-    would make every DuckLake catalog undispatchable."""
+    """Dispatch is gated on the advertised set."""
     for ext in ("ducklake", "postgres"):
         assert f'"{ext}"' in CHANNEL, ext
 
 
 def test_capability_matcher_expects_the_advertised_postgres_name():
-    """DuckDB installs `postgres` and advertises `postgres_scanner`. The image
-    installs the first; the matcher must expect the second."""
+    """The image installs `postgres`; the matcher must expect `postgres_scanner`."""
     from api.services.agent_capabilities import required_catalog_extensions
 
     assert "postgres_scanner" in required_catalog_extensions("ducklake")
@@ -126,11 +119,8 @@ def test_capability_matcher_expects_the_advertised_postgres_name():
 
 
 class _ComposeLoader(yaml.SafeLoader):
-    """SafeLoader that tolerates Compose's merge tags (`!override`, `!reset`).
-
-    They are directives to Compose about how to combine files, not data; for
-    asserting the resulting shape we only need the value they carry.
-    """
+    """Tolerates Compose's merge tags (`!override`, `!reset`), which are
+    directives rather than data; we only need the value they carry."""
 
 
 _ComposeLoader.add_multi_constructor(
@@ -142,24 +132,20 @@ with (DEPLOY / "docker-compose.ducklake-only.yml").open() as f:
 
 
 def test_ducklake_only_overlay_neutralises_polaris():
-    """The operator payoff: a deployment using only DuckLake catalogs needs no
-    catalog service. Compose cannot delete a service an earlier file defined, so
-    both are moved into a profile that is never activated."""
+    """Compose cannot delete a service, so both are moved into a never-activated
+    profile."""
     for service in ("polaris", "polaris-bootstrap"):
         assert DUCKLAKE_ONLY["services"][service]["profiles"] == ["iceberg"], service
 
 
 def test_ducklake_only_overlay_drops_the_polaris_dependency():
-    """`depends_on` is merged across compose files rather than replaced, so an
-    override that simply restates the list leaves the inherited Polaris entry —
-    and depending on a service in an inactive profile is a hard error. The
-    override tag is what actually removes it."""
+    """`depends_on` is merged, not replaced, so restating the list would leave
+    the inherited Polaris entry — a hard error for an inactive profile."""
     api = DUCKLAKE_ONLY["services"]["api"]
     assert "polaris" not in (api.get("depends_on") or {})
     assert "postgres" in (api.get("depends_on") or {})
 
 
 def test_ducklake_only_overlay_turns_the_feature_on():
-    """Selecting the overlay without enabling the only kind it supports would
-    produce a stack that can create no catalogs at all."""
+    """Without this the overlay could create no catalogs at all."""
     assert DUCKLAKE_ONLY["services"]["api"]["environment"]["DUCKLAKE_ENABLED"] == "true"

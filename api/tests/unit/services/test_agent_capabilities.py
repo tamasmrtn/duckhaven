@@ -10,7 +10,7 @@ from api.services.agent_capabilities import (
 def test_required_extension_mapping():
     assert required_extension("s3") == "httpfs"
     assert required_extension("adls_gen2") == "azure"
-    # object_store is the bundled store (S3) and so also needs httpfs.
+    # object_store is the bundled S3 store, so it needs httpfs too.
     assert required_extension("object_store") == "httpfs"
 
 
@@ -30,20 +30,15 @@ def test_cloud_backend_requires_extension():
 
 def test_catalog_kind_extension_mapping():
     assert required_catalog_extensions("ducklake") == ("ducklake", "postgres_scanner")
-    # Iceberg is deliberately ungated: that requirement predates this axis and
-    # has never been enforced, so starting now would be a change about Iceberg,
-    # not about DuckLake. See the mapping's comment.
+    # Iceberg is deliberately ungated (see the mapping's comment).
     assert required_catalog_extensions("iceberg_polaris") == ()
-    # An unknown kind requires nothing: the control plane decides what it can
-    # provision, and a capability check is the wrong place to discover it
-    # disagrees with the database.
+    # An unknown kind requires nothing.
     assert required_catalog_extensions("something_new") == ()
 
 
 def test_ducklake_needs_the_postgres_scanner_spelling():
-    """DuckDB installs the extension as `postgres` but advertises it as
-    `postgres_scanner`. Matching the install name would refuse every DuckLake
-    dispatch with a misleading 'missing extension' error."""
+    """DuckDB installs `postgres` but advertises `postgres_scanner`; matching the
+    install name would refuse every DuckLake dispatch."""
     advertised = {"extensions": ["ducklake", "postgres_scanner", "httpfs"]}
     assert agent_supports_catalog_kind(advertised, "ducklake") is True
     install_name_only = {"extensions": ["ducklake", "postgres", "httpfs"]}
@@ -57,22 +52,21 @@ def test_ducklake_needs_both_of_its_extensions():
 
 
 def test_an_iceberg_only_agent_still_serves_iceberg():
-    """The regression guard: adding the second axis must not narrow the first.
+    """Adding the second axis must not narrow the first.
 
-    Deliberately uses an agent advertising only `httpfs` for the object_store
-    case, because that is what a long-running deployment's agents actually
-    advertise and refusing them would be a regression, not a fix."""
+    The object_store case uses an agent advertising only `httpfs`, which is what
+    long-running deployments' agents actually advertise."""
     assert agent_supports_catalog({"extensions": ["httpfs"]}, "iceberg_polaris", "object_store")
     legacy = {"extensions": ["httpfs", "azure", "iceberg"]}
     assert agent_supports_catalog(legacy, "iceberg_polaris", "object_store") is True
     assert agent_supports_catalog(legacy, "iceberg_polaris", "s3") is True
     assert agent_supports_catalog(legacy, "iceberg_polaris", "adls_gen2") is True
-    # ...but it cannot serve DuckLake, which is the point of advertising.
+    # It cannot serve DuckLake, which is the point of the second axis.
     assert agent_supports_catalog(legacy, "ducklake", "object_store") is False
 
 
 def test_both_axes_must_pass():
-    """A DuckLake catalog on ADLS needs the kind's extensions AND azure."""
+    """A DuckLake catalog on ADLS needs the kind's extensions and azure."""
     no_azure = {"extensions": ["ducklake", "postgres_scanner", "httpfs"]}
     assert agent_supports_catalog(no_azure, "ducklake", "object_store") is True
     assert agent_supports_catalog(no_azure, "ducklake", "adls_gen2") is False

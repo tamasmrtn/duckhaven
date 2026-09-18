@@ -111,9 +111,8 @@ def test_get_capabilities_loads_and_advertises_query_extensions(monkeypatch):
 
     caps = ch_module._get_capabilities()
 
-    # Both axes: storage backends need httpfs/azure, catalog kinds need iceberg
-    # (Polaris) and ducklake + postgres (DuckLake). Dispatch is gated on these
-    # being advertised, so a missing one makes those catalogs undispatchable.
+    # Both axes: storage backends need httpfs/azure; catalog kinds need iceberg
+    # or ducklake + postgres. Dispatch is gated on the advertised set.
     assert loaded == ["httpfs", "azure", "iceberg", "ducklake", "postgres"]
     assert "httpfs" in caps.extensions
     assert "iceberg" in caps.extensions
@@ -590,12 +589,9 @@ async def test_dispatch_sends_done_frame(tmp_path, monkeypatch):
 
 
 async def test_done_frame_forwards_the_ducklake_stats_block(tmp_path, monkeypatch):
-    """A DuckLake probe's metadata has to reach the control plane.
-
-    The done payload names each field explicitly, so a probe block the runner
-    produces but this frame does not copy is silently dropped — which is how
-    DuckLake tables ended up with a row count but no file count.
-    """
+    """The done payload names each field explicitly, so a probe block this frame
+    does not copy is silently dropped — which is how DuckLake tables once ended
+    up with a row count but no file count."""
     import agent.control.channel as ch_module
 
     query_id = str(uuid.uuid4())
@@ -615,8 +611,7 @@ async def test_done_frame_forwards_the_ducklake_stats_block(tmp_path, monkeypatc
             },
         }
 
-    # The channel binds run_query into its own namespace at import, so the
-    # patch has to land there rather than on the supervisor module.
+    # Patch where channel.py imported it, not the supervisor module.
     monkeypatch.setattr(ch_module, "run_query", mock_run_query)
 
     async def handler(ws):

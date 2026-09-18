@@ -1,9 +1,8 @@
 """The catalog descriptor both dispatch paths put on the wire.
 
-These two paths described a catalog differently once — the session path kept the
-four Iceberg-era fields — so a DuckLake catalog attached as Iceberg, failed, and
-was swallowed by the agent's best-effort handler. Silently, for sixteen commits.
-The point of these tests is that the two paths cannot diverge again.
+The two paths once described a catalog differently — the session path kept the
+Iceberg-era fields — so a DuckLake catalog attached as Iceberg and failed
+silently. These tests keep them from diverging again.
 """
 
 from __future__ import annotations
@@ -40,7 +39,7 @@ def _clean_cache():
 
 @pytest.mark.asyncio
 async def test_iceberg_carries_no_credentials():
-    """Polaris vends them on attach, so the control plane must mint nothing."""
+    """Polaris vends on attach, so the control plane mints nothing."""
     entry = await build_catalog_attach(_catalog(KIND_ICEBERG_POLARIS))
     assert entry["kind"] == KIND_ICEBERG_POLARIS
     assert entry["polaris_name"] == "raw"
@@ -50,7 +49,7 @@ async def test_iceberg_carries_no_credentials():
 
 @pytest.mark.asyncio
 async def test_ducklake_carries_both_credentials_and_its_location():
-    """Nothing else will mint these: DuckLake has no credential vendor."""
+    """DuckLake has no credential vendor, so both are minted here."""
     original = settings.ducklake_agent_user
     settings.ducklake_agent_user = "ducklake_agent"
     try:
@@ -62,38 +61,34 @@ async def test_ducklake_carries_both_credentials_and_its_location():
     assert entry["metadata_schema"] == "cat_raw"
     assert entry["data_path"].endswith("/raw/")
     assert entry["meta"]["user"] == "ducklake_agent"
-    # Scoped to this catalog's own prefix: every catalog in a workspace lands on
-    # one connection, so an unscoped secret would serve another's data.
+    # Scoped per catalog: a workspace attaches every catalog to one connection.
     assert entry["storage"]["scope"] == entry["data_path"]
 
 
 @pytest.mark.asyncio
 async def test_a_ducklake_catalog_never_claims_a_polaris_warehouse():
-    """`polaris_name` is NULL for this kind; sending None would make the agent
-    run `ATTACH 'None' ... TYPE ICEBERG`."""
+    """Sending None would make the agent run `ATTACH 'None' ... TYPE ICEBERG`."""
     entry = await build_catalog_attach(_catalog(KIND_DUCKLAKE))
     assert entry["polaris_name"] == ""
 
 
 @pytest.mark.asyncio
 async def test_the_session_path_sends_the_same_descriptor_as_a_query():
-    """The regression that matters. If these diverge again, a DuckLake catalog
-    stops attaching in SQL sessions and nothing reports it."""
+    """If these diverge again, DuckLake stops attaching in sessions silently."""
     from api.services.sql_sessions.service import _catalog_descriptors
 
     catalogs = [_catalog(KIND_ICEBERG_POLARIS, "ice"), _catalog(KIND_DUCKLAKE, "lake")]
     session_side = await _catalog_descriptors(catalogs)
     query_side = [await build_catalog_attach(c) for c in catalogs]
     assert session_side == query_side
-    # And it is genuinely the DuckLake shape, not just two matching stubs.
+    # And it is the DuckLake shape, not just two matching stubs.
     assert session_side[1]["kind"] == KIND_DUCKLAKE
     assert "meta" in session_side[1]
 
 
 @pytest.mark.asyncio
 async def test_external_credentials_are_minted_once_per_catalog(monkeypatch):
-    """Minting is a network round-trip on the query dispatch path; doing it per
-    query would put an STS call in front of every statement."""
+    """Per-query minting would put an STS call in front of every statement."""
     import boto3
 
     calls = {"n": 0}
@@ -128,8 +123,7 @@ async def test_external_credentials_are_minted_once_per_catalog(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_the_bundled_store_is_not_cached_because_it_mints_nothing():
-    """It reads settings, so caching would only add a way to serve a stale
-    endpoint after an operator moves the store."""
+    """It reads settings, so caching could only serve a stale endpoint."""
     cat = _catalog(KIND_DUCKLAKE)
     await build_catalog_attach(cat)
     assert (

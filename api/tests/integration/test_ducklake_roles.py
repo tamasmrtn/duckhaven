@@ -1,8 +1,7 @@
 """The DuckLake agent role reaches its own database and nothing else.
 
-`tests/deploy/test_compose_ducklake.py` asserts the REVOKEs are *written*; this
-asserts Postgres enforces them, which is the claim that matters. Env-gated on a
-live server whose init scripts have run. See
+`tests/deploy/test_compose_ducklake.py` asserts the REVOKEs are written; this
+asserts Postgres enforces them. See
 deploy/postgres-init/20-create-ducklake-db.sh.
 """
 
@@ -57,9 +56,8 @@ async def test_agent_role_can_open_the_ducklake_database() -> None:
 async def test_agent_role_cannot_open_the_control_plane_databases(database: str) -> None:
     """If this ever passes, an agent can read the credentials table.
 
-    The refusal happens at connect time, so asyncpg raises its own
-    ``InsufficientPrivilegeError`` before SQLAlchemy gets a chance to wrap it in
-    ``DBAPIError`` — catch both rather than assuming which layer reports it.
+    Refused at connect time: asyncpg raises before SQLAlchemy can wrap it, so
+    catch both.
     """
     with pytest.raises((asyncpg.PostgresError, DBAPIError)) as excinfo:
         await _connect(database)
@@ -68,7 +66,7 @@ async def test_agent_role_cannot_open_the_control_plane_databases(database: str)
 
 @pytest.mark.asyncio
 async def test_agent_role_is_not_a_superuser() -> None:
-    """A superuser would bypass every CONNECT grant above."""
+    """A superuser bypasses every CONNECT grant above."""
     engine = create_async_engine(_agent_url("ducklake"), poolclass=None)
     try:
         async with engine.connect() as conn:

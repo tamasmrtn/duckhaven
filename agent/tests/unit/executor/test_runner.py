@@ -306,7 +306,7 @@ def test_iceberg_metadata_best_effort_on_failure():
 
 
 def test_ducklake_health_reports_file_and_snapshot_metrics():
-    """The DuckLake health probe fills the same keys the Iceberg one does."""
+    """The DuckLake probe fills the same keys as the Iceberg one."""
     from agent.executor.runner import collect_ducklake_table_health
 
     class FakeConn:
@@ -314,7 +314,7 @@ def test_ducklake_health_reports_file_and_snapshot_metrics():
             if "ducklake_snapshots" in sql:
                 self._row = (19, 0.4571759)
             elif "ducklake_list_files" in sql:
-                # 5 files, 2.2 GB total, 444 MB average, 1 under target.
+                # 5 files, 2.2 GB, 444 MB average, 1 under target.
                 self._row = (5, 2223533507, 444706701, 1)
             elif "ducklake_data_file" in sql:  # the table-scoped snapshot lookup
                 self._row = (10,)
@@ -333,28 +333,25 @@ def test_ducklake_health_reports_file_and_snapshot_metrics():
         target_file_bytes=128 * 1024**2,
         metadata_schema="cat_lake",
     )
-    # Catalog-scoped, because DuckLake snapshots are catalog commits and expiry
-    # is catalog-level.
+    # Catalog-scoped, matching expiry.
     assert health["snapshot_count"] == 19
     assert health["oldest_snapshot_age_days"] == 0.4572
-    # Table-scoped, because the scanner compares it to decide whether *this*
-    # table needs re-probing.
+    # Table-scoped: the scanner compares this to decide whether to re-probe.
     assert health["snapshot_id"] == 10
     assert health["data_file_count"] == 5
     assert health["total_data_bytes"] == 2223533507
     assert health["avg_file_bytes"] == 444706701
     assert health["small_file_ratio"] == 0.2
-    # No DuckLake counterpart: metadata is Postgres rows, not objects. Left None
-    # so the manifest-rewrite recommendation drops out instead of prescribing a
-    # command that does not exist.
+    # No DuckLake counterpart (metadata is Postgres rows), so the manifest
+    # rewrite drops out rather than prescribing a command that does not exist.
     assert health["manifest_count"] is None
     assert health["metadata_bytes"] is None
-    # Orphans are deep-tier only and need the metadata schema.
+    # Orphans need the deep tier and a metadata schema.
     assert health["orphan_file_count"] is None
 
 
 def test_ducklake_health_is_best_effort_per_field():
-    """One failing probe costs its own fields, not the whole sample."""
+    """A failing probe costs its own fields only."""
     from agent.executor.runner import collect_ducklake_table_health
 
     class HalfBrokenConn:
@@ -376,7 +373,7 @@ def test_ducklake_health_is_best_effort_per_field():
 
 
 def test_ducklake_health_counts_orphans_exactly_on_the_deep_tier():
-    """DuckLake schedules superseded files for deletion, so the count is exact."""
+    """DuckLake schedules superseded files, so the count is exact."""
     from agent.executor.runner import collect_ducklake_table_health
 
     class FakeConn:
@@ -408,18 +405,14 @@ def test_ducklake_health_counts_orphans_exactly_on_the_deep_tier():
         include_orphans=True,
     )
     assert health["orphan_file_count"] == 3
-    # The deletion table carries no size column, so bytes come from the live
-    # average; the count is the exact part.
+    # No size column, so bytes use the live average; the count is exact.
     assert health["orphan_bytes"] == 3000
 
 
 def test_health_probe_picks_the_probe_for_the_catalogs_kind(tmp_path, monkeypatch):
-    """A DuckLake table must not be health-probed with the Iceberg functions.
-
-    Doing so produced an all-null sample for every DuckLake table, and therefore
-    no maintenance recommendations at all. It must also not require a Polaris
-    block, which a DuckLake-only workspace has none of.
-    """
+    """The Iceberg functions produced an all-null sample for every DuckLake
+    table, and it must not require a Polaris block a DuckLake-only workspace
+    does not have."""
     from agent.executor import runner as runner_module
 
     calls: list[str] = []
@@ -446,7 +439,7 @@ def test_health_probe_picks_the_probe_for_the_catalogs_kind(tmp_path, monkeypatc
 
 
 def test_ducklake_metadata_counts_files_and_deletes():
-    """The DuckLake probe reads both counts out of one ducklake_list_files pass."""
+    """Both counts come from one ducklake_list_files pass."""
     from agent.executor.runner import _ducklake_metadata
 
     class FakeConn:
@@ -462,13 +455,13 @@ def test_ducklake_metadata_counts_files_and_deletes():
     meta = _ducklake_metadata(FakeConn(), "cat", "analytics", "events")
     assert meta["data_file_count"] == 5
     assert meta["has_deletes"] is True
-    # A DuckLake snapshot is a catalog commit, not a table one — never faked.
+    # Catalog-wide commits; never faked as per-table.
     assert meta["snapshot_id"] is None
     assert meta["snapshot_at"] is None
 
 
 def test_ducklake_metadata_best_effort_on_failure():
-    """A probe failure degrades to all-null rather than failing the query."""
+    """A probe failure degrades to all-null."""
     from agent.executor.runner import _ducklake_metadata
 
     class BoomConn:
@@ -484,7 +477,7 @@ def test_ducklake_metadata_best_effort_on_failure():
 
 
 def test_catalog_kind_resolves_by_slug():
-    """The probe picks its format from the target catalog, not the workspace."""
+    """The probe picks its format from the target catalog."""
     from agent.executor.runner import _catalog_kind
 
     catalogs = [
@@ -494,18 +487,14 @@ def test_catalog_kind_resolves_by_slug():
     ]
     assert _catalog_kind(catalogs, "lake") == "ducklake"
     assert _catalog_kind(catalogs, "berg") == "iceberg_polaris"
-    # An attach entry from an agent-era before catalog kinds, and a slug that
-    # is not attached at all, both mean Iceberg.
+    # A pre-kinds attach entry, and an un-attached slug, both mean Iceberg.
     assert _catalog_kind(catalogs, "legacy") == "iceberg_polaris"
     assert _catalog_kind(catalogs, "absent") == "iceberg_polaris"
 
 
 def test_stats_for_skips_the_iceberg_probe_on_a_ducklake_catalog(tmp_path):
-    """A DuckLake table must not be probed with iceberg_snapshots/iceberg_metadata.
-
-    It fails with "is not an Iceberg table" on every field, which left the
-    table-detail file counts empty and logged two warnings per probed table.
-    """
+    """The Iceberg probe fails with "is not an Iceberg table" on every field,
+    leaving file counts empty and logging two warnings per table."""
     result_path = tmp_path / "out.parquet"
 
     def seed(conn):
@@ -519,16 +508,16 @@ def test_stats_for_skips_the_iceberg_probe_on_a_ducklake_catalog(tmp_path):
         stats_for={"catalog": "memory", "schema": "main", "table": "events"},
         on_connect=seed,
     )
-    # The row count is format-agnostic and still lands.
+    # The row count is format-agnostic.
     assert stats["table_row_count"] == 3
     assert "iceberg" not in stats
-    # The DuckLake probe ran. There is no real DuckLake attached here, so it
-    # degrades to all-null — the point is which probe was chosen.
+    # The DuckLake probe ran and degrades to all-null here; the point is which
+    # probe was chosen.
     assert "ducklake" in stats
 
 
 def test_stats_for_uses_the_iceberg_probe_on_an_iceberg_catalog(tmp_path):
-    """The Iceberg path is unchanged: same probe, same payload key."""
+    """The Iceberg path is unchanged."""
     result_path = tmp_path / "out.parquet"
 
     def seed(conn):

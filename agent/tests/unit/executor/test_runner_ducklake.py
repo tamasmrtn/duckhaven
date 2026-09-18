@@ -1,8 +1,7 @@
 """The DuckLake attach path: what SQL the runner emits, and what it must not.
 
-Uses a recording fake connection rather than a live DuckDB, so these run with no
-infrastructure. The end-to-end behaviour (a real ATTACH against Postgres +
-object storage) is covered by agent/tests/integration/test_ducklake_roundtrip.py.
+A recording fake connection, so these run with no infrastructure; the real
+ATTACH is covered by agent/tests/integration/test_ducklake_roundtrip.py.
 """
 
 from __future__ import annotations
@@ -13,7 +12,7 @@ from agent.executor import runner
 
 
 class FakeConn:
-    """Records every statement and bind list it is given."""
+    """Records statements and bind lists."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, list]] = []
@@ -83,9 +82,8 @@ def test_ducklake_attach_emits_the_expected_statements():
 
 
 def test_the_postgres_password_never_appears_in_statement_text():
-    """DuckLake reports a failed attach by echoing the connection string, so an
-    inline password would surface in error messages and logs. It goes in a
-    secret, as a bind parameter."""
+    """DuckLake echoes the connection string on a failed attach, so an inline
+    password would surface in errors and logs. It is a secret bind parameter."""
     conn = FakeConn()
     runner._attach_ducklake(conn, _ducklake_catalog())
     assert "s3cr3t-pw" not in conn.sql_text()
@@ -94,8 +92,8 @@ def test_the_postgres_password_never_appears_in_statement_text():
 
 
 def test_the_storage_secret_is_scoped_to_the_catalog_prefix():
-    """Every catalog in a workspace is attached onto one connection, so without
-    SCOPE one catalog's credential would serve another's data."""
+    """All of a workspace's catalogs share one connection, so SCOPE keeps one
+    catalog's credential off another's data."""
     conn = FakeConn()
     runner._attach_ducklake(conn, _ducklake_catalog("raw"))
     secret_call = next(c for c in conn.calls if "TYPE S3" in c[0])
@@ -127,8 +125,7 @@ def test_azure_storage_uses_an_azure_secret():
 
 
 def test_a_ducklake_only_workspace_creates_no_iceberg_secret():
-    """The whole point of a Polaris-free deployment: no Polaris credential is
-    needed, and reading one unconditionally used to make the attach fail."""
+    """Polaris-free deployment: no Iceberg secret is created at all."""
     conn = FakeConn()
     runner._attach_catalogs(conn, catalogs=[_ducklake_catalog()], active_catalog="raw", polaris={})
     text = conn.sql_text()
@@ -152,7 +149,7 @@ def test_a_mixed_workspace_attaches_both_kinds():
 
 
 def test_an_iceberg_only_workspace_is_attached_exactly_as_before():
-    """Regression guard on the untouched path."""
+    """The Iceberg path is unchanged."""
     conn = FakeConn()
     runner._attach_catalogs(
         conn, catalogs=[_iceberg_catalog()], active_catalog="ice", polaris=_POLARIS
@@ -164,7 +161,7 @@ def test_an_iceberg_only_workspace_is_attached_exactly_as_before():
 
 
 def test_one_broken_catalog_does_not_fail_the_others():
-    """Per-catalog attach stays best-effort."""
+    """Attach is per-catalog best-effort."""
     broken = _ducklake_catalog("broken")
     del broken["meta"]  # KeyError inside _attach_ducklake
     conn = FakeConn()
@@ -178,9 +175,8 @@ def test_one_broken_catalog_does_not_fail_the_others():
 
 
 def test_retry_settings_are_pinned_and_not_user_changeable():
-    """Set before the sandbox locks configuration, and deliberately absent from
-    the allowed-configs list so a user statement cannot change how its own
-    writes retry."""
+    """Set before the sandbox locks configuration, and absent from
+    `_ALLOWED_CONFIGS` so a statement cannot change its own retries."""
     conn = FakeConn()
     runner._configure_ducklake(conn)
     text = conn.sql_text()
@@ -196,7 +192,6 @@ def test_retry_settings_are_pinned_and_not_user_changeable():
     [("iceberg_polaris", ("iceberg",)), ("ducklake", ("ducklake", "postgres"))],
 )
 def test_catalog_kind_extensions_use_the_install_name(kind, expected):
-    """The runner INSTALLs `postgres`; the control plane matches the advertised
-    `postgres_scanner`. The two spellings are deliberate — see
-    api/services/agent_capabilities.py."""
+    """The runner installs `postgres`; the control plane matches the advertised
+    `postgres_scanner`."""
     assert runner._CATALOG_KIND_EXTENSIONS[kind] == expected

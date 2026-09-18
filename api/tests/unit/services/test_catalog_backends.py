@@ -1,10 +1,8 @@
 """The catalog-metadata seam: registry, capabilities and error translation.
 
-The behaviour of the Polaris backend itself is covered by the existing router
-suite (`routers/test_schemas.py`), which now exercises it end to end. What is
-tested here is the seam's own contract — that a kind resolves to a backend, that
-capabilities describe the kind honestly, and that a metastore failure keeps the
-HTTP status it had before the seam existed.
+The Polaris backend's own behaviour is covered by the router suite
+(`routers/test_schemas.py`), which now exercises it end to end. Here: kind
+resolution, honest capabilities, and HTTP status preserved across the seam.
 """
 
 from __future__ import annotations
@@ -44,9 +42,7 @@ def test_iceberg_catalog_resolves_to_the_polaris_backend():
 def test_both_backends_implement_every_protocol_method():
     """Catches a method added to the Protocol without an implementation.
 
-    Compares the method *names* only — that is all a Protocol can be checked
-    against without a type checker, so a changed signature or a sync/async
-    mismatch still gets through here.
+    Names only; signatures still need a type checker.
     """
     from api.services.catalog_backends.ducklake import DuckLakeCatalogBackend
 
@@ -83,8 +79,7 @@ def test_unknown_kind_is_refused_by_name():
     ],
 )
 def test_polaris_errors_translate_one_to_one(polaris_exc, expected):
-    """The mapping has to stay 1:1 with the app-level handler's status codes, or
-    a Polaris failure silently changes the HTTP response it used to produce."""
+    """The mapping stays 1:1 with the app-level handler's status codes."""
     translated = _translate(polaris_exc)
     assert isinstance(translated, expected)
     assert str(translated) == str(polaris_exc)
@@ -92,12 +87,8 @@ def test_polaris_errors_translate_one_to_one(polaris_exc, expected):
 
 def test_iceberg_capabilities_are_honest():
     caps = capabilities_for(KIND_ICEBERG_POLARIS)
-    # An Iceberg snapshot belongs to one table.
-    # Spark/Trino/Flink/PyIceberg can read these tables — the reason Iceberg is
-    # the default kind.
+    # Spark/Trino/Flink/PyIceberg can read these tables, unlike DuckLake.
     assert caps.external_engine_readable is True
-    # DuckDB's iceberg extension cannot run compaction or snapshot expiry, which
-    # is why the maintenance advisor recommends rather than applies.
     assert caps.supports_storage_migration is True
     assert set(caps.supported_storage_kinds) == {"object_store", "s3", "adls_gen2"}
 
@@ -112,10 +103,6 @@ def test_ducklake_catalog_resolves_to_the_ducklake_backend():
 
 def test_ducklake_capabilities_state_the_trade_off():
     caps = capabilities_for(KIND_DUCKLAKE)
-    # A DuckLake snapshot is a commit against the catalog, not one table.
-    # The cost: no other engine can open these tables. This is what the create
-    # dialog has to tell the user before they choose.
+    # No other engine can open these tables.
     assert caps.external_engine_readable is False
-    # The win: DuckDB can actually run this kind's maintenance.
-    # Iceberg's path-rewriting migration engine does not apply here.
     assert caps.supports_storage_migration is False

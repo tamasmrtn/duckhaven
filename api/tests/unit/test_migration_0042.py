@@ -26,7 +26,7 @@ def migration_module():
 
 
 def _seed(conn, rows=(("c1", "raw", "raw"),)):
-    """A catalogs table shaped like 0041 leaves it, plus pre-existing rows."""
+    """A catalogs table shaped like 0041, plus pre-existing rows."""
     conn.execute(
         text(
             "CREATE TABLE catalogs ("
@@ -67,8 +67,7 @@ def test_upgrade_adds_the_columns(migration_module):
 
 
 def test_upgrade_backfills_existing_catalogs_as_iceberg(migration_module):
-    """Every catalog that existed before this migration is Iceberg + Polaris;
-    nothing about it changes behaviourally."""
+    """Every pre-existing catalog becomes Iceberg + Polaris, behaviourally unchanged."""
     engine = create_engine("sqlite://")
     with engine.begin() as conn:
         _seed(conn, rows=(("c1", "raw", "raw"), ("c2", "curated", "curated")))
@@ -116,9 +115,8 @@ def test_downgrade_restores_the_original_shape(migration_module):
 
 
 def test_downgrade_refuses_while_a_ducklake_catalog_exists(migration_module):
-    """metadata_schema is the only pointer to that catalog's metadata. Dropping
-    it would strand the schema in the `ducklake` database with nothing
-    referencing it, so fail loudly instead."""
+    """``metadata_schema`` is the only pointer to that catalog's metadata;
+    dropping it would strand the schema, so fail loudly."""
     engine = create_engine("sqlite://")
     with engine.begin() as conn:
         _seed(conn)
@@ -137,8 +135,7 @@ def test_downgrade_refuses_while_a_ducklake_catalog_exists(migration_module):
 
 
 def test_check_constraint_rejects_a_catalog_with_neither_identity(migration_module):
-    """A row with no polaris_name and no metadata_schema is a catalog nobody can
-    open. Enforced in the schema rather than left to the service layer."""
+    """Neither identity set is a catalog nobody can open; enforced in the schema."""
     from sqlalchemy.exc import IntegrityError
 
     engine = create_engine("sqlite://")
@@ -157,8 +154,7 @@ def test_check_constraint_rejects_a_catalog_with_neither_identity(migration_modu
 
 
 def test_check_constraint_rejects_a_catalog_claiming_both_identities(migration_module):
-    """An Iceberg catalog with a DuckLake metadata schema (or the reverse) means
-    two sources of truth for where its tables live."""
+    """Both identities set means two sources of truth for where the tables live."""
     from sqlalchemy.exc import IntegrityError
 
     engine = create_engine("sqlite://")

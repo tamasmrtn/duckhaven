@@ -88,10 +88,8 @@ def _api_env(db_url: str, setup_token_file: Path) -> dict[str, str]:
             "SQL_SESSIONS_ENABLED": "true",
         }
     )
-    # DuckLake, when the harness is pointed at a catalog database. Off (and its
-    # tests skipped) otherwise, so the suite still runs against a stack that has
-    # only Polaris. The agent role's details come from the same environment the
-    # DuckLake integration tests use.
+    # DuckLake only when DUCKLAKE_DATABASE_URL is set; its tests skip otherwise,
+    # so the suite still runs against a Polaris-only stack.
     if ducklake_url := os.getenv("DUCKLAKE_DATABASE_URL"):
         env.update(
             {
@@ -272,14 +270,9 @@ def stack(_require_env, tmp_path_factory) -> Iterator[Stack]:
 def _agent_healthy(base_url: str) -> bool:
     """True once an agent has registered *and* advertised what it can do.
 
-    Those are two frames, in that order: the agent reports healthy on AUTH_OK,
-    and only then opens DuckDB to describe itself. Waiting on status alone let
-    the suite start against an agent whose ``capabilities`` were still null,
-    which fails the lifecycle assertion outright and leaves dispatch — gated on
-    the advertised extension set — depending on timing.
-
-    The window is real rather than theoretical: an extension's first ``LOAD``
-    downloads it when the runner has no cached copy, and the agent loads five.
+    Health is reported on AUTH_OK, before the agent opens DuckDB to describe
+    itself, so waiting on status alone can start the suite against an agent
+    whose ``capabilities`` are still null.
     """
     with httpx.Client(base_url=base_url, timeout=5.0) as c:
         login = c.post("/api/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
@@ -299,13 +292,9 @@ async def api_client(stack: Stack):
 
 @pytest_asyncio.fixture
 async def healthy_agent(api_client) -> dict:
-    """The registered, healthy agent as the API reports it.
-
-    Requires advertised capabilities, not just a healthy status — the stack
-    fixture already waits for both, so an agent without them here is a
-    disposable one a `spawn_agent` test started and has not finished
-    registering, never the session agent.
-    """
+    """The registered, healthy agent with advertised capabilities. The stack
+    fixture already waits for both, so a match without them is a disposable
+    agent a `spawn_agent` test started."""
     agents = (await api_client.get("/api/agents")).json()
     healthy = [a for a in agents if a["status"] == "healthy" and a.get("capabilities")]
     assert healthy, "expected a healthy agent with advertised capabilities in the live stack"

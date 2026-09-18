@@ -67,14 +67,9 @@ async def test_start_migration(auth_client, owner, db_session):
 
 
 async def test_start_migration_refuses_a_ducklake_catalog(auth_client, owner, db_session):
-    """Storage migration is an Iceberg algorithm and must be refused, not attempted.
-
-    It stands up a shadow Polaris catalog and rewrites the absolute URIs in each
-    table's metadata tree. A DuckLake catalog has neither -- relative paths,
-    metadata as Postgres rows -- so running it would build a shadow catalog for
-    a NULL polaris_name. The migrations page already filters these out of its
-    source picker; the API has to refuse them too.
-    """
+    """Storage migration rewrites Iceberg metadata trees and would build a shadow
+    catalog for a NULL polaris_name. The page filters these out of its picker;
+    the API must refuse them too."""
     _, catalog = await seed_workspace(db_session, user_id=owner.id, slug="dl", name="DL")
     catalog.kind = "ducklake"
     catalog.polaris_name = None

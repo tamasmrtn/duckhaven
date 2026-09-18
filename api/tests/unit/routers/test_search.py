@@ -263,14 +263,10 @@ async def test_underscore_in_query_does_not_wildcard_match_saved_queries(
 async def test_search_sees_a_ducklake_catalogs_tables(
     auth_client: AsyncClient, backend: StorageBackend, db_session, fake_polaris, monkeypatch
 ):
-    """Search has to ask each catalog's own metadata backend.
-
-    A DuckLake catalog's ``polaris_name`` is NULL, so the old code's
-    ``polaris.list_schemas(cat.polaris_name)`` failed for it, the failure was
-    swallowed as a stale namespace, and the catalog's tables were invisible to
-    the command palette. Here the real DuckLake backend runs -- only its one
-    data-access method is stubbed -- so the dispatch and the row mapping are
-    both exercised.
+    """A DuckLake catalog's ``polaris_name`` is NULL, so the old
+    ``polaris.list_schemas(cat.polaris_name)`` failed and was swallowed, hiding
+    its tables. The real DuckLake backend runs here with only its data access
+    stubbed, exercising both dispatch and row mapping.
     """
     slug = await _make_workspace(auth_client, backend)
     await db_session.execute(

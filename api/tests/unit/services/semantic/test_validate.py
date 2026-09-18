@@ -361,13 +361,8 @@ async def test_revalidation_clears_a_previous_failure(db_session, fake_polaris):
 
 
 async def test_a_ducklake_bound_model_validates(db_session, fake_polaris, monkeypatch):
-    """A model bound to a DuckLake catalog is checked, not declared broken.
-
-    Bindings used to be looked up by ``polaris_name``, which is NULL for a
-    DuckLake catalog — so every DuckLake dataset came back "broken" with "the
-    catalog this dataset binds to is no longer available", when the catalog was
-    fine and only the lookup key was wrong. Reading through the catalog's own
-    metadata backend is what fixes it.
+    """Bindings were once looked up by ``polaris_name``, NULL for DuckLake, so
+    every such dataset came back "broken" though only the lookup key was wrong.
     """
     ws, catalog = await seed_workspace(db_session, user_id=uuid.uuid4())
     catalog.kind = "ducklake"

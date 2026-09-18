@@ -184,14 +184,9 @@ async def test_create_query_dispatches(
 async def test_dispatch_payload_carries_backend_and_no_credentials(
     authed_client: AsyncClient, db_session, user: User, connected_agent
 ):
-    """The dispatch frame carries the catalog descriptors (each with its kind and
-    backend) but, for an Iceberg catalog, no storage credentials and no catalog
-    endpoint — the agent attaches Polaris from its own config and Polaris vends
-    storage creds on attach.
-
-    This stays true now that DuckLake catalogs *do* carry vended credentials:
-    the credential blocks are populated per kind, and an Iceberg catalog must
-    keep carrying none."""
+    """For an Iceberg catalog: the descriptor, but no credentials and no catalog
+    endpoint — the agent attaches Polaris from its config, which vends storage
+    creds. The blocks are populated per kind, and Iceberg keeps carrying none."""
     import json
 
     agent, mock_ws = connected_agent
@@ -225,8 +220,7 @@ async def test_dispatch_payload_carries_backend_and_no_credentials(
         }
     ]
     assert "storage_credentials" not in payload
-    # The DuckLake credential blocks must stay absent for an Iceberg catalog:
-    # Polaris vends its storage creds, so the control plane mints nothing.
+    # Iceberg carries no credential blocks: Polaris vends storage creds.
     assert "meta" not in payload["catalogs"][0]
     assert "storage" not in payload["catalogs"][0]
 

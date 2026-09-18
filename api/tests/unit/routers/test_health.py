@@ -70,11 +70,8 @@ async def test_readyz_503_when_polaris_unreachable(client: AsyncClient, db_sessi
 
 
 async def test_readyz_ignores_polaris_when_no_iceberg_catalog_exists(client: AsyncClient):
-    """A DuckLake-only deployment does not run Polaris at all. Pinging it
-    unconditionally would keep such a stack permanently un-ready.
-
-    Deliberately keyed on what is deployed (does an Iceberg catalog exist?)
-    rather than on a feature flag, so the answer cannot disagree with reality."""
+    """A DuckLake-only deployment does not run Polaris, so readiness is keyed on
+    whether an Iceberg catalog exists, not on a feature flag."""
     api_app.dependency_overrides[get_polaris_client] = lambda: _BrokenPolaris()
     try:
         resp = await client.get("/readyz")

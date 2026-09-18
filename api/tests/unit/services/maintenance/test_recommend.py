@@ -97,9 +97,8 @@ def test_rewrite_manifests_needs_data_files():
 
 
 # --- Per-kind remediation ---------------------------------------------------
-# The findings are format-neutral (too many small files is too many small
-# files); the fix is not. DuckDB can run DuckLake's maintenance and cannot run
-# Iceberg's, which is the one real capability difference between the kinds.
+# The findings are format-neutral; the fix is not. DuckDB can run DuckLake's
+# maintenance and cannot run Iceberg's.
 
 
 def _small_files_metrics() -> dict:
@@ -122,8 +121,7 @@ def test_ducklake_remediation_names_commands_duckdb_can_run():
 
 
 def test_ducklake_snapshot_expiry_is_catalog_level():
-    """`expire_older_than` has global scope in DuckLake, so the command cannot
-    be narrowed to one table the way Iceberg's can."""
+    """`expire_older_than` has global scope, so the command cannot name a table."""
     metrics = {"snapshot_count": 500, "oldest_snapshot_age_days": 400}
     recs = recommend.generate(metrics, T, catalog_kind="ducklake")
     expire = next((r for r in recs if r["kind"] == "expire_snapshots"), None)
@@ -134,8 +132,7 @@ def test_ducklake_snapshot_expiry_is_catalog_level():
 
 
 def test_manifest_rewrites_are_dropped_for_ducklake():
-    """Manifests are an Iceberg structure with no DuckLake counterpart, so the
-    recommendation is dropped rather than given a command that does not exist."""
+    """No DuckLake counterpart, so it is dropped rather than given a fake command."""
     metrics = {"manifest_count": 5000, "data_file_count": 10}
     iceberg = recommend.generate(metrics, T)
     ducklake = recommend.generate(metrics, T, catalog_kind="ducklake")
@@ -144,8 +141,6 @@ def test_manifest_rewrites_are_dropped_for_ducklake():
 
 
 def test_ducklake_still_advises_rather_than_applying():
-    """DuckDB *can* run these, but DuckHaven does not yet: executing maintenance
-    needs its own design (authorization, locking, audit). This flag is what
-    flips when that lands."""
+    """DuckDB can run these, but DuckHaven does not yet; this flag flips when it does."""
     recs = recommend.generate(_small_files_metrics(), T, catalog_kind="ducklake")
     assert all(r["remediation"]["applicable_in_app"] is False for r in recs)

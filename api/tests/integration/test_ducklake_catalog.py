@@ -1,14 +1,9 @@
 """DuckLake provisioning and metadata reads against a live Postgres.
 
-Covers what the unit suite cannot: that provisioning creates a real schema with
-real grants, that the metadata reads match the DuckLake 1.0 table shapes, and
-that a catalog which has never been attached reads as empty rather than
-erroring.
-
-Env-gated on ``DUCKLAKE_DATABASE_URL`` (the owner credential). The DuckDB half —
-attaching and writing as an agent would — is skipped unless
-``DUCKLAKE_AGENT_PASSWORD`` and ``DUCKLAKE_TEST_S3_ENDPOINT`` are also set,
-because that half needs the object store too.
+Covers what the unit suite cannot: real schemas and grants, metadata reads
+matching the DuckLake 1.0 table shapes, and a never-attached catalog reading
+empty. Env-gated on ``DUCKLAKE_DATABASE_URL``; the DuckDB half additionally
+needs ``DUCKLAKE_AGENT_PASSWORD`` and ``DUCKLAKE_TEST_S3_ENDPOINT``.
 """
 
 from __future__ import annotations
@@ -40,7 +35,7 @@ def _ducklake_settings():
 
 @pytest.fixture
 async def catalog():
-    """A uniquely-named DuckLake catalog, provisioned and torn down."""
+    """A uniquely-named catalog, provisioned and torn down."""
     slug = f"it_{uuid.uuid4().hex[:8]}"
     cat = Catalog(
         slug=slug, name=slug, kind=KIND_DUCKLAKE, metadata_schema=metadata_schema_for(slug)
@@ -70,7 +65,7 @@ async def test_provision_creates_the_metadata_schema(catalog):
 
 @pytest.mark.asyncio
 async def test_provision_is_idempotent(catalog):
-    """Called on browse as a self-heal, so it runs constantly."""
+    """Called on browse as a self-heal."""
     backend = backend_for(catalog)
     await backend.provision(catalog)
     await backend.provision(catalog)
@@ -78,7 +73,7 @@ async def test_provision_is_idempotent(catalog):
 
 @pytest.mark.asyncio
 async def test_the_agent_role_is_granted_on_the_new_schema(catalog):
-    """Without this the extension cannot build its tables on first attach."""
+    """The extension builds its tables on first attach and needs this."""
     from sqlalchemy import text
 
     from api.services.catalog_backends.ducklake import get_engine
@@ -96,9 +91,8 @@ async def test_the_agent_role_is_granted_on_the_new_schema(catalog):
 
 @pytest.mark.asyncio
 async def test_a_never_attached_catalog_reads_as_empty(catalog):
-    """The schema exists but the ducklake_* tables do not until an agent
-    attaches. That is a real state for a freshly created catalog, and browsing
-    it should show nothing rather than fail."""
+    """The ducklake_* tables do not exist until an agent attaches, so a fresh
+    catalog browses as empty rather than failing."""
     backend = backend_for(catalog)
     assert await backend.list_schemas(catalog) == []
     assert await backend.list_tables(catalog, "analytics") == []
@@ -121,7 +115,7 @@ async def test_deprovision_removes_the_schema(catalog):
             {"n": catalog.metadata_schema},
         )
         assert found.scalar_one_or_none() is None
-    # Re-provision so the fixture's teardown has something to drop.
+    # Re-provision for the fixture's teardown.
     await backend.provision(catalog)
 
 
@@ -130,8 +124,7 @@ async def test_deprovision_removes_the_schema(catalog):
 
 @pytest.mark.asyncio
 async def test_create_ducklake_catalog_through_the_api(admin_client, workspace_factory):
-    """The whole point: an operator can create one, and it comes back describing
-    itself honestly."""
+    """An operator can create one, and it describes itself honestly."""
     ws = await workspace_factory()
     slug = f"api_{uuid.uuid4().hex[:8]}"
     resp = await admin_client.post(
@@ -141,12 +134,12 @@ async def test_create_ducklake_catalog_through_the_api(admin_client, workspace_f
     body = resp.json()
     assert body["kind"] == "ducklake"
     assert body["metadata_schema"] == f"cat_{slug}"
-    # Exactly one identity, per ck_catalogs_kind_identity.
+    # Exactly one identity per ck_catalogs_kind_identity.
     assert body["polaris_name"] is None
     caps = body["capabilities"]
     assert caps["external_engine_readable"] is False
 
-    # And it is droppable, which also purges its prefix and schema.
+    # Droppable, purging its prefix and schema.
     detach = await admin_client.delete(f"/workspaces/{ws['slug']}/catalogs/{slug}")
     assert detach.status_code == 204, detach.text
     drop = await admin_client.delete(f"/catalogs/{body['id']}")
@@ -173,7 +166,7 @@ async def test_creating_a_ducklake_catalog_is_refused_when_disabled(
 
 @pytest.mark.asyncio
 async def test_an_iceberg_catalog_still_reports_its_own_kind(admin_client, workspace_factory):
-    """Regression guard: the default path is untouched and self-describing."""
+    """The default path is untouched."""
     ws = await workspace_factory()
     slug = f"ice_{uuid.uuid4().hex[:8]}"
     resp = await admin_client.post(f"/workspaces/{ws['slug']}/catalogs", json={"name": slug})

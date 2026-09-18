@@ -246,9 +246,7 @@ def test_each_resident_block_is_within_budget():
 
 
 def test_the_ducklake_block_is_injected_only_where_ducklake_exists():
-    """An Iceberg-only workspace must not pay for DuckLake guidance.
-
-    And a DuckLake workspace must get it: the resident block describes the
+    """Injected only where DuckLake exists. The resident block describes the
     Iceberg shape, so without this the assistant tells the user to call
     iceberg_snapshots() on a table where that fails.
     """
@@ -258,21 +256,18 @@ def test_the_ducklake_block_is_injected_only_where_ducklake_exists():
     with_ducklake = build_instructions(ctx(catalog_kinds=("iceberg_polaris", "ducklake")))
     assert "<catalog>.snapshots()" in with_ducklake
     assert "ducklake_*() function is rejected" in with_ducklake
-    # The interoperability limit is the one thing a user cannot discover by
-    # trying it, so the assistant has to be able to say it.
+    # The interoperability limit cannot be discovered by trying it.
     assert "readable by DuckDB only" in with_ducklake
 
-    # Unknown/absent kinds add nothing rather than erroring.
+    # Unknown or absent kinds add nothing rather than erroring.
     assert build_instructions(ctx()) == iceberg_only
 
 
 def test_the_conditional_blocks_stay_small():
     assert len(SEMANTIC_PROMPT) <= 1_800
     assert len(STORAGE_PROMPT) + len(ELASTIC_PROMPT) + len(FLEET_PROMPT) <= 1_000
-    # DuckLake's differences from the Iceberg shape PRODUCT_PROMPT describes:
-    # where snapshot history lives, what the guard refuses, and that no other
-    # engine can read it. Conditional rather than resident precisely so an
-    # Iceberg-only deployment keeps the prompt size it has always had.
+    # DuckLake's differences from the Iceberg shape PRODUCT_PROMPT describes.
+    # Conditional, so an Iceberg-only deployment keeps its prompt size.
     assert len(DUCKLAKE_PROMPT) <= 1_000
 
 

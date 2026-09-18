@@ -208,12 +208,8 @@ async def test_query_done_upserts_table_stats(db_session):
 
 
 async def test_query_done_upserts_stats_from_the_ducklake_probe(db_session):
-    """A DuckLake catalog's probe reports under "ducklake", and lands the same.
-
-    The agent names the block after the format it actually probed, so a
-    DuckLake table's file count must not be dropped just because it did not
-    arrive under the Iceberg key.
-    """
+    """The agent names the probe block after the format, so a DuckLake table's
+    file count must not be dropped for arriving under a different key."""
     ws, catalog = await _make_workspace(db_session)
     query = Query(workspace_id=ws.id, sql="SELECT 1", status="running", origin="sample")
     db_session.add(query)
@@ -249,13 +245,12 @@ async def test_query_done_upserts_stats_from_the_ducklake_probe(db_session):
     assert meta.row_count == 42
     assert meta.data_file_count == 5
     assert meta.has_deletes is True
-    # Left None by the probe rather than faked: a DuckLake snapshot is a
-    # catalog commit, not a per-table one.
+    # Left None, not faked: a DuckLake snapshot is catalog-wide.
     assert meta.snapshot_id is None
 
 
 async def test_query_done_still_reads_the_iceberg_key(db_session):
-    """An agent that predates catalog kinds sends "iceberg"; it must keep working."""
+    """An agent that predates catalog kinds still sends "iceberg"."""
     ws, catalog = await _make_workspace(db_session)
     query = Query(workspace_id=ws.id, sql="SELECT 1", status="running", origin="sample")
     db_session.add(query)

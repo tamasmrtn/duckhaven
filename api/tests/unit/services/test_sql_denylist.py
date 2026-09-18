@@ -1,9 +1,8 @@
 """Foreign-database and DuckLake-metadata denials, shared by both statement gates.
 
-These close two holes that open the moment agents load the `postgres` extension
-for DuckLake, and that statement-type checks alone cannot see:
-`postgres_query(...)` is a SELECT, and an UPDATE against `__ducklake_metadata_*`
-is an UPDATE. Both forms were verified reachable on DuckDB 1.5.5.
+Both holes open once agents load the `postgres` extension, and statement-type
+checks alone cannot see them: `postgres_query(...)` is a SELECT, and an UPDATE
+against `__ducklake_metadata_*` is an UPDATE.
 """
 
 from __future__ import annotations
@@ -19,7 +18,7 @@ _MANAGED = {"sales", "analytics", "raw"}
 
 # Every one of these is an otherwise-allowed statement type.
 DENIED = [
-    # Foreign-database functions: arbitrary SQL as the agent's Postgres role.
+    # Foreign-database functions.
     "SELECT * FROM postgres_query('__ducklake_metadata_raw', 'SELECT 1')",
     "SELECT * FROM postgres_scan('dbname=x', 'public', 't')",
     "SELECT * FROM postgres_scan_pushdown('dbname=x', 'public', 't')",
@@ -34,18 +33,16 @@ DENIED = [
     "UPDATE __ducklake_metadata_raw.cat_raw.ducklake_data_file SET record_count = 0",
     "DELETE FROM __ducklake_metadata_raw.cat_raw.ducklake_snapshot",
     "DROP TABLE __ducklake_metadata_raw.cat_raw.ducklake_table",
-    # Two-part (metadata catalog in the `db` slot) and bare (the `name` slot).
+    # Two-part and bare references.
     "SELECT * FROM __ducklake_metadata_raw.ducklake_table",
     "SELECT * FROM __ducklake_metadata_raw",
-    # DuckLake maintenance verbs. Destructive, and reachable from `FROM` as a
-    # plain SELECT — verified executing that way on DuckDB 1.5.5.
+    # DuckLake maintenance verbs, reachable from `FROM` as a plain SELECT.
     "SELECT * FROM ducklake_cleanup_old_files('raw', cleanup_all => true)",
     "SELECT * FROM ducklake_expire_snapshots('raw', versions => [2])",
     "SELECT * FROM ducklake_merge_adjacent_files('raw')",
     "SELECT * FROM ducklake_rewrite_data_files('raw', 't')",
     "SELECT * FROM ducklake_add_data_files('raw', 't', 's3://attacker/x.parquet')",
-    # Denied by prefix, so a verb added in a future extension version is refused
-    # by default rather than silently becoming reachable.
+    # Prefix-denied, so a future verb is refused by default.
     "SELECT * FROM ducklake_some_future_verb('raw')",
     # Case must not be an escape.
     "SELECT * FROM POSTGRES_QUERY('m', 'SELECT 1')",
@@ -61,12 +58,11 @@ ALLOWED = [
     "CREATE TABLE ducklake_table (x INT)",
     "SELECT * FROM raw.analytics.ducklake_data_file",
     "SELECT * FROM t AT (VERSION => 3)",
-    # The read-only DuckLake surface is spelled as a method on the attached
-    # catalog, which carries no `ducklake_` prefix. Denying the verbs must not
-    # cost users their history.
+    # The read-only DuckLake surface is a method on the attached catalog and
+    # carries no `ducklake_` prefix.
     "SELECT * FROM dl.snapshots()",
     "SELECT * FROM raw.table_changes('t', 1, 2)",
-    # A user table that merely starts with the prefix is not a function.
+    # A table whose name begins with the prefix is not a function.
     "SELECT * FROM analytics.ducklake_report",
 ]
 
@@ -102,8 +98,7 @@ def test_statement_policy_rejects(sql: str) -> None:
 
 
 def test_maintenance_denial_has_its_own_rule() -> None:
-    """Separate from the foreign-database rule so the rejection metric can tell
-    "tried to run maintenance" from "tried to reach another database"."""
+    """Its own rule, so the rejection metric can tell maintenance from foreign access."""
     with pytest.raises(ForeignAccessDenied) as exc:
         check_sql("SELECT * FROM ducklake_cleanup_old_files('raw', cleanup_all => true)")
     assert exc.value.rule == "ducklake_maintenance_function"
@@ -120,14 +115,13 @@ def test_rules_are_distinct() -> None:
 
 
 def test_unparseable_sql_falls_back_to_a_lexical_check() -> None:
-    """sqlglot cannot parse everything DuckDB can. When it fails, text that
-    merely mentions a denied name is refused rather than waved through."""
+    """Unparseable SQL is refused lexically rather than waved through."""
     sql = "SELECT * FROM postgres_query('m', 'SELECT 1') ((( unbalanced"
     with pytest.raises(ForeignAccessDenied):
         check_sql(sql)
 
 
 def test_existing_allowlist_behaviour_is_unchanged() -> None:
-    """A spot-check that the new pass did not narrow the ordinary corpus."""
+    """The new pass did not narrow the ordinary corpus."""
     for sql in ("SELECT 1", "INSERT INTO t VALUES (1)", "CREATE TABLE t (x INT)"):
         assert_allowed(sql)

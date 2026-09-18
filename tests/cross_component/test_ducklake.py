@@ -1,18 +1,11 @@
 """DuckLake end to end: real API, real agent, real Postgres, real object store.
 
-The unit and integration suites cover the pieces. What this covers is the join
-between them — that a catalog created through the HTTP API is attachable by an
-agent that dialled home on its own, that DDL and DML dispatched over the WebSocket
-actually commit, and that the control plane then reads that state back out of the
-catalog database.
+Covers the join the unit and integration suites cannot: a catalog created over
+HTTP, attached by an agent that dialled home, DDL/DML committed over the
+WebSocket, and the state read back from the catalog database. The mixed-catalog
+join is the falsifiable test that kind and storage backend are orthogonal.
 
-The last test is the one that matters most: an Iceberg catalog and a DuckLake
-catalog attached to one workspace and joined in a single query. If that cannot be
-written, catalog kind and storage backend are not the orthogonal axes this design
-claims they are.
-
-Skipped unless the harness is pointed at a DuckLake catalog database, so the
-suite still runs against a Polaris-only stack.
+Skipped unless the harness is pointed at a DuckLake catalog database.
 """
 
 from __future__ import annotations
@@ -80,7 +73,7 @@ async def _make_ducklake(api_client, workspace: str, slug: str) -> dict:
 
 
 async def test_create_query_and_read_back(api_client, workspace, healthy_agent, slug) -> None:
-    """The keystone path, for the new kind."""
+    """The keystone path for the new kind."""
     await _make_ducklake(api_client, workspace, slug)
     agent_id = healthy_agent["id"]
 
@@ -99,7 +92,7 @@ async def test_create_query_and_read_back(api_client, workspace, healthy_agent, 
     rows = (await api_client.get(f"/api/queries/{counted['id']}/rows")).json()
     assert rows["rows"] == [{"c": 5000}]
 
-    # And the control plane sees the table without going anywhere near an agent.
+    # Visible to the control plane without an agent.
     listed = await api_client.get(
         f"/api/workspaces/{workspace}/catalogs/{slug}/schemas/analytics/tables"
     )
@@ -124,7 +117,7 @@ async def test_table_detail_describes_itself_as_ducklake(
     assert got.status_code == 200, got.text
     body = got.json()
     assert body["format"] == "DUCKLAKE"
-    # An Iceberg concept with no DuckLake equivalent: null, not faked.
+    # Iceberg-only concept: null, not faked.
     assert body["format_version"] is None
     assert {c["name"] for c in body["columns"]} == {"a", "b"}
 
@@ -144,7 +137,7 @@ async def test_time_travel(api_client, workspace, healthy_agent, slug) -> None:
     assert snaps.status_code == 200, snaps.text
     listed = snaps.json()
     assert listed, "a table that was just written should have history"
-    # Honest about what these are: a DuckLake snapshot is a catalog commit.
+    # A DuckLake snapshot is a catalog commit.
     assert listed[0]["granularity"] == "catalog"
 
     version = listed[0]["snapshot_id"]
@@ -177,9 +170,7 @@ async def test_schema_evolution(api_client, workspace, healthy_agent, slug) -> N
 async def test_structured_ddl_through_the_rest_surface(
     api_client, workspace, healthy_agent, slug
 ) -> None:
-    """Create/drop schema and table via the catalog UI's endpoints, which for
-    DuckLake are dispatched to an agent as SQL rather than sent to a REST
-    catalog."""
+    """The catalog UI's DDL endpoints, which DuckLake dispatches to an agent."""
     await _make_ducklake(api_client, workspace, slug)
     base = f"/api/workspaces/{workspace}/catalogs/{slug}/schemas"
 
@@ -214,8 +205,7 @@ async def test_unsupported_column_type_is_refused_before_dispatch(
 async def test_metadata_catalog_is_not_reachable_from_user_sql(
     api_client, workspace, healthy_agent, slug
 ) -> None:
-    """The escape the deny-list closes. Both forms are otherwise-allowed
-    statement types, and both were verified reachable on DuckDB 1.5.5."""
+    """Both forms are otherwise-allowed statement types, closed by the deny-list."""
     await _make_ducklake(api_client, workspace, slug)
     for sql in (
         f"SELECT count(*) FROM __ducklake_metadata_{slug}.cat_{slug}.ducklake_data_file",
@@ -232,13 +222,8 @@ async def test_metadata_catalog_is_not_reachable_from_user_sql(
 async def test_iceberg_and_ducklake_join_in_one_query(
     api_client, workspace, catalog, healthy_agent, slug
 ) -> None:
-    """The decisive test.
-
-    `workspace` already has an Iceberg catalog attached (`catalog`). Attaching a
-    DuckLake one beside it and joining across the two in a single statement is
-    what proves catalog kind and storage backend are orthogonal axes rather than
-    a claim. If this fails, the design is wrong, not the test.
-    """
+    """An Iceberg catalog and a DuckLake one joined in a single statement. If
+    this fails, the two axes are not orthogonal."""
     await _make_ducklake(api_client, workspace, slug)
     agent_id = healthy_agent["id"]
 
@@ -270,13 +255,9 @@ async def test_iceberg_and_ducklake_join_in_one_query(
 async def test_a_ducklake_catalog_works_in_a_held_sql_session(
     api_client, workspace, healthy_agent, slug
 ) -> None:
-    """The regression that survived sixteen commits.
-
-    The session path described a catalog with the four Iceberg-era fields, so a
-    DuckLake catalog was attached as Iceberg with a null warehouse name, failed,
-    and was swallowed by the agent's best-effort per-catalog handler. Nothing
-    reported it. Both paths now share one descriptor.
-    """
+    """The session path once kept the Iceberg-era fields, so a DuckLake catalog
+    attached as Iceberg with a null warehouse name and failed silently. Both
+    paths now share one descriptor."""
     await _make_ducklake(api_client, workspace, slug)
     await _run(
         api_client,

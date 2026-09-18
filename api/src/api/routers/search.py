@@ -23,7 +23,8 @@ from api.models.query import SavedQuery
 from api.models.user import User
 from api.schemas.search import SearchResultOut, SearchResultsOut
 from api.services import grants as grant_service
-from api.services.polaris import PolarisClient, PolarisError
+from api.services.catalog_backends import CatalogBackendError, backend_for
+from api.services.polaris import PolarisClient
 from api.services.workspace import (
     assert_workspace_member,
     get_workspace,
@@ -72,20 +73,28 @@ async def search_workspace(
 
     catalogs = await resolve_workspace_catalogs(db, workspace.id)
 
-    # The Polaris calls below touch only the HTTP client, so they can run
-    # concurrently; the grant checks further down share `db`, a single
+    # Per catalog kind, through the metadata seam: searching has to see a
+    # DuckLake catalog's tables too, and reaching for `cat.polaris_name` skipped
+    # them entirely (it is NULL for DuckLake, so every lookup failed and was
+    # swallowed as a stale namespace).
+    #
+    # The listing calls below hold no shared state -- Polaris is an HTTP client,
+    # and the DuckLake backend reads through its own pooled engine -- so they can
+    # run concurrently; the grant checks further down share `db`, a single
     # AsyncSession that is not safe for concurrent use, so those stay
-    # sequential. return_exceptions=True also isolates a catalog whose Polaris
-    # namespace is stale/missing from the rest of the search, instead of one
-    # PolarisError aborting the whole request.
+    # sequential. return_exceptions=True isolates a catalog whose metastore is
+    # stale or unreachable from the rest of the search, instead of one failure
+    # aborting the whole request.
+    backends = [backend_for(cat, polaris=polaris) for cat in catalogs]
     schemas_per_catalog = await asyncio.gather(
-        *(polaris.list_schemas(cat.polaris_name) for cat in catalogs),
+        *(backend.list_schemas(cat) for cat, backend in zip(catalogs, backends)),
         return_exceptions=True,
     )
 
     live = []
+    backend_by_slug = {cat.slug: backend for cat, backend in zip(catalogs, backends)}
     for cat, schemas in zip(catalogs, schemas_per_catalog):
-        if isinstance(schemas, PolarisError):
+        if isinstance(schemas, CatalogBackendError):
             logger.warning("Search skipped catalog=%s: %s", cat.slug, schemas)
             continue
         if isinstance(schemas, BaseException):
@@ -94,12 +103,12 @@ async def search_workspace(
 
     schema_lookup = [(cat, s) for cat, schemas in live for s in schemas]
     tables_per_schema = await asyncio.gather(
-        *(polaris.list_tables(cat.polaris_name, s.name) for cat, s in schema_lookup),
+        *(backend_by_slug[cat.slug].list_tables(cat, s.name) for cat, s in schema_lookup),
         return_exceptions=True,
     )
     tables_by_schema = {}
     for (cat, s), tables in zip(schema_lookup, tables_per_schema):
-        if isinstance(tables, PolarisError):
+        if isinstance(tables, CatalogBackendError):
             logger.warning("Search skipped schema=%s.%s: %s", cat.slug, s.name, tables)
             tables_by_schema[(cat.slug, s.name)] = []
             continue

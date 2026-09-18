@@ -258,3 +258,66 @@ async def test_underscore_in_query_does_not_wildcard_match_saved_queries(
     ).json()["items"]
     names = {r["name"] for r in results if r["type"] == "saved_query"}
     assert names == {"daily_report"}
+
+
+async def test_search_sees_a_ducklake_catalogs_tables(
+    auth_client: AsyncClient, backend: StorageBackend, db_session, fake_polaris, monkeypatch
+):
+    """Search has to ask each catalog's own metadata backend.
+
+    A DuckLake catalog's ``polaris_name`` is NULL, so the old code's
+    ``polaris.list_schemas(cat.polaris_name)`` failed for it, the failure was
+    swallowed as a stale namespace, and the catalog's tables were invisible to
+    the command palette. Here the real DuckLake backend runs -- only its one
+    data-access method is stubbed -- so the dispatch and the row mapping are
+    both exercised.
+    """
+    slug = await _make_workspace(auth_client, backend)
+    await db_session.execute(
+        update(Catalog)
+        .where(Catalog.slug == slug.replace("-", "_"))
+        .values(kind="ducklake", polaris_name=None, metadata_schema="cat_alpha")
+    )
+    await db_session.commit()
+
+    async def fake_rows(self, catalog, sql, params):  # noqa: ANN001
+        if "ducklake_schema" in sql and "ducklake_table" not in sql:
+            return [("sf10",)]
+        if "ducklake_table" in sql:
+            return [("lineitem", "uuid-1", 60_000_000, 2_000)]
+        return []
+
+    monkeypatch.setattr(
+        "api.services.catalog_backends.ducklake.DuckLakeCatalogBackend._rows", fake_rows
+    )
+
+    resp = await auth_client.get(f"/workspaces/{slug}/search", params={"q": "lineitem"})
+    assert resp.status_code == 200, resp.text
+    items = resp.json()["items"]
+    assert [(i["type"], i["catalog"], i["name"]) for i in items] == [
+        ("table", slug.replace("-", "_"), "lineitem")
+    ]
+
+
+async def test_search_isolates_one_catalogs_metadata_failure(
+    auth_client: AsyncClient, backend: StorageBackend, db_session, fake_polaris, monkeypatch
+):
+    """A catalog whose metastore will not answer costs only its own results."""
+    slug = await _make_workspace(auth_client, backend)
+    await db_session.execute(
+        update(Catalog)
+        .where(Catalog.slug == slug.replace("-", "_"))
+        .values(kind="ducklake", polaris_name=None, metadata_schema="cat_alpha")
+    )
+    await db_session.commit()
+
+    async def boom(self, catalog, sql, params):  # noqa: ANN001
+        from api.services.catalog_backends import CatalogBackendUnavailable
+
+        raise CatalogBackendUnavailable("catalog database is down")
+
+    monkeypatch.setattr("api.services.catalog_backends.ducklake.DuckLakeCatalogBackend._rows", boom)
+
+    resp = await auth_client.get(f"/workspaces/{slug}/search", params={"q": "lineitem"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["items"] == []

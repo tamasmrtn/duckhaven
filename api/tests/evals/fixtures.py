@@ -17,7 +17,10 @@ from sqlglot import exp
 
 from api.services.assistant.gateway import GatewayError
 
-CATALOGS = [{"slug": "warehouse", "name": "Warehouse"}]
+# `kind` mirrors what /workspaces/{ws}/catalogs actually returns. The DuckLake
+# block of the instructions tells the model that list_catalogs reports it, so a
+# fixture omitting it would contradict the prompt the model is given.
+CATALOGS = [{"slug": "warehouse", "name": "Warehouse", "kind": "iceberg_polaris"}]
 SCHEMAS = {"warehouse": ["analytics"]}
 TABLES = {("warehouse", "analytics"): ["orders", "customers", "events", "feedback"]}
 

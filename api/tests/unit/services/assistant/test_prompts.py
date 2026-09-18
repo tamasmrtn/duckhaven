@@ -280,20 +280,26 @@ def test_the_semantic_summary_is_bounded_however_the_workspace_is_named():
 
 
 def test_the_assembled_instructions_are_within_budget():
-    """~2,400 tokens for a bare workspace; ~3,650 for the largest a workspace can
-    make its own, which is the number the input window has to hold."""
+    """~2,400 tokens for a bare workspace; ~3,900 for the largest a workspace can
+    make its own, which is the number the input window has to hold.
+
+    Raised from 14,800 by the DuckLake block (890 chars), which a workspace turns
+    on by attaching a DuckLake catalog. The ceiling has to be measured with every
+    conditional block on, or it describes a prompt the product does not produce.
+    """
     assert len(build_instructions(ctx())) <= 10_000
 
     everything = build_instructions(
         ctx(
             semantic_summary=WORST_CASE_SUMMARY,
             storage_kinds=("s3", "adls_gen2"),
+            catalog_kinds=("iceberg_polaris", "ducklake"),
             elastic_enabled=True,
             agent_count=3,
         )
     )
 
-    assert len(everything) <= 14_800
+    assert len(everything) <= 15_700
 
 
 def test_the_product_block_names_the_v1_scope_limits():

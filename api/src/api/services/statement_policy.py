@@ -284,9 +284,8 @@ def _check_statement(
     # FROM 'http://…').
     _check_file_functions(stmt, staging_prefixes)
     _check_replacement_scans(stmt, staging_prefixes)
-    # Likewise foreign-database functions and DuckLake's internal metadata, which
-    # any statement type can reference. Shared with sql_guard so the two gates
-    # cannot drift apart on what "reaching a foreign database" means.
+    # Foreign-database functions and DuckLake's internal metadata reachable from
+    # any statement type. Shared with sql_guard so the gates cannot drift.
     try:
         check_denylist(stmt)
     except ForeignAccessDenied as exc:

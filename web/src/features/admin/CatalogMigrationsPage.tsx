@@ -54,11 +54,9 @@ function isActive(status: MigrationStatus): boolean {
 
 export function CatalogMigrationsPage() {
   const { data: allCatalogs, isLoading } = useAllCatalogs();
-  // Storage migration is an Iceberg-specific engine: it copies files and
-  // rewrites the absolute URIs Iceberg embeds in its metadata tree. DuckLake
-  // records relative paths and would need a different (simpler) procedure that
-  // does not exist yet, so its catalogs are not offered here rather than
-  // appearing and failing on submit.
+  // Storage migration is an Iceberg-specific engine that rewrites absolute URIs
+  // in metadata trees. DuckLake would need a different procedure that does not
+  // exist yet, so its catalogs are not offered rather than failing on submit.
   const catalogs = allCatalogs?.filter(
     (c) => c.capabilities?.supports_storage_migration !== false,
   );

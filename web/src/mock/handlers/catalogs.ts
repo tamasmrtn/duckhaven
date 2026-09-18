@@ -34,9 +34,8 @@ function out(c: (typeof CATALOGS)[number]): Catalog {
 export const catalogHandlers = [
   http.get("/api/catalogs", () => HttpResponse.json(CATALOGS.map(out))),
 
-  // The kinds this deployment offers. DuckLake is present but unavailable by
-  // default, mirroring DUCKLAKE_ENABLED=false — so the dev UI shows the same
-  // single-kind create dialog a fresh install does.
+  // Mirrors DUCKLAKE_ENABLED=false: DuckLake is listed but unavailable, so the
+  // dev UI shows the single-kind dialog a fresh install does.
   http.get("/api/catalog-kinds", () =>
     HttpResponse.json([
       {

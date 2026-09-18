@@ -122,11 +122,9 @@ async def dispatch_query(
         raise ValueError("Workspace has no catalogs attached")
 
     # Eager multi-attach: the agent ATTACHes every catalog bound to the
-    # workspace (each under its slug) and `USE`s the active one for unqualified
-    # names. For Iceberg catalogs the control plane vends nothing — the agent's
-    # own config supplies the Polaris endpoint + client creds, and Polaris vends
-    # storage creds on attach. DuckLake has no such vendor, so its catalogs
-    # carry API-minted credentials in the payload (see `_catalog_attach`).
+    # workspace under its slug and `USE`s the active one. Iceberg needs no
+    # vended credentials; DuckLake catalogs carry API-minted ones (see
+    # `build_catalog_attach`).
     if active_catalog is None:
         default = await get_default_catalog(db, workspace.id)
         active_catalog = default.slug if default is not None else catalogs[0].slug
@@ -332,10 +330,8 @@ async def _upsert_table_stats(db: AsyncSession, query_id: uuid.UUID, frame: Fram
     if size_bytes is not None:
         existing.size_bytes = size_bytes
 
-    # Format-native metadata from the agent probe (each field best-effort). The
-    # agent probes whichever format the target catalog actually is and names the
-    # block after it, so an agent that predates catalog kinds still sends
-    # "iceberg" and still means the same four fields.
+    # Format-native metadata from the agent probe, each field best-effort. An
+    # older agent still sends "iceberg" with the same four fields.
     native = frame.payload.get("iceberg") or frame.payload.get("ducklake")
     if native:
         if native.get("snapshot_id") is not None:
@@ -536,10 +532,9 @@ async def pick_agent_for(
     if not connected:
         return None
     catalogs = await resolve_workspace_catalogs(db, workspace.id)
-    # Both axes: the agent must have the extension every catalog's *storage*
-    # backend needs and the ones every catalog's *kind* needs. Checking storage
-    # alone would route a DuckLake workspace to an Iceberg-only agent, whose
-    # attach then fails best-effort and reports "catalog does not exist".
+    # Both axes: the agent needs the extensions for every catalog's kind *and*
+    # storage backend. Storage alone would route DuckLake to an Iceberg-only
+    # agent, whose attach fails best-effort as "catalog does not exist".
     pairs = {(c.kind, c.storage_backend.kind) for c in catalogs} or {
         ("iceberg_polaris", "object_store")
     }

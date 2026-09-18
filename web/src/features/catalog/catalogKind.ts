@@ -1,8 +1,7 @@
 import type { CatalogKind } from "@/types/catalog";
 
-// Display names for a catalog's kind and the table format it implies. Kept in
-// one module so the several places that show them cannot drift, the way the
-// storage-backend labels did.
+// Display names for a catalog's kind and the table format it implies, in one
+// module so the places that show them cannot drift.
 const KIND_LABELS: Record<CatalogKind, string> = {
   iceberg_polaris: "Apache Iceberg + Polaris",
   ducklake: "DuckLake",
@@ -13,8 +12,8 @@ const FORMAT_LABELS: Record<CatalogKind, string> = {
   ducklake: "DuckLake (Parquet)",
 };
 
-/** Falls through to the raw value for a kind this build does not know, so a
- * catalog created by a newer API still renders something truthful. */
+/** Falls through to the raw value for an unknown kind, so a catalog from a
+ * newer API still renders. */
 export function catalogKindLabel(kind: CatalogKind | undefined): string {
   if (!kind) return "—";
   return KIND_LABELS[kind] ?? kind;
@@ -25,11 +24,8 @@ export function tableFormatLabel(kind: CatalogKind | undefined): string {
   return FORMAT_LABELS[kind] ?? kind;
 }
 
-// Short badge text for the catalog tree, where the row is tight and the full
-// kind label does not fit. Iceberg is deliberately unbadged: it is the default
-// kind, so badging it would put a marker on every row of an Iceberg-only
-// deployment to say nothing. The badge answers "which of these is not the
-// default?"; the full label is on the catalog's detail page.
+// Short badge text for the catalog tree. Iceberg is unbadged: it is the
+// default, so a badge would mark every row to say nothing.
 const KIND_BADGES: Record<CatalogKind, string | null> = {
   iceberg_polaris: null,
   ducklake: "DuckLake",
@@ -37,16 +33,12 @@ const KIND_BADGES: Record<CatalogKind, string | null> = {
 
 export function catalogKindBadge(kind: CatalogKind | undefined): string | null {
   if (!kind) return null;
-  // `??` would be wrong here: a known kind maps to null deliberately (Iceberg
-  // is unbadged), and `??` cannot tell that apart from a kind this build has
-  // never heard of, which should fall back to its raw value.
+  // `??` would collapse Iceberg's deliberate null with an unknown kind.
   return kind in KIND_BADGES ? KIND_BADGES[kind] : kind;
 }
 
-// A table's format arrives from the catalog as free text ("ICEBERG" |
-// "DUCKLAKE"). Title-casing it blindly yields "Ducklake", so the names we know
-// are spelled here and anything else falls back to title case rather than being
-// dropped — a format from a newer API still renders.
+// Table formats arrive as free text ("ICEBERG" | "DUCKLAKE"); title-casing
+// blindly yields "Ducklake", so spell the known ones and title-case the rest.
 const FORMAT_DISPLAY: Record<string, string> = {
   ICEBERG: "Iceberg",
   DUCKLAKE: "DuckLake",

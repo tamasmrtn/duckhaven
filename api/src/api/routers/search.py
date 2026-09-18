@@ -73,18 +73,13 @@ async def search_workspace(
 
     catalogs = await resolve_workspace_catalogs(db, workspace.id)
 
-    # Per catalog kind, through the metadata seam: searching has to see a
-    # DuckLake catalog's tables too, and reaching for `cat.polaris_name` skipped
-    # them entirely (it is NULL for DuckLake, so every lookup failed and was
-    # swallowed as a stale namespace).
+    # Per catalog kind, through the metadata seam: `cat.polaris_name` is NULL
+    # for DuckLake, so reaching for it directly skipped those catalogs.
     #
-    # The listing calls below hold no shared state -- Polaris is an HTTP client,
-    # and the DuckLake backend reads through its own pooled engine -- so they can
-    # run concurrently; the grant checks further down share `db`, a single
-    # AsyncSession that is not safe for concurrent use, so those stay
-    # sequential. return_exceptions=True isolates a catalog whose metastore is
-    # stale or unreachable from the rest of the search, instead of one failure
-    # aborting the whole request.
+    # The listing calls hold no shared state, so they run concurrently; the
+    # grant checks below share one AsyncSession and stay sequential.
+    # return_exceptions=True isolates a stale or unreachable catalog from the
+    # rest of the search.
     backends = [backend_for(cat, polaris=polaris) for cat in catalogs]
     schemas_per_catalog = await asyncio.gather(
         *(backend.list_schemas(cat) for cat, backend in zip(catalogs, backends)),

@@ -235,9 +235,8 @@ def _storage_block(deps: AssistantDeps) -> str | None:
 
 
 def _ducklake_block(deps: AssistantDeps) -> str | None:
-    # Iceberg-only workspaces — every deployment that has not opted in — pay
-    # nothing for this. PRODUCT_PROMPT describes the Iceberg shape because that
-    # is the default kind; this says where DuckLake differs.
+    # PRODUCT_PROMPT describes the default Iceberg shape; this adds where
+    # DuckLake differs. Iceberg-only deployments pay nothing.
     if "ducklake" not in (deps.catalog_kinds or ()):
         return None
     return DUCKLAKE_PROMPT

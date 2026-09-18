@@ -217,9 +217,8 @@ async def _turn_context(
                 byte_cap=settings.assistant_result_byte_cap,
                 service_account_id=str(service_account_id),
             )
-            # Cheap lookups, so the instructions can describe what this
-            # workspace actually has. Concurrent because they are independent and
-            # the turn waits on all of them before the model sees anything.
+            # Independent lookups, so they run concurrently; the turn waits on
+            # all of them before the model sees anything.
             published, storage_kinds, catalog_kinds, agent_count = await asyncio.gather(
                 _advisory("semantic models", gateway.list_semantic_models()),
                 _advisory("storage kinds", gateway.storage_kinds()),

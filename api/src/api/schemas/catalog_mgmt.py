@@ -17,12 +17,10 @@ class CatalogCreate(BaseModel):
     # `catalog.schema.table` SQL). Validated against ^[a-z][a-z0-9_]*$ by the
     # service layer.
     name: str = Field(min_length=1, max_length=255)
-    # Where this catalog keeps its metadata. Defaults to Iceberg + Polaris, so an
-    # existing client that never sends it gets exactly today's behaviour.
+    # Defaults to Iceberg + Polaris, so existing clients are unaffected.
     # "ducklake" requires DUCKLAKE_ENABLED.
     kind: Literal["iceberg_polaris", "ducklake"] = KIND_ICEBERG_POLARIS
-    # Storage backend for the new catalog. When omitted a bundled object-store
-    # backend is auto-provisioned. Orthogonal to `kind`.
+    # Orthogonal to `kind`; omitted means a bundled object-store backend.
     storage_backend_id: uuid.UUID | None = None
     # Access mode of the attachment this call creates. Settable here so a catalog
     # meant to be scoped never exists in an open state: it would otherwise be
@@ -38,18 +36,10 @@ class CatalogAttachRequest(BaseModel):
 
 
 class CatalogCapabilitiesOut(BaseModel):
-    """What a catalog's kind can do, so clients never switch on `kind` itself.
+    """What a catalog's kind can do, so clients never switch on `kind` itself."""
 
-    Adding a third kind then changes one mapping here rather than every place
-    the UI asks "is this DuckLake?".
-    """
-
-    # "table" for Iceberg; "catalog" for DuckLake, whose snapshots are commits
-    # against the whole catalog rather than one table.
     supports_storage_migration: bool
-    # Whether DuckDB itself can run this kind's compaction / snapshot expiry.
-    # Whether engines other than DuckDB can read these tables. False for
-    # DuckLake — the trade-off a user makes when choosing it.
+    # False for DuckLake — the trade-off a user makes when choosing it.
     external_engine_readable: bool
     supported_storage_kinds: list[str]
 
@@ -57,17 +47,14 @@ class CatalogCapabilitiesOut(BaseModel):
 class CatalogKindOut(BaseModel):
     """One catalog kind this deployment can offer, for the create flow.
 
-    Served because the UI has to describe a kind — including the honest
-    trade-off in ``external_engine_readable`` — *before* any catalog of that
-    kind exists, and hardcoding those facts client-side would let them drift
-    from the backend that actually implements them.
+    Served so the UI can describe a kind before any catalog of it exists, and so
+    those facts cannot drift from the backend that implements them.
     """
 
     kind: str
     label: str
-    # False when the kind exists but this deployment has it switched off, so the
-    # UI can show it greyed with a reason rather than hiding it and leaving an
-    # operator wondering where it went.
+    # False when the kind is known but switched off; the UI greys it out with the
+    # reason rather than hiding it.
     available: bool
     unavailable_reason: str | None = None
     capabilities: CatalogCapabilitiesOut
@@ -77,12 +64,9 @@ class CatalogOut(BaseModel):
     id: uuid.UUID
     slug: str
     name: str
-    # Where this catalog's metadata lives: "iceberg_polaris" or "ducklake".
-    # Orthogonal to storage_backend_kind below — a catalog of either kind can
-    # sit on any storage backend.
+    # Orthogonal to storage_backend_kind below.
     kind: str = KIND_ICEBERG_POLARIS
-    # Exactly one of these is set, per the catalog's kind: the Polaris warehouse
-    # name, or the Postgres schema holding its ducklake_* tables.
+    # Exactly one is set, per kind.
     polaris_name: str | None = None
     metadata_schema: str | None = None
     capabilities: CatalogCapabilitiesOut | None = None

@@ -1,10 +1,7 @@
 """The Iceberg + Polaris catalog backend.
 
-An adapter, not a rewrite: ``services/polaris.py`` — a 720-line, well-tested,
-single-purpose REST client — is untouched, and this wraps it so the router can
-ask the same questions of either catalog kind. The Iceberg-specific type mapping
-moved here from ``routers/schemas.py``, where it no longer belongs now that not
-every catalog is Iceberg.
+A thin adapter over ``services/polaris.py``, so the router can ask the same
+questions of either catalog kind.
 """
 
 from __future__ import annotations
@@ -37,17 +34,13 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from api.schemas.catalog import ColumnSpec
 
 POLARIS_CAPABILITIES = CatalogCapabilities(
-    # An Iceberg snapshot belongs to one table.
     supports_storage_migration=True,
-    # DuckDB's iceberg extension cannot run compaction or snapshot expiry, which
-    # is why DuckHaven's maintenance advisor recommends rather than applies.
-    # The reason Iceberg is the default kind: Spark, Trino, Flink and PyIceberg
-    # can all read these tables.
+    # Why Iceberg is the default: Spark, Trino, Flink and PyIceberg can read it.
     external_engine_readable=True,
     supported_storage_kinds=("object_store", "s3", "adls_gen2"),
 )
 
-# The small set of allowed scalar types, as Iceberg primitive type strings.
+# The allowed scalar types as Iceberg primitive type strings.
 _TYPE_TO_ICEBERG: dict[str, str] = {
     "INTEGER": "int",
     "BIGINT": "long",
@@ -73,8 +66,7 @@ def column_for_iceberg(spec: ColumnSpec, field_id: int) -> dict[str, object]:
 def _translate(exc: PolarisError) -> CatalogBackendError:
     """Map a Polaris failure onto the seam's vocabulary.
 
-    The mapping is 1:1 with the app-level handler's status codes, so a Polaris
-    error surfaces exactly the HTTP response it did before the seam existed.
+    Keeps the app-level handler's status codes 1:1 with the pre-seam behaviour.
     """
     if isinstance(exc, PolarisNotFoundError):
         return CatalogBackendNotFound(str(exc))
@@ -99,8 +91,7 @@ class PolarisCatalogBackend:
     async def ensure(self, catalog: Catalog) -> None:
         """Create the Polaris catalog + default namespace if absent.
 
-        Called on browse as a self-heal, which is also what reconciles a drifted
-        bundled-store endpoint onto an existing catalog.
+        Called on browse; also reconciles a drifted bundled-store endpoint.
         """
         backend = catalog.storage_backend
         if backend is None:
@@ -122,9 +113,8 @@ class PolarisCatalogBackend:
     async def deprovision(self, catalog: Catalog) -> None:
         """Purge the catalog's namespaces and tables, then the catalog itself.
 
-        Polaris refuses to delete a catalog that still holds namespaces or custom
-        catalog roles, so the order matters. NotFound is swallowed so a
-        partially-provisioned catalog still drops cleanly.
+        Order matters: Polaris refuses to delete a non-empty catalog. NotFound is
+        swallowed so a partially-provisioned catalog still drops cleanly.
         """
         try:
             for schema in await self._polaris.list_schemas(catalog.polaris_name):
@@ -161,8 +151,7 @@ class PolarisCatalogBackend:
     ) -> None:
         try:
             if cascade:
-                # Polaris refuses to delete a namespace that still holds tables,
-                # so empty it first. Drop-with-purge, so the files go too.
+                # Empty the namespace first; purge so the files go too.
                 for table in await self._polaris.list_tables(catalog.polaris_name, name):
                     await self._polaris.delete_table(
                         catalog.polaris_name, name, table.name, purge=True
@@ -211,7 +200,6 @@ class PolarisCatalogBackend:
         self, catalog: Catalog, schema: str, name: str, ctx: WriteContext
     ) -> None:
         try:
-            # Drop-with-purge, so DROP TABLE reclaims the data files.
             await self._polaris.delete_table(catalog.polaris_name, schema, name, purge=True)
         except PolarisError as exc:
             raise _translate(exc) from exc

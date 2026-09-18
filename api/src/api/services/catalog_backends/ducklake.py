@@ -1,28 +1,15 @@
 """The DuckLake catalog backend.
 
-A DuckLake catalog's metadata is a set of ``ducklake_*`` tables in one schema of
-the ``ducklake`` database, defined by the DuckLake specification (v1.0). That
-makes this backend asymmetric in a way the Polaris one is not:
+Metadata lives in ``ducklake_*`` tables in one schema of the ``ducklake``
+database. Reads go straight to Postgres — no REST round-trip, no agent, so
+browsing works with no compute attached. Writes are dispatched to an agent,
+because only the DuckLake extension can safely commit them.
 
-**Reads go straight to Postgres.** Listing schemas, tables, columns and snapshots
-is a ``SELECT`` over the spec's own tables. No REST round-trip, no agent, and no
-DuckDB — so I1 holds and browsing a catalog works even with no agent connected.
+This does not violate I3: DuckHaven persists nothing here; this is the
+authoritative store, not a cache.
 
-**Writes go through an agent.** Catalog metadata is only safely mutated through
-DuckLake's transaction protocol, which lives in the ``ducklake`` DuckDB
-extension. Writing those rows by hand would corrupt the format. So DDL is
-generated as SQL and dispatched, which is also why ``WriteContext`` exists.
-
-Does reading it here violate I3 ("Polaris owns catalog metadata; Postgres owns
-DuckHaven entities; never persist catalog structure into Postgres")? No — both
-halves still hold. DuckHaven's own ORM persists nothing here, and this is not a
-cache but the authoritative store, read directly, in a database Alembic does not
-manage. That is exactly the relationship Postgres already has with the Polaris
-metastore, which has lived in the same instance since day one.
-
-Versioning note: every metadata table is versioned by a half-open
-``[begin_snapshot, end_snapshot)`` range, so "currently exists" is
-``end_snapshot IS NULL`` and every query below carries that filter.
+Every metadata table is versioned by a half-open ``[begin_snapshot,
+end_snapshot)`` range, so "currently exists" is ``end_snapshot IS NULL``.
 """
 
 from __future__ import annotations
@@ -57,25 +44,16 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 logger = logging.getLogger(__name__)
 
 DUCKLAKE_CAPABILITIES = CatalogCapabilities(
-    # The honest one. A DuckLake snapshot is a commit against the whole catalog,
-    # not one table, so a table's "history" is the subset of catalog snapshots
-    # that touched it. The UI has to be able to say so.
-    # Deliberately out of scope: DuckLake's relative paths make migration a copy
-    # plus one data_path update rather than Iceberg's metadata-tree rewrite, so
-    # the existing engine does not apply and building a second one is premature.
+    # DuckLake's relative paths need a different migration implementation than
+    # Iceberg's metadata-tree rewrite; not built yet.
     supports_storage_migration=False,
-    # The real product win. Unlike the iceberg extension, DuckDB's ducklake
-    # extension can run compaction, snapshot expiry and orphan cleanup.
-    # The real product cost, and the reason this is not the default kind: no
-    # other engine can open a DuckLake table today.
+    # DuckDB-only today: no other engine can open a DuckLake table.
     external_engine_readable=False,
     supported_storage_kinds=("object_store", "s3", "adls_gen2"),
 )
 
-# DuckLake's own type spelling, which is what ducklake_column stores. Mapped to
-# DuckHaven's display vocabulary so a DuckLake table's columns read the same as
-# an Iceberg table's in the UI. Unknown types pass through unchanged rather than
-# being hidden behind a placeholder.
+# ducklake_column's type spelling mapped to DuckHaven's display vocabulary.
+# Unknown types pass through unchanged.
 _DUCKLAKE_TYPE_DISPLAY: dict[str, str] = {
     "int8": "TINYINT",
     "int16": "SMALLINT",
@@ -109,12 +87,10 @@ _engine: AsyncEngine | None = None
 
 
 def get_engine() -> AsyncEngine:
-    """The owner-credential engine used for metadata reads and schema DDL.
+    """The owner-credential engine for metadata reads and schema DDL.
 
-    Module-level and lazily built, rather than created in the app lifespan and
-    threaded through every call site, because `backend_for` is reached from
-    routers that have no handle on app state. The lifespan calls
-    `dispose_engine` on shutdown.
+    Lazy and module-level because `backend_for` is called from routers with no
+    app state; the lifespan calls `dispose_engine` on shutdown.
     """
     global _engine
     if _engine is None:
@@ -131,16 +107,13 @@ async def dispose_engine() -> None:
 
 
 def metadata_schema_for(slug: str) -> str:
-    """The Postgres schema name a catalog's ducklake_* tables live in.
+    """The Postgres schema a catalog's ducklake_* tables live in.
 
-    Derived from the slug, which `validate_catalog_slug` has already constrained
-    to ``^[a-z][a-z0-9_]*$`` — so the result is injection-safe by construction
-    and needs no quoting beyond the identifier quotes used below. Stored on the
-    catalog row rather than re-derived at use, so a renamed catalog keeps
-    pointing at its physical schema.
+    The slug is constrained to ``^[a-z][a-z0-9_]*$`` by `validate_catalog_slug`,
+    so the result is injection-safe.
     """
     name = f"cat_{slug}"
-    if len(name) > 63:  # Postgres identifier limit; a longer name is truncated.
+    if len(name) > 63:  # Postgres truncates longer identifiers.
         raise CatalogBackendError(
             f"Catalog name {slug!r} is too long: its metadata schema would exceed "
             "Postgres's 63-character identifier limit."
@@ -166,12 +139,9 @@ class DuckLakeCatalogBackend:
     async def ensure(self, catalog: Catalog) -> None:
         """Create the metadata schema and grant the agent role on it.
 
-        Idempotent and called on browse, mirroring how the Polaris backend
-        self-heals a missing catalog. The ``ducklake_*`` tables inside the schema
-        are *not* created here: they are the DuckLake specification's own
-        structure, created by the extension on the first agent ATTACH. Hand-
-        writing 28 table definitions would duplicate the spec and break on the
-        next spec bump.
+        Idempotent, called on browse. The ``ducklake_*`` tables are not created
+        here: the extension builds them on first ATTACH, and hand-writing the
+        spec's tables would break on the next spec bump.
         """
         if not settings.ducklake_enabled:
             raise CatalogBackendUnavailable(
@@ -185,9 +155,8 @@ class DuckLakeCatalogBackend:
         try:
             async with get_engine().begin() as conn:
                 await conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {_quote(schema)}"))
-                # The agent role needs CREATE so the ducklake extension can build
-                # its tables on first attach, and DML on them thereafter — that
-                # is how DuckLake commits. It is scoped to this one schema.
+                # CREATE lets the extension build its tables on first attach; DML
+                # is how DuckLake commits. Scoped to this one schema.
                 await conn.execute(
                     text(f"GRANT USAGE, CREATE ON SCHEMA {_quote(schema)} TO {_quote(agent_role)}")
                 )
@@ -197,8 +166,7 @@ class DuckLakeCatalogBackend:
                         f"{_quote(schema)} TO {_quote(agent_role)}"
                     )
                 )
-                # Tables the extension creates later are covered by this, so the
-                # grant does not have to be re-run after the first attach.
+                # Covers tables the extension creates later.
                 await conn.execute(
                     text(
                         f"ALTER DEFAULT PRIVILEGES IN SCHEMA {_quote(schema)} "
@@ -220,20 +188,13 @@ class DuckLakeCatalogBackend:
         await self.ensure(catalog)
 
     async def deprovision(self, catalog: Catalog) -> None:
-        """Drop the catalog: reclaim its data files, then its metadata schema.
+        """Drop the catalog: purge its data files, then its metadata schema.
 
-        This is the drop-with-purge the Polaris backend gets from Polaris. It is
-        done by deleting the catalog's object-storage prefix rather than by
-        running ``ducklake_expire_snapshots`` + ``ducklake_cleanup_old_files`` on
-        an agent, for a reason worth stating: ``drop_catalog`` refuses while the
-        catalog is attached to any workspace, so by the time this runs there is
-        no workspace to dispatch against and no way to ATTACH it. The prefix is
-        owned outright by this catalog (``ducklake_data_path`` scopes it per
-        slug), so deleting it is both safe and complete.
+        Data is deleted by prefix rather than through ``ducklake_cleanup_*``:
+        the catalog is detached by now, so there is no workspace to dispatch
+        against. The prefix is scoped per slug, so deleting it is safe.
 
-        Data first, then metadata: the prefix is derived from the catalog row,
-        not from the metadata tables, but dropping the schema first would leave
-        nothing to retry against if the delete fails halfway.
+        Data first, so a failed delete leaves something to retry against.
         """
         if catalog.storage_backend is not None:
             await self._purge_data(catalog)
@@ -252,9 +213,8 @@ class DuckLakeCatalogBackend:
     async def _purge_data(self, catalog: Catalog) -> None:
         """Delete everything under the catalog's data path.
 
-        Best-effort: a storage failure must not leave the catalog half-dropped
-        and un-droppable. It is logged loudly instead, because the consequence is
-        orphaned objects an operator has to clean up, not lost data.
+        Best-effort: a storage failure must not leave the catalog un-droppable.
+        The worst case is orphaned objects, so it is logged rather than raised.
         """
         from api.services.session_credentials import build_storage_block, ducklake_data_path
 
@@ -262,8 +222,7 @@ class DuckLakeCatalogBackend:
             data_path = ducklake_data_path(catalog)
             block = await asyncio.to_thread(build_storage_block, catalog.storage_backend, data_path)
             purge = _purge_azure_prefix if block.get("type") == "azure" else _purge_s3_prefix
-            # Paginated deletes over a large prefix, on a thread: inline they
-            # would stall the whole API process for the length of the drop.
+            # Paginated deletes on a thread; inline they would stall the API.
             await asyncio.to_thread(purge, block, data_path)
         except Exception as exc:  # noqa: BLE001 - never block the drop
             logger.warning(
@@ -278,9 +237,8 @@ class DuckLakeCatalogBackend:
     async def _rows(self, catalog: Catalog, sql: str, params: dict[str, Any]) -> list[Any]:
         """Run one read against this catalog's metadata schema.
 
-        A missing table means the catalog exists but has never been attached, so
-        the extension has not built its structure yet. That is a legitimate
-        state (a freshly created catalog) and reads answer "empty", not "error".
+        Missing tables mean the catalog was never attached and the extension has
+        not built its structure yet — a legitimate state, so reads return empty.
         """
         schema = catalog.metadata_schema
         if not schema:
@@ -368,27 +326,15 @@ class DuckLakeCatalogBackend:
     async def list_snapshots(self, catalog: Catalog, schema: str, name: str) -> list[SnapshotInfo]:
         """The catalog snapshots in which this table changed.
 
-        DuckLake snapshots are catalog-wide, so this is a derivation rather than
-        a lookup, and the returned SnapshotInfo is marked
-        ``granularity="catalog"`` so the UI can say what these actually are.
+        DuckLake snapshots are catalog-wide, so this is derived from three
+        sources — ``ducklake_table`` (empty creates and drops),
+        ``ducklake_data_file`` (inserts, compaction) and ``ducklake_delete_file``
+        — and marked ``granularity="catalog"`` for the UI.
+        ``ducklake_snapshot_changes.changes_made`` is free text, so it is not
+        parsed.
 
-        It unions three sources, each of which alone misses real history
-        (verified against DuckLake 1.0):
-
-        - ``ducklake_table``'s own begin/end snapshot — without it a table
-          created empty has no history at all, and a drop is invisible;
-        - ``ducklake_data_file`` — inserts and compaction;
-        - ``ducklake_delete_file`` — deletes that wrote a delete file.
-
-        ``ducklake_snapshot_changes`` would be the direct answer, but its
-        ``changes_made`` column is free text
-        (``created_table:"analytics"."t",inserted_into_table:2``) that would have
-        to be parsed; these three are typed columns.
-
-        Known gap: a change small enough to be *inlined* into the catalog
-        database (10 rows by default) writes no file row, so a delete of a
-        handful of rows can leave no trace here. Those snapshots still exist and
-        are still queryable by version; they just do not appear in this list.
+        Known gap: changes inlined into the catalog database (10 rows by default)
+        write no file row and so do not appear here. The snapshots still exist.
         """
         rows = await self._rows(
             catalog,
@@ -431,11 +377,9 @@ class DuckLakeCatalogBackend:
 
     # --- Metadata writes (dispatched to an agent) ---------------------------
     #
-    # DuckLake commits through its DuckDB extension's transaction protocol.
-    # There is no REST endpoint to call and no safe way to write the catalog
-    # tables directly, so DDL is generated here and executed on an agent through
-    # the same fabric the maintenance scanner uses for health probes. Rows are
-    # tagged origin="metadata" so they stay out of the user's query history.
+    # DDL is generated here and run on an agent, because only the extension can
+    # safely commit it. Rows are tagged origin="metadata" to stay out of the
+    # user's query history.
 
     async def _run_ddl(self, catalog: Catalog, sql: str, ctx: WriteContext, *, what: str) -> None:
         from api.services import query as query_service
@@ -480,10 +424,8 @@ class DuckLakeCatalogBackend:
     ) -> None:
         """Drop the schema, optionally with its tables in the same statement.
 
-        ``cascade`` matters here in a way it does not for Polaris: each DuckLake
-        DDL is a round-trip to an agent, so dropping a 50-table schema table by
-        table is 50 sequential dispatches holding one HTTP request open. DuckDB
-        does it in one.
+        ``cascade`` matters here: each DuckLake DDL is an agent round-trip, so
+        emptying a large schema table by table would mean one dispatch each.
         """
         suffix = " CASCADE" if cascade else ""
         await self._run_ddl(
@@ -501,9 +443,8 @@ class DuckLakeCatalogBackend:
         columns: list[ColumnSpec],
         ctx: WriteContext,
     ) -> CatalogTableInfo:
-        # No type check here: ColumnSpec.type is AllowedColumnType, a Literal of
-        # eight scalars, every one of which DuckLake can represent. The types it
-        # cannot (ARRAY, ENUM, UNION, …) are unreachable through this API.
+        # No type check needed: ColumnSpec.type is a Literal of eight scalars,
+        # all representable in DuckLake.
         defs = ", ".join(
             f"{_quote(c.name)} {_TYPE_TO_DUCKDB[c.type]}" + ("" if c.nullable else " NOT NULL")
             for c in columns
@@ -514,9 +455,8 @@ class DuckLakeCatalogBackend:
             ctx,
             what=f"create table {schema}.{name}",
         )
-        # Read the created table back rather than synthesising it, so the caller
-        # gets the catalog's own view (table_uuid especially, which the metadata
-        # sidecar records as this table's identity at birth).
+        # Read it back so the caller gets the catalog's own view, table_uuid
+        # especially.
         return await self.get_table(catalog, schema, name)
 
     async def delete_table(
@@ -524,13 +464,10 @@ class DuckLakeCatalogBackend:
     ) -> None:
         """Drop the table. Its Parquet is NOT reclaimed here.
 
-        The Polaris sibling passes ``purge=True`` and gets its files back
-        immediately. DuckLake keeps the files so the table stays reachable
-        through time travel, and reclaims them only when the snapshots that
-        reference it are expired and `ducklake_cleanup_old_files` runs — which
-        the maintenance advisor recommends and DuckHaven does not yet execute.
-        Until then the objects remain under the catalog's prefix, and dropping
-        the whole catalog purges them.
+        DuckLake keeps the files so the table stays reachable through time
+        travel; they are reclaimed when snapshots expire and
+        ``ducklake_cleanup_old_files`` runs, which the advisor only recommends.
+        Dropping the whole catalog purges them.
         """
         await self._run_ddl(
             catalog,
@@ -559,17 +496,12 @@ def _table_info(
         storage_location=None,
         columns=columns or [],
         properties={},
-        # Iceberg concepts with no DuckLake equivalent. Left None rather than
-        # faked, so the UI can omit the row instead of showing a wrong number.
+        # Iceberg concepts with no DuckLake equivalent; left None, not faked.
         format_version=None,
         current_snapshot_summary=(
-            # Surfaced through the same field the Iceberg path uses for its free
-            # row-count estimate, because it has the same status: the spec says
-            # ducklake_table_stats.record_count "can be approximate", and it is —
-            # measured on DuckLake 1.0, it still read 5000 after 10 rows were
-            # deleted from a 5000-row table. It is an estimate available without
-            # a scan, not a true count; a true count comes from the same
-            # `recount` probe the Iceberg path uses.
+            # Same field as the Iceberg path's free row-count estimate, and the
+            # same status: the spec calls record_count approximate, and a true
+            # count needs the `recount` probe.
             {"total-records": str(int(record_count))} if record_count is not None else None
         ),
     )
@@ -582,10 +514,8 @@ _MISSING_RELATION_SQLSTATES = frozenset({"42P01", "3F000"})
 def _epoch_ms(value: datetime) -> int:
     """Epoch milliseconds from a snapshot timestamp.
 
-    ``ducklake_snapshot.snapshot_time`` is TIMESTAMPTZ per the spec, but a
-    driver or a hand-made schema can still hand back a naive datetime, and
-    ``.timestamp()`` would then read it as *local* time and shift every snapshot
-    by the server's UTC offset. Assume UTC when the tzinfo is missing.
+    ``snapshot_time`` is TIMESTAMPTZ per the spec, but a naive datetime would be
+    read as local time by ``.timestamp()``, so assume UTC when tzinfo is missing.
     """
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
@@ -595,9 +525,8 @@ def _epoch_ms(value: datetime) -> int:
 def _is_missing_relation(exc: Exception) -> bool:
     """True when the failure is "that table/schema does not exist".
 
-    Reads the driver's SQLSTATE off the wrapped exception rather than matching
-    its ``repr``: the repr is not part of asyncpg's contract, and if it changed
-    this would silently turn into a 502 on every browse.
+    Reads the driver's SQLSTATE rather than matching the exception repr, which
+    asyncpg does not guarantee.
     """
     for candidate in (getattr(exc, "orig", None), exc):
         sqlstate = getattr(candidate, "sqlstate", None)

@@ -143,14 +143,10 @@ async def _prune_old_samples(db: AsyncSession, now: datetime) -> None:
 async def _enumerate_catalog(polaris: PolarisClient, catalog: Catalog) -> list[tuple[str, str]]:
     """(schema, table) pairs for one catalog, cached for ``_ENUMERATION_TTL``.
 
-    Enumeration is a per-catalog ``list_schemas`` + ``list_tables`` round-trip;
-    caching it keeps the scan cycle cheap on large deployments. New tables appear
-    within the TTL; an error invalidates the entry so a transient failure doesn't
-    pin a stale list.
-
-    Goes through the catalog's own backend rather than straight to Polaris, so a
-    DuckLake catalog is enumerated too — calling Polaris with its (null) warehouse
-    name would have failed and silently skipped it from every scan.
+    Enumeration is a per-catalog ``list_schemas`` + ``list_tables`` round-trip,
+    cached to keep the scan cycle cheap; an error invalidates the entry so a
+    transient failure doesn't pin a stale list. Through the catalog's own
+    backend, so a DuckLake catalog is enumerated too rather than skipped.
     """
     now = datetime.now(tz=UTC)
     cached = _enumeration_cache.get(catalog.slug)
@@ -247,16 +243,9 @@ async def _filter_changed(
     """Drop tables whose latest snapshot id is unchanged since the last sample.
 
     A table is re-probed only when its snapshot id changed (or it was never
-    sampled), with a max-age safety net so a table that never changes still gets
-    re-checked periodically. The snapshot id comes from the catalog's own
-    metadata backend (a metadata read, no table scan); on an error we keep the
-    table rather than skip.
-
-    Reading it through the seam rather than from Polaris directly is what makes
-    this work for DuckLake: `polaris_name` is NULL there, so the old call 404ed
-    for every DuckLake table, the error was caught, and the table was kept --
-    meaning every DuckLake table was re-probed on every cycle forever, with a
-    warning each time.
+    sampled), with a max-age safety net so an unchanging table is still checked
+    periodically. The id comes from the catalog's own metadata backend (no table
+    scan); on error we keep the table rather than skip.
     """
     prior = await _latest_snapshot_ids(db)
     now = datetime.now(tz=UTC)

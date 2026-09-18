@@ -43,9 +43,8 @@ function formatNumber(n: number | null) {
   return n.toLocaleString();
 }
 
-// Table-detail tab ids, so an unrecognized ?tab= (a stale link, a hand-edited
-// URL) falls back to Sample instead of leaving Radix's controlled Tabs with no
-// matching trigger — which renders a blank content pane.
+// Table-detail tab ids, so an unrecognized ?tab= falls back to Sample instead
+// of leaving Radix's controlled Tabs with no matching trigger.
 const TABLE_DETAIL_TABS = [
   "sample",
   "history",
@@ -55,13 +54,9 @@ const TABLE_DETAIL_TABS = [
   "permissions",
 ] as const;
 
-/** Catalog-native facts for the table-detail header: table format, current
- * snapshot, data-file count, and a has-deletes badge. Renders nothing when no
- * metadata has been captured yet.
- *
- * `format_version` is an Iceberg concept with no DuckLake equivalent, so the
- * API sends null for a DuckLake table and the format is named from the table's
- * own `format` instead of being assumed. */
+/** Catalog-native facts for the table-detail header. Renders nothing when no
+ * metadata has been captured yet. `format_version` is Iceberg-only; the API
+ * sends null for DuckLake, so the format is named from `table.format`. */
 function TableMetaLine({ table }: { table: CatalogTable }) {
   const parts: string[] = [];
   if (table.format_version != null) {

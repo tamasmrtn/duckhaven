@@ -40,9 +40,8 @@ _STATEMENT_PENDING = ("queued", "running")
 
 
 async def _catalog_descriptors(catalogs: list[Catalog]) -> list[dict[str, object]]:
-    """Shared with the one-shot query path, so a held session attaches a catalog
-    exactly as a query does. These two were separate descriptions once, and a
-    DuckLake catalog silently failed to attach in a session as a result."""
+    """Shared with the one-shot query path, so a session attaches a catalog
+    exactly as a query does."""
     return [await build_catalog_attach(c) for c in catalogs]
 
 

@@ -135,14 +135,9 @@ def _get_capabilities() -> AgentCapabilities:
 
     conn = duckdb.connect()
     version = duckdb.version()
-    # Load the pre-installed query extensions so they are advertised as available.
-    # A fresh connection lists only built-ins under `WHERE loaded`; the storage
-    # backends require these (httpfs for S3, azure for ADLS) as do the catalog
-    # kinds (iceberg for Polaris catalogs, ducklake + postgres for DuckLake
-    # ones), and dispatch is gated on them being advertised.
-    #
-    # `postgres` loads under that name and reports itself as `postgres_scanner`;
-    # the control plane matches the reported name.
+    # Load the pre-installed query extensions so they are advertised as
+    # available; a fresh connection lists only built-ins under `WHERE loaded`.
+    # `postgres` loads under that name and reports itself as `postgres_scanner`.
     for ext in ("httpfs", "azure", "iceberg", "ducklake", "postgres"):
         try:
             conn.execute(f"LOAD {ext}")
@@ -1101,9 +1096,7 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
             }
             done_payload["table_row_count"] = stats.get("table_row_count")
             done_payload["table_size_bytes"] = stats.get("table_size_bytes")
-            # Whichever table format the runner actually probed. Only one of
-            # these is ever set, named after the format so neither block can be
-            # mistaken for the other; the control plane reads either.
+            # Only one of these is ever set, named after the probed format.
             done_payload["iceberg"] = stats.get("iceberg")
             done_payload["ducklake"] = stats.get("ducklake")
         if health_for:

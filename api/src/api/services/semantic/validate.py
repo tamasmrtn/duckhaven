@@ -110,10 +110,8 @@ async def validate_model(
     """Check every binding in a model and persist the outcome per object.
 
     ``catalogs`` maps catalog id to the catalog itself, so each binding is read
-    through its own kind's metadata backend. It used to map to the Polaris
-    warehouse name, which is NULL for a DuckLake catalog — so every DuckLake
-    dataset was reported "broken", claiming its catalog was unavailable when the
-    catalog was fine and only the lookup key was wrong.
+    through its own kind's backend. (Keying on the Polaris name reported every
+    DuckLake dataset "broken": that name is NULL there.)
     """
     report = ValidationReport(checked_at=datetime.now(UTC))
 

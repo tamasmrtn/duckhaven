@@ -47,9 +47,7 @@ const KIND_URI_PLACEHOLDER: Record<ExternalKind, string> = {
 
 const NAME_RE = /^[a-z][a-z0-9_]*$/;
 
-// What each catalog kind means for the person choosing it. The capability facts
-// themselves come from the API (`useCatalogKinds`) so they cannot drift from the
-// backend; this is only the prose.
+// Prose only; the capability facts come from the API (`useCatalogKinds`).
 const KIND_BLURB: Record<CatalogKind, string> = {
   iceberg_polaris:
     "Tables readable by Spark, Trino, Flink and PyIceberg. Storage credentials are vended per query.",
@@ -71,18 +69,15 @@ export function CreateCatalogDialog({
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  // Catalog kind: where this catalog's metadata lives. Orthogonal to storage
-  // below, and constrained only in that a kind declares which storage kinds it
-  // supports. Hidden entirely when the deployment offers only one kind, so
-  // nothing changes for an operator who has not enabled DuckLake.
+  // Hidden when the deployment offers only one kind, so an operator who has not
+  // enabled DuckLake sees no change.
   const { data: kinds = [] } = useCatalogKinds();
   const [catalogKind, setCatalogKind] =
     useState<CatalogKind>("iceberg_polaris");
   const offerKindChoice = kinds.filter((k) => k.available).length > 1;
 
-  // Storage is a first-class choice on every catalog (not hidden behind an
-  // "Advanced" toggle): bundled object storage, an existing backend, or a new
-  // external one.
+  // Storage is a first-class choice on every catalog, not hidden behind an
+  // "Advanced" toggle.
   const { data: backends = [] } = useStorageBackends();
   const createBackend = useCreateStorageBackend();
   const [backendChoice, setBackendChoice] = useState<string>(BUNDLED);

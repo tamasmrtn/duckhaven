@@ -1,22 +1,13 @@
 #!/bin/sh
 # Create the `ducklake` database and the restricted role agents use to reach it.
 #
-# DuckLake keeps its catalog in SQL tables, and the client — a DuckDB agent —
-# connects to that database directly; there is no credential vendor in front of
-# it the way Polaris sits in front of Iceberg storage. So agents need a Postgres
-# login, and `postgres` has to join the otherwise-isolated `duckhaven_internal`
-# network for them to reach it.
-#
-# Both of those are only acceptable because of what this script does: a
-# `ducklake_agent` role that can connect to `ducklake` and nothing else. Postgres
-# grants CONNECT to PUBLIC on every database by default, so the REVOKEs are the
-# load-bearing part — without them the role reaches `duckhaven`, which holds
-# users, password hashes and session tokens.
-#
-# Per-catalog schema privileges are granted by the API at catalog creation, not
-# here. Runs only on first boot (empty data dir), like all
-# /docker-entrypoint-initdb.d scripts; `scripts/enable-ducklake.sh` applies the
-# same thing to an existing deployment.
+# DuckLake agents connect directly to the catalog database — no credential
+# vendor sits in front of it like Polaris does for Iceberg — so they need a
+# Postgres login. The REVOKEs are load-bearing: Postgres grants CONNECT to
+# PUBLIC by default, which would let the role reach `duckhaven` (users, password
+# hashes, session tokens). Per-catalog schema privileges are granted by the API
+# at catalog creation. Runs only on an empty data dir, like all initdb scripts;
+# `scripts/enable-ducklake.sh` applies the same setup to an existing deployment.
 set -e
 
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \

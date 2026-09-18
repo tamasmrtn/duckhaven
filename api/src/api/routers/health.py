@@ -83,11 +83,9 @@ async def readyz(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"database unreachable: {type(e).__name__}",
         ) from e
-    # Polaris is only a readiness dependency when something needs it. A
-    # DuckLake-only deployment does not run it at all, and pinging it
-    # unconditionally would keep such a stack permanently un-ready. Checked by
-    # asking the database rather than a flag, so the answer follows what is
-    # actually deployed: one Iceberg catalog is enough to make Polaris required.
+    # Ping Polaris only when an Iceberg catalog exists, so a DuckLake-only stack
+    # (which does not run Polaris) can go ready. Asked of the database rather
+    # than a flag, so the answer follows what is deployed.
     needs_polaris = await db.scalar(
         select(sa.func.count()).select_from(Catalog).where(Catalog.kind == KIND_ICEBERG_POLARIS)
     )

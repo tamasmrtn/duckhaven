@@ -66,9 +66,8 @@ def assert_allowed(sql: str) -> None:
             "UPDATE, DELETE, MERGE, CREATE, ALTER, DROP."
         )
 
-    # An allowed statement *type* can still reach a foreign database or DuckLake's
-    # internal metadata; both are denied by name. Raised as SQLNotAllowed so the
-    # router's 422 shape is unchanged.
+    # An allowed statement type can still reach a foreign database or DuckLake's
+    # internal metadata; raised as SQLNotAllowed to keep the router's 422 shape.
     try:
         check_sql(sql)
     except ForeignAccessDenied as exc:

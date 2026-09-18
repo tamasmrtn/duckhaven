@@ -8,15 +8,11 @@ COMPOSE_FILE="$(dirname "$0")/../deploy/docker-compose.yml"
 
 mkdir -p "$BACKUP_DIR"
 
-# These databases live in the same Postgres instance and are each required to
-# restore a working install: `duckhaven` (users, workspaces, saved queries,
-# audit log, agent registrations), `polaris` (the Iceberg metastore) and, when
-# DuckLake is enabled, `ducklake` (the DuckLake catalog metadata).
-#
-# `ducklake` is skipped when absent, so this keeps working on an installation
-# that has never enabled DuckLake. When it IS present it is not optional: a
-# DuckLake table's schema, snapshots and file list live only there, so restoring
-# without it leaves the Parquet in object storage with nothing able to read it.
+# Each database here is required to restore a working install: `duckhaven`
+# (users, workspaces, saved queries, audit log, agent registrations), `polaris`
+# (the Iceberg metastore) and, when enabled, `ducklake` (DuckLake catalog
+# metadata). `ducklake` is skipped when absent; when present it is not optional,
+# since a DuckLake table's schema, snapshots and file list live only there.
 databases="duckhaven polaris"
 if docker compose -f "$COMPOSE_FILE" exec -T postgres \
         psql -U duckhaven -d postgres -tAc \

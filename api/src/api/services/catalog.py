@@ -51,10 +51,8 @@ async def create_catalog(
 ) -> Catalog:
     """Provision a new catalog in its metastore and persist its record.
 
-    A catalog has a single identifier-safe ``name`` that doubles as its slug and,
-    for an Iceberg catalog, its Polaris name; a DuckLake catalog derives its
-    metadata schema from the same name. Rolls back the pg row if provisioning
-    fails (D7)."""
+    ``name`` doubles as the slug and, per kind, the Polaris name or metadata
+    schema. No row is written if provisioning fails (D7)."""
     validate_catalog_slug(name)
     if kind == KIND_DUCKLAKE and not settings.ducklake_enabled:
         raise HTTPException(
@@ -85,8 +83,8 @@ async def create_catalog(
     try:
         metadata_schema = metadata_schema_for(name) if kind == KIND_DUCKLAKE else None
     except CatalogBackendError as exc:
-        # A name too long for a Postgres identifier is the caller's problem, not
-        # an upstream failure — without this it surfaces as a 502.
+        # A name too long for a Postgres identifier is the caller's error, not
+        # an upstream failure; without this it would surface as a 502.
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
         ) from exc
@@ -101,9 +99,8 @@ async def create_catalog(
         storage_backend_id=backend.id,
         created_by=created_by,
     )
-    # Provision before the row is flushed, so a metastore failure leaves no
-    # catalog behind (D7 rollback). The unsaved object carries everything the
-    # backend needs — its kind, its identity and its storage backend.
+    # Provision before flush so a failure leaves no row behind (D7); the unsaved
+    # object carries everything the backend needs.
     catalog.storage_backend = backend
     try:
         await backend_for(catalog, polaris=polaris).provision(catalog)
@@ -214,14 +211,8 @@ async def drop_catalog(db: AsyncSession, polaris: PolarisClient, *, catalog: Cat
                 "Detach it everywhere before dropping."
             ),
         )
-    # Tear down the catalog in its own metastore, reclaiming data files. What
-    # that means is kind-specific (Polaris purges its namespaces and roles in
-    # order; DuckLake deletes its object-storage prefix and drops its metadata
-    # schema), so it lives behind the backend rather than here.
-    #
-    # The storage backend is loaded first because the DuckLake teardown needs it
-    # to find the prefix, and touching a lazy relationship inside async code
-    # raises MissingGreenlet rather than loading it.
+    # Kind-specific teardown lives behind the backend. Load the storage backend
+    # first: touching a lazy relationship in async code raises MissingGreenlet.
     await db.refresh(catalog, attribute_names=["storage_backend"])
     try:
         await backend_for(catalog, polaris=polaris).deprovision(catalog)

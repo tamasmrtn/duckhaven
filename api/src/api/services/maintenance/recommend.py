@@ -202,17 +202,9 @@ def _investigate_growth(
     )
 
 
-# What a DuckLake catalog's remediation actually is. The recommendations
-# themselves are format-neutral — too many small files is too many small files —
-# but the fix is not: DuckDB's ducklake extension can run these, where its
-# iceberg extension cannot run Iceberg's equivalents. That is the one real
-# capability difference between the kinds, so it is stated rather than smoothed
-# over by a shared command string.
-#
-# `applicable_in_app` stays False for now: DuckHaven advises and does not yet
-# apply. Executing maintenance needs its own design — who may trigger it, what
-# it locks, how it is audited, what happens mid-run — and folding that in here
-# would double this change's surface. The flag is what will flip when it lands.
+# DuckLake's commands for the shared recommendation kinds. The findings are
+# format-neutral; the fix is not, and DuckDB's ducklake extension can run these.
+# `applicable_in_app` stays False: DuckHaven advises and does not yet apply.
 _DUCKLAKE_REMEDIATION: dict[str, dict[str, str]] = {
     "compact_small_files": {
         "command": (
@@ -221,8 +213,7 @@ _DUCKLAKE_REMEDIATION: dict[str, dict[str, str]] = {
         "tool": "DuckDB (ducklake extension)",
     },
     "expire_snapshots": {
-        # DuckLake expiry is catalog-level only: `expire_older_than` has global
-        # scope, so this cannot be narrowed to one table the way Iceberg's can.
+        # Catalog-level only: `expire_older_than` has global scope.
         "command": (
             "CALL ducklake_expire_snapshots('<catalog>', older_than => now() - INTERVAL '7 days')"
         ),
@@ -234,9 +225,8 @@ _DUCKLAKE_REMEDIATION: dict[str, dict[str, str]] = {
     },
 }
 
-# Manifests are an Iceberg structure with no DuckLake counterpart; a DuckLake
-# catalog cannot produce this recommendation, and if one somehow arrives it is
-# dropped rather than given a command that does not exist.
+# Manifests are Iceberg-only; dropped rather than given a command that does not
+# exist.
 _DUCKLAKE_INAPPLICABLE = {"rewrite_manifests"}
 
 
@@ -257,9 +247,8 @@ def generate(
 ) -> list[dict[str, Any]]:
     """All recommendations a single table's latest sample warrants, worst first.
 
-    ``catalog_kind`` decides only the *remediation* — what to run and with what.
-    The findings are the same either way, because they are derived from file and
-    snapshot counts that both formats have.
+    ``catalog_kind`` decides only the remediation; the findings come from file
+    and snapshot counts both formats have.
     """
     out = [
         _compact(metrics, thresholds),

@@ -99,8 +99,8 @@ async def _binding_count(db: AsyncSession, catalog_id: uuid.UUID) -> int:
 def _capabilities_out(kind: str) -> CatalogCapabilitiesOut | None:
     """This kind's capabilities, or None for a kind this build does not know.
 
-    None rather than a raise: a catalog row written by a newer version must not
-    make the whole listing 500.
+    None rather than a raise, so a row written by a newer version does not turn
+    the whole listing into a 500.
     """
     try:
         caps = capabilities_for(kind)
@@ -149,9 +149,7 @@ _KIND_LABELS = {
 async def list_catalog_kinds(_: User = Depends(get_current_user)) -> list[CatalogKindOut]:
     """The catalog kinds this deployment can create, with their capabilities.
 
-    Iceberg is listed first because it is the default. DuckLake is listed even
-    when disabled, with the reason — hiding it entirely would leave an operator
-    who read the docs wondering where it went.
+    A disabled kind is still listed, with the reason, rather than hidden.
     """
     out: list[CatalogKindOut] = []
     for kind in (KIND_ICEBERG_POLARIS, KIND_DUCKLAKE):

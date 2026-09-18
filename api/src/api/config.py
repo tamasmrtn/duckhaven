@@ -76,25 +76,19 @@ class Settings(BaseSettings):
     # data access). Defaults to the bootstrap root principal.
     polaris_principal: str = "root"
     polaris_http_timeout_s: float = 10.0
-    # DuckLake (the second catalog kind) keeps catalog metadata in SQL tables in
-    # its own `ducklake` database rather than in a catalog service. Off by
-    # default; Iceberg + Polaris stays the default kind.
+    # Off by default; Iceberg + Polaris remains the default kind.
     ducklake_enabled: bool = False
-    # Two credentials on purpose: the API is the owner, agents get a role
-    # confined to the `ducklake` database. See
-    # deploy/postgres-init/20-create-ducklake-db.sh.
+    # Owner credentials for DuckLake's metadata database; agents get a role
+    # confined to it (deploy/postgres-init/20-create-ducklake-db.sh).
     ducklake_database_url: str = "postgresql+asyncpg://duckhaven:duckhaven@localhost:5432/ducklake"
-    # Connection details vended to an agent per dispatch. Never written to the
-    # agent's config or disk — the closest this design gets to keeping I7's
-    # "no long-lived secrets on agents".
+    # Vended to an agent per dispatch, never written to its disk (I7).
     ducklake_agent_host: str = "postgres"
     ducklake_agent_port: int = 5432
     ducklake_agent_database: str = "ducklake"
     ducklake_agent_user: str = "ducklake_agent"
     ducklake_agent_password: str = ""
-    # DuckLake catalog options applied at provisioning. Inlining keeps small
-    # writes out of object storage (they land in the catalog database instead);
-    # target file size drives compaction.
+    # Inlining keeps small writes in the catalog database; file size drives
+    # compaction.
     ducklake_data_inlining_row_limit: int = 10
     ducklake_target_file_size_mb: int = 512
     # Bundled object store backing the object_store catalogs. Three tiers,

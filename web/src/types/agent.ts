@@ -221,14 +221,9 @@ export interface BootstrapToken {
   agent_image: string;
 }
 
-// Mirrors _CATALOG_KIND_EXTENSIONS in api/src/api/services/agent_capabilities.py,
-// which gates dispatch on the agent advertising these. `postgres_scanner`, not
-// `postgres`: DuckDB installs the extension under the latter name and advertises
-// it under the former.
-//
-// `iceberg_polaris` is empty on purpose, matching the server: that requirement
-// has never been gated, and enforcing it client-side would grey out agents the
-// API would happily accept.
+// Mirrors _CATALOG_KIND_EXTENSIONS in api/src/api/services/agent_capabilities.py.
+// `postgres_scanner` is the advertised name for the `postgres` extension.
+// `iceberg_polaris` is empty on purpose, matching the server.
 const CATALOG_KIND_EXTENSIONS: Record<CatalogKind, readonly string[]> = {
   iceberg_polaris: [],
   ducklake: ["ducklake", "postgres_scanner"],
@@ -238,7 +233,7 @@ export function agentSupportsCatalogKind(
   agent: Agent,
   kind: CatalogKind,
 ): boolean {
-  // A not-yet-registered agent (no advertised capabilities) supports nothing.
+  // No advertised capabilities (not yet registered) supports nothing.
   if (!agent.capabilities) return false;
   const { extensions } = agent.capabilities;
   return (CATALOG_KIND_EXTENSIONS[kind] ?? []).every((ext) =>
@@ -260,11 +255,10 @@ export function missingCatalogKindExtension(
 }
 
 export function agentSupportsBackend(agent: Agent, kind: BackendKind): boolean {
-  // A not-yet-registered agent (no advertised capabilities) supports nothing.
+  // No advertised capabilities (not yet registered) supports nothing.
   if (!agent.capabilities) return false;
   const { extensions } = agent.capabilities;
-  // Every backend is object storage: object_store is backed by the bundled
-  // the bundled store (S3) and needs httpfs, just like s3.
+  // Every backend is object storage; object_store is the bundled S3 store.
   if (kind === "adls_gen2") return extensions.includes("azure");
   return extensions.includes("httpfs");
 }

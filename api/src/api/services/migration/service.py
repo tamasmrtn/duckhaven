@@ -59,13 +59,9 @@ async def start_migration(
 ) -> CatalogMigration:
     """Validate and create a migration record (the runner picks it up). Refuses a
     no-op target, a second concurrent migration, or an unreachable target."""
-    # Migration is an Iceberg algorithm: it stands up a shadow Polaris catalog
-    # and rewrites the absolute URIs in each table's metadata tree. A DuckLake
-    # catalog has neither -- its paths are relative and its metadata is rows in
-    # Postgres -- so running this against one would build a shadow catalog for a
-    # NULL polaris_name and copy nothing. Refused here and not only in the
-    # migrations page's source picker, because the capability is the API's to
-    # enforce.
+    # Migration rewrites Iceberg metadata trees; DuckLake has relative paths and
+    # row-based metadata, so the algorithm does not apply. Enforced here, not
+    # only in the UI's source picker.
     if not capabilities_for(catalog.kind).supports_storage_migration:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

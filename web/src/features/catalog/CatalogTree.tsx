@@ -188,10 +188,8 @@ function TableNode({
 }: TableNodeProps) {
   const [open, setOpen] = useState(false);
   const [hovered, setHovered] = useState(false);
-  // Columns aren't in the table-list payload (Polaris lists identifiers only),
-  // so fetch the table detail lazily on expand — sharing the detail view's
-  // cache with the hover-preview card below (same query key), so neither
-  // triggers a duplicate fetch if the other already warmed the cache.
+  // Columns are not in the table-list payload, so fetch detail lazily on expand
+  // or hover; the shared query key dedupes the two.
   const { data, isLoading } = useTable(
     ws,
     catalog,
@@ -391,15 +389,13 @@ function SchemaNode({
   );
 }
 
-// The built-in, read-only metadata schema every catalog exposes. It is not a
-// Polaris namespace (so it never comes back from `useSchemas`); it is DuckDB's
-// native, live `information_schema`, surfaced here as a virtual node. The views
-// listed are the ones DuckHaven supports — see docs/reference/sql-support.md.
+// The built-in read-only DuckDB `information_schema`, surfaced as a virtual
+// node. The views listed are the ones DuckHaven supports — see
+// docs/reference/sql-support.md.
 const INFORMATION_SCHEMA = "information_schema";
-// `columns` is deliberately absent: DuckDB cannot introspect the columns of an
-// attached Iceberg relation through it — it returns an `UNKNOWN` placeholder —
-// so offering it here would seed a query that looks broken. Column detail comes
-// from `DESCRIBE`, or from clicking a table (which reads Polaris directly).
+// `columns` is absent deliberately: DuckDB cannot introspect columns through it
+// for an attached Iceberg relation, so it would seed a query that looks broken.
+// Column detail comes from `DESCRIBE` or clicking a table.
 const INFORMATION_SCHEMA_VIEWS = ["schemata", "tables", "views"] as const;
 
 interface InformationSchemaNodeProps {
@@ -408,10 +404,9 @@ interface InformationSchemaNodeProps {
   onMetaViewClick?: (catalog: string, view: string) => void;
 }
 
-// Virtual, read-only `information_schema` node. Always present (never created),
-// never writable — hence the lock icon and the "read-only" badge, and no
-// create/drop affordances. Clicking a view seeds a scoped query when a handler
-// is provided (worksheet sidebar); elsewhere the views are display-only.
+// Virtual, read-only `information_schema` node: always present, never writable.
+// Clicking a view seeds a scoped query when a handler is provided (worksheet
+// sidebar); elsewhere the views are display-only.
 function InformationSchemaNode({
   catalog,
   filter,
@@ -706,10 +701,8 @@ export function CatalogTree({
   const { data: catalogs, isLoading } = useCatalogs(ws);
   const refreshStats = useRefreshCatalogStats(ws);
 
-  // Probe row counts for any tables that lack one, then re-read the tree on
-  // settle. This button is workspace-wide, so it probes every attached
-  // catalog: the endpoint is catalog-scoped, and a catalog it is not called
-  // for keeps showing no row counts at all.
+  // Workspace-wide: the refresh endpoint is catalog-scoped, so probe every
+  // attached catalog or siblings keep showing no row counts.
   async function handleRefresh() {
     const slugs = catalogs?.map((c) => c.slug) ?? [];
     if (slugs.length === 0) return;

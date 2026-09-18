@@ -26,31 +26,22 @@ class CatalogAttach(BaseModel):
 
     The control plane sends a list of these (plus an ``active_catalog`` slug) in
     the DISPATCH_QUERY payload; the agent attaches each under its ``slug`` alias
-    and ``USE``s the active one. ``backend`` is the catalog's storage backend
-    descriptor (``{kind, root_uri}``) used to pick the DuckDB IO extension.
+    and ``USE``s the active one.
 
-    ``kind`` selects how the attach is performed, and which of the two groups of
-    fields below is populated:
-
-    - ``iceberg_polaris`` — ``polaris_name`` is the Polaris warehouse. DuckDB
-      does the OAuth2 exchange itself and Polaris vends storage credentials on
-      access, so the control plane sends none.
-    - ``ducklake`` — ``data_path``/``metadata_schema`` locate the catalog, and
-      ``meta``/``storage`` carry credentials the control plane minted, because
-      DuckLake has no credential vendor of its own.
-
-    Every new field has a default so a newer control plane and an older agent,
-    or the reverse, still agree on the frame. ``polaris_name`` is now defaulted
-    for the same reason: a DuckLake catalog has no Polaris warehouse to name."""
+    ``kind`` selects how the attach is performed: ``iceberg_polaris`` carries a
+    ``polaris_name`` and lets DuckDB authenticate and Polaris vend storage
+    credentials; ``ducklake`` carries ``data_path``/``metadata_schema`` plus
+    control-plane-minted ``meta``/``storage`` credentials, as DuckLake has no
+    credential vendor of its own. Every new field is defaulted so an older agent
+    and a newer control plane still agree on the frame.
+    """
 
     slug: str
     backend: dict[str, str | None]
     default_schema: str
     kind: str = "iceberg_polaris"
     polaris_name: str = ""
-    # DuckLake only. `meta` is a Postgres connection block and `storage` an
-    # object-store credential block; both are vended per dispatch and never
-    # persisted on the agent.
+    # DuckLake only; vended per dispatch, never persisted on the agent.
     data_path: str | None = None
     metadata_schema: str | None = None
     meta: dict[str, str | int] | None = None

@@ -1,21 +1,11 @@
 """The catalog-metadata seam: one narrow interface over two catalog kinds.
 
-DuckHaven asks the same questions of every catalog — what schemas are in it,
-what tables are in a schema, what columns and snapshots does a table have,
-create this schema, drop that table. Those questions have the same shape whether
-the answer comes from an Apache Polaris REST catalog or from a DuckLake catalog's
-``ducklake_*`` tables, so they belong behind one interface.
+Schemas, tables, columns and snapshots have the same shape whether they come
+from a Polaris REST catalog or a DuckLake catalog, so they sit behind one
+interface. Catalog metadata only: credential vending, maintenance verbs and
+storage migration stay elsewhere because the kinds differ there in substance.
 
-Catalog metadata only. Credential vending lives in
-``services/session_credentials.py``, maintenance verbs in
-``services/maintenance/recommend.py``, and storage migration in
-``services/migration/`` — each because the two kinds differ there in substance
-rather than in spelling. A method here for anything that is not catalog metadata
-is the signal this is drifting.
-
-Shape follows the house registry pattern (``services/compute/backends.py``,
-``services/lineage/providers``). The ``Protocol`` is documentation of the whole
-surface in one place; it is not enforced at runtime or by a type checker.
+The ``Protocol`` documents the surface; it is not enforced at runtime.
 """
 
 from __future__ import annotations
@@ -59,10 +49,8 @@ class CatalogBackendUnavailable(CatalogBackendError):
 
 
 # --- Backend-neutral metadata shapes ----------------------------------------
-# Structurally these match the Polaris response models, because those were
-# already format-neutral (a name, columns, properties, a storage location).
-# They are restated here rather than aliased so that a DuckLake backend is not
-# constructing something called PolarisTable.
+# Structurally identical to the Polaris response models, restated so a DuckLake
+# backend is not constructing something called PolarisTable.
 
 
 class _Info(BaseModel):
@@ -71,10 +59,8 @@ class _Info(BaseModel):
 
 class CatalogColumnInfo(_Info):
     name: str
-    # The catalog's own type spelling — Iceberg's ("long", "decimal(10,2)") or
-    # DuckLake's ("int64"). Displayed as-is; not normalized across kinds.
+    # The catalog's own spelling ("long", "int64"), displayed as-is.
     type_text: str
-    # Upper-cased base type for display.
     type_name: str
     position: int
     nullable: bool = True
@@ -97,24 +83,17 @@ class CatalogTableInfo(_Info):
     columns: list[CatalogColumnInfo] = Field(default_factory=list)
     properties: dict[str, str] | None = None
     comment: str | None = None
-    # Iceberg table-format version. None for DuckLake, which has no equivalent.
+    # None for DuckLake, which has neither concept.
     format_version: int | None = None
-    # Raw Iceberg snapshot summary, the source of the free row-count estimate.
-    # None for DuckLake, whose row count comes from ducklake_table_stats instead.
     current_snapshot_summary: dict[str, str] | None = None
 
 
 class SnapshotInfo(_Info):
     """One snapshot of a table.
 
-    Ids stay ints here (64-bit Iceberg snapshot ids); the API layer stringifies
-    them for JS safety.
-
-    ``granularity`` is the honest part. An Iceberg snapshot belongs to one table.
-    A DuckLake snapshot is a commit against the whole *catalog*, so what is
-    returned for a table is the subset of catalog snapshots that changed it —
-    the UI has to be able to say so rather than implying a per-table lineage
-    that does not exist.
+    Ids stay ints (the API layer stringifies them for JS). ``granularity``
+    distinguishes an Iceberg per-table snapshot from a DuckLake catalog-wide
+    commit, for which this is the subset that changed the table.
     """
 
     snapshot_id: int
@@ -132,20 +111,17 @@ class CatalogCapabilities:
     """What a catalog kind can do, surfaced so the UI never switches on `kind`."""
 
     supports_storage_migration: bool = True
-    # Whether engines other than DuckDB can read these tables. The honest
-    # trade-off a user makes when choosing a kind.
+    # Whether engines other than DuckDB can read these tables.
     external_engine_readable: bool = True
     supported_storage_kinds: tuple[str, ...] = ("object_store", "s3", "adls_gen2")
 
 
 @dataclass
 class WriteContext:
-    """What a metadata *write* needs beyond its arguments.
+    """What a metadata write needs beyond its arguments.
 
-    Polaris writes are a REST call and ignore all of this. A DuckLake write is
-    SQL that has to run on an agent, under a user, in a workspace — so the
-    caller passes it explicitly rather than a backend reaching into request
-    state.
+    Polaris writes are a REST call and ignore this. A DuckLake write runs as SQL
+    on an agent, so the caller passes workspace, user and session explicitly.
     """
 
     workspace: Workspace
@@ -179,9 +155,8 @@ class CatalogBackend(Protocol):
     ) -> None:
         """Drop the schema, and with ``cascade`` the tables inside it.
 
-        The backend owns *how*: Polaris refuses to delete a non-empty namespace
-        so its adapter empties it first, while DuckLake does it in one statement.
-        The caller should not have to know which.
+        The backend owns how: Polaris must be emptied first, DuckLake does it in
+        one statement.
         """
         ...
 
@@ -210,9 +185,8 @@ class CatalogBackend(Protocol):
 def backend_for(catalog: Catalog, *, polaris: PolarisClient | None = None) -> CatalogBackend:
     """The backend serving ``catalog``, chosen by its kind.
 
-    Lazily imported per kind, matching ``services/compute/backends.get_backend``:
-    it keeps an unused kind's dependencies (and its import cost) out of a process
-    that never touches it.
+    Imported lazily per kind, so an unused kind's dependencies stay out of the
+    process.
     """
     from api.models.catalog import KIND_DUCKLAKE, KIND_ICEBERG_POLARIS
 
@@ -234,11 +208,7 @@ def backend_for(catalog: Catalog, *, polaris: PolarisClient | None = None) -> Ca
 
 
 def capabilities_for(kind: str) -> CatalogCapabilities:
-    """Capabilities by kind, without needing a catalog row or a client.
-
-    Used by the create flow, which has to describe a kind before a catalog of
-    that kind exists.
-    """
+    """Capabilities by kind, for the create flow before a catalog row exists."""
     from api.models.catalog import KIND_DUCKLAKE, KIND_ICEBERG_POLARIS
 
     if kind == KIND_ICEBERG_POLARIS:

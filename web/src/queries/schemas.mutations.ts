@@ -7,15 +7,11 @@ import { schemasApi, type ColumnSpec } from "@/api/schemas";
 export function useRefreshCatalogStats(ws: string) {
   const qc = useQueryClient();
   return useMutation({
-    // Probes every catalog passed in, not just the workspace default. Row
-    // counts are per-catalog, so refreshing one catalog leaves every sibling
-    // catalog's tables showing no count at all — which is what the tree's
-    // workspace-wide button is expected to fix.
+    // Probes every catalog passed in: row counts are per-catalog, so refreshing
+    // one leaves siblings showing none.
     //
-    // Sequential, because each probe runs a real count(*) per table on an
-    // agent the catalogs share. One catalog failing (no agent, or an agent
-    // that can't serve that catalog's kind) must not stop the rest, so the
-    // failures are collected and returned rather than thrown.
+    // Sequential, since each probe runs a real count(*) per table on a shared
+    // agent. A failure must not stop the rest, so failures are collected.
     mutationFn: async (catalogs: string[]) => {
       let probed = 0;
       const failed: string[] = [];
@@ -28,10 +24,8 @@ export function useRefreshCatalogStats(ws: string) {
       }
       return { probed, failed };
     },
-    // Re-read on settle (even on failure, e.g. no agent) so the tree reflects
-    // any counts that were probed, plus schemas/tables created out-of-band.
-    // Invalidate the whole catalog subtree for the workspace so every catalog
-    // node refetches (the tree's top button is workspace-wide).
+    // Re-read on settle (even on failure) so the tree reflects any counts that
+    // were probed plus any out-of-band changes.
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ["workspace", ws, "catalog"] });
     },

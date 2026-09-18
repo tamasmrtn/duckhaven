@@ -239,9 +239,8 @@ class _Target:
 def _write_ctx(target: _Target, user: User, db: AsyncSession) -> WriteContext:
     """What a metadata write needs beyond its arguments.
 
-    Polaris ignores all of it; a DuckLake write is SQL that has to run on an
-    agent, under a user, in a workspace — so it is passed explicitly rather than
-    a backend reaching into request state.
+    Polaris ignores it; a DuckLake write runs on an agent, under a user, in a
+    workspace, so it is passed explicitly.
     """
     return WriteContext(workspace=target.workspace, user=user, db=db)
 
@@ -275,9 +274,7 @@ def target_catalog(
 def _backend(catalog: Catalog, polaris: PolarisClient) -> CatalogBackend:
     """The metadata backend serving this catalog, chosen by its kind.
 
-    Failures propagate: the app-level handler maps them to a status with the
-    reason attached. Catching here to raise a 500 gave the same exception two
-    different statuses depending on which call site produced it.
+    Failures propagate to the app-level handler.
     """
     return backend_for(catalog, polaris=polaris)
 
@@ -435,10 +432,8 @@ async def drop_schema(
                 "Pass cascade=true to drop them too."
             ),
         )
-    # One call, not one per table: how a schema's contents are removed is the
-    # backend's business (Polaris must empty the namespace first; DuckLake does
-    # it in a single statement). Dropping table by table made a 50-table schema
-    # 50 sequential agent round-trips on the DuckLake path.
+    # One call, not one per table: removing a schema's contents is the backend's
+    # business, and per-table drops were one agent round-trip each on DuckLake.
     await backend.delete_schema(cat, schema, _write_ctx(target, user, db), cascade=cascade)
     for t in tables:
         await _delete_table_meta(db, cat.id, schema, t.name)

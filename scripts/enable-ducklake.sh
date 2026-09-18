@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
 # Apply the DuckLake Postgres setup to an EXISTING deployment.
 #
-# deploy/postgres-init/20-create-ducklake-db.sh does this on a fresh install, but
-# /docker-entrypoint-initdb.d only runs against an empty data dir — so an
-# installation that predates DuckLake never sees it. This script is the same
-# work, idempotent, against a running stack.
-#
-# It creates the `ducklake` database and the restricted `ducklake_agent` role,
-# and revokes PUBLIC's default CONNECT on `duckhaven` and `polaris` so that role
-# cannot reach the control plane's own database.
+# /docker-entrypoint-initdb.d only runs against an empty data dir, so an
+# installation predating DuckLake never sees 20-create-ducklake-db.sh. This is
+# the same idempotent work against a running stack: create the `ducklake`
+# database and restricted `ducklake_agent` role, and revoke PUBLIC's default
+# CONNECT on `duckhaven`/`polaris`.
 #
 #   DUCKLAKE_AGENT_PASSWORD=... scripts/enable-ducklake.sh
 #

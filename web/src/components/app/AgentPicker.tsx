@@ -42,25 +42,16 @@ interface AgentPickerProps {
   onChange: (agentId: string) => void;
   workspaceBackend?: BackendKind;
   /**
-   * The catalog kinds attached to the workspace.
-   *
-   * Dispatch checks two independent axes — the storage backend the bytes live
-   * on, and the catalog kind whose metastore and table format the agent has to
-   * speak. Both are enforced server-side; without this the picker mirrored only
-   * the first, so an agent missing `ducklake` looked selectable and the query
-   * failed at dispatch instead.
+   * The catalog kinds attached to the workspace. Compatibility has two axes —
+   * storage backend and catalog kind — both enforced server-side; without the
+   * kind, an agent missing `ducklake` looked selectable and failed at dispatch.
    */
   workspaceCatalogKinds?: CatalogKind[];
   /**
-   * Allow picking an elastic agent that is currently down.
-   *
-   * The two call sites diverge here. A worksheet dispatches *now*, so a
-   * terminated agent would only 503. A schedule dispatches *later*: the
-   * scheduler restarts a terminated elastic agent at run time and parks the run
-   * until it dials home, so choosing one is the point rather than a mistake.
-   *
-   * Static agents stay unselectable when offline either way — nothing can start
-   * them, so the run would just fail.
+   * Allow picking an elastic agent that is currently down. A worksheet
+   * dispatches now, so a terminated agent would only 503; a schedule dispatches
+   * later and the scheduler restarts it. Static agents stay unselectable when
+   * offline either way.
    */
   allowTerminatedElastic?: boolean;
 }
@@ -103,7 +94,7 @@ function AgentRow({
           </span>
         )}
         {["s3", "adls_gen2", "object_store"].map((ext) => {
-          // object_store is the bundled S3 store, so it also needs httpfs.
+          // object_store is the bundled S3 store, so it needs httpfs too.
           const extensions = agent.capabilities?.extensions ?? [];
           const supported =
             ext === "adls_gen2"
@@ -204,8 +195,7 @@ export function AgentPicker({
                       setOpen(false);
                     }
                   }}
-                  // Static unavailable agents stay unselectable; elastic agents are
-                  // never disabled so their manage controls remain clickable.
+                  // Elastic agents stay enabled so their controls remain usable.
                   disabled={!agent.provider && agent.status === "unavailable"}
                   className="flex flex-col items-start py-2"
                 >

@@ -78,9 +78,7 @@ export function CatalogDetail({
   const cat = catalogs?.find((c) => c.slug === catalog);
   const { data: schemas, isLoading } = useSchemas(ws, catalog);
 
-  // Both kinds scope their storage per catalog, but under different names: an
-  // Iceberg catalog's base location is keyed by its Polaris warehouse name, a
-  // DuckLake catalog's data path by its slug.
+  // Iceberg scopes storage by Polaris warehouse name; DuckLake by slug.
   const locationKey = cat ? (cat.polaris_name ?? cat.slug) : "";
   const baseLocation = cat
     ? `${(cat.storage_backend_root_uri || "").replace(/\/$/, "")}/${locationKey}`.replace(

@@ -33,11 +33,8 @@ from api.models.catalog import KIND_DUCKLAKE
 from api.models.storage_backend import StorageBackend
 from api.services.workspace import DEFAULT_SCHEMA, polaris_storage
 
-# How long a vended DuckLake storage credential is good for. Long enough that a
-# slow query does not lose its credential mid-scan, short enough that a leaked
-# one expires. Only meaningful for the kinds that can mint a scoped credential
-# (external s3 via STS, ADLS via a user-delegation SAS); the bundled store has
-# no such mechanism — see `build_storage_block`.
+# Long enough for a slow query, short enough that a leaked credential expires.
+# Only the external backends mint scoped credentials; see `build_storage_block`.
 DUCKLAKE_CREDENTIAL_TTL = timedelta(hours=1)
 
 
@@ -79,11 +76,9 @@ def staging_prefixes(staging_uri: str | None) -> list[str]:
 def ducklake_data_path(catalog: Catalog) -> str:
     """Where a DuckLake catalog's Parquet lives: ``<backend base>/<slug>/``.
 
-    Resolved through ``polaris_storage`` for the same reason ``staging_uri_for``
-    does — the bundled backend's ``root_uri`` is a bucket-relative prefix label,
-    not a URI — and scoped per catalog exactly as ``ensure_polaris_catalog``
-    scopes an Iceberg catalog's base location, so two catalogs sharing a backend
-    never collide.
+    Resolved through ``polaris_storage`` because the bundled backend's
+    ``root_uri`` is a prefix label, not a URI. Per-slug, so catalogs sharing a
+    backend never collide.
     """
     backend = catalog.storage_backend
     _, base, _ = polaris_storage(backend.kind, backend.root_uri or "", backend.config)
@@ -96,10 +91,8 @@ def ducklake_data_path(catalog: Catalog) -> str:
 def build_ducklake_meta_block() -> dict[str, str | int]:
     """Postgres connection details an agent needs to reach a DuckLake catalog.
 
-    The restricted ``ducklake_agent`` role, which can open the ``ducklake``
-    database and nothing else. Sent per dispatch rather than configured on the
-    agent so it is never written to agent disk, and so rotating it does not
-    require touching every agent.
+    The restricted ``ducklake_agent`` role. Sent per dispatch, never written to
+    agent disk, so rotating it touches no agent config.
     """
     return {
         "host": settings.ducklake_agent_host,
@@ -113,20 +106,10 @@ def build_ducklake_meta_block() -> dict[str, str | int]:
 def build_storage_block(backend: StorageBackend, data_path: str) -> dict[str, object]:
     """Storage credentials for a DuckLake catalog's data path.
 
-    What Polaris vends for an Iceberg catalog, minted by DuckHaven instead. The
-    three backends differ in how good the credential is, and the difference is
-    worth being explicit about:
-
-    - ``s3`` — a real STS ``AssumeRole``, expiring within the hour. I7 fully
-      preserved, via the same helper the staging presigner already uses.
-    - ``adls_gen2`` — a user-delegation SAS over the catalog's container,
-      expiring within the hour. I7 preserved.
-    - ``object_store`` — the bundled store's static key. **This is weaker than
-      what Polaris vends today**, which is a short-lived STS credential even for
-      the bundled store. What bounds it is ``SCOPE``: the secret is usable only
-      for this catalog's prefix, and it dies with the connection. Closing this
-      gap needs the bundled store's own STS endpoint driven from the API, which
-      is not wired up.
+    ``s3`` mints a short-lived STS ``AssumeRole`` and ``adls_gen2`` a
+    user-delegation SAS. ``object_store`` is weaker: the bundled store's static
+    key, bounded only by ``SCOPE`` to this catalog's prefix and the connection's
+    lifetime. Closing that needs a bundled STS endpoint, which is not wired up.
     """
     if backend.kind == "adls_gen2":
         return _adls_storage_block(data_path)
@@ -136,9 +119,7 @@ def build_storage_block(backend: StorageBackend, data_path: str) -> dict[str, ob
 def _duckdb_endpoint(url: str) -> tuple[str, bool]:
     """Split an endpoint URL into DuckDB's ``(host[:port], use_ssl)`` form.
 
-    DuckDB's S3 secret wants a bare host, not a URL: handing it
-    ``http://localhost:4566`` produces requests to ``https://http://localhost…``.
-    An empty endpoint means real AWS, which is HTTPS.
+    DuckDB wants a bare host, not a URL. An empty endpoint is real AWS, HTTPS.
     """
     if not url:
         return "", True
@@ -152,9 +133,7 @@ def _s3_storage_block(backend: StorageBackend, data_path: str) -> dict[str, obje
     config = backend.config or {}
     block: dict[str, object] = {
         "type": "s3",
-        # Scope the secret to this catalog's prefix, so one catalog's credential
-        # cannot serve another's data even though both are attached to the same
-        # connection.
+        # Scoped to this catalog's prefix; a shared connection can attach several.
         "scope": data_path,
         "url_style": "path" if backend.kind == "object_store" else "vhost",
     }
@@ -172,7 +151,7 @@ def _s3_storage_block(backend: StorageBackend, data_path: str) -> dict[str, obje
         )
         return block
 
-    # External S3: assume the backend's role for short-lived scoped credentials.
+    # External S3: assume the backend's role for scoped credentials.
     import boto3
 
     assume_kwargs: dict[str, object] = {
@@ -183,10 +162,6 @@ def _s3_storage_block(backend: StorageBackend, data_path: str) -> dict[str, obje
     if config.get("external_id"):
         assume_kwargs["ExternalId"] = config["external_id"]
     creds = boto3.client("sts").assume_role(**assume_kwargs)["Credentials"]
-    # Same normalization as the bundled path: a backend may carry a custom
-    # endpoint (an S3-compatible store, a VPC endpoint, LocalStack in tests),
-    # and passing the URL through unchanged makes DuckDB request
-    # `https://http://host/...`.
     endpoint, use_ssl = _duckdb_endpoint(config.get("endpoint") or "")
     block.update(
         {
@@ -206,9 +181,8 @@ def _s3_storage_block(backend: StorageBackend, data_path: str) -> dict[str, obje
 def _adls_storage_block(data_path: str) -> dict[str, object]:
     """A container-scoped user-delegation SAS for the catalog's data path.
 
-    Container-level rather than the per-blob SAS the staging presigner mints:
-    an agent writing a DuckLake table creates blob names DuckHaven has never
-    seen, so there is nothing to enumerate up front.
+    Container-level, not per-blob: an agent writing a DuckLake table creates
+    blob names DuckHaven has never seen.
     """
     from azure.identity import DefaultAzureCredential
     from azure.storage.blob import (
@@ -244,9 +218,8 @@ def _adls_storage_block(data_path: str) -> dict[str, object]:
     }
 
 
-# Minted storage blocks, keyed by catalog id, with the time they go stale.
-# Credentials live an hour (`DUCKLAKE_CREDENTIAL_TTL`); re-minting a little early
-# keeps a long query from losing its credential mid-scan.
+# Minted storage blocks by catalog id, with their expiry. Re-minted before the
+# credential itself expires, so a query cannot lose it mid-scan.
 _storage_cache: dict[uuid.UUID, tuple[float, dict[str, object]]] = {}
 _STORAGE_CACHE_TTL_S = DUCKLAKE_CREDENTIAL_TTL.total_seconds() - 600
 
@@ -259,13 +232,8 @@ def reset_storage_cache() -> None:
 async def _storage_block(catalog: Catalog, data_path: str) -> dict[str, object]:
     """The catalog's storage credential, minted at most once per TTL.
 
-    Minting is a network round-trip for the external backends — an STS
-    ``AssumeRole``, or an Entra user-delegation key — and this runs on the query
-    dispatch path, so doing it inline would block the event loop on every query
-    against a DuckLake catalog. It goes to a thread, and the result is cached so
-    a busy workspace is not re-minting per query.
-
-    The bundled store reads settings and touches no network, so it skips both.
+    Minting is a network round-trip on the dispatch path, so it runs on a thread
+    and is cached. The bundled store touches no network and skips both.
     """
     backend = catalog.storage_backend
     if backend.kind == "object_store":
@@ -283,17 +251,10 @@ async def _storage_block(catalog: Catalog, data_path: str) -> dict[str, object]:
 async def build_catalog_attach(catalog: Catalog) -> dict[str, object]:
     """Everything an agent needs to ATTACH one catalog.
 
-    The single description of a catalog on the wire, used by both dispatch paths
-    — one-shot queries and held SQL sessions. They drifted apart once already:
-    the session path kept emitting the four Iceberg-era fields, so a DuckLake
-    catalog was attached as Iceberg with a null warehouse name, failed, and was
-    swallowed by the agent's best-effort per-catalog handler. Silently.
-
-    Iceberg catalogs carry no credentials: DuckDB authenticates to Polaris from
-    the agent's own config and Polaris vends storage creds on attach. DuckLake
-    catalogs carry both, because nothing else will mint them — a Postgres block
-    for the catalog metadata and an object-store block for the data path, each
-    scoped to this catalog and living only for this connection.
+    The single wire description used by both dispatch paths (one-shot queries
+    and SQL sessions). Iceberg catalogs carry no credentials — the agent's
+    config supplies Polaris, which vends storage creds on attach. DuckLake
+    carries a Postgres block and a scoped storage block, minted here.
     """
     entry: dict[str, object] = {
         "slug": catalog.slug,

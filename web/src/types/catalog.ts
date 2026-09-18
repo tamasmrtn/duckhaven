@@ -12,20 +12,14 @@ export interface TableColumn {
 // them, which gates the drop affordance.
 // Where a catalog keeps its metadata. Orthogonal to the storage backend: a
 // catalog of either kind can sit on object_store, s3 or adls_gen2.
-//   iceberg_polaris — Apache Iceberg tables in an Apache Polaris catalog.
-//   ducklake        — DuckLake tables catalogued in Postgres, data in Parquet.
 export type CatalogKind = "iceberg_polaris" | "ducklake";
 
 // What a catalog's kind can do. Surfaced by the API so the UI never switches on
-// `kind` itself — a third kind then changes one mapping server-side rather than
-// every place that asks "is this DuckLake?".
+// `kind` itself.
 export interface CatalogCapabilities {
-  // "table" for Iceberg; "catalog" for DuckLake, whose snapshots are commits
-  // against the whole catalog rather than one table.
+  // Whether DuckDB can run this kind's storage migration.
   supports_storage_migration: boolean;
-  // Whether DuckDB itself can run this kind's compaction / snapshot expiry.
-  // Whether engines other than DuckDB can read these tables. False for DuckLake
-  // — the trade-off a user makes when choosing it.
+  // False for DuckLake: only DuckDB can read its tables.
   external_engine_readable: boolean;
   supported_storage_kinds: BackendKind[];
 }
@@ -107,9 +101,8 @@ export interface TableSnapshot {
   granularity?: "table" | "catalog";
 }
 
-// One catalog kind this deployment can create, as served by GET /catalog-kinds.
-// The capability facts come from the backend that implements them, so the create
-// dialog cannot describe a kind in a way the server would contradict.
+// One catalog kind this deployment can create (GET /catalog-kinds). The
+// capability facts come from the backend that implements them.
 export interface CatalogKindOption {
   kind: CatalogKind;
   label: string;

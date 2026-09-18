@@ -9,17 +9,16 @@ services:
       # polaris and api services via compose interpolation so they all agree;
       # override in .env for a non-default deployment.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-duckhaven}
-      # Read by postgres-init/20-create-ducklake-db.sh to set the password on the
-      # restricted `ducklake_agent` role. Must match the api service's value.
+      # Read by postgres-init/20-create-ducklake-db.sh; must match the api
+      # service's value.
       DUCKLAKE_AGENT_PASSWORD: ${DUCKLAKE_AGENT_PASSWORD:-ducklake}
     volumes:
       # Postgres 18's official image moved to a version-specific data
       # subdirectory under a single /var/lib/postgresql mount (unlike 16's
       # /var/lib/postgresql/data), to support `pg_upgrade --link`.
       - postgres_data:/var/lib/postgresql
-      # Creates the dedicated `polaris` and `ducklake` databases on first init,
-      # and the restricted `ducklake_agent` role. Only runs on an empty data dir
-      # — use scripts/enable-ducklake.sh on an existing deployment.
+      # Creates the `polaris` and `ducklake` databases and the `ducklake_agent`
+      # role on first init only; use scripts/enable-ducklake.sh otherwise.
       - ./postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U duckhaven"]
@@ -27,9 +26,9 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      # Joins the agent network so DuckDB agents can reach the DuckLake catalog
-      # database. Safe only because of the role isolation in
-      # postgres-init/20-create-ducklake-db.sh — read it before changing either.
+      # Agent network, so DuckDB agents reach the DuckLake catalog database.
+      # Safe only because of the role isolation in
+      # postgres-init/20-create-ducklake-db.sh.
       - default
       - duckhaven_internal
 
@@ -268,13 +267,12 @@ services:
       MCP_QUERY_TIMEOUT_S: ${MCP_QUERY_TIMEOUT_S:-120.0}
       MCP_RESULT_ROW_CAP: ${MCP_RESULT_ROW_CAP:-100}
       MCP_RESULT_BYTE_CAP: ${MCP_RESULT_BYTE_CAP:-32768}
-      # DuckLake (experimental, opt-in): a second catalog kind keeping catalog
-      # metadata in Postgres and data in Parquet. Off by default; Iceberg +
-      # Polaris stays the default kind. See docs/concepts/ducklake.md.
+      # DuckLake (experimental, opt-in): catalog metadata in Postgres, data in
+      # Parquet. Off by default; Iceberg + Polaris stays the default kind. See
+      # docs/concepts/ducklake.md.
       #
-      # Two credentials, deliberately different: the API connects as the owner
-      # (DDL on metadata schemas, GRANTs, metadata reads), agents connect as the
-      # restricted `ducklake_agent` role. They must never be the same login.
+      # The API connects as the owner and agents as the restricted
+      # `ducklake_agent` role; they must never be the same login.
       DUCKLAKE_ENABLED: ${DUCKLAKE_ENABLED:-false}
       DUCKLAKE_DATABASE_URL: ${DUCKLAKE_DATABASE_URL:-postgresql+asyncpg://duckhaven:${POSTGRES_PASSWORD:-duckhaven}@postgres:5432/ducklake}
       DUCKLAKE_AGENT_HOST: ${DUCKLAKE_AGENT_HOST:-postgres}

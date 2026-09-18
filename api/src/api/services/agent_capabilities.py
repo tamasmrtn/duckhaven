@@ -1,38 +1,22 @@
 """Required-extension mapping and the dispatch-time compatibility check (G-D17-b).
 
-Two independent axes, both of which an agent must satisfy to serve a catalog:
-
-- its **catalog kind** — the metastore the agent has to talk to, and the table
-  format it has to read (``iceberg``, or ``ducklake`` + its Postgres client);
-- its **storage backend** — the object store the bytes live in.
-
-They are checked separately because they vary separately: a DuckLake catalog on
-ADLS needs ``ducklake`` + ``postgres_scanner`` + ``azure``, and an Iceberg
-catalog on the same backend needs ``iceberg`` + ``azure``.
-
-The storage-backend half is mirrored client-side in
-`web/src/components/app/AgentPicker.tsx` so the picker greys out an agent the
-API would refuse. The catalog-kind half is enforced here only — the picker does
-not yet know about catalog kinds.
+An agent must satisfy two independent axes to serve a catalog: its **catalog
+kind** (the metastore and table format) and its **storage backend** (where the
+bytes live). The storage half is mirrored in
+`web/src/components/app/AgentPicker.tsx`; the kind half is enforced only here.
 """
 
-# Every backend is object storage now: object_store is backed by the
-# bundled object store (S3) and so also needs httpfs.
+# Every backend is object storage now; object_store is the bundled S3 store and
+# so also needs httpfs.
 _BACKEND_EXTENSION: dict[str, str] = {
     "object_store": "httpfs",
     "s3": "httpfs",
     "adls_gen2": "azure",
 }
 
-# Extensions gated at dispatch, per catalog kind.
-#
-# `iceberg_polaris` is empty on purpose: that requirement has never been gated,
-# and enforcing it now would refuse agents with a stale advertised set. Separate
-# change.
-#
-# `postgres_scanner`, not `postgres`: DuckDB installs the extension under the
-# latter name and advertises it under the former, and this matches what an agent
-# advertises. Verified on DuckDB 1.5.5.
+# Extensions gated at dispatch, per catalog kind. `iceberg_polaris` is empty on
+# purpose: gating it now would refuse agents with a stale advertised set.
+# `postgres_scanner` is what the agent advertises for the `postgres` extension.
 _CATALOG_KIND_EXTENSIONS: dict[str, tuple[str, ...]] = {
     "iceberg_polaris": (),
     "ducklake": ("ducklake", "postgres_scanner"),
@@ -47,9 +31,8 @@ def required_extension(backend_kind: str) -> str | None:
 def required_catalog_extensions(catalog_kind: str) -> tuple[str, ...]:
     """The DuckDB extensions gated at dispatch for this catalog kind.
 
-    An unknown kind maps to no requirement rather than an error: the control
-    plane decides what it can provision, and a capability check is the wrong
-    place to discover it disagrees with the database.
+    An unknown kind maps to no requirement, since the control plane decides what
+    it can provision.
     """
     return _CATALOG_KIND_EXTENSIONS.get(catalog_kind, ())
 
@@ -78,12 +61,10 @@ def agent_supports_catalog(capabilities: dict | None, catalog_kind: str, backend
 
 
 def missing_extension(capabilities: dict | None, catalog_kind: str, backend_kind: str) -> str:
-    """The extension to name in an "agent is incompatible" message.
+    """The first extension this agent lacks, catalog kind first.
 
-    The first one this agent lacks, checking the catalog kind before the storage
-    backend so the message points at the more surprising requirement. Returns
-    "" when nothing is missing, which callers only reach by asking after
-    ``agent_supports_catalog`` already said no.
+    Returns "" when nothing is missing, which callers only reach after
+    ``agent_supports_catalog`` said no.
     """
     loaded = _loaded(capabilities)
     for ext in required_catalog_extensions(catalog_kind):

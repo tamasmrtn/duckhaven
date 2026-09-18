@@ -97,10 +97,8 @@ _BACKEND_IO_EXTENSION: dict[str, str] = {
 # All backends are object storage, so all get vended credentials from Polaris.
 _VENDED_BACKENDS = {"object_store", "s3", "adls_gen2"}
 
-# Catalog kind -> the extensions needed to attach it, independent of where its
-# bytes live. Mirrors api/services/agent_capabilities.py, which gates dispatch on
-# the agent advertising these; note `postgres` is the INSTALL name (it advertises
-# itself as `postgres_scanner`).
+# Catalog kind -> extensions needed to attach it. Mirrors
+# api/services/agent_capabilities.py; `postgres` is the install name.
 _CATALOG_KIND_EXTENSIONS: dict[str, tuple[str, ...]] = {
     "iceberg_polaris": ("iceberg",),
     "ducklake": ("ducklake", "postgres"),
@@ -108,9 +106,8 @@ _CATALOG_KIND_EXTENSIONS: dict[str, tuple[str, ...]] = {
 KIND_DUCKLAKE = "ducklake"
 
 
-# Per-connection secret names for a DuckLake catalog. Suffixed with the catalog
-# slug because a workspace can attach several DuckLake catalogs at once, each
-# with its own storage scope.
+# Per-connection secret names, suffixed by slug: one workspace can attach
+# several DuckLake catalogs, each with its own storage scope.
 def _meta_secret(slug: str) -> str:
     return f"dh_dl_meta_{slug}"
 
@@ -240,12 +237,9 @@ def _iceberg_metadata(
 ) -> dict[str, Any]:
     """Best-effort Iceberg-native metadata for a table in the attached catalog.
 
-    Returns the current snapshot id + timestamp, the data-file count, and a
-    has-deletes flag (true when the table carries position/equality delete files
-    — the same probe the future merge-on-read read guard will use). Each field is
-    independently best-effort: a probe failure (e.g. an older `iceberg` extension
-    lacking a function) degrades that field to None rather than failing the
-    query. The catalog must already be ATTACHed (under its slug alias).
+    Returns snapshot id and timestamp, data-file count and a has-deletes flag.
+    Each field degrades to None on its own probe failure. The catalog must be
+    ATTACHed already.
     """
     ident = f'"{catalog}"."{schema}"."{table}"'
     meta: dict[str, Any] = {
@@ -269,12 +263,9 @@ def _iceberg_metadata(
     except Exception as exc:  # noqa: BLE001 - metadata is best-effort
         logger.warning("iceberg_snapshots failed for %s.%s: %s", schema, table, exc)
     try:
-        # The column classifying data vs delete files moved from `content`
-        # (DATA/POSITION_DELETES/EQUALITY_DELETES) to `manifest_content`
-        # (DATA/DELETE) in newer DuckDB iceberg extensions; `content` now carries
-        # the manifest-entry status (ADDED/EXISTING/DELETED). Pick whichever the
-        # running extension exposes — `content` still exists in the new schema, so
-        # we must inspect the columns rather than just querying it.
+        # Newer iceberg extensions moved data-vs-delete classification from
+        # `content` to `manifest_content`. Both columns exist in the new schema,
+        # so inspect which one the running extension exposes.
         columns = [
             d[0]
             for d in conn.execute(f"SELECT * FROM iceberg_metadata({ident}) LIMIT 0").description
@@ -302,24 +293,11 @@ def _ducklake_metadata(
 ) -> dict[str, Any]:
     """Best-effort DuckLake-native metadata for a table in the attached catalog.
 
-    The DuckLake counterpart of `_iceberg_metadata`. `ducklake_list_files`
-    returns one row per current data file with that file's delete file (if any)
-    alongside it, so one query answers both counts. The catalog must already be
-    ATTACHed (under its slug alias).
-
-    Two fields are deliberately left None rather than faked:
-
-    - `snapshot_id`/`snapshot_at`, because a DuckLake snapshot is a commit
-      against the whole *catalog*, not against one table. There is no per-table
-      snapshot to report. The control plane derives which catalog snapshots
-      touched a table from the `ducklake_*` tables directly.
-
-    `has_deletes` means what it means on the Iceberg path — the table carries
-    delete *files*, which is what a rewrite-delete-files recommendation acts on.
-    A small DELETE is inlined into the catalog database
-    (`ducklake_inlined_delete_<table_id>`) and writes no file, so it reads as
-    False here; verified on DuckLake 1.0, where a 3-row DELETE inlined and a
-    larger one produced a file.
+    `ducklake_list_files` returns one row per data file with its delete file
+    alongside, so one query answers both counts. `snapshot_id`/`snapshot_at` stay
+    None: a DuckLake snapshot is a catalog-wide commit, and the control plane
+    derives which ones touched a table. `has_deletes` counts delete *files*;
+    small deletes inlined into the catalog database leave it False.
     """
     meta: dict[str, Any] = {
         "snapshot_id": None,
@@ -376,16 +354,12 @@ def collect_table_health(
 ) -> dict[str, Any]:
     """Best-effort health metrics for one table in the attached catalog.
 
-    Sibling of ``_iceberg_metadata`` but richer: it derives file-size distribution,
-    snapshot/manifest counts, and (on the deep tier) an orphan-file estimate, all
-    from DuckDB's ``iceberg`` extension over the already-attached catalog. Every
-    field is independently best-effort — a probe failure degrades that field to
-    ``None`` rather than failing the scan. ``schema``/``table`` are echoed so the
-    control plane's frame handler can route the sample without extra state.
+    File-size distribution, snapshot/manifest counts and (on the deep tier) an
+    orphan estimate, from DuckDB's ``iceberg`` extension. Each field degrades to
+    None on its own probe failure. ``schema``/``table`` are echoed for routing.
 
-    Orphan detection (``include_orphans``) lists the table's data directory with
-    ``glob`` and diffs against the live data-file set; it is expensive at scale and
-    only an estimate (in-flight writes look orphaned), so it runs on a slow cadence.
+    Orphan detection globs the table directory and diffs against the live file
+    set; expensive and only an estimate, so it runs on a slow cadence.
     """
     ident = f'"{catalog}"."{schema}"."{table}"'
     health: dict[str, Any] = {
@@ -421,9 +395,7 @@ def collect_table_health(
         oldest = conn.execute(
             f"SELECT min(timestamp_ms) FROM iceberg_snapshots({ident})"
         ).fetchone()
-        # timestamp_ms comes back as epoch-millis int on older iceberg
-        # extensions, a TIMESTAMP on newer ones (same split _snapshot_meta
-        # above already handles for the per-snapshot timestamp).
+        # epoch-millis on older extensions, TIMESTAMP on newer ones.
         oldest_ts = oldest[0] if oldest else None
         if isinstance(oldest_ts, datetime):
             oldest_dt = oldest_ts if oldest_ts.tzinfo else oldest_ts.replace(tzinfo=UTC)
@@ -440,7 +412,7 @@ def collect_table_health(
     try:
         columns = _iceberg_columns(conn, ident)
         classify = "manifest_content" if "manifest_content" in columns else "content"
-        # The data-file size column name has varied across extension versions.
+        # The size column name has varied across extension versions.
         size_col = next(
             (c for c in ("file_size_in_bytes", "file_size_bytes", "file_size") if c in columns),
             None,
@@ -455,12 +427,8 @@ def collect_table_health(
         live_paths = [r[0] for r in rows if r[0] is not None]
         health["data_file_count"] = len(rows)
         health["manifest_count"] = len(manifests) or None
-        # DuckDB's iceberg extension does not expose a data-file size column, so
-        # when it is absent fall back to the Parquet footers. This reads one
-        # footer per file, so it runs only on the deep tier alongside the orphan
-        # scan to keep the cheap cadence free of per-file object reads; on very
-        # wide tables the footer probe samples a bounded subset (see
-        # _parquet_file_sizes) and the total is scaled to the full file count.
+        # No size column: fall back to Parquet footers on the deep tier only
+        # (one read per file). Wide tables are sampled, then scaled.
         sampled = False
         if not sizes and include_orphans and live_paths:
             sizes, sampled = _parquet_file_sizes(conn, live_paths)
@@ -490,29 +458,14 @@ def collect_ducklake_table_health(
 ) -> dict[str, Any]:
     """Best-effort health metrics for one table in an attached DuckLake catalog.
 
-    The DuckLake counterpart of `collect_table_health`, returning the same keys
-    so scoring and the recommendation engine stay format-neutral. Three notes on
-    where it differs, all of them in DuckLake's favour or unavoidable:
+    The counterpart of `collect_table_health` with the same keys, so scoring and
+    recommendations stay format-neutral. File sizes come free from catalog
+    columns; snapshot counts and age are catalog-scoped, matching the grain of
+    `ducklake_expire_snapshots`. Manifests and metadata bytes have no DuckLake
+    counterpart and stay None.
 
-    - **File sizes are exact and free.** They are columns in the catalog, so
-      there is no Parquet-footer sampling and no `include_orphans` gate on the
-      size distribution -- the Iceberg path reads one footer per file on the deep
-      tier because its extension does not expose the size.
-    - **Snapshot metrics are catalog-scoped**, because a DuckLake snapshot is a
-      commit against the whole catalog. Every table in a catalog therefore
-      reports the same snapshot count and age. That is the honest number and the
-      right input here: the expiry rule scores on the *oldest snapshot's age*,
-      and `ducklake_expire_snapshots` is catalog-level only, so the metric and
-      the remediation are at the same grain.
-    - **Manifests and metadata bytes have no counterpart.** DuckLake keeps its
-      metadata as rows in Postgres, not as objects in the store, so both stay
-      None -- which is also what makes the manifest-rewrite recommendation drop
-      out for DuckLake rather than prescribe a command that does not exist.
-
-    Every timestamp is reduced to a number in SQL rather than fetched as a
-    Python datetime: `ducklake_snapshots.snapshot_time` is TIMESTAMPTZ, and
-    DuckDB's Python client needs `pytz` to convert one, which the agent image
-    does not carry.
+    Timestamps are reduced to numbers in SQL: the agent image has no `pytz` for
+    the Python client to convert DATETIMETZ.
     """
     health: dict[str, Any] = {
         "catalog": catalog,
@@ -593,19 +546,10 @@ def _ducklake_table_snapshot(
 ) -> int | None:
     """The newest catalog snapshot in which this table changed.
 
-    `snapshot_count` and `oldest_snapshot_age_days` are catalog-scoped, because
-    expiry is; this one is not. It is what the maintenance scanner compares
-    against the previous sample to decide whether the table needs re-probing, so
-    it has to move when *this* table moves and not when any table in the catalog
-    does — otherwise every table in a catalog is re-probed after every commit
-    anywhere in it.
-
-    Same derivation as the control plane's `list_snapshots` for a DuckLake table
-    (see api catalog_backends/ducklake.py): the half-open `[begin, end)` bounds
-    on the table row, its data files and its delete files. Kept in both places
-    because the scanner reads this from Postgres while the probe already holds an
-    attached connection; the two must agree, and they are checked against each
-    other in the cross-component suite.
+    What the scanner compares to the previous sample, so it must move with this
+    table, not with any commit in the catalog. Same `[begin, end)` derivation as
+    the control plane's `list_snapshots`; the cross-component suite keeps them
+    in agreement.
     """
     meta = f'"__ducklake_metadata_{catalog}"."{metadata_schema}"'
     joins = (
@@ -646,17 +590,12 @@ def _ducklake_orphans(
 ) -> dict[str, Any]:
     """Files this table has superseded and DuckLake has scheduled for deletion.
 
-    Exact, unlike the Iceberg path's glob-diff estimate: DuckLake records every
-    superseded file in `ducklake_files_scheduled_for_deletion` when a snapshot
-    expires, so there is a list to count rather than a directory to compare
-    against. It therefore has no false positives from in-flight writes.
+    Exact, unlike the Iceberg path's glob-diff: DuckLake records them, so there
+    is a list to count rather than a directory to compare. Bytes are estimated
+    from the live average; the count is the exact part.
 
-    The table carries no size column, so bytes are still approximated from the
-    live average -- the count is the exact part.
-
-    Reached through `__ducklake_metadata_<alias>`, the catalog database as DuckDB
-    exposes it. That name is denied to *user* SQL (see api sql_denylist) because
-    it is writable; this is the agent's own read on the trusted path.
+    Reached through `__ducklake_metadata_<alias>`, denied to user SQL but read
+    here on the trusted path.
     """
     out: dict[str, Any] = {"orphan_file_count": None, "orphan_bytes": None}
     meta = f'"__ducklake_metadata_{catalog}"."{metadata_schema}"'
@@ -679,23 +618,19 @@ def _ducklake_orphans(
     return out
 
 
-# Bound the per-file footer reads on the deep tier: a very wide table (100k+
-# files) would otherwise issue one ranged read per file. The size distribution
-# (small-file ratio, average) is well estimated from a bounded sample.
+# Bounds per-file footer reads on the deep tier; the distribution is well
+# estimated from a sample.
 _MAX_FOOTER_READS = 1000
 
 
 def _parquet_file_sizes(
     conn: duckdb.DuckDBPyConnection, paths: list[str]
 ) -> tuple[list[int], bool]:
-    """Per-file sizes read from the Parquet footers, for iceberg-extension versions
-    that don't surface a size column in ``iceberg_metadata``. One ranged read per
-    file (hence deep-tier only); ``total_compressed_size`` omits the footer/header
-    but is well within tolerance for small-file detection against the target size.
+    """Per-file sizes from the Parquet footers, for extension versions with no
+    size column. One ranged read per file, hence deep tier only.
 
-    Returns ``(sizes, sampled)``: when there are more files than
-    ``_MAX_FOOTER_READS``, a deterministic, evenly-spaced subset is read and
-    ``sampled`` is True so the caller can scale the total to the full file count.
+    Returns ``(sizes, sampled)``; a sampled subset is evenly spaced, so the
+    caller can scale the total.
     """
     sampled = len(paths) > _MAX_FOOTER_READS
     if sampled:
@@ -721,10 +656,8 @@ def _orphan_estimate(
 ) -> dict[str, Any]:
     """Count files under the table location not referenced by current metadata.
 
-    Derives the data prefix from a live file path (no need to resolve the table
-    location separately), lists both the data and metadata directories with
-    ``glob``, and subtracts the live data-file and manifest sets. ``glob`` yields
-    no sizes, so orphan bytes are estimated from the live average file size.
+    Derives the prefix from a live path, globs data and metadata, subtracts the
+    live sets. No sizes from glob, so orphan bytes use the live average.
     """
     out: dict[str, Any] = {"orphan_file_count": None, "orphan_bytes": None}
     sample = live_paths[0]
@@ -750,17 +683,10 @@ def _orphan_estimate(
 
 
 def _configure_ducklake(conn: duckdb.DuckDBPyConnection) -> None:
-    """Pin DuckLake's conflict-retry behaviour rather than inheriting defaults.
+    """Pin DuckLake's conflict-retry settings, which are the extension defaults.
 
-    DuckLake detects a write conflict by primary-key collision on the next
-    snapshot id, then retries automatically when the two changesets do not
-    logically conflict. These are the extension's own defaults, set explicitly so
-    the behaviour is stated in one place and does not move under us on an
-    extension bump.
-
-    Set here, before `_apply_sandbox` locks the configuration, and deliberately
-    NOT added to `_ALLOWED_CONFIGS`: a user statement must not be able to change
-    how its own writes retry.
+    Set before `_apply_sandbox` locks the configuration, and deliberately not in
+    `_ALLOWED_CONFIGS`: a statement must not change how its own writes retry.
     """
     for name, value in (
         ("ducklake_max_retry_count", "10"),
@@ -776,14 +702,9 @@ def _configure_ducklake(conn: duckdb.DuckDBPyConnection) -> None:
 def _attach_ducklake(conn: duckdb.DuckDBPyConnection, cat: dict[str, Any]) -> None:
     """ATTACH one DuckLake catalog, with the credentials the API vended for it.
 
-    Unlike the Iceberg path, nothing here is fetched by DuckDB: the control plane
-    minted both the Postgres credential for the catalog metadata and the
-    object-store credential for the data path, and they arrive in the dispatch
-    payload. Both become per-connection secrets and die with the connection.
-
-    The Postgres credential goes in a secret rather than inline in the ATTACH
-    string specifically so it cannot surface in a DuckDB error message or log
-    line — DuckLake reports a failed attach by echoing the connection string.
+    Both the Postgres and object-store credentials arrive in the dispatch
+    payload as per-connection secrets. The Postgres one goes in a secret rather
+    than inline, because DuckLake echoes a failed attach's connection string.
     """
     slug = cat["slug"]
     alias = slug.replace('"', '""')
@@ -798,11 +719,9 @@ def _attach_ducklake(conn: duckdb.DuckDBPyConnection, cat: dict[str, Any]) -> No
     if store:
         _create_storage_secret(conn, slug, store)
 
-    # ATTACH takes no bind parameters, so these are inlined as quoted literals,
-    # and the `''` escaping below is what makes that safe — not their provenance.
-    # `data_path` in particular is built from the storage backend's `root_uri`,
-    # which an operator supplies through the admin API. Do not remove the
-    # escaping on the belief that these values are trusted.
+    # ATTACH takes no bind parameters, so these are inlined as escaped quoted
+    # literals. `data_path` comes from an operator-supplied `root_uri`, so do not
+    # remove the escaping on the belief that these values are trusted.
     data_path = str(cat["data_path"]).replace("'", "''")
     metadata_schema = str(cat["metadata_schema"]).replace("'", "''")
     database = str(meta["database"]).replace("'", "''")
@@ -814,11 +733,8 @@ def _attach_ducklake(conn: duckdb.DuckDBPyConnection, cat: dict[str, Any]) -> No
         f"DATA_PATH '{data_path}', METADATA_SCHEMA '{metadata_schema}', "
         f"META_SECRET '{_meta_secret(slug)}', CREATE_IF_NOT_EXISTS true)"
     )
-    # The catalog's default namespace, to match the Iceberg path's `analytics`.
-    # Created here rather than at provisioning because it needs the extension:
-    # the control plane makes the Postgres schema, the extension makes the
-    # DuckLake structure inside it. Idempotent, so this is the same self-heal
-    # `ensure_polaris_catalog` performs on browse.
+    # The default namespace, matching the Iceberg path's `analytics`. Created
+    # here, not at provisioning, because it needs the extension.
     schema = (cat.get("default_schema") or _DEFAULT_NAMESPACE).replace('"', '""')
     conn.execute(f'CREATE SCHEMA IF NOT EXISTS "{alias}"."{schema}"')
 
@@ -828,7 +744,7 @@ def _create_storage_secret(
 ) -> None:
     """The object-store secret for a DuckLake catalog, scoped to its own prefix.
 
-    SCOPE is not decoration: a workspace attaches every catalog it has onto one
+    SCOPE is not decoration: a workspace attaches every catalog to one
     connection, so without it one catalog's credential would serve another's
     data path.
     """
@@ -866,41 +782,30 @@ def _attach_catalogs(
 ) -> None:
     """ATTACH every catalog bound to the workspace (multi-attach), by kind.
 
-    Each catalog is attached under its slug alias so the user's SQL can address
-    `catalog.schema.table` and join across catalogs — including across *kinds*;
-    the active catalog is then `USE`d so unqualified names resolve. Per-catalog
-    ATTACH is best-effort: one bad catalog is logged and skipped rather than
-    failing the whole query.
+    Each catalog is attached under its slug alias so SQL can address
+    `catalog.schema.table` and join across catalogs — including across kinds.
+    The active catalog is then `USE`d. Per-catalog ATTACH is best-effort: one bad
+    catalog is logged and skipped rather than failing the whole query.
 
-    Iceberg catalogs: DuckDB exchanges the client credentials for a token itself,
-    and with `vended_credentials` Polaris also vends scoped storage creds on
-    access. DuckLake catalogs: both credentials come from the payload — see
-    `_attach_ducklake`.
+    Iceberg catalogs authenticate through DuckDB and Polaris; DuckLake catalogs
+    carry both credentials in the payload (see `_attach_ducklake`).
     """
     # A DuckLake-only workspace gets no Polaris block at all, so nothing here may
-    # assume one exists — reading it unconditionally made a Polaris-free
-    # deployment attach nothing at all, silently, via the outer best-effort
-    # handler.
+    # assume one exists.
     has_iceberg = any(c.get("kind", "iceberg_polaris") != KIND_DUCKLAKE for c in catalogs)
     endpoint = str(polaris.get("endpoint", "")).rstrip("/")
-    # `trace_headers` carries the caller's active span (handle_dispatch, or
-    # duckdb.execute for static profiles) onto every DuckDB-issued request to
-    # Polaris, so Polaris's spans join this query's trace instead of starting
-    # their own. It must be captured on the event-loop thread by the caller —
-    # this function runs inside a worker thread (via run_in_executor), where
-    # OpenTelemetry's contextvar-based "current span" is not propagated, so
-    # calling inject_trace_context() here would silently see no active span.
-    # None when no SDK is configured or no span was active: DuckDB behaves
-    # exactly as before.
+    # `trace_headers` carries the caller's span onto every DuckDB-issued Polaris
+    # request, so Polaris's spans join this query's trace. It must be captured on
+    # the event-loop thread by the caller: this runs in a worker thread, where
+    # OpenTelemetry's contextvar "current span" is not propagated.
     if trace_headers and endpoint:
         conn.execute(
             f"CREATE OR REPLACE SECRET {_TRACE_HEADERS_SECRET} "
             "(TYPE HTTP, EXTRA_HTTP_HEADERS ?, SCOPE ?)",
             [trace_headers, endpoint],
         )
-    # Only when there is an Iceberg catalog to authenticate for. A DuckLake-only
-    # workspace must not need Polaris credentials to be configured at all — that
-    # is what makes a Polaris-free deployment possible.
+    # Only when an Iceberg catalog needs it; this is what makes a Polaris-free
+    # deployment possible.
     if has_iceberg:
         conn.execute(
             f"CREATE SECRET {_ICEBERG_SECRET} "
@@ -911,9 +816,7 @@ def _attach_catalogs(
                 f"{endpoint}/api/catalog/v1/oauth/tokens",
             ],
         )
-    # ATTACH does not accept bind parameters, so inline the warehouse name, alias
-    # and endpoint as quoted literals (quotes escaped). None are user-supplied SQL
-    # (slug/polaris_name come from the control plane; endpoint from agent config).
+    # ATTACH takes no bind parameters; inline as quoted, escaped literals.
     cat_endpoint = f"{endpoint}/api/catalog".replace("'", "''")
     active = None
     for cat in catalogs:
@@ -936,9 +839,8 @@ def _attach_catalogs(
             continue
         if slug == active_catalog:
             active = cat
-    # `USE <catalog>.<schema>` sets the default catalog (so unqualified SQL
-    # resolves) and a default schema. A bare `USE <catalog>` does not reliably
-    # resolve the attached Iceberg catalog's namespaces.
+    # `USE <catalog>.<schema>` sets both defaults; a bare `USE <catalog>` does
+    # not reliably resolve an attached Iceberg catalog.
     if active is None and catalogs:
         active = catalogs[0]
     if active is not None:
@@ -1411,13 +1313,9 @@ def run_query_sync(
                     )
                     result["table_row_count"] = None
                 result["table_size_bytes"] = None
-                # Table-format-native metadata for the table-detail page. Only
-                # meaningful when a catalog is attached; best-effort throughout.
-                #
-                # Dispatched on the *target* catalog's kind: running the iceberg
-                # probe against a DuckLake table fails with "is not an Iceberg
-                # table" for every field, which left the row/file counts empty
-                # and logged two warnings per probed table.
+                # Table-format-native metadata for the table-detail page,
+                # dispatched on the target catalog's kind: the Iceberg probe
+                # fails on a DuckLake table for every field.
                 if catalogs:
                     if _catalog_kind(catalogs, catalog) == KIND_DUCKLAKE:
                         result["ducklake"] = _ducklake_metadata(conn, catalog, schema, table)
@@ -1425,12 +1323,8 @@ def run_query_sync(
                         result["iceberg"] = _iceberg_metadata(conn, catalog, schema, table)
 
         # Maintenance health probe: richer metrics on the same attached
-        # connection. Driven by the scanner; best-effort throughout.
-        #
-        # Dispatched on the target catalog's kind, and no longer gated on a
-        # Polaris block: a DuckLake catalog needs none, and requiring one left
-        # every DuckLake table with an all-null health sample and therefore no
-        # maintenance recommendations at all.
+        # connection, dispatched on the target catalog's kind and not gated on a
+        # Polaris block (a DuckLake catalog has none). Driven by the scanner.
         if health_for and catalogs:
             catalog = health_for.get("catalog")
             schema = health_for.get("schema")

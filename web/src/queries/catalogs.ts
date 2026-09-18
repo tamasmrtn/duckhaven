@@ -22,8 +22,7 @@ export function useCatalogKinds() {
   return useQuery({
     queryKey: ["catalog-kinds"],
     queryFn: () => catalogsApi.listKinds(),
-    // A deployment's kinds change only when an operator restarts the API with a
-    // different flag, so this does not need refetching on every focus.
+    // Kinds change only on an API restart with a different flag.
     staleTime: 5 * 60 * 1000,
   });
 }

@@ -312,11 +312,13 @@ def test_ducklake_health_reports_file_and_snapshot_metrics():
     class FakeConn:
         def execute(self, sql, params=None):
             if "ducklake_snapshots" in sql:
-                self._row = (19, 19, 0.4571759)
+                self._row = (19, 0.4571759)
             elif "ducklake_list_files" in sql:
                 # 5 files, 2.2 GB total, 444 MB average, 1 under target.
                 self._row = (5, 2223533507, 444706701, 1)
-            else:  # pragma: no cover - the probe issues only these two
+            elif "ducklake_data_file" in sql:  # the table-scoped snapshot lookup
+                self._row = (10,)
+            else:  # pragma: no cover
                 raise AssertionError(sql)
             return self
 
@@ -324,11 +326,20 @@ def test_ducklake_health_reports_file_and_snapshot_metrics():
             return self._row
 
     health = collect_ducklake_table_health(
-        FakeConn(), "lake", "sf10", "lineitem", target_file_bytes=128 * 1024**2
+        FakeConn(),
+        "lake",
+        "sf10",
+        "lineitem",
+        target_file_bytes=128 * 1024**2,
+        metadata_schema="cat_lake",
     )
+    # Catalog-scoped, because DuckLake snapshots are catalog commits and expiry
+    # is catalog-level.
     assert health["snapshot_count"] == 19
-    assert health["snapshot_id"] == 19
     assert health["oldest_snapshot_age_days"] == 0.4572
+    # Table-scoped, because the scanner compares it to decide whether *this*
+    # table needs re-probing.
+    assert health["snapshot_id"] == 10
     assert health["data_file_count"] == 5
     assert health["total_data_bytes"] == 2223533507
     assert health["avg_file_bytes"] == 444706701
@@ -378,6 +389,8 @@ def test_ducklake_health_counts_orphans_exactly_on_the_deep_tier():
                 assert "__ducklake_metadata_lake" in sql
                 assert params == ["analytics", "events"]
                 self._row = (3,)
+            elif "ducklake_data_file" in sql:  # the table-scoped snapshot lookup
+                self._row = (7,)
             else:  # pragma: no cover
                 raise AssertionError(sql)
             return self

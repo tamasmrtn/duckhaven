@@ -533,18 +533,22 @@ def collect_ducklake_table_health(
 
     try:
         row = conn.execute(
-            "SELECT count(*)::BIGINT, max(snapshot_id)::BIGINT, "
+            "SELECT count(*)::BIGINT, "
             "max(date_diff('second', snapshot_time, now())) / 86400.0 "
             "FROM ducklake_snapshots(?)",
             [catalog],
         ).fetchone()
         if row and row[0]:
             health["snapshot_count"] = int(row[0])
-            health["snapshot_id"] = int(row[1]) if row[1] is not None else None
-            if row[2] is not None:
-                health["oldest_snapshot_age_days"] = round(float(row[2]), 4)
+            if row[1] is not None:
+                health["oldest_snapshot_age_days"] = round(float(row[1]), 4)
     except Exception as exc:  # noqa: BLE001 - metadata is best-effort
         logger.warning("ducklake_snapshots failed for %s.%s: %s", schema, table, exc)
+
+    if metadata_schema:
+        health["snapshot_id"] = _ducklake_table_snapshot(
+            conn, catalog, schema, table, metadata_schema=metadata_schema
+        )
 
     try:
         row = conn.execute(
@@ -577,6 +581,58 @@ def collect_ducklake_table_health(
             )
         )
     return health
+
+
+def _ducklake_table_snapshot(
+    conn: duckdb.DuckDBPyConnection,
+    catalog: str,
+    schema: str,
+    table: str,
+    *,
+    metadata_schema: str,
+) -> int | None:
+    """The newest catalog snapshot in which this table changed.
+
+    `snapshot_count` and `oldest_snapshot_age_days` are catalog-scoped, because
+    expiry is; this one is not. It is what the maintenance scanner compares
+    against the previous sample to decide whether the table needs re-probing, so
+    it has to move when *this* table moves and not when any table in the catalog
+    does — otherwise every table in a catalog is re-probed after every commit
+    anywhere in it.
+
+    Same derivation as the control plane's `list_snapshots` for a DuckLake table
+    (see api catalog_backends/ducklake.py): the half-open `[begin, end)` bounds
+    on the table row, its data files and its delete files. Kept in both places
+    because the scanner reads this from Postgres while the probe already holds an
+    attached connection; the two must agree, and they are checked against each
+    other in the cross-component suite.
+    """
+    meta = f'"__ducklake_metadata_{catalog}"."{metadata_schema}"'
+    joins = (
+        f"JOIN {meta}.ducklake_table t ON t.table_id = d.table_id "
+        f"JOIN {meta}.ducklake_schema s ON s.schema_id = t.schema_id "
+        "WHERE s.schema_name = ? AND t.table_name = ?"
+    )
+    table_join = (
+        f"JOIN {meta}.ducklake_schema s ON s.schema_id = t.schema_id "
+        "WHERE s.schema_name = ? AND t.table_name = ?"
+    )
+    sql = (
+        "SELECT max(sid)::BIGINT FROM ("
+        f"  SELECT t.begin_snapshot AS sid FROM {meta}.ducklake_table t {table_join}"
+        f"  UNION ALL SELECT t.end_snapshot FROM {meta}.ducklake_table t {table_join}"
+        f"  UNION ALL SELECT d.begin_snapshot FROM {meta}.ducklake_data_file d {joins}"
+        f"  UNION ALL SELECT d.end_snapshot FROM {meta}.ducklake_data_file d {joins}"
+        f"  UNION ALL SELECT d.begin_snapshot FROM {meta}.ducklake_delete_file d {joins}"
+        f"  UNION ALL SELECT d.end_snapshot FROM {meta}.ducklake_delete_file d {joins}"
+        ")"
+    )
+    try:
+        row = conn.execute(sql, [schema, table] * 6).fetchone()
+        return int(row[0]) if row and row[0] is not None else None
+    except Exception as exc:  # noqa: BLE001 - metadata is best-effort
+        logger.warning("ducklake snapshot lookup failed for %s.%s: %s", schema, table, exc)
+        return None
 
 
 def _ducklake_orphans(

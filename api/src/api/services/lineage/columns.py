@@ -46,6 +46,8 @@ from sqlglot.lineage import lineage as sqlglot_lineage
 from sqlglot.optimizer.qualify import qualify
 from sqlglot.optimizer.scope import build_scope
 
+from api.models.catalog import Catalog
+from api.services.catalog_backends import backend_for
 from api.services.lineage.extract import ParsedRef, classify, resolve_ref, statement_refs
 from api.services.lineage.keys import AssetRef
 
@@ -128,7 +130,7 @@ class MappingSchemaLookup:
 
 
 class CatalogSchemaLookup:
-    """A lookup that reads column names from the Iceberg catalog.
+    """A lookup that reads column names from each catalog's own metastore.
 
     Memoised for the life of one instance and no longer. The instance is built
     per extraction and thrown away, which is the point: nothing can invalidate a
@@ -142,9 +144,9 @@ class CatalogSchemaLookup:
     the statement its column detail, nothing more.
     """
 
-    def __init__(self, polaris, catalogs_by_id: dict[uuid.UUID, str]) -> None:
+    def __init__(self, polaris, catalogs_by_id: dict[uuid.UUID, Catalog]) -> None:
         self._polaris = polaris
-        self._polaris_names = catalogs_by_id
+        self._catalogs = catalogs_by_id
         self._cache: dict[AssetRef, list[str] | None] = {}
 
     async def columns(self, ref: AssetRef) -> list[str] | None:
@@ -157,11 +159,13 @@ class CatalogSchemaLookup:
     async def _load(self, ref: AssetRef) -> list[str] | None:
         if ref.catalog_id is None:
             return None
-        polaris_name = self._polaris_names.get(ref.catalog_id)
-        if polaris_name is None:
+        catalog = self._catalogs.get(ref.catalog_id)
+        if catalog is None:
             return None
         try:
-            table = await self._polaris.get_table(polaris_name, ref.schema, ref.table)
+            table = await backend_for(catalog, polaris=self._polaris).get_table(
+                catalog, ref.schema, ref.table
+            )
         except Exception as exc:
             logger.debug("Column lineage: no schema for %s.%s: %s", ref.schema, ref.table, exc)
             return None

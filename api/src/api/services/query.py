@@ -283,7 +283,7 @@ async def _record_lineage(db: AsyncSession, query: Query, polaris=None) -> None:
         schemas = None
         if polaris is not None:
             context = await workspace_catalog_context(db, query.workspace_id)
-            schemas = CatalogSchemaLookup(polaris, {c.id: c.polaris_name for c in context.catalogs})
+            schemas = CatalogSchemaLookup(polaris, {c.id: c for c in context.catalogs})
         await record_execution_lineage(db, query, schemas=schemas)
         await db.commit()
     except Exception:

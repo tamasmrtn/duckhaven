@@ -248,8 +248,15 @@ async def _filter_changed(
 
     A table is re-probed only when its snapshot id changed (or it was never
     sampled), with a max-age safety net so a table that never changes still gets
-    re-checked periodically. The snapshot id is read from Polaris (a metadata
-    read, no table scan); on a Polaris error we keep the table rather than skip.
+    re-checked periodically. The snapshot id comes from the catalog's own
+    metadata backend (a metadata read, no table scan); on an error we keep the
+    table rather than skip.
+
+    Reading it through the seam rather than from Polaris directly is what makes
+    this work for DuckLake: `polaris_name` is NULL there, so the old call 404ed
+    for every DuckLake table, the error was caught, and the table was kept --
+    meaning every DuckLake table was re-probed on every cycle forever, with a
+    warning each time.
     """
     prior = await _latest_snapshot_ids(db)
     now = datetime.now(tz=UTC)
@@ -275,8 +282,10 @@ async def _filter_changed(
     async def _unchanged(item: tuple[Catalog, Workspace, str, str, int]) -> bool:
         catalog, _ws, schema, table, prior_snapshot_id = item
         try:
-            snapshots = await polaris.list_snapshots(catalog.polaris_name, schema, table)
-        except PolarisError as exc:
+            snapshots = await backend_for(catalog, polaris=polaris).list_snapshots(
+                catalog, schema, table
+            )
+        except CatalogBackendError as exc:
             logger.warning(
                 "Maintenance scan: snapshot check failed for %s.%s: %s", schema, table, exc
             )

@@ -144,9 +144,7 @@ async def test_create_ducklake_catalog_through_the_api(admin_client, workspace_f
     # Exactly one identity, per ck_catalogs_kind_identity.
     assert body["polaris_name"] is None
     caps = body["capabilities"]
-    assert caps["snapshot_granularity"] == "catalog"
     assert caps["external_engine_readable"] is False
-    assert caps["maintenance_executable"] is True
 
     # And it is droppable, which also purges its prefix and schema.
     detach = await admin_client.delete(f"/workspaces/{ws['slug']}/catalogs/{slug}")

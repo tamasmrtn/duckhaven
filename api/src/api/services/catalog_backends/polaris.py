@@ -38,11 +38,9 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 POLARIS_CAPABILITIES = CatalogCapabilities(
     # An Iceberg snapshot belongs to one table.
-    snapshot_granularity="table",
     supports_storage_migration=True,
     # DuckDB's iceberg extension cannot run compaction or snapshot expiry, which
     # is why DuckHaven's maintenance advisor recommends rather than applies.
-    maintenance_executable=False,
     # The reason Iceberg is the default kind: Spark, Trino, Flink and PyIceberg
     # can all read these tables.
     external_engine_readable=True,

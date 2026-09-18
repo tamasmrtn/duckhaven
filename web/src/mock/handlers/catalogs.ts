@@ -17,9 +17,7 @@ function out(c: (typeof CATALOGS)[number]): Catalog {
     polaris_name: c.polaris_name,
     metadata_schema: c.metadata_schema ?? null,
     capabilities: c.capabilities ?? {
-      snapshot_granularity: "table" as const,
       supports_storage_migration: true,
-      maintenance_executable: false,
       external_engine_readable: true,
       supported_storage_kinds: ["object_store", "s3", "adls_gen2"] as const,
     },
@@ -47,9 +45,7 @@ export const catalogHandlers = [
         available: true,
         unavailable_reason: null,
         capabilities: {
-          snapshot_granularity: "table",
           supports_storage_migration: true,
-          maintenance_executable: false,
           external_engine_readable: true,
           supported_storage_kinds: ["object_store", "s3", "adls_gen2"],
         },
@@ -61,9 +57,7 @@ export const catalogHandlers = [
         unavailable_reason:
           "Not enabled on this deployment (set DUCKLAKE_ENABLED=true).",
         capabilities: {
-          snapshot_granularity: "catalog",
           supports_storage_migration: false,
-          maintenance_executable: true,
           external_engine_readable: false,
           supported_storage_kinds: ["object_store", "s3", "adls_gen2"],
         },

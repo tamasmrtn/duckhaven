@@ -46,10 +46,8 @@ class CatalogCapabilitiesOut(BaseModel):
 
     # "table" for Iceberg; "catalog" for DuckLake, whose snapshots are commits
     # against the whole catalog rather than one table.
-    snapshot_granularity: str
     supports_storage_migration: bool
     # Whether DuckDB itself can run this kind's compaction / snapshot expiry.
-    maintenance_executable: bool
     # Whether engines other than DuckDB can read these tables. False for
     # DuckLake — the trade-off a user makes when choosing it.
     external_engine_readable: bool

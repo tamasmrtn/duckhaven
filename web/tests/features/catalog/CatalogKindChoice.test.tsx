@@ -13,9 +13,7 @@ const ICEBERG = {
   available: true,
   unavailable_reason: null,
   capabilities: {
-    snapshot_granularity: "table",
     supports_storage_migration: true,
-    maintenance_executable: false,
     external_engine_readable: true,
     supported_storage_kinds: ["object_store", "s3", "adls_gen2"],
   },
@@ -27,9 +25,7 @@ const DUCKLAKE = {
   available: true,
   unavailable_reason: null,
   capabilities: {
-    snapshot_granularity: "catalog",
     supports_storage_migration: false,
-    maintenance_executable: true,
     external_engine_readable: false,
     supported_storage_kinds: ["object_store", "s3", "adls_gen2"],
   },

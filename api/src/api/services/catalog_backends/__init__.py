@@ -131,12 +131,7 @@ class SnapshotInfo(_Info):
 class CatalogCapabilities:
     """What a catalog kind can do, surfaced so the UI never switches on `kind`."""
 
-    # "table" for Iceberg, "catalog" for DuckLake — see SnapshotInfo.
-    snapshot_granularity: Literal["table", "catalog"] = "table"
     supports_storage_migration: bool = True
-    # Whether DuckDB itself can run this kind's compaction / snapshot expiry.
-    # False for Iceberg, which is why maintenance is advisory-only today.
-    maintenance_executable: bool = False
     # Whether engines other than DuckDB can read these tables. The honest
     # trade-off a user makes when choosing a kind.
     external_engine_readable: bool = True

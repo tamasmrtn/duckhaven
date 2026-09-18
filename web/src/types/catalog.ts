@@ -22,10 +22,8 @@ export type CatalogKind = "iceberg_polaris" | "ducklake";
 export interface CatalogCapabilities {
   // "table" for Iceberg; "catalog" for DuckLake, whose snapshots are commits
   // against the whole catalog rather than one table.
-  snapshot_granularity: "table" | "catalog";
   supports_storage_migration: boolean;
   // Whether DuckDB itself can run this kind's compaction / snapshot expiry.
-  maintenance_executable: boolean;
   // Whether engines other than DuckDB can read these tables. False for DuckLake
   // — the trade-off a user makes when choosing it.
   external_engine_readable: boolean;

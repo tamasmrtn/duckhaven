@@ -107,9 +107,7 @@ def _capabilities_out(kind: str) -> CatalogCapabilitiesOut | None:
     except CatalogBackendError:
         return None
     return CatalogCapabilitiesOut(
-        snapshot_granularity=caps.snapshot_granularity,
         supports_storage_migration=caps.supports_storage_migration,
-        maintenance_executable=caps.maintenance_executable,
         external_engine_readable=caps.external_engine_readable,
         supported_storage_kinds=list(caps.supported_storage_kinds),
     )

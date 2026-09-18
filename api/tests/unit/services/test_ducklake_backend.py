@@ -110,9 +110,7 @@ def test_missing_relation_is_recognised_but_other_failures_are_not():
 
 def test_capabilities_are_stated_honestly():
     caps = DUCKLAKE_CAPABILITIES
-    assert caps.snapshot_granularity == "catalog"
     assert caps.external_engine_readable is False
-    assert caps.maintenance_executable is True
     assert caps.supports_storage_migration is False
 
 

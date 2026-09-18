@@ -93,13 +93,11 @@ def test_polaris_errors_translate_one_to_one(polaris_exc, expected):
 def test_iceberg_capabilities_are_honest():
     caps = capabilities_for(KIND_ICEBERG_POLARIS)
     # An Iceberg snapshot belongs to one table.
-    assert caps.snapshot_granularity == "table"
     # Spark/Trino/Flink/PyIceberg can read these tables — the reason Iceberg is
     # the default kind.
     assert caps.external_engine_readable is True
     # DuckDB's iceberg extension cannot run compaction or snapshot expiry, which
     # is why the maintenance advisor recommends rather than applies.
-    assert caps.maintenance_executable is False
     assert caps.supports_storage_migration is True
     assert set(caps.supported_storage_kinds) == {"object_store", "s3", "adls_gen2"}
 
@@ -115,11 +113,9 @@ def test_ducklake_catalog_resolves_to_the_ducklake_backend():
 def test_ducklake_capabilities_state_the_trade_off():
     caps = capabilities_for(KIND_DUCKLAKE)
     # A DuckLake snapshot is a commit against the catalog, not one table.
-    assert caps.snapshot_granularity == "catalog"
     # The cost: no other engine can open these tables. This is what the create
     # dialog has to tell the user before they choose.
     assert caps.external_engine_readable is False
     # The win: DuckDB can actually run this kind's maintenance.
-    assert caps.maintenance_executable is True
     # Iceberg's path-rewriting migration engine does not apply here.
     assert caps.supports_storage_migration is False

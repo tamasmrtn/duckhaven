@@ -60,14 +60,12 @@ DUCKLAKE_CAPABILITIES = CatalogCapabilities(
     # The honest one. A DuckLake snapshot is a commit against the whole catalog,
     # not one table, so a table's "history" is the subset of catalog snapshots
     # that touched it. The UI has to be able to say so.
-    snapshot_granularity="catalog",
     # Deliberately out of scope: DuckLake's relative paths make migration a copy
     # plus one data_path update rather than Iceberg's metadata-tree rewrite, so
     # the existing engine does not apply and building a second one is premature.
     supports_storage_migration=False,
     # The real product win. Unlike the iceberg extension, DuckDB's ducklake
     # extension can run compaction, snapshot expiry and orphan cleanup.
-    maintenance_executable=True,
     # The real product cost, and the reason this is not the default kind: no
     # other engine can open a DuckLake table today.
     external_engine_readable=False,

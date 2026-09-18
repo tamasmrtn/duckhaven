@@ -156,3 +156,53 @@ describe('AgentPicker terminated elastic agents', () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 })
+
+describe('AgentPicker catalog-kind compatibility', () => {
+  function renderWithKinds(kinds: ('iceberg_polaris' | 'ducklake')[]) {
+    const { wrapper: Wrapper } = createWrapper()
+    return render(
+      <Wrapper>
+        <AgentPicker value={null} onChange={vi.fn()} workspaceCatalogKinds={kinds} />
+      </Wrapper>,
+    )
+  }
+
+  it('flags an agent that cannot serve a DuckLake catalog', async () => {
+    // Dispatch checks two axes; the picker mirrored only the storage one, so an
+    // agent without the ducklake extension looked selectable and the query
+    // failed at dispatch instead of the agent being greyed out.
+    server.use(http.get('/api/agents', () => HttpResponse.json([RUNNING])))
+    renderWithKinds(['ducklake'])
+
+    await userEvent.click(await screen.findByRole('combobox'))
+    expect(await screen.findByText(/Missing extension for ducklake catalogs/i)).toBeInTheDocument()
+    expect(screen.getByText(/ducklake/i)).toBeInTheDocument()
+  })
+
+  it('does not flag an agent that has the DuckLake extensions', async () => {
+    const capable = {
+      ...RUNNING,
+      capabilities: {
+        ...RUNNING.capabilities,
+        extensions: ['httpfs', 'ducklake', 'postgres_scanner'],
+      },
+    }
+    server.use(http.get('/api/agents', () => HttpResponse.json([capable])))
+    renderWithKinds(['ducklake'])
+
+    await userEvent.click(await screen.findByRole('combobox'))
+    await screen.findByText('warehouse-a')
+    expect(screen.queryByText(/Missing extension for/i)).not.toBeInTheDocument()
+  })
+
+  it('never flags an Iceberg catalog, which has never been gated', async () => {
+    // Matches the server: _CATALOG_KIND_EXTENSIONS["iceberg_polaris"] is empty,
+    // so enforcing it client-side would grey out agents the API accepts.
+    server.use(http.get('/api/agents', () => HttpResponse.json([RUNNING])))
+    renderWithKinds(['iceberg_polaris'])
+
+    await userEvent.click(await screen.findByRole('combobox'))
+    await screen.findByText('warehouse-a')
+    expect(screen.queryByText(/Missing extension for/i)).not.toBeInTheDocument()
+  })
+})

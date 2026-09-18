@@ -808,6 +808,7 @@ export function WorksheetPage() {
               value={resolvedAgentId}
               onChange={setAgentId}
               workspaceBackend={workspace?.storage_backend_kind ?? undefined}
+              workspaceCatalogKinds={catalogs.map((c) => c.kind)}
             />
 
             {catalogs.length > 0 && (

@@ -1,3 +1,4 @@
+import type { CatalogKind } from "./catalog";
 import type { BackendKind } from "./storage-backend";
 
 export type AgentStatus = "healthy" | "unavailable" | "degraded";
@@ -218,6 +219,44 @@ export interface BootstrapToken {
   expires_at: string;
   control_plane_url: string;
   agent_image: string;
+}
+
+// Mirrors _CATALOG_KIND_EXTENSIONS in api/src/api/services/agent_capabilities.py,
+// which gates dispatch on the agent advertising these. `postgres_scanner`, not
+// `postgres`: DuckDB installs the extension under the latter name and advertises
+// it under the former.
+//
+// `iceberg_polaris` is empty on purpose, matching the server: that requirement
+// has never been gated, and enforcing it client-side would grey out agents the
+// API would happily accept.
+const CATALOG_KIND_EXTENSIONS: Record<CatalogKind, readonly string[]> = {
+  iceberg_polaris: [],
+  ducklake: ["ducklake", "postgres_scanner"],
+};
+
+export function agentSupportsCatalogKind(
+  agent: Agent,
+  kind: CatalogKind,
+): boolean {
+  // A not-yet-registered agent (no advertised capabilities) supports nothing.
+  if (!agent.capabilities) return false;
+  const { extensions } = agent.capabilities;
+  return (CATALOG_KIND_EXTENSIONS[kind] ?? []).every((ext) =>
+    extensions.includes(ext),
+  );
+}
+
+/** The first extension this agent lacks for the kind, or null if it has them all. */
+export function missingCatalogKindExtension(
+  agent: Agent,
+  kind: CatalogKind,
+): string | null {
+  const extensions = agent.capabilities?.extensions ?? [];
+  return (
+    (CATALOG_KIND_EXTENSIONS[kind] ?? []).find(
+      (ext) => !extensions.includes(ext),
+    ) ?? null
+  );
 }
 
 export function agentSupportsBackend(agent: Agent, kind: BackendKind): boolean {

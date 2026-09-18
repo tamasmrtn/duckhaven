@@ -27,14 +27,30 @@ import {
   useTerminateAgent,
 } from "@/queries/agents";
 import type { Agent, AgentStatus } from "@/types/agent";
+import type { CatalogKind } from "@/types/catalog";
 import type { BackendKind } from "@/types/storage-backend";
-import { agentSupportsBackend, agentTierAtLeast } from "@/types/agent";
+import {
+  agentSupportsBackend,
+  agentSupportsCatalogKind,
+  agentTierAtLeast,
+  missingCatalogKindExtension,
+} from "@/types/agent";
 import { cn } from "@/utils";
 
 interface AgentPickerProps {
   value: string | null;
   onChange: (agentId: string) => void;
   workspaceBackend?: BackendKind;
+  /**
+   * The catalog kinds attached to the workspace.
+   *
+   * Dispatch checks two independent axes — the storage backend the bytes live
+   * on, and the catalog kind whose metastore and table format the agent has to
+   * speak. Both are enforced server-side; without this the picker mirrored only
+   * the first, so an agent missing `ducklake` looked selectable and the query
+   * failed at dispatch instead.
+   */
+  workspaceCatalogKinds?: CatalogKind[];
   /**
    * Allow picking an elastic agent that is currently down.
    *
@@ -55,8 +71,20 @@ const statusIcon: Record<AgentStatus, React.ReactNode> = {
   unavailable: <Circle className="size-3 text-[var(--status-failed)]" />,
 };
 
-function AgentRow({ agent, backend }: { agent: Agent; backend?: BackendKind }) {
-  const compatible = !backend || agentSupportsBackend(agent, backend);
+function AgentRow({
+  agent,
+  backend,
+  catalogKinds = [],
+}: {
+  agent: Agent;
+  backend?: BackendKind;
+  catalogKinds?: CatalogKind[];
+}) {
+  const backendOk = !backend || agentSupportsBackend(agent, backend);
+  const unservedKind = catalogKinds.find(
+    (kind) => !agentSupportsCatalogKind(agent, kind),
+  );
+  const compatible = backendOk && unservedKind === undefined;
   return (
     <div className={cn("flex flex-col gap-0.5", !compatible && "opacity-60")}>
       <div className="flex items-center gap-1.5">
@@ -97,7 +125,15 @@ function AgentRow({ agent, backend }: { agent: Agent; backend?: BackendKind }) {
           );
         })}
       </div>
-      {!compatible && backend && (
+      {/* Name the catalog-kind requirement first: it is the more surprising of
+          the two, and matches which extension the API names when it refuses. */}
+      {unservedKind !== undefined && (
+        <p className="pl-4.5 text-2xs text-[var(--status-failed)]">
+          Missing extension for {unservedKind} catalogs:{" "}
+          {missingCatalogKindExtension(agent, unservedKind)}
+        </p>
+      )}
+      {!backendOk && backend && (
         <p className="pl-4.5 text-2xs text-[var(--status-failed)]">
           Missing extension for {backend === "adls_gen2" ? "azure" : "httpfs"}
         </p>
@@ -110,6 +146,7 @@ export function AgentPicker({
   value,
   onChange,
   workspaceBackend,
+  workspaceCatalogKinds,
   allowTerminatedElastic = false,
 }: AgentPickerProps) {
   const [open, setOpen] = useState(false);
@@ -172,7 +209,11 @@ export function AgentPicker({
                   disabled={!agent.provider && agent.status === "unavailable"}
                   className="flex flex-col items-start py-2"
                 >
-                  <AgentRow agent={agent} backend={workspaceBackend} />
+                  <AgentRow
+                    agent={agent}
+                    backend={workspaceBackend}
+                    catalogKinds={workspaceCatalogKinds}
+                  />
                   {allowTerminatedElastic &&
                     agent.provider &&
                     agent.status === "unavailable" && (

@@ -270,11 +270,22 @@ def stack(_require_env, tmp_path_factory) -> Iterator[Stack]:
 
 
 def _agent_healthy(base_url: str) -> bool:
+    """True once an agent has registered *and* advertised what it can do.
+
+    Those are two frames, in that order: the agent reports healthy on AUTH_OK,
+    and only then opens DuckDB to describe itself. Waiting on status alone let
+    the suite start against an agent whose ``capabilities`` were still null,
+    which fails the lifecycle assertion outright and leaves dispatch — gated on
+    the advertised extension set — depending on timing.
+
+    The window is real rather than theoretical: an extension's first ``LOAD``
+    downloads it when the runner has no cached copy, and the agent loads five.
+    """
     with httpx.Client(base_url=base_url, timeout=5.0) as c:
         login = c.post("/api/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
         login.raise_for_status()
         agents = c.get("/api/agents").json()
-        return any(a["status"] == "healthy" for a in agents)
+        return any(a["status"] == "healthy" and a.get("capabilities") for a in agents)
 
 
 @pytest_asyncio.fixture
@@ -288,10 +299,16 @@ async def api_client(stack: Stack):
 
 @pytest_asyncio.fixture
 async def healthy_agent(api_client) -> dict:
-    """The registered, healthy agent as the API reports it."""
+    """The registered, healthy agent as the API reports it.
+
+    Requires advertised capabilities, not just a healthy status — the stack
+    fixture already waits for both, so an agent without them here is a
+    disposable one a `spawn_agent` test started and has not finished
+    registering, never the session agent.
+    """
     agents = (await api_client.get("/api/agents")).json()
-    healthy = [a for a in agents if a["status"] == "healthy"]
-    assert healthy, "expected a healthy agent in the live stack"
+    healthy = [a for a in agents if a["status"] == "healthy" and a.get("capabilities")]
+    assert healthy, "expected a healthy agent with advertised capabilities in the live stack"
     return healthy[0]
 
 

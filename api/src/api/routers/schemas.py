@@ -185,7 +185,11 @@ def _table_to_out(
             if table.current_snapshot_summary
             else None
         ),
-        size_bytes=meta.size_bytes if meta else None,
+        # The agent probe is authoritative where it has run; otherwise fall back
+        # to whatever the catalog knows for free. DuckLake tracks its live bytes
+        # exactly, so a never-probed table still shows a real size, with no
+        # compute attached.
+        size_bytes=(meta.size_bytes if meta and meta.size_bytes is not None else table.size_bytes),
         owner=meta.owner if meta else None,
         last_write_at=meta.last_write_at if meta else None,
         last_write_by=meta.last_write_by if meta else None,

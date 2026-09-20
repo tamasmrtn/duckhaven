@@ -33,7 +33,9 @@ The create dialog says so at the moment you choose. It is repeated here because 
 - **One fewer service.** A deployment that uses only DuckLake catalogs does not need Polaris at all — see
   [Enable DuckLake](../deployment/ducklake.md#a-ducklake-only-deployment).
 - **Faster browsing.** Listing schemas, tables and columns is a SQL query against Postgres, with no REST round-trip
-  and no agent involved. A DuckLake catalog can be browsed even when no [agent](agents.md) is connected.
+  and no agent involved. A DuckLake catalog can be browsed even when no [agent](agents.md) is connected, and a table's
+  size is read from the catalog rather than measured — the catalog keeps a running total of its live data files, so
+  the number is exact and costs nothing. An Iceberg table's size needs an agent to go and look.
 - **Maintenance that can actually run.** DuckDB's `ducklake` extension performs compaction, snapshot expiry and orphan
   cleanup; its `iceberg` extension cannot. The [maintenance advisor](maintenance.md) scans both kinds, and a DuckLake
   table's recommendations name a `ducklake_*` command DuckDB itself can run rather than an external engine. Its health

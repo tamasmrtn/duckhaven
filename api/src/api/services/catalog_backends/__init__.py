@@ -80,6 +80,10 @@ class CatalogTableInfo(_Info):
     # "ICEBERG" or "DUCKLAKE" — what the UI shows as the table format.
     data_source_format: str = "ICEBERG"
     storage_location: str | None = None
+    # Total bytes of the table's live data files, when the catalog knows it
+    # without a scan. DuckLake keeps a running total; Polaris does not expose
+    # one, so it stays None there and the agent probe remains the only source.
+    size_bytes: int | None = None
     columns: list[CatalogColumnInfo] = Field(default_factory=list)
     properties: dict[str, str] | None = None
     comment: str | None = None

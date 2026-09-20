@@ -277,7 +277,14 @@ class DuckLakeCatalogBackend:
             {"schema": schema},
         )
         return [
-            _table_info(catalog, schema, name=r[0], table_uuid=r[1], record_count=r[2])
+            _table_info(
+                catalog,
+                schema,
+                name=r[0],
+                table_uuid=r[1],
+                record_count=r[2],
+                size_bytes=r[3],
+            )
             for r in rows
         ]
 
@@ -294,7 +301,7 @@ class DuckLakeCatalogBackend:
         )
         if not rows:
             raise CatalogBackendNotFound(f"Table {schema}.{name} does not exist")
-        table_id, table_uuid, record_count, _size = rows[0]
+        table_id, table_uuid, record_count, size_bytes = rows[0]
 
         column_rows = await self._rows(
             catalog,
@@ -320,6 +327,7 @@ class DuckLakeCatalogBackend:
             name=name,
             table_uuid=table_uuid,
             record_count=record_count,
+            size_bytes=size_bytes,
             columns=columns,
         )
 
@@ -492,6 +500,7 @@ def _table_info(
     name: str,
     table_uuid: Any,
     record_count: Any,
+    size_bytes: Any = None,
     columns: list[CatalogColumnInfo] | None = None,
 ) -> CatalogTableInfo:
     return CatalogTableInfo(
@@ -502,6 +511,9 @@ def _table_info(
         table_type="MANAGED",
         data_source_format="DUCKLAKE",
         storage_location=None,
+        # Exact, and free: ducklake_table_stats keeps a running total of the
+        # live data files' bytes, so this needs no scan and no agent.
+        size_bytes=int(size_bytes) if size_bytes is not None else None,
         columns=columns or [],
         properties={},
         # Iceberg concepts with no DuckLake equivalent; left None, not faked.

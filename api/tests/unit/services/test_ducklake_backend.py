@@ -336,3 +336,30 @@ async def test_inlined_writes_are_matched_a_token_at_a_time():
     assert "string_to_array(c.changes_made, ',')" in sql
     assert "split_part(tok, ':', 2) = tbl.table_id::text" in sql
     assert "ESCAPE" in sql
+
+
+@pytest.mark.asyncio
+async def test_a_table_carries_the_size_the_catalog_already_knows():
+    """ducklake_table_stats keeps a running total of live data-file bytes.
+
+    It was selected and then dropped on the floor, so a DuckLake table showed
+    no size until an agent probed it -- a scan to learn something the catalog
+    had already written down.
+    """
+    backend = DuckLakeCatalogBackend()
+    backend._rows = _FakeRows(  # type: ignore[method-assign]
+        [("events", "uuid-1", 5000, 20994)]
+    )
+    tables = await backend.list_tables(_catalog(), "analytics")
+
+    assert [t.size_bytes for t in tables] == [20994]
+
+
+@pytest.mark.asyncio
+async def test_a_table_with_no_stats_row_reports_no_size():
+    """A table written but never stat-ted; None, not a confident zero."""
+    backend = DuckLakeCatalogBackend()
+    backend._rows = _FakeRows([("events", "uuid-1", None, None)])  # type: ignore[method-assign]
+    tables = await backend.list_tables(_catalog(), "analytics")
+
+    assert tables[0].size_bytes is None

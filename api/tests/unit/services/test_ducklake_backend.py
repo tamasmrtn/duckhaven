@@ -249,9 +249,10 @@ class _FakeRows:
 
 @pytest.mark.asyncio
 async def test_snapshot_derivation_covers_files_deletes_and_the_table_itself():
-    """History is derived from three sources, each covering what the others miss:
-    ducklake_table for empty creates and drops, and the file tables for data and
-    delete changes."""
+    """History is derived from four sources, each covering what the others miss:
+    ducklake_table for empty creates and drops, the file tables for data and
+    delete changes, and snapshot_changes for writes small enough to be inlined
+    into the catalog database rather than written to a file."""
     from datetime import UTC, datetime
 
     backend = DuckLakeCatalogBackend()
@@ -268,6 +269,7 @@ async def test_snapshot_derivation_covers_files_deletes_and_the_table_itself():
     assert "ducklake_table" in sql
     assert "ducklake_data_file" in sql
     assert "ducklake_delete_file" in sql
+    assert "ducklake_snapshot_changes" in sql
     # Newest first; only the newest is current, and all are catalog-granularity.
     assert [s.snapshot_id for s in got] == [7, 4]
     assert [s.is_current for s in got] == [True, False]
@@ -314,3 +316,23 @@ async def test_a_purge_failure_never_blocks_the_drop(monkeypatch, caplog):
     with caplog.at_level("WARNING"):
         await DuckLakeCatalogBackend()._purge_data(cat)
     assert "orphaned" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_inlined_writes_are_matched_a_token_at_a_time():
+    """`changes_made` packs several changes into one comma-separated string.
+
+    Table ids are bare integers, so a substring match for table 1 would also
+    claim every snapshot that touched table 13 — someone's history showing
+    changes they never made. Matched per token instead, with the `_` in
+    `inlined_` escaped so LIKE treats it as a literal rather than a wildcard.
+    """
+    backend = DuckLakeCatalogBackend()
+    rows = _FakeRows([])
+    backend._rows = rows  # type: ignore[method-assign]
+    await backend.list_snapshots(_catalog(), "analytics", "t")
+
+    sql = rows.sql[0]
+    assert "string_to_array(c.changes_made, ',')" in sql
+    assert "split_part(tok, ':', 2) = tbl.table_id::text" in sql
+    assert "ESCAPE" in sql

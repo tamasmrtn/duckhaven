@@ -92,10 +92,11 @@ SELECT * FROM raw.analytics.events AT (VERSION => 42);
 SELECT * FROM raw.analytics.events AT (TIMESTAMP => TIMESTAMP '2026-09-01 00:00:00');
 ```
 
-!!! note "Small writes may not appear in a table's history"
-    DuckLake stores very small changes (ten rows by default) in the catalog database rather than writing a Parquet
-    file. Those snapshots exist and are queryable by version, but they leave no file for DuckHaven to attribute to a
-    table, so they do not appear in the table's snapshot list.
+!!! note "Very small writes are stored in the catalog, not in a file"
+    DuckLake keeps changes below `DUCKLAKE_DATA_INLINING_ROW_LIMIT` (ten rows by default) in the catalog database
+    instead of writing a Parquet file. Those snapshots still appear in the table's history — DuckHaven reads the
+    catalog's own record of which table each one changed — but they contribute no data file, so they do not move the
+    file counts on the [maintenance](maintenance.md) page.
 
 ## What DuckLake cannot do
 

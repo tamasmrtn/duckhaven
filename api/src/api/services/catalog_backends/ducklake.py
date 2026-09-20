@@ -326,15 +326,18 @@ class DuckLakeCatalogBackend:
     async def list_snapshots(self, catalog: Catalog, schema: str, name: str) -> list[SnapshotInfo]:
         """The catalog snapshots in which this table changed.
 
-        DuckLake snapshots are catalog-wide, so this is derived from three
+        DuckLake snapshots are catalog-wide, so this is derived from four
         sources — ``ducklake_table`` (empty creates and drops),
-        ``ducklake_data_file`` (inserts, compaction) and ``ducklake_delete_file``
-        — and marked ``granularity="catalog"`` for the UI.
-        ``ducklake_snapshot_changes.changes_made`` is free text, so it is not
-        parsed.
+        ``ducklake_data_file`` (inserts, compaction), ``ducklake_delete_file``,
+        and ``ducklake_snapshot_changes`` for writes small enough to be inlined
+        into the catalog database — and marked ``granularity="catalog"``.
 
-        Known gap: changes inlined into the catalog database (10 rows by default)
-        write no file row and so do not appear here. The snapshots still exist.
+        An inlined write produces no file row, so without the fourth source it
+        was invisible here: the table looked unchanged to the maintenance
+        scanner as well as to the history panel. ``changes_made`` is text, but
+        its inlined forms are ``inlined_<verb>:<table_id>`` joined by commas, so
+        it is matched a token at a time — ``LIKE '%:1%'`` would also match
+        table 13.
         """
         rows = await self._rows(
             catalog,
@@ -354,6 +357,11 @@ class DuckLakeCatalogBackend:
             "    JOIN tbl ON tbl.table_id = d.table_id "
             "  UNION SELECT d.end_snapshot FROM {schema}.ducklake_delete_file d "
             "    JOIN tbl ON tbl.table_id = d.table_id"
+            "  UNION SELECT c.snapshot_id FROM {schema}.ducklake_snapshot_changes c, tbl "
+            "    WHERE EXISTS ("
+            "      SELECT 1 FROM unnest(string_to_array(c.changes_made, ',')) AS tok "
+            "      WHERE tok LIKE 'inlined@_%' ESCAPE '@' "
+            "        AND split_part(tok, ':', 2) = tbl.table_id::text)"
             ") "
             "SELECT s.snapshot_id, s.snapshot_time, s.schema_version "
             "FROM {schema}.ducklake_snapshot s "

@@ -187,6 +187,10 @@ def _preinstall_agent_extensions() -> None:
     time. The agent here runs from the uv env (not the image), and its capability
     probe only ``LOAD``s (relying on pre-installed extensions), so without this
     ``httpfs`` is never advertised and dispatch is rejected as agent_incompatible.
+
+    The list must track the image's: ``ducklake`` and ``postgres`` are gated at
+    dispatch for a DuckLake catalog, so omitting them here rejects every
+    DuckLake test as agent_incompatible rather than failing it usefully.
     """
     subprocess.run(
         [
@@ -197,8 +201,9 @@ def _preinstall_agent_extensions() -> None:
             "python",
             "-c",
             "import duckdb; c = duckdb.connect(); "
-            "[c.execute(f'INSTALL {e}') for e in ('httpfs', 'azure', 'iceberg')]; "
-            "[c.execute(f'LOAD {e}') for e in ('httpfs', 'azure', 'iceberg')]",
+            "exts = ('httpfs', 'azure', 'iceberg', 'ducklake', 'postgres'); "
+            "[c.execute(f'INSTALL {e}') for e in exts]; "
+            "[c.execute(f'LOAD {e}') for e in exts]",
         ],
         cwd=REPO_ROOT,
         check=True,

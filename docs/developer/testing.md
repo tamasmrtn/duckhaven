@@ -25,6 +25,23 @@ make test-e2e           # Playwright
 
 Heavier layers (integration, cross-component, e2e) are env-gated so the default `make test` stays fast.
 
+### DuckLake in the integration and cross-component layers
+
+DuckLake's suites gate on `DUCKLAKE_DATABASE_URL` and skip without it, so a Polaris-only checkout still
+runs everything else. CI sets it, along with the restricted role agents log in with; to run them locally
+against the Compose stack:
+
+```bash
+export DUCKLAKE_DATABASE_URL=postgresql+asyncpg://duckhaven:duckhaven@localhost:5432/ducklake
+export DUCKLAKE_AGENT_HOST=127.0.0.1 DUCKLAKE_AGENT_PASSWORD=<the value in deploy/.env>
+make test-integration-api test-cross-component
+```
+
+The agent also needs the `ducklake` and `postgres` DuckDB extensions installed. The cross-component
+harness installs them itself; for `make test-integration-agent` they come from your local `~/.duckdb`
+cache. An agent missing either is rejected at dispatch as `agent_incompatible` rather than failing the
+assertion you were interested in, so a whole suite can look like it passed when it never ran.
+
 ### Elastic compute in the cross-component layer
 
 Scale-out can only be observed where compute is *absent*, so the elastic tests cannot share the main

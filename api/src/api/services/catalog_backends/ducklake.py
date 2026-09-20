@@ -98,6 +98,17 @@ def get_engine() -> AsyncEngine:
     return _engine
 
 
+async def ping() -> None:
+    """Prove the catalog database is reachable, for the readiness probe.
+
+    Its own engine, so a healthy control-plane connection says nothing about
+    it: the `ducklake` database can be gone, the role revoked or this pool
+    exhausted while `SELECT 1` on `duckhaven` still succeeds.
+    """
+    async with get_engine().connect() as conn:
+        await conn.execute(text("SELECT 1"))
+
+
 async def dispose_engine() -> None:
     """Close the pool. Called from the app lifespan and by tests."""
     global _engine

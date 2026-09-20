@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
 from api.deps import get_db, get_polaris_client
-from api.models.catalog import KIND_ICEBERG_POLARIS, Catalog
+from api.models.catalog import KIND_DUCKLAKE, KIND_ICEBERG_POLARIS, Catalog
 from api.services.polaris import PolarisClient
 
 router = APIRouter()
@@ -96,5 +96,23 @@ async def readyz(
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=f"polaris unreachable: {type(e).__name__}",
+            ) from e
+
+    # The same question for the other kind's metastore. Asked separately because
+    # it is a separate engine: the check above proves nothing about it, and a
+    # replica that cannot reach the catalog database cannot serve a DuckLake
+    # catalog even though every other dependency is fine.
+    needs_ducklake = await db.scalar(
+        select(sa.func.count()).select_from(Catalog).where(Catalog.kind == KIND_DUCKLAKE)
+    )
+    if needs_ducklake:
+        from api.services.catalog_backends import ducklake
+
+        try:
+            await ducklake.ping()
+        except Exception as e:  # noqa: BLE001 — any failure means not ready
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"ducklake unreachable: {type(e).__name__}",
             ) from e
     return {"status": "ready"}

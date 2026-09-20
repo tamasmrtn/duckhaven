@@ -97,3 +97,59 @@ async def test_healthz_503_when_db_unreachable(client: AsyncClient):
         del api_app.dependency_overrides[get_db]
     assert resp.status_code == 503
     assert "database unreachable" in resp.json()["message"]
+
+
+async def _seed_ducklake_catalog(db_session, slug: str = "lake_cat"):
+    """A workspace holding one DuckLake catalog, which is what makes the
+    catalog database a readiness dependency."""
+    from api.models.catalog import KIND_DUCKLAKE
+
+    owner = User(
+        email=f"{slug}@test.local", password_hash=hash_password("pw"), name="D", role="user"
+    )
+    db_session.add(owner)
+    await db_session.commit()
+    await db_session.refresh(owner)
+    _ws, catalog = await seed_workspace(
+        db_session, user_id=owner.id, slug=f"{slug}-ws", catalog_slug=slug
+    )
+    catalog.kind = KIND_DUCKLAKE
+    catalog.polaris_name = None
+    catalog.metadata_schema = f"cat_{slug}"
+    await db_session.commit()
+    return catalog
+
+
+async def test_readyz_503_when_the_ducklake_database_is_unreachable(
+    client: AsyncClient, db_session, monkeypatch: pytest.MonkeyPatch
+):
+    """The catalog database is its own engine, so the control plane's own
+    connection being healthy says nothing about it."""
+    from api.services.catalog_backends import ducklake
+
+    await _seed_ducklake_catalog(db_session)
+
+    async def _broken() -> None:
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(ducklake, "ping", _broken)
+    resp = await client.get("/readyz")
+
+    assert resp.status_code == 503
+    assert "ducklake unreachable" in resp.json()["message"]
+
+
+async def test_readyz_ignores_the_ducklake_database_when_no_such_catalog_exists(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    """An Iceberg-only deployment never configures it, so it must not be a
+    dependency there -- keyed on what is deployed, not on a feature flag."""
+    from api.services.catalog_backends import ducklake
+
+    async def _broken() -> None:
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(ducklake, "ping", _broken)
+    resp = await client.get("/readyz")
+
+    assert resp.status_code == 200

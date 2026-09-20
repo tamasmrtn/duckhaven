@@ -15,6 +15,8 @@ a lexical check that over-matches; refusing beats guessing.
 
 from __future__ import annotations
 
+import re
+
 import sqlglot
 from sqlglot import exp
 
@@ -47,6 +49,16 @@ DUCKLAKE_METADATA_PREFIX = "__ducklake_metadata_"
 DUCKLAKE_FUNCTION_PREFIX = "ducklake_"
 
 
+# `CHECKPOINT <catalog>` runs ducklake_flush_inlined_data, _expire_snapshots,
+# _merge_adjacent_files, _rewrite_data_files, _cleanup_old_files and
+# _delete_orphaned_files in one statement -- every verb below, with none of the
+# prefix. Both gates already refuse it, but only because sqlglot models it as an
+# `Alias`/`Command` that falls outside their allowlists: a release that parses it
+# into an admitted node would reopen the hole silently. Denied by name instead,
+# so the guarantee stops depending on how a parser happens to shape it.
+DENIED_COMMAND_HEADS = frozenset({"checkpoint"})
+
+
 class ForeignAccessDenied(Exception):
     """A statement reaches a foreign database or DuckLake's internal metadata.
 
@@ -75,6 +87,26 @@ def _deny_maintenance(name: str) -> ForeignAccessDenied:
     )
 
 
+def _deny_command(name: str) -> ForeignAccessDenied:
+    return ForeignAccessDenied(
+        f"{name.upper()} is not permitted: it runs DuckLake's maintenance verbs, "
+        "which rewrite and delete data. Use the Lakehouse health page to see what "
+        "a catalog needs.",
+        "ducklake_checkpoint",
+    )
+
+
+def _leading_words(stmt: exp.Expression) -> list[str]:
+    """The leading bare words of a statement sqlglot could not model as SQL.
+
+    Only the statement root is inspected, so `SELECT checkpoint FROM t` -- a
+    perfectly ordinary column -- parses as a `Select` and is never considered.
+    """
+    if isinstance(stmt, exp.Column | exp.Alias | exp.Command):
+        return stmt.sql(dialect="duckdb").lower().replace('"', " ").split()
+    return []
+
+
 def _deny_metadata(ref: str) -> ForeignAccessDenied:
     return ForeignAccessDenied(
         f"{ref!r} is DuckLake's internal catalog metadata and is not queryable. "
@@ -85,6 +117,11 @@ def _deny_metadata(ref: str) -> ForeignAccessDenied:
 
 def check_statement(stmt: exp.Expression) -> None:
     """Raise :class:`ForeignAccessDenied` if ``stmt`` touches a denied name."""
+    # `CHECKPOINT db` and `FORCE CHECKPOINT db` put the keyword first or second.
+    for word in _leading_words(stmt)[:2]:
+        if word in DENIED_COMMAND_HEADS:
+            raise _deny_command(word)
+
     for node in stmt.find_all(exp.Anonymous):
         if not isinstance(node.this, str):
             continue
@@ -133,3 +170,6 @@ def _check_lexically(sql: str) -> None:
         raise _deny_metadata(DUCKLAKE_METADATA_PREFIX + "*")
     if DUCKLAKE_FUNCTION_PREFIX in lowered:
         raise _deny_maintenance(DUCKLAKE_FUNCTION_PREFIX + "*")
+    for name in DENIED_COMMAND_HEADS:
+        if re.search(rf"\b{name}\b", lowered):
+            raise _deny_command(name)

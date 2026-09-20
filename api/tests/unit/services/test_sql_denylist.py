@@ -125,3 +125,62 @@ def test_existing_allowlist_behaviour_is_unchanged() -> None:
     """The new pass did not narrow the ordinary corpus."""
     for sql in ("SELECT 1", "INSERT INTO t VALUES (1)", "CREATE TABLE t (x INT)"):
         assert_allowed(sql)
+
+
+# --- CHECKPOINT ------------------------------------------------------------
+#
+# The statement that reaches every verb the ducklake_ prefix rule exists to
+# block, while carrying none of that prefix.
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "CHECKPOINT",
+        "CHECKPOINT lake",
+        "checkpoint  lake",
+        "FORCE CHECKPOINT lake",
+    ],
+)
+def test_checkpoint_is_denied_by_name(sql):
+    """Denied for being CHECKPOINT, not for being an unmodelled parse node.
+
+    Both gates refused these before this rule existed, but incidentally -- the
+    message named a sqlglot class. Assert the rule slug so the guarantee is the
+    one we meant rather than one we inherited.
+    """
+    with pytest.raises(ForeignAccessDenied) as exc:
+        check_sql(sql)
+    assert exc.value.rule == "ducklake_checkpoint"
+
+
+def test_a_column_named_checkpoint_is_not_a_checkpoint():
+    """Only the statement root is considered, so ordinary SQL is unaffected."""
+    check_sql("SELECT checkpoint FROM events")
+    check_sql("SELECT 1 AS checkpoint")
+
+
+def test_checkpoint_is_refused_by_both_statement_gates():
+    """The two gates share this module precisely so they cannot drift."""
+    with pytest.raises(SQLNotAllowed):
+        assert_allowed("CHECKPOINT lake")
+    with pytest.raises(StatementNotAllowed):
+        assert_statement_allowed("CHECKPOINT lake", staging_prefixes=[], managed_catalogs={"lake"})
+
+
+def test_copy_from_database_is_refused_by_both_statement_gates():
+    """`COPY FROM DATABASE a TO b` clones a whole catalog in one statement.
+
+    It reaches no ducklake_ function and names no metadata schema, so this
+    module does not catch it -- the COPY target rule and the statement-type
+    allowlist do. Pinned here because the export feature runs exactly this
+    statement from the control plane, and the user-facing refusal must stay.
+    """
+    sql = "COPY FROM DATABASE lake TO ice"
+    with pytest.raises(SQLNotAllowed):
+        assert_allowed(sql)
+    with pytest.raises(StatementNotAllowed) as exc:
+        assert_statement_allowed(sql, staging_prefixes=[], managed_catalogs={"lake", "ice"})
+    # Denied on the COPY target, before the grant layer sees its bogus
+    # `TableRef(table="DATABASE")`.
+    assert exc.value.rule == "copy_path"

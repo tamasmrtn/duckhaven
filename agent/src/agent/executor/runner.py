@@ -733,10 +733,31 @@ def _attach_ducklake(conn: duckdb.DuckDBPyConnection, cat: dict[str, Any]) -> No
         f"DATA_PATH '{data_path}', METADATA_SCHEMA '{metadata_schema}', "
         f"META_SECRET '{_meta_secret(slug)}', CREATE_IF_NOT_EXISTS true)"
     )
+    _apply_ducklake_options(conn, alias, cat.get("options") or {})
+
     # The default namespace, matching the Iceberg path's `analytics`. Created
     # here, not at provisioning, because it needs the extension.
     schema = (cat.get("default_schema") or _DEFAULT_NAMESPACE).replace('"', '""')
     conn.execute(f'CREATE SCHEMA IF NOT EXISTS "{alias}"."{schema}"')
+
+
+def _apply_ducklake_options(
+    conn: duckdb.DuckDBPyConnection, alias: str, options: dict[str, Any]
+) -> None:
+    """Apply the catalog options the API vended.
+
+    These persist in `ducklake_metadata` rather than the connection, and
+    re-applying an unchanged value writes no snapshot, so this is an upsert per
+    attach rather than a change to the catalog's history.
+
+    Best-effort per option: an extension that does not know one must not cost us
+    the attach, and therefore the whole query.
+    """
+    for name, value in options.items():
+        try:
+            conn.execute(f'CALL "{alias}".set_option(?, ?)', [name, str(value)])
+        except Exception as exc:  # noqa: BLE001 - an older extension may not know it
+            logger.warning("Could not set DuckLake option %s on %s: %s", name, alias, exc)
 
 
 def _create_storage_secret(

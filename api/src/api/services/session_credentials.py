@@ -103,6 +103,25 @@ def build_ducklake_meta_block() -> dict[str, str | int]:
     }
 
 
+def build_ducklake_options() -> dict[str, str]:
+    """Catalog options DuckHaven owns, applied on attach.
+
+    These are GLOBAL options persisted in ``ducklake_metadata``, not
+    per-connection settings, so DuckHaven's configuration is authoritative for
+    them the same way it is for ``data_path``. Re-applying an unchanged value
+    writes no snapshot, so sending them every attach costs one upsert and keeps
+    a catalog from drifting away from the deployment's settings.
+
+    ``target_file_size`` is the writer's target, and the maintenance advisor
+    scores small files against ``target_file_bytes``; the two are documented
+    together because a disagreement produces confident, wrong advice.
+    """
+    return {
+        "target_file_size": f"{settings.ducklake_target_file_size_mb}MB",
+        "data_inlining_row_limit": str(settings.ducklake_data_inlining_row_limit),
+    }
+
+
 def build_storage_block(backend: StorageBackend, data_path: str) -> dict[str, object]:
     """Storage credentials for a DuckLake catalog's data path.
 
@@ -275,6 +294,7 @@ async def build_catalog_attach(catalog: Catalog) -> dict[str, object]:
             "data_path": data_path,
             "metadata_schema": catalog.metadata_schema,
             "meta": build_ducklake_meta_block(),
+            "options": build_ducklake_options(),
             "storage": await _storage_block(catalog, data_path),
         }
     )

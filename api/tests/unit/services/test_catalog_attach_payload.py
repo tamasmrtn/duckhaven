@@ -132,3 +132,37 @@ async def test_the_bundled_store_is_not_cached_because_it_mints_nothing():
             "api.services.session_credentials", fromlist=["_storage_cache"]
         )._storage_cache
     )
+
+
+@pytest.mark.asyncio
+async def test_ducklake_carries_the_deployment_s_catalog_options():
+    """The tuning settings have to reach the catalog to mean anything.
+
+    They were declared and documented before anything read them, so a
+    deployment that set them got the extension's defaults regardless.
+    """
+    original = (
+        settings.ducklake_target_file_size_mb,
+        settings.ducklake_data_inlining_row_limit,
+    )
+    settings.ducklake_target_file_size_mb = 256
+    settings.ducklake_data_inlining_row_limit = 42
+    try:
+        entry = await build_catalog_attach(_catalog(KIND_DUCKLAKE))
+    finally:
+        (
+            settings.ducklake_target_file_size_mb,
+            settings.ducklake_data_inlining_row_limit,
+        ) = original
+
+    assert entry["options"] == {
+        "target_file_size": "256MB",
+        "data_inlining_row_limit": "42",
+    }
+
+
+@pytest.mark.asyncio
+async def test_iceberg_carries_no_catalog_options():
+    """They are DuckLake catalog options; Iceberg has no such concept."""
+    entry = await build_catalog_attach(_catalog(KIND_ICEBERG_POLARIS))
+    assert "options" not in entry

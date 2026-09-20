@@ -40,13 +40,16 @@ boot, so every variable below is optional.
 | `polaris.features."SUPPORTED_CATALOG_STORAGE_TYPES"` | `["S3","AZURE"]` | Storage types Polaris will provision (set in `docker-compose.yml`). `S3` covers the bundled store and external AWS S3; `AZURE` enables external ADLS Gen2. |
 | `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` | _(empty)_ | Service principal Polaris uses to mint ADLS Gen2 SAS tokens (Azure `DefaultAzureCredential`). Needs **Storage Blob Data Contributor** on the account. Empty disables ADLS vending; AWS S3 and the bundled store are unaffected. |
 | `AWS_ENDPOINT_URL_STS` | _(empty)_ | Override the STS endpoint Polaris uses to assume external `s3` roles. Empty = real AWS STS. Set to a private/emulated STS (LocalStack, a VPC STS endpoint, GovCloud) for testing or non-public deployments. |
+| `COOKIE_SECURE` | `false` | Set `true` only when the API is served over HTTPS (a TLS terminator in front), so session cookies are `Secure`-flagged. |
+| `SESSION_MAX_AGE_SECONDS` | `604800` (7 days) | Session lifetime — drives both the server-side credential expiry and the cookie max-age. Lower it to shorten how long a sign-in lasts. |
+| `AGENT_BOOTSTRAP_TOKEN` | `dh_boot_localdev_seed` | Single-use token the API seeds on startup so the bundled in-stack agent auto-registers. Override in production. |
 
 ### DuckLake
 
 Off by default; see [Enable DuckLake](../deployment/ducklake.md). Only the two variables an operator sets are listed
 first — the rest have working defaults for the bundled Compose stack.
 
-| Variable | Default | Meaning |
+| Variable | Default | Description |
 |---|---|---|
 | `DUCKLAKE_ENABLED` | `false` | Whether DuckLake catalogs can be created. Existing Iceberg catalogs are unaffected either way. |
 | `DUCKLAKE_AGENT_PASSWORD` | `ducklake` | Password for the `ducklake_agent` PostgreSQL role, which agents authenticate with. A real credential — change it. Must match the value given to `scripts/enable-ducklake.sh` or `postgres-init`. |
@@ -54,12 +57,8 @@ first — the rest have working defaults for the bundled Compose stack.
 | `DUCKLAKE_AGENT_HOST` / `DUCKLAKE_AGENT_PORT` | `postgres` / `5432` | How **agents** reach the catalog database. Set the host to an address reachable from the agent host when agents run elsewhere. |
 | `DUCKLAKE_AGENT_DATABASE` | `ducklake` | Database holding the `ducklake_*` metadata schemas. |
 | `DUCKLAKE_AGENT_USER` | `ducklake_agent` | Restricted role agents authenticate as. It has `CONNECT` on `DUCKLAKE_AGENT_DATABASE` only — widening it undoes the isolation the agent network exists for. |
-| `DUCKLAKE_DATA_INLINING_ROW_LIMIT` | `10` | Rows below which a write is stored in the catalog database instead of a Parquet file. |
-| `DUCKLAKE_TARGET_FILE_SIZE_MB` | `512` | Target Parquet file size for inserts and compaction. |
-
-| `COOKIE_SECURE` | `false` | Set `true` only when the API is served over HTTPS (a TLS terminator in front), so session cookies are `Secure`-flagged. |
-| `SESSION_MAX_AGE_SECONDS` | `604800` (7 days) | Session lifetime — drives both the server-side credential expiry and the cookie max-age. Lower it to shorten how long a sign-in lasts. |
-| `AGENT_BOOTSTRAP_TOKEN` | `dh_boot_localdev_seed` | Single-use token the API seeds on startup so the bundled in-stack agent auto-registers. Override in production. |
+| `DUCKLAKE_DATA_INLINING_ROW_LIMIT` | `10` | Rows below which a write is stored in the catalog database instead of a Parquet file, avoiding a tiny Parquet object per small insert. Applied to every DuckLake catalog when an agent attaches it. |
+| `DUCKLAKE_TARGET_FILE_SIZE_MB` | `512` | Target Parquet file size for inserts and compaction, applied to every DuckLake catalog when an agent attaches it. Keep it consistent with the maintenance advisor's `target_file_bytes` ([Maintenance advisor](#maintenance-advisor)): if the writer aims at one size and the advisor scores against another, every table looks fragmented. |
 
 ### Identity & SSO
 

@@ -41,6 +41,7 @@ def _ducklake_catalog(slug: str = "raw") -> dict:
             "user": "ducklake_agent",
             "password": "s3cr3t-pw",
         },
+        "options": {"target_file_size": "512MB", "data_inlining_row_limit": "10"},
         "storage": {
             "type": "s3",
             "scope": f"s3://warehouse/{slug}/",
@@ -195,3 +196,52 @@ def test_catalog_kind_extensions_use_the_install_name(kind, expected):
     """The runner installs `postgres`; the control plane matches the advertised
     `postgres_scanner`."""
     assert runner._CATALOG_KIND_EXTENSIONS[kind] == expected
+
+
+def test_catalog_options_are_applied_with_bound_arguments():
+    """The API's tuning settings are applied to the catalog on attach.
+
+    Bound rather than interpolated: these are values, and `set_option` takes
+    parameters, so there is no reason to build the statement by hand.
+    """
+    conn = FakeConn()
+    runner._attach_ducklake(conn, _ducklake_catalog())
+
+    option_calls = [c for c in conn.calls if "set_option" in c[0]]
+    assert [c[1] for c in option_calls] == [
+        ["target_file_size", "512MB"],
+        ["data_inlining_row_limit", "10"],
+    ]
+    assert all("512MB" not in sql for sql, _ in option_calls)
+
+
+def test_an_unknown_catalog_option_does_not_cost_us_the_attach():
+    """An older extension that rejects an option must not fail every query.
+
+    The attach is the whole workspace's connection; degrading one tuning knob
+    beats refusing to serve the catalog.
+    """
+
+    class RejectingConn(FakeConn):
+        def execute(self, sql: str, params: list | None = None):
+            if "set_option" in sql:
+                raise RuntimeError("Catalog Error: unrecognized option")
+            return super().execute(sql, params)
+
+    conn = RejectingConn()
+    runner._attach_ducklake(conn, _ducklake_catalog())
+
+    # The attach and the default namespace still happened.
+    assert "ATTACH" in conn.sql_text()
+    assert "CREATE SCHEMA IF NOT EXISTS" in conn.sql_text()
+
+
+def test_a_catalog_with_no_options_block_attaches_cleanly():
+    """An agent may outlive the API version that started sending options."""
+    conn = FakeConn()
+    cat = _ducklake_catalog()
+    del cat["options"]
+    runner._attach_ducklake(conn, cat)
+
+    assert "ATTACH" in conn.sql_text()
+    assert not [c for c in conn.calls if "set_option" in c[0]]

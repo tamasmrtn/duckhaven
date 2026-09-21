@@ -334,6 +334,7 @@ def _capabilities_out(kind: str) -> CatalogCapabilitiesOut | None:
         external_engine_readable=caps.external_engine_readable,
         supports_maintenance_apply=caps.supports_maintenance_apply,
         supports_iceberg_export=caps.supports_iceberg_export,
+        supports_agentless_ddl=caps.supports_agentless_ddl,
         supported_storage_kinds=list(caps.supported_storage_kinds),
     )
 

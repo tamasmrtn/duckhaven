@@ -58,6 +58,8 @@ DUCKLAKE_CAPABILITIES = CatalogCapabilities(
     supports_maintenance_apply=True,
     # The way back out of the DuckDB-only trade-off.
     supports_iceberg_export=True,
+    # DDL runs on an agent: only the extension can commit a DuckLake change.
+    supports_agentless_ddl=False,
     supported_storage_kinds=("object_store", "s3", "adls_gen2"),
 )
 

@@ -386,3 +386,72 @@ async def test_each_metadata_read_is_named_for_its_metric_label():
     await backend.list_snapshots(_catalog(), "analytics", "t")
 
     assert rows.operations == ["list_schemas", "list_tables", "list_snapshots"]
+
+
+# --- Error taxonomy ---------------------------------------------------------
+#
+# Polaris maps failures from HTTP status codes. DuckLake's DDL runs on an agent
+# and comes back as text, so the seam's exception is chosen by matching that
+# text. These pin the real DuckDB messages the matching depends on: a reworded
+# upstream message would otherwise turn a 409 into a 503 with nothing failing.
+#
+# Captured from DuckDB 1.5.5 with the ducklake extension, not written from
+# memory. Note the last one: a missing schema says "not found" rather than
+# "does not exist", which is why both substrings are matched.
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ('Catalog Error: Schema with name "analytics" already exists!', CatalogBackendConflict),
+        ('Catalog Error: Table with name "events" already exists!', CatalogBackendConflict),
+        ("Catalog Error: Table with name nope does not exist!", CatalogBackendNotFound),
+        (
+            'Binder Error: Schema "nope" not found in DuckLakeCatalog "lake"',
+            CatalogBackendNotFound,
+        ),
+        ("IO Error: could not reach the object store", CatalogBackendUnavailable),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_real_duckdb_failure_maps_to_the_right_seam_error(message, expected, monkeypatch):
+    """Drives `_run_ddl` with messages DuckDB actually emits.
+
+    The HTTP status a caller sees depends on which of these the text matches,
+    so a reworded upstream message would otherwise turn a 409 into a 503 with
+    nothing failing.
+    """
+    from types import SimpleNamespace
+
+    from api.services import query as query_service
+
+    async def _agent(db, workspace, *, principal_id=None):  # noqa: ANN001
+        return SimpleNamespace(id="agent-1")
+
+    async def _run(db, **kwargs):  # noqa: ANN001
+        return SimpleNamespace(status="failed", error=message)
+
+    monkeypatch.setattr(query_service, "pick_agent_for", _agent)
+    monkeypatch.setattr(query_service, "run_sync_query", _run)
+
+    ctx = SimpleNamespace(db=None, workspace=SimpleNamespace(id="ws"), user=SimpleNamespace(id="u"))
+    with pytest.raises(expected):
+        await DuckLakeCatalogBackend()._run_ddl(_catalog(), "CREATE SCHEMA x", ctx, what="create")
+
+
+@pytest.mark.asyncio
+async def test_ddl_with_no_agent_says_why_rather_than_timing_out(monkeypatch):
+    """A DuckLake catalog can be browsed with no compute, but not changed --
+    only the extension can commit its DDL. The 503 should explain that."""
+    from types import SimpleNamespace
+
+    from api.services import query as query_service
+
+    async def _none(db, workspace, *, principal_id=None):  # noqa: ANN001
+        return None
+
+    monkeypatch.setattr(query_service, "pick_agent_for", _none)
+
+    ctx = SimpleNamespace(db=None, workspace=SimpleNamespace(id="ws"), user=SimpleNamespace(id="u"))
+    with pytest.raises(CatalogBackendUnavailable, match="only the DuckLake extension"):
+        await DuckLakeCatalogBackend()._run_ddl(_catalog(), "CREATE SCHEMA x", ctx, what="create")

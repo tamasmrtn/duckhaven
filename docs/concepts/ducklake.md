@@ -110,6 +110,16 @@ From the [specification's own list](https://ducklake.select/docs/stable/duckdb/u
 - No sequences, and no non-literal column defaults.
 - `MERGE INTO` is the only upsert.
 
+Not the specification's fault, but worth knowing:
+
+- **Partitioning, sort order and encryption are not surfaced by DuckHaven.** DuckLake supports all three — including
+  Iceberg-compatible `bucket(N, column)` transforms and per-file encryption with keys held in the catalog database —
+  and DuckHaven's create-table surface offers none of them, for either catalog kind. This is a gap in DuckHaven rather
+  than in DuckLake.
+- **Creating a schema or table needs a connected [agent](agents.md).** Browsing does not: the catalog is read straight
+  from PostgreSQL. But only the DuckDB extension can commit a change, so DDL is dispatched to compute. An Iceberg
+  catalog's DDL is a REST call the control plane makes on its own.
+
 Within DuckHaven specifically:
 
 - **Storage migration refuses files registered in place.** `ducklake_add_data_files` records an absolute path, which

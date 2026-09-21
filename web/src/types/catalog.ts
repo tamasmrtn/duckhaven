@@ -27,6 +27,9 @@ export interface CatalogCapabilities {
   // True for DuckLake only: its data can be copied into an Iceberg catalog
   // other engines can open.
   supports_iceberg_export?: boolean;
+  // False for DuckLake: its DDL runs on an agent, because only the extension
+  // can commit it. Creating a schema or table needs connected compute.
+  supports_agentless_ddl?: boolean;
   supported_storage_kinds: BackendKind[];
 }
 

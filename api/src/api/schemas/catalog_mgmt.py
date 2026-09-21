@@ -45,6 +45,8 @@ class CatalogCapabilitiesOut(BaseModel):
     supports_maintenance_apply: bool = False
     # True for DuckLake only: its data can be copied into an Iceberg catalog.
     supports_iceberg_export: bool = False
+    # False for DuckLake: creating a schema or table needs a connected agent.
+    supports_agentless_ddl: bool = True
     supported_storage_kinds: list[str]
 
 

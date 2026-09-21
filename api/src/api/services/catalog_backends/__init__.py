@@ -126,6 +126,19 @@ class CatalogCapabilities:
     # engines can open. True for DuckLake, which is what turns its
     # DuckDB-only trade-off from a one-way door into a door.
     supports_iceberg_export: bool = False
+    # Whether the control plane can create schemas and tables without an agent.
+    # True for Polaris, which is a REST call; False for DuckLake, whose DDL only
+    # the extension can commit. The one asymmetry here with immediate
+    # user-visible value: it is why a DuckLake catalog answers 503 to a create
+    # with no compute connected, and lets the UI say so before the click.
+    supports_agentless_ddl: bool = True
+    # Table-shaping features DuckHaven does not surface for either kind yet.
+    # Declared rather than built, so the UI and API never have to switch on
+    # `kind` when they are, and so the gap is legible in GET /catalog-kinds
+    # instead of invisible.
+    supports_partitioning: bool = False
+    supports_sort_order: bool = False
+    supports_encryption: bool = False
     supported_storage_kinds: tuple[str, ...] = ("object_store", "s3", "adls_gen2")
 
 

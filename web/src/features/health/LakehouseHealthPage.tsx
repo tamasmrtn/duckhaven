@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatBytes, plural } from "@/utils";
 import {
   useRecommendations,
+  useApplyRecommendation,
   useDismissRecommendation,
   useWorkspaceHealth,
 } from "@/queries/maintenance";
@@ -61,6 +62,7 @@ export function LakehouseHealthPage() {
   const { data: health, isLoading } = useWorkspaceHealth(ws);
   const { data: recommendations = [] } = useRecommendations("open");
   const dismiss = useDismissRecommendation();
+  const apply = useApplyRecommendation();
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -154,6 +156,7 @@ export function LakehouseHealthPage() {
                       rec={rec}
                       dismissing={dismiss.isPending}
                       onDismiss={(id) => dismiss.mutate(id)}
+                      onApply={(id) => apply.mutate(id)}
                     />
                   ))
                 )}

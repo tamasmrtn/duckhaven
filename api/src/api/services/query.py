@@ -106,6 +106,7 @@ async def dispatch_query(
     principal_id: uuid.UUID | None = None,
     stats_for: dict[str, str] | None = None,
     health_for: dict[str, object] | None = None,
+    maintain_for: dict[str, object] | None = None,
 ) -> None:
     if query.agent_id is None or not await is_agent_connected(db, query.agent_id):
         raise AgentUnavailable("Agent not connected")
@@ -152,6 +153,10 @@ async def dispatch_query(
     if health_for is not None:
         # Ask the agent to run the maintenance health probe for this table.
         payload["health_for"] = health_for
+    if maintain_for is not None:
+        # Measure this table either side of the statement, on the same
+        # connection: a separate dispatch would race a concurrent write.
+        payload["maintain_for"] = maintain_for
 
     # Producer span for the WebSocket hop; its context rides in the frame so
     # the agent's consumer span joins this trace.
@@ -249,6 +254,12 @@ async def handle_agent_frame(db: AsyncSession, frame: Frame, polaris=None) -> No
             # Session statements are counted on their own series (kept out of the
             # interactive-query counters above).
             record_sql_statement(status_val)
+        # Settled either way: an apply that failed must leave the
+        # recommendation failed rather than running forever.
+        if query is not None and query.origin == "maintenance_apply":
+            from api.services.maintenance.apply import record_apply_result
+
+            await record_apply_result(db, query, frame.payload)
         if status_val == "done":
             await _upsert_table_stats(db, query_id, frame)
             health = frame.payload.get("health")

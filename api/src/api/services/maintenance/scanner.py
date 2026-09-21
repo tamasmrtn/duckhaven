@@ -27,6 +27,7 @@ from api.models.maintenance import MaintenancePolicy, TableHealthSample
 from api.models.query import Query
 from api.models.workspace import Workspace
 from api.services.catalog_backends import CatalogBackendError, backend_for
+from api.services.maintenance import apply as apply_service
 from api.services.maintenance.policy import get_or_create_policy
 from api.services.polaris import PolarisClient, PolarisError
 from api.services.query import dispatch_query, pick_agent_for
@@ -84,6 +85,9 @@ async def run_cycle(
             return {"status": "skipped", "reason": "not_due"}
 
         await _prune_old_samples(db, now)
+        # An agent that never came back would otherwise leave a recommendation
+        # "running" forever, and every later apply on that catalog refused.
+        await apply_service.sweep_stale_applies(db, now)
         include_orphans = _deep_scan_due(policy, now)
         target_file_bytes = int(policy.thresholds.get("target_file_bytes", 128 * 1024**2))
 

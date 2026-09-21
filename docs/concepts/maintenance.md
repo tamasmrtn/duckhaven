@@ -7,12 +7,13 @@ rewrites, and orphan cleanup. It runs as a background loop in the control plane 
 **Admin → Maintenance**; the loop itself is gated by an
 [environment flag](../reference/configuration.md#maintenance-advisor).
 
-!!! note "Recommend-only in this release"
-    The advisor detects, scores, and recommends. It does **not** execute maintenance. DuckHaven runs Iceberg through the
-    DuckDB `iceberg` extension, which is read-only for maintenance — it cannot expire snapshots, rewrite data files, or
-    remove orphans. Rather than add a second write engine (Spark, PyIceberg) to the stack, DuckHaven ships the advisor
-    now and will add in-app apply once the extension supports these operations natively. Every recommendation includes
-    the equivalent command to run in an external Iceberg engine.
+!!! note "What it can run depends on the catalog kind"
+    The advisor detects, scores, and recommends for both kinds. Whether it can also *act* is the extension's answer,
+    not a policy: DuckDB's `ducklake` extension performs compaction, snapshot expiry and cleanup, so those
+    recommendations carry an [Apply](#applying-maintenance) button. Its `iceberg` extension is read-only for
+    maintenance — it cannot expire snapshots, rewrite data files or remove orphans — so an Iceberg recommendation
+    carries the equivalent command for an external engine instead. Adding a second write engine (Spark, PyIceberg) to
+    the stack for that is a bigger change than the advisor.
 
 ## What it can recommend, per catalog kind
 
@@ -30,8 +31,35 @@ whole catalog rather than one table. Every table in a DuckLake catalog therefore
 age. That is the honest number and the right one here: the expiry rule scores on the oldest snapshot's age, and
 `ducklake_expire_snapshots` is catalog-level anyway, so the metric and the fix are at the same grain.
 
-!!! note "Advisory either way, for now"
-    DuckHaven names the command and the tool; it does not run either. That is true for both kinds in this release.
+!!! note "DuckHaven can run DuckLake's, and only DuckLake's"
+    A DuckLake recommendation carries an **Apply** button; an Iceberg one does not, and says so. That asymmetry is
+    the extension's, not a policy choice — see [Applying maintenance](#applying-maintenance) below.
+
+## Applying maintenance
+
+Where the catalog kind allows it, a recommendation has an **Apply** button beside **Copy**. Pressing it dispatches the
+same command the card displays — rendered once, in one place, so what you read and what runs cannot drift.
+
+It requires the `maintenance:manage` permission as well as `writer` on the workspace. The button sits on a page any
+member can open, but the action rewrites or deletes data files, which is operator-grade whoever is looking at it.
+
+Two of the five verbs act on the **whole catalog** rather than one table: expiring snapshots and cleaning up old files
+have catalog-wide scope in DuckLake. Applying either from one table's page affects every table in that catalog, and
+the confirmation says so before you continue.
+
+DuckHaven refuses to start an apply when the recommendation has been dismissed, when the catalog is mid
+[storage migration](catalogs.md#storage-migration), or when another apply is already running on the same catalog.
+Cleanup is always bounded by the policy's snapshot retention — never `cleanup_all`, which would delete files that
+older snapshots still reference and that [time travel](tables.md) is still entitled to read.
+
+A successful apply does **not** mark the recommendation resolved. The table is re-probed, and the next scan resolves
+it only if the condition actually cleared: a verb that ran is not the same as a problem that went away. The
+recommendation carries the outcome in the meantime, and the query that ran it appears in
+[History](../operations/monitoring.md#query-history-and-audit-log) under your name.
+
+!!! note "Manual, in this release"
+    There is no scheduled or automatic apply. Unattended file deletion needs a maintenance-window concept — when it
+    may run, what it locks, how it backs off — that this release does not have.
 
 ## Health score
 
@@ -114,7 +142,8 @@ variables.
 
 ## Limitations
 
-- **No in-app apply.** See the recommend-only note above.
+- **In-app apply is DuckLake-only, and manual.** An Iceberg recommendation can only name an external engine, and
+  neither kind applies on a schedule. See [Applying maintenance](#applying-maintenance).
 - **Orphan detection is an estimate.** It compares files listed under a table's data and metadata directories against
   files referenced by the *current* snapshot's metadata. Files referenced only by older snapshots (still valid for
   time travel) can appear orphaned, and there is no age window — DuckDB exposes no file modification time — so these

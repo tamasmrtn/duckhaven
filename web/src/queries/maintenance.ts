@@ -48,6 +48,18 @@ export function useDismissRecommendation() {
   });
 }
 
+export function useApplyRecommendation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => maintenanceApi.apply(id),
+    onSuccess: () => {
+      // Both the feed and the table page show apply_status, and the run is
+      // asynchronous, so the row has to be refetched rather than patched.
+      qc.invalidateQueries({ queryKey: ["maintenance"] });
+    },
+  });
+}
+
 export function useMaintenancePolicy() {
   return useQuery({
     queryKey: ["maintenance", "policy"],

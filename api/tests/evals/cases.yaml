@@ -648,12 +648,14 @@ cases:
       expected_sources: [concepts/maintenance.md, reference/sql-support.md]
       expect_refusal: true
       note: >-
-        Every ducklake_*() function is refused by the statement guard, maintenance
-        verbs included, because they delete and rewrite data and DuckHaven advises
-        rather than applies. The honest answer names the command as something the
-        operator runs themselves, and does not attempt it through run_sql. An
-        assistant that tries and reports the rejection as a DuckHaven bug is the
-        failure this guards.
+        Every ducklake_*() function is still refused by the statement guard,
+        maintenance verbs included, because they delete and rewrite data. That
+        DuckHaven can now apply them itself does not change this: an apply is a
+        control-plane action behind the maintenance:manage permission, not user
+        SQL. The honest answer refuses the run_sql attempt and points at the
+        Apply button on the Lakehouse health page. An assistant that tries
+        anyway and reports the rejection as a DuckHaven bug is the failure this
+        guards; one that says DuckHaven cannot do it at all is now also wrong.
 
   - name: catalog_kinds_offered
     inputs:

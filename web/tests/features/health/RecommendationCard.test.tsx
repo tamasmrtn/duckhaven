@@ -1,45 +1,100 @@
-import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
-import { RecommendationCard } from '@/features/health/RecommendationCard'
-import { RECOMMENDATIONS } from '@/mock/fixtures/maintenance'
+import { describe, it, expect, vi } from "vitest";
+import { render, screen, fireEvent } from "@testing-library/react";
+import { RecommendationCard } from "@/features/health/RecommendationCard";
+import { RECOMMENDATIONS } from "@/mock/fixtures/maintenance";
 
-const REC = RECOMMENDATIONS[0]
+const REC = RECOMMENDATIONS[0];
 
-describe('RecommendationCard', () => {
-  it('renders the kind, severity, confidence and rationale', () => {
-    render(<RecommendationCard rec={REC} />)
-    expect(screen.getByText('Compact small files')).toBeInTheDocument()
-    expect(screen.getByText('Critical')).toBeInTheDocument()
-    expect(screen.getByText(/high confidence/i)).toBeInTheDocument()
-    expect(screen.getByText(REC.rationale)).toBeInTheDocument()
-  })
+describe("RecommendationCard", () => {
+  it("renders the kind, severity, confidence and rationale", () => {
+    render(<RecommendationCard rec={REC} />);
+    expect(screen.getByText("Compact small files")).toBeInTheDocument();
+    expect(screen.getByText("Critical")).toBeInTheDocument();
+    expect(screen.getByText(/high confidence/i)).toBeInTheDocument();
+    expect(screen.getByText(REC.rationale)).toBeInTheDocument();
+  });
 
-  it('shows the remediation command and an explicit "not applied yet" note', () => {
-    render(<RecommendationCard rec={REC} />)
+  it("shows the remediation command and says DuckHaven can run it", () => {
+    render(<RecommendationCard rec={REC} />);
+    expect(screen.getByText(REC.remediation!.command!)).toBeInTheDocument();
     expect(
-      screen.getByText(REC.remediation!.command!),
-    ).toBeInTheDocument()
+      screen.getByText(/DuckHaven can run this for you/i),
+    ).toBeInTheDocument();
+  });
+
+  it("says so plainly when the catalog kind has no verbs to run", () => {
+    // Iceberg: DuckDB's extension implements none of these, so naming an
+    // external engine is the only honest thing the footer can do.
+    const rec = {
+      ...REC,
+      remediation: { ...REC.remediation!, applicable_in_app: false },
+    };
+    render(<RecommendationCard rec={rec} />);
     expect(
-      screen.getByText(/does not apply maintenance yet/i),
-    ).toBeInTheDocument()
-  })
+      screen.getByText(/cannot apply this kind of maintenance/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /apply/i })).toBeNull();
+  });
 
-  it('shows the table name when showTable is set', () => {
-    render(<RecommendationCard rec={REC} showTable />)
-    expect(screen.getByText('analytics.events')).toBeInTheDocument()
-  })
+  it("offers Apply only when the kind can be applied", () => {
+    const onApply = vi.fn();
+    render(<RecommendationCard rec={REC} onApply={onApply} />);
+    fireEvent.click(screen.getByRole("button", { name: /^apply$/i }));
+    expect(onApply).toHaveBeenCalledWith(REC.id);
+  });
 
-  it('calls onDismiss with the recommendation id when dismissed', () => {
-    const onDismiss = vi.fn()
-    render(<RecommendationCard rec={REC} onDismiss={onDismiss} />)
-    fireEvent.click(screen.getByRole('button', { name: /dismiss/i }))
-    expect(onDismiss).toHaveBeenCalledWith(REC.id)
-  })
+  it("confirms before a verb that acts on the whole catalog", () => {
+    // expire_snapshots from one table's page expires every table's, so the
+    // blast radius has to be stated before the click, not after.
+    const onApply = vi.fn();
+    const rec = {
+      ...REC,
+      remediation: {
+        ...REC.remediation!,
+        applicable_in_app: true,
+        scope: "catalog" as const,
+      },
+    };
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<RecommendationCard rec={rec} onApply={onApply} />);
+    fireEvent.click(screen.getByRole("button", { name: /^apply$/i }));
 
-  it('omits the dismiss button when no handler is provided', () => {
-    render(<RecommendationCard rec={REC} />)
+    expect(confirm).toHaveBeenCalled();
+    expect(String(confirm.mock.calls[0][0])).toMatch(
+      /every table in this catalog/i,
+    );
+    expect(onApply).not.toHaveBeenCalled();
+    confirm.mockRestore();
+  });
+
+  it("reports a failed apply rather than staying silent", () => {
+    const rec = {
+      ...REC,
+      apply_status: "failed" as const,
+      apply_error: "no agent",
+    };
+    render(<RecommendationCard rec={rec} />);
     expect(
-      screen.queryByRole('button', { name: /dismiss/i }),
-    ).not.toBeInTheDocument()
-  })
-})
+      screen.getByText(/Last apply failed: no agent/i),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the table name when showTable is set", () => {
+    render(<RecommendationCard rec={REC} showTable />);
+    expect(screen.getByText("analytics.events")).toBeInTheDocument();
+  });
+
+  it("calls onDismiss with the recommendation id when dismissed", () => {
+    const onDismiss = vi.fn();
+    render(<RecommendationCard rec={REC} onDismiss={onDismiss} />);
+    fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
+    expect(onDismiss).toHaveBeenCalledWith(REC.id);
+  });
+
+  it("omits the dismiss button when no handler is provided", () => {
+    render(<RecommendationCard rec={REC} />);
+    expect(
+      screen.queryByRole("button", { name: /dismiss/i }),
+    ).not.toBeInTheDocument();
+  });
+});

@@ -151,3 +151,20 @@ class MaintenanceRecommendation(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # --- Apply record ------------------------------------------------------
+    # `status` deliberately gains no "applied" value. A verb that ran is not a
+    # condition that cleared: after a successful apply the table is re-probed,
+    # and the next scan resolves the recommendation only if the finding is
+    # actually gone. Marking it applied here would be a claim we cannot make.
+    apply_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    apply_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # {"before": {...}, "after": {...}} as the agent measured it on the same
+    # connection, immediately either side of the statement.
+    apply_result: Mapped[dict | None] = mapped_column(_Json, nullable=True)
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    applied_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    # The Query row that ran it. There is no audit table in this codebase --
+    # the query log is the audit trail -- so this is the pointer to who ran
+    # what, and when.
+    applied_query_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)

@@ -103,6 +103,15 @@ class RecommendationOut(BaseModel):
     status: str
     created_at: datetime
     resolved_at: datetime | None = None
+    # The last apply against this recommendation, if DuckHaven ran one.
+    # `status` above is unaffected: a verb that ran is not a condition that
+    # cleared, so only a later scan can resolve it.
+    apply_status: str | None = None
+    apply_error: str | None = None
+    apply_result: dict | None = None
+    applied_at: datetime | None = None
+    # The query that ran it -- this codebase's audit trail is the query log.
+    applied_query_id: uuid.UUID | None = None
 
 
 class TableHealthDetailOut(BaseModel):

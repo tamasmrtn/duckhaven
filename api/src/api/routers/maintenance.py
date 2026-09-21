@@ -1,8 +1,9 @@
 """Lakehouse health + recommendations API (member-scoped, read-mostly).
 
 Surfaces what the scanner has computed: explainable health scores rolled up from
-table to deployment, and the recommendation feed. The only mutation is dismissing
-a recommendation — V1 never applies maintenance.
+table to deployment, and the recommendation feed. Two mutations: dismissing a
+recommendation, which is a judgement rather than a fix, and applying one, which
+runs the maintenance for the catalog kinds whose capability allows it.
 """
 
 from __future__ import annotations
@@ -283,6 +284,50 @@ async def dismiss_recommendation(
     rec.status = "dismissed"
     rec.resolved_at = datetime.now(tz=UTC)
     await db.commit()
+    await db.refresh(rec)
+    return RecommendationOut.model_validate(rec, from_attributes=True)
+
+
+@router.post(
+    "/maintenance/recommendations/{recommendation_id}/apply",
+    response_model=RecommendationOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def apply_recommendation(
+    recommendation_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> RecommendationOut:
+    """Run the maintenance this recommendation asks for.
+
+    Gated on `maintenance:manage` as well as workspace membership. The button
+    sits on a member-scoped page, but the action rewrites or deletes data
+    files, which is operator-grade whoever is looking at it.
+
+    Returns as soon as the work is dispatched; the recommendation's
+    `apply_status` reports how it went.
+    """
+    from api.models.catalog import Catalog
+    from api.services.maintenance.apply import start_apply
+    from api.services.permissions import Permission
+    from api.services.rbac import has_permission
+
+    rec = await db.get(MaintenanceRecommendation, recommendation_id)
+    if rec is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    await assert_workspace_member(db, rec.workspace_id, user.id, min_role="writer")
+    if not await has_permission(db, user, Permission.MAINTENANCE_MANAGE):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Applying maintenance requires the 'maintenance:manage' permission.",
+        )
+
+    catalog = await db.get(Catalog, rec.catalog_id)
+    workspace = await db.get(Workspace, rec.workspace_id)
+    if catalog is None or workspace is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+    await start_apply(db, recommendation=rec, catalog=catalog, workspace=workspace, user=user)
     await db.refresh(rec)
     return RecommendationOut.model_validate(rec, from_attributes=True)
 

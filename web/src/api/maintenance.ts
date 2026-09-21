@@ -23,6 +23,8 @@ export const maintenanceApi = {
     getAllPages<Recommendation>("/maintenance/recommendations", { status }),
   dismiss: (id: string) =>
     post<Recommendation>(`/maintenance/recommendations/${id}/dismiss`),
+  apply: (id: string) =>
+    post<Recommendation>(`/maintenance/recommendations/${id}/apply`),
 
   // Admin.
   policy: () => get<MaintenancePolicy>("/admin/maintenance/policy"),

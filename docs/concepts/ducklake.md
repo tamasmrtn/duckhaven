@@ -17,7 +17,7 @@ This is the decision that matters, and it cannot be reversed later without copyi
 | Catalog metadata | Polaris (a service) | SQL tables in Postgres |
 | Data files | Parquet | Parquet |
 | Snapshots | Per table | **Per catalog** |
-| Maintenance | Advisory only — DuckDB cannot run it | DuckDB can run it |
+| Maintenance | Advisory only — DuckDB cannot run it | **DuckHaven runs it for you** |
 | Storage migration | Supported | Not supported |
 | Services required | Polaris + its database | None beyond Postgres |
 
@@ -42,10 +42,10 @@ The create dialog says so at the moment you choose. It is repeated here because 
   numbers are also cheaper and exact: file sizes are columns in the catalog database, so there are no Parquet footers
   to read.
 
-    !!! note "Still advisory in this release"
-        DuckHaven names the command a DuckLake catalog needs and tells you DuckDB can run it, but does not run it for
-        you yet. Executing maintenance needs its own design — who may trigger it, what it locks, how it is audited —
-        and that is not part of this release.
+    !!! note "And DuckHaven can run it"
+        A DuckLake recommendation carries an **Apply** button, which dispatches the command shown on the card. It
+        needs the `maintenance:manage` permission, it is manual rather than scheduled, and two of the verbs act on the
+        whole catalog rather than one table — see [Applying maintenance](maintenance.md#applying-maintenance).
 
 ## How it is put together
 

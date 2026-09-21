@@ -446,6 +446,35 @@ def collect_table_health(
     return health
 
 
+def _measure_ducklake_table(
+    conn: duckdb.DuckDBPyConnection, target: dict[str, Any]
+) -> dict[str, Any] | None:
+    """File count and bytes for one table, for the before/after of an apply.
+
+    Deliberately cheap -- two numbers from `ducklake_list_files`, no footer
+    reads and no orphan scan -- because it runs twice around a statement that
+    is already doing real work.
+
+    Returns None rather than raising: a measurement that failed must not fail
+    the maintenance that succeeded.
+    """
+    catalog, schema, table = target.get("catalog"), target.get("schema"), target.get("table")
+    if not (catalog and schema and table):
+        return None
+    try:
+        row = conn.execute(
+            "SELECT count(*)::BIGINT, coalesce(sum(data_file_size_bytes), 0)::BIGINT "
+            "FROM ducklake_list_files(?, ?, schema => ?)",
+            [catalog, table, schema],
+        ).fetchone()
+    except Exception as exc:  # noqa: BLE001 - measurement is best-effort
+        logger.warning("Could not measure %s.%s for maintenance: %s", schema, table, exc)
+        return None
+    if row is None:
+        return None
+    return {"data_file_count": int(row[0]), "total_data_bytes": int(row[1])}
+
+
 def collect_ducklake_table_health(
     conn: duckdb.DuckDBPyConnection,
     catalog: str,
@@ -1257,6 +1286,7 @@ def run_query_sync(
     polaris: dict[str, Any] | None = None,
     stats_for: dict[str, str] | None = None,
     health_for: dict[str, Any] | None = None,
+    maintain_for: dict[str, Any] | None = None,
     conn: duckdb.DuckDBPyConnection | None = None,
     enable_profiling: bool = True,
     on_connect: Callable[[duckdb.DuckDBPyConnection], None] | None = None,
@@ -1307,6 +1337,11 @@ def run_query_sync(
     can_reattach = bool(catalogs and polaris)
 
     def _execute() -> dict[str, Any]:
+        # Measured before the statement, on this connection, so the comparison
+        # is against the state the statement actually acted on rather than
+        # whatever a second dispatch would have found later.
+        before = _measure_ducklake_table(conn, maintain_for) if maintain_for else None
+
         result = _run_one_statement(
             conn,
             sql,
@@ -1315,6 +1350,12 @@ def run_query_sync(
             threads=threads,
             enable_profiling=enable_profiling,
         )
+
+        if maintain_for:
+            result["maintenance"] = {
+                "before": before,
+                "after": _measure_ducklake_table(conn, maintain_for),
+            }
 
         # When asked, compute true table stats on the same attached connection.
         # size_bytes has no reliable cross-backend source yet, so it stays null.

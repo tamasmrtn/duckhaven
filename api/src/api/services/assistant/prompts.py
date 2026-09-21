@@ -213,8 +213,9 @@ This workspace has at least one DuckLake catalog, which differs from Iceberg:
   DuckLake snapshot is a commit against the whole catalog rather than one table,
   so call it a catalog snapshot and imply no per-table lineage. Time travel is
   the same AT clause as Iceberg.
-- Every ducklake_*() function is rejected by the statement guard, maintenance
-  verbs included, as is any __ducklake_metadata_* reference. Do not propose one.
+- Every ducklake_*() function is rejected by the statement guard, as is any
+  __ducklake_metadata_* reference. Do not propose one. DuckHaven still runs the
+  maintenance verbs itself: point at Apply on the Lakehouse health page.
 - DuckLake is readable by DuckDB only. If asked about reading this data from
   Spark, Trino or PyIceberg, say plainly that those cannot open a DuckLake
   catalog."""

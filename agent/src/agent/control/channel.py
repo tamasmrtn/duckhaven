@@ -991,6 +991,7 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
     }
     stats_for = payload.get("stats_for")
     health_for = payload.get("health_for")
+    maintain_for = payload.get("maintain_for")
     result_path = results_dir / f"{query_id}.parquet"
 
     # Admission gate: wait in the FIFO queue until the agent has capacity. While
@@ -1068,6 +1069,7 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
             polaris=polaris,
             stats_for=stats_for,
             health_for=health_for,
+            maintain_for=maintain_for,
             conn=conn,
             enable_profiling=settings.profiling_enabled,
             disabled_filesystems=settings.sandbox_disabled_filesystems,
@@ -1099,6 +1101,8 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
             # Only one of these is ever set, named after the probed format.
             done_payload["iceberg"] = stats.get("iceberg")
             done_payload["ducklake"] = stats.get("ducklake")
+        if maintain_for:
+            done_payload["maintenance"] = stats.get("maintenance")
         if health_for:
             done_payload["health"] = stats.get("health")
         done = Frame(type=FrameType.QUERY_DONE, payload=done_payload)

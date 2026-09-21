@@ -84,7 +84,7 @@ export const RECOMMENDATIONS: Recommendation[] = [
       "62% of 980 data files are below the 128.0 MB target. Compacting reduces file count and speeds up scans.",
     estimated_impact: { small_files: 608, data_files: 980 },
     remediation: {
-      applicable_in_app: false,
+      applicable_in_app: true,
       summary: "Compact data files to ~128.0 MB.",
       command: "CALL <catalog>.system.rewrite_data_files('analytics.events')",
       tool: "Spark / external Iceberg engine",

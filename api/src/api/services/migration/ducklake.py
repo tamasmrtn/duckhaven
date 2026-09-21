@@ -142,8 +142,13 @@ async def set_agent_dml(catalog: Catalog, *, allowed: bool) -> None:
 async def provision(db: AsyncSession, migration: CatalogMigration, log) -> None:  # noqa: ANN001
     """Record the two paths, wait for writes to drain, enumerate the tables."""
     catalog = await db.get(Catalog, migration.catalog_id)
+    # Fetched by id rather than through `catalog.storage_backend`: that
+    # relationship is lazy, and the runner loads the catalog without it, so
+    # touching it here raises MissingGreenlet in async context. The Iceberg
+    # path takes the ids for the same reason.
+    source = await db.get(StorageBackend, migration.source_storage_backend_id)
     target = await db.get(StorageBackend, migration.target_storage_backend_id)
-    assert catalog and target
+    assert catalog and source and target
 
     remaining = await absolute_path_count(catalog)
     if remaining:
@@ -154,7 +159,7 @@ async def provision(db: AsyncSession, migration: CatalogMigration, log) -> None:
 
     if migration.started_at is None:
         migration.started_at = datetime.now(tz=UTC)
-        migration.source_data_path = _data_path_for(catalog.storage_backend, catalog.slug)
+        migration.source_data_path = _data_path_for(source, catalog.slug)
         migration.target_data_path = _data_path_for(target, catalog.slug)
         await db.commit()
 
@@ -204,12 +209,13 @@ async def _enumerate(catalog: Catalog) -> list[tuple[str, str]]:
 async def copy(db: AsyncSession, migration: CatalogMigration, log) -> None:  # noqa: ANN001
     """Copy each table's prefix, then sweep anything not attributed to a table."""
     catalog = await db.get(Catalog, migration.catalog_id)
+    source = await db.get(StorageBackend, migration.source_storage_backend_id)
     target = await db.get(StorageBackend, migration.target_storage_backend_id)
-    assert catalog and target
+    assert catalog and source and target
 
     src_path, dst_path = migration.source_data_path, migration.target_data_path
     assert src_path and dst_path
-    src = _context(catalog.storage_backend, src_path)
+    src = _context(source, src_path)
     dst = _context(target, dst_path)
 
     rows = (
@@ -293,12 +299,13 @@ def _copy_prefix(src: StorageContext, dst: StorageContext, src_prefix: str, dst_
 async def verify(db: AsyncSession, migration: CatalogMigration, log) -> None:  # noqa: ANN001
     """Every source object exists at the target with the same size."""
     catalog = await db.get(Catalog, migration.catalog_id)
+    source = await db.get(StorageBackend, migration.source_storage_backend_id)
     target = await db.get(StorageBackend, migration.target_storage_backend_id)
-    assert catalog and target
+    assert catalog and source and target
 
     src_path, dst_path = migration.source_data_path, migration.target_data_path
     assert src_path and dst_path
-    src = _context(catalog.storage_backend, src_path)
+    src = _context(source, src_path)
     dst = _context(target, dst_path)
 
     missing = await asyncio.to_thread(_missing_at_target, src, dst, src_path, dst_path)

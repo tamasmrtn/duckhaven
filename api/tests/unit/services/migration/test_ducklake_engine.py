@@ -170,3 +170,27 @@ def _async(value):
         return value
 
     return _inner()
+
+
+def test_no_phase_reads_the_catalogs_lazy_storage_backend():
+    """`catalog.storage_backend` is a lazy relationship and the runner fetches
+    the catalog with db.get, so reading it raises MissingGreenlet under asyncpg
+    and takes the migration straight to failed.
+
+    Asserted against the source rather than by exercising it, deliberately: the
+    unit suite runs on SQLite, which resolves that lazy load happily, so a
+    behavioural test here passes with the bug present. The phases take the
+    backend ids from the migration row instead, as the Iceberg path does.
+    """
+    import inspect
+
+    source = inspect.getsource(dl)
+    offenders = [
+        line.strip()
+        for line in source.splitlines()
+        # The cutover assigns the *column*, which is not a relationship load.
+        if "catalog.storage_backend" in line
+        and "catalog.storage_backend_id" not in line
+        and not line.strip().startswith("#")
+    ]
+    assert offenders == [], offenders

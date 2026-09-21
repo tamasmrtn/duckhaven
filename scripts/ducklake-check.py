@@ -36,6 +36,7 @@ from urllib.parse import urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "api" / "src"))
 
 from sqlalchemy import select, text  # noqa: E402
+from sqlalchemy.orm import selectinload  # noqa: E402
 
 from api.db.session import async_session_factory  # noqa: E402
 from api.models.catalog import KIND_DUCKLAKE, Catalog  # noqa: E402
@@ -139,7 +140,13 @@ async def main() -> int:
 
     failures = 0
     async with async_session_factory() as db:
-        stmt = select(Catalog).where(Catalog.kind == KIND_DUCKLAKE)
+        # Eager-loaded: resolving the data path reads this relationship, and a
+        # lazy load here is IO outside greenlet context under asyncpg.
+        stmt = (
+            select(Catalog)
+            .where(Catalog.kind == KIND_DUCKLAKE)
+            .options(selectinload(Catalog.storage_backend))
+        )
         if args.catalog:
             stmt = stmt.where(Catalog.slug == args.catalog)
         catalogs = (await db.execute(stmt)).scalars().all()

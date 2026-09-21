@@ -92,6 +92,11 @@ docker compose -f docker-compose.yml -f docker-compose.ducklake-only.yml up -d
 
 That drops `polaris` and `polaris-bootstrap`, leaving eight services instead of ten.
 
+Registering an external S3 or ADLS Gen 2 backend still works there. The health check that runs when you save one
+normally proves reachability by provisioning a throwaway Polaris catalog; with no Polaris to ask, it mints the same
+short-lived credentials a DuckLake attach uses and lists the storage directly. That exercises the `AssumeRole` or
+user-delegation-SAS path you actually care about.
+
 !!! warning "One-way for existing catalogs"
     Do this only on a deployment with no Iceberg catalogs. Removing Polaris makes any existing Iceberg catalog
     unreadable until it is brought back.

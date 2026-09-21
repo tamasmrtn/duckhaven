@@ -79,6 +79,21 @@ async def _query(catalog: Catalog, database: str, sql: str):
         await engine.dispose()
 
 
+async def _exec(catalog: Catalog, database: str, *statements: str) -> None:
+    """Run statements that return no rows, on one connection.
+
+    One connection matters for anything touching a temporary table: it lives
+    and dies with the session.
+    """
+    engine = create_async_engine(_role_url(catalog, database), poolclass=None)
+    try:
+        async with engine.begin() as conn:
+            for sql in statements:
+                await conn.execute(text(sql))
+    finally:
+        await engine.dispose()
+
+
 @pytest.fixture
 async def two_catalogs():
     """Two provisioned DuckLake catalogs, torn down afterwards."""
@@ -177,3 +192,29 @@ async def test_rotating_a_role_invalidates_the_old_password(two_catalogs) -> Non
     stale.pending_ducklake_password = None
     with pytest.raises((asyncpg.PostgresError, DBAPIError)):
         await _query(stale, "ducklake", "SELECT 1")
+
+
+@pytest.mark.asyncio
+async def test_a_catalogs_role_can_create_a_temporary_table(two_catalogs) -> None:
+    """`ducklake_set_option` is implemented with one, so without TEMPORARY every
+    catalog option silently fails to apply -- the attach still succeeds and the
+    setting simply never takes effect.
+
+    Revoking PUBLIC's defaults on the database removed the implicit grant, which
+    is correct; it has to be given back explicitly rather than by accident.
+    """
+    raw, _ = two_catalogs
+    await _exec(raw, "ducklake", "CREATE TEMPORARY TABLE t (i int)", "INSERT INTO t VALUES (1)")
+
+
+@pytest.mark.asyncio
+async def test_a_temporary_table_reaches_no_other_catalog(two_catalogs) -> None:
+    """TEMPORARY is a database-level grant, so it is worth pinning that it does
+    not widen what the role can see."""
+    raw, curated = two_catalogs
+    with pytest.raises((asyncpg.PostgresError, DBAPIError)):
+        await _exec(
+            raw,
+            "ducklake",
+            f'CREATE TEMPORARY TABLE leak AS SELECT * FROM "{curated.metadata_schema}".probe',
+        )

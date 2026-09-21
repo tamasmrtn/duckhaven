@@ -254,10 +254,17 @@ class DuckLakeCatalogBackend:
                         f"'{agent_role}', current_setting('duckhaven.role_password')); END $do$"
                     )
                 )
+                # TEMPORARY as well as CONNECT: the extension implements
+                # `set_option` with a temporary table, so without it every
+                # catalog option silently fails to apply. Revoking PUBLIC's
+                # defaults on this database took the implicit grant away, which
+                # is the right trade -- but it has to be given back explicitly.
+                # Temp tables live in the session's own pg_temp schema, so this
+                # reaches no other catalog's metadata.
                 await conn.execute(
                     text(
-                        f"GRANT CONNECT ON DATABASE {_quote(settings.ducklake_agent_database)} "
-                        f"TO {_quote(agent_role)}"
+                        f"GRANT CONNECT, TEMPORARY ON DATABASE "
+                        f"{_quote(settings.ducklake_agent_database)} TO {_quote(agent_role)}"
                     )
                 )
                 await conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {_quote(schema)}"))

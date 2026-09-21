@@ -164,3 +164,13 @@ def test_ducklake_only_overlay_drops_the_polaris_dependency():
 def test_ducklake_only_overlay_turns_the_feature_on():
     """Without this the overlay could create no catalogs at all."""
     assert DUCKLAKE_ONLY["services"]["api"]["environment"]["DUCKLAKE_ENABLED"] == "true"
+
+
+def test_the_tuning_knobs_reach_the_api():
+    """They are documented in the configuration reference as operator knobs.
+    A variable compose does not pass through is one an operator can set in
+    .env and watch do nothing -- which is what these did before they were
+    wired into the attach payload at all."""
+    env = DEV["services"]["api"]["environment"]
+    assert env["DUCKLAKE_TARGET_FILE_SIZE_MB"] == "${DUCKLAKE_TARGET_FILE_SIZE_MB:-512}"
+    assert env["DUCKLAKE_DATA_INLINING_ROW_LIMIT"] == "${DUCKLAKE_DATA_INLINING_ROW_LIMIT:-10}"

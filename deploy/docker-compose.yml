@@ -276,6 +276,11 @@ services:
       DUCKLAKE_AGENT_HOST: ${DUCKLAKE_AGENT_HOST:-postgres}
       DUCKLAKE_AGENT_PORT: ${DUCKLAKE_AGENT_PORT:-5432}
       DUCKLAKE_AGENT_DATABASE: ${DUCKLAKE_AGENT_DATABASE:-ducklake}
+      # Applied to every DuckLake catalog when an agent attaches it. Passed
+      # through so setting them in .env actually reaches the API -- the
+      # reference documents them as operator knobs.
+      DUCKLAKE_TARGET_FILE_SIZE_MB: ${DUCKLAKE_TARGET_FILE_SIZE_MB:-512}
+      DUCKLAKE_DATA_INLINING_ROW_LIMIT: ${DUCKLAKE_DATA_INLINING_ROW_LIMIT:-10}
       SQL_SESSIONS_ENABLED: ${SQL_SESSIONS_ENABLED:-false}
       SQL_SESSION_IDLE_TIMEOUT_S: ${SQL_SESSION_IDLE_TIMEOUT_S:-900}
       SQL_SESSION_MAX_LIFETIME_S: ${SQL_SESSION_MAX_LIFETIME_S:-14400}

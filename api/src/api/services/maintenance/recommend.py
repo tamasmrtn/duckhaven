@@ -14,7 +14,12 @@ from __future__ import annotations
 from typing import Any
 
 from api.models.catalog import KIND_DUCKLAKE, KIND_ICEBERG_POLARIS
+from api.services.maintenance import verbs
 from api.services.maintenance.scoring import _human_bytes
+
+# The retention the displayed command shows. The applied one uses the
+# policy's real value; this is only what a reader copies.
+_RETENTION_DAYS_PLACEHOLDER = 7
 
 #: Severity order, most severe first. Ranked rather than compared as a string:
 #: `critical` sorts *after* `info` alphabetically, which would bury exactly the
@@ -205,38 +210,45 @@ def _investigate_growth(
 # DuckLake's commands for the shared recommendation kinds. The findings are
 # format-neutral; the fix is not, and DuckDB's ducklake extension can run these.
 # `applicable_in_app` stays False: DuckHaven advises and does not yet apply.
-_DUCKLAKE_REMEDIATION: dict[str, dict[str, str]] = {
-    "compact_small_files": {
-        "command": (
-            "CALL ducklake_merge_adjacent_files('<catalog>', '<table>', schema => '<schema>')"
-        ),
-        "tool": "DuckDB (ducklake extension)",
-    },
-    "expire_snapshots": {
-        # Catalog-level only: `expire_older_than` has global scope.
-        "command": (
-            "CALL ducklake_expire_snapshots('<catalog>', older_than => now() - INTERVAL '7 days')"
-        ),
-        "tool": "DuckDB (ducklake extension)",
-    },
-    "cleanup_orphans": {
-        "command": "CALL ducklake_cleanup_old_files('<catalog>', cleanup_all => true)",
-        "tool": "DuckDB (ducklake extension)",
-    },
-}
+_DUCKLAKE_TOOL = "DuckDB (ducklake extension)"
 
 # Manifests are Iceberg-only; dropped rather than given a command that does not
 # exist.
 _DUCKLAKE_INAPPLICABLE = {"rewrite_manifests"}
 
 
-def _for_ducklake(rec: dict[str, Any]) -> dict[str, Any] | None:
-    remediation = _DUCKLAKE_REMEDIATION.get(rec["kind"])
-    if remediation is None:
-        if rec["kind"] in _DUCKLAKE_INAPPLICABLE:
-            return None
+def _for_ducklake(rec: dict[str, Any], *, can_apply: bool) -> dict[str, Any] | None:
+    """Re-point a format-neutral finding at the command DuckLake needs.
+
+    The command shown is the one Apply runs, rendered by the same module, so
+    the Copy button and the button beside it can never disagree.
+    """
+    kind = rec["kind"]
+    if kind in _DUCKLAKE_INAPPLICABLE:
+        return None
+    if kind not in verbs.APPLICABLE_KINDS:
         return rec  # e.g. investigate_growth, which prescribes nothing
-    return {**rec, "remediation": {**rec["remediation"], **remediation}}
+    command = "; ".join(
+        verbs.render(
+            kind,
+            catalog="<catalog>",
+            schema="<schema>",
+            table="<table>",
+            retention_days=_RETENTION_DAYS_PLACEHOLDER,
+        )
+    )
+    return {
+        **rec,
+        "remediation": {
+            **rec["remediation"],
+            "command": command,
+            "tool": _DUCKLAKE_TOOL,
+            "applicable_in_app": can_apply,
+            # Catalog-scoped verbs affect every table, which the confirmation
+            # has to say before anyone presses the button.
+            "scope": verbs.VERB_SCOPE[kind],
+        },
+    }
 
 
 def generate(
@@ -244,11 +256,13 @@ def generate(
     thresholds: dict[str, float],
     history: list[dict[str, Any]] | None = None,
     catalog_kind: str = KIND_ICEBERG_POLARIS,
+    can_apply: bool = False,
 ) -> list[dict[str, Any]]:
     """All recommendations a single table's latest sample warrants, worst first.
 
     ``catalog_kind`` decides only the remediation; the findings come from file
-    and snapshot counts both formats have.
+    and snapshot counts both formats have. ``can_apply`` is the catalog kind's
+    capability, passed in rather than looked up so this module stays pure.
     """
     out = [
         _compact(metrics, thresholds),
@@ -259,5 +273,5 @@ def generate(
     ]
     recs = [r for r in out if r is not None]
     if catalog_kind == KIND_DUCKLAKE:
-        recs = [r for r in (_for_ducklake(r) for r in recs) if r is not None]
+        recs = [r for r in (_for_ducklake(r, can_apply=can_apply) for r in recs) if r is not None]
     return sorted(recs, key=lambda r: SEVERITY_RANK.get(r["severity"], 9))

@@ -19,6 +19,7 @@ function out(c: (typeof CATALOGS)[number]): Catalog {
     capabilities: c.capabilities ?? {
       supports_storage_migration: true,
       external_engine_readable: true,
+      supports_maintenance_apply: false,
       supported_storage_kinds: ["object_store", "s3", "adls_gen2"] as const,
     },
     storage_backend_id: c.storage_backend_id,
@@ -46,6 +47,7 @@ export const catalogHandlers = [
         capabilities: {
           supports_storage_migration: true,
           external_engine_readable: true,
+          supports_maintenance_apply: false,
           supported_storage_kinds: ["object_store", "s3", "adls_gen2"],
         },
       },
@@ -58,6 +60,7 @@ export const catalogHandlers = [
         capabilities: {
           supports_storage_migration: false,
           external_engine_readable: false,
+          supports_maintenance_apply: true,
           supported_storage_kinds: ["object_store", "s3", "adls_gen2"],
         },
       },

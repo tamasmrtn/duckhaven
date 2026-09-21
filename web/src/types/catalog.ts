@@ -21,6 +21,9 @@ export interface CatalogCapabilities {
   supports_storage_migration: boolean;
   // False for DuckLake: only DuckDB can read its tables.
   external_engine_readable: boolean;
+  // True for DuckLake only: DuckHaven can run its maintenance itself, where an
+  // Iceberg table's recommendation can only name an external engine.
+  supports_maintenance_apply?: boolean;
   supported_storage_kinds: BackendKind[];
 }
 

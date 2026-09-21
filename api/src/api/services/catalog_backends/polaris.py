@@ -37,6 +37,9 @@ POLARIS_CAPABILITIES = CatalogCapabilities(
     supports_storage_migration=True,
     # Why Iceberg is the default: Spark, Trino, Flink and PyIceberg can read it.
     external_engine_readable=True,
+    # DuckDB's iceberg extension has no maintenance verbs, so DuckHaven can only
+    # advise here however much it would like to act.
+    supports_maintenance_apply=False,
     supported_storage_kinds=("object_store", "s3", "adls_gen2"),
 )
 

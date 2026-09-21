@@ -144,3 +144,66 @@ def test_ducklake_still_advises_rather_than_applying():
     """DuckDB can run these, but DuckHaven does not yet; this flag flips when it does."""
     recs = recommend.generate(_small_files_metrics(), T, catalog_kind="ducklake")
     assert all(r["remediation"]["applicable_in_app"] is False for r in recs)
+
+
+# --- Applicability ---------------------------------------------------------
+#
+# Whether DuckHaven can run the fix is the catalog kind's capability, not a
+# property of the finding: too many small files is too many small files either
+# way, and only the remedy differs.
+
+FRAGMENTED = {"small_file_ratio": 0.4, "data_file_count": 200}
+
+
+def _ducklake(metrics, *, can_apply):
+    return recommend.generate(metrics, T, catalog_kind="ducklake", can_apply=can_apply)
+
+
+def test_a_ducklake_recommendation_is_applicable_when_the_kind_says_so():
+    compact = next(
+        r for r in _ducklake(FRAGMENTED, can_apply=True) if r["kind"] == "compact_small_files"
+    )
+
+    assert compact["remediation"]["applicable_in_app"] is True
+    assert compact["remediation"]["scope"] == "table"
+    # The command shown is the one Apply runs, from the same renderer, so the
+    # Copy button and the button beside it cannot disagree.
+    assert compact["remediation"]["command"].startswith("CALL ducklake_merge_adjacent_files(")
+
+
+def test_a_ducklake_recommendation_is_not_applicable_when_the_kind_says_not():
+    """The capability is the switch, so turning it off leaves the advice and
+    removes only the button."""
+    compact = next(
+        r for r in _ducklake(FRAGMENTED, can_apply=False) if r["kind"] == "compact_small_files"
+    )
+
+    assert compact["remediation"]["applicable_in_app"] is False
+    assert compact["remediation"]["command"].startswith("CALL ducklake_")
+
+
+def test_a_catalog_scoped_recommendation_says_so():
+    """Expiring snapshots from one table's page expires every table's, and the
+    confirmation cannot say that unless the finding carries it."""
+    metrics = {**FRAGMENTED, "snapshot_count": 500, "oldest_snapshot_age_days": 400}
+    expire = next(r for r in _ducklake(metrics, can_apply=True) if r["kind"] == "expire_snapshots")
+
+    assert expire["remediation"]["scope"] == "catalog"
+
+
+def test_the_displayed_cleanup_command_is_bounded_by_retention():
+    """It was `cleanup_all => true`, which deletes files older snapshots still
+    reference -- so anyone who copied it lost their time travel."""
+    metrics = {**FRAGMENTED, "orphan_bytes": 50 * MIB, "total_data_bytes": 100 * MIB}
+    recs = _ducklake(metrics, can_apply=True)
+    for rec in recs:
+        assert "cleanup_all" not in rec["remediation"].get("command", "")
+
+
+def test_growth_prescribes_nothing_so_is_never_applicable():
+    metrics = {**FRAGMENTED, "total_data_bytes": 10_000 * MIB}
+    history = [{"total_data_bytes": 1 * MIB}]
+    recs = recommend.generate(metrics, T, history=history, catalog_kind="ducklake", can_apply=True)
+    for rec in recs:
+        if rec["kind"] == "investigate_growth":
+            assert rec["remediation"]["applicable_in_app"] is False

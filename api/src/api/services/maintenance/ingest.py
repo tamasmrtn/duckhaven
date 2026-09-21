@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.models.catalog import Catalog
 from api.models.maintenance import MaintenanceRecommendation, TableHealthSample
 from api.models.query import Query
+from api.services.catalog_backends import capabilities_for
 from api.services.maintenance import recommend, scoring
 from api.services.maintenance.policy import get_or_create_policy
 
@@ -69,7 +70,15 @@ async def record_health_sample(db: AsyncSession, query: Query, health: dict[str,
     db.add(sample)
 
     history = await _growth_history(db, catalog.id, schema, table)
-    recs = recommend.generate(health, thresholds, history=history, catalog_kind=catalog.kind)
+    recs = recommend.generate(
+        health,
+        thresholds,
+        history=history,
+        catalog_kind=catalog.kind,
+        # Whether DuckHaven can run the fix, asked of the kind's capability
+        # rather than its name, so a future kind that can needs no change here.
+        can_apply=capabilities_for(catalog.kind).supports_maintenance_apply,
+    )
     await _sync_recommendations(db, query.workspace_id, catalog.id, schema, table, recs)
     await db.commit()
 

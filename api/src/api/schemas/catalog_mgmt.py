@@ -41,6 +41,8 @@ class CatalogCapabilitiesOut(BaseModel):
     supports_storage_migration: bool
     # False for DuckLake — the trade-off a user makes when choosing it.
     external_engine_readable: bool
+    # True for DuckLake only: DuckDB can run its maintenance verbs.
+    supports_maintenance_apply: bool = False
     supported_storage_kinds: list[str]
 
 

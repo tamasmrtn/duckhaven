@@ -222,6 +222,7 @@ def _capabilities_out(kind: str) -> CatalogCapabilitiesOut | None:
     return CatalogCapabilitiesOut(
         supports_storage_migration=caps.supports_storage_migration,
         external_engine_readable=caps.external_engine_readable,
+        supports_maintenance_apply=caps.supports_maintenance_apply,
         supported_storage_kinds=list(caps.supported_storage_kinds),
     )
 

@@ -117,6 +117,11 @@ class CatalogCapabilities:
     supports_storage_migration: bool = True
     # Whether engines other than DuckDB can read these tables.
     external_engine_readable: bool = True
+    # Whether DuckHaven can run this kind's maintenance itself. DuckDB's
+    # `ducklake` extension implements compaction, expiry and cleanup; its
+    # `iceberg` extension implements none of them, so an Iceberg table's
+    # recommendation can only ever name an external engine.
+    supports_maintenance_apply: bool = False
     supported_storage_kinds: tuple[str, ...] = ("object_store", "s3", "adls_gen2")
 
 

@@ -11,7 +11,7 @@ read by DuckDB and nothing else.
 | Requirement | Why |
 |---|---|
 | A `ducklake` database | Holds one schema per catalog, containing that catalog's `ducklake_*` tables |
-| A `ducklake_agent` role | The login agents authenticate with; granted `CONNECT` on `ducklake` only |
+| A login role per catalog | Created by the API as `dl_<catalog>`, granted only on that catalog's own schema |
 | `postgres` on the agent network | Agents connect to the catalog database directly — there is no vendor in front of it |
 | An agent image with `ducklake` + `postgres` | Baked in; an agent on an isolated network cannot download them at runtime |
 
@@ -24,10 +24,10 @@ In `deploy/.env`:
 
 ```bash
 DUCKLAKE_ENABLED=true
-DUCKLAKE_AGENT_PASSWORD=<choose a strong password>
 ```
 
-Then `docker compose up -d`.
+Then `docker compose up -d`. There is no password to choose: each catalog's login is created with a generated one when
+the catalog is provisioned.
 
 ## On an existing install
 
@@ -35,14 +35,22 @@ Then `docker compose up -d`.
 never sees the init script. Run the same work against the running stack:
 
 ```bash
-DUCKLAKE_AGENT_PASSWORD=<choose a strong password> scripts/enable-ducklake.sh
+scripts/enable-ducklake.sh
 ```
 
-It is idempotent. Then set `DUCKLAKE_ENABLED=true` and the **same** `DUCKLAKE_AGENT_PASSWORD` in `deploy/.env`, and
-restart the API and Postgres so the new network membership takes effect:
+It is idempotent. Then set `DUCKLAKE_ENABLED=true` in `deploy/.env` and restart the API and Postgres so the new
+network membership takes effect:
 
 ```bash
 docker compose up -d postgres api
+```
+
+If the deployment already has DuckLake catalogs — from a version before per-catalog roles — create their logins in one
+step rather than waiting for each to be browsed:
+
+```bash
+curl -X POST -H "Authorization: Bearer $PAT" \
+    http://localhost:8000/api/admin/catalogs/ducklake/reconcile-roles
 ```
 
 Agents need an image containing the `ducklake` and `postgres` extensions. An older agent is not broken by this — it
@@ -56,13 +64,36 @@ An Iceberg catalog's agent never holds a credential: Polaris vends short-lived s
 attaches. DuckLake has no such vendor — the agent *is* the catalog client, so it needs a PostgreSQL login, and
 `postgres` has to join the otherwise-isolated `duckhaven_internal` network for it to connect.
 
-What keeps that acceptable is the role. `ducklake_agent` has `CONNECT` on the `ducklake` database and nothing else, and
-PostgreSQL's default `CONNECT` grant to `PUBLIC` is revoked on `duckhaven` and `polaris`. Without those revokes the
-role would reach the database holding users, password hashes and session tokens.
+Two things keep that acceptable.
 
-!!! warning "Do not widen the agent role"
-    Granting `ducklake_agent` access to the `duckhaven` database, or configuring agents with the owner credential,
-    undoes the isolation the agent network exists for. The API connects as the owner; agents must not.
+**Each catalog has its own login.** A catalog `raw` gets a role `dl_raw`, granted `USAGE` and DML on `cat_raw` and
+nothing else. An agent serving `raw` therefore holds no credential that reaches `curated`'s metadata. That isolation is
+enforced by PostgreSQL rather than by DuckHaven's SQL parser — which matters, because the alternative is trusting a
+denylist to catch every way a statement might name another catalog's schema.
+
+**The default grants are revoked.** PostgreSQL grants `CONNECT` on every database to `PUBLIC`, and `CREATE` on the
+`public` schema too before version 15. Without the revokes in the setup script, every per-catalog role would inherit the
+right to open `duckhaven` — the database holding users, password hashes and session tokens — and the scheme above would
+be decorative.
+
+!!! warning "Do not widen a catalog role"
+    Granting a `dl_*` role access to the `duckhaven` database, to another catalog's schema, or configuring agents with
+    the owner credential, undoes all of this. The API connects as the owner; agents must not.
+
+The passwords are stored in DuckHaven's `credentials` table, unencrypted — the same as session tokens and the Polaris
+client secret. What makes that acceptable is precisely the revoke above: a DuckLake role cannot open the `duckhaven`
+database at all, so a compromised agent cannot read the table its own password lives in.
+
+### Rotating a catalog's login
+
+```bash
+curl -X POST -H "Authorization: Bearer $PAT" \
+    http://localhost:8000/api/catalogs/<catalog-id>/ducklake/rotate-role
+```
+
+New dispatches use the new password immediately. An open SQL session keeps working — PostgreSQL does not
+re-authenticate an established connection — so the response reports how many sessions are still holding the old one.
+They pick it up when they close.
 
 Storage credentials are minted by the API per query and never written to agent disk. For external S3 they are STS
 credentials expiring within the hour; for ADLS Gen 2, a user-delegation SAS. For the bundled object store they are the

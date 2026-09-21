@@ -49,11 +49,26 @@ def test_public_connect_is_revoked_on_the_control_plane_databases():
         assert "REVOKE CONNECT ON DATABASE polaris FROM PUBLIC" in script
 
 
-def test_agent_role_is_granted_only_the_ducklake_database():
+def test_the_scripts_create_no_shared_agent_role():
+    """Every catalog gets its own login, created by the API when the catalog is
+    provisioned. A shared role left behind here would still work, and would be
+    exactly the hole the per-catalog roles close."""
     for script in (INIT_SQL, ENABLE_SQL):
-        assert "GRANT CONNECT ON DATABASE ducklake TO ducklake_agent" in script
-        for db in ("duckhaven", "polaris"):
-            assert f"GRANT CONNECT ON DATABASE {db} TO ducklake_agent" not in script
+        assert "CREATE ROLE ducklake_agent" not in script
+        assert "DUCKLAKE_AGENT_PASSWORD" not in script
+
+
+def test_public_cannot_reach_the_other_databases_or_create_in_ducklake():
+    """Load-bearing, and easy to drop. PostgreSQL grants CONNECT to PUBLIC on
+    every database by default, and CREATE on `public` before version 15 -- so
+    without these a per-catalog role inherits the right to open the database
+    holding users and password hashes, which would make the whole scheme
+    decorative."""
+    for script in (INIT_SQL, ENABLE_SQL):
+        assert "REVOKE CONNECT ON DATABASE duckhaven FROM PUBLIC" in script
+        assert "REVOKE CONNECT ON DATABASE polaris FROM PUBLIC" in script
+        assert "REVOKE ALL ON DATABASE ducklake FROM PUBLIC" in script
+        assert "REVOKE ALL ON SCHEMA public FROM PUBLIC" in script
 
 
 def test_init_and_enable_scripts_are_idempotent():
@@ -61,19 +76,17 @@ def test_init_and_enable_scripts_are_idempotent():
     invocation."""
     for script in (INIT_SQL, ENABLE_SQL):
         assert "WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'ducklake')" in script
-        assert "WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'ducklake_agent')" in script
 
 
-def test_api_gets_the_owner_credential_and_the_agent_role_separately():
-    """The API is the owner; agents get the restricted role. Collapsing them
-    would hand agents the control-plane database."""
+def test_the_api_reaches_the_catalog_database_as_owner():
+    """It creates each catalog's role, so it is the owner and needs CREATEROLE;
+    agents never use this credential."""
     env = DEV["services"]["api"]["environment"]
-    # Default points the API at the ducklake database as owner.
     url = env["DUCKLAKE_DATABASE_URL"]
     assert "duckhaven:" in url
     assert url.rstrip("}").endswith("/ducklake")
-    assert "ducklake_agent" in env["DUCKLAKE_AGENT_USER"]
-    assert "duckhaven" not in env["DUCKLAKE_AGENT_USER"]
+    assert "DUCKLAKE_AGENT_USER" not in env
+    assert "DUCKLAKE_AGENT_PASSWORD" not in env
 
 
 def test_ducklake_is_off_by_default():
@@ -81,9 +94,9 @@ def test_ducklake_is_off_by_default():
     assert DEV["services"]["api"]["environment"]["DUCKLAKE_ENABLED"] == "${DUCKLAKE_ENABLED:-false}"
 
 
-def test_postgres_service_can_set_the_agent_role_password():
-    """Read from the postgres service's own environment."""
-    assert "DUCKLAKE_AGENT_PASSWORD" in DEV["services"]["postgres"]["environment"]
+def test_postgres_service_needs_no_ducklake_secret():
+    """There is no shared password to hand it any more."""
+    assert "DUCKLAKE_AGENT_PASSWORD" not in DEV["services"]["postgres"]["environment"]
 
 
 def test_backups_cover_the_ducklake_catalog():

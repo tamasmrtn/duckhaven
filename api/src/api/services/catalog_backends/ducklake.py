@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -129,19 +130,56 @@ async def dispose_engine() -> None:
         _engine = None
 
 
-def metadata_schema_for(slug: str) -> str:
-    """The Postgres schema a catalog's ducklake_* tables live in.
+def ducklake_identifiers(slug: str) -> tuple[str, str]:
+    """The Postgres schema and login role for a catalog, validated as a pair.
 
     The slug is constrained to ``^[a-z][a-z0-9_]*$`` by `validate_catalog_slug`,
-    so the result is injection-safe.
+    so both results are injection-safe. Checked together rather than separately
+    so they can never disagree about which slugs are acceptable.
     """
-    name = f"cat_{slug}"
-    if len(name) > 63:  # Postgres truncates longer identifiers.
+    schema, role = f"cat_{slug}", f"dl_{slug}"
+    too_long = max(schema, role, key=len)
+    if len(too_long) > 63:  # Postgres truncates longer identifiers.
         raise CatalogBackendError(
-            f"Catalog name {slug!r} is too long: its metadata schema would exceed "
-            "Postgres's 63-character identifier limit."
+            f"Catalog name {slug!r} is too long: its metadata schema and role would "
+            "exceed Postgres's 63-character identifier limit."
         )
-    return name
+    return schema, role
+
+
+def metadata_schema_for(slug: str) -> str:
+    """The Postgres schema a catalog's ducklake_* tables live in."""
+    return ducklake_identifiers(slug)[0]
+
+
+def agent_role_for(slug: str) -> str:
+    """The PostgreSQL login this catalog's agents authenticate with."""
+    return ducklake_identifiers(slug)[1]
+
+
+def ducklake_role_password(catalog: Catalog) -> str:
+    """This catalog's PostgreSQL password, from its own credential row.
+
+    Raises rather than falling back to a deployment-wide password. A fallback
+    would mean the per-catalog isolation quietly did not hold for exactly the
+    catalogs that predate it -- the ones it was introduced for.
+    """
+    # During creation the row cannot exist yet -- the catalog has no id to point
+    # at -- so the freshly minted password travels on the object itself.
+    if pending := getattr(catalog, "pending_ducklake_password", None):
+        return pending
+    credential = catalog.ducklake_credential
+    if credential is None or not credential.token:
+        raise CatalogBackendUnavailable(
+            f"DuckLake catalog {catalog.slug!r} has no metadata credential. Run "
+            "POST /api/admin/catalogs/ducklake/reconcile-roles to create one."
+        )
+    return credential.token
+
+
+def new_role_password() -> str:
+    """A fresh password for a catalog's PostgreSQL role."""
+    return secrets.token_urlsafe(32)
 
 
 def _quote(identifier: str) -> str:
@@ -174,9 +212,42 @@ class DuckLakeCatalogBackend:
         if not schema:
             raise CatalogBackendError("DuckLake catalog has no metadata schema recorded")
 
-        agent_role = settings.ducklake_agent_user
+        agent_role = agent_role_for(catalog.slug)
+        password = ducklake_role_password(catalog)
         try:
             async with get_engine().begin() as conn:
+                # One login per catalog, so a catalog cannot reach another's
+                # metadata even if a statement gate is ever bypassed. The
+                # password is re-applied every time: that is what makes a
+                # rotation take effect, and what repairs a role an operator
+                # changed out from under us.
+                exists = await conn.scalar(
+                    text("SELECT 1 FROM pg_roles WHERE rolname = :role").bindparams(role=agent_role)
+                )
+                # CREATE/ALTER ROLE take no bind parameters -- PostgreSQL parses
+                # them as DDL, so a placeholder arrives as a literal `$1`. The
+                # password is carried in a transaction-local setting and quoted
+                # server-side with format(%L), which keeps it out of the
+                # statement text without hand-rolling an escape.
+                await conn.execute(
+                    text("SELECT set_config('duckhaven.role_password', :pw, true)").bindparams(
+                        pw=password
+                    )
+                )
+                verb = "CREATE" if not exists else "ALTER"
+                await conn.execute(
+                    text(
+                        f"DO $do$ BEGIN EXECUTE format("
+                        f"'{verb} ROLE %I {'LOGIN ' if not exists else 'WITH '}PASSWORD %L', "
+                        f"'{agent_role}', current_setting('duckhaven.role_password')); END $do$"
+                    )
+                )
+                await conn.execute(
+                    text(
+                        f"GRANT CONNECT ON DATABASE {_quote(settings.ducklake_agent_database)} "
+                        f"TO {_quote(agent_role)}"
+                    )
+                )
                 await conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {_quote(schema)}"))
                 # CREATE lets the extension build its tables on first attach; DML
                 # is how DuckLake commits. Scoped to this one schema.
@@ -232,6 +303,37 @@ class DuckLakeCatalogBackend:
             raise CatalogBackendUnavailable(
                 f"Could not drop the DuckLake metadata schema: {exc}"
             ) from exc
+        await self._drop_role(catalog)
+
+    async def _drop_role(self, catalog: Catalog) -> None:
+        """Drop the catalog's login role, after its schema is gone.
+
+        ``DROP OWNED BY`` is not optional: PostgreSQL refuses to drop a role
+        that still holds any privilege anywhere, and this one was granted on a
+        schema and its default privileges.
+
+        Best-effort, like ``_purge_data``: a role we cannot drop must not make
+        the catalog undroppable. The worst case is a login with no schema to
+        reach, which `reconcile-roles` will not recreate.
+        """
+        role = agent_role_for(catalog.slug)
+        try:
+            async with get_engine().begin() as conn:
+                exists = await conn.scalar(
+                    text("SELECT 1 FROM pg_roles WHERE rolname = :role").bindparams(role=role)
+                )
+                if not exists:
+                    return
+                await conn.execute(text(f"REASSIGN OWNED BY {_quote(role)} TO CURRENT_USER"))
+                await conn.execute(text(f"DROP OWNED BY {_quote(role)}"))
+                await conn.execute(text(f"DROP ROLE IF EXISTS {_quote(role)}"))
+        except Exception as exc:  # noqa: BLE001 - never block the drop
+            logger.warning(
+                "Could not drop the PostgreSQL role for DuckLake catalog %s; it remains "
+                "with no schema to reach and needs manual cleanup: %s",
+                catalog.slug,
+                exc,
+            )
 
     async def _purge_data(self, catalog: Catalog) -> None:
         """Delete everything under the catalog's data path.

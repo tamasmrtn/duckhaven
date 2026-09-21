@@ -9,16 +9,14 @@ services:
       # polaris and api services via compose interpolation so they all agree;
       # override in .env for a non-default deployment.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-duckhaven}
-      # Read by postgres-init/20-create-ducklake-db.sh; must match the api
-      # service's value.
-      DUCKLAKE_AGENT_PASSWORD: ${DUCKLAKE_AGENT_PASSWORD:-ducklake}
     volumes:
       # Postgres 18's official image moved to a version-specific data
       # subdirectory under a single /var/lib/postgresql mount (unlike 16's
       # /var/lib/postgresql/data), to support `pg_upgrade --link`.
       - postgres_data:/var/lib/postgresql
-      # Creates the `polaris` and `ducklake` databases and the `ducklake_agent`
-      # role on first init only; use scripts/enable-ducklake.sh otherwise.
+      # Creates the `polaris` and `ducklake` databases and revokes PUBLIC's
+      # default grants, on first init only; use scripts/enable-ducklake.sh
+      # otherwise. Per-catalog login roles are created by the API.
       - ./postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U duckhaven"]
@@ -271,15 +269,13 @@ services:
       # Parquet. Off by default; Iceberg + Polaris stays the default kind. See
       # docs/concepts/ducklake.md.
       #
-      # The API connects as the owner and agents as the restricted
-      # `ducklake_agent` role; they must never be the same login.
+      # The API connects as the owner; each catalog's agents connect as that
+      # catalog's own login, which the API creates. They are never the same.
       DUCKLAKE_ENABLED: ${DUCKLAKE_ENABLED:-false}
       DUCKLAKE_DATABASE_URL: ${DUCKLAKE_DATABASE_URL:-postgresql+asyncpg://duckhaven:${POSTGRES_PASSWORD:-duckhaven}@postgres:5432/ducklake}
       DUCKLAKE_AGENT_HOST: ${DUCKLAKE_AGENT_HOST:-postgres}
       DUCKLAKE_AGENT_PORT: ${DUCKLAKE_AGENT_PORT:-5432}
       DUCKLAKE_AGENT_DATABASE: ${DUCKLAKE_AGENT_DATABASE:-ducklake}
-      DUCKLAKE_AGENT_USER: ${DUCKLAKE_AGENT_USER:-ducklake_agent}
-      DUCKLAKE_AGENT_PASSWORD: ${DUCKLAKE_AGENT_PASSWORD:-ducklake}
       SQL_SESSIONS_ENABLED: ${SQL_SESSIONS_ENABLED:-false}
       SQL_SESSION_IDLE_TIMEOUT_S: ${SQL_SESSION_IDLE_TIMEOUT_S:-900}
       SQL_SESSION_MAX_LIFETIME_S: ${SQL_SESSION_MAX_LIFETIME_S:-14400}

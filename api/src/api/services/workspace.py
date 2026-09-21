@@ -333,7 +333,7 @@ async def resolve_workspace_catalogs(db: AsyncSession, workspace_id: uuid.UUID) 
         select(Catalog)
         .join(WorkspaceCatalog, WorkspaceCatalog.catalog_id == Catalog.id)
         .where(WorkspaceCatalog.workspace_id == workspace_id)
-        .options(selectinload(Catalog.storage_backend))
+        .options(selectinload(Catalog.storage_backend), selectinload(Catalog.ducklake_credential))
         .order_by(Catalog.slug)
     )
     return list(rows.scalars().all())
@@ -348,7 +348,7 @@ async def get_default_catalog(db: AsyncSession, workspace_id: uuid.UUID) -> Cata
             WorkspaceCatalog.workspace_id == workspace_id,
             WorkspaceCatalog.is_default.is_(True),
         )
-        .options(selectinload(Catalog.storage_backend))
+        .options(selectinload(Catalog.storage_backend), selectinload(Catalog.ducklake_credential))
     )
     return row.scalar_one_or_none()
 
@@ -362,7 +362,7 @@ async def resolve_catalog(db: AsyncSession, workspace_id: uuid.UUID, catalog_slu
             WorkspaceCatalog.workspace_id == workspace_id,
             Catalog.slug == catalog_slug,
         )
-        .options(selectinload(Catalog.storage_backend))
+        .options(selectinload(Catalog.storage_backend), selectinload(Catalog.ducklake_credential))
     )
     catalog = row.scalar_one_or_none()
     if catalog is None:

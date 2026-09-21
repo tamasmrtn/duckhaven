@@ -8,6 +8,7 @@ catalog's creator or an admin and is refused while any binding remains.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Annotated
 
@@ -18,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from api.config import settings
-from api.deps import get_current_user, get_db, get_polaris_client
+from api.deps import get_current_user, get_db, get_polaris_client, require_permission
 from api.models.catalog import (
     KIND_DUCKLAKE,
     KIND_ICEBERG_POLARIS,
@@ -59,6 +60,8 @@ from api.services.workspace import (
     resolve_workspace_catalogs,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 
@@ -72,6 +75,116 @@ async def _catalog_for_admin(db: AsyncSession, user: User, catalog_id: uuid.UUID
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
     return catalog
+
+
+@router.post("/admin/catalogs/ducklake/reconcile-roles")
+async def reconcile_ducklake_roles(
+    _: User = Depends(require_permission(Permission.CATALOGS_ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, int]:
+    """Create any DuckLake login role that does not exist yet.
+
+    The migration that introduced per-catalog roles could only write the
+    credential rows: it runs against the control-plane database, and the roles
+    and their grants live in the catalog database, which it has no connection
+    to. Each catalog's role is otherwise created lazily on next browse, so this
+    is the post-upgrade step that closes the window in which a dispatch would
+    fail for a catalog nobody has opened yet.
+
+    Idempotent, and safe to re-run: it is also the repair path for a role an
+    operator dropped by hand.
+    """
+    from api.models.user import Credential
+    from api.services.catalog_backends.ducklake import DuckLakeCatalogBackend, new_role_password
+
+    catalogs = (
+        (
+            await db.execute(
+                select(Catalog)
+                .where(Catalog.kind == KIND_DUCKLAKE)
+                .options(selectinload(Catalog.ducklake_credential))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    backend = DuckLakeCatalogBackend()
+    reconciled = 0
+    for catalog in catalogs:
+        if catalog.ducklake_credential is None:
+            db.add(
+                Credential(kind="ducklake_role", token=new_role_password(), catalog_id=catalog.id)
+            )
+            await db.flush()
+            await db.refresh(catalog, attribute_names=["ducklake_credential"])
+        try:
+            await backend.ensure(catalog)
+        except CatalogBackendError as exc:
+            # One unreachable catalog must not stop the sweep; it is reported
+            # by the count rather than by failing the whole request.
+            logger.warning("Could not reconcile DuckLake role for %s: %s", catalog.slug, exc)
+            continue
+        reconciled += 1
+    await db.commit()
+    return {"catalogs": len(catalogs), "reconciled": reconciled}
+
+
+@router.post("/catalogs/{catalog_id}/ducklake/rotate-role")
+async def rotate_ducklake_role(
+    catalog_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, object]:
+    """Give this catalog's PostgreSQL role a new password.
+
+    An open SQL session keeps working: its connection authenticated when it was
+    opened, and PostgreSQL does not re-authenticate an established connection.
+    New dispatches pick up the new password immediately. The count of affected
+    sessions is returned rather than acted on -- closing someone's session is a
+    bigger surprise than a rotation they asked for.
+    """
+    from api.models.sql_session import SqlSession
+    from api.models.user import Credential
+    from api.services.catalog_backends.ducklake import DuckLakeCatalogBackend, new_role_password
+
+    catalog = await _catalog_for_admin(db, user, catalog_id)
+    if catalog.kind != KIND_DUCKLAKE:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Catalog '{catalog.slug}' is not a DuckLake catalog.",
+        )
+
+    credential = (
+        await db.execute(
+            select(Credential).where(
+                Credential.catalog_id == catalog.id, Credential.kind == "ducklake_role"
+            )
+        )
+    ).scalar_one_or_none()
+    if credential is None:
+        credential = Credential(kind="ducklake_role", catalog_id=catalog.id)
+        db.add(credential)
+    credential.token = new_role_password()
+    await db.flush()
+    await db.refresh(catalog, attribute_names=["ducklake_credential"])
+
+    # `ensure` re-applies the stored password to the role, which is what makes
+    # the rotation take effect.
+    await DuckLakeCatalogBackend().ensure(catalog)
+    await db.commit()
+
+    # Workspace-scoped, not active-catalog-scoped: a session attaches every
+    # catalog bound to its workspace, so any of them holds this role's password.
+    open_sessions = await db.scalar(
+        select(func.count())
+        .select_from(SqlSession)
+        .join(WorkspaceCatalog, WorkspaceCatalog.workspace_id == SqlSession.workspace_id)
+        .where(
+            WorkspaceCatalog.catalog_id == catalog.id,
+            SqlSession.status.in_(("open", "opening")),
+        )
+    )
+    return {"rotated": True, "open_sessions": int(open_sessions or 0)}
 
 
 def _migration_out(migration, *, include_tables: bool = False) -> CatalogMigrationOut:

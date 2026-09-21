@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import ClassVar
 
 from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import UUID
@@ -60,6 +61,24 @@ class Catalog(Base):
     )
 
     storage_backend: Mapped[StorageBackend] = relationship(back_populates="catalogs")
+    # The PostgreSQL login this catalog's agents authenticate with (DuckLake
+    # only; None for Iceberg). View-only and eager-loaded by the catalog
+    # resolvers, so the dispatch path can mint an attach payload without a
+    # second round trip -- it builds one of these per catalog per query.
+    # Set only between minting a DuckLake catalog's password and writing its
+    # credential row, which cannot happen until the flush gives this an id.
+    # A plain attribute, not a column: it is never persisted and never read
+    # again once the row exists.
+    pending_ducklake_password: ClassVar[str | None] = None
+
+    ducklake_credential: Mapped[Credential | None] = relationship(
+        "Credential",
+        primaryjoin=(
+            "and_(Catalog.id == foreign(Credential.catalog_id), Credential.kind == 'ducklake_role')"
+        ),
+        viewonly=True,
+        uselist=False,
+    )
     workspace_links: Mapped[list[WorkspaceCatalog]] = relationship(
         back_populates="catalog", cascade="all, delete-orphan"
     )

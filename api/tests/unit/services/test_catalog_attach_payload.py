@@ -14,6 +14,7 @@ import pytest
 from api.config import settings
 from api.models.catalog import KIND_DUCKLAKE, KIND_ICEBERG_POLARIS, Catalog
 from api.models.storage_backend import StorageBackend
+from api.models.user import Credential
 from api.services.session_credentials import build_catalog_attach, reset_storage_cache
 
 
@@ -27,6 +28,10 @@ def _catalog(kind: str, slug: str = "raw") -> Catalog:
     )
     cat.id = uuid.uuid4()
     cat.storage_backend = StorageBackend(kind="object_store", name="bundled", root_uri="")
+    if kind == KIND_DUCKLAKE:
+        # Every DuckLake catalog has its own PostgreSQL login; there is no
+        # deployment-wide password to fall back on.
+        cat.ducklake_credential = Credential(kind="ducklake_role", token="per-catalog-pw")
     return cat
 
 
@@ -50,19 +55,40 @@ async def test_iceberg_carries_no_credentials():
 @pytest.mark.asyncio
 async def test_ducklake_carries_both_credentials_and_its_location():
     """DuckLake has no credential vendor, so both are minted here."""
-    original = settings.ducklake_agent_user
-    settings.ducklake_agent_user = "ducklake_agent"
-    try:
-        entry = await build_catalog_attach(_catalog(KIND_DUCKLAKE))
-    finally:
-        settings.ducklake_agent_user = original
+    entry = await build_catalog_attach(_catalog(KIND_DUCKLAKE))
 
     assert entry["kind"] == KIND_DUCKLAKE
     assert entry["metadata_schema"] == "cat_raw"
     assert entry["data_path"].endswith("/raw/")
-    assert entry["meta"]["user"] == "ducklake_agent"
+    # This catalog's own login, not a deployment-wide one: an agent serving
+    # `raw` holds no credential that reaches any other catalog's metadata.
+    assert entry["meta"]["user"] == "dl_raw"
+    assert entry["meta"]["password"] == "per-catalog-pw"
     # Scoped per catalog: a workspace attaches every catalog to one connection.
     assert entry["storage"]["scope"] == entry["data_path"]
+
+
+@pytest.mark.asyncio
+async def test_two_catalogs_never_share_a_login():
+    """The point of the per-catalog role: one compromised agent reaches one
+    catalog's metadata, not every catalog's."""
+    raw = await build_catalog_attach(_catalog(KIND_DUCKLAKE, "raw"))
+    curated = await build_catalog_attach(_catalog(KIND_DUCKLAKE, "curated"))
+
+    assert raw["meta"]["user"] != curated["meta"]["user"]
+
+
+@pytest.mark.asyncio
+async def test_a_ducklake_catalog_with_no_credential_refuses_rather_than_falls_back():
+    """A fallback to a shared password would mean the isolation quietly did not
+    hold for exactly the catalogs that predate it."""
+    from api.services.catalog_backends import CatalogBackendUnavailable
+
+    cat = _catalog(KIND_DUCKLAKE)
+    cat.ducklake_credential = None
+
+    with pytest.raises(CatalogBackendUnavailable, match="reconcile-roles"):
+        await build_catalog_attach(cat)
 
 
 @pytest.mark.asyncio

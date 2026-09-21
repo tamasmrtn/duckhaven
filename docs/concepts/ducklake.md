@@ -150,6 +150,9 @@ Everything DuckHaven enforces, it enforces the same way for both kinds, because 
 - [Workspace roles and scoped grants](permissions.md) are checked at the API before a query is dispatched. DuckLake
   itself has no access control of its own, which does not matter here — DuckHaven was never delegating authorization
   to the catalog.
+- **Catalogs are isolated from each other in PostgreSQL, not just in SQL.** Each DuckLake catalog has its own database
+  login, granted on its own metadata schema and nothing else, so an agent serving one catalog holds no credential that
+  reaches another's metadata. See [Enable DuckLake](../deployment/ducklake.md#why-the-isolation-matters).
 - The [audit trail](../guides/session-audit.md), [lineage](lineage.md) and query history all work identically.
 - The SQL allowlist is unchanged, and additionally refuses any statement that reaches DuckLake's internal metadata
   tables or opens a connection to a foreign database.

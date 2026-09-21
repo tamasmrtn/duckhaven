@@ -98,8 +98,6 @@ def _api_env(db_url: str, setup_token_file: Path) -> dict[str, str]:
                 "DUCKLAKE_AGENT_HOST": os.getenv("DUCKLAKE_AGENT_HOST", "127.0.0.1"),
                 "DUCKLAKE_AGENT_PORT": os.getenv("DUCKLAKE_AGENT_PORT", "5432"),
                 "DUCKLAKE_AGENT_DATABASE": os.getenv("DUCKLAKE_AGENT_DATABASE", "ducklake"),
-                "DUCKLAKE_AGENT_USER": os.getenv("DUCKLAKE_AGENT_USER", "ducklake_agent"),
-                "DUCKLAKE_AGENT_PASSWORD": os.getenv("DUCKLAKE_AGENT_PASSWORD", ""),
             }
         )
     if endpoint := os.getenv("POLARIS_S3_ENDPOINT"):

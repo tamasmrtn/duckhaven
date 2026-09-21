@@ -27,13 +27,14 @@ from api.models.catalog import (
 from api.models.maintenance import MaintenanceRecommendation, TableHealthSample
 from api.models.storage_backend import StorageBackend
 from api.models.table_metadata import TableMetadata
+from api.models.user import Credential
 from api.models.workspace import Workspace
 from api.services.catalog_backends import (
     CatalogBackendError,
     backend_for,
     capabilities_for,
 )
-from api.services.catalog_backends.ducklake import metadata_schema_for
+from api.services.catalog_backends.ducklake import metadata_schema_for, new_role_password
 from api.services.polaris import PolarisClient
 from api.services.workspace import validate_catalog_slug
 
@@ -102,6 +103,11 @@ async def create_catalog(
     # Provision before flush so a failure leaves no row behind (D7); the unsaved
     # object carries everything the backend needs.
     catalog.storage_backend = backend
+    if kind == KIND_DUCKLAKE:
+        # The catalog's own PostgreSQL login, minted here because provisioning is
+        # what creates the role with it, and carried on the unsaved object: there
+        # is no row to point a credential at until the flush below.
+        catalog.pending_ducklake_password = new_role_password()
     try:
         await backend_for(catalog, polaris=polaris).provision(catalog)
     except CatalogBackendError as exc:
@@ -113,6 +119,17 @@ async def create_catalog(
 
     db.add(catalog)
     await db.flush()
+    if kind == KIND_DUCKLAKE:
+        # After the flush, so there is an id to point at. Written explicitly
+        # rather than through the relationship, which is view-only.
+        db.add(
+            Credential(
+                kind="ducklake_role",
+                token=catalog.pending_ducklake_password,
+                catalog_id=catalog.id,
+            )
+        )
+        await db.flush()
     return catalog
 
 

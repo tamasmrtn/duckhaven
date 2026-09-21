@@ -88,18 +88,22 @@ def ducklake_data_path(catalog: Catalog) -> str:
     return f"{base}/{catalog.slug}/"
 
 
-def build_ducklake_meta_block() -> dict[str, str | int]:
+def build_ducklake_meta_block(catalog: Catalog) -> dict[str, str | int]:
     """Postgres connection details an agent needs to reach a DuckLake catalog.
 
-    The restricted ``ducklake_agent`` role. Sent per dispatch, never written to
-    agent disk, so rotating it touches no agent config.
+    Host, port and database describe *where* and come from settings; the login
+    describes *who* and is this catalog's own restricted role, so an agent
+    serving one catalog holds no credential for another. Sent per dispatch,
+    never written to agent disk, so rotating it touches no agent config.
     """
+    from api.services.catalog_backends.ducklake import agent_role_for, ducklake_role_password
+
     return {
         "host": settings.ducklake_agent_host,
         "port": settings.ducklake_agent_port,
         "database": settings.ducklake_agent_database,
-        "user": settings.ducklake_agent_user,
-        "password": settings.ducklake_agent_password,
+        "user": agent_role_for(catalog.slug),
+        "password": ducklake_role_password(catalog),
     }
 
 
@@ -293,7 +297,7 @@ async def build_catalog_attach(catalog: Catalog) -> dict[str, object]:
         {
             "data_path": data_path,
             "metadata_schema": catalog.metadata_schema,
-            "meta": build_ducklake_meta_block(),
+            "meta": build_ducklake_meta_block(catalog),
             "options": build_ducklake_options(),
             "storage": await _storage_block(catalog, data_path),
         }

@@ -13,6 +13,7 @@ import pytest
 from api.config import settings
 from api.models.catalog import KIND_DUCKLAKE, Catalog
 from api.models.storage_backend import StorageBackend
+from api.models.user import Credential
 from api.services.session_credentials import (
     _duckdb_endpoint,
     build_ducklake_meta_block,
@@ -24,6 +25,7 @@ from api.services.session_credentials import (
 def _catalog(slug: str, backend: StorageBackend) -> Catalog:
     cat = Catalog(slug=slug, name=slug, kind=KIND_DUCKLAKE, metadata_schema=f"cat_{slug}")
     cat.storage_backend = backend
+    cat.ducklake_credential = Credential(kind="ducklake_role", token=f"pw-{slug}")
     return cat
 
 
@@ -44,19 +46,26 @@ def test_data_path_resolves_the_bundled_prefix_label():
     assert ducklake_data_path(_catalog("raw", backend)) == f"s3://{settings.s3_bucket}/lake/raw/"
 
 
-def test_meta_block_vends_the_restricted_role_not_the_owner():
-    """The agent gets the restricted role, never the control-plane login."""
-    original = settings.ducklake_agent_user
-    settings.ducklake_agent_user = "ducklake_agent"
-    try:
-        block = build_ducklake_meta_block()
-        assert block["user"] == "ducklake_agent"
-        assert block["database"] == settings.ducklake_agent_database
-        assert block["user"] != "duckhaven"
-        # Must not leak the owner connection string.
-        assert settings.ducklake_database_url not in str(block)
-    finally:
-        settings.ducklake_agent_user = original
+def test_meta_block_vends_this_catalogs_own_role_not_the_owner():
+    """The agent gets a login scoped to one catalog, never the control-plane one."""
+    block = build_ducklake_meta_block(_catalog("raw", _bundled()))
+
+    assert block["user"] == "dl_raw"
+    assert block["password"] == "pw-raw"
+    assert block["database"] == settings.ducklake_agent_database
+    assert block["user"] != "duckhaven"
+    # Must not leak the owner connection string.
+    assert settings.ducklake_database_url not in str(block)
+
+
+def test_each_catalog_vends_a_different_login():
+    """Structural isolation: the denylist is no longer the only thing between
+    an agent and another catalog's metadata."""
+    raw = build_ducklake_meta_block(_catalog("raw", _bundled()))
+    curated = build_ducklake_meta_block(_catalog("curated", _bundled()))
+
+    assert raw["user"] != curated["user"]
+    assert raw["password"] != curated["password"]
 
 
 def test_bundled_storage_block_is_scoped_to_the_catalog_prefix():

@@ -78,15 +78,15 @@ class Settings(BaseSettings):
     polaris_http_timeout_s: float = 10.0
     # Off by default; Iceberg + Polaris remains the default kind.
     ducklake_enabled: bool = False
-    # Owner credentials for DuckLake's metadata database; agents get a role
-    # confined to it (deploy/postgres-init/20-create-ducklake-db.sh).
+    # Owner credentials for DuckLake's metadata database. Agents never use this:
+    # each catalog gets its own login, created by the API, whose password lives
+    # in `credentials`. The owner therefore needs CREATEROLE (the bundled
+    # stack's POSTGRES_USER is a superuser, so this holds out of the box).
     ducklake_database_url: str = "postgresql+asyncpg://duckhaven:duckhaven@localhost:5432/ducklake"
     # Vended to an agent per dispatch, never written to its disk (I7).
     ducklake_agent_host: str = "postgres"
     ducklake_agent_port: int = 5432
     ducklake_agent_database: str = "ducklake"
-    ducklake_agent_user: str = "ducklake_agent"
-    ducklake_agent_password: str = ""
     # Inlining keeps small writes in the catalog database; file size drives
     # compaction.
     ducklake_data_inlining_row_limit: int = 10

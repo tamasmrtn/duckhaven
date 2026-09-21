@@ -20,6 +20,17 @@ if docker compose -f "$COMPOSE_FILE" exec -T postgres \
     databases="$databases ducklake"
 fi
 
+# A DuckLake catalog's metadata and its data are two systems that can be
+# restored to two different moments, which Iceberg's cannot. Say so here rather
+# than only in the runbook: this script is what an operator actually reads.
+case " $databases " in
+    *" ducklake "*)
+        echo "note: DuckLake is enabled. Snapshot object storage at the same point"
+        echo "      in time as this dump, and restore storage first. See"
+        echo "      docs/operations/runbook.md and scripts/ducklake-check.py."
+        ;;
+esac
+
 for db in $databases; do
     backup_file="${BACKUP_DIR}/${db}_${TIMESTAMP}.sql.gz"
     docker compose -f "$COMPOSE_FILE" exec -T postgres \

@@ -46,6 +46,31 @@ which leaves no trace anywhere else. Expect to discard most of what it surfaces.
     output rather than a job consuming it. Explicit user feedback would be the single biggest improvement here, and it
     does not exist yet.
 
+## `ducklake-check.py` — find drift between a DuckLake catalog and its storage
+
+Read-only. Lists, compares and prints; it deletes nothing, so it is safe against a live deployment.
+
+```sh
+DATABASE_URL=... DUCKLAKE_DATABASE_URL=... ./scripts/ducklake-check.py
+./scripts/ducklake-check.py --catalog raw     # just one
+```
+
+An Iceberg table cannot disagree with its own metadata, because the metadata sits beside the data in object storage.
+A [DuckLake](../concepts/ducklake.md) catalog keeps its metadata in PostgreSQL and its data in object storage, so a
+restore can put the two at different moments. This reports both directions, per catalog:
+
+- **missing** — the catalog references a file storage does not have. Queries on that table fail. This is the direction
+  that looks like corruption, and the script exits non-zero when it finds any, so it can gate a restore.
+- **orphaned** — an object nothing live references. Costs storage and nothing else. **Time travel produces these
+  legitimately**: a file only older snapshots reference is still needed. Treat the number as something to understand,
+  never as a delete list.
+
+It also counts rows with absolute paths, which do not move when a catalog's data path changes and are therefore the
+ones left pointing at an old location after a relocation.
+
+Run it after restoring a deployment that has DuckLake catalogs — see
+[Backups & disaster recovery](../operations/runbook.md#restoring-a-deployment-with-ducklake-catalogs).
+
 ## `wait-for-stack.sh` — wait for healthy containers
 
 Blocks until the `api` and `agent` containers report healthy. Used by the end-to-end CI job and handy locally after

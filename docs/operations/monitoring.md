@@ -139,8 +139,8 @@ the conventional `_total` suffix in the exposition (e.g. `duckhaven_queries_tota
 | `duckhaven_http_requests_total` | counter | `replica_id`, `method`, `route`, `status` | REST API requests, keyed by route template. |
 | `duckhaven_http_request_duration_seconds` | histogram | `replica_id`, `method`, `route` | REST API request latency. |
 | `duckhaven_polaris_requests_total` | counter | `replica_id`, `operation`, `status` | Requests to Apache Polaris (Iceberg REST + management). `status` is the HTTP code, or `error` for transport failures. |
-| `duckhaven_ducklake_queries_total` | counter | `replica_id`, `operation`, `status` | Metadata queries to a DuckLake catalog database (`operation`: `list_schemas`/`list_tables`/`get_table`/`get_table_columns`/`list_snapshots`). `status` is `ok`, `error`, or `empty` for a catalog no agent has attached yet — a normal state, kept separate so it does not read as a failure rate. The DuckLake counterpart to the Polaris rows above: a slow catalog browse shows up in one of the two depending on the kind. |
-| `duckhaven_ducklake_query_duration_seconds` | histogram | `replica_id`, `operation` | Latency of those queries. |
+| `duckhaven_ducklake_queries_total` | counter | (same) | Metadata queries to a DuckLake catalog database — the counterpart to the Polaris rows above, so a slow browse appears in one or the other by kind. `status` is `ok`, `error`, or `empty` (nothing has attached it yet). |
+| `duckhaven_ducklake_query_duration_seconds` | histogram | (same) | Latency of the above. |
 | `duckhaven_polaris_request_duration_seconds` | histogram | `replica_id`, `operation` | Latency of requests to Apache Polaris. |
 | `duckhaven_agent_up` | gauge | `replica_id`, `agent_id`, `agent_name` | `1` for each agent with a recent sample owned by this replica. |
 | `duckhaven_agent_cpu_percent` | gauge | (same) | Agent CPU utilization. |
@@ -154,8 +154,8 @@ the conventional `_total` suffix in the exposition (e.g. `duckhaven_queries_tota
 | `duckhaven_agent_provisions_total` | counter | `replica_id`, `provider`, `outcome` | Elastic provisioning attempts (`outcome`: `success`/`failure`). |
 | `duckhaven_agent_provisioning_seconds` | histogram | `replica_id`, `provider` | Time to provision an elastic agent. Successes only — a failure's duration measures how long the backend took to say no, which would distort the cold-start percentiles. |
 | `duckhaven_agents_reaped_total` | counter | `replica_id`, `reason` | Elastic agents torn down by the reaper (`reason`: `idle`/`max_lifetime`/`provisioning_timeout`/`orphan`/`dead_row`). |
-| `duckhaven_db_pool_size` | gauge | `replica_id`, `pool` | Configured connection-pool size. `pool` is `main` (the control-plane database) or `ducklake` (a DuckLake catalog's metadata database, present only once a DuckLake catalog has been browsed). |
-| `duckhaven_db_pool_checked_out` | gauge | (same) | Connections currently checked out. Sustained saturation of the `ducklake` pool shows up as slow catalog browsing rather than slow queries. |
+| `duckhaven_db_pool_size` | gauge | `replica_id`, `pool` | Configured connection-pool size. `pool` is `main` or `ducklake`, the latter only once a DuckLake catalog has been browsed. |
+| `duckhaven_db_pool_checked_out` | gauge | (same) | Connections checked out. Saturating the `ducklake` pool reads as slow browsing, not slow queries. |
 | `duckhaven_db_pool_overflow` | gauge | (same) | Connections beyond the configured pool size. |
 | `duckhaven_maintenance_last_scan_timestamp_seconds` | gauge | — | Unix time of the last completed maintenance scan cycle. |
 | `duckhaven_maintenance_open_recommendations` | gauge | `severity` | Open maintenance recommendations by severity. |
@@ -176,9 +176,8 @@ would hide:
   rejections mean the fleet is saturated — add an agent or raise its slot count. (Rejections
   also show up under `duckhaven_queries_total{status="failed"}`; this counter is the specific
   breakdown.)
-- **Catalog dependency health** — `duckhaven_polaris_requests_total` and
-  `duckhaven_ducklake_queries_total`, each with its `_duration_seconds` companion. Watch whichever
-  kinds are deployed; a deployment with both needs both.
+- **Catalog dependency health** — `duckhaven_polaris_requests_total` and `duckhaven_ducklake_queries_total`,
+  each with its `_duration_seconds` companion. Watch whichever kinds are deployed.
   surface the Iceberg catalog's error rate and latency. Alert on a non-zero rate of
   `status="error"` (or 5xx) here to catch catalog-layer degradation before it manifests as
   mysterious query failures.

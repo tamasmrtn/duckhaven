@@ -377,7 +377,7 @@ async def test_a_ducklake_bound_model_validates(db_session, fake_polaris, monkey
             for i, name in enumerate(names)
         ]
 
-    async def fake_rows(self, cat, sql, params):  # noqa: ANN001
+    async def fake_rows(self, cat, sql, params, **_):  # noqa: ANN001
         if "ducklake_column" in sql:
             table = _seen.get("table")
             names = (

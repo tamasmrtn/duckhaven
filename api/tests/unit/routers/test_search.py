@@ -276,7 +276,7 @@ async def test_search_sees_a_ducklake_catalogs_tables(
     )
     await db_session.commit()
 
-    async def fake_rows(self, catalog, sql, params):  # noqa: ANN001
+    async def fake_rows(self, catalog, sql, params, **_):  # noqa: ANN001
         if "ducklake_schema" in sql and "ducklake_table" not in sql:
             return [("sf10",)]
         if "ducklake_table" in sql:
@@ -307,7 +307,7 @@ async def test_search_isolates_one_catalogs_metadata_failure(
     )
     await db_session.commit()
 
-    async def boom(self, catalog, sql, params):  # noqa: ANN001
+    async def boom(self, catalog, sql, params, **_):  # noqa: ANN001
         from api.services.catalog_backends import CatalogBackendUnavailable
 
         raise CatalogBackendUnavailable("catalog database is down")

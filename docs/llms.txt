@@ -22,7 +22,7 @@
 - [What is DuckHaven?](https://tamasmrtn.github.io/duckhaven/concepts/what-is-duckhaven/): Overview of the product and who it is for.
 - [Architecture](https://tamasmrtn.github.io/duckhaven/concepts/architecture/): The control-plane / compute split and data flow — the defining idea behind DuckHaven.
 - [Workspaces](https://tamasmrtn.github.io/duckhaven/concepts/workspaces/): How workspaces isolate queries, permissions, and history.
-- [Catalogs](https://tamasmrtn.github.io/duckhaven/concepts/catalogs/): The shared Iceberg catalog governed by Apache Polaris.
+- [Catalogs](https://tamasmrtn.github.io/duckhaven/concepts/catalogs/): Catalogs of either kind, how they bind to workspaces, and what a kind decides.
 - [Tables & Iceberg](https://tamasmrtn.github.io/duckhaven/concepts/tables/): Iceberg-native tables, snapshots, and time travel.
 - [DuckLake](https://tamasmrtn.github.io/duckhaven/concepts/ducklake/): DuckLake is the second kind of catalog DuckHaven can create.
 - [Agents](https://tamasmrtn.github.io/duckhaven/concepts/agents/): DuckDB compute agents you pick per query.

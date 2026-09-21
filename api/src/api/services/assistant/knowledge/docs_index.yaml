@@ -45,7 +45,7 @@ pages:
 - path: concepts/catalogs.md
   title: Catalogs
   section: Concepts
-  summary: The shared Iceberg catalog governed by Apache Polaris.
+  summary: Catalogs of either kind, how they bind to workspaces, and what a kind decides.
 - path: concepts/tables.md
   title: Tables & Iceberg
   section: Concepts

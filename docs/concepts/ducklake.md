@@ -4,8 +4,10 @@
 metadata in Apache Polaris, a DuckLake catalog keeps it in SQL tables in a PostgreSQL database, and its data in plain
 Parquet in the same [object storage](storage-backends.md) everything else uses.
 
-It is **off by default** and **experimental**. Apache Iceberg + Polaris remains the default kind, and existing catalogs
-are untouched by this feature existing.
+Apache Iceberg + Polaris remains the **default kind** for a new catalog, and existing catalogs are untouched by this
+feature existing. DuckLake is available to choose rather than opt into: it matches the Iceberg path on every
+capability DuckHaven exposes, and exceeds it on maintenance, which is the one thing DuckDB can do for DuckLake and
+cannot do for Iceberg.
 
 ## The trade-off, stated plainly
 

@@ -1,10 +1,14 @@
 # Enable DuckLake
 
-[DuckLake](../concepts/ducklake.md) is a second [catalog](../concepts/catalogs.md) kind, off by default. Turning it on
-adds nothing to the stack: it uses the PostgreSQL and object storage DuckHaven already runs.
+[DuckLake](../concepts/ducklake.md) is a second [catalog](../concepts/catalogs.md) kind, available by default. It adds
+nothing to the stack: it uses the PostgreSQL and object storage DuckHaven already runs.
 
-Read [the trade-off](../concepts/ducklake.md#the-trade-off-stated-plainly) before enabling it. A DuckLake table can be
-read by DuckDB and nothing else.
+Read [the trade-off](../concepts/ducklake.md#the-trade-off-stated-plainly) before choosing it. A DuckLake table is read
+by DuckDB and nothing else, though the catalog can be
+[exported to Iceberg](../concepts/ducklake.md#exporting-to-iceberg) later.
+
+Everything on this page is about the PostgreSQL side, which a new install sets up for itself. An install that predates
+DuckLake needs one command — see [On an existing install](#on-an-existing-install).
 
 ## What it needs
 
@@ -17,17 +21,11 @@ read by DuckDB and nothing else.
 
 ## On a new install
 
-Nothing to do beyond setting the flag. `deploy/postgres-init/20-create-ducklake-db.sh` creates the database and the
-role on first boot.
+Nothing to do. `deploy/postgres-init/20-create-ducklake-db.sh` creates the database and locks down its default grants
+on first boot, and `DUCKLAKE_ENABLED` defaults to `true`. There is no password to choose: each catalog's login is
+created with a generated one when the catalog is provisioned.
 
-In `deploy/.env`:
-
-```bash
-DUCKLAKE_ENABLED=true
-```
-
-Then `docker compose up -d`. There is no password to choose: each catalog's login is created with a generated one when
-the catalog is provisioned.
+Set `DUCKLAKE_ENABLED=false` in `deploy/.env` to remove the option from the create dialog entirely.
 
 ## On an existing install
 
@@ -38,8 +36,7 @@ never sees the init script. Run the same work against the running stack:
 scripts/enable-ducklake.sh
 ```
 
-It is idempotent. Then set `DUCKLAKE_ENABLED=true` in `deploy/.env` and restart the API and Postgres so the new
-network membership takes effect:
+It is idempotent. Then restart the API and Postgres so the new network membership takes effect:
 
 ```bash
 docker compose up -d postgres api
@@ -100,11 +97,12 @@ credentials expiring within the hour; for ADLS Gen 2, a user-delegation SAS. For
 store's static key, scoped to the catalog's own prefix — weaker than what Polaris vends, and worth knowing if that
 matters to you.
 
-!!! note "How far each backend has been exercised"
+!!! warning "ADLS Gen 2 is implemented but unexercised"
     The bundled object store and external S3 are verified end to end — external S3 against a real STS `AssumeRole`,
-    including writing Parquet and purging it on drop. **ADLS Gen 2 is implemented but has not been run against a real
-    storage account**, because there is no local substitute (Azurite has no Entra, so no user-delegation SAS). Treat a
-    DuckLake catalog on ADLS as untested until you have tried it on a non-production account.
+    including writing Parquet and purging it on drop. **ADLS Gen 2 has never been run against a real storage
+    account**, because there is no local substitute: Azurite has no Entra, so no user-delegation SAS.
+    This did not change when DuckLake became available by default — treat a DuckLake catalog on ADLS as untested until
+    you have tried it on a non-production account of your own.
 
 ## Back up the catalog database
 

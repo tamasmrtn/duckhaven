@@ -89,9 +89,11 @@ def test_the_api_reaches_the_catalog_database_as_owner():
     assert "DUCKLAKE_AGENT_PASSWORD" not in env
 
 
-def test_ducklake_is_off_by_default():
-    """Iceberg + Polaris stays the default; enabling is an operator decision."""
-    assert DEV["services"]["api"]["environment"]["DUCKLAKE_ENABLED"] == "${DUCKLAKE_ENABLED:-false}"
+def test_ducklake_is_available_by_default_and_still_overridable():
+    """It reached parity with the Iceberg path, so it is offered rather than
+    opted into. Iceberg + Polaris remains the default *kind* for a new catalog,
+    which is a different thing, and an operator can still remove the option."""
+    assert DEV["services"]["api"]["environment"]["DUCKLAKE_ENABLED"] == "${DUCKLAKE_ENABLED:-true}"
 
 
 def test_postgres_service_needs_no_ducklake_secret():

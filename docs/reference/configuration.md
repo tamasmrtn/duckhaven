@@ -46,13 +46,13 @@ boot, so every variable below is optional.
 
 ### DuckLake
 
-Off by default; see [Enable DuckLake](../deployment/ducklake.md). `DUCKLAKE_ENABLED` is the only one an operator
-normally sets — the rest have working defaults for the bundled Compose stack. There is no agent password here: each
-catalog gets its own PostgreSQL login, created by the API and stored with the catalog.
+Available by default; see [Enable DuckLake](../deployment/ducklake.md). An operator normally sets none of these — they
+have working defaults for the bundled Compose stack. There is no agent password here: each catalog gets its own
+PostgreSQL login, created by the API and stored with the catalog.
 
 | Variable | Default | Description |
 |---|---|---|
-| `DUCKLAKE_ENABLED` | `false` | Whether DuckLake catalogs can be created. Existing Iceberg catalogs are unaffected either way. |
+| `DUCKLAKE_ENABLED` | `true` | Whether DuckLake can be chosen when creating a catalog. Set `false` to remove it from the dialog. Iceberg + Polaris remains the default *kind* either way, and existing catalogs are unaffected. |
 | `DUCKLAKE_DATABASE_URL` | `postgresql+asyncpg://duckhaven:…@postgres:5432/ducklake` | How the **API** reaches the catalog database, as the owner. Used to create each catalog's metadata schema, grant on it, and read metadata back. Never given to agents. Its connection pool follows the same `DB_POOL_*` settings as the control-plane database, and it honours `DB_AUTH_MODE`. |
 | `DUCKLAKE_AGENT_HOST` / `DUCKLAKE_AGENT_PORT` | `postgres` / `5432` | How **agents** reach the catalog database. Set the host to an address reachable from the agent host when agents run elsewhere. |
 | `DUCKLAKE_AGENT_DATABASE` | `ducklake` | Database holding the `ducklake_*` metadata schemas. |

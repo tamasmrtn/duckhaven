@@ -83,11 +83,14 @@ trail — with data sovereignty, network privacy, and no SaaS lock-in.
   preview sample rows without writing a query.
 - **Iceberg-native tables** — Every table is Apache Iceberg with Catalog Commits
   ON, governed by Polaris.
-- **DuckLake catalogs (opt-in, experimental)** — A second catalog kind that keeps
-  metadata in Postgres and data in Parquet, needing no catalog service at all. A
-  DuckLake-only deployment drops Polaris entirely. The trade is portability:
-  DuckLake tables are readable by DuckDB only, where Iceberg tables are readable
-  by Spark, Trino, Flink and PyIceberg — so Iceberg stays the default. See
+- **DuckLake catalogs** — A second catalog kind that keeps metadata in Postgres
+  and data in Parquet, needing no catalog service at all. A DuckLake-only
+  deployment drops Polaris entirely. It also runs its own maintenance, which
+  Iceberg cannot: DuckDB compacts, expires and cleans up a DuckLake catalog
+  where its Iceberg extension can only advise. The trade is portability —
+  DuckLake tables are read by DuckDB only, where Iceberg tables are read by
+  Spark, Trino, Flink and PyIceberg — so Iceberg stays the default kind, and a
+  DuckLake catalog can be exported to Iceberg if that changes. See
   [docs/concepts/ducklake.md](docs/concepts/ducklake.md).
 - **Snapshot history & time travel** — Browse a table's Iceberg snapshots and run
   "query at this snapshot" against any point in its history.

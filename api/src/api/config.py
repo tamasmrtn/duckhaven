@@ -76,8 +76,10 @@ class Settings(BaseSettings):
     # data access). Defaults to the bootstrap root principal.
     polaris_principal: str = "root"
     polaris_http_timeout_s: float = 10.0
-    # Off by default; Iceberg + Polaris remains the default kind.
-    ducklake_enabled: bool = False
+    # On: DuckLake reached parity with the Iceberg path and exceeds it on
+    # maintenance. Iceberg + Polaris remains the *default kind* for a new
+    # catalog, which is a separate thing from whether DuckLake can be chosen.
+    ducklake_enabled: bool = True
     # Owner credentials for DuckLake's metadata database. Agents never use this:
     # each catalog gets its own login, created by the API, whose password lives
     # in `credentials`. The owner therefore needs CREATEROLE (the bundled

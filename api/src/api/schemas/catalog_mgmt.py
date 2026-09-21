@@ -43,6 +43,8 @@ class CatalogCapabilitiesOut(BaseModel):
     external_engine_readable: bool
     # True for DuckLake only: DuckDB can run its maintenance verbs.
     supports_maintenance_apply: bool = False
+    # True for DuckLake only: its data can be copied into an Iceberg catalog.
+    supports_iceberg_export: bool = False
     supported_storage_kinds: list[str]
 
 

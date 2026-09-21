@@ -122,6 +122,10 @@ class CatalogCapabilities:
     # `iceberg` extension implements none of them, so an Iceberg table's
     # recommendation can only ever name an external engine.
     supports_maintenance_apply: bool = False
+    # Whether this kind's data can be copied into an Iceberg catalog other
+    # engines can open. True for DuckLake, which is what turns its
+    # DuckDB-only trade-off from a one-way door into a door.
+    supports_iceberg_export: bool = False
     supported_storage_kinds: tuple[str, ...] = ("object_store", "s3", "adls_gen2")
 
 

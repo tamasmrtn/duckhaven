@@ -188,14 +188,17 @@ export function CreateCatalogDialog({
                     <span className="mt-0.5 block text-2xs text-text-tertiary">
                       {k.unavailable_reason ?? KIND_BLURB[k.kind]}
                     </span>
-                    {/* The trade-off that matters most and cannot be undone
-                        later: say it at the moment of choosing, not only in
-                        the docs. */}
+                    {/* The trade-off that matters most: say it at the moment
+                        of choosing, not only in the docs. It is recoverable
+                        rather than permanent, and saying which is the
+                        difference between a warning and a scare. */}
                     {k.available &&
                       !k.capabilities.external_engine_readable && (
                         <span className="mt-1 block text-2xs text-[var(--text-warning,#b45309)]">
                           Readable by DuckDB only — other engines cannot open
                           these tables.
+                          {k.capabilities.supports_iceberg_export &&
+                            " You can export the catalog to Iceberg later, which copies the data and its current state but not its snapshot history."}
                         </span>
                       )}
                   </button>

@@ -26,10 +26,12 @@ from api.models.catalog import (
     Catalog,
     WorkspaceCatalog,
 )
+from api.models.catalog_export import CatalogExport
 from api.models.catalog_grant import CatalogGrant
 from api.models.catalog_migration import CatalogMigration
 from api.models.storage_backend import StorageBackend
 from api.models.user import User
+from api.schemas.catalog_export import CatalogExportOut, ExportStartRequest
 from api.schemas.catalog_mgmt import (
     CatalogAttachRequest,
     CatalogCapabilitiesOut,
@@ -47,6 +49,7 @@ from api.schemas.catalog_migration import (
 from api.schemas.page import Page
 from api.services import catalog as catalog_service
 from api.services.catalog_backends import CatalogBackendError, capabilities_for
+from api.services.export import ACTIVE_STATUSES as EXPORT_ACTIVE
 from api.services.migration import service as migration_service
 from api.services.paging import paginate
 from api.services.permissions import Permission
@@ -187,6 +190,113 @@ async def rotate_ducklake_role(
     return {"rotated": True, "open_sessions": int(open_sessions or 0)}
 
 
+@router.post(
+    "/catalogs/{catalog_id}/exports",
+    response_model=CatalogExportOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def start_export(
+    catalog_id: uuid.UUID,
+    body: ExportStartRequest,
+    workspace: str = Query(..., description="Workspace to attach the new catalog to"),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> CatalogExportOut:
+    """Copy this DuckLake catalog into a new Iceberg one.
+
+    Iceberg is readable by Spark, Trino, Flink and PyIceberg; DuckLake is not.
+    This is the way back out of that trade-off, and it copies the catalog's
+    **current state** rather than its snapshot history — a deep copy of the
+    latest snapshot is what `COPY FROM DATABASE` does.
+
+    Requires the catalog's creator or `catalogs:admin`, plus `owner` on the
+    target workspace, because it creates and attaches a catalog there.
+    """
+    catalog = await _catalog_for_admin(db, user, catalog_id)
+    if not capabilities_for(catalog.kind).supports_iceberg_export:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"A {catalog.kind} catalog cannot be exported to Iceberg.",
+        )
+    ws = await get_workspace(db, workspace)
+    await assert_workspace_member(db, ws.id, user.id, min_role="owner")
+
+    existing = await db.scalar(
+        select(CatalogExport.id).where(
+            CatalogExport.source_catalog_id == catalog.id,
+            CatalogExport.status.in_(EXPORT_ACTIVE),
+        )
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An export of this catalog is already running.",
+        )
+
+    export = CatalogExport(
+        source_catalog_id=catalog.id,
+        target_name=body.target_name,
+        target_storage_backend_id=body.target_storage_backend_id,
+        workspace_id=ws.id,
+        created_by=user.id,
+    )
+    db.add(export)
+    await db.commit()
+    await db.refresh(export)
+    return CatalogExportOut.model_validate(export, from_attributes=True)
+
+
+@router.get("/catalogs/{catalog_id}/exports", response_model=Page[CatalogExportOut])
+async def list_exports(
+    catalog_id: uuid.UUID,
+    limit: int = Query(default=100, ge=1, le=1000),
+    cursor: str | None = Query(default=None),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Page[CatalogExportOut]:
+    """Export history for a catalog, newest first."""
+    await _catalog_for_admin(db, user, catalog_id)
+    rows, next_cursor, has_more = await paginate(
+        db,
+        select(CatalogExport).where(CatalogExport.source_catalog_id == catalog_id),
+        sort=[CatalogExport.created_at.desc(), CatalogExport.id.desc()],
+        limit=limit,
+        cursor=cursor,
+    )
+    return Page[CatalogExportOut](
+        items=[CatalogExportOut.model_validate(r[0], from_attributes=True) for r in rows],
+        cursor=next_cursor,
+        has_more=has_more,
+    )
+
+
+@router.post("/catalogs/{catalog_id}/exports/{export_id}/cancel", response_model=CatalogExportOut)
+async def cancel_export(
+    catalog_id: uuid.UUID,
+    export_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> CatalogExportOut:
+    """Ask a running export to stop.
+
+    Before the copy is dispatched this prevents it entirely. Once dispatched it
+    cancels the query, which leaves a partially-populated target behind — the
+    response says so rather than tidying it away.
+    """
+    await _catalog_for_admin(db, user, catalog_id)
+    export = await db.get(CatalogExport, export_id)
+    if export is None or export.source_catalog_id != catalog_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    if export.status not in EXPORT_ACTIVE:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=f"Export is already {export.status}."
+        )
+    export.cancel_requested = True
+    await db.commit()
+    await db.refresh(export)
+    return CatalogExportOut.model_validate(export, from_attributes=True)
+
+
 def _migration_out(migration, *, include_tables: bool = False) -> CatalogMigrationOut:
     # Validated via the scalar-only schema first: the full schema declares
     # ``tables``, and pydantic's from_attributes mode reads every declared field,
@@ -223,6 +333,7 @@ def _capabilities_out(kind: str) -> CatalogCapabilitiesOut | None:
         supports_storage_migration=caps.supports_storage_migration,
         external_engine_readable=caps.external_engine_readable,
         supports_maintenance_apply=caps.supports_maintenance_apply,
+        supports_iceberg_export=caps.supports_iceberg_export,
         supported_storage_kinds=list(caps.supported_storage_kinds),
     )
 

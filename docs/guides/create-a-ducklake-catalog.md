@@ -7,8 +7,11 @@ A walkthrough of creating, using and dropping a [DuckLake](../concepts/ducklake.
 ## Before you start
 
 A DuckLake catalog's tables are readable by DuckDB and nothing else. If anything outside DuckHaven needs to read this
-data — Spark, Trino, a PyIceberg script — create an Iceberg catalog instead. The choice cannot be changed later without
-copying the data.
+data — Spark, Trino, a PyIceberg script — create an Iceberg catalog instead.
+
+That is not irreversible: a DuckLake catalog can be [exported to Iceberg](../concepts/ducklake.md#exporting-to-iceberg)
+later, which copies the data and its current state but not its snapshot history. Prefer Iceberg from the start if you
+already know something else will read it.
 
 ## Create it
 

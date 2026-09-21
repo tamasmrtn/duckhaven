@@ -56,6 +56,8 @@ DUCKLAKE_CAPABILITIES = CatalogCapabilities(
     external_engine_readable=False,
     # The one axis where DuckLake does more than Iceberg rather than less.
     supports_maintenance_apply=True,
+    # The way back out of the DuckDB-only trade-off.
+    supports_iceberg_export=True,
     supported_storage_kinds=("object_store", "s3", "adls_gen2"),
 )
 

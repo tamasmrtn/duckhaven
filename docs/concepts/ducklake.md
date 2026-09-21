@@ -13,7 +13,7 @@ This is the decision that matters, and it cannot be reversed later without copyi
 
 | | Apache Iceberg + Polaris | DuckLake |
 |---|---|---|
-| Read by other engines | Spark, Trino, Flink, PyIceberg | **DuckDB only** |
+| Read by other engines | Spark, Trino, Flink, PyIceberg | **DuckDB only** — but [exportable](#exporting-to-iceberg) |
 | Catalog metadata | Polaris (a service) | SQL tables in Postgres |
 | Data files | Parquet | Parquet |
 | Snapshots | Per table | **Per catalog** |
@@ -118,9 +118,32 @@ Within DuckHaven specifically:
 - **`information_schema` does not work** against an attached DuckLake catalog, exactly as it does not for an attached
   Iceberg catalog. Use `DESCRIBE`.
 
+## Exporting to Iceberg
+
+The DuckDB-only limitation is real, and it is not permanent. **Catalog → Export to Iceberg** creates a new
+[Iceberg catalog](catalogs.md#catalog-kinds) and copies the whole DuckLake catalog into it, in one
+`COPY FROM DATABASE` statement. The result is an ordinary Iceberg catalog: Spark, Trino, Flink and PyIceberg can open
+it, and DuckHaven treats it like any other.
+
+You choose the new catalog's name and storage backend; the backend is independent of the source's, as the two axes
+always are. It runs in the background and appears in [History](../operations/monitoring.md#query-history-and-audit-log)
+under your name, because it is a query like any other.
+
+!!! warning "The copy carries state, not history"
+    It copies the catalog's **current** contents. Snapshots, and therefore [time travel](tables.md) into the past, do
+    not cross — the exported tables start with a single snapshot of the data as it was when the export ran. The
+    confirmation says so before you start.
+
+What this changes is the shape of the decision, not the trade-off itself. Choosing DuckLake still means that *today*,
+in place, only DuckDB reads it. It no longer means choosing once and forever.
+
+!!! note "One direction only"
+    Iceberg → DuckLake is a different problem and is not supported; see below.
+
 ## Converting an existing Iceberg catalog
 
-**Not supported.** There is no way to turn an existing Iceberg catalog into a DuckLake one, in DuckHaven or outside it.
+**Not supported**, in this direction. There is no way to turn an existing Iceberg catalog into a DuckLake one, in
+DuckHaven or outside it. (The reverse — DuckLake to Iceberg — is [supported](#exporting-to-iceberg).)
 
 DuckDB's `iceberg_to_ducklake()` is designed for exactly this — a metadata-only copy that carries snapshot history
 across without moving a byte of Parquet — but at the versions DuckHaven ships (DuckLake 1.0 on DuckDB 1.5.5) it

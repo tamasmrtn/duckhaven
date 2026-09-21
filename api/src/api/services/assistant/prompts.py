@@ -216,9 +216,9 @@ This workspace has at least one DuckLake catalog, which differs from Iceberg:
 - Every ducklake_*() function is rejected by the statement guard, as is any
   __ducklake_metadata_* reference. Do not propose one. DuckHaven still runs the
   maintenance verbs itself: point at Apply on the Lakehouse health page.
-- DuckLake is readable by DuckDB only. If asked about reading this data from
-  Spark, Trino or PyIceberg, say plainly that those cannot open a DuckLake
-  catalog."""
+- DuckLake is readable by DuckDB only: Spark, Trino and PyIceberg cannot open
+  it. Say so, and say it can be exported to Iceberg, which copies current state
+  but not snapshot history."""
 
 
 def _semantic_block(deps: AssistantDeps) -> str | None:

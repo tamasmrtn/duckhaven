@@ -40,6 +40,8 @@ POLARIS_CAPABILITIES = CatalogCapabilities(
     # DuckDB's iceberg extension has no maintenance verbs, so DuckHaven can only
     # advise here however much it would like to act.
     supports_maintenance_apply=False,
+    # Already Iceberg; there is nothing to export it to.
+    supports_iceberg_export=False,
     supported_storage_kinds=("object_store", "s3", "adls_gen2"),
 )
 

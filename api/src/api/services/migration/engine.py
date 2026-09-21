@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.models.catalog import Catalog
+from api.models.catalog import KIND_DUCKLAKE, Catalog
 from api.models.catalog_migration import (
     CatalogMigration,
     CatalogMigrationEvent,
@@ -42,6 +42,7 @@ from api.services.migration import (
     TABLE_PENDING,
     TABLE_REGISTERED,
     TABLE_VERIFIED,
+    ducklake,
     relocate,
 )
 from api.services.migration.storage_io import StorageContext
@@ -94,21 +95,35 @@ async def process_migration(
     db: AsyncSession, polaris: PolarisClient, migration: CatalogMigration
 ) -> None:
     """Advance one migration to a terminal state, or fail it cleanly."""
+    catalog = await db.get(Catalog, migration.catalog_id)
+    is_ducklake = catalog is not None and catalog.kind == KIND_DUCKLAKE
     try:
         if migration.cancel_requested and migration.status != STATUS_CUTOVER:
             await _cancel(db, polaris, migration)
             return
         if migration.status == STATUS_PENDING:
-            await _provision(db, polaris, migration)
+            if is_ducklake:
+                await ducklake.provision(db, migration, log_event)
+            else:
+                await _provision(db, polaris, migration)
         if migration.status == STATUS_COPYING:
             if migration.cancel_requested:
                 await _cancel(db, polaris, migration)
                 return
-            await _copy(db, polaris, migration)
+            if is_ducklake:
+                await ducklake.copy(db, migration, log_event)
+            else:
+                await _copy(db, polaris, migration)
         if migration.status == STATUS_VERIFYING:
-            await _verify(db, polaris, migration)
+            if is_ducklake:
+                await ducklake.verify(db, migration, log_event)
+            else:
+                await _verify(db, polaris, migration)
         if migration.status == STATUS_CUTOVER:
-            await _cutover(db, polaris, migration)
+            if is_ducklake:
+                await ducklake.cutover(db, migration, log_event)
+            else:
+                await _cutover(db, polaris, migration)
     except Exception as exc:  # noqa: BLE001 - any failure must leave a recoverable state
         await _fail(db, polaris, migration, exc)
 
@@ -340,11 +355,27 @@ async def _cutover(db: AsyncSession, polaris: PolarisClient, migration: CatalogM
     await db.commit()
 
 
-async def _cancel(db: AsyncSession, polaris: PolarisClient, migration: CatalogMigration) -> None:
+async def _teardown(db: AsyncSession, polaris: PolarisClient, migration: CatalogMigration) -> None:
+    """Remove whatever the abandoned attempt created at the target.
+
+    Dispatches on kind: Iceberg drops the shadow Polaris catalog, DuckLake
+    deletes the prefix it was copying into. DuckLake also re-grants the writes
+    it revoked, or the catalog stays read-only in PostgreSQL after a failure and
+    looks corrupt to whoever writes next.
+    """
+    catalog = await db.get(Catalog, migration.catalog_id)
+    if catalog is not None and catalog.kind == KIND_DUCKLAKE:
+        await ducklake.teardown(db, migration, which="target")
+        await ducklake.restore_writes(db, migration)
+        return
     await _teardown_shadow(polaris, migration.shadow_polaris_name)
+
+
+async def _cancel(db: AsyncSession, polaris: PolarisClient, migration: CatalogMigration) -> None:
+    await _teardown(db, polaris, migration)
     migration.status = STATUS_CANCELLED
     migration.finished_at = datetime.now(tz=UTC)
-    await log_event(db, migration.id, "warning", "Migration cancelled; shadow catalog removed")
+    await log_event(db, migration.id, "warning", "Migration cancelled; target data removed")
     await db.commit()
 
 
@@ -358,7 +389,7 @@ async def _fail(
     migration = await db.get(CatalogMigration, migration_id)
     if migration is None or migration.status in (STATUS_COMPLETED, STATUS_CANCELLED):
         return
-    await _teardown_shadow(polaris, migration.shadow_polaris_name)
+    await _teardown(db, polaris, migration)
     migration.status = STATUS_FAILED
     migration.error = " ".join(str(exc).split())[:1000]
     migration.finished_at = datetime.now(tz=UTC)
@@ -377,7 +408,10 @@ async def cleanup_retained(
             await db.execute(
                 sa.select(CatalogMigration).where(
                     CatalogMigration.status == STATUS_COMPLETED,
-                    CatalogMigration.source_polaris_name.isnot(None),
+                    sa.or_(
+                        CatalogMigration.source_polaris_name.isnot(None),
+                        CatalogMigration.source_data_path.isnot(None),
+                    ),
                     CatalogMigration.cutover_at.isnot(None),
                     CatalogMigration.cutover_at < older_than,
                 )
@@ -387,14 +421,26 @@ async def cleanup_retained(
         .all()
     )
     for migration in rows:
-        await _teardown_shadow(polaris, migration.source_polaris_name)
-        await log_event(
-            db,
-            migration.id,
-            "info",
-            f"Retention elapsed; dropped old catalog '{migration.source_polaris_name}'",
-        )
-        migration.source_polaris_name = None
+        if migration.source_data_path:
+            # The stored path, never a recomputed one: after cutover the catalog
+            # resolves to the *target*, so recomputing here would purge live data.
+            await ducklake.teardown(db, migration, which="source")
+            await log_event(
+                db,
+                migration.id,
+                "info",
+                f"Retention elapsed; deleted old data at '{migration.source_data_path}'",
+            )
+            migration.source_data_path = None
+        else:
+            await _teardown_shadow(polaris, migration.source_polaris_name)
+            await log_event(
+                db,
+                migration.id,
+                "info",
+                f"Retention elapsed; dropped old catalog '{migration.source_polaris_name}'",
+            )
+            migration.source_polaris_name = None
         await db.commit()
     return len(rows)
 

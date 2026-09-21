@@ -103,6 +103,19 @@ def test_ducklake_catalog_resolves_to_the_ducklake_backend():
 
 def test_ducklake_capabilities_state_the_trade_off():
     caps = capabilities_for(KIND_DUCKLAKE)
-    # No other engine can open these tables.
+    # The one genuine trade-off: no other engine can open these tables.
     assert caps.external_engine_readable is False
-    assert caps.supports_storage_migration is False
+    # Everything else it does at least as well. Relocating is a prefix copy
+    # plus one row; maintenance it can actually run.
+    assert caps.supports_storage_migration is True
+    assert caps.supports_maintenance_apply is True
+
+
+def test_iceberg_keeps_every_capability_it_had():
+    """The whole exercise is additive: nothing DuckLake gained was taken from
+    the default kind."""
+    caps = capabilities_for(KIND_ICEBERG_POLARIS)
+    assert caps.external_engine_readable is True
+    assert caps.supports_storage_migration is True
+    # The exception, and it is the extension's doing rather than a choice.
+    assert caps.supports_maintenance_apply is False

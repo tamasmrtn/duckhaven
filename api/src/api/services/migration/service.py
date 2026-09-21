@@ -14,13 +14,14 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.models.catalog import Catalog, WorkspaceCatalog
+from api.models.catalog import KIND_DUCKLAKE, Catalog, WorkspaceCatalog
 from api.models.catalog_migration import CatalogMigration, CatalogMigrationEvent
 from api.models.storage_backend import StorageBackend
 from api.services.catalog_backends import capabilities_for
 from api.services.migration import ACTIVE_STATUSES, STATUS_CUTOVER, TERMINAL_STATUSES
+from api.services.migration import ducklake as ducklake_migration
 from api.services.polaris import PolarisClient
-from api.services.storage_health import validate_backend
+from api.services.storage_health import validate_backend_for
 
 
 async def active_migration(db: AsyncSession, catalog_id: uuid.UUID) -> CatalogMigration | None:
@@ -59,9 +60,6 @@ async def start_migration(
 ) -> CatalogMigration:
     """Validate and create a migration record (the runner picks it up). Refuses a
     no-op target, a second concurrent migration, or an unreachable target."""
-    # Migration rewrites Iceberg metadata trees; DuckLake has relative paths and
-    # row-based metadata, so the algorithm does not apply. Enforced here, not
-    # only in the UI's source picker.
     if not capabilities_for(catalog.kind).supports_storage_migration:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -70,6 +68,22 @@ async def start_migration(
                 "Copy the data into a new catalog on the target backend instead."
             ),
         )
+    if catalog.kind == KIND_DUCKLAKE:
+        # Absolute paths do not move with the catalog's data path -- that is what
+        # absolute means -- so they would be silently left behind. Refused here
+        # rather than rewritten, because such a path can name a bucket the target
+        # credentials cannot reach, and a guess is not a migration.
+        stranded = await ducklake_migration.absolute_path_count(catalog)
+        if stranded:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"{stranded} data file(s) in '{catalog.slug}' are recorded with an "
+                    "absolute path and will not move with the catalog. They were "
+                    "registered in place rather than written by DuckHaven. Rewrite or "
+                    "drop them before migrating."
+                ),
+            )
     if target_backend.id == catalog.storage_backend_id:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -80,7 +94,8 @@ async def start_migration(
             status_code=status.HTTP_409_CONFLICT,
             detail="A migration is already in progress for this catalog.",
         )
-    health = await validate_backend(polaris, target_backend)
+    # A DuckLake-only deployment has no Polaris to probe through.
+    health = await validate_backend_for(db, polaris, target_backend)
     if not health.valid:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

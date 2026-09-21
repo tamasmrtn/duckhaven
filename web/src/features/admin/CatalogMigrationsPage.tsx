@@ -54,13 +54,11 @@ function isActive(status: MigrationStatus): boolean {
 
 export function CatalogMigrationsPage() {
   const { data: allCatalogs, isLoading } = useAllCatalogs();
-  // Storage migration is an Iceberg-specific engine that rewrites absolute URIs
-  // in metadata trees. DuckLake would need a different procedure that does not
-  // exist yet, so its catalogs are not offered rather than failing on submit.
+  // Kept capability-driven although both kinds now migrate: a future kind that
+  // cannot should be absent from the picker rather than failing on submit.
   const catalogs = allCatalogs?.filter(
     (c) => c.capabilities?.supports_storage_migration !== false,
   );
-  const hiddenCount = (allCatalogs?.length ?? 0) - (catalogs?.length ?? 0);
   const [dialogCatalog, setDialogCatalog] = useState<Catalog | null>(null);
   const [selectedCatalogId, setSelectedCatalogId] = useState<string | null>(
     null,
@@ -89,18 +87,6 @@ export function CatalogMigrationsPage() {
               <tr>
                 <td className="px-4 py-3" colSpan={3}>
                   <Skeleton className="h-5 w-40" />
-                </td>
-              </tr>
-            )}
-            {hiddenCount > 0 && (
-              <tr>
-                <td
-                  className="px-4 py-2 text-2xs text-text-tertiary"
-                  colSpan={3}
-                >
-                  {hiddenCount} DuckLake catalog
-                  {hiddenCount === 1 ? "" : "s"} not shown: storage migration is
-                  an Iceberg-specific procedure.
                 </td>
               </tr>
             )}

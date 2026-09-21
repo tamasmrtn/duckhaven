@@ -18,7 +18,7 @@ This is the decision that matters, and it cannot be reversed later without copyi
 | Data files | Parquet | Parquet |
 | Snapshots | Per table | **Per catalog** |
 | Maintenance | Advisory only — DuckDB cannot run it | **DuckHaven runs it for you** |
-| Storage migration | Supported | Not supported |
+| Storage migration | Supported | Supported |
 | Services required | Polaris + its database | None beyond Postgres |
 
 The first row is the one to weigh. An Iceberg table is portable: any engine that speaks the format can open it, which
@@ -112,9 +112,9 @@ From the [specification's own list](https://ducklake.select/docs/stable/duckdb/u
 
 Within DuckHaven specifically:
 
-- **No storage migration.** Moving a catalog between backends rewrites the absolute file URIs Iceberg embeds in its
-  metadata. DuckLake records relative paths, so it needs a different (simpler) procedure that does not exist yet.
-  DuckLake catalogs are not offered in Admin → Migrations.
+- **Storage migration refuses files registered in place.** `ducklake_add_data_files` records an absolute path, which
+  does not move when the catalog's data path changes. DuckHaven refuses rather than guessing — see
+  [Migrate a catalog's storage](../guides/migrate-catalog-storage.md). A catalog DuckHaven wrote itself has none.
 - **`information_schema` does not work** against an attached DuckLake catalog, exactly as it does not for an attached
   Iceberg catalog. Use `DESCRIBE`.
 

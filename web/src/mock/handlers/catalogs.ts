@@ -58,7 +58,7 @@ export const catalogHandlers = [
         unavailable_reason:
           "Not enabled on this deployment (set DUCKLAKE_ENABLED=true).",
         capabilities: {
-          supports_storage_migration: false,
+          supports_storage_migration: true,
           external_engine_readable: false,
           supports_maintenance_apply: true,
           supported_storage_kinds: ["object_store", "s3", "adls_gen2"],

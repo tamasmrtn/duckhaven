@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user, get_db, get_polaris_client
 from api.models.agent import Agent
-from api.models.catalog import Catalog
+from api.models.catalog import KIND_DUCKLAKE, Catalog
 from api.models.table_metadata import TableMetadata
 from api.models.user import User
 from api.models.workspace import Workspace
@@ -47,6 +47,7 @@ from api.services.catalog_backends import (
 )
 from api.services.lineage import graph as lineage_graph
 from api.services.lineage import ingest as lineage_ingest
+from api.services.migration.service import active_migration
 from api.services.polaris import PolarisClient
 from api.services.semantic import impact as semantic_impact
 from api.services.workspace import (
@@ -290,7 +291,15 @@ async def _ensure_catalog(db: AsyncSession, polaris: PolarisClient, catalog: Cat
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Catalog points to a missing storage backend",
         )
-    await _backend(catalog, polaris).ensure(catalog)
+    backend = _backend(catalog, polaris)
+    if catalog.kind == KIND_DUCKLAKE:
+        # A storage migration revokes this catalog's write access for the
+        # duration of the copy. Self-healing on browse would re-grant it, which
+        # is how someone opening the catalog tree would quietly undo the freeze.
+        frozen = await active_migration(db, catalog.id) is not None
+        await backend.ensure(catalog, grant_dml=not frozen)
+        return
+    await backend.ensure(catalog)
 
 
 # --- Handlers (registered against the catalog-scoped router below) ---

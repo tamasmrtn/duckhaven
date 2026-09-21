@@ -104,8 +104,12 @@ def test_missing_relation_is_recognised_but_other_failures_are_not():
 
 def test_capabilities_are_stated_honestly():
     caps = DUCKLAKE_CAPABILITIES
+    # The trade-off a user makes when choosing DuckLake, and the one thing it
+    # does that Iceberg cannot.
     assert caps.external_engine_readable is False
-    assert caps.supports_storage_migration is False
+    assert caps.supports_maintenance_apply is True
+    # Relocating is a prefix copy plus one row, not a metadata-tree rewrite.
+    assert caps.supports_storage_migration is True
 
 
 def test_every_offered_column_type_is_representable_in_ducklake():

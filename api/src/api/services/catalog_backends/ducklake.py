@@ -49,9 +49,9 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 logger = logging.getLogger(__name__)
 
 DUCKLAKE_CAPABILITIES = CatalogCapabilities(
-    # DuckLake's relative paths need a different migration implementation than
-    # Iceberg's metadata-tree rewrite; not built yet.
-    supports_storage_migration=False,
+    # Relocating a DuckLake catalog is a prefix copy plus one row, because its
+    # file paths are relative to a data path recorded in the catalog itself.
+    supports_storage_migration=True,
     # DuckDB-only today: no other engine can open a DuckLake table.
     external_engine_readable=False,
     # The one axis where DuckLake does more than Iceberg rather than less.
@@ -199,12 +199,18 @@ class DuckLakeCatalogBackend:
 
     # --- Lifecycle ----------------------------------------------------------
 
-    async def ensure(self, catalog: Catalog) -> None:
-        """Create the metadata schema and grant the agent role on it.
+    async def ensure(self, catalog: Catalog, *, grant_dml: bool = True) -> None:
+        """Create the metadata schema, role and grants for this catalog.
 
         Idempotent, called on browse. The ``ducklake_*`` tables are not created
         here: the extension builds them on first ATTACH, and hand-writing the
         spec's tables would break on the next spec bump.
+
+        ``grant_dml=False`` leaves write access alone. A storage migration
+        revokes it for the duration of the copy, and this runs on every browse —
+        so without the opt-out, opening the catalog tree mid-migration would
+        silently re-grant the writes the freeze exists to prevent, seconds after
+        it revoked them.
         """
         if not settings.ducklake_enabled:
             raise CatalogBackendUnavailable(
@@ -256,9 +262,11 @@ class DuckLakeCatalogBackend:
                 await conn.execute(
                     text(f"GRANT USAGE, CREATE ON SCHEMA {_quote(schema)} TO {_quote(agent_role)}")
                 )
+                # Reads are always granted; writes only when not frozen.
+                write = ", INSERT, UPDATE, DELETE" if grant_dml else ""
                 await conn.execute(
                     text(
-                        f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA "
+                        f"GRANT SELECT{write} ON ALL TABLES IN SCHEMA "
                         f"{_quote(schema)} TO {_quote(agent_role)}"
                     )
                 )
@@ -266,7 +274,7 @@ class DuckLakeCatalogBackend:
                 await conn.execute(
                     text(
                         f"ALTER DEFAULT PRIVILEGES IN SCHEMA {_quote(schema)} "
-                        f"GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {_quote(agent_role)}"
+                        f"GRANT SELECT{write} ON TABLES TO {_quote(agent_role)}"
                     )
                 )
                 await conn.execute(

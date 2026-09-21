@@ -71,6 +71,147 @@ def object_size(ctx: StorageContext, uri: str) -> int | None:
 # --- S3 ---
 
 
+def context_from_duckdb_block(kind: str, block: dict, config: dict | None) -> StorageContext:
+    """Build a context from `session_credentials.build_storage_block`'s output.
+
+    Two credential vocabularies exist here. Polaris vends the Iceberg REST
+    spelling (``s3.access-key-id``); DuckLake has no vendor, so DuckHaven mints
+    the same access itself in DuckDB's spelling (``key_id``). This module speaks
+    the first, so the second is translated rather than given a second
+    implementation of list/get/put.
+    """
+    if block.get("type") == "azure":
+        # `_adls_container` wants a bare SAS keyed by account, not the
+        # connection string DuckDB is handed.
+        conn = str(block.get("connection_string") or "")
+        sas = next(
+            (
+                part.split("=", 1)[1]
+                for part in conn.split(";")
+                if part.startswith("SharedAccessSignature=")
+            ),
+            "",
+        )
+        return StorageContext(
+            kind=kind,
+            creds={f"adls.sas-token.{block.get('account_name', '')}": sas},
+            config=config or {},
+        )
+
+    endpoint = str(block.get("endpoint") or "")
+    if endpoint and "://" not in endpoint:
+        # DuckDB wants a bare host; boto3 wants the scheme back.
+        endpoint = f"{'https' if block.get('use_ssl') else 'http'}://{endpoint}"
+    creds = {
+        "s3.access-key-id": block.get("key_id"),
+        "s3.secret-access-key": block.get("secret"),
+        "s3.session-token": block.get("session_token") or None,
+        "client.region": block.get("region"),
+        "s3.endpoint": endpoint or None,
+    }
+    return StorageContext(kind=kind, creds=creds, config=config or {})
+
+
+def copy_object(src: StorageContext, dst: StorageContext, src_uri: str, dst_uri: str) -> int:
+    """Copy one object, server-side where both ends allow it.
+
+    Returns the bytes copied. `get_object`/`put_object` buffer a whole object in
+    memory, which is fine for Iceberg metadata but not for a DuckLake data file
+    at the default 512 MB target size — the API would hold one per concurrent
+    copy. So: S3-to-S3 on the same endpoint is a server-side ``copy_object``
+    that moves no bytes through this process, and everything else streams with a
+    bounded buffer.
+    """
+    if src.proto == "s3" and dst.proto == "s3" and _same_s3_endpoint(src, dst):
+        return _s3_server_side_copy(src, dst, src_uri, dst_uri)
+    return _stream_object(src, dst, src_uri, dst_uri)
+
+
+def delete_prefix(ctx: StorageContext, location: str) -> int:
+    """Delete every object under ``location``. Returns the count."""
+    if ctx.proto == "s3":
+        return _s3_delete_prefix(ctx, location)
+    return _adls_delete_prefix(ctx, location)
+
+
+def _same_s3_endpoint(src: StorageContext, dst: StorageContext) -> bool:
+    """Whether one client can see both ends.
+
+    A server-side copy is a single request naming both objects, so it only
+    works when the same credentials reach both — true for two prefixes of the
+    bundled store, false across accounts.
+    """
+
+    def endpoint(ctx: StorageContext) -> str:
+        return str(ctx.creds.get("s3.endpoint") or ctx.config.get("endpoint") or "")
+
+    return endpoint(src) == endpoint(dst) and src.creds.get("s3.access-key-id") == dst.creds.get(
+        "s3.access-key-id"
+    )
+
+
+def _s3_server_side_copy(
+    src: StorageContext, dst: StorageContext, src_uri: str, dst_uri: str
+) -> int:
+    client = _s3_client(dst)
+    src_bucket, src_key = _s3_bucket_key(src_uri)
+    dst_bucket, dst_key = _s3_bucket_key(dst_uri)
+    client.copy_object(
+        Bucket=dst_bucket, Key=dst_key, CopySource={"Bucket": src_bucket, "Key": src_key}
+    )
+    return _s3_size(dst, dst_uri) or 0
+
+
+def _stream_object(src: StorageContext, dst: StorageContext, src_uri: str, dst_uri: str) -> int:
+    """Stream an object across backends without buffering it whole.
+
+    boto3's `upload_fileobj` and Azure's `upload_blob` both read from a
+    file-like and chunk it themselves, so the peak memory is their part size
+    rather than the object size.
+    """
+    if src.proto == "s3":
+        body = _s3_client(src).get_object(
+            Bucket=_s3_bucket_key(src_uri)[0], Key=_s3_bucket_key(src_uri)[1]
+        )["Body"]
+    else:
+        body = _adls_container(src, src_uri).download_blob(_adls_path(src_uri))
+        body = body.chunks()  # type: ignore[assignment]
+
+    if dst.proto == "s3":
+        bucket, key = _s3_bucket_key(dst_uri)
+        _s3_client(dst).upload_fileobj(body, bucket, key)
+    else:
+        _adls_container(dst, dst_uri).upload_blob(_adls_path(dst_uri), body, overwrite=True)
+    return object_size(dst, dst_uri) or 0
+
+
+def _s3_delete_prefix(ctx: StorageContext, location: str) -> int:
+    client = _s3_client(ctx)
+    bucket, prefix = _s3_bucket_key(location)
+    if prefix and not prefix.endswith("/"):
+        prefix += "/"
+    deleted = 0
+    paginator = client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        keys = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
+        if keys:
+            client.delete_objects(Bucket=bucket, Delete={"Objects": keys})
+            deleted += len(keys)
+    return deleted
+
+
+def _adls_delete_prefix(ctx: StorageContext, location: str) -> int:
+    container = _adls_container(ctx, location)
+    prefix = _adls_path(location)
+    if prefix and not prefix.endswith("/"):
+        prefix += "/"
+    deleted = 0
+    for blob in container.list_blobs(name_starts_with=prefix):
+        container.delete_blob(blob.name)
+        deleted += 1
+    return deleted
+
+
 def _s3_client(ctx: StorageContext):  # noqa: ANN202 - boto3 client is untyped
     import boto3
 

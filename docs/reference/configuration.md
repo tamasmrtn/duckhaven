@@ -53,7 +53,7 @@ first — the rest have working defaults for the bundled Compose stack.
 |---|---|---|
 | `DUCKLAKE_ENABLED` | `false` | Whether DuckLake catalogs can be created. Existing Iceberg catalogs are unaffected either way. |
 | `DUCKLAKE_AGENT_PASSWORD` | `ducklake` | Password for the `ducklake_agent` PostgreSQL role, which agents authenticate with. A real credential — change it. Must match the value given to `scripts/enable-ducklake.sh` or `postgres-init`. |
-| `DUCKLAKE_DATABASE_URL` | `postgresql+asyncpg://duckhaven:…@postgres:5432/ducklake` | How the **API** reaches the catalog database, as the owner. Used to create each catalog's metadata schema, grant on it, and read metadata back. Never given to agents. |
+| `DUCKLAKE_DATABASE_URL` | `postgresql+asyncpg://duckhaven:…@postgres:5432/ducklake` | How the **API** reaches the catalog database, as the owner. Used to create each catalog's metadata schema, grant on it, and read metadata back. Never given to agents. Its connection pool follows the same `DB_POOL_*` settings as the control-plane database, and it honours `DB_AUTH_MODE`. |
 | `DUCKLAKE_AGENT_HOST` / `DUCKLAKE_AGENT_PORT` | `postgres` / `5432` | How **agents** reach the catalog database. Set the host to an address reachable from the agent host when agents run elsewhere. |
 | `DUCKLAKE_AGENT_DATABASE` | `ducklake` | Database holding the `ducklake_*` metadata schemas. |
 | `DUCKLAKE_AGENT_USER` | `ducklake_agent` | Restricted role agents authenticate as. It has `CONNECT` on `DUCKLAKE_AGENT_DATABASE` only — widening it undoes the isolation the agent network exists for. |

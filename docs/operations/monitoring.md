@@ -154,9 +154,9 @@ the conventional `_total` suffix in the exposition (e.g. `duckhaven_queries_tota
 | `duckhaven_agent_provisions_total` | counter | `replica_id`, `provider`, `outcome` | Elastic provisioning attempts (`outcome`: `success`/`failure`). |
 | `duckhaven_agent_provisioning_seconds` | histogram | `replica_id`, `provider` | Time to provision an elastic agent. Successes only — a failure's duration measures how long the backend took to say no, which would distort the cold-start percentiles. |
 | `duckhaven_agents_reaped_total` | counter | `replica_id`, `reason` | Elastic agents torn down by the reaper (`reason`: `idle`/`max_lifetime`/`provisioning_timeout`/`orphan`/`dead_row`). |
-| `duckhaven_db_pool_size` | gauge | `replica_id` | Configured connection-pool size. |
-| `duckhaven_db_pool_checked_out` | gauge | `replica_id` | Connections currently checked out. |
-| `duckhaven_db_pool_overflow` | gauge | `replica_id` | Connections beyond the configured pool size. |
+| `duckhaven_db_pool_size` | gauge | `replica_id`, `pool` | Configured connection-pool size. `pool` is `main` (the control-plane database) or `ducklake` (a DuckLake catalog's metadata database, present only once a DuckLake catalog has been browsed). |
+| `duckhaven_db_pool_checked_out` | gauge | (same) | Connections currently checked out. Sustained saturation of the `ducklake` pool shows up as slow catalog browsing rather than slow queries. |
+| `duckhaven_db_pool_overflow` | gauge | (same) | Connections beyond the configured pool size. |
 | `duckhaven_maintenance_last_scan_timestamp_seconds` | gauge | — | Unix time of the last completed maintenance scan cycle. |
 | `duckhaven_maintenance_open_recommendations` | gauge | `severity` | Open maintenance recommendations by severity. |
 | `duckhaven_maintenance_table_health_samples` | gauge | — | Total table-health samples recorded. |

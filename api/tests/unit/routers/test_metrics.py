@@ -185,11 +185,35 @@ async def test_peer_owned_agents_not_reported(client: AsyncClient, db_session):
 
 async def test_db_pool_gauges(client: AsyncClient):
     await client.get("/metrics")
-    val = _value("duckhaven_db_pool_size", {"replica_id": RID})
+    val = _value("duckhaven_db_pool_size", {"replica_id": RID, "pool": "main"})
     if isinstance(engine.sync_engine.pool, QueuePool):
         assert val == settings.db_pool_size
     else:  # NullPool / SQLite-style pools don't expose sizing stats
         assert val is None
+
+
+async def test_the_ducklake_pool_is_reported_separately_once_it_exists(client: AsyncClient):
+    """The catalog database is a second pool on the hot path of every browse.
+
+    Labelled rather than given its own metric name so the two are comparable,
+    and absent entirely until the lazy engine is built -- an Iceberg-only
+    deployment should not open a pool just so it can be measured.
+    """
+    from api.services.catalog_backends import ducklake
+
+    await client.get("/metrics")
+    assert _value("duckhaven_db_pool_size", {"replica_id": RID, "pool": "ducklake"}) is None
+
+    settings.ducklake_database_url = "postgresql+asyncpg://u:p@localhost:5432/ducklake"
+    try:
+        ducklake.get_engine()
+        await client.get("/metrics")
+        assert (
+            _value("duckhaven_db_pool_size", {"replica_id": RID, "pool": "ducklake"})
+            == settings.db_pool_size
+        )
+    finally:
+        await ducklake.dispose_engine()
 
 
 async def test_maintenance_gauges_leader_gated(client: AsyncClient, db_session):

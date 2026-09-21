@@ -25,6 +25,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from api.config import settings
+from api.db.entra import attach_entra_auth
+from api.db.session import engine_kwargs
 from api.metrics import record_ducklake_query
 from api.services.catalog_backends import (
     CatalogBackendConflict,
@@ -93,10 +95,18 @@ def get_engine() -> AsyncEngine:
 
     Lazy and module-level because `backend_for` is called from routers with no
     app state; the lifespan calls `dispose_engine` on shutdown.
+
+    Configured exactly like the control plane's own engine, and for the same
+    reasons: this one is on the hot path of every catalog browse, so it needs
+    the same pool sizing and recycling, and a deployment authenticating to
+    Postgres with Entra cannot have one engine that does and one that does not.
     """
     global _engine
     if _engine is None:
-        _engine = create_async_engine(settings.ducklake_database_url, pool_pre_ping=True)
+        url = settings.ducklake_database_url
+        _engine = create_async_engine(url, **engine_kwargs(url))
+        if settings.db_auth_mode == "entra":
+            attach_entra_auth(_engine)
     return _engine
 
 

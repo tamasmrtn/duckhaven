@@ -392,7 +392,7 @@ class _Snapshot:
     """Instantaneous state gathered by the endpoint, read by the collector."""
 
     agents: list[dict] = field(default_factory=list)
-    pool: dict | None = None
+    pool: dict[str, dict] = field(default_factory=dict)
     maintenance: dict | None = None
     sql_sessions_active: int = 0
     # (provider, lifecycle) -> count; None when this replica isn't the reap leader.
@@ -425,14 +425,17 @@ class _ScrapeCollector:
             for (provider, lifecycle), count in sorted(snap.agent_lifecycles.items()):
                 fam.add_metric([provider, lifecycle], count)
             yield fam
-        if snap.pool is not None:
+        if snap.pool:
             for key, doc in (
                 ("size", "Configured connection pool size."),
                 ("checked_out", "Connections currently checked out."),
                 ("overflow", "Connections beyond the configured pool size."),
             ):
-                fam = GaugeMetricFamily(f"duckhaven_db_pool_{key}", doc, labels=["replica_id"])
-                fam.add_metric([settings.replica_id], snap.pool[key])
+                fam = GaugeMetricFamily(
+                    f"duckhaven_db_pool_{key}", doc, labels=["replica_id", "pool"]
+                )
+                for name, stats in snap.pool.items():
+                    fam.add_metric([settings.replica_id, name], stats[key])
                 yield fam
         if snap.maintenance is not None:
             m = snap.maintenance
@@ -546,9 +549,9 @@ async def _collect_agents(db: AsyncSession) -> list[dict]:
     return out
 
 
-def _collect_pool() -> dict | None:
+def _pool_stats(target) -> dict | None:  # noqa: ANN001 - an AsyncEngine
     try:
-        pool = engine.sync_engine.pool
+        pool = target.sync_engine.pool
         return {
             "size": pool.size(),
             "checked_out": pool.checkedout(),
@@ -556,6 +559,26 @@ def _collect_pool() -> dict | None:
         }
     except Exception:  # noqa: BLE001 — non-QueuePool (e.g. SQLite tests) lacks these
         return None
+
+
+def _collect_pool() -> dict[str, dict]:
+    """Pool stats per engine.
+
+    DuckLake's catalog database is a second pool on the hot path of every
+    catalog browse, and it was not reported at all — so the one number an
+    operator would look at when browsing got slow did not exist. Imported
+    lazily: `catalog_backends.ducklake` records its own metrics from here.
+    """
+    from api.services.catalog_backends import ducklake
+
+    pools = {}
+    if (main := _pool_stats(engine)) is not None:
+        pools["main"] = main
+    # Only when it has been built: the engine is lazy, and creating one just to
+    # measure it would open a connection pool on an Iceberg-only deployment.
+    if ducklake._engine is not None and (dl := _pool_stats(ducklake._engine)) is not None:
+        pools["ducklake"] = dl
+    return pools
 
 
 async def _collect_maintenance(db: AsyncSession) -> dict:

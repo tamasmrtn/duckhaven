@@ -240,10 +240,11 @@ class _FakeRows:
     """Stands in for the catalog database, capturing the SQL it is asked for."""
 
     def __init__(self, rows: list) -> None:
-        self.rows, self.sql = rows, []
+        self.rows, self.sql, self.operations = rows, [], []
 
-    async def __call__(self, catalog, sql, params):  # noqa: ANN001
+    async def __call__(self, catalog, sql, params, *, operation="read"):  # noqa: ANN001
         self.sql.append(" ".join(sql.split()))
+        self.operations.append(operation)
         return self.rows
 
 
@@ -363,3 +364,21 @@ async def test_a_table_with_no_stats_row_reports_no_size():
     tables = await backend.list_tables(_catalog(), "analytics")
 
     assert tables[0].size_bytes is None
+
+
+@pytest.mark.asyncio
+async def test_each_metadata_read_is_named_for_its_metric_label():
+    """The operation label has to be a fixed name, not the SQL or the catalog.
+
+    Both of those carry user data, and an unbounded Prometheus label is how a
+    metrics backend falls over.
+    """
+    backend = DuckLakeCatalogBackend()
+    rows = _FakeRows([])
+    backend._rows = rows  # type: ignore[method-assign]
+
+    await backend.list_schemas(_catalog())
+    await backend.list_tables(_catalog(), "analytics")
+    await backend.list_snapshots(_catalog(), "analytics", "t")
+
+    assert rows.operations == ["list_schemas", "list_tables", "list_snapshots"]

@@ -115,6 +115,17 @@ POLARIS_DURATION = Histogram(
     ["replica_id", "operation"],
 )
 
+DUCKLAKE_QUERIES = Counter(
+    "duckhaven_ducklake_queries",
+    "Metadata queries issued to a DuckLake catalog database.",
+    ["replica_id", "operation", "status"],
+)
+DUCKLAKE_DURATION = Histogram(
+    "duckhaven_ducklake_query_duration_seconds",
+    "Latency of metadata queries issued to a DuckLake catalog database.",
+    ["replica_id", "operation"],
+)
+
 QUERY_QUEUE_WAIT = Histogram(
     "duckhaven_query_queue_wait_seconds",
     "Time a user query waited in the agent admission queue before running.",
@@ -235,6 +246,16 @@ def record_query_queue_rejection(error: str | None) -> bool:
 def record_polaris_request(operation: str, status: str, duration_s: float) -> None:
     POLARIS_REQUESTS.labels(settings.replica_id, operation, status).inc()
     POLARIS_DURATION.labels(settings.replica_id, operation).observe(duration_s)
+
+
+def record_ducklake_query(operation: str, status: str, duration_s: float) -> None:
+    """The DuckLake counterpart to `record_polaris_request`.
+
+    `operation` is a stable name supplied by the caller, never the SQL or a
+    catalog name: both carry user data and would make this unbounded.
+    """
+    DUCKLAKE_QUERIES.labels(settings.replica_id, operation, status).inc()
+    DUCKLAKE_DURATION.labels(settings.replica_id, operation).observe(duration_s)
 
 
 def record_sql_session_opened() -> None:

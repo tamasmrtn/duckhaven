@@ -139,6 +139,8 @@ the conventional `_total` suffix in the exposition (e.g. `duckhaven_queries_tota
 | `duckhaven_http_requests_total` | counter | `replica_id`, `method`, `route`, `status` | REST API requests, keyed by route template. |
 | `duckhaven_http_request_duration_seconds` | histogram | `replica_id`, `method`, `route` | REST API request latency. |
 | `duckhaven_polaris_requests_total` | counter | `replica_id`, `operation`, `status` | Requests to Apache Polaris (Iceberg REST + management). `status` is the HTTP code, or `error` for transport failures. |
+| `duckhaven_ducklake_queries_total` | counter | `replica_id`, `operation`, `status` | Metadata queries to a DuckLake catalog database (`operation`: `list_schemas`/`list_tables`/`get_table`/`get_table_columns`/`list_snapshots`). `status` is `ok`, `error`, or `empty` for a catalog no agent has attached yet — a normal state, kept separate so it does not read as a failure rate. The DuckLake counterpart to the Polaris rows above: a slow catalog browse shows up in one of the two depending on the kind. |
+| `duckhaven_ducklake_query_duration_seconds` | histogram | `replica_id`, `operation` | Latency of those queries. |
 | `duckhaven_polaris_request_duration_seconds` | histogram | `replica_id`, `operation` | Latency of requests to Apache Polaris. |
 | `duckhaven_agent_up` | gauge | `replica_id`, `agent_id`, `agent_name` | `1` for each agent with a recent sample owned by this replica. |
 | `duckhaven_agent_cpu_percent` | gauge | (same) | Agent CPU utilization. |
@@ -174,7 +176,9 @@ would hide:
   rejections mean the fleet is saturated — add an agent or raise its slot count. (Rejections
   also show up under `duckhaven_queries_total{status="failed"}`; this counter is the specific
   breakdown.)
-- **Polaris dependency health** — `duckhaven_polaris_requests_total` / `_request_duration_seconds`
+- **Catalog dependency health** — `duckhaven_polaris_requests_total` and
+  `duckhaven_ducklake_queries_total`, each with its `_duration_seconds` companion. Watch whichever
+  kinds are deployed; a deployment with both needs both.
   surface the Iceberg catalog's error rate and latency. Alert on a non-zero rate of
   `status="error"` (or 5xx) here to catch catalog-layer degradation before it manifests as
   mysterious query failures.

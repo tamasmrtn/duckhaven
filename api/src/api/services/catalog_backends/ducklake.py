@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -24,6 +25,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from api.config import settings
+from api.metrics import record_ducklake_query
 from api.services.catalog_backends import (
     CatalogBackendConflict,
     CatalogBackendError,
@@ -245,20 +247,33 @@ class DuckLakeCatalogBackend:
 
     # --- Metadata reads -----------------------------------------------------
 
-    async def _rows(self, catalog: Catalog, sql: str, params: dict[str, Any]) -> list[Any]:
+    async def _rows(
+        self, catalog: Catalog, sql: str, params: dict[str, Any], *, operation: str = "read"
+    ) -> list[Any]:
         """Run one read against this catalog's metadata schema.
 
         Missing tables mean the catalog was never attached and the extension has
         not built its structure yet — a legitimate state, so reads return empty.
+
+        The single chokepoint for metadata reads, so it is where they are timed.
+        ``operation`` is a stable caller-supplied name rather than the SQL or the
+        catalog, which carry user data and would make the label unbounded.
         """
         schema = catalog.metadata_schema
         if not schema:
             raise CatalogBackendError("DuckLake catalog has no metadata schema recorded")
+        started = time.perf_counter()
         try:
             async with get_engine().connect() as conn:
                 result = await conn.execute(text(sql.format(schema=_quote(schema))), params)
-                return list(result.all())
+                rows = list(result.all())
+            record_ducklake_query(operation, "ok", time.perf_counter() - started)
+            return rows
         except Exception as exc:  # noqa: BLE001
+            # "Never attached yet" is a legitimate state, not a failure, so it is
+            # recorded as its own status rather than lumped in with errors.
+            status = "empty" if _is_missing_relation(exc) else "error"
+            record_ducklake_query(operation, status, time.perf_counter() - started)
             if _is_missing_relation(exc):
                 logger.info(
                     "DuckLake catalog %s has no metadata tables yet (never attached)",
@@ -273,6 +288,7 @@ class DuckLakeCatalogBackend:
             "SELECT schema_name FROM {schema}.ducklake_schema "
             "WHERE end_snapshot IS NULL ORDER BY schema_name",
             {},
+            operation="list_schemas",
         )
         return [CatalogSchemaInfo(name=r[0], catalog_name=catalog.slug) for r in rows]
 
@@ -286,6 +302,7 @@ class DuckLakeCatalogBackend:
             "WHERE t.end_snapshot IS NULL AND sc.end_snapshot IS NULL "
             "AND sc.schema_name = :schema ORDER BY t.table_name",
             {"schema": schema},
+            operation="list_tables",
         )
         return [
             _table_info(
@@ -309,6 +326,7 @@ class DuckLakeCatalogBackend:
             "WHERE t.end_snapshot IS NULL AND sc.end_snapshot IS NULL "
             "AND sc.schema_name = :schema AND t.table_name = :name",
             {"schema": schema, "name": name},
+            operation="get_table",
         )
         if not rows:
             raise CatalogBackendNotFound(f"Table {schema}.{name} does not exist")
@@ -321,6 +339,7 @@ class DuckLakeCatalogBackend:
             "WHERE table_id = :table_id AND end_snapshot IS NULL AND parent_column IS NULL "
             "ORDER BY column_order",
             {"table_id": table_id},
+            operation="get_table_columns",
         )
         columns = [
             CatalogColumnInfo(
@@ -387,6 +406,7 @@ class DuckLakeCatalogBackend:
             "JOIN touched ON touched.sid = s.snapshot_id "
             "ORDER BY s.snapshot_id DESC",
             {"schema": schema, "name": name},
+            operation="list_snapshots",
         )
         if not rows:
             return []

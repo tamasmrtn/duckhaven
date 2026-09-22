@@ -201,6 +201,11 @@ async def test_the_ducklake_pool_is_reported_separately_once_it_exists(client: A
     """
     from api.services.catalog_backends import ducklake
 
+    # The engine is module-level, so whether it exists depends on what else has
+    # run in this xdist worker. Dispose it first, or the "absent" half of this
+    # test asserts nothing and fails whenever the ordering changes.
+    await ducklake.dispose_engine()
+
     await client.get("/metrics")
     assert _value("duckhaven_db_pool_size", {"replica_id": RID, "pool": "ducklake"}) is None
 

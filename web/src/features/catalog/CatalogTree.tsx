@@ -53,10 +53,6 @@ import {
   backendLabel,
 } from "@/features/catalog/CatalogInfoDialog";
 import { StorageIcon } from "@/components/app/StorageIcon";
-import {
-  catalogKindBadge,
-  catalogKindLabel,
-} from "@/features/catalog/catalogKind";
 import type { BackendKind } from "@/types/storage-backend";
 import { cn, formatBytes, formatRowCount } from "@/utils";
 import type { Catalog, CatalogTable } from "@/types/catalog";
@@ -560,16 +556,6 @@ function CatalogNode({
                   className="size-3 text-text-tertiary"
                 />
               </span>
-              {/* Catalog-kind indicator: which table format + metastore this
-                  catalog is. Absent for Iceberg, the default kind. */}
-              {catalogKindBadge(catalog.kind) && (
-                <span
-                  className="ml-1 shrink-0 rounded bg-accent px-1 text-2xs text-text-tertiary"
-                  title={`Catalog: ${catalogKindLabel(catalog.kind)}`}
-                >
-                  {catalogKindBadge(catalog.kind)}
-                </span>
-              )}
               {catalog.access_mode === "scoped" && (
                 <span className="ml-1 rounded bg-accent px-1 text-2xs text-text-tertiary">
                   scoped

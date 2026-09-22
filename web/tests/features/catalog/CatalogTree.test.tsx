@@ -461,11 +461,11 @@ describe("CatalogTree", () => {
 
     await waitFor(() => expect(probed).toEqual(["curated"]));
   });
-  it("badges a DuckLake catalog and leaves Iceberg unmarked", async () => {
-    // Without this the tree showed only a storage icon, so an operator could
-    // not tell which of their catalogs was DuckLake. Iceberg stays unbadged on
-    // purpose: it is the default kind, and badging it would mark every row of
-    // an Iceberg-only deployment to say nothing.
+  it("shows no catalog-kind marker on any row", async () => {
+    // The tree names catalogs and shows a storage icon; the kind is not part
+    // of that. It is on the catalog's detail panel and its info dialog, which
+    // is where someone goes to ask what a catalog is. A badge here marked one
+    // kind as the odd one out on every row of a mixed deployment.
     server.use(
       http.get("/api/workspaces/:ws/catalogs", () =>
         HttpResponse.json([
@@ -493,14 +493,15 @@ describe("CatalogTree", () => {
     renderTree(() => {});
 
     const lake = await screen.findByRole("button", { name: /^lake/i });
-    expect(lake).toHaveTextContent("DuckLake");
-
-    // The Iceberg row carries no kind badge at all. Asserting only the absence
-    // of "DuckLake" is not enough: a nullish-coalescing slip rendered the raw
-    // "iceberg_polaris" here and still passed that weaker check.
     const iceberg = screen.getByRole("button", { name: /^acme_analytics/i });
-    expect(iceberg).not.toHaveTextContent("DuckLake");
-    expect(iceberg).not.toHaveTextContent("iceberg_polaris");
-    expect(iceberg).not.toHaveTextContent("Iceberg");
+
+    // Neither the label nor the raw kind: a nullish-coalescing slip once
+    // rendered "iceberg_polaris" here, so both are worth asserting.
+    for (const row of [lake, iceberg]) {
+      expect(row).not.toHaveTextContent("DuckLake");
+      expect(row).not.toHaveTextContent("ducklake");
+      expect(row).not.toHaveTextContent("Iceberg");
+      expect(row).not.toHaveTextContent("iceberg_polaris");
+    }
   });
 });

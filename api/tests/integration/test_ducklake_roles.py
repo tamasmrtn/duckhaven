@@ -133,11 +133,25 @@ async def test_a_catalogs_role_cannot_read_another_catalogs_metadata(two_catalog
     assert "permission denied" in str(excinfo.value).lower()
 
 
+def _control_plane_database() -> str:
+    """The database holding users, password hashes and session tokens.
+
+    Read from DATABASE_URL rather than hardcoded: it is `duckhaven` in the
+    bundled stack and `testdb` in CI, and asserting against the wrong name
+    proves nothing -- PostgreSQL answers "does not exist", which is not the
+    refusal this test is about.
+    """
+    raw = os.getenv("DATABASE_URL")
+    if not raw:
+        pytest.skip("DATABASE_URL not set; skipping DuckLake role test")
+    name = urlsplit(raw).path.lstrip("/")
+    if not name:
+        pytest.skip("DATABASE_URL names no database")
+    return name
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("database", ["duckhaven", "polaris"])
-async def test_a_catalogs_role_cannot_open_the_control_plane_databases(
-    two_catalogs, database: str
-) -> None:
+async def test_a_catalogs_role_cannot_open_the_control_plane_database(two_catalogs) -> None:
     """If this ever passes, an agent can read the credentials table -- which is
     where every other catalog's password lives.
 
@@ -146,7 +160,22 @@ async def test_a_catalogs_role_cannot_open_the_control_plane_databases(
     """
     raw, _ = two_catalogs
     with pytest.raises((asyncpg.PostgresError, DBAPIError)) as excinfo:
-        await _query(raw, database, "SELECT 1")
+        await _query(raw, _control_plane_database(), "SELECT 1")
+    assert "permission denied" in str(excinfo.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_a_catalogs_role_cannot_open_the_polaris_database(two_catalogs) -> None:
+    """Skipped where Polaris is not deployed: a database that does not exist
+    refuses every role, which would make this pass for the wrong reason."""
+    raw, _ = two_catalogs
+    async with get_engine().connect() as conn:
+        exists = await conn.scalar(text("SELECT 1 FROM pg_database WHERE datname = 'polaris'"))
+    if not exists:
+        pytest.skip("no polaris database in this deployment")
+
+    with pytest.raises((asyncpg.PostgresError, DBAPIError)) as excinfo:
+        await _query(raw, "polaris", "SELECT 1")
     assert "permission denied" in str(excinfo.value).lower()
 
 

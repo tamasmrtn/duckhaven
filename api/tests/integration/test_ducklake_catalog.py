@@ -16,7 +16,12 @@ import pytest
 from api.config import settings
 from api.models.catalog import KIND_DUCKLAKE, Catalog
 from api.services.catalog_backends import CatalogBackendNotFound, backend_for
-from api.services.catalog_backends.ducklake import dispose_engine, metadata_schema_for
+from api.services.catalog_backends.ducklake import (
+    agent_role_for,
+    dispose_engine,
+    metadata_schema_for,
+    new_role_password,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -40,6 +45,11 @@ async def catalog():
     cat = Catalog(
         slug=slug, name=slug, kind=KIND_DUCKLAKE, metadata_schema=metadata_schema_for(slug)
     )
+    # Every DuckLake catalog carries its own PostgreSQL login, minted before
+    # provisioning because provisioning is what creates the role with it. This
+    # mirrors what `create_catalog` does; without it `provision` refuses, which
+    # is the point -- there is no deployment-wide password to fall back on.
+    cat.pending_ducklake_password = new_role_password()
     backend = backend_for(cat)
     await backend.provision(cat)
     try:
@@ -84,7 +94,7 @@ async def test_the_agent_role_is_granted_on_the_new_schema(catalog):
                 "SELECT has_schema_privilege(:role, :schema, 'CREATE'), "
                 "has_schema_privilege(:role, :schema, 'USAGE')"
             ),
-            {"role": settings.ducklake_agent_user, "schema": catalog.metadata_schema},
+            {"role": agent_role_for(catalog.slug), "schema": catalog.metadata_schema},
         )
         assert result.one() == (True, True)
 

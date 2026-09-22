@@ -354,3 +354,23 @@ async def connected_agent(db_session: AsyncSession) -> AsyncIterator[tuple[Agent
         yield agent, stub
     finally:
         registry.unregister(agent.id)
+
+
+@pytest.fixture(autouse=True)
+async def _fresh_ducklake_engine():
+    """Dispose the DuckLake engine around every test.
+
+    Same reason the `pg_engine` fixture above is function-scoped: asyncpg
+    connections are bound to the loop that opened them, and pytest-asyncio gives
+    each test its own. That engine is module-global and cached, so without this
+    the second test to touch it inherits connections from a dead loop and fails
+    with "attached to a different loop" -- during fixture setup, which reads as
+    an unrelated provisioning error.
+
+    A no-op when nothing built it, so Polaris-only runs pay nothing.
+    """
+    from api.services.catalog_backends.ducklake import dispose_engine
+
+    await dispose_engine()
+    yield
+    await dispose_engine()

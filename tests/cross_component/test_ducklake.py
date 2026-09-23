@@ -41,13 +41,9 @@ async def _run(api_client, workspace: str, agent_id: str, sql: str) -> dict:
 
 @pytest_asyncio.fixture
 async def slug(api_client, workspace):
-    """A unique catalog name, whose catalog is dropped on teardown.
+    """A unique catalog name, whose catalog (schema and data) is dropped on teardown.
 
-    Unlike a Polaris catalog, a DuckLake catalog's metadata schema lives in the
-    catalog database and outlives the workspace — `delete_workspace` deliberately
-    never touches catalog rows. Without this, every run would leave another
-    `cat_*` schema behind, the same accumulation `workspace_factory` avoids for
-    Polaris. Dropping also purges the catalog's object-storage prefix.
+    Catalogs outlive their workspace, so each run would otherwise leak a schema.
     """
     name = f"dl_{uuid.uuid4().hex[:8]}"
     yield name

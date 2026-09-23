@@ -218,11 +218,7 @@ def test_list_adls_requires_sas_when_only_expiry_is_vended():
         )
 
 
-# --- The Polaris-free path -------------------------------------------------
-#
-# A DuckLake-only deployment does not run Polaris, so the throwaway-catalog
-# probe cannot work there -- and that is the topology
-# docker-compose.ducklake-only.yml ships.
+# --- The Polaris-free path (DuckLake-only deployments) ---------------------
 
 
 def test_a_duckdb_dialect_block_is_translated_for_the_listing_helpers():
@@ -313,11 +309,7 @@ async def test_the_direct_probe_reports_a_refused_assume_role_as_unusable(monkey
 
 @pytest.mark.asyncio
 async def test_a_backend_saved_with_a_missing_config_key_is_unusable_not_a_crash():
-    """Resolving the base location raises for an incomplete config.
-
-    It belongs inside the same guard as the rest: this function's contract is
-    to report a backend as unusable, not to raise at whoever asked.
-    """
+    """An incomplete config is reported as unusable, not raised."""
     health = await storage_health.validate_backend_direct(_backend("s3", {"role_arn": "arn:x"}))
 
     assert health.valid is False

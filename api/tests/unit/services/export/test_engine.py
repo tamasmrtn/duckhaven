@@ -1,8 +1,7 @@
 """Exporting a DuckLake catalog to Iceberg.
 
-The COPY itself is verified against a live Polaris catalog in the integration
-layer; what is asserted here is the decisions around it — what gets created,
-what gets dispatched, and what is deliberately *not* cleaned up on failure.
+The decisions around the COPY: what is created, dispatched, and deliberately
+*not* cleaned up on failure.
 """
 
 from __future__ import annotations

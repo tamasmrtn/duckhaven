@@ -52,10 +52,7 @@ def test_ducklake_needs_both_of_its_extensions():
 
 
 def test_an_iceberg_only_agent_still_serves_iceberg():
-    """Adding the second axis must not narrow the first.
-
-    The object_store case uses an agent advertising only `httpfs`, which is what
-    long-running deployments' agents actually advertise."""
+    """Adding the catalog-kind axis must not narrow the storage axis."""
     assert agent_supports_catalog({"extensions": ["httpfs"]}, "iceberg_polaris", "object_store")
     legacy = {"extensions": ["httpfs", "azure", "iceberg"]}
     assert agent_supports_catalog(legacy, "iceberg_polaris", "object_store") is True

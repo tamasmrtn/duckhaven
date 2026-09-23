@@ -1,8 +1,7 @@
 """The DuckLake arm of the migration phase machine.
 
-Storage IO is stubbed; what is asserted is the decisions — when it refuses to
-start, when it waits, what it copies, when it declares the copy sound, and that
-cutover can be re-entered after a crash without doing the wrong thing twice.
+Storage IO is stubbed; these assert the phase decisions and that cutover is
+re-entrant after a crash.
 """
 
 from __future__ import annotations
@@ -173,14 +172,10 @@ def _async(value):
 
 
 def test_no_phase_reads_the_catalogs_lazy_storage_backend():
-    """`catalog.storage_backend` is a lazy relationship and the runner fetches
-    the catalog with db.get, so reading it raises MissingGreenlet under asyncpg
-    and takes the migration straight to failed.
+    """The lazy relationship raises MissingGreenlet under asyncpg.
 
-    Asserted against the source rather than by exercising it, deliberately: the
-    unit suite runs on SQLite, which resolves that lazy load happily, so a
-    behavioural test here passes with the bug present. The phases take the
-    backend ids from the migration row instead, as the Iceberg path does.
+    Asserted against the source because SQLite resolves the lazy load happily,
+    so a behavioural test would pass with the bug present.
     """
     import inspect
 

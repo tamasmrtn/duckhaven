@@ -17,9 +17,7 @@ from sqlglot import exp
 
 from api.services.assistant.gateway import GatewayError
 
-# `kind` mirrors what /workspaces/{ws}/catalogs actually returns. The DuckLake
-# block of the instructions tells the model that list_catalogs reports it, so a
-# fixture omitting it would contradict the prompt the model is given.
+# `kind` mirrors /workspaces/{ws}/catalogs; the DuckLake prompt block relies on it.
 CATALOGS = [{"slug": "warehouse", "name": "Warehouse", "kind": "iceberg_polaris"}]
 SCHEMAS = {"warehouse": ["analytics"]}
 TABLES = {("warehouse", "analytics"): ["orders", "customers", "events", "feedback"]}

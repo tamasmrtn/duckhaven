@@ -1,11 +1,7 @@
 """The exact SQL a destructive maintenance operation will run.
 
-Pure, so it is testable without an agent or a catalog -- which is the reason
-the statements are built in the control plane rather than on the agent. The
-call shapes here were read from `duckdb_functions()` against the pinned
-extension, not inferred: two verbs take the table positionally with a `schema`
-keyword and one takes both as keywords with different names, and guessing binds
-to no overload and fails at apply time.
+Call shapes were read from `duckdb_functions()` against the pinned extension;
+they differ between verbs.
 """
 
 from __future__ import annotations

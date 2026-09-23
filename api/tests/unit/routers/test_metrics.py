@@ -193,17 +193,10 @@ async def test_db_pool_gauges(client: AsyncClient):
 
 
 async def test_the_ducklake_pool_is_reported_separately_once_it_exists(client: AsyncClient):
-    """The catalog database is a second pool on the hot path of every browse.
-
-    Labelled rather than given its own metric name so the two are comparable,
-    and absent entirely until the lazy engine is built -- an Iceberg-only
-    deployment should not open a pool just so it can be measured.
-    """
+    """Labelled alongside the main pool, and absent until the lazy engine is built."""
     from api.services.catalog_backends import ducklake
 
-    # The engine is module-level, so whether it exists depends on what else has
-    # run in this xdist worker. Dispose it first, or the "absent" half of this
-    # test asserts nothing and fails whenever the ordering changes.
+    # The engine is module-level; dispose it so the result doesn't depend on test order.
     await ducklake.dispose_engine()
 
     await client.get("/metrics")

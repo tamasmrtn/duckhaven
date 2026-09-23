@@ -1,10 +1,4 @@
-"""Translating DuckHaven's own storage block into the vocabulary this module reads.
-
-Two credential vocabularies exist: Polaris vends the Iceberg REST spelling, and
-DuckLake -- which has no vendor -- is minted by DuckHaven in DuckDB's. The
-listing helpers speak the first, so the second is translated rather than given a
-second implementation.
-"""
+"""Translating DuckDB's credential spelling (``key_id``) into the Iceberg REST one."""
 
 from __future__ import annotations
 

@@ -45,10 +45,7 @@ async def catalog():
     cat = Catalog(
         slug=slug, name=slug, kind=KIND_DUCKLAKE, metadata_schema=metadata_schema_for(slug)
     )
-    # Every DuckLake catalog carries its own PostgreSQL login, minted before
-    # provisioning because provisioning is what creates the role with it. This
-    # mirrors what `create_catalog` does; without it `provision` refuses, which
-    # is the point -- there is no deployment-wide password to fall back on.
+    # Mirrors `create_catalog`: the password is minted before provisioning.
     cat.pending_ducklake_password = new_role_password()
     backend = backend_for(cat)
     await backend.provision(cat)

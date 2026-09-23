@@ -1,9 +1,6 @@
 """Credential vending for DuckLake catalogs.
 
-Iceberg storage credentials come from Polaris at ATTACH time; DuckLake has no
-vendor, so both the catalog-database and object-store credentials are minted
-here and travel in the dispatch payload. These tests pin what is minted and its
-scope.
+DuckLake has no credential vendor; these pin what DuckHaven mints and its scope.
 """
 
 from __future__ import annotations

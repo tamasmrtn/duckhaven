@@ -246,10 +246,7 @@ def test_each_resident_block_is_within_budget():
 
 
 def test_the_ducklake_block_is_injected_only_where_ducklake_exists():
-    """Injected only where DuckLake exists. The resident block describes the
-    Iceberg shape, so without this the assistant tells the user to call
-    iceberg_snapshots() on a table where that fails.
-    """
+    """Injected only where DuckLake exists."""
     iceberg_only = build_instructions(ctx(catalog_kinds=("iceberg_polaris",)))
     assert "<catalog>.snapshots()" not in iceberg_only
 
@@ -283,9 +280,7 @@ def test_the_assembled_instructions_are_within_budget():
     """~2,400 tokens for a bare workspace; ~3,900 for the largest a workspace can
     make its own, which is the number the input window has to hold.
 
-    Raised from 14,800 by the DuckLake block (890 chars), which a workspace turns
-    on by attaching a DuckLake catalog. The ceiling has to be measured with every
-    conditional block on, or it describes a prompt the product does not produce.
+    Measured with every conditional block on, the DuckLake block included.
     """
     assert len(build_instructions(ctx())) <= 10_000
 

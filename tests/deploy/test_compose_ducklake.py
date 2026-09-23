@@ -59,11 +59,7 @@ def test_the_scripts_create_no_shared_agent_role():
 
 
 def test_public_cannot_reach_the_other_databases_or_create_in_ducklake():
-    """Load-bearing, and easy to drop. PostgreSQL grants CONNECT to PUBLIC on
-    every database by default, and CREATE on `public` before version 15 -- so
-    without these a per-catalog role inherits the right to open the database
-    holding users and password hashes, which would make the whole scheme
-    decorative."""
+    """Without these, per-catalog roles inherit CONNECT on the control-plane database."""
     for script in (INIT_SQL, ENABLE_SQL):
         assert "REVOKE CONNECT ON DATABASE duckhaven FROM PUBLIC" in script
         assert "REVOKE CONNECT ON DATABASE polaris FROM PUBLIC" in script
@@ -167,10 +163,7 @@ def test_ducklake_only_overlay_turns_the_feature_on():
 
 
 def test_the_tuning_knobs_reach_the_api():
-    """They are documented in the configuration reference as operator knobs.
-    A variable compose does not pass through is one an operator can set in
-    .env and watch do nothing -- which is what these did before they were
-    wired into the attach payload at all."""
+    """Documented operator knobs must be passed through to the API."""
     env = DEV["services"]["api"]["environment"]
     assert env["DUCKLAKE_TARGET_FILE_SIZE_MB"] == "${DUCKLAKE_TARGET_FILE_SIZE_MB:-512}"
     assert env["DUCKLAKE_DATA_INLINING_ROW_LIMIT"] == "${DUCKLAKE_DATA_INLINING_ROW_LIMIT:-10}"

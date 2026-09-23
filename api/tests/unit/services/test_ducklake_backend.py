@@ -254,10 +254,7 @@ class _FakeRows:
 
 @pytest.mark.asyncio
 async def test_snapshot_derivation_covers_files_deletes_and_the_table_itself():
-    """History is derived from four sources, each covering what the others miss:
-    ducklake_table for empty creates and drops, the file tables for data and
-    delete changes, and snapshot_changes for writes small enough to be inlined
-    into the catalog database rather than written to a file."""
+    """History unions the table, data-file, delete-file and inlined-change sources."""
     from datetime import UTC, datetime
 
     backend = DuckLakeCatalogBackend()
@@ -325,13 +322,7 @@ async def test_a_purge_failure_never_blocks_the_drop(monkeypatch, caplog):
 
 @pytest.mark.asyncio
 async def test_inlined_writes_are_matched_a_token_at_a_time():
-    """`changes_made` packs several changes into one comma-separated string.
-
-    Table ids are bare integers, so a substring match for table 1 would also
-    claim every snapshot that touched table 13 — someone's history showing
-    changes they never made. Matched per token instead, with the `_` in
-    `inlined_` escaped so LIKE treats it as a literal rather than a wildcard.
-    """
+    """A substring match for table 1 would also match table 13; `_` is escaped."""
     backend = DuckLakeCatalogBackend()
     rows = _FakeRows([])
     backend._rows = rows  # type: ignore[method-assign]
@@ -345,12 +336,7 @@ async def test_inlined_writes_are_matched_a_token_at_a_time():
 
 @pytest.mark.asyncio
 async def test_a_table_carries_the_size_the_catalog_already_knows():
-    """ducklake_table_stats keeps a running total of live data-file bytes.
-
-    It was selected and then dropped on the floor, so a DuckLake table showed
-    no size until an agent probed it -- a scan to learn something the catalog
-    had already written down.
-    """
+    """ducklake_table_stats' byte total is surfaced without an agent probe."""
     backend = DuckLakeCatalogBackend()
     backend._rows = _FakeRows(  # type: ignore[method-assign]
         [("events", "uuid-1", 5000, 20994)]
@@ -372,11 +358,7 @@ async def test_a_table_with_no_stats_row_reports_no_size():
 
 @pytest.mark.asyncio
 async def test_each_metadata_read_is_named_for_its_metric_label():
-    """The operation label has to be a fixed name, not the SQL or the catalog.
-
-    Both of those carry user data, and an unbounded Prometheus label is how a
-    metrics backend falls over.
-    """
+    """The operation label is a fixed name, keeping label cardinality bounded."""
     backend = DuckLakeCatalogBackend()
     rows = _FakeRows([])
     backend._rows = rows  # type: ignore[method-assign]
@@ -389,15 +371,9 @@ async def test_each_metadata_read_is_named_for_its_metric_label():
 
 
 # --- Error taxonomy ---------------------------------------------------------
-#
-# Polaris maps failures from HTTP status codes. DuckLake's DDL runs on an agent
-# and comes back as text, so the seam's exception is chosen by matching that
-# text. These pin the real DuckDB messages the matching depends on: a reworded
-# upstream message would otherwise turn a 409 into a 503 with nothing failing.
-#
-# Captured from DuckDB 1.5.5 with the ducklake extension, not written from
-# memory. Note the last one: a missing schema says "not found" rather than
-# "does not exist", which is why both substrings are matched.
+# DuckLake DDL errors come back as text, so the seam's exception is chosen by
+# matching it. Real messages captured from DuckDB 1.5.5; a missing schema says
+# "not found", not "does not exist".
 
 
 @pytest.mark.parametrize(
@@ -415,12 +391,7 @@ async def test_each_metadata_read_is_named_for_its_metric_label():
 )
 @pytest.mark.asyncio
 async def test_a_real_duckdb_failure_maps_to_the_right_seam_error(message, expected, monkeypatch):
-    """Drives `_run_ddl` with messages DuckDB actually emits.
-
-    The HTTP status a caller sees depends on which of these the text matches,
-    so a reworded upstream message would otherwise turn a 409 into a 503 with
-    nothing failing.
-    """
+    """Drives `_run_ddl` with messages DuckDB actually emits."""
     from types import SimpleNamespace
 
     from api.services import query as query_service

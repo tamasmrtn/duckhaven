@@ -1,8 +1,6 @@
 """Running the maintenance a recommendation asks for.
 
-The refusals matter more than the happy path here: this dispatches a statement
-that rewrites or deletes data files, so every way it could be the wrong moment
-is a test.
+Mostly the refusals: this dispatches a statement that rewrites or deletes data.
 """
 
 from __future__ import annotations

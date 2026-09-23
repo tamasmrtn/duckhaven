@@ -45,8 +45,7 @@ function kinds(...list: unknown[]) {
 
 describe("catalog kind choice", () => {
   it("is hidden entirely when only one kind is available", async () => {
-    // The default deployment. Nothing changes for an operator who has not
-    // enabled DuckLake — they must not see a choice with one option.
+    // With one kind available there is no choice to show.
     kinds(ICEBERG, { ...DUCKLAKE, available: false });
     renderDialog();
 
@@ -68,8 +67,7 @@ describe("catalog kind choice", () => {
   });
 
   it("warns that a DuckLake catalog is readable by DuckDB only", async () => {
-    // The one irreversible consequence of the choice, shown at the moment of
-    // choosing rather than only in the docs.
+    // The portability trade-off is shown at the moment of choosing.
     kinds(ICEBERG, DUCKLAKE);
     renderDialog();
 
@@ -128,8 +126,7 @@ describe("catalog kind choice", () => {
   });
 
   it("shows a disabled kind with the reason rather than hiding it", async () => {
-    // An operator who read the docs and expected DuckLake should learn why it
-    // is not selectable, not be left wondering where it went.
+    // A disabled kind explains why it is not selectable.
     kinds(ICEBERG, DUCKLAKE, {
       ...DUCKLAKE,
       kind: "future_kind",

@@ -1,8 +1,6 @@
 """The catalog descriptor both dispatch paths put on the wire.
 
-The two paths once described a catalog differently — the session path kept the
-Iceberg-era fields — so a DuckLake catalog attached as Iceberg and failed
-silently. These tests keep them from diverging again.
+Keeps the query and session paths from describing a catalog differently.
 """
 
 from __future__ import annotations
@@ -162,11 +160,7 @@ async def test_the_bundled_store_is_not_cached_because_it_mints_nothing():
 
 @pytest.mark.asyncio
 async def test_ducklake_carries_the_deployment_s_catalog_options():
-    """The tuning settings have to reach the catalog to mean anything.
-
-    They were declared and documented before anything read them, so a
-    deployment that set them got the extension's defaults regardless.
-    """
+    """The tuning settings reach the catalog."""
     original = (
         settings.ducklake_target_file_size_mb,
         settings.ducklake_data_inlining_row_limit,

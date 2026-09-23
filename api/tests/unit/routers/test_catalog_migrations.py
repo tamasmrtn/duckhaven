@@ -92,10 +92,7 @@ async def test_start_migration_accepts_a_ducklake_catalog(auth_client, owner, db
 async def test_start_migration_refuses_a_ducklake_catalog_with_absolute_paths(
     auth_client, owner, db_session, monkeypatch
 ):
-    """Absolute paths do not move when the catalog's data path changes, so they
-    would be left behind pointing at the old location. They can also name a
-    bucket the target credentials cannot reach, which is why this refuses rather
-    than rewriting them."""
+    """Absolute paths would not move with the data path, so migration refuses."""
     catalog = await _ducklake_catalog(db_session, owner, slug="dl2")
     target = await _target_backend(db_session, owner)
 

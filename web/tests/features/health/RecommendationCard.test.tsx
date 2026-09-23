@@ -23,8 +23,7 @@ describe("RecommendationCard", () => {
   });
 
   it("says so plainly when the catalog kind has no verbs to run", () => {
-    // Iceberg: DuckDB's extension implements none of these, so naming an
-    // external engine is the only honest thing the footer can do.
+    // Iceberg: DuckDB cannot run these, so the footer names an external engine.
     const rec = {
       ...REC,
       remediation: { ...REC.remediation!, applicable_in_app: false },
@@ -44,8 +43,7 @@ describe("RecommendationCard", () => {
   });
 
   it("confirms before a verb that acts on the whole catalog", () => {
-    // expire_snapshots from one table's page expires every table's, so the
-    // blast radius has to be stated before the click, not after.
+    // A catalog-scoped verb states its blast radius before the click.
     const onApply = vi.fn();
     const rec = {
       ...REC,

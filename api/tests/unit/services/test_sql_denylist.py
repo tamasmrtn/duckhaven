@@ -128,9 +128,7 @@ def test_existing_allowlist_behaviour_is_unchanged() -> None:
 
 
 # --- CHECKPOINT ------------------------------------------------------------
-#
-# The statement that reaches every verb the ducklake_ prefix rule exists to
-# block, while carrying none of that prefix.
+# Runs every maintenance verb without the ducklake_ prefix.
 
 
 @pytest.mark.parametrize(
@@ -143,12 +141,7 @@ def test_existing_allowlist_behaviour_is_unchanged() -> None:
     ],
 )
 def test_checkpoint_is_denied_by_name(sql):
-    """Denied for being CHECKPOINT, not for being an unmodelled parse node.
-
-    Both gates refused these before this rule existed, but incidentally -- the
-    message named a sqlglot class. Assert the rule slug so the guarantee is the
-    one we meant rather than one we inherited.
-    """
+    """Denied for being CHECKPOINT, not incidentally as an unmodelled parse node."""
     with pytest.raises(ForeignAccessDenied) as exc:
         check_sql(sql)
     assert exc.value.rule == "ducklake_checkpoint"
@@ -169,12 +162,9 @@ def test_checkpoint_is_refused_by_both_statement_gates():
 
 
 def test_copy_from_database_is_refused_by_both_statement_gates():
-    """`COPY FROM DATABASE a TO b` clones a whole catalog in one statement.
+    """Export runs this from the control plane; user SQL must still be refused.
 
-    It reaches no ducklake_ function and names no metadata schema, so this
-    module does not catch it -- the COPY target rule and the statement-type
-    allowlist do. Pinned here because the export feature runs exactly this
-    statement from the control plane, and the user-facing refusal must stay.
+    Caught by the COPY target rule and the type allowlist, not this module.
     """
     sql = "COPY FROM DATABASE lake TO ice"
     with pytest.raises(SQLNotAllowed):

@@ -1,10 +1,7 @@
 """Each DuckLake catalog's role reaches its own schema and nothing else.
 
 `tests/deploy/test_compose_ducklake.py` asserts the REVOKEs are written; this
-asserts PostgreSQL enforces them, and that the per-catalog grants actually
-isolate one catalog's metadata from another's. That isolation is the reason the
-SQL denylist is no longer the only thing standing between an agent and every
-catalog in the deployment.
+asserts PostgreSQL enforces them and the per-catalog grants isolate catalogs.
 """
 
 from __future__ import annotations
@@ -80,11 +77,7 @@ async def _query(catalog: Catalog, database: str, sql: str):
 
 
 async def _exec(catalog: Catalog, database: str, *statements: str) -> None:
-    """Run statements that return no rows, on one connection.
-
-    One connection matters for anything touching a temporary table: it lives
-    and dies with the session.
-    """
+    """Run statements that return no rows, on one connection (temp tables need it)."""
     engine = create_async_engine(_role_url(catalog, database), poolclass=None)
     try:
         async with engine.begin() as conn:
@@ -134,13 +127,7 @@ async def test_a_catalogs_role_cannot_read_another_catalogs_metadata(two_catalog
 
 
 def _control_plane_database() -> str:
-    """The database holding users, password hashes and session tokens.
-
-    Read from DATABASE_URL rather than hardcoded: it is `duckhaven` in the
-    bundled stack and `testdb` in CI, and asserting against the wrong name
-    proves nothing -- PostgreSQL answers "does not exist", which is not the
-    refusal this test is about.
-    """
+    """The control-plane database: `duckhaven` in the bundled stack, `testdb` in CI."""
     raw = os.getenv("DATABASE_URL")
     if not raw:
         pytest.skip("DATABASE_URL not set; skipping DuckLake role test")
@@ -152,11 +139,9 @@ def _control_plane_database() -> str:
 
 @pytest.mark.asyncio
 async def test_a_catalogs_role_cannot_open_the_control_plane_database(two_catalogs) -> None:
-    """If this ever passes, an agent can read the credentials table -- which is
-    where every other catalog's password lives.
+    """Otherwise an agent could read every other catalog's password.
 
-    Refused at connect time: asyncpg raises before SQLAlchemy can wrap it, so
-    catch both.
+    asyncpg raises before SQLAlchemy can wrap it, so catch both.
     """
     raw, _ = two_catalogs
     with pytest.raises((asyncpg.PostgresError, DBAPIError)) as excinfo:
@@ -225,13 +210,7 @@ async def test_rotating_a_role_invalidates_the_old_password(two_catalogs) -> Non
 
 @pytest.mark.asyncio
 async def test_a_catalogs_role_can_create_a_temporary_table(two_catalogs) -> None:
-    """`ducklake_set_option` is implemented with one, so without TEMPORARY every
-    catalog option silently fails to apply -- the attach still succeeds and the
-    setting simply never takes effect.
-
-    Revoking PUBLIC's defaults on the database removed the implicit grant, which
-    is correct; it has to be given back explicitly rather than by accident.
-    """
+    """`ducklake_set_option` uses one; without TEMPORARY options silently don't apply."""
     raw, _ = two_catalogs
     await _exec(raw, "ducklake", "CREATE TEMPORARY TABLE t (i int)", "INSERT INTO t VALUES (1)")
 

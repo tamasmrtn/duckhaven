@@ -423,10 +423,7 @@ describe("CatalogTree", () => {
       screen.getByRole("button", { name: /refresh catalog/i }),
     );
 
-    // `acme_analytics` is the workspace default and `curated` is attached but
-    // not default. The button used to resolve a single default catalog, so
-    // `curated`'s tables kept showing no row count however often it was
-    // pressed — the endpoint was never called for them.
+    // `acme_analytics` is the default; `curated` is attached but not default.
     await waitFor(() =>
       expect([...probed].sort()).toEqual(["acme_analytics", "curated"]),
     );
@@ -439,8 +436,7 @@ describe("CatalogTree", () => {
         "/api/workspaces/:ws/catalogs/:catalog/refresh-stats",
         ({ params }) => {
           const catalog = params.catalog as string;
-          // A catalog can fail on its own — no agent that can serve its kind,
-          // say — and that must not abandon its siblings.
+          // One catalog failing must not abandon its siblings.
           if (catalog === "acme_analytics") {
             return HttpResponse.json(
               { detail: "No compatible agent is connected." },
@@ -462,10 +458,7 @@ describe("CatalogTree", () => {
     await waitFor(() => expect(probed).toEqual(["curated"]));
   });
   it("shows no catalog-kind marker on any row", async () => {
-    // The tree names catalogs and shows a storage icon; the kind is not part
-    // of that. It is on the catalog's detail panel and its info dialog, which
-    // is where someone goes to ask what a catalog is. A badge here marked one
-    // kind as the odd one out on every row of a mixed deployment.
+    // The kind lives on the detail panel and info dialog, not the tree.
     server.use(
       http.get("/api/workspaces/:ws/catalogs", () =>
         HttpResponse.json([
@@ -495,8 +488,7 @@ describe("CatalogTree", () => {
     const lake = await screen.findByRole("button", { name: /^lake/i });
     const iceberg = screen.getByRole("button", { name: /^acme_analytics/i });
 
-    // Neither the label nor the raw kind: a nullish-coalescing slip once
-    // rendered "iceberg_polaris" here, so both are worth asserting.
+    // Neither the label nor the raw kind.
     for (const row of [lake, iceberg]) {
       expect(row).not.toHaveTextContent("DuckLake");
       expect(row).not.toHaveTextContent("ducklake");

@@ -97,8 +97,7 @@ def test_rewrite_manifests_needs_data_files():
 
 
 # --- Per-kind remediation ---------------------------------------------------
-# The findings are format-neutral; the fix is not. DuckDB can run DuckLake's
-# maintenance and cannot run Iceberg's.
+# The findings are format-neutral; the fix is not.
 
 
 def _small_files_metrics() -> dict:
@@ -147,10 +146,7 @@ def test_ducklake_still_advises_rather_than_applying():
 
 
 # --- Applicability ---------------------------------------------------------
-#
-# Whether DuckHaven can run the fix is the catalog kind's capability, not a
-# property of the finding: too many small files is too many small files either
-# way, and only the remedy differs.
+# Decided by the catalog kind's capability, not the finding.
 
 FRAGMENTED = {"small_file_ratio": 0.4, "data_file_count": 200}
 

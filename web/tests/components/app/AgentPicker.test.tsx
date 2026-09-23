@@ -168,9 +168,7 @@ describe('AgentPicker catalog-kind compatibility', () => {
   }
 
   it('flags an agent that cannot serve a DuckLake catalog', async () => {
-    // Dispatch checks two axes; the picker mirrored only the storage one, so an
-    // agent without the ducklake extension looked selectable and the query
-    // failed at dispatch instead of the agent being greyed out.
+    // The picker mirrors both dispatch axes, catalog kind included.
     server.use(http.get('/api/agents', () => HttpResponse.json([RUNNING])))
     renderWithKinds(['ducklake'])
 
@@ -196,8 +194,7 @@ describe('AgentPicker catalog-kind compatibility', () => {
   })
 
   it('never flags an Iceberg catalog, which has never been gated', async () => {
-    // Matches the server: _CATALOG_KIND_EXTENSIONS["iceberg_polaris"] is empty,
-    // so enforcing it client-side would grey out agents the API accepts.
+    // Matches the server, which requires no extension for iceberg_polaris.
     server.use(http.get('/api/agents', () => HttpResponse.json([RUNNING])))
     renderWithKinds(['iceberg_polaris'])
 

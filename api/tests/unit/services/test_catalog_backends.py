@@ -1,8 +1,6 @@
 """The catalog-metadata seam: registry, capabilities and error translation.
 
-The Polaris backend's own behaviour is covered by the router suite
-(`routers/test_schemas.py`), which now exercises it end to end. Here: kind
-resolution, honest capabilities, and HTTP status preserved across the seam.
+Polaris behaviour is covered end to end by `routers/test_schemas.py`.
 """
 
 from __future__ import annotations

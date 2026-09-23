@@ -199,11 +199,7 @@ def test_catalog_kind_extensions_use_the_install_name(kind, expected):
 
 
 def test_catalog_options_are_applied_with_bound_arguments():
-    """The API's tuning settings are applied to the catalog on attach.
-
-    Bound rather than interpolated: these are values, and `set_option` takes
-    parameters, so there is no reason to build the statement by hand.
-    """
+    """The API's tuning settings are applied on attach, as bound parameters."""
     conn = FakeConn()
     runner._attach_ducklake(conn, _ducklake_catalog())
 
@@ -216,11 +212,7 @@ def test_catalog_options_are_applied_with_bound_arguments():
 
 
 def test_an_unknown_catalog_option_does_not_cost_us_the_attach():
-    """An older extension that rejects an option must not fail every query.
-
-    The attach is the whole workspace's connection; degrading one tuning knob
-    beats refusing to serve the catalog.
-    """
+    """An older extension that rejects an option must not fail every query."""
 
     class RejectingConn(FakeConn):
         def execute(self, sql: str, params: list | None = None):

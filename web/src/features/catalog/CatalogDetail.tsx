@@ -154,9 +154,6 @@ export function CatalogDetail({
               </p>
               <MetaRow label="Name" value={cat?.name ?? catalog} />
               <MetaRow label="Kind" value={catalogKindLabel(cat?.kind)} />
-              {/* Each kind names its metadata store differently — a Polaris
-                  warehouse, or a Postgres schema — so label the row for what it
-                  actually is rather than always saying "Polaris name". */}
               <MetaRow
                 label={
                   cat?.kind === "ducklake" ? "Metadata schema" : "Polaris name"

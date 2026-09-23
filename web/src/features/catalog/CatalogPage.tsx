@@ -158,10 +158,7 @@ function TableDetail({
               )}
               <span className="text-xs text-text-secondary">
                 {tableFormatDisplay(tableData.format)}
-                {/* "Catalog Commits" is Iceberg vocabulary — a DuckLake table
-                    has no equivalent, so the API sends no format_version for
-                    one and the phrase is omitted rather than shown as OFF,
-                    which would read as a missing feature. */}
+                {/* Iceberg-only: omitted, not shown as OFF, for DuckLake. */}
                 {tableData.format_version != null && (
                   <>
                     {" · Catalog Commits "}

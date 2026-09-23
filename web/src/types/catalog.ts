@@ -10,25 +10,16 @@ export interface TableColumn {
 // A decoupled catalog (data domain) attached to a workspace. The same catalog
 // can be attached to multiple workspaces (M:N) — `attached_workspaces` counts
 // them, which gates the drop affordance.
-// Where a catalog keeps its metadata. Orthogonal to the storage backend: a
-// catalog of either kind can sit on object_store, s3 or adls_gen2.
+// Where a catalog keeps its metadata. Orthogonal to the storage backend.
 export type CatalogKind = "iceberg_polaris" | "ducklake";
 
-// What a catalog's kind can do. Surfaced by the API so the UI never switches on
-// `kind` itself.
+// What a catalog's kind can do, so the UI never switches on `kind` itself.
 export interface CatalogCapabilities {
-  // Whether DuckDB can run this kind's storage migration.
   supports_storage_migration: boolean;
-  // False for DuckLake: only DuckDB can read its tables.
   external_engine_readable: boolean;
-  // True for DuckLake only: DuckHaven can run its maintenance itself, where an
-  // Iceberg table's recommendation can only name an external engine.
   supports_maintenance_apply?: boolean;
-  // True for DuckLake only: its data can be copied into an Iceberg catalog
-  // other engines can open.
   supports_iceberg_export?: boolean;
-  // False for DuckLake: its DDL runs on an agent, because only the extension
-  // can commit it. Creating a schema or table needs connected compute.
+  // False for DuckLake: creating a schema or table needs connected compute.
   supports_agentless_ddl?: boolean;
   supported_storage_kinds: BackendKind[];
 }
@@ -38,8 +29,7 @@ export interface Catalog {
   slug: string;
   name: string;
   kind: CatalogKind;
-  // Exactly one of these is set, per `kind`: the Polaris warehouse name, or the
-  // Postgres schema holding this catalog's ducklake_* tables.
+  // Exactly one of these is set, per `kind`.
   polaris_name: string | null;
   metadata_schema?: string | null;
   capabilities?: CatalogCapabilities | null;
@@ -105,13 +95,11 @@ export interface TableSnapshot {
   total_records: number | null;
   added_data_files: number | null;
   total_data_files: number | null;
-  // "table" for Iceberg. "catalog" for DuckLake, whose snapshots are commits
-  // against the whole catalog — these are the ones that changed this table.
+  // "catalog" for DuckLake's catalog-wide commits that touched this table.
   granularity?: "table" | "catalog";
 }
 
-// One catalog kind this deployment can create (GET /catalog-kinds). The
-// capability facts come from the backend that implements them.
+// One catalog kind this deployment can create (GET /catalog-kinds).
 export interface CatalogKindOption {
   kind: CatalogKind;
   label: string;

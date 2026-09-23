@@ -54,8 +54,6 @@ function isActive(status: MigrationStatus): boolean {
 
 export function CatalogMigrationsPage() {
   const { data: allCatalogs, isLoading } = useAllCatalogs();
-  // Kept capability-driven although both kinds now migrate: a future kind that
-  // cannot should be absent from the picker rather than failing on submit.
   const catalogs = allCatalogs?.filter(
     (c) => c.capabilities?.supports_storage_migration !== false,
   );

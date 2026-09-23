@@ -42,9 +42,8 @@ interface AgentPickerProps {
   onChange: (agentId: string) => void;
   workspaceBackend?: BackendKind;
   /**
-   * The catalog kinds attached to the workspace. Compatibility has two axes —
-   * storage backend and catalog kind — both enforced server-side; without the
-   * kind, an agent missing `ducklake` looked selectable and failed at dispatch.
+   * The catalog kinds attached to the workspace; an agent must serve every
+   * kind as well as every storage backend.
    */
   workspaceCatalogKinds?: CatalogKind[];
   /**
@@ -116,8 +115,7 @@ function AgentRow({
           );
         })}
       </div>
-      {/* Name the catalog-kind requirement first: it is the more surprising of
-          the two, and matches which extension the API names when it refuses. */}
+      {/* Catalog kind first, matching the extension the API names on refusal. */}
       {unservedKind !== undefined && (
         <p className="pl-4.5 text-2xs text-[var(--status-failed)]">
           Missing extension for {unservedKind} catalogs:{" "}

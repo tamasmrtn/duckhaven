@@ -65,8 +65,7 @@ export interface HealthHistoryPoint {
 
 export interface Remediation {
   applicable_in_app: boolean;
-  // "table" or "catalog": a catalog-scoped verb affects every table in the
-  // catalog, which the confirmation has to say.
+  // A catalog-scoped verb affects every table in the catalog.
   scope?: "table" | "catalog";
   summary?: string;
   command?: string;

@@ -49,8 +49,7 @@ export function SnapshotHistoryPanel({
   }
 
   const snapshots = data ?? [];
-  // A DuckLake snapshot is a catalog-wide commit, so this list is the subset
-  // that changed the table; say so rather than implying per-table lineage.
+  // DuckLake snapshots are catalog-wide commits; don't imply per-table lineage.
   const catalogScoped = snapshots.some((s) => s.granularity === "catalog");
 
   return (

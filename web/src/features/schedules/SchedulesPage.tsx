@@ -319,8 +319,7 @@ function ScheduleDialog({
   const create = useCreateSchedule(ws);
   const update = useUpdateSchedule(ws);
   const remove = useDeleteSchedule(ws);
-  // A scheduled run dispatches against the same catalogs a worksheet does, so
-  // the agent must serve their kinds too.
+  // The agent must serve the workspace's catalog kinds, as for a worksheet.
   const { data: catalogs = [] } = useCatalogs(ws);
   const { data: runs = [] } = useScheduleRuns(ws, schedule?.id ?? null);
 

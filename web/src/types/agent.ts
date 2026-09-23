@@ -222,8 +222,6 @@ export interface BootstrapToken {
 }
 
 // Mirrors _CATALOG_KIND_EXTENSIONS in api/src/api/services/agent_capabilities.py.
-// `postgres_scanner` is the advertised name for the `postgres` extension.
-// `iceberg_polaris` is empty on purpose, matching the server.
 const CATALOG_KIND_EXTENSIONS: Record<CatalogKind, readonly string[]> = {
   iceberg_polaris: [],
   ducklake: ["ducklake", "postgres_scanner"],
@@ -233,7 +231,6 @@ export function agentSupportsCatalogKind(
   agent: Agent,
   kind: CatalogKind,
 ): boolean {
-  // No advertised capabilities (not yet registered) supports nothing.
   if (!agent.capabilities) return false;
   const { extensions } = agent.capabilities;
   return (CATALOG_KIND_EXTENSIONS[kind] ?? []).every((ext) =>

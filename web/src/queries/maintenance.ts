@@ -53,8 +53,7 @@ export function useApplyRecommendation() {
   return useMutation({
     mutationFn: (id: string) => maintenanceApi.apply(id),
     onSuccess: () => {
-      // Both the feed and the table page show apply_status, and the run is
-      // asynchronous, so the row has to be refetched rather than patched.
+      // The apply runs asynchronously; refetch rather than patch.
       qc.invalidateQueries({ queryKey: ["maintenance"] });
     },
   });

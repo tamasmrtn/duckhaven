@@ -7,11 +7,8 @@ import { schemasApi, type ColumnSpec } from "@/api/schemas";
 export function useRefreshCatalogStats(ws: string) {
   const qc = useQueryClient();
   return useMutation({
-    // Probes every catalog passed in: row counts are per-catalog, so refreshing
-    // one leaves siblings showing none.
-    //
-    // Sequential, since each probe runs a real count(*) per table on a shared
-    // agent. A failure must not stop the rest, so failures are collected.
+    // Sequential: each probe runs a real count(*) per table on a shared agent.
+    // Failures are collected so one catalog cannot stop the rest.
     mutationFn: async (catalogs: string[]) => {
       let probed = 0;
       const failed: string[] = [];

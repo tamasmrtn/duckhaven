@@ -69,15 +69,12 @@ export function CreateCatalogDialog({
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  // Hidden when the deployment offers only one kind, so an operator who has not
-  // enabled DuckLake sees no change.
+  // The kind picker is hidden when the deployment offers only one kind.
   const { data: kinds = [] } = useCatalogKinds();
   const [catalogKind, setCatalogKind] =
     useState<CatalogKind>("iceberg_polaris");
   const offerKindChoice = kinds.filter((k) => k.available).length > 1;
 
-  // Storage is a first-class choice on every catalog, not hidden behind an
-  // "Advanced" toggle.
   const { data: backends = [] } = useStorageBackends();
   const createBackend = useCreateStorageBackend();
   const [backendChoice, setBackendChoice] = useState<string>(BUNDLED);
@@ -188,10 +185,8 @@ export function CreateCatalogDialog({
                     <span className="mt-0.5 block text-2xs text-text-tertiary">
                       {k.unavailable_reason ?? KIND_BLURB[k.kind]}
                     </span>
-                    {/* The trade-off that matters most: say it at the moment
-                        of choosing, not only in the docs. It is recoverable
-                        rather than permanent, and saying which is the
-                        difference between a warning and a scare. */}
+                    {/* State the portability trade-off, and that it is
+                        recoverable, at the moment of choosing. */}
                     {k.available &&
                       !k.capabilities.external_engine_readable && (
                         <span className="mt-1 block text-2xs text-[var(--text-warning,#b45309)]">

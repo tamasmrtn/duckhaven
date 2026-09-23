@@ -127,8 +127,7 @@ export const maintenanceHandlers = [
         "DuckHaven cannot run maintenance for this catalog kind.",
       );
     }
-    // Dispatched, not finished: status stays open until a later scan decides
-    // whether the condition actually cleared.
+    // Status stays open until a later scan decides.
     rec.apply_status = "running";
     return HttpResponse.json(rec, { status: 202 });
   }),

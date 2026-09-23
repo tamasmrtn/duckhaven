@@ -12,9 +12,7 @@ interface Props {
   dismissing?: boolean;
 }
 
-// What the footer says, which depends on whether DuckHaven can run this at all.
-// It used to say "does not apply maintenance yet" unconditionally, which is now
-// only true for the kinds whose extension has no verbs.
+// Depends on whether DuckHaven can run this recommendation itself.
 function footer(rec: Recommendation): string {
   const tool = rec.remediation?.tool
     ? `Run with ${rec.remediation.tool}. `
@@ -51,8 +49,7 @@ export function RecommendationCard({
     Boolean(rec.remediation?.applicable_in_app) &&
     rec.status === "open" &&
     !applying;
-  // Two of the five verbs act on the whole catalog, so pressing this from one
-  // table's page still affects every table. Say so before, not after.
+  // Catalog-scoped verbs affect every table, so warn before applying.
   const catalogWide = rec.remediation?.scope === "catalog";
   return (
     <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4">

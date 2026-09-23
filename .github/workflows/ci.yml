@@ -178,12 +178,8 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --dev
-      # DuckLake keeps its catalog metadata in PostgreSQL, so its suites need
-      # that database. Without it they skip -- silently, and including the
-      # role-isolation test that is the whole reason the agent network is
-      # allowed to reach Postgres at all. Mirrors
-      # deploy/postgres-init/20-create-ducklake-db.sh; the per-catalog login
-      # roles are created by the API, not here.
+      # Without this database the DuckLake suites (role isolation included)
+      # skip silently. Mirrors deploy/postgres-init/20-create-ducklake-db.sh.
       - name: Create the DuckLake catalog database
         run: |
           psql "$ADMIN_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE ducklake"
@@ -242,12 +238,8 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --dev
-      # DuckLake keeps its catalog metadata in PostgreSQL, so its suites need
-      # that database. Without it they skip -- silently, and including the
-      # role-isolation test that is the whole reason the agent network is
-      # allowed to reach Postgres at all. Mirrors
-      # deploy/postgres-init/20-create-ducklake-db.sh; the per-catalog login
-      # roles are created by the API, not here.
+      # Without this database the DuckLake suites (role isolation included)
+      # skip silently. Mirrors deploy/postgres-init/20-create-ducklake-db.sh.
       - name: Create the DuckLake catalog database
         run: |
           psql "$ADMIN_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE ducklake"

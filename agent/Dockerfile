@@ -32,9 +32,8 @@ RUN uv sync --frozen --no-dev --no-editable --package duckhaven-agent
 # connect (closes G-D17-c). Extensions land in $HOME/.duckdb; HOME is pinned to
 # the runtime user's home so the runtime stage resolves them with no download.
 #
-# Required, not an optimisation, for `ducklake`/`postgres`: the agent runs on an
-# `internal: true` network and cannot reach extensions.duckdb.org. `postgres`
-# installs under that name but is advertised as `postgres_scanner`.
+# Required for `ducklake`/`postgres`: the agent's `internal: true` network
+# cannot reach extensions.duckdb.org.
 ENV HOME=/home/duckhaven
 RUN mkdir -p /home/duckhaven && \
     /app/.venv/bin/python -c "import duckdb; c = duckdb.connect(); \

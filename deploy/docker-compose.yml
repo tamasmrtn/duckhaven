@@ -14,9 +14,7 @@ services:
       # subdirectory under a single /var/lib/postgresql mount (unlike 16's
       # /var/lib/postgresql/data), to support `pg_upgrade --link`.
       - postgres_data:/var/lib/postgresql
-      # Creates the `polaris` and `ducklake` databases and revokes PUBLIC's
-      # default grants, on first init only; use scripts/enable-ducklake.sh
-      # otherwise. Per-catalog login roles are created by the API.
+      # First init only; existing deployments use scripts/enable-ducklake.sh.
       - ./postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U duckhaven"]
@@ -24,9 +22,8 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      # Agent network, so DuckDB agents reach the DuckLake catalog database.
-      # Safe only because of the role isolation in
-      # postgres-init/20-create-ducklake-db.sh.
+      # Agent network, for the DuckLake catalog database. Safe only because of
+      # the role isolation in postgres-init/20-create-ducklake-db.sh.
       - default
       - duckhaven_internal
 
@@ -265,20 +262,14 @@ services:
       MCP_QUERY_TIMEOUT_S: ${MCP_QUERY_TIMEOUT_S:-120.0}
       MCP_RESULT_ROW_CAP: ${MCP_RESULT_ROW_CAP:-100}
       MCP_RESULT_BYTE_CAP: ${MCP_RESULT_BYTE_CAP:-32768}
-      # DuckLake: catalog metadata in Postgres, data in Parquet. Available by
-      # default; Iceberg + Polaris stays the default *kind* for a new catalog.
-      # See docs/concepts/ducklake.md.
-      #
-      # The API connects as the owner; each catalog's agents connect as that
-      # catalog's own login, which the API creates. They are never the same.
+      # DuckLake: see docs/concepts/ducklake.md. The API connects as the owner;
+      # agents use each catalog's own login.
       DUCKLAKE_ENABLED: ${DUCKLAKE_ENABLED:-true}
       DUCKLAKE_DATABASE_URL: ${DUCKLAKE_DATABASE_URL:-postgresql+asyncpg://duckhaven:${POSTGRES_PASSWORD:-duckhaven}@postgres:5432/ducklake}
       DUCKLAKE_AGENT_HOST: ${DUCKLAKE_AGENT_HOST:-postgres}
       DUCKLAKE_AGENT_PORT: ${DUCKLAKE_AGENT_PORT:-5432}
       DUCKLAKE_AGENT_DATABASE: ${DUCKLAKE_AGENT_DATABASE:-ducklake}
-      # Applied to every DuckLake catalog when an agent attaches it. Passed
-      # through so setting them in .env actually reaches the API -- the
-      # reference documents them as operator knobs.
+      # Applied to every DuckLake catalog on attach.
       DUCKLAKE_TARGET_FILE_SIZE_MB: ${DUCKLAKE_TARGET_FILE_SIZE_MB:-512}
       DUCKLAKE_DATA_INLINING_ROW_LIMIT: ${DUCKLAKE_DATA_INLINING_ROW_LIMIT:-10}
       SQL_SESSIONS_ENABLED: ${SQL_SESSIONS_ENABLED:-false}

@@ -1,21 +1,10 @@
 #!/usr/bin/env bash
 # Apply the DuckLake PostgreSQL setup to an EXISTING deployment.
 #
-# /docker-entrypoint-initdb.d only runs against an empty data dir, so an
-# installation predating DuckLake never sees 20-create-ducklake-db.sh. This is
-# the same idempotent work against a running stack: create the `ducklake`
-# database and revoke the default PUBLIC privileges that would otherwise let any
-# role reach `duckhaven` or create objects in `ducklake.public`.
+# The idempotent equivalent of deploy/postgres-init/20-create-ducklake-db.sh,
+# which initdb never runs on an existing data dir.
 #
 #   scripts/enable-ducklake.sh
-#
-# There is no shared agent role and no password to choose: each catalog gets its
-# own login, created by the API when the catalog is provisioned. After enabling
-# DuckLake on a deployment that already has catalogs, run
-#   POST /api/admin/catalogs/ducklake/reconcile-roles
-# to create the roles for them rather than waiting for each to be browsed.
-#
-# Afterwards, set DUCKLAKE_ENABLED=true in deploy/.env and restart the api.
 set -euo pipefail
 
 COMPOSE_FILE="$(dirname "$0")/../deploy/docker-compose.yml"

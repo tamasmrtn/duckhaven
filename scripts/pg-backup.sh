@@ -8,11 +8,8 @@ COMPOSE_FILE="$(dirname "$0")/../deploy/docker-compose.yml"
 
 mkdir -p "$BACKUP_DIR"
 
-# Each database here is required to restore a working install: `duckhaven`
-# (users, workspaces, saved queries, audit log, agent registrations), `polaris`
-# (the Iceberg metastore) and, when enabled, `ducklake` (DuckLake catalog
-# metadata). `ducklake` is skipped when absent; when present it is not optional,
-# since a DuckLake table's schema, snapshots and file list live only there.
+# All are required to restore a working install: `duckhaven`, `polaris` (the
+# Iceberg metastore) and, when it exists, `ducklake` (DuckLake catalog metadata).
 databases="duckhaven polaris"
 if docker compose -f "$COMPOSE_FILE" exec -T postgres \
         psql -U duckhaven -d postgres -tAc \
@@ -20,9 +17,7 @@ if docker compose -f "$COMPOSE_FILE" exec -T postgres \
     databases="$databases ducklake"
 fi
 
-# A DuckLake catalog's metadata and its data are two systems that can be
-# restored to two different moments, which Iceberg's cannot. Say so here rather
-# than only in the runbook: this script is what an operator actually reads.
+# DuckLake metadata and data can be restored to different moments; warn here.
 case " $databases " in
     *" ducklake "*)
         echo "note: DuckLake is enabled. Snapshot object storage at the same point"

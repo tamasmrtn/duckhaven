@@ -7,10 +7,8 @@ could escape the per-query sandbox (`ATTACH`/`DETACH`, `COPY`/`EXPORT`,
 transaction control, …) is rejected. Multi-statement bodies must consist
 entirely of allowed statements.
 
-Statement type alone is not enough once agents load the `postgres` extension
-for DuckLake: `postgres_query(...)` is a `SELECT` and an `UPDATE` against
-`__ducklake_metadata_*` is an `UPDATE`. Both are denied by `sql_denylist`,
-which this module applies after the type check.
+After the type check, `sql_denylist` refuses allowed-type statements that reach
+a foreign database or DuckLake's internal metadata.
 
 The control plane uses DuckDB *as a parser*: `duckdb.extract_statements`
 is purely lexical/syntactic — no execution, no storage, no extensions
@@ -66,8 +64,7 @@ def assert_allowed(sql: str) -> None:
             "UPDATE, DELETE, MERGE, CREATE, ALTER, DROP."
         )
 
-    # An allowed statement type can still reach a foreign database or DuckLake's
-    # internal metadata; raised as SQLNotAllowed to keep the router's 422 shape.
+    # Re-raised as SQLNotAllowed to keep the router's 422 shape.
     try:
         check_sql(sql)
     except ForeignAccessDenied as exc:

@@ -1,13 +1,8 @@
 """Drive one catalog export from pending to a terminal state.
 
-Two phases. ``pending`` creates the Iceberg target and attaches it to the same
-workspace; ``copying`` dispatches the COPY and then watches the Query row it
-created.
-
-Attaching the target is what makes this work with **no agent changes at all**:
-`dispatch_query` already attaches every catalog bound to the workspace, so both
-the DuckLake source and the Iceberg target land on one connection, and
-`pick_agent_for` already requires an agent that can serve both kinds.
+``pending`` creates the Iceberg target and attaches it to the source's
+workspace, so `dispatch_query` puts both catalogs on one connection.
+``copying`` dispatches the COPY and watches its Query row.
 """
 
 from __future__ import annotations
@@ -33,18 +28,12 @@ from api.services.polaris import PolarisClient
 
 logger = logging.getLogger(__name__)
 
-# Generous: a whole-catalog deep copy is unbounded, and the alternative to
-# waiting is a half-copied target.
+# Generous: a whole-catalog deep copy is unbounded.
 EXPORT_TIMEOUT_S = 12 * 3600
 
 
 def copy_statement(source_slug: str, target_slug: str) -> str:
-    """The one statement that does the whole catalog.
-
-    Slugs are identifiers here, not values, so they are quoted as such. They are
-    already constrained to ``^[a-z][a-z0-9_]*$`` by `validate_catalog_slug`, and
-    quoting them anyway costs nothing and survives that constraint loosening.
-    """
+    """The one statement that does the whole catalog."""
     return f'COPY FROM DATABASE "{source_slug}" TO "{target_slug}"'
 
 
@@ -93,10 +82,7 @@ async def _provision(db: AsyncSession, polaris: PolarisClient, export: CatalogEx
         export.target_catalog_id = target.id
         await db.commit()
 
-    # Namespaces first: COPY FROM DATABASE writes into schemas, and Polaris does
-    # not create them implicitly. Called on the Polaris client directly rather
-    # than through the seam -- the target is Iceberg by construction, and the
-    # seam's create_schema wants a WriteContext that means nothing here.
+    # COPY FROM DATABASE needs the namespaces to exist; Polaris won't create them.
     from api.services.catalog_backends import backend_for
     from api.services.polaris import PolarisConflictError
 
@@ -130,9 +116,7 @@ async def _advance(db: AsyncSession, export: CatalogExport) -> None:
         export.tables_done = export.tables_total
         await _finish(db, export, STATUS_COMPLETED, None)
     elif query.status in ("failed", "cancelled"):
-        # Deliberately not dropping the target: it may be partially populated,
-        # and silently deleting data a user can already see in the UI is worse
-        # than leaving something they can inspect and remove.
+        # Deliberately keep the partial target for the user to inspect and drop.
         target = (
             await db.get(Catalog, export.target_catalog_id) if export.target_catalog_id else None
         )

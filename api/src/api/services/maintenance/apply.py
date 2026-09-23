@@ -1,19 +1,11 @@
 """Running the maintenance a recommendation asks for.
 
-The advisor has only ever advised. DuckLake's verbs can actually be run, so
-this is where DuckHaven runs them — for the kinds whose capability says it can,
-never by switching on the catalog's name.
+Gated on the kind's `supports_maintenance_apply` capability.
 
-**The statement is the Query row's SQL, not a payload key.** The `queries`
-table is the only audit trail in this codebase, and a destructive operation
-whose audit row reads `SELECT 1` is not an audit record. Keeping the real
-statement there also means `dispatch_query`'s write-freeze applies for free:
-`CALL ducklake_...` is not read-only, so an apply is refused while a storage
-migration is in flight without this module asking.
-
-A `maintain_for` key rides alongside, carrying only before/after measurement.
-It exists so the agent measures the same table on the same connection either
-side of the statement; a second dispatch would race a concurrent write.
+The statement is the Query row's SQL, not a payload key, so the `queries` audit
+trail shows what actually ran and `dispatch_query`'s write-freeze applies.
+`maintain_for` only asks the agent to measure the table before and after on the
+same connection.
 """
 
 from __future__ import annotations
@@ -38,9 +30,7 @@ from api.services.maintenance.policy import get_or_create_policy
 
 logger = logging.getLogger(__name__)
 
-# How long an apply may sit unfinished before the scan cycle gives up on it.
-# Compaction is unbounded, so this is generous; the point is that a row cannot
-# stay "running" forever and block every later apply on the catalog.
+# Generous because compaction is unbounded; after this the scan cycle fails the apply.
 _STALE_AFTER_S = 6 * 3600
 
 
@@ -52,12 +42,7 @@ async def start_apply(
     workspace: Workspace,
     user: User,
 ) -> Query:
-    """Dispatch the maintenance this recommendation asks for.
-
-    Refuses, in order, the four ways this is the wrong moment: the kind cannot
-    be applied, the recommendation is not open, the catalog is mid-migration,
-    or another apply is already running against the same catalog.
-    """
+    """Dispatch the maintenance this recommendation asks for."""
     from api.services import query as query_service
     from api.services.migration.service import active_migration
 
@@ -80,8 +65,7 @@ async def start_apply(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Recommendation is {recommendation.status}, not open.",
         )
-    # Checked explicitly so the caller gets this rather than dispatch_query's
-    # bare ValueError, which would surface as a 500.
+    # Checked here so the caller gets a 409, not dispatch_query's ValueError (500).
     if await active_migration(db, catalog.id) is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -116,9 +100,7 @@ async def start_apply(
         user_id=user.id,
         sql=";\n".join(statements),
         status="queued",
-        # Visible in the query log by default, unlike the read-only
-        # "maintenance" probe: this one rewrites or deletes data files, and who
-        # ran it is exactly what an operator will want to find later.
+        # Unlike the read-only "maintenance" probe, visible in the query log.
         origin="maintenance_apply",
     )
     db.add(query)
@@ -149,8 +131,7 @@ async def start_apply(
 async def _apply_running_on(db: AsyncSession, catalog_id: uuid.UUID) -> bool:
     """Whether any recommendation on this catalog has an apply in flight.
 
-    Per catalog, not per table: `expire_snapshots` and `cleanup_orphans` act on
-    the whole catalog, so two applies that look table-scoped can still collide.
+    Per catalog: `expire_snapshots` and `cleanup_orphans` act on the whole catalog.
     """
     found = await db.scalar(
         select(MaintenanceRecommendation.id).where(
@@ -164,9 +145,7 @@ async def _apply_running_on(db: AsyncSession, catalog_id: uuid.UUID) -> bool:
 async def record_apply_result(db: AsyncSession, query: Query, payload: dict[str, Any]) -> None:
     """Settle the recommendation this query was applying.
 
-    On success the table is re-probed rather than the recommendation being
-    marked resolved: whether the finding actually cleared is a question for the
-    next sample, not an assumption for this one.
+    Success does not resolve the recommendation; the next health sample decides.
     """
     recommendation = (
         await db.execute(
@@ -188,11 +167,7 @@ async def record_apply_result(db: AsyncSession, query: Query, payload: dict[str,
 
 
 async def sweep_stale_applies(db: AsyncSession, now: datetime) -> int:
-    """Fail applies whose query never came back.
-
-    Without this a lost agent leaves a recommendation "running" forever, and
-    every later apply on that catalog is refused as a conflict.
-    """
+    """Fail applies whose query never came back, so they stop blocking the catalog."""
     cutoff = now.timestamp() - _STALE_AFTER_S
     stale = (
         (

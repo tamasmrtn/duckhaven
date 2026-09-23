@@ -55,14 +55,7 @@ def _short(exc: object) -> str:
 
 
 def _block_to_creds(block: dict, location: str) -> dict:
-    """Translate a DuckDB-dialect storage block into the spelling `_list_prefix` reads.
-
-    Two credential vocabularies exist in this codebase: Polaris vends the
-    Iceberg REST spelling (``s3.access-key-id``), and
-    ``session_credentials.build_storage_block`` mints the same access in
-    DuckDB's (``key_id``). The listing helpers already speak the first, so a
-    DuckLake-era block is translated rather than given a second code path.
-    """
+    """Translate a DuckDB-dialect storage block into the spelling `_list_prefix` reads."""
     if block.get("type") == "azure":
         # `_list_adls` wants a bare SAS keyed by account, not a connection string.
         conn = str(block.get("connection_string") or "")
@@ -92,14 +85,8 @@ def _block_to_creds(block: dict, location: str) -> dict:
 async def validate_backend_direct(backend: StorageBackend) -> StorageBackendHealth:
     """Validate a backend without Polaris, by minting credentials ourselves.
 
-    The external path below provisions a throwaway Polaris catalog, which a
-    DuckLake-only deployment cannot do -- it does not run Polaris. That is the
-    topology `docker-compose.ducklake-only.yml` ships, so registering an
-    external backend there failed on a dependency the deployment deliberately
-    removed.
-
-    This exercises the same STS AssumeRole / user-delegation-SAS path a DuckLake
-    attach uses, which is the thing actually worth proving.
+    For DuckLake-only deployments. Exercises the same credential path a
+    DuckLake attach uses.
     """
     from api.services.session_credentials import build_storage_block
 
@@ -107,15 +94,11 @@ async def validate_backend_direct(backend: StorageBackend) -> StorageBackendHeal
         return _validate_bundled()
 
     try:
-        # Inside the try: a backend saved with a missing config key raises here,
-        # and an unusable backend is what this function reports, not raises.
         _, base_location, _ = polaris_storage(backend.kind, backend.root_uri, backend.config)
         probe = f"{base_location.rstrip('/')}/dhhealth{uuid.uuid4().hex[:12]}/"
-        # Minting is a synchronous SDK call; off the event loop, as elsewhere.
         block = await asyncio.to_thread(build_storage_block, backend, probe)
         creds = _block_to_creds(block, probe)
-        # A prefix with nothing under it lists zero objects rather than failing,
-        # so this proves reach without needing the probe to have written.
+        # An empty prefix lists zero objects, which still proves reach.
         count = await asyncio.to_thread(
             _list_prefix, backend.kind, probe, creds, backend.config or {}
         )
@@ -133,12 +116,7 @@ async def validate_backend_direct(backend: StorageBackend) -> StorageBackendHeal
 async def validate_backend_for(
     db: AsyncSession, polaris: PolarisClient, backend: StorageBackend
 ) -> StorageBackendHealth:
-    """Validate through whichever path this deployment can actually run.
-
-    Asked of the database rather than a flag, matching `readyz`: a deployment
-    with no Iceberg catalog does not run Polaris, so the throwaway-catalog probe
-    below would fail on a dependency that is deliberately absent.
-    """
+    """Validate through Polaris only if the deployment has an Iceberg catalog, like `readyz`."""
     has_iceberg = await db.scalar(
         select(sa.func.count()).select_from(Catalog).where(Catalog.kind == KIND_ICEBERG_POLARIS)
     )

@@ -26,10 +26,8 @@ class Catalog(Base):
     ``catalog.schema.table`` prefix.
 
     ``kind`` says where catalog metadata lives and which of ``polaris_name`` /
-    ``metadata_schema`` is set (enforced by ``ck_catalogs_kind_identity``).
-    Storage is orthogonal: both kinds bind to a ``StorageBackend`` the same way
-    (I4). Both identity columns are stored rather than derived, so a renamed
-    catalog keeps pointing at its physical metastore.
+    ``metadata_schema`` is set. Storage is orthogonal to kind (I4). Identity
+    columns are stored, not derived, so a rename keeps the physical metastore.
     """
 
     __tablename__ = "catalogs"
@@ -50,7 +48,6 @@ class Catalog(Base):
         String(32), nullable=False, server_default=KIND_ICEBERG_POLARIS
     )
     polaris_name: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
-    # 63 is Postgres's identifier limit; a longer name would be truncated there.
     metadata_schema: Mapped[str | None] = mapped_column(String(63), unique=True, nullable=True)
     storage_backend_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("storage_backends.id"), nullable=False
@@ -61,16 +58,11 @@ class Catalog(Base):
     )
 
     storage_backend: Mapped[StorageBackend] = relationship(back_populates="catalogs")
-    # The PostgreSQL login this catalog's agents authenticate with (DuckLake
-    # only; None for Iceberg). View-only and eager-loaded by the catalog
-    # resolvers, so the dispatch path can mint an attach payload without a
-    # second round trip -- it builds one of these per catalog per query.
-    # Set only between minting a DuckLake catalog's password and writing its
-    # credential row, which cannot happen until the flush gives this an id.
-    # A plain attribute, not a column: it is never persisted and never read
-    # again once the row exists.
+    # Carries a new DuckLake password until the flush gives the row an id for
+    # its credential row. Never persisted.
     pending_ducklake_password: ClassVar[str | None] = None
 
+    # DuckLake only. Eager-loaded by the catalog resolvers for the dispatch path.
     ducklake_credential: Mapped[Credential | None] = relationship(
         "Credential",
         primaryjoin=(

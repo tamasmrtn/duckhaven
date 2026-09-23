@@ -123,9 +123,7 @@ async def dispatch_query(
         raise ValueError("Workspace has no catalogs attached")
 
     # Eager multi-attach: the agent ATTACHes every catalog bound to the
-    # workspace under its slug and `USE`s the active one. Iceberg needs no
-    # vended credentials; DuckLake catalogs carry API-minted ones (see
-    # `build_catalog_attach`).
+    # workspace under its slug and `USE`s the active one.
     if active_catalog is None:
         default = await get_default_catalog(db, workspace.id)
         active_catalog = default.slug if default is not None else catalogs[0].slug
@@ -154,8 +152,6 @@ async def dispatch_query(
         # Ask the agent to run the maintenance health probe for this table.
         payload["health_for"] = health_for
     if maintain_for is not None:
-        # Measure this table either side of the statement, on the same
-        # connection: a separate dispatch would race a concurrent write.
         payload["maintain_for"] = maintain_for
 
     # Producer span for the WebSocket hop; its context rides in the frame so
@@ -254,8 +250,6 @@ async def handle_agent_frame(db: AsyncSession, frame: Frame, polaris=None) -> No
             # Session statements are counted on their own series (kept out of the
             # interactive-query counters above).
             record_sql_statement(status_val)
-        # Settled either way: an apply that failed must leave the
-        # recommendation failed rather than running forever.
         if query is not None and query.origin == "maintenance_apply":
             from api.services.maintenance.apply import record_apply_result
 
@@ -341,8 +335,7 @@ async def _upsert_table_stats(db: AsyncSession, query_id: uuid.UUID, frame: Fram
     if size_bytes is not None:
         existing.size_bytes = size_bytes
 
-    # Format-native metadata from the agent probe, each field best-effort. An
-    # older agent still sends "iceberg" with the same four fields.
+    # Format-native metadata from the agent probe, each field best-effort.
     native = frame.payload.get("iceberg") or frame.payload.get("ducklake")
     if native:
         if native.get("snapshot_id") is not None:
@@ -543,9 +536,7 @@ async def pick_agent_for(
     if not connected:
         return None
     catalogs = await resolve_workspace_catalogs(db, workspace.id)
-    # Both axes: the agent needs the extensions for every catalog's kind *and*
-    # storage backend. Storage alone would route DuckLake to an Iceberg-only
-    # agent, whose attach fails best-effort as "catalog does not exist".
+    # The agent needs the extensions for every catalog's kind *and* backend.
     pairs = {(c.kind, c.storage_backend.kind) for c in catalogs} or {
         ("iceberg_polaris", "object_store")
     }

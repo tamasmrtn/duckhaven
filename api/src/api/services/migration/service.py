@@ -69,10 +69,7 @@ async def start_migration(
             ),
         )
     if catalog.kind == KIND_DUCKLAKE:
-        # Absolute paths do not move with the catalog's data path -- that is what
-        # absolute means -- so they would be silently left behind. Refused here
-        # rather than rewritten, because such a path can name a bucket the target
-        # credentials cannot reach, and a guess is not a migration.
+        # Absolute paths would not move with the data path; refuse, don't guess.
         stranded = await ducklake_migration.absolute_path_count(catalog)
         if stranded:
             raise HTTPException(
@@ -94,7 +91,6 @@ async def start_migration(
             status_code=status.HTTP_409_CONFLICT,
             detail="A migration is already in progress for this catalog.",
         )
-    # A DuckLake-only deployment has no Polaris to probe through.
     health = await validate_backend_for(db, polaris, target_backend)
     if not health.valid:
         raise HTTPException(

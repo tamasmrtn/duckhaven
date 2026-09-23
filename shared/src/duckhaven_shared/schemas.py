@@ -28,12 +28,9 @@ class CatalogAttach(BaseModel):
     the DISPATCH_QUERY payload; the agent attaches each under its ``slug`` alias
     and ``USE``s the active one.
 
-    ``kind`` selects how the attach is performed: ``iceberg_polaris`` carries a
-    ``polaris_name`` and lets DuckDB authenticate and Polaris vend storage
-    credentials; ``ducklake`` carries ``data_path``/``metadata_schema`` plus
-    control-plane-minted ``meta``/``storage`` credentials, as DuckLake has no
-    credential vendor of its own. Every new field is defaulted so an older agent
-    and a newer control plane still agree on the frame.
+    ``iceberg_polaris`` carries a ``polaris_name``; Polaris vends storage
+    credentials. ``ducklake`` carries control-plane-minted ``meta``/``storage``
+    credentials. New fields are defaulted for older agents.
     """
 
     slug: str

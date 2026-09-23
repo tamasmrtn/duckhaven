@@ -186,10 +186,7 @@ def _table_to_out(
             if table.current_snapshot_summary
             else None
         ),
-        # The agent probe is authoritative where it has run; otherwise fall back
-        # to whatever the catalog knows for free. DuckLake tracks its live bytes
-        # exactly, so a never-probed table still shows a real size, with no
-        # compute attached.
+        # The agent probe wins; otherwise what the catalog knows for free (DuckLake).
         size_bytes=(meta.size_bytes if meta and meta.size_bytes is not None else table.size_bytes),
         owner=meta.owner if meta else None,
         last_write_at=meta.last_write_at if meta else None,
@@ -242,11 +239,6 @@ class _Target:
 
 
 def _write_ctx(target: _Target, user: User, db: AsyncSession) -> WriteContext:
-    """What a metadata write needs beyond its arguments.
-
-    Polaris ignores it; a DuckLake write runs on an agent, under a user, in a
-    workspace, so it is passed explicitly.
-    """
     return WriteContext(workspace=target.workspace, user=user, db=db)
 
 
@@ -277,10 +269,7 @@ def target_catalog(
 
 
 def _backend(catalog: Catalog, polaris: PolarisClient) -> CatalogBackend:
-    """The metadata backend serving this catalog, chosen by its kind.
-
-    Failures propagate to the app-level handler.
-    """
+    """The metadata backend serving this catalog; errors reach the app-level handler."""
     return backend_for(catalog, polaris=polaris)
 
 
@@ -293,9 +282,7 @@ async def _ensure_catalog(db: AsyncSession, polaris: PolarisClient, catalog: Cat
         )
     backend = _backend(catalog, polaris)
     if catalog.kind == KIND_DUCKLAKE:
-        # A storage migration revokes this catalog's write access for the
-        # duration of the copy. Self-healing on browse would re-grant it, which
-        # is how someone opening the catalog tree would quietly undo the freeze.
+        # Don't let a browse re-grant writes a storage migration revoked.
         frozen = await active_migration(db, catalog.id) is not None
         await backend.ensure(catalog, grant_dml=not frozen)
         return
@@ -445,8 +432,7 @@ async def drop_schema(
                 "Pass cascade=true to drop them too."
             ),
         )
-    # One call, not one per table: removing a schema's contents is the backend's
-    # business, and per-table drops were one agent round-trip each on DuckLake.
+    # One call: per-table drops were an agent round-trip each on DuckLake.
     await backend.delete_schema(cat, schema, _write_ctx(target, user, db), cascade=cascade)
     for t in tables:
         await _delete_table_meta(db, cat.id, schema, t.name)

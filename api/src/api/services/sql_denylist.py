@@ -1,16 +1,13 @@
 """Object/function denials shared by both statement gates.
 
-``sql_guard`` (the ``/queries`` allowlist) and ``statement_policy`` (SQL-session
-policy) admit statement types and shapes, but not which foreign database a
-statement reaches. Loading ``postgres`` for DuckLake made three holes reachable:
-``postgres_query`` runs arbitrary SQL against the catalog database; DuckLake
-maintenance verbs arrive as plain ``SELECT`` because DuckDB dispatches table
-functions from ``FROM``; and ``__ducklake_metadata_<alias>`` accepts direct
-``UPDATE``s that corrupt the catalog. All are denied unconditionally — a rule
-that switches off with a feature flag is one nobody can reason about.
+``sql_guard`` and ``statement_policy`` admit statement shapes, not which
+database a statement reaches. Loading ``postgres`` for DuckLake opened three
+holes: ``postgres_query`` against the catalog database, maintenance verbs
+disguised as ``SELECT ... FROM ducklake_*()``, and direct writes to
+``__ducklake_metadata_<alias>``. All are denied unconditionally, regardless of
+feature flags.
 
-Parsing is ``sqlglot``, pure Python, so I1 holds. Unparseable SQL falls back to
-a lexical check that over-matches; refusing beats guessing.
+Unparseable SQL falls back to a lexical check that over-matches on purpose.
 """
 
 from __future__ import annotations
@@ -20,9 +17,8 @@ import re
 import sqlglot
 from sqlglot import exp
 
-# Table functions that open a connection to a foreign database, each able to run
-# statements the gates never see. The postgres ones are the live risk; the rest
-# are listed so a future extension load cannot silently reopen the hole.
+# Table functions that reach a foreign database. Non-postgres ones are listed so
+# a future extension load cannot silently reopen the hole.
 DENIED_FUNCTIONS = frozenset(
     {
         "postgres_query",
@@ -38,33 +34,22 @@ DENIED_FUNCTIONS = frozenset(
     }
 )
 
-# Reserved: catalog slugs match ``^[a-z][a-z0-9_]*$``, so this prefix cannot
-# collide with a real name.
+# Cannot collide with a catalog slug, which must start with a letter.
 DUCKLAKE_METADATA_PREFIX = "__ducklake_metadata_"
 
-# DuckLake's maintenance verbs delete files or snapshots, and arrive as plain
-# ``SELECT`` because DuckDB dispatches table functions from ``FROM``. Denied by
-# prefix, so a verb added in a future extension is refused by default. The
-# read-only surface (`catalog.snapshots()`, time travel) carries no prefix.
+# Denied by prefix so a future maintenance verb is refused by default. The
+# read-only surface (`catalog.snapshots()`, time travel) has no prefix.
 DUCKLAKE_FUNCTION_PREFIX = "ducklake_"
 
 
-# `CHECKPOINT <catalog>` runs ducklake_flush_inlined_data, _expire_snapshots,
-# _merge_adjacent_files, _rewrite_data_files, _cleanup_old_files and
-# _delete_orphaned_files in one statement -- every verb below, with none of the
-# prefix. Both gates already refuse it, but only because sqlglot models it as an
-# `Alias`/`Command` that falls outside their allowlists: a release that parses it
-# into an admitted node would reopen the hole silently. Denied by name instead,
-# so the guarantee stops depending on how a parser happens to shape it.
+# `CHECKPOINT <catalog>` runs every DuckLake maintenance verb without the prefix.
+# The gates' allowlists already refuse it only because of how sqlglot parses it;
+# denied by name so the guarantee does not depend on that.
 DENIED_COMMAND_HEADS = frozenset({"checkpoint"})
 
 
 class ForeignAccessDenied(Exception):
-    """A statement reaches a foreign database or DuckLake's internal metadata.
-
-    Carries a user-facing ``message`` and a short ``rule`` slug; each caller
-    re-raises it as its own gate's exception type.
-    """
+    """A statement reaches a foreign database or DuckLake's internal metadata."""
 
     def __init__(self, message: str, rule: str) -> None:
         super().__init__(message)
@@ -99,8 +84,7 @@ def _deny_command(name: str) -> ForeignAccessDenied:
 def _leading_words(stmt: exp.Expression) -> list[str]:
     """The leading bare words of a statement sqlglot could not model as SQL.
 
-    Only the statement root is inspected, so `SELECT checkpoint FROM t` -- a
-    perfectly ordinary column -- parses as a `Select` and is never considered.
+    Root only, so a column named `checkpoint` in a `Select` is not matched.
     """
     if isinstance(stmt, exp.Column | exp.Alias | exp.Command):
         return stmt.sql(dialect="duckdb").lower().replace('"', " ").split()
@@ -142,8 +126,7 @@ def check_statement(stmt: exp.Expression) -> None:
 def check_sql(sql: str) -> None:
     """Raise :class:`ForeignAccessDenied` if any statement in ``sql`` is denied.
 
-    For gates that parse elsewhere (``sql_guard`` uses DuckDB) and have no AST.
-    Unparseable SQL falls back to the lexical check.
+    For gates with no sqlglot AST of their own.
     """
     try:
         statements = sqlglot.parse(sql, read="duckdb")

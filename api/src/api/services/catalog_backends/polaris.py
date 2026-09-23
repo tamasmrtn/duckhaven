@@ -35,12 +35,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 POLARIS_CAPABILITIES = CatalogCapabilities(
     supports_storage_migration=True,
-    # Why Iceberg is the default: Spark, Trino, Flink and PyIceberg can read it.
     external_engine_readable=True,
-    # DuckDB's iceberg extension has no maintenance verbs, so DuckHaven can only
-    # advise here however much it would like to act.
     supports_maintenance_apply=False,
-    # Already Iceberg; there is nothing to export it to.
     supports_iceberg_export=False,
     supported_storage_kinds=("object_store", "s3", "adls_gen2"),
 )
@@ -69,10 +65,7 @@ def column_for_iceberg(spec: ColumnSpec, field_id: int) -> dict[str, object]:
 
 
 def _translate(exc: PolarisError) -> CatalogBackendError:
-    """Map a Polaris failure onto the seam's vocabulary.
-
-    Keeps the app-level handler's status codes 1:1 with the pre-seam behaviour.
-    """
+    """Map a Polaris failure onto the seam's vocabulary."""
     if isinstance(exc, PolarisNotFoundError):
         return CatalogBackendNotFound(str(exc))
     if isinstance(exc, PolarisBadRequestError):

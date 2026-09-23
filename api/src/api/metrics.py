@@ -251,8 +251,8 @@ def record_polaris_request(operation: str, status: str, duration_s: float) -> No
 def record_ducklake_query(operation: str, status: str, duration_s: float) -> None:
     """The DuckLake counterpart to `record_polaris_request`.
 
-    `operation` is a stable name supplied by the caller, never the SQL or a
-    catalog name: both carry user data and would make this unbounded.
+    `operation` must be a stable caller-supplied name, never SQL or a catalog
+    name, to keep label cardinality bounded.
     """
     DUCKLAKE_QUERIES.labels(settings.replica_id, operation, status).inc()
     DUCKLAKE_DURATION.labels(settings.replica_id, operation).observe(duration_s)
@@ -562,20 +562,13 @@ def _pool_stats(target) -> dict | None:  # noqa: ANN001 - an AsyncEngine
 
 
 def _collect_pool() -> dict[str, dict]:
-    """Pool stats per engine.
-
-    DuckLake's catalog database is a second pool on the hot path of every
-    catalog browse, and it was not reported at all — so the one number an
-    operator would look at when browsing got slow did not exist. Imported
-    lazily: `catalog_backends.ducklake` records its own metrics from here.
-    """
+    """Pool stats per engine, including DuckLake's catalog database."""
     from api.services.catalog_backends import ducklake
 
     pools = {}
     if (main := _pool_stats(engine)) is not None:
         pools["main"] = main
-    # Only when it has been built: the engine is lazy, and creating one just to
-    # measure it would open a connection pool on an Iceberg-only deployment.
+    # Don't build the lazy engine just to measure it.
     if ducklake._engine is not None and (dl := _pool_stats(ducklake._engine)) is not None:
         pools["ducklake"] = dl
     return pools

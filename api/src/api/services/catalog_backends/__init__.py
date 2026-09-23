@@ -1,11 +1,7 @@
 """The catalog-metadata seam: one narrow interface over two catalog kinds.
 
-Schemas, tables, columns and snapshots have the same shape whether they come
-from a Polaris REST catalog or a DuckLake catalog, so they sit behind one
-interface. Catalog metadata only: credential vending, maintenance verbs and
-storage migration stay elsewhere because the kinds differ there in substance.
-
-The ``Protocol`` documents the surface; it is not enforced at runtime.
+Metadata only. Credential vending, maintenance verbs and storage migration
+stay elsewhere because the kinds differ there in substance.
 """
 
 from __future__ import annotations
@@ -49,8 +45,7 @@ class CatalogBackendUnavailable(CatalogBackendError):
 
 
 # --- Backend-neutral metadata shapes ----------------------------------------
-# Structurally identical to the Polaris response models, restated so a DuckLake
-# backend is not constructing something called PolarisTable.
+# Structurally identical to the Polaris response models.
 
 
 class _Info(BaseModel):
@@ -77,17 +72,13 @@ class CatalogTableInfo(_Info):
     schema_name: str
     table_id: str | None = None
     table_type: Literal["MANAGED", "EXTERNAL"] = "MANAGED"
-    # "ICEBERG" or "DUCKLAKE" — what the UI shows as the table format.
     data_source_format: str = "ICEBERG"
     storage_location: str | None = None
-    # Total bytes of the table's live data files, when the catalog knows it
-    # without a scan. DuckLake keeps a running total; Polaris does not expose
-    # one, so it stays None there and the agent probe remains the only source.
+    # Live data bytes when known without a scan: DuckLake only.
     size_bytes: int | None = None
     columns: list[CatalogColumnInfo] = Field(default_factory=list)
     properties: dict[str, str] | None = None
     comment: str | None = None
-    # None for DuckLake, which has neither concept.
     format_version: int | None = None
     current_snapshot_summary: dict[str, str] | None = None
 
@@ -95,9 +86,8 @@ class CatalogTableInfo(_Info):
 class SnapshotInfo(_Info):
     """One snapshot of a table.
 
-    Ids stay ints (the API layer stringifies them for JS). ``granularity``
-    distinguishes an Iceberg per-table snapshot from a DuckLake catalog-wide
-    commit, for which this is the subset that changed the table.
+    ``granularity="catalog"`` marks a DuckLake catalog-wide commit that touched
+    this table.
     """
 
     snapshot_id: int
@@ -117,25 +107,14 @@ class CatalogCapabilities:
     supports_storage_migration: bool = True
     # Whether engines other than DuckDB can read these tables.
     external_engine_readable: bool = True
-    # Whether DuckHaven can run this kind's maintenance itself. DuckDB's
-    # `ducklake` extension implements compaction, expiry and cleanup; its
-    # `iceberg` extension implements none of them, so an Iceberg table's
-    # recommendation can only ever name an external engine.
+    # Whether DuckHaven can run maintenance itself. DuckDB's `iceberg` extension
+    # implements no maintenance verbs; `ducklake` does.
     supports_maintenance_apply: bool = False
-    # Whether this kind's data can be copied into an Iceberg catalog other
-    # engines can open. True for DuckLake, which is what turns its
-    # DuckDB-only trade-off from a one-way door into a door.
+    # Whether data can be copied out into an Iceberg catalog.
     supports_iceberg_export: bool = False
-    # Whether the control plane can create schemas and tables without an agent.
-    # True for Polaris, which is a REST call; False for DuckLake, whose DDL only
-    # the extension can commit. The one asymmetry here with immediate
-    # user-visible value: it is why a DuckLake catalog answers 503 to a create
-    # with no compute connected, and lets the UI say so before the click.
+    # Whether schemas and tables can be created with no agent connected.
     supports_agentless_ddl: bool = True
-    # Table-shaping features DuckHaven does not surface for either kind yet.
-    # Declared rather than built, so the UI and API never have to switch on
-    # `kind` when they are, and so the gap is legible in GET /catalog-kinds
-    # instead of invisible.
+    # Not surfaced for either kind yet; declared so GET /catalog-kinds shows the gap.
     supports_partitioning: bool = False
     supports_sort_order: bool = False
     supports_encryption: bool = False
@@ -144,11 +123,7 @@ class CatalogCapabilities:
 
 @dataclass
 class WriteContext:
-    """What a metadata write needs beyond its arguments.
-
-    Polaris writes are a REST call and ignore this. A DuckLake write runs as SQL
-    on an agent, so the caller passes workspace, user and session explicitly.
-    """
+    """What a DuckLake write needs to dispatch SQL to an agent. Polaris ignores it."""
 
     workspace: Workspace
     user: User
@@ -179,11 +154,7 @@ class CatalogBackend(Protocol):
     async def delete_schema(
         self, catalog: Catalog, name: str, ctx: WriteContext, *, cascade: bool = False
     ) -> None:
-        """Drop the schema, and with ``cascade`` the tables inside it.
-
-        The backend owns how: Polaris must be emptied first, DuckLake does it in
-        one statement.
-        """
+        """Drop the schema, and with ``cascade`` the tables inside it."""
         ...
 
     async def list_tables(self, catalog: Catalog, schema: str) -> list[CatalogTableInfo]: ...
@@ -209,11 +180,7 @@ class CatalogBackend(Protocol):
 
 
 def backend_for(catalog: Catalog, *, polaris: PolarisClient | None = None) -> CatalogBackend:
-    """The backend serving ``catalog``, chosen by its kind.
-
-    Imported lazily per kind, so an unused kind's dependencies stay out of the
-    process.
-    """
+    """The backend serving ``catalog``, chosen by its kind (imported lazily)."""
     from api.models.catalog import KIND_DUCKLAKE, KIND_ICEBERG_POLARIS
 
     if catalog.kind == KIND_ICEBERG_POLARIS:

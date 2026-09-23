@@ -1,8 +1,6 @@
 """The catalog-jobs runner: a periodic, leader-elected driver.
 
-Named for migrations because that is what it started as; it also advances
-catalog exports, which have the same cadence and the same need for exactly one
-driver per tick.
+Also advances catalog exports, which need the same single driver per tick.
 
 Each tick it claims the oldest active ``CatalogMigration`` and advances it to a
 terminal state via the engine, then sweeps any completed migrations past their
@@ -62,9 +60,7 @@ async def run_cycle(
             processed = str(migration.id)
             await engine.process_migration(db, polaris, migration)
 
-        # Catalog exports ride this loop rather than a fourth one: same cadence,
-        # same leader election, one extra select. A separate lock and lifespan
-        # task would buy nothing.
+        # Exports share this loop's cadence and leader election.
         exported = None
         export = (
             await db.execute(

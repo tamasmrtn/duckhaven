@@ -87,15 +87,8 @@ async def reconcile_ducklake_roles(
 ) -> dict[str, int]:
     """Create any DuckLake login role that does not exist yet.
 
-    The migration that introduced per-catalog roles could only write the
-    credential rows: it runs against the control-plane database, and the roles
-    and their grants live in the catalog database, which it has no connection
-    to. Each catalog's role is otherwise created lazily on next browse, so this
-    is the post-upgrade step that closes the window in which a dispatch would
-    fail for a catalog nobody has opened yet.
-
-    Idempotent, and safe to re-run: it is also the repair path for a role an
-    operator dropped by hand.
+    Post-upgrade step: the Alembic migration can only write credential rows, not
+    roles in the catalog database. Idempotent; also repairs a dropped role.
     """
     from api.models.user import Credential
     from api.services.catalog_backends.ducklake import DuckLakeCatalogBackend, new_role_password
@@ -123,8 +116,6 @@ async def reconcile_ducklake_roles(
         try:
             await backend.ensure(catalog)
         except CatalogBackendError as exc:
-            # One unreachable catalog must not stop the sweep; it is reported
-            # by the count rather than by failing the whole request.
             logger.warning("Could not reconcile DuckLake role for %s: %s", catalog.slug, exc)
             continue
         reconciled += 1
@@ -140,11 +131,8 @@ async def rotate_ducklake_role(
 ) -> dict[str, object]:
     """Give this catalog's PostgreSQL role a new password.
 
-    An open SQL session keeps working: its connection authenticated when it was
-    opened, and PostgreSQL does not re-authenticate an established connection.
-    New dispatches pick up the new password immediately. The count of affected
-    sessions is returned rather than acted on -- closing someone's session is a
-    bigger surprise than a rotation they asked for.
+    Open SQL sessions keep their authenticated connections and are counted in
+    the response, not closed.
     """
     from api.models.sql_session import SqlSession
     from api.models.user import Credential
@@ -171,13 +159,11 @@ async def rotate_ducklake_role(
     await db.flush()
     await db.refresh(catalog, attribute_names=["ducklake_credential"])
 
-    # `ensure` re-applies the stored password to the role, which is what makes
-    # the rotation take effect.
+    # `ensure` re-applies the stored password to the role.
     await DuckLakeCatalogBackend().ensure(catalog)
     await db.commit()
 
-    # Workspace-scoped, not active-catalog-scoped: a session attaches every
-    # catalog bound to its workspace, so any of them holds this role's password.
+    # A session attaches every catalog in its workspace, not just the active one.
     open_sessions = await db.scalar(
         select(func.count())
         .select_from(SqlSession)
@@ -202,15 +188,10 @@ async def start_export(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> CatalogExportOut:
-    """Copy this DuckLake catalog into a new Iceberg one.
-
-    Iceberg is readable by Spark, Trino, Flink and PyIceberg; DuckLake is not.
-    This is the way back out of that trade-off, and it copies the catalog's
-    **current state** rather than its snapshot history — a deep copy of the
-    latest snapshot is what `COPY FROM DATABASE` does.
+    """Copy this DuckLake catalog's current state (not its history) into a new Iceberg one.
 
     Requires the catalog's creator or `catalogs:admin`, plus `owner` on the
-    target workspace, because it creates and attaches a catalog there.
+    target workspace.
     """
     catalog = await _catalog_for_admin(db, user, catalog_id)
     if not capabilities_for(catalog.kind).supports_iceberg_export:
@@ -277,12 +258,7 @@ async def cancel_export(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> CatalogExportOut:
-    """Ask a running export to stop.
-
-    Before the copy is dispatched this prevents it entirely. Once dispatched it
-    cancels the query, which leaves a partially-populated target behind — the
-    response says so rather than tidying it away.
-    """
+    """Ask a running export to stop. A dispatched copy leaves a partial target behind."""
     await _catalog_for_admin(db, user, catalog_id)
     export = await db.get(CatalogExport, export_id)
     if export is None or export.source_catalog_id != catalog_id:
@@ -320,11 +296,7 @@ async def _binding_count(db: AsyncSession, catalog_id: uuid.UUID) -> int:
 
 
 def _capabilities_out(kind: str) -> CatalogCapabilitiesOut | None:
-    """This kind's capabilities, or None for a kind this build does not know.
-
-    None rather than a raise, so a row written by a newer version does not turn
-    the whole listing into a 500.
-    """
+    """This kind's capabilities, or None for a kind this build does not know."""
     try:
         caps = capabilities_for(kind)
     except CatalogBackendError:
@@ -373,10 +345,7 @@ _KIND_LABELS = {
 
 @router.get("/catalog-kinds", response_model=list[CatalogKindOut])
 async def list_catalog_kinds(_: User = Depends(get_current_user)) -> list[CatalogKindOut]:
-    """The catalog kinds this deployment can create, with their capabilities.
-
-    A disabled kind is still listed, with the reason, rather than hidden.
-    """
+    """The catalog kinds this deployment knows, with capabilities and availability."""
     out: list[CatalogKindOut] = []
     for kind in (KIND_ICEBERG_POLARIS, KIND_DUCKLAKE):
         available = kind != KIND_DUCKLAKE or settings.ducklake_enabled
@@ -390,7 +359,6 @@ async def list_catalog_kinds(_: User = Depends(get_current_user)) -> list[Catalo
                     if available
                     else "Not enabled on this deployment (set DUCKLAKE_ENABLED=true)."
                 ),
-                # Never None here: both kinds are known to this build.
                 capabilities=_capabilities_out(kind),  # type: ignore[arg-type]
             )
         )

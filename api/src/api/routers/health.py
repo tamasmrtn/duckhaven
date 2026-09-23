@@ -84,8 +84,7 @@ async def readyz(
             detail=f"database unreachable: {type(e).__name__}",
         ) from e
     # Ping Polaris only when an Iceberg catalog exists, so a DuckLake-only stack
-    # (which does not run Polaris) can go ready. Asked of the database rather
-    # than a flag, so the answer follows what is deployed.
+    # can go ready.
     needs_polaris = await db.scalar(
         select(sa.func.count()).select_from(Catalog).where(Catalog.kind == KIND_ICEBERG_POLARIS)
     )
@@ -98,10 +97,7 @@ async def readyz(
                 detail=f"polaris unreachable: {type(e).__name__}",
             ) from e
 
-    # The same question for the other kind's metastore. Asked separately because
-    # it is a separate engine: the check above proves nothing about it, and a
-    # replica that cannot reach the catalog database cannot serve a DuckLake
-    # catalog even though every other dependency is fine.
+    # Likewise for DuckLake's catalog database, which has its own engine.
     needs_ducklake = await db.scalar(
         select(sa.func.count()).select_from(Catalog).where(Catalog.kind == KIND_DUCKLAKE)
     )

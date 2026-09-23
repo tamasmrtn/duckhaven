@@ -1,19 +1,9 @@
 """Migrating a DuckLake catalog between storage backends.
 
-Structurally simpler than the Iceberg path, and the reason is worth stating: a
-DuckLake data file's location is relative to its table's path, which is relative
-to its schema's, which is relative to a ``data_path`` recorded once in
-``ducklake_metadata``. Moving the catalog is therefore a prefix copy plus one row
-update — no shadow catalog, no metadata tree to rewrite, no re-registration.
-
-The phases, statuses, per-table checkpoints, event log, cancel and runner loop
-are the Iceberg path's, unchanged. Only the bodies differ, so the admin UI and
-everything else keeps working without knowing a second kind exists.
-
-Per DuckLake **table**, not per object: table paths nest under the data path, so
-each table is a prefix, ``tables_done``/``tables_total`` keep their literal
-meaning in the existing progress bar, and a mid-table crash resumes cheaply
-because the copy skips objects already present at the target.
+File paths nest relative to a single ``data_path`` in ``ducklake_metadata``, so
+moving the catalog is a prefix copy plus one row update: no shadow catalog and
+no metadata rewrite. Phases, statuses and checkpoints are the Iceberg path's;
+only the phase bodies differ. Checkpoints are per table, each one a prefix.
 """
 
 from __future__ import annotations
@@ -49,21 +39,16 @@ from api.services.migration.storage_io import (
 
 logger = logging.getLogger(__name__)
 
-# How long to wait for in-flight statements to drain before copying. The
-# submit-time freeze cannot catch a statement that was already running when the
-# migration row committed, and on DuckLake that write lands under the source
-# prefix *after* the copy started.
+# How long to wait for statements already running at freeze time to drain;
+# their writes would otherwise land under the source prefix mid-copy.
 QUIESCE_TIMEOUT_S = 300.0
 
 
 async def absolute_path_count(catalog: Catalog) -> int:
     """Live data and delete files recorded with an absolute path.
 
-    These do not move when ``data_path`` changes — that is what absolute means —
-    so they would be silently left behind pointing at the old location. They
-    arrive via `ducklake_add_data_files`, which registers existing Parquet
-    without copying it, and can name a bucket the target credentials cannot even
-    reach. Refused up front rather than rewritten on a guess.
+    These (from `ducklake_add_data_files`) do not move with ``data_path``, so a
+    migration refuses them rather than rewriting them on a guess.
     """
     from api.services.catalog_backends.ducklake import get_engine
 
@@ -118,10 +103,7 @@ async def in_flight_statements(db: AsyncSession, catalog_id: uuid.UUID) -> int:
 async def set_agent_dml(catalog: Catalog, *, allowed: bool) -> None:
     """Grant or revoke the catalog role's write access to its metadata schema.
 
-    The structural half of the freeze. The submit-time gate is a check the
-    control plane makes; this is one PostgreSQL makes, so an agent that somehow
-    dispatches during the copy gets a permission error rather than committing a
-    write the copy has already passed.
+    Backs the submit-time freeze with a PostgreSQL-enforced one.
     """
     from api.services.catalog_backends.ducklake import agent_role_for, get_engine
 
@@ -142,10 +124,7 @@ async def set_agent_dml(catalog: Catalog, *, allowed: bool) -> None:
 async def provision(db: AsyncSession, migration: CatalogMigration, log) -> None:  # noqa: ANN001
     """Record the two paths, wait for writes to drain, enumerate the tables."""
     catalog = await db.get(Catalog, migration.catalog_id)
-    # Fetched by id rather than through `catalog.storage_backend`: that
-    # relationship is lazy, and the runner loads the catalog without it, so
-    # touching it here raises MissingGreenlet in async context. The Iceberg
-    # path takes the ids for the same reason.
+    # By id: the lazy `catalog.storage_backend` raises MissingGreenlet here.
     source = await db.get(StorageBackend, migration.source_storage_backend_id)
     target = await db.get(StorageBackend, migration.target_storage_backend_id)
     assert catalog and source and target
@@ -163,8 +142,7 @@ async def provision(db: AsyncSession, migration: CatalogMigration, log) -> None:
         migration.target_data_path = _data_path_for(target, catalog.slug)
         await db.commit()
 
-    # Stay in `pending` while anything is still running: the runner retries in
-    # 30s, so this costs a tick rather than a busy-wait.
+    # Stay in `pending` while anything is running; the runner retries next tick.
     busy = await in_flight_statements(db, catalog.id)
     if busy:
         elapsed = (datetime.now(tz=UTC) - migration.started_at).total_seconds()
@@ -249,8 +227,7 @@ async def copy(db: AsyncSession, migration: CatalogMigration, log) -> None:  # n
         )
         await db.commit()
 
-    # Catalog-level files live directly under the data path and belong to no
-    # table; without this sweep they would be left behind.
+    # Sweep catalog-level files that belong to no table.
     swept = await asyncio.to_thread(_copy_prefix, src, dst, src_path, dst_path)
     if swept:
         migration.bytes_copied += swept
@@ -278,11 +255,7 @@ async def _table_prefix(catalog: Catalog, schema_name: str, table_name: str) -> 
 
 
 def _copy_prefix(src: StorageContext, dst: StorageContext, src_prefix: str, dst_prefix: str) -> int:
-    """Copy every object under a prefix, skipping ones already the right size.
-
-    Copy-if-absent, as the Iceberg path does, so a crashed migration resumes
-    without re-moving what it already moved.
-    """
+    """Copy every object under a prefix, skipping ones already the right size."""
     from api.services.migration.storage_io import object_size
 
     copied = 0
@@ -315,8 +288,7 @@ async def verify(db: AsyncSession, migration: CatalogMigration, log) -> None:  #
             f"starting with {missing[0]}"
         )
 
-    # Re-checked here as well as up front: a write that slipped the freeze could
-    # have registered an absolute path while the copy was running.
+    # Re-checked: a write that slipped the freeze could have added one mid-copy.
     remaining = await absolute_path_count(catalog)
     if remaining:
         raise RuntimeError(
@@ -352,12 +324,9 @@ def _missing_at_target(
 async def cutover(db: AsyncSession, migration: CatalogMigration, log) -> None:  # noqa: ANN001
     """Point the catalog at the copied data.
 
-    Two databases are involved and cannot share a transaction: ``data_path``
-    lives in the catalog database, ``storage_backend_id`` in DuckHaven's. The
-    stored path is updated first and is authoritative — the agent no longer
-    passes DATA_PATH for an initialised catalog — so a crash between the two
-    leaves reads failing loudly against the target rather than silently reading
-    the wrong place, and re-entry is idempotent.
+    ``data_path`` and ``storage_backend_id`` live in different databases. The
+    stored path goes first and is authoritative, so a crash between the two
+    fails loudly against the target and re-entry is idempotent.
     """
     from api.services.catalog_backends.ducklake import get_engine
 
@@ -397,7 +366,6 @@ async def cutover(db: AsyncSession, migration: CatalogMigration, log) -> None:  
     await log(db, migration.id, "info", "Cutover complete; catalog now served from the new backend")
     await db.commit()
 
-    # Writes were revoked for the copy; the catalog is live again.
     await set_agent_dml(catalog, allowed=True)
 
 
@@ -424,11 +392,7 @@ async def teardown(db: AsyncSession, migration: CatalogMigration, *, which: str)
 
 
 async def restore_writes(db: AsyncSession, migration: CatalogMigration) -> None:
-    """Re-grant DML after a failed or cancelled migration.
-
-    Without this the catalog stays read-only at the PostgreSQL level after a
-    failure, which looks exactly like corruption to whoever tries to write next.
-    """
+    """Re-grant DML after a failed or cancelled migration."""
     catalog = await db.get(Catalog, migration.catalog_id)
     if catalog is None:
         return

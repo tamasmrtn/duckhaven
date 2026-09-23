@@ -74,15 +74,11 @@ def object_size(ctx: StorageContext, uri: str) -> int | None:
 def context_from_duckdb_block(kind: str, block: dict, config: dict | None) -> StorageContext:
     """Build a context from `session_credentials.build_storage_block`'s output.
 
-    Two credential vocabularies exist here. Polaris vends the Iceberg REST
-    spelling (``s3.access-key-id``); DuckLake has no vendor, so DuckHaven mints
-    the same access itself in DuckDB's spelling (``key_id``). This module speaks
-    the first, so the second is translated rather than given a second
-    implementation of list/get/put.
+    Translates DuckDB's credential spelling (``key_id``) into the Iceberg REST
+    one (``s3.access-key-id``) this module speaks.
     """
     if block.get("type") == "azure":
-        # `_adls_container` wants a bare SAS keyed by account, not the
-        # connection string DuckDB is handed.
+        # `_adls_container` wants a bare SAS keyed by account.
         conn = str(block.get("connection_string") or "")
         sas = next(
             (
@@ -113,14 +109,10 @@ def context_from_duckdb_block(kind: str, block: dict, config: dict | None) -> St
 
 
 def copy_object(src: StorageContext, dst: StorageContext, src_uri: str, dst_uri: str) -> int:
-    """Copy one object, server-side where both ends allow it.
+    """Copy one object, server-side where both ends allow it, else streamed.
 
-    Returns the bytes copied. `get_object`/`put_object` buffer a whole object in
-    memory, which is fine for Iceberg metadata but not for a DuckLake data file
-    at the default 512 MB target size — the API would hold one per concurrent
-    copy. So: S3-to-S3 on the same endpoint is a server-side ``copy_object``
-    that moves no bytes through this process, and everything else streams with a
-    bounded buffer.
+    Returns the bytes copied. Never buffers whole objects: DuckLake data files
+    default to 512 MB.
     """
     if src.proto == "s3" and dst.proto == "s3" and _same_s3_endpoint(src, dst):
         return _s3_server_side_copy(src, dst, src_uri, dst_uri)
@@ -135,12 +127,7 @@ def delete_prefix(ctx: StorageContext, location: str) -> int:
 
 
 def _same_s3_endpoint(src: StorageContext, dst: StorageContext) -> bool:
-    """Whether one client can see both ends.
-
-    A server-side copy is a single request naming both objects, so it only
-    works when the same credentials reach both — true for two prefixes of the
-    bundled store, false across accounts.
-    """
+    """Whether one client can see both ends, as a server-side copy requires."""
 
     def endpoint(ctx: StorageContext) -> str:
         return str(ctx.creds.get("s3.endpoint") or ctx.config.get("endpoint") or "")
@@ -163,12 +150,7 @@ def _s3_server_side_copy(
 
 
 def _stream_object(src: StorageContext, dst: StorageContext, src_uri: str, dst_uri: str) -> int:
-    """Stream an object across backends without buffering it whole.
-
-    boto3's `upload_fileobj` and Azure's `upload_blob` both read from a
-    file-like and chunk it themselves, so the peak memory is their part size
-    rather than the object size.
-    """
+    """Stream an object across backends; peak memory is the SDK's part size."""
     if src.proto == "s3":
         body = _s3_client(src).get_object(
             Bucket=_s3_bucket_key(src_uri)[0], Key=_s3_bucket_key(src_uri)[1]

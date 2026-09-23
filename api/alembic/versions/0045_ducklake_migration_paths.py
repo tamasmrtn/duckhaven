@@ -4,20 +4,12 @@ Revision ID: 0045
 Revises: 0044
 Create Date: 2026-09-21
 
-Migrating an Iceberg catalog provisions a shadow Polaris catalog at the target
-and re-points the row at it. A DuckLake catalog has no shadow: its file paths
-are relative to a ``data_path`` recorded in the catalog itself, so relocating it
-is a prefix copy plus one row update. What it needs instead is where its data
-started and where it is going.
-
-No check constraint pairing these with the shadow columns. "Exactly one of the
-two pairs" reads as the right invariant and is wrong: both are NULL for a
-``pending`` row of either kind. The discriminator is ``catalogs.kind`` on the
-joined row, as it is for every other per-kind difference here.
+A DuckLake catalog has no shadow catalog to migrate through; it needs its
+source and target data paths instead. No CHECK pairing them with the shadow
+columns: both pairs are NULL for a ``pending`` row of either kind.
 
 Downgrade refuses while any ``source_data_path`` is set: it is the only pointer
-to data retained for rollback, and dropping it silently strands that prefix in
-object storage with nothing referencing it.
+to data retained for rollback.
 """
 
 from collections.abc import Sequence

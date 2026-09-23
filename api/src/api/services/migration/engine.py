@@ -358,10 +358,8 @@ async def _cutover(db: AsyncSession, polaris: PolarisClient, migration: CatalogM
 async def _teardown(db: AsyncSession, polaris: PolarisClient, migration: CatalogMigration) -> None:
     """Remove whatever the abandoned attempt created at the target.
 
-    Dispatches on kind: Iceberg drops the shadow Polaris catalog, DuckLake
-    deletes the prefix it was copying into. DuckLake also re-grants the writes
-    it revoked, or the catalog stays read-only in PostgreSQL after a failure and
-    looks corrupt to whoever writes next.
+    Iceberg drops the shadow Polaris catalog; DuckLake deletes the target prefix
+    and re-grants the writes it revoked.
     """
     catalog = await db.get(Catalog, migration.catalog_id)
     if catalog is not None and catalog.kind == KIND_DUCKLAKE:
@@ -422,8 +420,7 @@ async def cleanup_retained(
     )
     for migration in rows:
         if migration.source_data_path:
-            # The stored path, never a recomputed one: after cutover the catalog
-            # resolves to the *target*, so recomputing here would purge live data.
+            # Never recompute: after cutover that would be the live target.
             await ducklake.teardown(db, migration, which="source")
             await log_event(
                 db,

@@ -53,18 +53,14 @@ class Credential(Base):
     agent_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("agents.id", ondelete="CASCADE"), nullable=True
     )
-    # Set for kind="ducklake_role": the PostgreSQL login that catalog's agents
-    # authenticate with, one per catalog so a catalog cannot reach another's
-    # metadata. Unique, because a catalog has exactly one.
+    # Set for kind="ducklake_role": that catalog's own PostgreSQL login password.
     catalog_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("catalogs.id", ondelete="CASCADE"), unique=True, nullable=True
     )
     kind: Mapped[str] = mapped_column(String(50), nullable=False)
     # Raw value for sessions, agent tokens and DuckLake role passwords; NULL for
-    # PATs, which store only a hash. Not encrypted at rest, consistently with
-    # every other secret here and in the environment. The mitigation that
-    # matters is that a DuckLake role cannot connect to this database at all,
-    # so an agent compromise cannot read this table.
+    # PATs, which store only a hash. Not encrypted at rest, but DuckLake roles
+    # cannot connect to this database.
     token: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
     # SHA-256 hex digest of a PAT secret (kind="pat"); NULL for other kinds. The
     # unique index gives an O(1) lookup by the hash of a presented bearer token.

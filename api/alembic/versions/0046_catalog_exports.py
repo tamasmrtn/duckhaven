@@ -4,19 +4,9 @@ Revision ID: 0046
 Revises: 0045
 Create Date: 2026-09-21
 
-DuckHaven tells users at the moment of choice that a DuckLake table is readable
-by DuckDB and nothing else, and that the choice cannot be changed later without
-copying the data. Both are true; the second is also the way out. This records a
-run of that copy.
-
-A separate table rather than a reuse of ``catalog_migrations``, for a specific
-reason: ``workspace_has_active_migration`` is the write-freeze, so an export
-modelled as a migration would stop writes to the source catalog. It must not --
-an export reads the latest snapshot, and a concurrent write simply is not
-included in it.
-
-Downgrade drops the table. Nothing else points at it, and an export leaves its
-result behind as a normal catalog, so the history is the only thing lost.
+Records runs of copying a DuckLake catalog into Iceberg. Separate from
+``catalog_migrations`` because an active migration freezes writes to the
+source, and an export must not.
 """
 
 from collections.abc import Sequence

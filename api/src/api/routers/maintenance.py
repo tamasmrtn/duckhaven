@@ -2,8 +2,7 @@
 
 Surfaces what the scanner has computed: explainable health scores rolled up from
 table to deployment, and the recommendation feed. Two mutations: dismissing a
-recommendation, which is a judgement rather than a fix, and applying one, which
-runs the maintenance for the catalog kinds whose capability allows it.
+recommendation and applying one, where the catalog kind supports it.
 """
 
 from __future__ import annotations
@@ -300,12 +299,8 @@ async def apply_recommendation(
 ) -> RecommendationOut:
     """Run the maintenance this recommendation asks for.
 
-    Gated on `maintenance:manage` as well as workspace membership. The button
-    sits on a member-scoped page, but the action rewrites or deletes data
-    files, which is operator-grade whoever is looking at it.
-
-    Returns as soon as the work is dispatched; the recommendation's
-    `apply_status` reports how it went.
+    Needs `maintenance:manage` on top of membership: it rewrites or deletes data.
+    Returns once dispatched; `apply_status` reports the outcome.
     """
     from api.models.catalog import Catalog
     from api.services.maintenance.apply import start_apply

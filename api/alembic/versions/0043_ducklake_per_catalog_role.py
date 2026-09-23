@@ -4,24 +4,16 @@ Revision ID: 0043
 Revises: 0042
 Create Date: 2026-09-21
 
-One shared ``ducklake_agent`` login reached every catalog's metadata schema, so
-the only thing stopping an agent from reading or corrupting another catalog's
-metadata was the SQL denylist -- a control that depends on a parser's fidelity.
-Each catalog now has its own login, which makes the isolation structural.
+Replaces the shared ``ducklake_agent`` login with one login per catalog, so
+isolation no longer depends on the SQL denylist alone. The password lives in
+``credentials``, not ``catalogs``, which is serialized to every client.
 
-The password lives in ``credentials`` rather than on ``catalogs``: that table is
-serialized to every client on every catalog listing, and a live secret does not
-belong there. ``catalog_id`` is unique because a catalog has exactly one.
-
-This migration does the *data* half only. Alembic is connected to the
-``duckhaven`` database, and the role and its grants live in ``ducklake``, which
-it has no connection to. The roles themselves are created by
-``DuckLakeCatalogBackend.ensure()`` on next browse, or immediately by
+Data half only: the roles live in the ``ducklake`` database, which Alembic cannot
+reach. They are created on next browse, or by
 ``POST /api/admin/catalogs/ducklake/reconcile-roles``.
 
-Downgrade refuses while any such credential exists: dropping the column strands
-the catalog-to-role mapping, leaving roles in PostgreSQL that DuckHaven can no
-longer name, and therefore no longer drop.
+Downgrade refuses while any such credential exists, since DuckHaven could no
+longer name (or drop) the roles.
 """
 
 import secrets
@@ -38,14 +30,8 @@ depends_on: str | Sequence[str] | None = None
 
 
 def _backfill(bind: sa.engine.Connection) -> None:
-    """Mint a credential for every catalog that predates this.
-
-    Lightweight `sa.table()` constructs with string literals, so the backfill
-    runs under SQLite in the unit suite as well as Postgres -- the house pattern
-    from 0042.
-    """
-    # Typed columns, unlike 0042's: this backfill binds real UUID values, and an
-    # untyped sa.column() hands them to the driver unadapted.
+    """Mint a credential for every catalog that predates this (SQLite-safe)."""
+    # Typed columns: untyped sa.column() hands UUID values to the driver unadapted.
     catalogs = sa.table("catalogs", sa.column("id", sa.Uuid()), sa.column("kind"))
     credentials = sa.table(
         "credentials",

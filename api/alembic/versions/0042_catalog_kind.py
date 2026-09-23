@@ -4,25 +4,13 @@ Revision ID: 0042
 Revises: 0041
 Create Date: 2026-09-16
 
-Adds the axis that lets a catalog keep its metadata somewhere other than
-Polaris. ``kind`` decides which identity column is populated:
+Adds ``kind``, which decides the identity column: ``iceberg_polaris`` keeps
+``polaris_name``; ``ducklake`` carries ``metadata_schema`` instead. A CHECK
+constraint keeps the pair exclusive. Existing rows are backfilled to
+``iceberg_polaris``.
 
-- ``iceberg_polaris`` (every existing row) keeps ``polaris_name``.
-- ``ducklake`` instead carries ``metadata_schema``, the Postgres schema in the
-  ``ducklake`` database holding that catalog's ``ducklake_*`` tables.
-
-``polaris_name`` therefore becomes nullable, and a CHECK constraint keeps the
-pair exclusive so a row can never end up with neither — a catalog nobody can
-open.
-
-Backward-compat: every existing catalog is backfilled to ``iceberg_polaris``
-and is otherwise untouched; storage backends are unchanged, since catalog kind
-and storage kind are orthogonal axes.
-
-Downgrade refuses while any DuckLake catalog exists. ``metadata_schema`` is the
-only pointer to that catalog's metadata, so dropping the column would strand the
-schema in the ``ducklake`` database with nothing referencing it — a loud failure
-is better than silent data loss.
+Downgrade refuses while any DuckLake catalog exists: ``metadata_schema`` is the
+only pointer to its metadata.
 """
 
 from collections.abc import Sequence
@@ -42,12 +30,7 @@ _KIND_CHECK = (
 
 
 def _backfill(bind: sa.engine.Connection) -> None:
-    """Stamp every pre-existing catalog as Iceberg + Polaris.
-
-    Uses a lightweight `sa.table()` construct with a string literal so the
-    backfill runs under SQLite in the unit suite as well as Postgres, matching
-    the house pattern in 0010.
-    """
+    """Stamp every pre-existing catalog as Iceberg + Polaris (SQLite-safe, as in 0010)."""
     catalogs = sa.table("catalogs", sa.column("kind"))
     bind.execute(catalogs.update().where(catalogs.c.kind.is_(None)).values(kind="iceberg_polaris"))
 

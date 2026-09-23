@@ -73,9 +73,6 @@ async def search_workspace(
 
     catalogs = await resolve_workspace_catalogs(db, workspace.id)
 
-    # Per catalog kind, through the metadata seam: `cat.polaris_name` is NULL
-    # for DuckLake, so reaching for it directly skipped those catalogs.
-    #
     # The listing calls hold no shared state, so they run concurrently; the
     # grant checks below share one AsyncSession and stay sequential.
     # return_exceptions=True isolates a stale or unreachable catalog from the

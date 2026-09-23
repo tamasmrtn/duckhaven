@@ -109,9 +109,7 @@ async def validate_model(
 ) -> ValidationReport:
     """Check every binding in a model and persist the outcome per object.
 
-    ``catalogs`` maps catalog id to the catalog itself, so each binding is read
-    through its own kind's backend. (Keying on the Polaris name reported every
-    DuckLake dataset "broken": that name is NULL there.)
+    ``catalogs`` maps catalog id to the catalog, read through its kind's backend.
     """
     report = ValidationReport(checked_at=datetime.now(UTC))
 

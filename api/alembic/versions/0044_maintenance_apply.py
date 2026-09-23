@@ -4,17 +4,12 @@ Revision ID: 0044
 Revises: 0043
 Create Date: 2026-09-21
 
-Until now the maintenance advisor only advised, so a recommendation needed no
-record of having been acted on. DuckLake's verbs can be run by DuckHaven
-itself, so each recommendation gains the outcome of the last apply against it.
+Each recommendation gains the outcome of the last apply against it. ``status``
+gains no ``applied`` value: only the next scan can tell whether the finding
+cleared.
 
-``status`` deliberately gains no ``applied`` value: a verb that ran is not a
-condition that cleared. The table is re-probed afterwards and the next scan
-resolves the recommendation only if the finding is actually gone.
-
-Downgrade refuses once any apply has happened. These columns and the Query row
-they point at are the only record that something rewrote or deleted data files;
-dropping them silently is worse than failing loudly.
+Downgrade refuses once any apply has happened: these columns are the record
+that data files were rewritten or deleted.
 """
 
 from collections.abc import Sequence

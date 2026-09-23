@@ -76,21 +76,15 @@ class Settings(BaseSettings):
     # data access). Defaults to the bootstrap root principal.
     polaris_principal: str = "root"
     polaris_http_timeout_s: float = 10.0
-    # On: DuckLake reached parity with the Iceberg path and exceeds it on
-    # maintenance. Iceberg + Polaris remains the *default kind* for a new
-    # catalog, which is a separate thing from whether DuckLake can be chosen.
+    # Whether DuckLake can be chosen; Iceberg + Polaris stays the default kind.
     ducklake_enabled: bool = True
-    # Owner credentials for DuckLake's metadata database. Agents never use this:
-    # each catalog gets its own login, created by the API, whose password lives
-    # in `credentials`. The owner therefore needs CREATEROLE (the bundled
-    # stack's POSTGRES_USER is a superuser, so this holds out of the box).
+    # Owner credentials for DuckLake's metadata database; needs CREATEROLE to
+    # create each catalog's own login. Agents never see it.
     ducklake_database_url: str = "postgresql+asyncpg://duckhaven:duckhaven@localhost:5432/ducklake"
     # Vended to an agent per dispatch, never written to its disk (I7).
     ducklake_agent_host: str = "postgres"
     ducklake_agent_port: int = 5432
     ducklake_agent_database: str = "ducklake"
-    # Inlining keeps small writes in the catalog database; file size drives
-    # compaction.
     ducklake_data_inlining_row_limit: int = 10
     ducklake_target_file_size_mb: int = 512
     # Bundled object store backing the object_store catalogs. Three tiers,

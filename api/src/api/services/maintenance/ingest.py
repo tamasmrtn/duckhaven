@@ -75,8 +75,6 @@ async def record_health_sample(db: AsyncSession, query: Query, health: dict[str,
         thresholds,
         history=history,
         catalog_kind=catalog.kind,
-        # Whether DuckHaven can run the fix, asked of the kind's capability
-        # rather than its name, so a future kind that can needs no change here.
         can_apply=capabilities_for(catalog.kind).supports_maintenance_apply,
     )
     await _sync_recommendations(db, query.workspace_id, catalog.id, schema, table, recs)

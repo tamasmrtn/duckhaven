@@ -196,7 +196,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
         await app.state.polaris_client.aclose()
-        # Drain the module-level DuckLake engine's pool (see get_engine).
         await dispose_ducklake_engine()
 
 
@@ -284,9 +283,7 @@ async def _polaris_error_handler(_: Request, exc: PolarisError) -> JSONResponse:
     return JSONResponse(status_code=code, content=error_body(code, str(exc)))
 
 
-# The same mapping for catalog-metadata failures, now that reads and writes go
-# through `services/catalog_backends`. Separate from the Polaris handler because
-# a DuckLake failure is not a Polaris failure.
+# The same mapping for catalog-metadata failures from `services/catalog_backends`.
 @api_app.exception_handler(CatalogBackendError)
 async def _catalog_backend_error_handler(_: Request, exc: CatalogBackendError) -> JSONResponse:
     if isinstance(exc, CatalogBackendNotFound):

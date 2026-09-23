@@ -1,26 +1,16 @@
 #!/usr/bin/env python
 """Report drift between a DuckLake catalog and its object storage.
 
-Read-only. Lists, compares and prints; it deletes nothing and writes nothing,
-so it is safe against a live deployment.
+Read-only, so safe against a live deployment.
 
     DUCKLAKE_DATABASE_URL=... DATABASE_URL=... ./scripts/ducklake-check.py
 
-An Iceberg table cannot disagree with its own metadata -- the metadata sits
-beside the data in object storage, so restoring the bucket restores both
-together. A DuckLake catalog's metadata is in PostgreSQL and its data is in
-object storage, which is two systems that a restore can put at two different
-moments. That is a failure mode Iceberg does not have, so it needs a tool
-Iceberg does not need.
+DuckLake metadata (PostgreSQL) and data (object storage) can be restored to
+different moments. Two kinds of drift:
 
-Two directions, and they are not equally bad:
-
-- **missing** -- the catalog references a file that storage does not have.
-  Queries against that table fail. This is the one that looks like corruption.
-- **orphaned** -- an object under the catalog's data path that no live row
-  references. Costs storage and nothing else. Note that time travel legitimately
-  produces these: a file only older snapshots reference is still needed, so this
-  count is a number to understand, never a delete list.
+- **missing** -- referenced by the catalog but absent from storage. Queries fail.
+- **orphaned** -- in storage but referenced by no live row. Time travel produces
+  these legitimately, so this is never a delete list.
 
 Exits 1 when any file is missing, so it can gate a restore.
 """
@@ -86,11 +76,8 @@ def _list_objects(block: dict, data_path: str) -> set[str]:
 def _resolve(levels: list[tuple[str, bool]], root: str) -> str:
     """Resolve a data file's location from its nested, possibly-relative parts.
 
-    DuckLake nests paths: a file's path is relative to its table's, which is
-    relative to its schema's, which is relative to the catalog's ``data_path``.
-    Any level may instead be absolute, in which case it is the base and the
-    levels above it do not apply. Assuming a file path is relative to the
-    catalog root -- the obvious reading -- reports every file as missing.
+    File paths are relative to the table's, then the schema's, then
+    ``data_path``; an absolute level stops the chain.
     """
     out = ""
     for value, is_relative in reversed(levels):
@@ -102,10 +89,7 @@ def _resolve(levels: list[tuple[str, bool]], root: str) -> str:
 
 async def _catalog_files(schema: str) -> tuple[dict[str, str], int]:
     """Live data files as {resolved location: relative path}, and how many are
-    absolute.
-
-    Absolute paths do not move with ``data_path``, so after a relocation they
-    are exactly the rows still pointing at the old location.
+    absolute (and so would not move with ``data_path``).
     """
     async with get_engine().connect() as conn:
         rows = (
@@ -140,8 +124,7 @@ async def main() -> int:
 
     failures = 0
     async with async_session_factory() as db:
-        # Eager-loaded: resolving the data path reads this relationship, and a
-        # lazy load here is IO outside greenlet context under asyncpg.
+        # Eager-loaded: a lazy load raises MissingGreenlet under asyncpg.
         stmt = (
             select(Catalog)
             .where(Catalog.kind == KIND_DUCKLAKE)

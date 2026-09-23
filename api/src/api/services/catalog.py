@@ -84,8 +84,7 @@ async def create_catalog(
     try:
         metadata_schema = metadata_schema_for(name) if kind == KIND_DUCKLAKE else None
     except CatalogBackendError as exc:
-        # A name too long for a Postgres identifier is the caller's error, not
-        # an upstream failure; without this it would surface as a 502.
+        # A name too long for a Postgres identifier is a 422, not a 502.
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
         ) from exc
@@ -100,13 +99,9 @@ async def create_catalog(
         storage_backend_id=backend.id,
         created_by=created_by,
     )
-    # Provision before flush so a failure leaves no row behind (D7); the unsaved
-    # object carries everything the backend needs.
+    # Provision before flush so a failure leaves no row behind (D7).
     catalog.storage_backend = backend
     if kind == KIND_DUCKLAKE:
-        # The catalog's own PostgreSQL login, minted here because provisioning is
-        # what creates the role with it, and carried on the unsaved object: there
-        # is no row to point a credential at until the flush below.
         catalog.pending_ducklake_password = new_role_password()
     try:
         await backend_for(catalog, polaris=polaris).provision(catalog)
@@ -120,8 +115,7 @@ async def create_catalog(
     db.add(catalog)
     await db.flush()
     if kind == KIND_DUCKLAKE:
-        # After the flush, so there is an id to point at. Written explicitly
-        # rather than through the relationship, which is view-only.
+        # Explicit: the relationship is view-only.
         db.add(
             Credential(
                 kind="ducklake_role",
@@ -228,8 +222,7 @@ async def drop_catalog(db: AsyncSession, polaris: PolarisClient, *, catalog: Cat
                 "Detach it everywhere before dropping."
             ),
         )
-    # Kind-specific teardown lives behind the backend. Load the storage backend
-    # first: touching a lazy relationship in async code raises MissingGreenlet.
+    # Load eagerly: a lazy relationship in async code raises MissingGreenlet.
     await db.refresh(catalog, attribute_names=["storage_backend"])
     try:
         await backend_for(catalog, polaris=polaris).deprovision(catalog)

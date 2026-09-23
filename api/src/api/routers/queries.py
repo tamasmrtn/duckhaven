@@ -131,8 +131,7 @@ async def create_query(
         )
 
     # Every catalog bound to the workspace is attached on each query, so the
-    # agent must support every catalog's kind *and* every storage backend kind
-    # across them.
+    # agent must support every catalog's kind and storage backend kind.
     catalogs = await resolve_workspace_catalogs(db, workspace.id)
     for catalog in catalogs:
         kind = catalog.storage_backend.kind

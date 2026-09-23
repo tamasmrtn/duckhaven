@@ -1,9 +1,8 @@
 """Required-extension mapping and the dispatch-time compatibility check (G-D17-b).
 
-An agent must satisfy two independent axes to serve a catalog: its **catalog
-kind** (the metastore and table format) and its **storage backend** (where the
-bytes live). The storage half is mirrored in
-`web/src/components/app/AgentPicker.tsx`; the kind half is enforced only here.
+An agent must satisfy two axes to serve a catalog: its catalog kind and its
+storage backend. The storage half is mirrored in
+`web/src/components/app/AgentPicker.tsx`.
 """
 
 # Every backend is object storage now; object_store is the bundled S3 store and
@@ -29,11 +28,7 @@ def required_extension(backend_kind: str) -> str | None:
 
 
 def required_catalog_extensions(catalog_kind: str) -> tuple[str, ...]:
-    """The DuckDB extensions gated at dispatch for this catalog kind.
-
-    An unknown kind maps to no requirement, since the control plane decides what
-    it can provision.
-    """
+    """The DuckDB extensions gated at dispatch for this catalog kind."""
     return _CATALOG_KIND_EXTENSIONS.get(catalog_kind, ())
 
 
@@ -61,11 +56,7 @@ def agent_supports_catalog(capabilities: dict | None, catalog_kind: str, backend
 
 
 def missing_extension(capabilities: dict | None, catalog_kind: str, backend_kind: str) -> str:
-    """The first extension this agent lacks, catalog kind first.
-
-    Returns "" when nothing is missing, which callers only reach after
-    ``agent_supports_catalog`` said no.
-    """
+    """The first extension this agent lacks, catalog kind first; "" if none."""
     loaded = _loaded(capabilities)
     for ext in required_catalog_extensions(catalog_kind):
         if ext not in loaded:

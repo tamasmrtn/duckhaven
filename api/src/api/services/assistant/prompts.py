@@ -236,8 +236,6 @@ def _storage_block(deps: AssistantDeps) -> str | None:
 
 
 def _ducklake_block(deps: AssistantDeps) -> str | None:
-    # PRODUCT_PROMPT describes the default Iceberg shape; this adds where
-    # DuckLake differs. Iceberg-only deployments pay nothing.
     if "ducklake" not in (deps.catalog_kinds or ()):
         return None
     return DUCKLAKE_PROMPT

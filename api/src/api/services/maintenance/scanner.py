@@ -85,8 +85,6 @@ async def run_cycle(
             return {"status": "skipped", "reason": "not_due"}
 
         await _prune_old_samples(db, now)
-        # An agent that never came back would otherwise leave a recommendation
-        # "running" forever, and every later apply on that catalog refused.
         await apply_service.sweep_stale_applies(db, now)
         include_orphans = _deep_scan_due(policy, now)
         target_file_bytes = int(policy.thresholds.get("target_file_bytes", 128 * 1024**2))
@@ -149,8 +147,7 @@ async def _enumerate_catalog(polaris: PolarisClient, catalog: Catalog) -> list[t
 
     Enumeration is a per-catalog ``list_schemas`` + ``list_tables`` round-trip,
     cached to keep the scan cycle cheap; an error invalidates the entry so a
-    transient failure doesn't pin a stale list. Through the catalog's own
-    backend, so a DuckLake catalog is enumerated too rather than skipped.
+    transient failure doesn't pin a stale list.
     """
     now = datetime.now(tz=UTC)
     cached = _enumeration_cache.get(catalog.slug)

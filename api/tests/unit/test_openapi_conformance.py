@@ -87,6 +87,7 @@ ALLOWED_TAGS = {
     "setup",
     "sql-sessions",
     "workspaces",
+    "worksheets",
 }
 
 #: Routes that answer before authentication and so document no 401.

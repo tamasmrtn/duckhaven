@@ -14,6 +14,7 @@ from api.models.maintenance import MaintenanceRecommendation, TableHealthSample
 from api.models.query import Query, SavedQuery, Schedule
 from api.models.sql_session import SqlSession
 from api.models.storage_backend import StorageBackend
+from api.models.worksheet import Worksheet
 from api.models.workspace import Workspace, WorkspaceMember
 from api.services.polaris import (
     PolarisCatalog,
@@ -183,7 +184,7 @@ async def update_workspace(
 
 async def delete_workspace(db: AsyncSession, workspace: Workspace) -> None:
     """Permanently delete a workspace and its intrinsic control-plane rows
-    (membership, schedules, query/session history, saved queries, assistant
+    (membership, schedules, query/session history, worksheets, saved queries, assistant
     conversations, maintenance sidecars).
 
     Never touches Polaris or `Catalog` rows: catalogs are decoupled M:N and are
@@ -199,6 +200,7 @@ async def delete_workspace(db: AsyncSession, workspace: Workspace) -> None:
         WorkspaceMember,
         Schedule,
         Query,
+        Worksheet,
         SavedQuery,
         SqlSession,
         AssistantConversation,

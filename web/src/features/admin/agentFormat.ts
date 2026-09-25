@@ -24,11 +24,4 @@ export function agentDotClass(agent: Agent): string {
   return statusDot[agent.status];
 }
 
-export function relativeTime(iso: string | null): string {
-  if (!iso) return "—";
-  const diff = (Date.now() - new Date(iso).getTime()) / 1000;
-  if (diff < 5) return "just now";
-  if (diff < 60) return `${Math.floor(diff)}s ago`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  return `${Math.floor(diff / 3600)}h ago`;
-}
+export { relativeTime } from "@/utils/relativeTime";

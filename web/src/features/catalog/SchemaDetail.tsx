@@ -14,7 +14,9 @@ function fmtNum(n: number | null | undefined) {
 
 function Stat({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="rounded-md border border-[var(--border-subtle)] px-4 py-3">
+    // Grows with its value: a large schema's row count is wider than a fixed
+    // third of the row.
+    <div className="min-w-[10rem] rounded-md border border-[var(--border-subtle)] px-4 py-3">
       <p className="text-2xl font-semibold text-text-primary font-tabular">
         {value}
       </p>
@@ -65,7 +67,7 @@ export function SchemaDetail({
           {isLoading ? (
             <Skeleton className="h-24 w-full" />
           ) : (
-            <div className="grid max-w-lg grid-cols-3 gap-3">
+            <div className="flex flex-wrap gap-3">
               <Stat label="Tables" value={tables?.length ?? 0} />
               <Stat label="Rows" value={fmtNum(totalRows)} />
               <Stat label="Size" value={formatBytes(totalSize)} />

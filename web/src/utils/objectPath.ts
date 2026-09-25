@@ -1,9 +1,9 @@
 interface RoutableObject {
-  // Deliberately excludes "saved_query": unlike a schema/table, a saved query
-  // has no plain object-detail route — opening one means stashing its SQL and
-  // navigating to the worksheet (see openSavedQuery in CommandPalette.tsx),
-  // not building a path from its name. Callers filter those out first.
-  type: "schema" | "table";
+  // Deliberately excludes "saved_query": unlike a catalog object, a saved
+  // query has no plain object-detail route — opening one means opening its
+  // worksheet (see openSavedQuery in CommandPalette.tsx), not building a path
+  // from its name. Callers filter those out first.
+  type: "catalog" | "schema" | "table";
   catalog?: string | null;
   schema_name?: string | null;
   name: string;
@@ -19,6 +19,7 @@ interface RoutableObject {
 // contain characters that would otherwise produce a malformed path.
 export function objectPath(ws: string, r: RoutableObject): string {
   const seg = (v: string | null | undefined) => encodeURIComponent(v ?? "");
+  if (r.type === "catalog") return `/${seg(ws)}/catalog/${seg(r.name)}`;
   if (r.type === "schema")
     return `/${seg(ws)}/catalog/${seg(r.catalog)}/${seg(r.name)}`;
   return `/${seg(ws)}/catalog/${seg(r.catalog)}/${seg(r.schema_name)}/${seg(r.name)}`;

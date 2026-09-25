@@ -23,12 +23,9 @@ import { TableHealthPanel } from "@/features/health/TableHealthPanel";
 import { LineagePanel } from "@/features/lineage/LineagePanel";
 import { SemanticPanel } from "@/features/semantic/SemanticPanel";
 import { BrokenByDropWarning } from "@/features/semantic/BrokenByDropWarning";
-import {
-  alterTemplate,
-  selectTemplate,
-  stashWorksheetSql,
-} from "@/features/catalog/worksheetSql";
+import { alterTemplate, selectTemplate } from "@/features/catalog/worksheetSql";
 import { tableFormatDisplay } from "@/features/catalog/catalogKind";
+import { useOpenInWorksheet } from "@/features/worksheet/openInWorksheet";
 import { formatBytes } from "@/utils";
 import {
   recordRecentlyViewed,
@@ -117,9 +114,9 @@ function TableDetail({
     recordRecentlyViewed(ws, { type: "table", catalog, schema, name: table });
   }, [ws, catalog, schema, table]);
 
+  const openWorksheet = useOpenInWorksheet(ws);
   function openInWorksheet(sql: string) {
-    stashWorksheetSql(ws, sql);
-    navigate({ to: "/$ws/worksheets", params: { ws } });
+    void openWorksheet({ sql, title: table });
   }
 
   if (isLoading) {
@@ -440,7 +437,7 @@ export function CatalogPage() {
         <div className="w-[280px] shrink-0 overflow-hidden border-r border-[var(--border-subtle)] bg-[var(--bg-surface)]">
           <CatalogTree
             ws={ws}
-            workspaceName={workspace?.name ?? ws}
+            workspaceName={workspace?.name}
             onCatalogClick={(c) =>
               navigate({
                 to: "/$ws/catalog/$catalog",

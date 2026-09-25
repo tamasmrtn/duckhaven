@@ -109,6 +109,32 @@ describe('CommandPalette', () => {
     await waitFor(() =>
       expect(router.state.location.pathname).toBe('/acme-analytics/worksheets'),
     )
+    // "Funnel overview" is already linked to the funnel-draft worksheet, which
+    // is focused rather than duplicated.
+    await waitFor(() =>
+      expect(screen.getByRole('tab', { name: /funnel-draft/ })).toHaveAttribute(
+        'data-state',
+        'active',
+      ),
+    )
+  })
+
+  it('finds catalogs by name and opens the catalog page', async () => {
+    const { router } = renderWithProviders({ initialRoute: WS_ROUTE })
+    const dialog = await openPalette()
+    await userEvent.type(
+      within(dialog).getByPlaceholderText(/search commands/i),
+      'curated',
+    )
+
+    const group = await within(dialog).findByText('Catalogs')
+    await userEvent.click(
+      group.closest('[cmdk-group]')!.querySelector('[cmdk-item]') as HTMLElement,
+    )
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe('/acme-analytics/catalog/curated'),
+    )
   })
 
   it('percent-encodes an unusual workspace slug when switching to it', async () => {

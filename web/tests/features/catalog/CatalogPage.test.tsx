@@ -1,14 +1,24 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import { screen, waitFor, within, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@tests/mock/server";
 import { renderWithProviders } from "@tests/utils";
 import { recordRecentlyViewed } from "@/utils/recentlyViewed";
+import { WORKSHEETS } from "@/mock/fixtures/worksheets";
 
 const CATALOG_ROUTE = "/acme-analytics/catalog";
 
 describe("CatalogPage", () => {
+  // The tree starts collapsed and remembers what was opened: begin with the
+  // default catalog and its `raw` schema open.
+  beforeEach(() => {
+    localStorage.setItem(
+      "dh-tree-expanded-acme-analytics",
+      JSON.stringify(["c:acme_analytics", "s:acme_analytics.raw"]),
+    );
+  });
+
   it("creates a schema via the catalog right-click menu", async () => {
     const user = userEvent.setup();
     renderWithProviders({ initialRoute: CATALOG_ROUTE });
@@ -45,7 +55,7 @@ describe("CatalogPage", () => {
     await user.type(screen.getByLabelText(/column name/i), "id");
     await user.click(screen.getByRole("button", { name: /^create$/i }));
 
-    // The tree auto-expands schemas, so the new table appears on refetch.
+    // `raw` is expanded, so the new table appears on refetch.
     await waitFor(() => {
       expect(screen.getByText("pageviews")).toBeInTheDocument();
     });
@@ -82,8 +92,9 @@ describe("CatalogPage", () => {
 
   it("renders a schema with no tables and the selection placeholder", async () => {
     server.use(
-      http.get("/api/workspaces/:ws/schemas/:schema/tables", () =>
-        HttpResponse.json([]),
+      http.get(
+        "/api/workspaces/:ws/catalogs/:catalog/schemas/:schema/tables",
+        () => HttpResponse.json([]),
       ),
     );
     renderWithProviders({ initialRoute: CATALOG_ROUTE });
@@ -191,8 +202,9 @@ describe("CatalogPage", () => {
       await screen.findByRole("button", { name: /alter table/i }),
     );
 
-    // Navigates to the worksheet, seeding a new tab from the catalog action.
-    expect(await screen.findByText(/from catalog/i)).toBeInTheDocument();
+    // Opens a worksheet named for the table, holding the ALTER statement.
+    expect(await screen.findByRole("tab", { name: /^events(?!\.sql)/ })).toBeInTheDocument();
+    expect(WORKSHEETS.at(-1)?.sql).toMatch(/^ALTER TABLE .*"events"/);
   });
 
   it("lists snapshot history under the History tab", async () => {
@@ -237,7 +249,8 @@ describe("CatalogPage", () => {
     });
     await user.click(buttons[0]);
 
-    expect(await screen.findByText(/from catalog/i)).toBeInTheDocument();
+    expect(await screen.findByRole("tab", { name: /^events(?!\.sql)/ })).toBeInTheDocument();
+    expect(WORKSHEETS.at(-1)?.sql).toMatch(/AT \(VERSION =>/);
   });
 });
 

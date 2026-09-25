@@ -16,6 +16,7 @@ test("a table created via DDL appears, previews data, and can be dropped", async
   // The table is listed under the default catalog's namespace.
   await catalogPage.goto();
   await catalogPage.expandCatalog();
+  await catalogPage.expandSchema(DEFAULT_SCHEMA);
   await expect(catalogPage.tableLink(table)).toBeVisible();
 
   // The detail view previews rows through the agent result server (proxy_rows)

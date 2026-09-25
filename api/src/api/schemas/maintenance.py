@@ -103,6 +103,12 @@ class RecommendationOut(BaseModel):
     status: str
     created_at: datetime
     resolved_at: datetime | None = None
+    # The last apply, if any. It never changes `status`; only a later scan can.
+    apply_status: str | None = None
+    apply_error: str | None = None
+    apply_result: dict | None = None
+    applied_at: datetime | None = None
+    applied_query_id: uuid.UUID | None = None
 
 
 class TableHealthDetailOut(BaseModel):

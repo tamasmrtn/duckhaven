@@ -2,8 +2,25 @@
 
 A [catalog](../concepts/catalogs.md)'s [storage backend](../concepts/storage-backends.md) is chosen when the catalog is
 created, but it is not permanent. An admin can **migrate** a catalog to a different backend — for example off the
-bundled object store onto a corporate S3 bucket, or from S3 to Azure ADLS Gen 2 — preserving all data and full Iceberg
-snapshot history. This guide covers the operator workflow.
+bundled object store onto a corporate S3 bucket, or from S3 to Azure ADLS Gen 2 — preserving all data and full
+snapshot history. Both [catalog kinds](../concepts/catalogs.md#catalog-kinds) can be migrated, by different procedures.
+This guide covers the operator workflow.
+
+## The two procedures
+
+**Iceberg** references every file by **absolute** URI, so a raw copy would leave the new tree pointing at the old
+location. The runner stands up a shadow Polaris catalog at the target, copies each file while rewriting that prefix
+inside the metadata and manifests, registers the rewritten tables, and cuts over.
+
+**[DuckLake](../concepts/ducklake.md)** records file paths *relative* to a `data_path` held in the catalog itself, so
+there is no tree to rewrite. The runner copies the prefix, updates that one row, and re-points the catalog. Same
+phases, same progress, same cancel — a shorter road to the same place.
+
+!!! warning "Files registered in place cannot be migrated"
+    `ducklake_add_data_files` registers existing Parquet without copying it, recording an **absolute** path. Those
+    files do not move when `data_path` changes, and the path may name a bucket the target's credentials cannot reach.
+    DuckHaven refuses the migration with **422** rather than guessing, naming how many such files exist. Rewrite or
+    drop them first — a catalog DuckHaven wrote itself has none of these.
 
 ## Who can migrate
 

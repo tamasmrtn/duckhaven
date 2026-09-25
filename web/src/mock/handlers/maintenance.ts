@@ -118,6 +118,20 @@ export const maintenanceHandlers = [
     return HttpResponse.json(rec);
   }),
 
+  http.post("/api/maintenance/recommendations/:id/apply", ({ params }) => {
+    const rec = RECOMMENDATIONS.find((r) => r.id === params.id);
+    if (!rec) return httpError(404, "Recommendation not found");
+    if (!rec.remediation?.applicable_in_app) {
+      return httpError(
+        422,
+        "DuckHaven cannot run maintenance for this catalog kind.",
+      );
+    }
+    // Status stays open until a later scan decides.
+    rec.apply_status = "running";
+    return HttpResponse.json(rec, { status: 202 });
+  }),
+
   http.get("/api/admin/maintenance/policy", () => HttpResponse.json(POLICY)),
 
   http.put("/api/admin/maintenance/policy", async ({ request }) => {

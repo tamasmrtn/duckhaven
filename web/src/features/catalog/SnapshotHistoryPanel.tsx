@@ -49,9 +49,17 @@ export function SnapshotHistoryPanel({
   }
 
   const snapshots = data ?? [];
+  // DuckLake snapshots are catalog-wide commits; don't imply per-table lineage.
+  const catalogScoped = snapshots.some((s) => s.granularity === "catalog");
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
+      {catalogScoped && (
+        <p className="border-b border-[var(--border-subtle)] px-4 py-2 text-2xs text-text-tertiary shrink-0">
+          DuckLake snapshots are catalog-wide. These are the ones that changed
+          this table.
+        </p>
+      )}
       {/* "Query as of…" — timestamp + relative-offset picks (snapshot-id pins
           live on each row below). */}
       <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border-subtle)] px-4 py-2 shrink-0">

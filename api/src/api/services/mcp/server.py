@@ -42,7 +42,7 @@ __all__ = ["MCP_PATH", "build_endpoint", "build_server", "mcp_asgi_app", "mcp_se
 
 INSTRUCTIONS = """\
 DuckHaven is a self-hosted lakehouse: DuckDB compute over Apache Iceberg tables
-governed by Apache Polaris. These tools read and query it as you, with your own
+governed by a Polaris or DuckLake catalog. These tools read and query it as you, with your own
 workspace membership and catalog grants — you cannot see or do more here than you
 could in the web app.
 

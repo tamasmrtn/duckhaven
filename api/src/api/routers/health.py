@@ -11,13 +11,15 @@ replica that is shutting down or has lost a dependency, while ``/healthz`` keeps
 the container alive.
 """
 
+import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
 from api.deps import get_db, get_polaris_client
+from api.models.catalog import KIND_DUCKLAKE, KIND_ICEBERG_POLARIS, Catalog
 from api.services.polaris import PolarisClient
 
 router = APIRouter()
@@ -81,11 +83,32 @@ async def readyz(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"database unreachable: {type(e).__name__}",
         ) from e
-    try:
-        await polaris.ping()
-    except Exception as e:  # noqa: BLE001 — any Polaris failure means not ready
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"polaris unreachable: {type(e).__name__}",
-        ) from e
+    # Ping Polaris only when an Iceberg catalog exists, so a DuckLake-only stack
+    # can go ready.
+    needs_polaris = await db.scalar(
+        select(sa.func.count()).select_from(Catalog).where(Catalog.kind == KIND_ICEBERG_POLARIS)
+    )
+    if needs_polaris:
+        try:
+            await polaris.ping()
+        except Exception as e:  # noqa: BLE001 — any Polaris failure means not ready
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"polaris unreachable: {type(e).__name__}",
+            ) from e
+
+    # Likewise for DuckLake's catalog database, which has its own engine.
+    needs_ducklake = await db.scalar(
+        select(sa.func.count()).select_from(Catalog).where(Catalog.kind == KIND_DUCKLAKE)
+    )
+    if needs_ducklake:
+        from api.services.catalog_backends import ducklake
+
+        try:
+            await ducklake.ping()
+        except Exception as e:  # noqa: BLE001 — any failure means not ready
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"ducklake unreachable: {type(e).__name__}",
+            ) from e
     return {"status": "ready"}

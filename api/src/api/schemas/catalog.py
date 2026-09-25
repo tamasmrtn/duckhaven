@@ -112,3 +112,5 @@ class SnapshotOut(BaseModel):
     total_records: int | None = None
     added_data_files: int | None = None
     total_data_files: int | None = None
+    # "catalog" for DuckLake's catalog-wide commits that touched this table.
+    granularity: str = "table"

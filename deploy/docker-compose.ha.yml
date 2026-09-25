@@ -157,6 +157,10 @@ services:
         condition: service_started
     volumes:
       - ./ha/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    # Agent network, so agents reach the DuckLake catalog through the proxy.
+    networks:
+      - default
+      - duckhaven_internal
 
   # ── Object store + Polaris (unchanged from the single-node stack) ────────────
   # Publishes no ports here: in the HA topology only caddy faces the host, and

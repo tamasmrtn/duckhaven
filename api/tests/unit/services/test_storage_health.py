@@ -216,3 +216,101 @@ def test_list_adls_requires_sas_when_only_expiry_is_vended():
             "abfss://c@a.dfs.core.windows.net/p",
             {"adls.sas-token-expires-at-ms.a.dfs.core.windows.net": "1785065500847"},
         )
+
+
+# --- The Polaris-free path (DuckLake-only deployments) ---------------------
+
+
+def test_a_duckdb_dialect_block_is_translated_for_the_listing_helpers():
+    """Two credential vocabularies exist; the listers speak the Polaris one."""
+    creds = storage_health._block_to_creds(
+        {
+            "type": "s3",
+            "key_id": "AK",
+            "secret": "SK",
+            "session_token": "TOK",
+            "region": "eu-west-1",
+            "endpoint": "objectstore:9000",
+            "use_ssl": False,
+        },
+        "s3://bucket/prefix/",
+    )
+
+    assert creds["s3.access-key-id"] == "AK"
+    assert creds["s3.secret-access-key"] == "SK"
+    assert creds["s3.session-token"] == "TOK"
+    assert creds["client.region"] == "eu-west-1"
+    # The DuckDB form is a bare host; boto3 needs the scheme back.
+    assert creds["s3.endpoint"] == "http://objectstore:9000"
+
+
+def test_an_empty_session_token_becomes_none_rather_than_an_empty_string():
+    """boto3 treats an empty token as a token and signs with it, which fails."""
+    creds = storage_health._block_to_creds(
+        {"type": "s3", "key_id": "AK", "secret": "SK", "session_token": "", "endpoint": ""},
+        "s3://bucket/",
+    )
+    assert creds["s3.session-token"] is None
+    assert creds["s3.endpoint"] is None
+
+
+def test_an_azure_block_yields_the_bare_sas_keyed_by_account():
+    """`_list_adls` wants the token, not the connection string wrapping it."""
+    creds = storage_health._block_to_creds(
+        {
+            "type": "azure",
+            "account_name": "acme",
+            "connection_string": "BlobEndpoint=https://acme.blob.core.windows.net;SharedAccessSignature=sv=2024&sig=abc",
+        },
+        "abfss://c@acme.dfs.core.windows.net/x/",
+    )
+    assert creds == {"adls.sas-token.acme": "sv=2024&sig=abc"}
+
+
+@pytest.mark.asyncio
+async def test_the_direct_probe_never_touches_polaris(monkeypatch):
+    """The whole point: it must work where Polaris is not deployed."""
+    listed = {}
+
+    def _fake_list(kind, location, creds, config):  # noqa: ANN001
+        listed["location"] = location
+        return 0
+
+    monkeypatch.setattr(storage_health, "_list_prefix", _fake_list)
+    monkeypatch.setattr(
+        "api.services.session_credentials.build_storage_block",
+        lambda backend, data_path: {"type": "s3", "key_id": "AK", "secret": "SK"},
+    )
+
+    health = await storage_health.validate_backend_direct(
+        _backend("s3", {"role_arn": "arn:aws:iam::1:role/r", "region": "us-east-1"})
+    )
+
+    assert health.valid is True
+    # An empty probe prefix listing zero objects still proves reach.
+    assert "0 object(s)" in health.detail
+    assert listed["location"].startswith("s3://acme-data/duckhaven/dhhealth")
+
+
+@pytest.mark.asyncio
+async def test_the_direct_probe_reports_a_refused_assume_role_as_unusable(monkeypatch):
+    monkeypatch.setattr(
+        "api.services.session_credentials.build_storage_block",
+        lambda backend, data_path: (_ for _ in ()).throw(RuntimeError("AssumeRole denied")),
+    )
+
+    health = await storage_health.validate_backend_direct(
+        _backend("s3", {"role_arn": "arn:aws:iam::1:role/r", "region": "us-east-1"})
+    )
+
+    assert health.valid is False
+    assert "AssumeRole denied" in health.detail
+
+
+@pytest.mark.asyncio
+async def test_a_backend_saved_with_a_missing_config_key_is_unusable_not_a_crash():
+    """An incomplete config is reported as unusable, not raised."""
+    health = await storage_health.validate_backend_direct(_backend("s3", {"role_arn": "arn:x"}))
+
+    assert health.valid is False
+    assert "region" in health.detail

@@ -8,6 +8,7 @@ catalog's creator or an admin and is refused while any binding remains.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Annotated
 
@@ -17,13 +18,27 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from api.deps import get_current_user, get_db, get_polaris_client
-from api.models.catalog import Catalog, WorkspaceCatalog
+from api.config import settings
+from api.deps import get_current_user, get_db, get_polaris_client, require_permission
+from api.models.catalog import (
+    KIND_DUCKLAKE,
+    KIND_ICEBERG_POLARIS,
+    Catalog,
+    WorkspaceCatalog,
+)
+from api.models.catalog_export import CatalogExport
 from api.models.catalog_grant import CatalogGrant
 from api.models.catalog_migration import CatalogMigration
 from api.models.storage_backend import StorageBackend
 from api.models.user import User
-from api.schemas.catalog_mgmt import CatalogAttachRequest, CatalogCreate, CatalogOut
+from api.schemas.catalog_export import CatalogExportOut, ExportStartRequest
+from api.schemas.catalog_mgmt import (
+    CatalogAttachRequest,
+    CatalogCapabilitiesOut,
+    CatalogCreate,
+    CatalogKindOut,
+    CatalogOut,
+)
 from api.schemas.catalog_migration import (
     CatalogMigrationEventOut,
     CatalogMigrationOut,
@@ -33,6 +48,8 @@ from api.schemas.catalog_migration import (
 )
 from api.schemas.page import Page
 from api.services import catalog as catalog_service
+from api.services.catalog_backends import CatalogBackendError, capabilities_for
+from api.services.export import ACTIVE_STATUSES as EXPORT_ACTIVE
 from api.services.migration import service as migration_service
 from api.services.paging import paginate
 from api.services.permissions import Permission
@@ -45,6 +62,8 @@ from api.services.workspace import (
     resolve_catalog,
     resolve_workspace_catalogs,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -59,6 +78,199 @@ async def _catalog_for_admin(db: AsyncSession, user: User, catalog_id: uuid.UUID
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
     return catalog
+
+
+@router.post("/admin/catalogs/ducklake/reconcile-roles")
+async def reconcile_ducklake_roles(
+    _: User = Depends(require_permission(Permission.CATALOGS_ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, int]:
+    """Create any DuckLake login role that does not exist yet.
+
+    Post-upgrade step: the Alembic migration can only write credential rows, not
+    roles in the catalog database. Idempotent; also repairs a dropped role.
+    """
+    from api.models.user import Credential
+    from api.services.catalog_backends.ducklake import DuckLakeCatalogBackend, new_role_password
+
+    catalogs = (
+        (
+            await db.execute(
+                select(Catalog)
+                .where(Catalog.kind == KIND_DUCKLAKE)
+                .options(selectinload(Catalog.ducklake_credential))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    backend = DuckLakeCatalogBackend()
+    reconciled = 0
+    for catalog in catalogs:
+        if catalog.ducklake_credential is None:
+            db.add(
+                Credential(kind="ducklake_role", token=new_role_password(), catalog_id=catalog.id)
+            )
+            await db.flush()
+            await db.refresh(catalog, attribute_names=["ducklake_credential"])
+        try:
+            await backend.ensure(catalog)
+        except CatalogBackendError as exc:
+            logger.warning("Could not reconcile DuckLake role for %s: %s", catalog.slug, exc)
+            continue
+        reconciled += 1
+    await db.commit()
+    return {"catalogs": len(catalogs), "reconciled": reconciled}
+
+
+@router.post("/catalogs/{catalog_id}/ducklake/rotate-role")
+async def rotate_ducklake_role(
+    catalog_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, object]:
+    """Give this catalog's PostgreSQL role a new password.
+
+    Open SQL sessions keep their authenticated connections and are counted in
+    the response, not closed.
+    """
+    from api.models.sql_session import SqlSession
+    from api.models.user import Credential
+    from api.services.catalog_backends.ducklake import DuckLakeCatalogBackend, new_role_password
+
+    catalog = await _catalog_for_admin(db, user, catalog_id)
+    if catalog.kind != KIND_DUCKLAKE:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Catalog '{catalog.slug}' is not a DuckLake catalog.",
+        )
+
+    credential = (
+        await db.execute(
+            select(Credential).where(
+                Credential.catalog_id == catalog.id, Credential.kind == "ducklake_role"
+            )
+        )
+    ).scalar_one_or_none()
+    if credential is None:
+        credential = Credential(kind="ducklake_role", catalog_id=catalog.id)
+        db.add(credential)
+    credential.token = new_role_password()
+    await db.flush()
+    await db.refresh(catalog, attribute_names=["ducklake_credential"])
+
+    # `ensure` re-applies the stored password to the role.
+    await DuckLakeCatalogBackend().ensure(catalog)
+    await db.commit()
+
+    # A session attaches every catalog in its workspace, not just the active one.
+    open_sessions = await db.scalar(
+        select(func.count())
+        .select_from(SqlSession)
+        .join(WorkspaceCatalog, WorkspaceCatalog.workspace_id == SqlSession.workspace_id)
+        .where(
+            WorkspaceCatalog.catalog_id == catalog.id,
+            SqlSession.status.in_(("open", "opening")),
+        )
+    )
+    return {"rotated": True, "open_sessions": int(open_sessions or 0)}
+
+
+@router.post(
+    "/catalogs/{catalog_id}/exports",
+    response_model=CatalogExportOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def start_export(
+    catalog_id: uuid.UUID,
+    body: ExportStartRequest,
+    workspace: str = Query(..., description="Workspace to attach the new catalog to"),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> CatalogExportOut:
+    """Copy this DuckLake catalog's current state (not its history) into a new Iceberg one.
+
+    Requires the catalog's creator or `catalogs:admin`, plus `owner` on the
+    target workspace.
+    """
+    catalog = await _catalog_for_admin(db, user, catalog_id)
+    if not capabilities_for(catalog.kind).supports_iceberg_export:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"A {catalog.kind} catalog cannot be exported to Iceberg.",
+        )
+    ws = await get_workspace(db, workspace)
+    await assert_workspace_member(db, ws.id, user.id, min_role="owner")
+
+    existing = await db.scalar(
+        select(CatalogExport.id).where(
+            CatalogExport.source_catalog_id == catalog.id,
+            CatalogExport.status.in_(EXPORT_ACTIVE),
+        )
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An export of this catalog is already running.",
+        )
+
+    export = CatalogExport(
+        source_catalog_id=catalog.id,
+        target_name=body.target_name,
+        target_storage_backend_id=body.target_storage_backend_id,
+        workspace_id=ws.id,
+        created_by=user.id,
+    )
+    db.add(export)
+    await db.commit()
+    await db.refresh(export)
+    return CatalogExportOut.model_validate(export, from_attributes=True)
+
+
+@router.get("/catalogs/{catalog_id}/exports", response_model=Page[CatalogExportOut])
+async def list_exports(
+    catalog_id: uuid.UUID,
+    limit: int = Query(default=100, ge=1, le=1000),
+    cursor: str | None = Query(default=None),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Page[CatalogExportOut]:
+    """Export history for a catalog, newest first."""
+    await _catalog_for_admin(db, user, catalog_id)
+    rows, next_cursor, has_more = await paginate(
+        db,
+        select(CatalogExport).where(CatalogExport.source_catalog_id == catalog_id),
+        sort=[CatalogExport.created_at.desc(), CatalogExport.id.desc()],
+        limit=limit,
+        cursor=cursor,
+    )
+    return Page[CatalogExportOut](
+        items=[CatalogExportOut.model_validate(r[0], from_attributes=True) for r in rows],
+        cursor=next_cursor,
+        has_more=has_more,
+    )
+
+
+@router.post("/catalogs/{catalog_id}/exports/{export_id}/cancel", response_model=CatalogExportOut)
+async def cancel_export(
+    catalog_id: uuid.UUID,
+    export_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> CatalogExportOut:
+    """Ask a running export to stop. A dispatched copy leaves a partial target behind."""
+    await _catalog_for_admin(db, user, catalog_id)
+    export = await db.get(CatalogExport, export_id)
+    if export is None or export.source_catalog_id != catalog_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    if export.status not in EXPORT_ACTIVE:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=f"Export is already {export.status}."
+        )
+    export.cancel_requested = True
+    await db.commit()
+    await db.refresh(export)
+    return CatalogExportOut.model_validate(export, from_attributes=True)
 
 
 def _migration_out(migration, *, include_tables: bool = False) -> CatalogMigrationOut:
@@ -83,6 +295,22 @@ async def _binding_count(db: AsyncSession, catalog_id: uuid.UUID) -> int:
     )
 
 
+def _capabilities_out(kind: str) -> CatalogCapabilitiesOut | None:
+    """This kind's capabilities, or None for a kind this build does not know."""
+    try:
+        caps = capabilities_for(kind)
+    except CatalogBackendError:
+        return None
+    return CatalogCapabilitiesOut(
+        supports_storage_migration=caps.supports_storage_migration,
+        external_engine_readable=caps.external_engine_readable,
+        supports_maintenance_apply=caps.supports_maintenance_apply,
+        supports_iceberg_export=caps.supports_iceberg_export,
+        supports_agentless_ddl=caps.supports_agentless_ddl,
+        supported_storage_kinds=list(caps.supported_storage_kinds),
+    )
+
+
 def _catalog_out(
     catalog: Catalog,
     *,
@@ -94,7 +322,10 @@ def _catalog_out(
         id=catalog.id,
         slug=catalog.slug,
         name=catalog.name,
+        kind=catalog.kind,
         polaris_name=catalog.polaris_name,
+        metadata_schema=catalog.metadata_schema,
+        capabilities=_capabilities_out(catalog.kind),
         storage_backend_id=catalog.storage_backend_id,
         storage_backend_kind=catalog.storage_backend.kind,
         storage_backend_name=catalog.storage_backend.name,
@@ -104,6 +335,34 @@ def _catalog_out(
         attached_workspaces=attached_workspaces,
         access_mode=access_mode,
     )
+
+
+_KIND_LABELS = {
+    KIND_ICEBERG_POLARIS: "Apache Iceberg + Polaris",
+    KIND_DUCKLAKE: "DuckLake",
+}
+
+
+@router.get("/catalog-kinds", response_model=list[CatalogKindOut])
+async def list_catalog_kinds(_: User = Depends(get_current_user)) -> list[CatalogKindOut]:
+    """The catalog kinds this deployment knows, with capabilities and availability."""
+    out: list[CatalogKindOut] = []
+    for kind in (KIND_ICEBERG_POLARIS, KIND_DUCKLAKE):
+        available = kind != KIND_DUCKLAKE or settings.ducklake_enabled
+        out.append(
+            CatalogKindOut(
+                kind=kind,
+                label=_KIND_LABELS[kind],
+                available=available,
+                unavailable_reason=(
+                    None
+                    if available
+                    else "Not enabled on this deployment (set DUCKLAKE_ENABLED=true)."
+                ),
+                capabilities=_capabilities_out(kind),  # type: ignore[arg-type]
+            )
+        )
+    return out
 
 
 @router.get("/catalogs", response_model=list[CatalogOut])
@@ -186,7 +445,7 @@ async def create_workspace_catalog(
             )
 
     catalog = await catalog_service.create_catalog(
-        db, polaris, name=body.name, backend=backend, created_by=user.id
+        db, polaris, name=body.name, backend=backend, created_by=user.id, kind=body.kind
     )
     link = await catalog_service.attach_catalog(
         db,

@@ -91,7 +91,8 @@ Repeat so at least two agents are registered (e.g. one S3-capable, one local).
 
 ### Schedule nightly Postgres backups
 
-`scripts/pg-backup.sh` dumps the DuckHaven app state and the Polaris metastore.
+`scripts/pg-backup.sh` dumps the DuckHaven app state, the Polaris metastore, and — when
+DuckLake is enabled — the DuckLake catalog database.
 
 ```sh
 # Point backups at a SECOND disk / NAS mount, not the data disk:
@@ -109,6 +110,32 @@ systemctl list-timers duckhaven-backup.timer   # verify next run
 gunzip -c <backup>.sql.gz | docker compose -f deploy/docker-compose.yml \
     exec -T postgres psql -U duckhaven duckhaven
 ```
+
+### Restoring a deployment with DuckLake catalogs
+
+An [Iceberg](../concepts/tables.md) table cannot get out of step with its own metadata: the metadata lives beside the
+data in object storage, so restoring the bucket restores both together. A [DuckLake](../concepts/ducklake.md) catalog
+is different. Its metadata is in the `ducklake` database and its data is in object storage, and those are two systems
+that can be restored to two different moments.
+
+**Restore object storage first, then the catalog database**, and use the newest catalog dump that is *no newer* than
+the storage snapshot. The two failure directions are not symmetric:
+
+- **Catalog older than storage** — the catalog does not know about the newest Parquet files. They sit there
+  unreferenced, costing money and nothing else. Queries return the older, consistent state. This is the direction to
+  aim for.
+- **Catalog newer than storage** — the catalog references files that the restored storage does not have. Queries
+  against the affected tables fail on a missing file. This is the one that looks like corruption, and it is why the
+  ordering above matters.
+
+`scripts/ducklake-check.py` reports both directions for every DuckLake catalog: rows pointing at files that are gone,
+and objects nothing references. It reads and reports; it deletes nothing. Run it after any restore, and before
+trusting a catalog you have just recovered.
+
+!!! warning "The catalog database is not optional"
+    A DuckLake table's schema, snapshots and file list exist **only** in the `ducklake` database. A backup that covers
+    object storage but not that database leaves Parquet nothing can read — there is no metadata in the bucket to
+    rebuild from, as there would be for Iceberg.
 
 ### Data DR by backend kind
 

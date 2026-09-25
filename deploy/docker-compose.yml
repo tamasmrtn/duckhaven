@@ -14,13 +14,18 @@ services:
       # subdirectory under a single /var/lib/postgresql mount (unlike 16's
       # /var/lib/postgresql/data), to support `pg_upgrade --link`.
       - postgres_data:/var/lib/postgresql
-      # Creates the dedicated `polaris` database on first init.
+      # First init only; existing deployments use scripts/enable-ducklake.sh.
       - ./postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U duckhaven"]
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      # Agent network, for the DuckLake catalog database. Safe only because of
+      # the role isolation in postgres-init/20-create-ducklake-db.sh.
+      - default
+      - duckhaven_internal
 
   # Bundled S3-compatible object store (RustFS). Backs the object_store catalogs
   # (and is the storage Polaris vends credentials for). Its :9000 endpoint must
@@ -257,6 +262,19 @@ services:
       MCP_QUERY_TIMEOUT_S: ${MCP_QUERY_TIMEOUT_S:-120.0}
       MCP_RESULT_ROW_CAP: ${MCP_RESULT_ROW_CAP:-100}
       MCP_RESULT_BYTE_CAP: ${MCP_RESULT_BYTE_CAP:-32768}
+      # DuckLake: see docs/concepts/ducklake.md. The API connects as the owner;
+      # agents use each catalog's own login.
+      DUCKLAKE_ENABLED: ${DUCKLAKE_ENABLED:-true}
+      DUCKLAKE_DATABASE_URL: ${DUCKLAKE_DATABASE_URL:-postgresql+asyncpg://duckhaven:${POSTGRES_PASSWORD:-duckhaven}@postgres:5432/ducklake}
+      DUCKLAKE_AGENT_HOST: ${DUCKLAKE_AGENT_HOST:-postgres}
+      DUCKLAKE_AGENT_PORT: ${DUCKLAKE_AGENT_PORT:-5432}
+      DUCKLAKE_AGENT_DATABASE: ${DUCKLAKE_AGENT_DATABASE:-ducklake}
+      # Applied to every DuckLake catalog on attach.
+      DUCKLAKE_TARGET_FILE_SIZE_MB: ${DUCKLAKE_TARGET_FILE_SIZE_MB:-512}
+      DUCKLAKE_DATA_INLINING_ROW_LIMIT: ${DUCKLAKE_DATA_INLINING_ROW_LIMIT:-10}
+      SQL_SESSIONS_ENABLED: ${SQL_SESSIONS_ENABLED:-false}
+      SQL_SESSION_IDLE_TIMEOUT_S: ${SQL_SESSION_IDLE_TIMEOUT_S:-900}
+      SQL_SESSION_MAX_LIFETIME_S: ${SQL_SESSION_MAX_LIFETIME_S:-14400}
       # OIDC / SSO (optional). Empty by default -> SSO off, local login only.
       # OIDC_PROVIDERS is a JSON list of providers (one button each); see
       # docs/guides/connect-idp.md. The OIDC_* fields below are a single-provider

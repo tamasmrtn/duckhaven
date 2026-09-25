@@ -15,7 +15,7 @@ from api.schemas.storage_backend import (
 )
 from api.services.permissions import Permission
 from api.services.polaris import PolarisClient
-from api.services.storage_health import validate_backend
+from api.services.storage_health import validate_backend_for
 
 router = APIRouter(prefix="/storage-backends")
 
@@ -102,7 +102,7 @@ async def check_backend_health(
     sb = result.scalar_one_or_none()
     if sb is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-    return await validate_backend(polaris, sb)
+    return await validate_backend_for(db, polaris, sb)
 
 
 @router.delete("/{storage_backend_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -24,8 +24,7 @@ from api.models.catalog import Catalog
 from api.models.query import Query
 from api.models.sql_session import SqlSession
 from api.services.agent_dispatch import send_to_agent
-from api.services.session_credentials import build_polaris_block
-from api.services.workspace import DEFAULT_SCHEMA
+from api.services.session_credentials import build_catalog_attach, build_polaris_block
 from duckhaven_shared.protocol import Frame, FrameType
 from duckhaven_shared.telemetry import inject_trace_context
 
@@ -40,16 +39,8 @@ _WAITING = ("pending", "opening")
 _STATEMENT_PENDING = ("queued", "running")
 
 
-def _catalog_descriptors(catalogs: list[Catalog]) -> list[dict[str, object]]:
-    return [
-        {
-            "slug": c.slug,
-            "polaris_name": c.polaris_name,
-            "backend": {"kind": c.storage_backend.kind, "root_uri": c.storage_backend.root_uri},
-            "default_schema": DEFAULT_SCHEMA,
-        }
-        for c in catalogs
-    ]
+async def _catalog_descriptors(catalogs: list[Catalog]) -> list[dict[str, object]]:
+    return [await build_catalog_attach(c) for c in catalogs]
 
 
 async def dispatch_open_session(
@@ -62,7 +53,7 @@ async def dispatch_open_session(
     payload: dict[str, object] = {
         "session_id": str(session.id),
         "active_catalog": session.active_catalog,
-        "catalogs": _catalog_descriptors(catalogs),
+        "catalogs": await _catalog_descriptors(catalogs),
         "polaris": build_polaris_block(),
     }
     with _tracer.start_as_current_span(

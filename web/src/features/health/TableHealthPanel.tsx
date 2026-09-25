@@ -11,6 +11,7 @@ import { HeartPulse } from "lucide-react";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  useApplyRecommendation,
   useDismissRecommendation,
   useTableHealth,
 } from "@/queries/maintenance";
@@ -72,6 +73,7 @@ export function TableHealthPanel({
     table,
   );
   const dismiss = useDismissRecommendation();
+  const apply = useApplyRecommendation();
 
   if (isLoading) {
     return (
@@ -174,6 +176,7 @@ export function TableHealthPanel({
                 showTable={false}
                 dismissing={dismiss.isPending}
                 onDismiss={(id) => dismiss.mutate(id)}
+                onApply={(id) => apply.mutate(id)}
               />
             ))}
           </div>

@@ -185,11 +185,33 @@ async def test_peer_owned_agents_not_reported(client: AsyncClient, db_session):
 
 async def test_db_pool_gauges(client: AsyncClient):
     await client.get("/metrics")
-    val = _value("duckhaven_db_pool_size", {"replica_id": RID})
+    val = _value("duckhaven_db_pool_size", {"replica_id": RID, "pool": "main"})
     if isinstance(engine.sync_engine.pool, QueuePool):
         assert val == settings.db_pool_size
     else:  # NullPool / SQLite-style pools don't expose sizing stats
         assert val is None
+
+
+async def test_the_ducklake_pool_is_reported_separately_once_it_exists(client: AsyncClient):
+    """Labelled alongside the main pool, and absent until the lazy engine is built."""
+    from api.services.catalog_backends import ducklake
+
+    # The engine is module-level; dispose it so the result doesn't depend on test order.
+    await ducklake.dispose_engine()
+
+    await client.get("/metrics")
+    assert _value("duckhaven_db_pool_size", {"replica_id": RID, "pool": "ducklake"}) is None
+
+    settings.ducklake_database_url = "postgresql+asyncpg://u:p@localhost:5432/ducklake"
+    try:
+        ducklake.get_engine()
+        await client.get("/metrics")
+        assert (
+            _value("duckhaven_db_pool_size", {"replica_id": RID, "pool": "ducklake"})
+            == settings.db_pool_size
+        )
+    finally:
+        await ducklake.dispose_engine()
 
 
 async def test_maintenance_gauges_leader_gated(client: AsyncClient, db_session):

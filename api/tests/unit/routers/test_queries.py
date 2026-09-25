@@ -172,6 +172,7 @@ async def test_create_query_dispatches(
     assert frame["payload"]["catalogs"] == [
         {
             "slug": "test_ws",
+            "kind": "iceberg_polaris",
             "polaris_name": "test-ws",
             "backend": {"kind": "object_store", "root_uri": "/tmp/test"},
             "default_schema": "analytics",
@@ -183,9 +184,9 @@ async def test_create_query_dispatches(
 async def test_dispatch_payload_carries_backend_and_no_credentials(
     authed_client: AsyncClient, db_session, user: User, connected_agent
 ):
-    """The dispatch frame carries the catalog descriptors (each with its backend)
-    but no storage credentials or catalog endpoint — the agent attaches Polaris
-    from its own config and Polaris vends storage creds on attach."""
+    """For an Iceberg catalog: the descriptor, but no credentials and no catalog
+    endpoint — the agent attaches Polaris from its config, which vends storage
+    creds. The blocks are populated per kind, and Iceberg keeps carrying none."""
     import json
 
     agent, mock_ws = connected_agent
@@ -212,12 +213,16 @@ async def test_dispatch_payload_carries_backend_and_no_credentials(
     assert payload["catalogs"] == [
         {
             "slug": "s3_cat",
+            "kind": "iceberg_polaris",
             "polaris_name": "s3-ws",
             "backend": {"kind": "s3", "root_uri": "/tmp/test"},
             "default_schema": "analytics",
         }
     ]
     assert "storage_credentials" not in payload
+    # Iceberg carries no credential blocks: Polaris vends storage creds.
+    assert "meta" not in payload["catalogs"][0]
+    assert "storage" not in payload["catalogs"][0]
 
 
 async def test_dispatch_rejects_agent_missing_extension(

@@ -19,11 +19,17 @@ loaded when a health check actually runs.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from urllib.parse import urlparse
 
+import sqlalchemy as sa
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from api.config import settings
+from api.models.catalog import KIND_ICEBERG_POLARIS, Catalog
 from api.models.storage_backend import StorageBackend
 from api.schemas.storage_backend import StorageBackendHealth
 from api.services.polaris import PolarisClient, PolarisError
@@ -46,6 +52,77 @@ def _short(exc: object) -> str:
     if not msg and isinstance(exc, BaseException):
         msg = type(exc).__name__
     return msg[:300]
+
+
+def _block_to_creds(block: dict, location: str) -> dict:
+    """Translate a DuckDB-dialect storage block into the spelling `_list_prefix` reads."""
+    if block.get("type") == "azure":
+        # `_list_adls` wants a bare SAS keyed by account, not a connection string.
+        conn = str(block.get("connection_string") or "")
+        sas = next(
+            (
+                part.split("=", 1)[1]
+                for part in conn.split(";")
+                if part.startswith("SharedAccessSignature=")
+            ),
+            "",
+        )
+        return {f"adls.sas-token.{block.get('account_name', '')}": sas}
+
+    endpoint = str(block.get("endpoint") or "")
+    if endpoint and "://" not in endpoint:
+        # `_duckdb_endpoint` strips the scheme; boto3 wants it back.
+        endpoint = f"{'https' if block.get('use_ssl') else 'http'}://{endpoint}"
+    return {
+        "s3.access-key-id": block.get("key_id"),
+        "s3.secret-access-key": block.get("secret"),
+        "s3.session-token": block.get("session_token") or None,
+        "client.region": block.get("region"),
+        "s3.endpoint": endpoint or None,
+    }
+
+
+async def validate_backend_direct(backend: StorageBackend) -> StorageBackendHealth:
+    """Validate a backend without Polaris, by minting credentials ourselves.
+
+    For DuckLake-only deployments. Exercises the same credential path a
+    DuckLake attach uses.
+    """
+    from api.services.session_credentials import build_storage_block
+
+    if backend.kind == "object_store":
+        return _validate_bundled()
+
+    try:
+        _, base_location, _ = polaris_storage(backend.kind, backend.root_uri, backend.config)
+        probe = f"{base_location.rstrip('/')}/dhhealth{uuid.uuid4().hex[:12]}/"
+        block = await asyncio.to_thread(build_storage_block, backend, probe)
+        creds = _block_to_creds(block, probe)
+        # An empty prefix lists zero objects, which still proves reach.
+        count = await asyncio.to_thread(
+            _list_prefix, backend.kind, probe, creds, backend.config or {}
+        )
+    except Exception as exc:  # noqa: BLE001 — any failure means the backend isn't usable
+        logger.warning(
+            "Direct storage health check failed for backend=%s", backend.id, exc_info=True
+        )
+        return StorageBackendHealth(valid=False, detail=_short(exc))
+    return StorageBackendHealth(
+        valid=True,
+        detail=f"Minted credentials reached storage ({count} object(s) under the probe path).",
+    )
+
+
+async def validate_backend_for(
+    db: AsyncSession, polaris: PolarisClient, backend: StorageBackend
+) -> StorageBackendHealth:
+    """Validate through Polaris only if the deployment has an Iceberg catalog, like `readyz`."""
+    has_iceberg = await db.scalar(
+        select(sa.func.count()).select_from(Catalog).where(Catalog.kind == KIND_ICEBERG_POLARIS)
+    )
+    if not has_iceberg:
+        return await validate_backend_direct(backend)
+    return await validate_backend(polaris, backend)
 
 
 async def validate_backend(polaris: PolarisClient, backend: StorageBackend) -> StorageBackendHealth:

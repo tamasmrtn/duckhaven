@@ -354,3 +354,17 @@ async def connected_agent(db_session: AsyncSession) -> AsyncIterator[tuple[Agent
         yield agent, stub
     finally:
         registry.unregister(agent.id)
+
+
+@pytest.fixture(autouse=True)
+async def _fresh_ducklake_engine():
+    """Dispose the module-global DuckLake engine around every test.
+
+    asyncpg connections are bound to the loop that opened them, and each test
+    gets its own loop (same reason `pg_engine` is function-scoped).
+    """
+    from api.services.catalog_backends.ducklake import dispose_engine
+
+    await dispose_engine()
+    yield
+    await dispose_engine()

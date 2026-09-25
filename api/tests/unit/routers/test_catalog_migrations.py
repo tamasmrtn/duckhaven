@@ -66,6 +66,49 @@ async def test_start_migration(auth_client, owner, db_session):
     assert body["target_storage_backend_id"] == str(target.id)
 
 
+async def _ducklake_catalog(db_session, owner, slug="dl"):
+    _, catalog = await seed_workspace(db_session, user_id=owner.id, slug=slug, name="DL")
+    catalog.kind = "ducklake"
+    catalog.polaris_name = None
+    catalog.metadata_schema = f"cat_{slug}"
+    await db_session.commit()
+    return catalog
+
+
+async def test_start_migration_accepts_a_ducklake_catalog(auth_client, owner, db_session):
+    """Relocating a DuckLake catalog is a prefix copy plus one row update, not
+    the metadata-tree rewrite Iceberg needs, so it is supported rather than
+    refused."""
+    catalog = await _ducklake_catalog(db_session, owner)
+    target = await _target_backend(db_session, owner)
+
+    resp = await auth_client.post(
+        f"/catalogs/{catalog.id}/migrations",
+        json={"target_storage_backend_id": str(target.id)},
+    )
+    assert resp.status_code == 202, resp.text
+
+
+async def test_start_migration_refuses_a_ducklake_catalog_with_absolute_paths(
+    auth_client, owner, db_session, monkeypatch
+):
+    """Absolute paths would not move with the data path, so migration refuses."""
+    catalog = await _ducklake_catalog(db_session, owner, slug="dl2")
+    target = await _target_backend(db_session, owner)
+
+    async def _stranded(_catalog):
+        return 3
+
+    monkeypatch.setattr("api.services.migration.ducklake.absolute_path_count", _stranded)
+
+    resp = await auth_client.post(
+        f"/catalogs/{catalog.id}/migrations",
+        json={"target_storage_backend_id": str(target.id)},
+    )
+    assert resp.status_code == 422, resp.text
+    assert "absolute path" in resp.json()["message"].lower()
+
+
 async def test_start_migration_rejects_unreachable_target(
     auth_client, owner, db_session, monkeypatch
 ):

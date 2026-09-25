@@ -8,7 +8,9 @@ control, and the read-only introspection statements (``DESCRIBE``, ``SHOW``,
 ``SUMMARIZE``, the row-returning ``PRAGMA``s) clients use for relation metadata —
 while still rejecting sandbox escapes: local-FS or arbitrary-URL
 ``COPY``/``read_*``, arbitrary ``INSTALL``/``LOAD``, ``ATTACH`` of anything
-but the managed catalog, and the configuration-setting form of ``PRAGMA``.
+but the managed catalog, the configuration-setting form of ``PRAGMA``, and
+(via ``sql_denylist``) foreign-database functions and DuckLake's internal
+catalog metadata.
 
 It runs **at the API** (I1/I8 stay enforced at the boundary) using ``sqlglot`` —
 the same pure-Python parser ``grants.py`` uses — so no DuckDB connection is
@@ -21,6 +23,9 @@ import posixpath
 
 import sqlglot
 from sqlglot import exp
+
+from api.services.sql_denylist import ForeignAccessDenied
+from api.services.sql_denylist import check_statement as check_denylist
 
 # SET names dbt/dlt legitimately need. Everything else is denied — crucially
 # anything that could widen the sandbox (memory_limit, threads,
@@ -279,6 +284,11 @@ def _check_statement(
     # FROM 'http://…').
     _check_file_functions(stmt, staging_prefixes)
     _check_replacement_scans(stmt, staging_prefixes)
+    # Shared with sql_guard so the gates cannot drift.
+    try:
+        check_denylist(stmt)
+    except ForeignAccessDenied as exc:
+        raise StatementNotAllowed(str(exc), exc.rule) from exc
 
     if isinstance(stmt, exp.Set):
         _check_set(stmt)

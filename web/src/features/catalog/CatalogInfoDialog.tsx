@@ -9,6 +9,7 @@ import {
 import { StorageIcon } from "@/components/app/StorageIcon";
 import type { BackendKind } from "@/types/storage-backend";
 import type { Catalog } from "@/types/catalog";
+import { catalogKindLabel } from "./catalogKind";
 
 // Friendly labels for the backend kinds, shared with the tree indicator tooltip.
 export const BACKEND_LABELS: Record<string, string> = {
@@ -59,8 +60,15 @@ export function CatalogInfoDialog({
           <Row label="Slug">
             <span className="font-mono text-xs">{catalog.slug}</span>
           </Row>
-          <Row label="Polaris name">
-            <span className="font-mono text-xs">{catalog.polaris_name}</span>
+          <Row label="Kind">{catalogKindLabel(catalog.kind)}</Row>
+          <Row
+            label={
+              catalog.kind === "ducklake" ? "Metadata schema" : "Polaris name"
+            }
+          >
+            <span className="font-mono text-xs">
+              {catalog.metadata_schema ?? catalog.polaris_name ?? "—"}
+            </span>
           </Row>
           <Row label="Storage backend">
             <span className="flex items-center gap-1.5">

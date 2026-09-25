@@ -111,9 +111,12 @@ def test_get_capabilities_loads_and_advertises_query_extensions(monkeypatch):
 
     caps = ch_module._get_capabilities()
 
-    assert loaded == ["httpfs", "azure", "iceberg"]
+    # Both axes: storage backends need httpfs/azure; catalog kinds need iceberg
+    # or ducklake + postgres. Dispatch is gated on the advertised set.
+    assert loaded == ["httpfs", "azure", "iceberg", "ducklake", "postgres"]
     assert "httpfs" in caps.extensions
     assert "iceberg" in caps.extensions
+    assert "ducklake" in caps.extensions
 
 
 def test_get_capabilities_reports_detected_cpu(monkeypatch):
@@ -583,6 +586,91 @@ async def test_dispatch_sends_done_frame(tmp_path, monkeypatch):
     assert done is not None
     assert done.payload["query_id"] == query_id
     assert done.payload["status"] == "done"
+
+
+async def test_done_frame_forwards_the_ducklake_stats_block(tmp_path, monkeypatch):
+    """The done payload names each field explicitly, so a probe block this frame
+    does not copy is silently dropped — which is how DuckLake tables once ended
+    up with a row count but no file count."""
+    import agent.control.channel as ch_module
+
+    query_id = str(uuid.uuid4())
+    done_frames: list[Frame] = []
+
+    async def mock_run_query(sql, result_path, timeout_s, **kwargs):
+        result_path.write_bytes(b"PAR1fake")
+        return {
+            "row_count": 1,
+            "duration_ms": 10,
+            "table_row_count": 42,
+            "ducklake": {
+                "snapshot_id": None,
+                "snapshot_at": None,
+                "data_file_count": 5,
+                "has_deletes": True,
+            },
+        }
+
+    # Patch where channel.py imported it, not the supervisor module.
+    monkeypatch.setattr(ch_module, "run_query", mock_run_query)
+
+    async def handler(ws):
+        raw = await ws.recv()
+        Frame.model_validate_json(raw)  # auth frame
+
+        await ws.send(
+            Frame(
+                type=FrameType.AUTH_OK,
+                payload={"agent_id": str(uuid.uuid4()), "session_token": "tok"},
+            ).model_dump_json()
+        )
+        await ws.recv()  # capabilities
+
+        await ws.send(
+            Frame(
+                type=FrameType.DISPATCH_QUERY,
+                payload={
+                    "query_id": query_id,
+                    "sql": "SELECT 1",
+                    "timeout_s": 30.0,
+                    "stats_for": {
+                        "catalog": "lake",
+                        "schema": "analytics",
+                        "table": "events",
+                    },
+                },
+            ).model_dump_json()
+        )
+
+        for _ in range(5):
+            try:
+                raw = await asyncio.wait_for(ws.recv(), timeout=1.0)
+                done_frames.append(Frame.model_validate_json(raw))
+                if done_frames[-1].type == FrameType.QUERY_DONE:
+                    break
+            except TimeoutError:
+                break
+
+        await asyncio.sleep(0.05)
+
+    async with websockets.serve(handler, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        monkeypatch.setattr(ch_module.settings, "control_plane_url", f"ws://127.0.0.1:{port}")
+        monkeypatch.setattr(ch_module.settings, "bootstrap_token", "boot")
+
+        task = asyncio.create_task(ch_module.run_control_channel(results_dir=tmp_path))
+        await asyncio.sleep(0.5)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError, Exception:
+            pass
+
+    done = next((f for f in done_frames if f.type == FrameType.QUERY_DONE), None)
+    assert done is not None
+    assert done.payload["table_row_count"] == 42
+    assert done.payload["ducklake"]["data_file_count"] == 5
+    assert done.payload["ducklake"]["has_deletes"] is True
 
 
 async def test_auth_failure_exits(tmp_path, monkeypatch):

@@ -136,6 +136,7 @@ def deps_for(arm: ArmConfig, *, gateway: Any = None, docs_search: Any = None) ->
         service_account_id=uuid.uuid4(),
         semantic_summary=arm.workspace.get("semantic_summary"),
         storage_kinds=tuple(arm.workspace.get("storage_kinds", ()) or ()) or None,
+        catalog_kinds=tuple(arm.workspace.get("catalog_kinds", ()) or ()) or None,
         elastic_enabled=arm.workspace.get("elastic_enabled", False),
         docs_enabled=arm.docs_enabled,
         agent_count=arm.workspace.get("agent_count"),

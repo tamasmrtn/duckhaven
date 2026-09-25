@@ -53,7 +53,10 @@ function isActive(status: MigrationStatus): boolean {
 }
 
 export function CatalogMigrationsPage() {
-  const { data: catalogs, isLoading } = useAllCatalogs();
+  const { data: allCatalogs, isLoading } = useAllCatalogs();
+  const catalogs = allCatalogs?.filter(
+    (c) => c.capabilities?.supports_storage_migration !== false,
+  );
   const [dialogCatalog, setDialogCatalog] = useState<Catalog | null>(null);
   const [selectedCatalogId, setSelectedCatalogId] = useState<string | null>(
     null,

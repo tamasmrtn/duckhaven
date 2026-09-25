@@ -4,14 +4,25 @@ import { schemasApi, type ColumnSpec } from "@/api/schemas";
 // Mutations are catalog-scoped: every cache key includes the catalog slug so a
 // change in one catalog never invalidates a sibling catalog's tree.
 
-export function useRefreshCatalogStats(ws: string, catalog: string) {
+export function useRefreshCatalogStats(ws: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => schemasApi.refreshStats(ws, catalog),
-    // Re-read on settle (even on failure, e.g. no agent) so the tree reflects
-    // any counts that were probed, plus schemas/tables created out-of-band.
-    // Invalidate the whole catalog subtree for the workspace so every catalog
-    // node refetches (the tree's top button is workspace-wide).
+    // Sequential: each probe runs a real count(*) per table on a shared agent.
+    // Failures are collected so one catalog cannot stop the rest.
+    mutationFn: async (catalogs: string[]) => {
+      let probed = 0;
+      const failed: string[] = [];
+      for (const catalog of catalogs) {
+        try {
+          probed += (await schemasApi.refreshStats(ws, catalog)).probed;
+        } catch {
+          failed.push(catalog);
+        }
+      }
+      return { probed, failed };
+    },
+    // Re-read on settle (even on failure) so the tree reflects any counts that
+    // were probed plus any out-of-band changes.
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ["workspace", ws, "catalog"] });
     },

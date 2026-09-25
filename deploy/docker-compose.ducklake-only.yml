@@ -1,0 +1,21 @@
+# DuckLake-only overlay: the same stack without Apache Polaris.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.ducklake-only.yml up -d
+#
+# Only use this where there are NO Iceberg catalogs: without Polaris their
+# metadata is unreachable. Compose cannot delete a service, so Polaris is parked
+# in a never-activated profile.
+services:
+  polaris:
+    profiles: [iceberg]
+
+  polaris-bootstrap:
+    profiles: [iceberg]
+
+  api:
+    environment:
+      DUCKLAKE_ENABLED: "true"
+    # `!override` drops the inherited `depends_on`, which names Polaris.
+    depends_on: !override
+      postgres:
+        condition: service_healthy

@@ -216,6 +216,7 @@ describe("CatalogTree", () => {
             id: "cat-scoped",
             slug: "acme_analytics",
             name: "acme_analytics",
+            kind: "iceberg_polaris" as const,
             polaris_name: "acme_analytics",
             storage_backend_kind: "s3",
             is_default: true,
@@ -402,5 +403,97 @@ describe("CatalogTree", () => {
     );
 
     await waitFor(() => expect(probed).toBe(true));
+  });
+
+  it("probes every attached catalog, not just the workspace default", async () => {
+    const probed: string[] = [];
+    server.use(
+      http.post(
+        "/api/workspaces/:ws/catalogs/:catalog/refresh-stats",
+        ({ params }) => {
+          probed.push(params.catalog as string);
+          return HttpResponse.json({ probed: 1 });
+        },
+      ),
+    );
+    renderTree(() => {});
+    await screen.findByRole("button", { name: /events/i });
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /refresh catalog/i }),
+    );
+
+    // `acme_analytics` is the default; `curated` is attached but not default.
+    await waitFor(() =>
+      expect([...probed].sort()).toEqual(["acme_analytics", "curated"]),
+    );
+  });
+
+  it("keeps probing the other catalogs when one of them fails", async () => {
+    const probed: string[] = [];
+    server.use(
+      http.post(
+        "/api/workspaces/:ws/catalogs/:catalog/refresh-stats",
+        ({ params }) => {
+          const catalog = params.catalog as string;
+          // One catalog failing must not abandon its siblings.
+          if (catalog === "acme_analytics") {
+            return HttpResponse.json(
+              { detail: "No compatible agent is connected." },
+              { status: 503 },
+            );
+          }
+          probed.push(catalog);
+          return HttpResponse.json({ probed: 1 });
+        },
+      ),
+    );
+    renderTree(() => {});
+    await screen.findByRole("button", { name: /events/i });
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /refresh catalog/i }),
+    );
+
+    await waitFor(() => expect(probed).toEqual(["curated"]));
+  });
+  it("shows no catalog-kind marker on any row", async () => {
+    // The kind lives on the detail panel and info dialog, not the tree.
+    server.use(
+      http.get("/api/workspaces/:ws/catalogs", () =>
+        HttpResponse.json([
+          {
+            id: "cat-1",
+            slug: "acme_analytics",
+            name: "acme-analytics",
+            kind: "iceberg_polaris",
+            storage_backend_kind: "s3",
+            is_default: true,
+            access_mode: "open",
+          },
+          {
+            id: "cat-lake",
+            slug: "lake",
+            name: "Lake",
+            kind: "ducklake",
+            storage_backend_kind: "object_store",
+            is_default: false,
+            access_mode: "open",
+          },
+        ]),
+      ),
+    );
+    renderTree(() => {});
+
+    const lake = await screen.findByRole("button", { name: /^lake/i });
+    const iceberg = screen.getByRole("button", { name: /^acme_analytics/i });
+
+    // Neither the label nor the raw kind.
+    for (const row of [lake, iceberg]) {
+      expect(row).not.toHaveTextContent("DuckLake");
+      expect(row).not.toHaveTextContent("ducklake");
+      expect(row).not.toHaveTextContent("Iceberg");
+      expect(row).not.toHaveTextContent("iceberg_polaris");
+    }
   });
 });

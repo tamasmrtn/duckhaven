@@ -6,6 +6,7 @@ from api.models.assistant import (
     AssistantToolCall,
 )
 from api.models.catalog import Catalog, WorkspaceCatalog
+from api.models.catalog_export import CatalogExport
 from api.models.catalog_grant import CatalogGrant
 from api.models.catalog_migration import (
     CatalogMigration,
@@ -42,6 +43,7 @@ __all__ = [
     "AssistantMessage",
     "AssistantToolCall",
     "Catalog",
+    "CatalogExport",
     "CatalogGrant",
     "CatalogMigration",
     "CatalogMigrationEvent",

@@ -76,6 +76,17 @@ class Settings(BaseSettings):
     # data access). Defaults to the bootstrap root principal.
     polaris_principal: str = "root"
     polaris_http_timeout_s: float = 10.0
+    # Whether DuckLake can be chosen; Iceberg + Polaris stays the default kind.
+    ducklake_enabled: bool = True
+    # Owner credentials for DuckLake's metadata database; needs CREATEROLE to
+    # create each catalog's own login. Agents never see it.
+    ducklake_database_url: str = "postgresql+asyncpg://duckhaven:duckhaven@localhost:5432/ducklake"
+    # Vended to an agent per dispatch, never written to its disk (I7).
+    ducklake_agent_host: str = "postgres"
+    ducklake_agent_port: int = 5432
+    ducklake_agent_database: str = "ducklake"
+    ducklake_data_inlining_row_limit: int = 10
+    ducklake_target_file_size_mb: int = 512
     # Bundled object store backing the object_store catalogs. Three tiers,
     # most-internal to most-external: `s3_endpoint_internal` is what Polaris uses
     # to reach the store inside the compose network (and what the agent's httpfs

@@ -26,14 +26,23 @@ class CatalogAttach(BaseModel):
 
     The control plane sends a list of these (plus an ``active_catalog`` slug) in
     the DISPATCH_QUERY payload; the agent attaches each under its ``slug`` alias
-    and ``USE``s the active one. ``polaris_name`` is the Polaris warehouse name;
-    ``backend`` is the catalog's storage backend descriptor (``{kind, root_uri}``)
-    used to pick the DuckDB IO extension + credential-vending mode."""
+    and ``USE``s the active one.
+
+    ``iceberg_polaris`` carries a ``polaris_name``; Polaris vends storage
+    credentials. ``ducklake`` carries control-plane-minted ``meta``/``storage``
+    credentials. New fields are defaulted for older agents.
+    """
 
     slug: str
-    polaris_name: str
     backend: dict[str, str | None]
     default_schema: str
+    kind: str = "iceberg_polaris"
+    polaris_name: str = ""
+    # DuckLake only; vended per dispatch, never persisted on the agent.
+    data_path: str | None = None
+    metadata_schema: str | None = None
+    meta: dict[str, str | int] | None = None
+    storage: dict[str, object] | None = None
 
 
 class MetricsSample(BaseModel):

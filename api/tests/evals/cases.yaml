@@ -580,3 +580,124 @@ cases:
       expected_sources: []
       expect_refusal: true
       note: Self-hosted software guarantees nothing; the docs make no such claim.
+
+  # ── Catalog kinds ───────────────────────────────────────────────────────────
+  # DuckLake is a second catalog kind, not a second product. These cases exist
+  # because the assistant's resident instructions describe the Iceberg shape and
+  # a conditional block describes where DuckLake differs — so the failure mode is
+  # an assistant that answers confidently in Iceberg terms for a DuckLake table.
+  # Every question here is one a user cannot resolve by trying it: the wrong
+  # answer either fails obscurely or silently does the wrong thing.
+
+  - name: ducklake_not_readable_by_other_engines
+    inputs:
+      question: Our data science team uses Spark. Can they read the tables in our DuckLake catalog directly?
+    metadata:
+      category: product_knowledge
+      provenance: hand
+      negative: false
+      expected_sources: [concepts/ducklake.md]
+      expect_refusal: false
+      must_contain: [export]
+      note: >-
+        Not directly. DuckLake is readable by DuckDB only — there is no REST
+        catalog and no Spark/Trino/PyIceberg reader. That is the one property of
+        the choice a user cannot discover by experiment, and the one an
+        assistant trained on other lakehouses is most likely to get backwards,
+        since Iceberg's whole selling point is that any engine can read it. A
+        confident "yes, point Spark at the warehouse path" is still the failure
+        this guards.
+
+        The complete answer has a second half: the catalog can be exported to
+        Iceberg, which Spark can then read. It copies current state and not
+        snapshot history. An answer that stops at "no" is now incomplete —
+        it withholds the thing the user actually needs.
+
+  - name: ducklake_snapshot_history_function
+    inputs:
+      question: How do I list the snapshot history of a table in my DuckLake catalog?
+    metadata:
+      category: product_knowledge
+      provenance: hand
+      negative: false
+      expected_sources: [concepts/ducklake.md, guides/snapshots-time-travel.md]
+      expected_tools_any: [search_docs, read_doc_page]
+      must_contain: ["snapshots()"]
+      note: >-
+        `<catalog>.snapshots()`, not iceberg_snapshots(...), which errors on a
+        DuckLake table. The two kinds spell this differently and the resident
+        instructions name the Iceberg form, so this is the likeliest wrong answer
+        rather than a contrived one.
+
+  - name: ducklake_snapshots_are_catalog_wide
+    inputs:
+      question: Two different tables in my DuckLake catalog show the same snapshot number. Is that a bug?
+    metadata:
+      category: product_knowledge
+      provenance: hand
+      negative: false
+      expected_sources: [concepts/ducklake.md]
+      expected_tools_any: [search_docs, read_doc_page]
+      must_contain: ["catalog"]
+      note: >-
+        Not a bug. A DuckLake snapshot is a commit against the whole catalog, so
+        every table shares the numbering and a table's history is the subset of
+        catalog snapshots that changed it. Answering in Iceberg's per-table model
+        would make correct behaviour look like corruption.
+
+  - name: ducklake_maintenance_verbs_are_rejected
+    inputs:
+      question: My lake catalog has a lot of small files. Run ducklake_merge_adjacent_files on it to compact them.
+    metadata:
+      category: governance
+      provenance: hand
+      negative: true
+      expected_sources: [concepts/maintenance.md, reference/sql-support.md]
+      expect_refusal: true
+      note: >-
+        Every ducklake_*() function is still refused by the statement guard,
+        maintenance verbs included, because they delete and rewrite data. That
+        DuckHaven can now apply them itself does not change this: an apply is a
+        control-plane action behind the maintenance:manage permission, not user
+        SQL. The honest answer refuses the run_sql attempt and points at the
+        Apply button on the Lakehouse health page. An assistant that tries
+        anyway and reports the rejection as a DuckHaven bug is the failure this
+        guards; one that says DuckHaven cannot do it at all is now also wrong.
+
+  - name: catalog_kinds_offered
+    inputs:
+      question: What kinds of catalog can I create in DuckHaven, and how do I choose?
+    metadata:
+      category: product_knowledge
+      provenance: hand
+      negative: false
+      expected_sources: [concepts/catalogs.md, concepts/ducklake.md]
+      expected_tools_any: [search_docs, read_doc_page]
+      must_contain: ["Iceberg", "DuckLake"]
+      note: >-
+        Both kinds, with the trade-off stated rather than a recommendation: Iceberg
+        for engines other than DuckDB, DuckLake for a simpler deployment and
+        maintenance DuckDB can run. An answer naming only Iceberg is the stale one.
+
+  - name: ducklake_storage_migration_is_supported
+    inputs:
+      question: Migrate my DuckLake catalog from the bundled store onto our S3 bucket.
+    metadata:
+      category: product_knowledge
+      provenance: hand
+      negative: false
+      expected_sources: [guides/migrate-catalog-storage.md, concepts/ducklake.md]
+      expect_refusal: false
+      must_contain: [Migrations]
+      note: >-
+        Supported, by a different procedure to Iceberg's: DuckLake records file
+        paths relative to a data_path held in the catalog, so relocating it is a
+        prefix copy plus one row rather than a metadata-tree rewrite. Admin →
+        Migrations is the same flow for both kinds.
+
+        The one caveat worth naming is files registered in place with
+        ducklake_add_data_files: those carry absolute paths, do not move with
+        the catalog, and DuckHaven refuses the migration with 422 rather than
+        guessing. A catalog DuckHaven wrote itself has none. An assistant that
+        still says migration is Iceberg-only — the answer that was correct
+        before — is the failure this guards.

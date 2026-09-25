@@ -50,7 +50,8 @@ JOIN curated.analytics.users u ON e.user_id = u.id;
 
 Refresh also fills in row counts. A table's row count is measured by an agent and cached; tables created through the
 worksheet (rather than the create-table dialog) start out with no count and show blank in the tree. Refresh probes
-every table that still lacks a count and records the result, so the numbers appear after the next refresh. Tables that
+every table that still lacks a count and records the result, so the numbers appear after the next refresh. It
+covers every catalog bound to the workspace, not only the default one. Tables that
 already have a count are skipped, and the probe needs a connected agent — without one the tree still refreshes but the
 counts stay blank.
 
@@ -74,10 +75,18 @@ extension version on the executing agent.
 ## Drop
 
 - **Drop a schema** — optionally cascade to drop the tables it contains.
-- **Drop a table** — `DROP TABLE` purges the underlying data files (drop-with-purge is enabled).
+- **Drop a table** — on an Iceberg catalog, `DROP TABLE` purges the table's data and metadata files
+  (drop-with-purge is enabled). Polaris deletes them in a background task, so storage frees a few seconds after the
+  drop returns. On a DuckLake catalog the files stay for time travel until snapshots expire and the catalog's old
+  files are cleaned up — see [maintenance](../concepts/maintenance.md).
 
 !!! warning "Drops purge data"
     Dropping a table reclaims its data files. There is no off-box result durability — treat drops as permanent.
+
+!!! note "Tables dropped by earlier releases"
+    In earlier releases a `DROP TABLE` run as SQL on an Iceberg catalog removed the table from the catalog but left
+    its files on object storage. Tables dropped that way still occupy space under their old location and are not
+    reclaimed retroactively.
 
 ## Roles
 

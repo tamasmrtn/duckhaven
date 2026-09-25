@@ -167,12 +167,28 @@ jobs:
       # `make polaris-dev`) reaches it at the dh-objectstore-dev container name.
       POLARIS_S3_ENDPOINT: http://localhost:9000
       POLARIS_S3_ENDPOINT_INTERNAL: http://dh-objectstore-dev:9000
+      DUCKLAKE_ENABLED: "true"
+      DUCKLAKE_DATABASE_URL: postgresql+asyncpg://postgres:testpassword@localhost:5432/ducklake
+      DUCKLAKE_AGENT_HOST: 127.0.0.1
+      DUCKLAKE_AGENT_PORT: "5432"
+      DUCKLAKE_AGENT_DATABASE: ducklake
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
       - run: uv sync --dev
+      # Without this database the DuckLake suites (role isolation included)
+      # skip silently. Mirrors deploy/postgres-init/20-create-ducklake-db.sh.
+      - name: Create the DuckLake catalog database
+        run: |
+          psql "$ADMIN_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE ducklake"
+          psql "$ADMIN_URL" -v ON_ERROR_STOP=1 -c "REVOKE CONNECT ON DATABASE testdb FROM PUBLIC"
+          psql "$ADMIN_URL" -v ON_ERROR_STOP=1 -c "REVOKE ALL ON DATABASE ducklake FROM PUBLIC"
+          psql "$DUCKLAKE_URL" -v ON_ERROR_STOP=1 -c "REVOKE ALL ON SCHEMA public FROM PUBLIC"
+        env:
+          ADMIN_URL: postgresql://postgres:testpassword@localhost:5432/postgres
+          DUCKLAKE_URL: postgresql://postgres:testpassword@localhost:5432/ducklake
       - name: Run migrations
         run: uv run alembic upgrade head
         working-directory: api
@@ -211,12 +227,28 @@ jobs:
       POLARIS_CLIENT_SECRET: s3cr3t
       POLARIS_S3_ENDPOINT: http://localhost:9000
       POLARIS_S3_ENDPOINT_INTERNAL: http://dh-objectstore-dev:9000
+      DUCKLAKE_ENABLED: "true"
+      DUCKLAKE_DATABASE_URL: postgresql+asyncpg://postgres:testpassword@localhost:5432/ducklake
+      DUCKLAKE_AGENT_HOST: 127.0.0.1
+      DUCKLAKE_AGENT_PORT: "5432"
+      DUCKLAKE_AGENT_DATABASE: ducklake
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
       - run: uv sync --dev
+      # Without this database the DuckLake suites (role isolation included)
+      # skip silently. Mirrors deploy/postgres-init/20-create-ducklake-db.sh.
+      - name: Create the DuckLake catalog database
+        run: |
+          psql "$ADMIN_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE ducklake"
+          psql "$ADMIN_URL" -v ON_ERROR_STOP=1 -c "REVOKE CONNECT ON DATABASE testdb FROM PUBLIC"
+          psql "$ADMIN_URL" -v ON_ERROR_STOP=1 -c "REVOKE ALL ON DATABASE ducklake FROM PUBLIC"
+          psql "$DUCKLAKE_URL" -v ON_ERROR_STOP=1 -c "REVOKE ALL ON SCHEMA public FROM PUBLIC"
+        env:
+          ADMIN_URL: postgresql://postgres:testpassword@localhost:5432/postgres
+          DUCKLAKE_URL: postgresql://postgres:testpassword@localhost:5432/ducklake
       - name: Start Polaris + object store (S3)
         run: make polaris-dev
       # Boots the real API + agent over the live control channel; the harness

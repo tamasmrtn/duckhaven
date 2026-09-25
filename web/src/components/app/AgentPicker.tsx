@@ -27,8 +27,14 @@ import {
   useTerminateAgent,
 } from "@/queries/agents";
 import type { Agent, AgentStatus } from "@/types/agent";
+import type { CatalogKind } from "@/types/catalog";
 import type { BackendKind } from "@/types/storage-backend";
-import { agentSupportsBackend, agentTierAtLeast } from "@/types/agent";
+import {
+  agentSupportsBackend,
+  agentSupportsCatalogKind,
+  agentTierAtLeast,
+  missingCatalogKindExtension,
+} from "@/types/agent";
 import { cn } from "@/utils";
 
 interface AgentPickerProps {
@@ -36,15 +42,15 @@ interface AgentPickerProps {
   onChange: (agentId: string) => void;
   workspaceBackend?: BackendKind;
   /**
-   * Allow picking an elastic agent that is currently down.
-   *
-   * The two call sites diverge here. A worksheet dispatches *now*, so a
-   * terminated agent would only 503. A schedule dispatches *later*: the
-   * scheduler restarts a terminated elastic agent at run time and parks the run
-   * until it dials home, so choosing one is the point rather than a mistake.
-   *
-   * Static agents stay unselectable when offline either way — nothing can start
-   * them, so the run would just fail.
+   * The catalog kinds attached to the workspace; an agent must serve every
+   * kind as well as every storage backend.
+   */
+  workspaceCatalogKinds?: CatalogKind[];
+  /**
+   * Allow picking an elastic agent that is currently down. A worksheet
+   * dispatches now, so a terminated agent would only 503; a schedule dispatches
+   * later and the scheduler restarts it. Static agents stay unselectable when
+   * offline either way.
    */
   allowTerminatedElastic?: boolean;
 }
@@ -55,8 +61,20 @@ const statusIcon: Record<AgentStatus, React.ReactNode> = {
   unavailable: <Circle className="size-3 text-[var(--status-failed)]" />,
 };
 
-function AgentRow({ agent, backend }: { agent: Agent; backend?: BackendKind }) {
-  const compatible = !backend || agentSupportsBackend(agent, backend);
+function AgentRow({
+  agent,
+  backend,
+  catalogKinds = [],
+}: {
+  agent: Agent;
+  backend?: BackendKind;
+  catalogKinds?: CatalogKind[];
+}) {
+  const backendOk = !backend || agentSupportsBackend(agent, backend);
+  const unservedKind = catalogKinds.find(
+    (kind) => !agentSupportsCatalogKind(agent, kind),
+  );
+  const compatible = backendOk && unservedKind === undefined;
   return (
     <div className={cn("flex flex-col gap-0.5", !compatible && "opacity-60")}>
       <div className="flex items-center gap-1.5">
@@ -75,7 +93,7 @@ function AgentRow({ agent, backend }: { agent: Agent; backend?: BackendKind }) {
           </span>
         )}
         {["s3", "adls_gen2", "object_store"].map((ext) => {
-          // object_store is the bundled S3 store, so it also needs httpfs.
+          // object_store is the bundled S3 store, so it needs httpfs too.
           const extensions = agent.capabilities?.extensions ?? [];
           const supported =
             ext === "adls_gen2"
@@ -97,7 +115,14 @@ function AgentRow({ agent, backend }: { agent: Agent; backend?: BackendKind }) {
           );
         })}
       </div>
-      {!compatible && backend && (
+      {/* Catalog kind first, matching the extension the API names on refusal. */}
+      {unservedKind !== undefined && (
+        <p className="pl-4.5 text-2xs text-[var(--status-failed)]">
+          Missing extension for {unservedKind} catalogs:{" "}
+          {missingCatalogKindExtension(agent, unservedKind)}
+        </p>
+      )}
+      {!backendOk && backend && (
         <p className="pl-4.5 text-2xs text-[var(--status-failed)]">
           Missing extension for {backend === "adls_gen2" ? "azure" : "httpfs"}
         </p>
@@ -110,6 +135,7 @@ export function AgentPicker({
   value,
   onChange,
   workspaceBackend,
+  workspaceCatalogKinds,
   allowTerminatedElastic = false,
 }: AgentPickerProps) {
   const [open, setOpen] = useState(false);
@@ -167,12 +193,15 @@ export function AgentPicker({
                       setOpen(false);
                     }
                   }}
-                  // Static unavailable agents stay unselectable; elastic agents are
-                  // never disabled so their manage controls remain clickable.
+                  // Elastic agents stay enabled so their controls remain usable.
                   disabled={!agent.provider && agent.status === "unavailable"}
                   className="flex flex-col items-start py-2"
                 >
-                  <AgentRow agent={agent} backend={workspaceBackend} />
+                  <AgentRow
+                    agent={agent}
+                    backend={workspaceBackend}
+                    catalogKinds={workspaceCatalogKinds}
+                  />
                   {allowTerminatedElastic &&
                     agent.provider &&
                     agent.status === "unavailable" && (

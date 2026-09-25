@@ -99,6 +99,23 @@ def test_object_store_loads_httpfs_and_vends_credentials(fake_conn: FakeConn, tm
     assert not any("ca_cert_file" in c for c in cmds)
 
 
+@pytest.mark.parametrize("kind", ["object_store", "s3", "adls_gen2"])
+def test_iceberg_attach_requests_purge_on_drop(fake_conn: FakeConn, tmp_path: Path, kind: str):
+    """Without it DuckDB sends purgeRequested=false and a DROP TABLE leaves every
+    data and metadata file behind, whatever the catalog's drop-with-purge flag."""
+    runner_module.run_query_sync(
+        "SELECT 1",
+        tmp_path / "out.parquet",
+        memory_bytes=1024**3,
+        threads=2,
+        catalogs=[_catalog("ws_alpha", "ws-alpha", kind, "s3://bucket/prefix")],
+        active_catalog="ws_alpha",
+        polaris=POLARIS,
+    )
+    attach_cmd = next(c[0] for c in fake_conn.commands if c[0].startswith("ATTACH"))
+    assert "PURGE_REQUESTED true" in attach_cmd
+
+
 def test_s3_loads_httpfs_and_vends_credentials(fake_conn: FakeConn, tmp_path: Path):
     runner_module.run_query_sync(
         "SELECT 1",

@@ -13,7 +13,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from api.models.catalog import KIND_DUCKLAKE, KIND_ICEBERG_POLARIS
+from api.services.maintenance import verbs
 from api.services.maintenance.scoring import _human_bytes
+
+# Display only; an apply uses the policy's retention.
+_RETENTION_DAYS_PLACEHOLDER = 7
 
 #: Severity order, most severe first. Ranked rather than compared as a string:
 #: `critical` sorts *after* `info` alphabetically, which would bury exactly the
@@ -201,12 +206,51 @@ def _investigate_growth(
     )
 
 
+_DUCKLAKE_TOOL = "DuckDB (ducklake extension)"
+
+# Manifests are Iceberg-only.
+_DUCKLAKE_INAPPLICABLE = {"rewrite_manifests"}
+
+
+def _for_ducklake(rec: dict[str, Any], *, can_apply: bool) -> dict[str, Any] | None:
+    """Re-point a format-neutral finding at the command DuckLake needs."""
+    kind = rec["kind"]
+    if kind in _DUCKLAKE_INAPPLICABLE:
+        return None
+    if kind not in verbs.APPLICABLE_KINDS:
+        return rec  # e.g. investigate_growth, which prescribes nothing
+    command = "; ".join(
+        verbs.render(
+            kind,
+            catalog="<catalog>",
+            schema="<schema>",
+            table="<table>",
+            retention_days=_RETENTION_DAYS_PLACEHOLDER,
+        )
+    )
+    return {
+        **rec,
+        "remediation": {
+            **rec["remediation"],
+            "command": command,
+            "tool": _DUCKLAKE_TOOL,
+            "applicable_in_app": can_apply,
+            "scope": verbs.VERB_SCOPE[kind],
+        },
+    }
+
+
 def generate(
     metrics: dict[str, Any],
     thresholds: dict[str, float],
     history: list[dict[str, Any]] | None = None,
+    catalog_kind: str = KIND_ICEBERG_POLARIS,
+    can_apply: bool = False,
 ) -> list[dict[str, Any]]:
-    """All recommendations a single table's latest sample warrants, worst first."""
+    """All recommendations a single table's latest sample warrants, worst first.
+
+    ``catalog_kind`` changes only the remediation, not the findings.
+    """
     out = [
         _compact(metrics, thresholds),
         _expire(metrics, thresholds),
@@ -214,6 +258,7 @@ def generate(
         _cleanup_orphans(metrics, thresholds),
         _investigate_growth(metrics, thresholds, history),
     ]
-    return sorted(
-        (r for r in out if r is not None), key=lambda r: SEVERITY_RANK.get(r["severity"], 9)
-    )
+    recs = [r for r in out if r is not None]
+    if catalog_kind == KIND_DUCKLAKE:
+        recs = [r for r in (_for_ducklake(r, can_apply=can_apply) for r in recs) if r is not None]
+    return sorted(recs, key=lambda r: SEVERITY_RANK.get(r["severity"], 9))

@@ -40,6 +40,11 @@ class CatalogMigration(Base):
     # The fresh Polaris catalog provisioned at the target backend; null until the
     # runner provisions it. The catalog's polaris_name is set to this at cutover.
     shadow_polaris_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # DuckLake only (Iceberg uses the shadow catalog). The retention sweep must
+    # use the stored `source_data_path`: after cutover a recomputed one is the
+    # live target.
+    source_data_path: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    target_data_path: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     # The catalog's polaris_name at start, captured before cutover overwrites it.
     # Needed to drop the retained old catalog later and to support rollback.
     source_polaris_name: Mapped[str | None] = mapped_column(String(255), nullable=True)

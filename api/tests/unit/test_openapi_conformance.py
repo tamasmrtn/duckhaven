@@ -42,6 +42,8 @@ BOUNDED_COLLECTIONS = {
     "/admin/agents",
     "/admin/agents/metrics",
     "/admin/storage-backends",
+    # Bounded by the build: a literal tuple in the router, not data.
+    "/catalog-kinds",
     "/admin/users/{user_id}/workspaces",
     "/admin/service-accounts/{service_account_id}/pats",
     "/me/pats",

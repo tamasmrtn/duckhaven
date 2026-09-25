@@ -305,6 +305,237 @@ def test_iceberg_metadata_best_effort_on_failure():
     }
 
 
+def test_ducklake_health_reports_file_and_snapshot_metrics():
+    """The DuckLake probe fills the same keys as the Iceberg one."""
+    from agent.executor.runner import collect_ducklake_table_health
+
+    class FakeConn:
+        def execute(self, sql, params=None):
+            if "ducklake_snapshots" in sql:
+                self._row = (19, 0.4571759)
+            elif "ducklake_list_files" in sql:
+                # 5 files, 2.2 GB, 444 MB average, 1 under target.
+                self._row = (5, 2223533507, 444706701, 1)
+            elif "ducklake_data_file" in sql:  # the table-scoped snapshot lookup
+                self._row = (10,)
+            else:  # pragma: no cover
+                raise AssertionError(sql)
+            return self
+
+        def fetchone(self):
+            return self._row
+
+    health = collect_ducklake_table_health(
+        FakeConn(),
+        "lake",
+        "sf10",
+        "lineitem",
+        target_file_bytes=128 * 1024**2,
+        metadata_schema="cat_lake",
+    )
+    # Catalog-scoped, matching expiry.
+    assert health["snapshot_count"] == 19
+    assert health["oldest_snapshot_age_days"] == 0.4572
+    # Table-scoped: the scanner compares this to decide whether to re-probe.
+    assert health["snapshot_id"] == 10
+    assert health["data_file_count"] == 5
+    assert health["total_data_bytes"] == 2223533507
+    assert health["avg_file_bytes"] == 444706701
+    assert health["small_file_ratio"] == 0.2
+    # No DuckLake counterpart (metadata is Postgres rows), so the manifest
+    # rewrite drops out rather than prescribing a command that does not exist.
+    assert health["manifest_count"] is None
+    assert health["metadata_bytes"] is None
+    # Orphans need the deep tier and a metadata schema.
+    assert health["orphan_file_count"] is None
+
+
+def test_ducklake_health_is_best_effort_per_field():
+    """A failing probe costs its own fields only."""
+    from agent.executor.runner import collect_ducklake_table_health
+
+    class HalfBrokenConn:
+        def execute(self, sql, params=None):
+            if "ducklake_snapshots" in sql:
+                raise RuntimeError("no such function: ducklake_snapshots")
+            self._row = (3, 300, 100, 0)
+            return self
+
+        def fetchone(self):
+            return self._row
+
+    health = collect_ducklake_table_health(
+        HalfBrokenConn(), "lake", "analytics", "events", target_file_bytes=1024
+    )
+    assert health["snapshot_count"] is None
+    assert health["data_file_count"] == 3
+    assert health["small_file_ratio"] == 0.0
+
+
+def test_ducklake_health_counts_orphans_exactly_on_the_deep_tier():
+    """DuckLake schedules superseded files, so the count is exact."""
+    from agent.executor.runner import collect_ducklake_table_health
+
+    class FakeConn:
+        def execute(self, sql, params=None):
+            if "ducklake_snapshots" in sql:
+                self._row = (2, 2, 1.0)
+            elif "ducklake_list_files" in sql:
+                self._row = (4, 4000, 1000, 0)
+            elif "ducklake_files_scheduled_for_deletion" in sql:
+                assert "__ducklake_metadata_lake" in sql
+                assert params == ["analytics", "events"]
+                self._row = (3,)
+            elif "ducklake_data_file" in sql:  # the table-scoped snapshot lookup
+                self._row = (7,)
+            else:  # pragma: no cover
+                raise AssertionError(sql)
+            return self
+
+        def fetchone(self):
+            return self._row
+
+    health = collect_ducklake_table_health(
+        FakeConn(),
+        "lake",
+        "analytics",
+        "events",
+        target_file_bytes=128 * 1024**2,
+        metadata_schema="cat_lake",
+        include_orphans=True,
+    )
+    assert health["orphan_file_count"] == 3
+    # No size column, so bytes use the live average; the count is exact.
+    assert health["orphan_bytes"] == 3000
+
+
+def test_health_probe_picks_the_probe_for_the_catalogs_kind(tmp_path, monkeypatch):
+    """The Iceberg functions produced an all-null sample for every DuckLake
+    table, and it must not require a Polaris block a DuckLake-only workspace
+    does not have."""
+    from agent.executor import runner as runner_module
+
+    calls: list[str] = []
+
+    def fake_ducklake(conn, catalog, schema, table, **kwargs):
+        calls.append("ducklake")
+        return {"catalog": catalog, "schema": schema, "table": table, "data_file_count": 5}
+
+    def fake_iceberg(conn, catalog, schema, table, **kwargs):
+        calls.append("iceberg")
+        return {"catalog": catalog, "schema": schema, "table": table}
+
+    monkeypatch.setattr(runner_module, "collect_ducklake_table_health", fake_ducklake)
+    monkeypatch.setattr(runner_module, "collect_table_health", fake_iceberg)
+    stats = _run(
+        "SELECT 1",
+        tmp_path / "out.parquet",
+        catalogs=[{"slug": "memory", "kind": "ducklake", "metadata_schema": "cat_memory"}],
+        health_for={"catalog": "memory", "schema": "main", "table": "events"},
+    )
+
+    assert calls == ["ducklake"]
+    assert stats["health"]["data_file_count"] == 5
+
+
+def test_ducklake_metadata_counts_files_and_deletes():
+    """Both counts come from one ducklake_list_files pass."""
+    from agent.executor.runner import _ducklake_metadata
+
+    class FakeConn:
+        def execute(self, sql, params=None):
+            assert "ducklake_list_files" in sql
+            assert params == ["cat", "events", "analytics"]
+            self._row = (5, True)
+            return self
+
+        def fetchone(self):
+            return self._row
+
+    meta = _ducklake_metadata(FakeConn(), "cat", "analytics", "events")
+    assert meta["data_file_count"] == 5
+    assert meta["has_deletes"] is True
+    # Catalog-wide commits; never faked as per-table.
+    assert meta["snapshot_id"] is None
+    assert meta["snapshot_at"] is None
+
+
+def test_ducklake_metadata_best_effort_on_failure():
+    """A probe failure degrades to all-null."""
+    from agent.executor.runner import _ducklake_metadata
+
+    class BoomConn:
+        def execute(self, sql, params=None):
+            raise RuntimeError("no such function: ducklake_list_files")
+
+    assert _ducklake_metadata(BoomConn(), "cat", "analytics", "events") == {
+        "snapshot_id": None,
+        "snapshot_at": None,
+        "data_file_count": None,
+        "has_deletes": None,
+    }
+
+
+def test_catalog_kind_resolves_by_slug():
+    """The probe picks its format from the target catalog."""
+    from agent.executor.runner import _catalog_kind
+
+    catalogs = [
+        {"slug": "berg", "kind": "iceberg_polaris"},
+        {"slug": "lake", "kind": "ducklake"},
+        {"slug": "legacy"},
+    ]
+    assert _catalog_kind(catalogs, "lake") == "ducklake"
+    assert _catalog_kind(catalogs, "berg") == "iceberg_polaris"
+    # A pre-kinds attach entry, and an un-attached slug, both mean Iceberg.
+    assert _catalog_kind(catalogs, "legacy") == "iceberg_polaris"
+    assert _catalog_kind(catalogs, "absent") == "iceberg_polaris"
+
+
+def test_stats_for_skips_the_iceberg_probe_on_a_ducklake_catalog(tmp_path):
+    """The Iceberg probe fails with "is not an Iceberg table" on every field,
+    leaving file counts empty and logging two warnings per table."""
+    result_path = tmp_path / "out.parquet"
+
+    def seed(conn):
+        conn.execute("CREATE TABLE main.events AS SELECT * FROM range(3) t(id)")
+
+    stats = _run(
+        "SELECT * FROM main.events",
+        result_path,
+        catalogs=[{"slug": "memory", "kind": "ducklake"}],
+        polaris={"endpoint": "http://polaris:8181/api/catalog"},
+        stats_for={"catalog": "memory", "schema": "main", "table": "events"},
+        on_connect=seed,
+    )
+    # The row count is format-agnostic.
+    assert stats["table_row_count"] == 3
+    assert "iceberg" not in stats
+    # The DuckLake probe ran and degrades to all-null here; the point is which
+    # probe was chosen.
+    assert "ducklake" in stats
+
+
+def test_stats_for_uses_the_iceberg_probe_on_an_iceberg_catalog(tmp_path):
+    """The Iceberg path is unchanged."""
+    result_path = tmp_path / "out.parquet"
+
+    def seed(conn):
+        conn.execute("CREATE TABLE main.events AS SELECT * FROM range(3) t(id)")
+
+    stats = _run(
+        "SELECT * FROM main.events",
+        result_path,
+        catalogs=[{"slug": "memory", "kind": "iceberg_polaris"}],
+        polaris={"endpoint": "http://polaris:8181/api/catalog"},
+        stats_for={"catalog": "memory", "schema": "main", "table": "events"},
+        on_connect=seed,
+    )
+    assert stats["table_row_count"] == 3
+    assert "iceberg" in stats
+    assert "ducklake" not in stats
+
+
 def test_select_captures_normalized_profile(tmp_path):
     """A materialized SELECT returns a normalized profile: query summary with
     latency + peak memory, and an operator tree with actual cardinalities."""

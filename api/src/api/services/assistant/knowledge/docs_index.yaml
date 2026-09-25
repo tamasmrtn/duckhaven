@@ -43,13 +43,17 @@ pages:
   section: Concepts
   summary: How workspaces isolate queries, permissions, and history.
 - path: concepts/catalogs.md
-  title: Catalogs & Polaris
+  title: Catalogs
   section: Concepts
-  summary: The shared Iceberg catalog governed by Apache Polaris.
+  summary: Catalogs of either kind, how they bind to workspaces, and what a kind decides.
 - path: concepts/tables.md
   title: Tables & Iceberg
   section: Concepts
   summary: Iceberg-native tables, snapshots, and time travel.
+- path: concepts/ducklake.md
+  title: DuckLake
+  section: Concepts
+  summary: DuckLake is the second kind of catalog DuckHaven can create.
 - path: concepts/agents.md
   title: Agents
   section: Concepts
@@ -120,6 +124,10 @@ pages:
   title: Configure storage
   section: Deployment
   summary: Point DuckHaven at your object storage backend.
+- path: deployment/ducklake.md
+  title: Enable DuckLake
+  section: Deployment
+  summary: DuckLake is a second catalog kind, off by default.
 - path: deployment/reverse-proxy-tls.md
   title: Reverse proxy & TLS
   section: Deployment
@@ -148,6 +156,10 @@ pages:
   title: Manage catalogs
   section: Guides
   summary: Create and govern catalogs.
+- path: guides/create-a-ducklake-catalog.md
+  title: Create a DuckLake catalog
+  section: Guides
+  summary: A walkthrough of creating, using and dropping a DuckLake catalog.
 - path: guides/migrate-catalog-storage.md
   title: Migrate a catalog's storage
   section: Guides

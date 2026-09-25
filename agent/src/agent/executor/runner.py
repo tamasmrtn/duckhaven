@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -96,6 +97,24 @@ _BACKEND_IO_EXTENSION: dict[str, str] = {
 }
 # All backends are object storage, so all get vended credentials from Polaris.
 _VENDED_BACKENDS = {"object_store", "s3", "adls_gen2"}
+
+# Catalog kind -> extensions needed to attach it. Mirrors
+# api/services/agent_capabilities.py; `postgres` is the install name.
+_CATALOG_KIND_EXTENSIONS: dict[str, tuple[str, ...]] = {
+    "iceberg_polaris": ("iceberg",),
+    "ducklake": ("ducklake", "postgres"),
+}
+KIND_DUCKLAKE = "ducklake"
+
+
+# Suffixed by slug: one connection can attach several DuckLake catalogs.
+def _meta_secret(slug: str) -> str:
+    return f"dh_dl_meta_{slug}"
+
+
+def _storage_secret(slug: str) -> str:
+    return f"dh_dl_store_{slug}"
+
 
 # Substrings that identify a rejected/expired *storage* credential (as opposed to
 # a genuine authz or missing-object error). Polaris vends short-lived STS creds
@@ -218,12 +237,9 @@ def _iceberg_metadata(
 ) -> dict[str, Any]:
     """Best-effort Iceberg-native metadata for a table in the attached catalog.
 
-    Returns the current snapshot id + timestamp, the data-file count, and a
-    has-deletes flag (true when the table carries position/equality delete files
-    — the same probe the future merge-on-read read guard will use). Each field is
-    independently best-effort: a probe failure (e.g. an older `iceberg` extension
-    lacking a function) degrades that field to None rather than failing the
-    query. The catalog must already be ATTACHed (under its slug alias).
+    Returns snapshot id and timestamp, data-file count and a has-deletes flag.
+    Each field degrades to None on its own probe failure. The catalog must be
+    ATTACHed already.
     """
     ident = f'"{catalog}"."{schema}"."{table}"'
     meta: dict[str, Any] = {
@@ -247,12 +263,9 @@ def _iceberg_metadata(
     except Exception as exc:  # noqa: BLE001 - metadata is best-effort
         logger.warning("iceberg_snapshots failed for %s.%s: %s", schema, table, exc)
     try:
-        # The column classifying data vs delete files moved from `content`
-        # (DATA/POSITION_DELETES/EQUALITY_DELETES) to `manifest_content`
-        # (DATA/DELETE) in newer DuckDB iceberg extensions; `content` now carries
-        # the manifest-entry status (ADDED/EXISTING/DELETED). Pick whichever the
-        # running extension exposes — `content` still exists in the new schema, so
-        # we must inspect the columns rather than just querying it.
+        # Newer iceberg extensions moved data-vs-delete classification from
+        # `content` to `manifest_content`. Both columns exist in the new schema,
+        # so inspect which one the running extension exposes.
         columns = [
             d[0]
             for d in conn.execute(f"SELECT * FROM iceberg_metadata({ident}) LIMIT 0").description
@@ -270,6 +283,55 @@ def _iceberg_metadata(
     except Exception as exc:  # noqa: BLE001 - metadata is best-effort
         logger.warning("iceberg_metadata failed for %s.%s: %s", schema, table, exc)
     return meta
+
+
+def _ducklake_metadata(
+    conn: duckdb.DuckDBPyConnection,
+    catalog: str,
+    schema: str,
+    table: str,
+) -> dict[str, Any]:
+    """Best-effort DuckLake-native metadata for a table in the attached catalog.
+
+    Snapshot fields stay None: DuckLake snapshots are catalog-wide, and the
+    control plane derives which touched a table. `has_deletes` ignores inlined
+    deletes.
+    """
+    meta: dict[str, Any] = {
+        "snapshot_id": None,
+        "snapshot_at": None,
+        "data_file_count": None,
+        "has_deletes": None,
+    }
+    try:
+        row = conn.execute(
+            "SELECT count(*), coalesce(bool_or(delete_file IS NOT NULL), false) "
+            "FROM ducklake_list_files(?, ?, schema => ?)",
+            [catalog, table, schema],
+        ).fetchone()
+        if row:
+            meta["data_file_count"] = row[0]
+            meta["has_deletes"] = bool(row[1])
+    except Exception as exc:  # noqa: BLE001 - metadata is best-effort
+        logger.warning("ducklake_list_files failed for %s.%s: %s", schema, table, exc)
+    return meta
+
+
+def _catalog_kind(catalogs: list[dict[str, Any]], slug: str | None) -> str:
+    """The catalog kind of an attached catalog, by its slug alias."""
+    for cat in catalogs:
+        if cat.get("slug") == slug:
+            return str(cat.get("kind") or "iceberg_polaris")
+    return "iceberg_polaris"
+
+
+def _catalog_metadata_schema(catalogs: list[dict[str, Any]], slug: str | None) -> str | None:
+    """The Postgres schema holding a DuckLake catalog's own tables, by slug."""
+    for cat in catalogs:
+        if cat.get("slug") == slug:
+            value = cat.get("metadata_schema")
+            return str(value) if value else None
+    return None
 
 
 def _iceberg_columns(conn: duckdb.DuckDBPyConnection, ident: str) -> list[str]:
@@ -290,16 +352,12 @@ def collect_table_health(
 ) -> dict[str, Any]:
     """Best-effort health metrics for one table in the attached catalog.
 
-    Sibling of ``_iceberg_metadata`` but richer: it derives file-size distribution,
-    snapshot/manifest counts, and (on the deep tier) an orphan-file estimate, all
-    from DuckDB's ``iceberg`` extension over the already-attached catalog. Every
-    field is independently best-effort — a probe failure degrades that field to
-    ``None`` rather than failing the scan. ``schema``/``table`` are echoed so the
-    control plane's frame handler can route the sample without extra state.
+    File-size distribution, snapshot/manifest counts and (on the deep tier) an
+    orphan estimate, from DuckDB's ``iceberg`` extension. Each field degrades to
+    None on its own probe failure. ``schema``/``table`` are echoed for routing.
 
-    Orphan detection (``include_orphans``) lists the table's data directory with
-    ``glob`` and diffs against the live data-file set; it is expensive at scale and
-    only an estimate (in-flight writes look orphaned), so it runs on a slow cadence.
+    Orphan detection globs the table directory and diffs against the live file
+    set; expensive and only an estimate, so it runs on a slow cadence.
     """
     ident = f'"{catalog}"."{schema}"."{table}"'
     health: dict[str, Any] = {
@@ -335,9 +393,7 @@ def collect_table_health(
         oldest = conn.execute(
             f"SELECT min(timestamp_ms) FROM iceberg_snapshots({ident})"
         ).fetchone()
-        # timestamp_ms comes back as epoch-millis int on older iceberg
-        # extensions, a TIMESTAMP on newer ones (same split _snapshot_meta
-        # above already handles for the per-snapshot timestamp).
+        # epoch-millis on older extensions, TIMESTAMP on newer ones.
         oldest_ts = oldest[0] if oldest else None
         if isinstance(oldest_ts, datetime):
             oldest_dt = oldest_ts if oldest_ts.tzinfo else oldest_ts.replace(tzinfo=UTC)
@@ -354,7 +410,7 @@ def collect_table_health(
     try:
         columns = _iceberg_columns(conn, ident)
         classify = "manifest_content" if "manifest_content" in columns else "content"
-        # The data-file size column name has varied across extension versions.
+        # The size column name has varied across extension versions.
         size_col = next(
             (c for c in ("file_size_in_bytes", "file_size_bytes", "file_size") if c in columns),
             None,
@@ -369,12 +425,8 @@ def collect_table_health(
         live_paths = [r[0] for r in rows if r[0] is not None]
         health["data_file_count"] = len(rows)
         health["manifest_count"] = len(manifests) or None
-        # DuckDB's iceberg extension does not expose a data-file size column, so
-        # when it is absent fall back to the Parquet footers. This reads one
-        # footer per file, so it runs only on the deep tier alongside the orphan
-        # scan to keep the cheap cadence free of per-file object reads; on very
-        # wide tables the footer probe samples a bounded subset (see
-        # _parquet_file_sizes) and the total is scaled to the full file count.
+        # No size column: fall back to Parquet footers on the deep tier only
+        # (one read per file). Wide tables are sampled, then scaled.
         sampled = False
         if not sizes and include_orphans and live_paths:
             sizes, sampled = _parquet_file_sizes(conn, live_paths)
@@ -392,23 +444,204 @@ def collect_table_health(
     return health
 
 
-# Bound the per-file footer reads on the deep tier: a very wide table (100k+
-# files) would otherwise issue one ranged read per file. The size distribution
-# (small-file ratio, average) is well estimated from a bounded sample.
+def _measure_ducklake_table(
+    conn: duckdb.DuckDBPyConnection, target: dict[str, Any]
+) -> dict[str, Any] | None:
+    """File count and bytes for one table, for the before/after of an apply.
+
+    Returns None on failure: a failed measurement must not fail the maintenance.
+    """
+    catalog, schema, table = target.get("catalog"), target.get("schema"), target.get("table")
+    if not (catalog and schema and table):
+        return None
+    try:
+        row = conn.execute(
+            "SELECT count(*)::BIGINT, coalesce(sum(data_file_size_bytes), 0)::BIGINT "
+            "FROM ducklake_list_files(?, ?, schema => ?)",
+            [catalog, table, schema],
+        ).fetchone()
+    except Exception as exc:  # noqa: BLE001 - measurement is best-effort
+        logger.warning("Could not measure %s.%s for maintenance: %s", schema, table, exc)
+        return None
+    if row is None:
+        return None
+    return {"data_file_count": int(row[0]), "total_data_bytes": int(row[1])}
+
+
+def collect_ducklake_table_health(
+    conn: duckdb.DuckDBPyConnection,
+    catalog: str,
+    schema: str,
+    table: str,
+    *,
+    target_file_bytes: int,
+    metadata_schema: str | None = None,
+    include_orphans: bool = False,
+) -> dict[str, Any]:
+    """Best-effort health metrics for one table in an attached DuckLake catalog.
+
+    Same keys as `collect_table_health`, so scoring stays format-neutral.
+    Snapshot counts and age are catalog-scoped, matching
+    `ducklake_expire_snapshots`. Timestamps are reduced to numbers in SQL
+    because the agent image has no `pytz` to convert DATETIMETZ.
+    """
+    health: dict[str, Any] = {
+        "catalog": catalog,
+        "schema": schema,
+        "table": table,
+        "snapshot_count": None,
+        "snapshot_id": None,
+        "oldest_snapshot_age_days": None,
+        "data_file_count": None,
+        "manifest_count": None,
+        "total_data_bytes": None,
+        "avg_file_bytes": None,
+        "small_file_ratio": None,
+        "metadata_bytes": None,
+        "orphan_file_count": None,
+        "orphan_bytes": None,
+    }
+
+    try:
+        row = conn.execute(
+            "SELECT count(*)::BIGINT, "
+            "max(date_diff('second', snapshot_time, now())) / 86400.0 "
+            "FROM ducklake_snapshots(?)",
+            [catalog],
+        ).fetchone()
+        if row and row[0]:
+            health["snapshot_count"] = int(row[0])
+            if row[1] is not None:
+                health["oldest_snapshot_age_days"] = round(float(row[1]), 4)
+    except Exception as exc:  # noqa: BLE001 - metadata is best-effort
+        logger.warning("ducklake_snapshots failed for %s.%s: %s", schema, table, exc)
+
+    if metadata_schema:
+        health["snapshot_id"] = _ducklake_table_snapshot(
+            conn, catalog, schema, table, metadata_schema=metadata_schema
+        )
+
+    try:
+        row = conn.execute(
+            "SELECT count(*)::BIGINT, "
+            "sum(data_file_size_bytes)::BIGINT, "
+            "avg(data_file_size_bytes)::BIGINT, "
+            "count(*) FILTER (WHERE data_file_size_bytes < ?)::BIGINT "
+            "FROM ducklake_list_files(?, ?, schema => ?)",
+            [target_file_bytes, catalog, table, schema],
+        ).fetchone()
+        if row:
+            count = int(row[0])
+            health["data_file_count"] = count
+            if count:
+                health["total_data_bytes"] = int(row[1]) if row[1] is not None else None
+                health["avg_file_bytes"] = int(row[2]) if row[2] is not None else None
+                health["small_file_ratio"] = round(int(row[3]) / count, 4)
+    except Exception as exc:  # noqa: BLE001 - metadata is best-effort
+        logger.warning("ducklake_list_files failed for %s.%s: %s", schema, table, exc)
+
+    if include_orphans and metadata_schema:
+        health.update(
+            _ducklake_orphans(
+                conn,
+                catalog,
+                schema,
+                table,
+                metadata_schema=metadata_schema,
+                avg_file_bytes=health.get("avg_file_bytes"),
+            )
+        )
+    return health
+
+
+def _ducklake_table_snapshot(
+    conn: duckdb.DuckDBPyConnection,
+    catalog: str,
+    schema: str,
+    table: str,
+    *,
+    metadata_schema: str,
+) -> int | None:
+    """The newest catalog snapshot in which this table changed.
+
+    Mirrors the control plane's `list_snapshots`; the cross-component suite
+    keeps them in agreement.
+    """
+    meta = f'"__ducklake_metadata_{catalog}"."{metadata_schema}"'
+    joins = (
+        f"JOIN {meta}.ducklake_table t ON t.table_id = d.table_id "
+        f"JOIN {meta}.ducklake_schema s ON s.schema_id = t.schema_id "
+        "WHERE s.schema_name = ? AND t.table_name = ?"
+    )
+    table_join = (
+        f"JOIN {meta}.ducklake_schema s ON s.schema_id = t.schema_id "
+        "WHERE s.schema_name = ? AND t.table_name = ?"
+    )
+    sql = (
+        "SELECT max(sid)::BIGINT FROM ("
+        f"  SELECT t.begin_snapshot AS sid FROM {meta}.ducklake_table t {table_join}"
+        f"  UNION ALL SELECT t.end_snapshot FROM {meta}.ducklake_table t {table_join}"
+        f"  UNION ALL SELECT d.begin_snapshot FROM {meta}.ducklake_data_file d {joins}"
+        f"  UNION ALL SELECT d.end_snapshot FROM {meta}.ducklake_data_file d {joins}"
+        f"  UNION ALL SELECT d.begin_snapshot FROM {meta}.ducklake_delete_file d {joins}"
+        f"  UNION ALL SELECT d.end_snapshot FROM {meta}.ducklake_delete_file d {joins}"
+        ")"
+    )
+    try:
+        row = conn.execute(sql, [schema, table] * 6).fetchone()
+        return int(row[0]) if row and row[0] is not None else None
+    except Exception as exc:  # noqa: BLE001 - metadata is best-effort
+        logger.warning("ducklake snapshot lookup failed for %s.%s: %s", schema, table, exc)
+        return None
+
+
+def _ducklake_orphans(
+    conn: duckdb.DuckDBPyConnection,
+    catalog: str,
+    schema: str,
+    table: str,
+    *,
+    metadata_schema: str,
+    avg_file_bytes: int | None,
+) -> dict[str, Any]:
+    """Files this table has superseded and DuckLake has scheduled for deletion.
+
+    The count is exact, unlike Iceberg's glob-diff; bytes use the live average.
+    """
+    out: dict[str, Any] = {"orphan_file_count": None, "orphan_bytes": None}
+    meta = f'"__ducklake_metadata_{catalog}"."{metadata_schema}"'
+    try:
+        row = conn.execute(
+            f"SELECT count(*)::BIGINT FROM {meta}.ducklake_files_scheduled_for_deletion f "
+            f"JOIN {meta}.ducklake_data_file d ON d.data_file_id = f.data_file_id "
+            f"JOIN {meta}.ducklake_table t ON t.table_id = d.table_id "
+            f"JOIN {meta}.ducklake_schema s ON s.schema_id = t.schema_id "
+            "WHERE s.schema_name = ? AND t.table_name = ?",
+            [schema, table],
+        ).fetchone()
+        if row is not None:
+            count = int(row[0])
+            out["orphan_file_count"] = count
+            if avg_file_bytes is not None:
+                out["orphan_bytes"] = count * int(avg_file_bytes)
+    except Exception as exc:  # noqa: BLE001 - orphan detail is best-effort
+        logger.warning("ducklake orphan scan failed for %s.%s: %s", schema, table, exc)
+    return out
+
+
+# Bounds per-file footer reads on the deep tier; the distribution is well
+# estimated from a sample.
 _MAX_FOOTER_READS = 1000
 
 
 def _parquet_file_sizes(
     conn: duckdb.DuckDBPyConnection, paths: list[str]
 ) -> tuple[list[int], bool]:
-    """Per-file sizes read from the Parquet footers, for iceberg-extension versions
-    that don't surface a size column in ``iceberg_metadata``. One ranged read per
-    file (hence deep-tier only); ``total_compressed_size`` omits the footer/header
-    but is well within tolerance for small-file detection against the target size.
+    """Per-file sizes from the Parquet footers, for extension versions with no
+    size column. One ranged read per file, hence deep tier only.
 
-    Returns ``(sizes, sampled)``: when there are more files than
-    ``_MAX_FOOTER_READS``, a deterministic, evenly-spaced subset is read and
-    ``sampled`` is True so the caller can scale the total to the full file count.
+    Returns ``(sizes, sampled)``; a sampled subset is evenly spaced, so the
+    caller can scale the total.
     """
     sampled = len(paths) > _MAX_FOOTER_READS
     if sampled:
@@ -434,10 +667,8 @@ def _orphan_estimate(
 ) -> dict[str, Any]:
     """Count files under the table location not referenced by current metadata.
 
-    Derives the data prefix from a live file path (no need to resolve the table
-    location separately), lists both the data and metadata directories with
-    ``glob``, and subtracts the live data-file and manifest sets. ``glob`` yields
-    no sizes, so orphan bytes are estimated from the live average file size.
+    Derives the prefix from a live path, globs data and metadata, subtracts the
+    live sets. No sizes from glob, so orphan bytes use the live average.
     """
     out: dict[str, Any] = {"orphan_file_count": None, "orphan_bytes": None}
     sample = live_paths[0]
@@ -462,6 +693,165 @@ def _orphan_estimate(
     return out
 
 
+def _configure_ducklake(conn: duckdb.DuckDBPyConnection) -> None:
+    """Pin DuckLake's conflict-retry settings to the extension defaults.
+
+    Deliberately not in `_ALLOWED_CONFIGS`: a statement must not change how its
+    own writes retry.
+    """
+    for name, value in (
+        ("ducklake_max_retry_count", "10"),
+        ("ducklake_retry_backoff", "1.5"),
+        ("ducklake_retry_wait_ms", "100"),
+    ):
+        try:
+            conn.execute(f"SET {name} = {value}")
+        except Exception as exc:  # noqa: BLE001 - an older extension may not know it
+            logger.warning("Could not set %s: %s", name, exc)
+
+
+def _attach_ducklake(conn: duckdb.DuckDBPyConnection, cat: dict[str, Any]) -> None:
+    """ATTACH one DuckLake catalog, with the credentials the API vended for it.
+
+    The Postgres password goes in a secret, not the DSN, because DuckLake
+    echoes a failed attach's connection string.
+    """
+    slug = cat["slug"]
+    alias = slug.replace('"', '""')
+    meta = cat.get("meta") or {}
+    store = cat.get("storage") or {}
+
+    conn.execute(
+        f"CREATE OR REPLACE SECRET {_meta_secret(slug)} "
+        "(TYPE POSTGRES, HOST ?, PORT ?, DATABASE ?, USER ?, PASSWORD ?)",
+        [meta["host"], int(meta["port"]), meta["database"], meta["user"], meta["password"]],
+    )
+    if store:
+        _create_storage_secret(conn, slug, store)
+
+    # ATTACH takes no bind parameters. Keep the escaping: `data_path` derives
+    # from an operator-supplied `root_uri`.
+    data_path = str(cat["data_path"]).replace("'", "''")
+    metadata_schema = str(cat["metadata_schema"]).replace("'", "''")
+    database = str(meta["database"]).replace("'", "''")
+    host = str(meta["host"]).replace("'", "''")
+    port = int(meta["port"])
+    dsn = f"ducklake:postgres:dbname={database} host={host} port={port}"
+    conn.execute(
+        f"ATTACH '{dsn}' AS \"{alias}\" ("
+        f"DATA_PATH '{data_path}', METADATA_SCHEMA '{metadata_schema}', "
+        f"META_SECRET '{_meta_secret(slug)}', CREATE_IF_NOT_EXISTS true)"
+    )
+    _apply_ducklake_options(conn, alias, cat.get("options") or {})
+
+    # Created here, not at provisioning, because it needs the extension.
+    schema = (cat.get("default_schema") or _DEFAULT_NAMESPACE).replace('"', '""')
+    conn.execute(f'CREATE SCHEMA IF NOT EXISTS "{alias}"."{schema}"')
+
+
+_SIZE_UNITS = {
+    "kb": 1000,
+    "mb": 1000**2,
+    "gb": 1000**3,
+    "tb": 1000**4,
+    "kib": 1024,
+    "mib": 1024**2,
+    "gib": 1024**3,
+    "tib": 1024**4,
+}
+_SIZE_VALUE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([kmgt]i?b)\s*$", re.IGNORECASE)
+
+
+def _normalise_option_value(value: object) -> str:
+    """An option value in the form DuckLake stores it.
+
+    `set_option` takes sizes with a unit ("512MB") but stores bytes
+    ("512000000"), using DuckDB's rule: KB-TB are powers of 1000, KiB-TiB 1024.
+    """
+    text = str(value).strip()
+    if match := _SIZE_VALUE.match(text):
+        return str(int(float(match.group(1)) * _SIZE_UNITS[match.group(2).lower()]))
+    return text
+
+
+def _current_ducklake_options(conn: duckdb.DuckDBPyConnection, alias: str) -> dict[str, str]:
+    rows = conn.execute(
+        "SELECT option_name, value FROM ducklake_options(?) WHERE scope = 'GLOBAL'", [alias]
+    ).fetchall()
+    return {name: _normalise_option_value(value) for name, value in rows}
+
+
+def _apply_ducklake_options(
+    conn: duckdb.DuckDBPyConnection, alias: str, options: dict[str, Any]
+) -> None:
+    """Apply the catalog options the API vended, writing only those that differ.
+
+    `set_option` updates `ducklake_metadata` even when the value is unchanged,
+    and every attach runs this. Concurrent attaches then collide on the same
+    rows ("could not serialize access due to concurrent update"), so the
+    current values are read first and the steady state writes nothing.
+    """
+    if not options:
+        return
+    try:
+        current: dict[str, str] | None = _current_ducklake_options(conn, alias)
+    except Exception as exc:  # noqa: BLE001 - an older extension may lack the function
+        logger.debug("Could not read DuckLake options on %s: %s", alias, exc)
+        current = None
+
+    for name, value in options.items():
+        wanted = _normalise_option_value(value)
+        if current is not None and current.get(name) == wanted:
+            continue
+        try:
+            conn.execute(f'CALL "{alias}".set_option(?, ?)', [name, str(value)])
+        except Exception as exc:  # noqa: BLE001 - an older extension may not know it
+            if _option_now_matches(conn, alias, name, wanted):
+                # Another attach wrote the same value first.
+                logger.debug("DuckLake option %s on %s was set concurrently", name, alias)
+                continue
+            logger.warning("Could not set DuckLake option %s on %s: %s", name, alias, exc)
+
+
+def _option_now_matches(
+    conn: duckdb.DuckDBPyConnection, alias: str, name: str, wanted: str
+) -> bool:
+    try:
+        return _current_ducklake_options(conn, alias).get(name) == wanted
+    except Exception:  # noqa: BLE001 - nothing to compare against
+        return False
+
+
+def _create_storage_secret(
+    conn: duckdb.DuckDBPyConnection, slug: str, store: dict[str, Any]
+) -> None:
+    """The object-store secret for a DuckLake catalog, SCOPEd to its own prefix
+    so it cannot serve another catalog attached to the same connection.
+    """
+    name = _storage_secret(slug)
+    if store.get("type") == "azure":
+        conn.execute(
+            f"CREATE OR REPLACE SECRET {name} "
+            "(TYPE AZURE, PROVIDER config, CONNECTION_STRING ?, ACCOUNT_NAME ?)",
+            [store["connection_string"], store["account_name"]],
+        )
+        return
+    conn.execute(
+        f"CREATE OR REPLACE SECRET {name} (TYPE S3, PROVIDER config, KEY_ID ?, SECRET ?, "
+        "SESSION_TOKEN ?, REGION ?, ENDPOINT ?, URL_STYLE ?, USE_SSL ?, SCOPE ?)",
+        [
+            store.get("key_id", ""),
+            store.get("secret", ""),
+            store.get("session_token", ""),
+            store.get("region", ""),
+            store.get("endpoint", ""),
+            store.get("url_style", "path"),
+            bool(store.get("use_ssl", False)),
+            store.get("scope", ""),
+        ],
+    )
+
+
 def _attach_catalogs(
     conn: duckdb.DuckDBPyConnection,
     *,
@@ -470,65 +860,64 @@ def _attach_catalogs(
     polaris: dict[str, Any],
     trace_headers: dict[str, str] | None = None,
 ) -> None:
-    """Create the iceberg OAuth2 secret and ATTACH every catalog (multi-attach).
+    """ATTACH every catalog bound to the workspace (multi-attach), by kind.
 
-    Each catalog is attached under its slug alias so the user's SQL can address
-    `catalog.schema.table` and join across catalogs; the active catalog is then
-    `USE`d so unqualified names resolve. DuckDB exchanges the client credentials
-    for a token itself; with `vended_credentials` Polaris also vends scoped
-    storage creds on access. Per-catalog ATTACH is best-effort: one bad catalog
+    Each catalog is attached under its slug alias so SQL can address
+    `catalog.schema.table` and join across catalogs and kinds. The active
+    catalog is then `USE`d. Per-catalog ATTACH is best-effort: one bad catalog
     is logged and skipped rather than failing the whole query.
     """
-    endpoint = str(polaris["endpoint"]).rstrip("/")
-    # `trace_headers` carries the caller's active span (handle_dispatch, or
-    # duckdb.execute for static profiles) onto every DuckDB-issued request to
-    # Polaris, so Polaris's spans join this query's trace instead of starting
-    # their own. It must be captured on the event-loop thread by the caller —
-    # this function runs inside a worker thread (via run_in_executor), where
-    # OpenTelemetry's contextvar-based "current span" is not propagated, so
-    # calling inject_trace_context() here would silently see no active span.
-    # None when no SDK is configured or no span was active: DuckDB behaves
-    # exactly as before.
-    if trace_headers:
+    # A DuckLake-only workspace gets no Polaris block.
+    has_iceberg = any(c.get("kind", "iceberg_polaris") != KIND_DUCKLAKE for c in catalogs)
+    endpoint = str(polaris.get("endpoint", "")).rstrip("/")
+    # `trace_headers` carries the caller's span onto every DuckDB-issued Polaris
+    # request, so Polaris's spans join this query's trace. It must be captured on
+    # the event-loop thread by the caller: this runs in a worker thread, where
+    # OpenTelemetry's contextvar "current span" is not propagated.
+    if trace_headers and endpoint:
         conn.execute(
             f"CREATE OR REPLACE SECRET {_TRACE_HEADERS_SECRET} "
             "(TYPE HTTP, EXTRA_HTTP_HEADERS ?, SCOPE ?)",
             [trace_headers, endpoint],
         )
-    conn.execute(
-        f"CREATE SECRET {_ICEBERG_SECRET} "
-        "(TYPE ICEBERG, CLIENT_ID ?, CLIENT_SECRET ?, OAUTH2_SERVER_URI ?)",
-        [
-            polaris["client_id"],
-            polaris["client_secret"],
-            f"{endpoint}/api/catalog/v1/oauth/tokens",
-        ],
-    )
-    # ATTACH does not accept bind parameters, so inline the warehouse name, alias
-    # and endpoint as quoted literals (quotes escaped). None are user-supplied SQL
-    # (slug/polaris_name come from the control plane; endpoint from agent config).
+    if has_iceberg:
+        conn.execute(
+            f"CREATE SECRET {_ICEBERG_SECRET} "
+            "(TYPE ICEBERG, CLIENT_ID ?, CLIENT_SECRET ?, OAUTH2_SERVER_URI ?)",
+            [
+                polaris["client_id"],
+                polaris["client_secret"],
+                f"{endpoint}/api/catalog/v1/oauth/tokens",
+            ],
+        )
+    # ATTACH takes no bind parameters; inline as quoted, escaped literals.
     cat_endpoint = f"{endpoint}/api/catalog".replace("'", "''")
     active = None
     for cat in catalogs:
         slug = cat["slug"]
-        kind = (cat.get("backend") or {}).get("kind")
-        delegation = "vended_credentials" if kind in _VENDED_BACKENDS else "none"
-        wh = str(cat["polaris_name"]).replace("'", "''")
-        alias = slug.replace('"', '""')
+        backend_kind = (cat.get("backend") or {}).get("kind")
         try:
-            conn.execute(
-                f"ATTACH '{wh}' AS \"{alias}\" "
-                f"(TYPE ICEBERG, SECRET {_ICEBERG_SECRET}, ENDPOINT '{cat_endpoint}', "
-                f"ACCESS_DELEGATION_MODE '{delegation}')"
-            )
+            if cat.get("kind") == KIND_DUCKLAKE:
+                _attach_ducklake(conn, cat)
+            else:
+                delegation = "vended_credentials" if backend_kind in _VENDED_BACKENDS else "none"
+                wh = str(cat["polaris_name"]).replace("'", "''")
+                alias = slug.replace('"', '""')
+                # PURGE_REQUESTED: the catalog's drop-with-purge flag only allows a
+                # purge, and DuckDB otherwise drops with purgeRequested=false, which
+                # leaves every data and metadata file on object storage.
+                conn.execute(
+                    f"ATTACH '{wh}' AS \"{alias}\" "
+                    f"(TYPE ICEBERG, SECRET {_ICEBERG_SECRET}, ENDPOINT '{cat_endpoint}', "
+                    f"ACCESS_DELEGATION_MODE '{delegation}', PURGE_REQUESTED true)"
+                )
         except Exception as exc:  # noqa: BLE001 - one bad catalog must not fail the query
-            logger.warning("Polaris ATTACH failed for catalog %s: %s", slug, exc)
+            logger.warning("ATTACH failed for catalog %s: %s", slug, exc)
             continue
         if slug == active_catalog:
             active = cat
-    # `USE <catalog>.<schema>` sets the default catalog (so unqualified SQL
-    # resolves) and a default schema. A bare `USE <catalog>` does not reliably
-    # resolve the attached Iceberg catalog's namespaces.
+    # `USE <catalog>.<schema>` sets both defaults; a bare `USE <catalog>` does
+    # not reliably resolve an attached Iceberg catalog.
     if active is None and catalogs:
         active = catalogs[0]
     if active is not None:
@@ -679,17 +1068,38 @@ def open_and_attach(
     # statically-linked extensions can't find on their own.
     if backend_kinds - {None, "object_store"}:
         _configure_external_tls(conn, azure="adls_gen2" in backend_kinds)
-    if catalogs and polaris and _safe_install_load(conn, "iceberg"):
+
+    catalog_kinds = {cat.get("kind", "iceberg_polaris") for cat in catalogs}
+    loaded: set[str] = set()
+    for catalog_kind in catalog_kinds:
+        for ext in _CATALOG_KIND_EXTENSIONS.get(catalog_kind, ()):
+            if ext not in loaded and _safe_install_load(conn, ext):
+                loaded.add(ext)
+    # Drop catalogs whose extensions failed to load: the iceberg secret is
+    # created outside the per-catalog guard, so a failed `iceberg` load would
+    # otherwise take the DuckLake attaches down with it.
+    catalogs = [
+        cat
+        for cat in catalogs
+        if all(
+            ext in loaded
+            for ext in _CATALOG_KIND_EXTENSIONS.get(cat.get("kind", "iceberg_polaris"), ())
+        )
+    ]
+    if KIND_DUCKLAKE in catalog_kinds:
+        _configure_ducklake(conn)
+
+    if catalogs and (polaris or KIND_DUCKLAKE in catalog_kinds):
         try:
             _attach_catalogs(
                 conn,
                 catalogs=catalogs,
                 active_catalog=active_catalog,
-                polaris=polaris,
+                polaris=polaris or {},
                 trace_headers=trace_headers,
             )
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Polaris ATTACH failed: %s", exc)
+            logger.warning("Catalog ATTACH failed: %s", exc)
     # Apply the sandbox last: the IO extensions are loaded and catalogs are
     # attached, so disabling a filesystem (and locking the configuration) here
     # only constrains subsequent user-statement access, not the trusted
@@ -900,6 +1310,7 @@ def run_query_sync(
     polaris: dict[str, Any] | None = None,
     stats_for: dict[str, str] | None = None,
     health_for: dict[str, Any] | None = None,
+    maintain_for: dict[str, Any] | None = None,
     conn: duckdb.DuckDBPyConnection | None = None,
     enable_profiling: bool = True,
     on_connect: Callable[[duckdb.DuckDBPyConnection], None] | None = None,
@@ -950,6 +1361,9 @@ def run_query_sync(
     can_reattach = bool(catalogs and polaris)
 
     def _execute() -> dict[str, Any]:
+        # Measured on this connection so the delta reflects this statement alone.
+        before = _measure_ducklake_table(conn, maintain_for) if maintain_for else None
+
         result = _run_one_statement(
             conn,
             sql,
@@ -958,6 +1372,12 @@ def run_query_sync(
             threads=threads,
             enable_profiling=enable_profiling,
         )
+
+        if maintain_for:
+            result["maintenance"] = {
+                "before": before,
+                "after": _measure_ducklake_table(conn, maintain_for),
+            }
 
         # When asked, compute true table stats on the same attached connection.
         # size_bytes has no reliable cross-backend source yet, so it stays null.
@@ -977,27 +1397,45 @@ def run_query_sync(
                     )
                     result["table_row_count"] = None
                 result["table_size_bytes"] = None
-                # Iceberg-native metadata for the table-detail page. Only
-                # meaningful when a catalog is attached; best-effort throughout.
-                if catalogs and polaris:
-                    result["iceberg"] = _iceberg_metadata(conn, catalog, schema, table)
+                # Table-format-native metadata for the table-detail page.
+                if catalogs:
+                    if _catalog_kind(catalogs, catalog) == KIND_DUCKLAKE:
+                        result["ducklake"] = _ducklake_metadata(conn, catalog, schema, table)
+                    elif polaris:
+                        result["iceberg"] = _iceberg_metadata(conn, catalog, schema, table)
 
-        # Maintenance health probe: richer Iceberg metrics on the same attached
-        # connection. Driven by the scanner; best-effort throughout.
-        if health_for and catalogs and polaris:
+        # Maintenance health probe, driven by the scanner. Not gated on Polaris:
+        # a DuckLake catalog has none.
+        if health_for and catalogs:
             catalog = health_for.get("catalog")
             schema = health_for.get("schema")
             table = health_for.get("table")
             if catalog and schema and table:
+                is_ducklake = _catalog_kind(catalogs, catalog) == KIND_DUCKLAKE
                 try:
-                    result["health"] = collect_table_health(
-                        conn,
-                        catalog,
-                        schema,
-                        table,
-                        target_file_bytes=int(health_for.get("target_file_bytes", 128 * 1024**2)),
-                        include_orphans=bool(health_for.get("include_orphans", False)),
-                    )
+                    if is_ducklake:
+                        result["health"] = collect_ducklake_table_health(
+                            conn,
+                            catalog,
+                            schema,
+                            table,
+                            target_file_bytes=int(
+                                health_for.get("target_file_bytes", 128 * 1024**2)
+                            ),
+                            metadata_schema=_catalog_metadata_schema(catalogs, catalog),
+                            include_orphans=bool(health_for.get("include_orphans", False)),
+                        )
+                    elif polaris:
+                        result["health"] = collect_table_health(
+                            conn,
+                            catalog,
+                            schema,
+                            table,
+                            target_file_bytes=int(
+                                health_for.get("target_file_bytes", 128 * 1024**2)
+                            ),
+                            include_orphans=bool(health_for.get("include_orphans", False)),
+                        )
                 except Exception as exc:  # noqa: BLE001 - health probe is best-effort
                     logger.warning("Health probe failed for %s.%s: %s", schema, table, exc)
         return result

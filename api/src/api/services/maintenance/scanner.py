@@ -26,6 +26,8 @@ from api.models.catalog import Catalog, WorkspaceCatalog
 from api.models.maintenance import MaintenancePolicy, TableHealthSample
 from api.models.query import Query
 from api.models.workspace import Workspace
+from api.services.catalog_backends import CatalogBackendError, backend_for
+from api.services.maintenance import apply as apply_service
 from api.services.maintenance.policy import get_or_create_policy
 from api.services.polaris import PolarisClient, PolarisError
 from api.services.query import dispatch_query, pick_agent_for
@@ -83,6 +85,7 @@ async def run_cycle(
             return {"status": "skipped", "reason": "not_due"}
 
         await _prune_old_samples(db, now)
+        await apply_service.sweep_stale_applies(db, now)
         include_orphans = _deep_scan_due(policy, now)
         target_file_bytes = int(policy.thresholds.get("target_file_bytes", 128 * 1024**2))
 
@@ -142,22 +145,21 @@ async def _prune_old_samples(db: AsyncSession, now: datetime) -> None:
 async def _enumerate_catalog(polaris: PolarisClient, catalog: Catalog) -> list[tuple[str, str]]:
     """(schema, table) pairs for one catalog, cached for ``_ENUMERATION_TTL``.
 
-    Enumeration is a per-catalog ``list_schemas`` + ``list_tables`` round-trip;
-    caching it keeps the scan cycle cheap on large deployments. New tables appear
-    within the TTL; a Polaris error invalidates the entry so a transient failure
-    doesn't pin a stale list.
+    Enumeration is a per-catalog ``list_schemas`` + ``list_tables`` round-trip,
+    cached to keep the scan cycle cheap; an error invalidates the entry so a
+    transient failure doesn't pin a stale list.
     """
     now = datetime.now(tz=UTC)
     cached = _enumeration_cache.get(catalog.slug)
     if cached is not None and now - cached[0] < _ENUMERATION_TTL:
         return cached[1]
     try:
+        backend = backend_for(catalog, polaris=polaris)
         out: list[tuple[str, str]] = []
-        schemas = await polaris.list_schemas(catalog.polaris_name)
-        for schema in schemas:
-            tables = await polaris.list_tables(catalog.polaris_name, schema.name)
+        for schema in await backend.list_schemas(catalog):
+            tables = await backend.list_tables(catalog, schema.name)
             out.extend((schema.name, t.name) for t in tables)
-    except PolarisError as exc:
+    except (CatalogBackendError, PolarisError) as exc:
         _enumeration_cache.pop(catalog.slug, None)
         logger.warning("Maintenance scan: enumerate failed for %s: %s", catalog.slug, exc)
         return []
@@ -242,9 +244,9 @@ async def _filter_changed(
     """Drop tables whose latest snapshot id is unchanged since the last sample.
 
     A table is re-probed only when its snapshot id changed (or it was never
-    sampled), with a max-age safety net so a table that never changes still gets
-    re-checked periodically. The snapshot id is read from Polaris (a metadata
-    read, no table scan); on a Polaris error we keep the table rather than skip.
+    sampled), with a max-age safety net so an unchanging table is still checked
+    periodically. The id comes from the catalog's own metadata backend (no table
+    scan); on error we keep the table rather than skip.
     """
     prior = await _latest_snapshot_ids(db)
     now = datetime.now(tz=UTC)
@@ -270,8 +272,10 @@ async def _filter_changed(
     async def _unchanged(item: tuple[Catalog, Workspace, str, str, int]) -> bool:
         catalog, _ws, schema, table, prior_snapshot_id = item
         try:
-            snapshots = await polaris.list_snapshots(catalog.polaris_name, schema, table)
-        except PolarisError as exc:
+            snapshots = await backend_for(catalog, polaris=polaris).list_snapshots(
+                catalog, schema, table
+            )
+        except CatalogBackendError as exc:
             logger.warning(
                 "Maintenance scan: snapshot check failed for %s.%s: %s", schema, table, exc
             )

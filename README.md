@@ -83,6 +83,15 @@ trail — with data sovereignty, network privacy, and no SaaS lock-in.
   preview sample rows without writing a query.
 - **Iceberg-native tables** — Every table is Apache Iceberg with Catalog Commits
   ON, governed by Polaris.
+- **DuckLake catalogs** — A second catalog kind that keeps metadata in Postgres
+  and data in Parquet, needing no catalog service at all. A DuckLake-only
+  deployment drops Polaris entirely. It also runs its own maintenance, which
+  Iceberg cannot: DuckDB compacts, expires and cleans up a DuckLake catalog
+  where its Iceberg extension can only advise. The trade is portability —
+  DuckLake tables are read by DuckDB only, where Iceberg tables are read by
+  Spark, Trino, Flink and PyIceberg — so Iceberg stays the default kind, and a
+  DuckLake catalog can be exported to Iceberg if that changes. See
+  [docs/concepts/ducklake.md](docs/concepts/ducklake.md).
 - **Snapshot history & time travel** — Browse a table's Iceberg snapshots and run
   "query at this snapshot" against any point in its history.
 - **Data lineage, down to the column** — See where a table's data came from and
@@ -222,6 +231,8 @@ flowchart TB
 - Users pick the executing agent per worksheet — transparent compute, no opaque optimizer.
 - Every catalog is bound to one storage backend: bundled object storage, S3, or Azure. Workspaces attach
   catalogs many-to-many, so a workspace can span several backends.
+- A catalog's *kind* — Iceberg + Polaris, or DuckLake on Postgres — is an axis orthogonal to its storage backend. One
+  workspace can attach both kinds and join across them.
 - Apache Polaris provides table governance and vends short-lived storage credentials per catalog.
 - SQL is allowlisted to data statements
   (`SELECT`/`INSERT`/`UPDATE`/`DELETE`/`MERGE`) and catalog DDL
@@ -246,8 +257,8 @@ the UI design system, see [docs/developer/design-system.md](docs/developer/desig
 | Database | PostgreSQL 18, SQLAlchemy 2.x (async) + Alembic migrations |
 | Agent | Python 3.14 embedding DuckDB; small HTTP server for result Parquet reads |
 | Engine | DuckDB ≥ 1.5.5 — present **only** on agents |
-| Catalog | Apache Polaris — catalog + short-lived credential vendor |
-| Storage format | Apache Iceberg, Catalog Commits ON, one backend per catalog |
+| Catalog | Apache Polaris — catalog + short-lived credential vendor. DuckLake on Postgres is an opt-in second kind |
+| Storage format | Apache Iceberg, Catalog Commits ON, one backend per catalog; DuckLake/Parquet for DuckLake catalogs |
 | Storage backends | Object storage (bundled RustFS, `httpfs`), S3 (`httpfs`), ADLS Gen 2 (`azure`) |
 | Auth | Local (`bcrypt`), OIDC SSO (`authlib`), LDAP / AD (`ldap3`) with JIT provisioning |
 | Scheduling | Cron-based recurring queries (`croniter`), leader-elected across replicas |

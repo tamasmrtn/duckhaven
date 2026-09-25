@@ -88,6 +88,18 @@ def _api_env(db_url: str, setup_token_file: Path) -> dict[str, str]:
             "SQL_SESSIONS_ENABLED": "true",
         }
     )
+    # DuckLake only when DUCKLAKE_DATABASE_URL is set; its tests skip otherwise,
+    # so the suite still runs against a Polaris-only stack.
+    if ducklake_url := os.getenv("DUCKLAKE_DATABASE_URL"):
+        env.update(
+            {
+                "DUCKLAKE_ENABLED": "true",
+                "DUCKLAKE_DATABASE_URL": ducklake_url,
+                "DUCKLAKE_AGENT_HOST": os.getenv("DUCKLAKE_AGENT_HOST", "127.0.0.1"),
+                "DUCKLAKE_AGENT_PORT": os.getenv("DUCKLAKE_AGENT_PORT", "5432"),
+                "DUCKLAKE_AGENT_DATABASE": os.getenv("DUCKLAKE_AGENT_DATABASE", "ducklake"),
+            }
+        )
     if endpoint := os.getenv("POLARIS_S3_ENDPOINT"):
         env["S3_ENDPOINT"] = endpoint
     if internal := os.getenv("POLARIS_S3_ENDPOINT_INTERNAL"):
@@ -173,6 +185,10 @@ def _preinstall_agent_extensions() -> None:
     time. The agent here runs from the uv env (not the image), and its capability
     probe only ``LOAD``s (relying on pre-installed extensions), so without this
     ``httpfs`` is never advertised and dispatch is rejected as agent_incompatible.
+
+    The list must track the image's: ``ducklake`` and ``postgres`` are gated at
+    dispatch for a DuckLake catalog, so omitting them here rejects every
+    DuckLake test as agent_incompatible rather than failing it usefully.
     """
     subprocess.run(
         [
@@ -183,8 +199,9 @@ def _preinstall_agent_extensions() -> None:
             "python",
             "-c",
             "import duckdb; c = duckdb.connect(); "
-            "[c.execute(f'INSTALL {e}') for e in ('httpfs', 'azure', 'iceberg')]; "
-            "[c.execute(f'LOAD {e}') for e in ('httpfs', 'azure', 'iceberg')]",
+            "exts = ('httpfs', 'azure', 'iceberg', 'ducklake', 'postgres'); "
+            "[c.execute(f'INSTALL {e}') for e in exts]; "
+            "[c.execute(f'LOAD {e}') for e in exts]",
         ],
         cwd=REPO_ROOT,
         check=True,
@@ -254,11 +271,17 @@ def stack(_require_env, tmp_path_factory) -> Iterator[Stack]:
 
 
 def _agent_healthy(base_url: str) -> bool:
+    """True once an agent has registered *and* advertised what it can do.
+
+    Health is reported on AUTH_OK, before the agent opens DuckDB to describe
+    itself, so waiting on status alone can start the suite against an agent
+    whose ``capabilities`` are still null.
+    """
     with httpx.Client(base_url=base_url, timeout=5.0) as c:
         login = c.post("/api/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
         login.raise_for_status()
         agents = c.get("/api/agents").json()
-        return any(a["status"] == "healthy" for a in agents)
+        return any(a["status"] == "healthy" and a.get("capabilities") for a in agents)
 
 
 @pytest_asyncio.fixture
@@ -272,10 +295,12 @@ async def api_client(stack: Stack):
 
 @pytest_asyncio.fixture
 async def healthy_agent(api_client) -> dict:
-    """The registered, healthy agent as the API reports it."""
+    """The registered, healthy agent with advertised capabilities. The stack
+    fixture already waits for both, so a match without them is a disposable
+    agent a `spawn_agent` test started."""
     agents = (await api_client.get("/api/agents")).json()
-    healthy = [a for a in agents if a["status"] == "healthy"]
-    assert healthy, "expected a healthy agent in the live stack"
+    healthy = [a for a in agents if a["status"] == "healthy" and a.get("capabilities")]
+    assert healthy, "expected a healthy agent with advertised capabilities in the live stack"
     return healthy[0]
 
 

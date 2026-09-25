@@ -2,31 +2,53 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import ClassVar
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, func
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from api.db.base import Base
 
+# A kind pairs a table format with the metastore that arbitrates its commits, so
+# it is one column, not two. Strings rather than an Enum, matching
+# `storage_backends.kind` and keeping future kinds a data migration.
+KIND_ICEBERG_POLARIS = "iceberg_polaris"
+KIND_DUCKLAKE = "ducklake"
+CATALOG_KINDS = frozenset({KIND_ICEBERG_POLARIS, KIND_DUCKLAKE})
+
 
 class Catalog(Base):
-    """A decoupled data domain: its own Polaris catalog + storage backend,
+    """A decoupled data domain: one catalog kind + one storage backend,
     attachable to many workspaces (M:N via :class:`WorkspaceCatalog`).
 
-    ``slug`` is an identifier-safe handle (``^[a-z][a-z0-9_]*$``) used as the
-    DuckDB ATTACH alias and in ``catalog.schema.table`` addressing. ``polaris_name``
-    is the Polaris warehouse/catalog name (globally unique); it is stored
-    explicitly rather than derived so migrated catalogs keep their legacy name
-    (the originating workspace slug) without a Polaris rename.
+    ``slug`` is the identifier-safe DuckDB ATTACH alias and
+    ``catalog.schema.table`` prefix.
+
+    ``kind`` says where catalog metadata lives and which of ``polaris_name`` /
+    ``metadata_schema`` is set. Storage is orthogonal to kind (I4). Identity
+    columns are stored, not derived, so a rename keeps the physical metastore.
     """
 
     __tablename__ = "catalogs"
+    __table_args__ = (
+        CheckConstraint(
+            "(kind = 'iceberg_polaris' AND polaris_name IS NOT NULL "
+            "AND metadata_schema IS NULL) OR "
+            "(kind = 'ducklake' AND metadata_schema IS NOT NULL "
+            "AND polaris_name IS NULL)",
+            name="ck_catalogs_kind_identity",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     slug: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    polaris_name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    kind: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default=KIND_ICEBERG_POLARIS
+    )
+    polaris_name: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
+    metadata_schema: Mapped[str | None] = mapped_column(String(63), unique=True, nullable=True)
     storage_backend_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("storage_backends.id"), nullable=False
     )
@@ -36,6 +58,19 @@ class Catalog(Base):
     )
 
     storage_backend: Mapped[StorageBackend] = relationship(back_populates="catalogs")
+    # Carries a new DuckLake password until the flush gives the row an id for
+    # its credential row. Never persisted.
+    pending_ducklake_password: ClassVar[str | None] = None
+
+    # DuckLake only. Eager-loaded by the catalog resolvers for the dispatch path.
+    ducklake_credential: Mapped[Credential | None] = relationship(
+        "Credential",
+        primaryjoin=(
+            "and_(Catalog.id == foreign(Credential.catalog_id), Credential.kind == 'ducklake_role')"
+        ),
+        viewonly=True,
+        uselist=False,
+    )
     workspace_links: Mapped[list[WorkspaceCatalog]] = relationship(
         back_populates="catalog", cascade="all, delete-orphan"
     )

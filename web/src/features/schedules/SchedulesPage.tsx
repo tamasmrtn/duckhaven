@@ -33,6 +33,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { AgentPicker } from "@/components/app/AgentPicker";
+import { useCatalogs } from "@/queries/catalogs";
 import { StatusPill } from "@/components/app/StatusPill";
 import { useSavedQueries } from "@/queries/queries";
 import { useAgents } from "@/queries/agents";
@@ -318,6 +319,8 @@ function ScheduleDialog({
   const create = useCreateSchedule(ws);
   const update = useUpdateSchedule(ws);
   const remove = useDeleteSchedule(ws);
+  // The agent must serve the workspace's catalog kinds, as for a worksheet.
+  const { data: catalogs = [] } = useCatalogs(ws);
   const { data: runs = [] } = useScheduleRuns(ws, schedule?.id ?? null);
 
   const [savedQueryId, setSavedQueryId] = useState<string>("");
@@ -467,6 +470,7 @@ function ScheduleDialog({
             <AgentPicker
               value={agentId}
               onChange={setAgentId}
+              workspaceCatalogKinds={catalogs.map((c) => c.kind)}
               allowTerminatedElastic
             />
             <p className="text-2xs text-text-tertiary">

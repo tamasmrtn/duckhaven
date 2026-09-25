@@ -65,6 +65,8 @@ export interface HealthHistoryPoint {
 
 export interface Remediation {
   applicable_in_app: boolean;
+  // A catalog-scoped verb affects every table in the catalog.
+  scope?: "table" | "catalog";
   summary?: string;
   command?: string;
   tool?: string;
@@ -85,6 +87,15 @@ export interface Recommendation {
   status: string;
   created_at: string;
   resolved_at: string | null;
+  // The last apply DuckHaven ran against this recommendation, if any.
+  apply_status?: "running" | "succeeded" | "failed" | null;
+  apply_error?: string | null;
+  apply_result?: {
+    before?: { data_file_count?: number; total_data_bytes?: number } | null;
+    after?: { data_file_count?: number; total_data_bytes?: number } | null;
+  } | null;
+  applied_at?: string | null;
+  applied_query_id?: string | null;
 }
 
 export interface TableHealthDetail {

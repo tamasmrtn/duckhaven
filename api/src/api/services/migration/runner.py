@@ -1,4 +1,6 @@
-"""The catalog-migration runner: a periodic, leader-elected driver.
+"""The catalog-jobs runner: a periodic, leader-elected driver.
+
+Also advances catalog exports, which need the same single driver per tick.
 
 Each tick it claims the oldest active ``CatalogMigration`` and advances it to a
 terminal state via the engine, then sweeps any completed migrations past their
@@ -24,7 +26,10 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import settings
+from api.models.catalog_export import CatalogExport
 from api.models.catalog_migration import CatalogMigration
+from api.services.export import ACTIVE_STATUSES as EXPORT_ACTIVE
+from api.services.export import engine as export_engine
 from api.services.migration import ACTIVE_STATUSES, engine
 from api.services.polaris import PolarisClient
 
@@ -55,9 +60,28 @@ async def run_cycle(
             processed = str(migration.id)
             await engine.process_migration(db, polaris, migration)
 
+        # Exports share this loop's cadence and leader election.
+        exported = None
+        export = (
+            await db.execute(
+                sa.select(CatalogExport)
+                .where(CatalogExport.status.in_(EXPORT_ACTIVE))
+                .order_by(CatalogExport.created_at)
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if export is not None:
+            exported = str(export.id)
+            await export_engine.process_export(db, polaris, export)
+
         cutoff = datetime.now(tz=UTC) - timedelta(days=settings.migration_retention_days)
         swept = await engine.cleanup_retained(db, polaris, older_than=cutoff)
-        return {"status": "ran", "processed": processed, "swept": swept}
+        return {
+            "status": "ran",
+            "processed": processed,
+            "exported": exported,
+            "swept": swept,
+        }
 
 
 @contextlib.asynccontextmanager

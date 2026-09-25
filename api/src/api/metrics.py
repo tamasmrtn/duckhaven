@@ -115,6 +115,17 @@ POLARIS_DURATION = Histogram(
     ["replica_id", "operation"],
 )
 
+DUCKLAKE_QUERIES = Counter(
+    "duckhaven_ducklake_queries",
+    "Metadata queries issued to a DuckLake catalog database.",
+    ["replica_id", "operation", "status"],
+)
+DUCKLAKE_DURATION = Histogram(
+    "duckhaven_ducklake_query_duration_seconds",
+    "Latency of metadata queries issued to a DuckLake catalog database.",
+    ["replica_id", "operation"],
+)
+
 QUERY_QUEUE_WAIT = Histogram(
     "duckhaven_query_queue_wait_seconds",
     "Time a user query waited in the agent admission queue before running.",
@@ -235,6 +246,16 @@ def record_query_queue_rejection(error: str | None) -> bool:
 def record_polaris_request(operation: str, status: str, duration_s: float) -> None:
     POLARIS_REQUESTS.labels(settings.replica_id, operation, status).inc()
     POLARIS_DURATION.labels(settings.replica_id, operation).observe(duration_s)
+
+
+def record_ducklake_query(operation: str, status: str, duration_s: float) -> None:
+    """The DuckLake counterpart to `record_polaris_request`.
+
+    `operation` must be a stable caller-supplied name, never SQL or a catalog
+    name, to keep label cardinality bounded.
+    """
+    DUCKLAKE_QUERIES.labels(settings.replica_id, operation, status).inc()
+    DUCKLAKE_DURATION.labels(settings.replica_id, operation).observe(duration_s)
 
 
 def record_sql_session_opened() -> None:
@@ -371,7 +392,7 @@ class _Snapshot:
     """Instantaneous state gathered by the endpoint, read by the collector."""
 
     agents: list[dict] = field(default_factory=list)
-    pool: dict | None = None
+    pool: dict[str, dict] = field(default_factory=dict)
     maintenance: dict | None = None
     sql_sessions_active: int = 0
     # (provider, lifecycle) -> count; None when this replica isn't the reap leader.
@@ -404,14 +425,17 @@ class _ScrapeCollector:
             for (provider, lifecycle), count in sorted(snap.agent_lifecycles.items()):
                 fam.add_metric([provider, lifecycle], count)
             yield fam
-        if snap.pool is not None:
+        if snap.pool:
             for key, doc in (
                 ("size", "Configured connection pool size."),
                 ("checked_out", "Connections currently checked out."),
                 ("overflow", "Connections beyond the configured pool size."),
             ):
-                fam = GaugeMetricFamily(f"duckhaven_db_pool_{key}", doc, labels=["replica_id"])
-                fam.add_metric([settings.replica_id], snap.pool[key])
+                fam = GaugeMetricFamily(
+                    f"duckhaven_db_pool_{key}", doc, labels=["replica_id", "pool"]
+                )
+                for name, stats in snap.pool.items():
+                    fam.add_metric([settings.replica_id, name], stats[key])
                 yield fam
         if snap.maintenance is not None:
             m = snap.maintenance
@@ -525,9 +549,9 @@ async def _collect_agents(db: AsyncSession) -> list[dict]:
     return out
 
 
-def _collect_pool() -> dict | None:
+def _pool_stats(target) -> dict | None:  # noqa: ANN001 - an AsyncEngine
     try:
-        pool = engine.sync_engine.pool
+        pool = target.sync_engine.pool
         return {
             "size": pool.size(),
             "checked_out": pool.checkedout(),
@@ -535,6 +559,19 @@ def _collect_pool() -> dict | None:
         }
     except Exception:  # noqa: BLE001 — non-QueuePool (e.g. SQLite tests) lacks these
         return None
+
+
+def _collect_pool() -> dict[str, dict]:
+    """Pool stats per engine, including DuckLake's catalog database."""
+    from api.services.catalog_backends import ducklake
+
+    pools = {}
+    if (main := _pool_stats(engine)) is not None:
+        pools["main"] = main
+    # Don't build the lazy engine just to measure it.
+    if ducklake._engine is not None and (dl := _pool_stats(ducklake._engine)) is not None:
+        pools["ducklake"] = dl
+    return pools
 
 
 async def _collect_maintenance(db: AsyncSession) -> dict:

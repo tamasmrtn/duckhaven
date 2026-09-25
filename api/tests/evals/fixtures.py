@@ -17,7 +17,8 @@ from sqlglot import exp
 
 from api.services.assistant.gateway import GatewayError
 
-CATALOGS = [{"slug": "warehouse", "name": "Warehouse"}]
+# `kind` mirrors /workspaces/{ws}/catalogs; the DuckLake prompt block relies on it.
+CATALOGS = [{"slug": "warehouse", "name": "Warehouse", "kind": "iceberg_polaris"}]
 SCHEMAS = {"warehouse": ["analytics"]}
 TABLES = {("warehouse", "analytics"): ["orders", "customers", "events", "feedback"]}
 

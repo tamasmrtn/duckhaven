@@ -75,6 +75,46 @@ async def test_create_query_agent_not_connected(
         json={"sql": "SELECT 1", "agent_id": str(agent.id)},
     )
     assert resp.status_code == 503
+    assert resp.json()["message"] == "Agent not connected"
+
+
+async def test_an_unreachable_agent_leaves_a_failed_run_in_history(
+    authed_client: AsyncClient, workspace: Workspace, agent: Agent
+):
+    """The rejected attempt is recorded, so History explains the worksheet's error."""
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(agent.id), "catalog": "lake"},
+    )
+    query_id = resp.json()["details"]["query_id"]
+
+    run = (await authed_client.get(f"/queries/{query_id}")).json()
+    assert run["status"] == "failed"
+    assert run["error"] == "Agent not connected"
+    assert run["agent_id"] == str(agent.id)
+    history = (await authed_client.get(f"/workspaces/{workspace.slug}/queries")).json()
+    assert [q["id"] for q in history["items"]] == [query_id]
+
+
+async def test_agent_lost_between_probe_and_send_is_a_503_not_a_500(
+    authed_client: AsyncClient, workspace: Workspace, connected_agent, monkeypatch
+):
+    from api.services import query as query_service
+
+    agent, _ws = connected_agent
+
+    async def lose_the_socket(*_args, **_kwargs):
+        raise query_service.AgentUnavailable("Agent not connected")
+
+    monkeypatch.setattr(query_service, "dispatch_query", lose_the_socket)
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(agent.id)},
+    )
+
+    assert resp.status_code == 503
+    run = (await authed_client.get(f"/queries/{resp.json()['details']['query_id']}")).json()
+    assert run["status"] == "failed"
 
 
 async def test_create_query_rejects_disallowed_sql(

@@ -129,9 +129,16 @@ async def create_query(
             and agent.lifecycle in ("terminated", "failed")
         ):
             return await _create_starting_query(db, workspace, user.id, body, agent)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Agent not connected"
+        failed = Query(
+            workspace_id=workspace.id,
+            agent_id=agent.id,
+            user_id=user.id,
+            sql=body.sql,
+            timeout_s=body.timeout_s,
+            active_catalog=body.catalog,
         )
+        db.add(failed)
+        raise await _agent_not_connected(db, failed)
 
     # Every catalog bound to the workspace is attached on each query, so the
     # agent must support every catalog's kind and storage backend kind.
@@ -173,7 +180,31 @@ async def create_query(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"error": "grant_denied", "detail": str(exc)},
         ) from exc
+    except query_service.AgentUnavailable:
+        # Presence is read with a TTL, so the agent can lose its socket between the
+        # probe above and the send. Same answer as the probe, rather than a 500.
+        raise await _agent_not_connected(db, query) from None
     return query
+
+
+async def _agent_not_connected(db: AsyncSession, query: Query) -> HTTPException:
+    """Record `query` as a failed run and build the 503 for an unreachable agent.
+
+    The run is committed before the error is raised so History shows the attempt
+    -- otherwise a worksheet reports a failure that leaves no trace anywhere.
+    """
+    query.status = "failed"
+    query.error = "Agent not connected"
+    query.finished_at = datetime.now(UTC)
+    await db.commit()
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail={
+            "error": "unavailable",
+            "detail": "Agent not connected",
+            "query_id": str(query.id),
+        },
+    )
 
 
 async def _stamp_saved_query_run(db: AsyncSession, workspace, saved_query_id) -> None:

@@ -214,6 +214,37 @@ async def test_scheduled_run_allowed_with_creator_grant(session_factory):
         assert q.status == "queued"
 
 
+async def _hand_saved_query_to(db, ws, *, email: str):
+    """Make a fresh user, with no grants, the last editor of `ws`'s saved query."""
+    editor = User(email=email, password_hash=hash_password("pw"), name="Ed", role="user")
+    db.add(editor)
+    await db.flush()
+    saved = (
+        await db.execute(select(SavedQuery).where(SavedQuery.workspace_id == ws.id))
+    ).scalar_one()
+    saved.updated_by = editor.id
+    await db.commit()
+
+
+async def test_scheduled_run_executes_as_the_last_editor(session_factory):
+    """The creator's grant does not carry over to SQL someone else wrote: the run
+    is enforced against whoever last edited the saved query."""
+    async with session_factory() as db:
+        ws = await _seed_scoped(db, sql="SELECT * FROM analytics.secret", grant_tier="reader")
+        await _hand_saved_query_to(db, ws, email=f"ed-{uuid.uuid4().hex[:8]}@test.local")
+
+    await run_cycle(session_factory, now=_NOW)
+
+    async with session_factory() as db:
+        q = (
+            await db.execute(
+                select(Query).where(Query.workspace_id == ws.id, Query.origin == "scheduled")
+            )
+        ).scalar_one()
+        assert q.status == "failed"
+        assert "authorized" in (q.error or "").lower()
+
+
 async def test_skips_disabled_and_future_schedules(session_factory):
     async with session_factory() as db:
         await _seed(db, enabled=False, next_run_at=_PAST)
@@ -660,3 +691,42 @@ async def test_a_dispatched_scheduled_run_is_never_re_dispatched(session_factory
     async with session_factory() as db:
         bound = await bind_scheduled_work(db, await db.get(Agent, agent_id))
     assert bound == 0
+
+
+async def test_bound_run_executes_as_the_last_editor(session_factory, elastic_enabled, monkeypatch):
+    """The binder dispatches a parked run with the same principal the scanner
+    would: the saved query's last editor, not its creator."""
+    from api.services import query as query_mod
+    from api.services.compute.service import bind_scheduled_work
+
+    async with session_factory() as db:
+        schedule, agent = await _seed_with_agent(
+            db, provider="null", lifecycle="terminated", connected=False
+        )
+        editor = User(
+            email=f"bind-{uuid.uuid4().hex[:8]}@test.local",
+            password_hash=hash_password("pw"),
+            name="Ed",
+            role="user",
+        )
+        db.add(editor)
+        await db.flush()
+        saved = await db.get(SavedQuery, schedule.saved_query_id)
+        saved.updated_by = editor.id
+        await db.commit()
+        agent_id, editor_id = agent.id, editor.id
+
+    await run_cycle(session_factory, now=_NOW)
+
+    principals = []
+
+    async def fake_dispatch(db, query, *, principal_id=None, **_kwargs):
+        principals.append(principal_id)
+
+    monkeypatch.setattr(query_mod, "dispatch_query", fake_dispatch)
+    async with session_factory() as db:
+        fresh = await db.get(Agent, agent_id)
+        registry.register(fresh.id, FakeWS())  # type: ignore[arg-type]
+        await bind_scheduled_work(db, fresh)
+
+    assert principals == [editor_id]

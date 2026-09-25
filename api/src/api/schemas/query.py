@@ -1,8 +1,8 @@
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, StringConstraints
 
 
 class QueryCreate(BaseModel):
@@ -130,14 +130,21 @@ class SqlMetadataOut(BaseModel):
     types: list[SqlTypeOut]
 
 
+# Names are compared case-insensitively and must stay unique per workspace, so
+# surrounding whitespace is dropped rather than letting "report " shadow "report".
+SavedQueryName = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)
+]
+
+
 class SavedQueryCreate(BaseModel):
-    name: str
+    name: SavedQueryName
     sql: str
     default_agent_id: uuid.UUID | None = None
 
 
 class SavedQueryUpdate(BaseModel):
-    name: str | None = None
+    name: SavedQueryName | None = None
     sql: str | None = None
     default_agent_id: uuid.UUID | None = None
 
@@ -153,6 +160,11 @@ class SavedQueryOut(BaseModel):
     created_by: uuid.UUID
     created_by_name: str | None = None
     created_at: datetime
+    # The last change to the SQL, name or default agent, and who made it. The
+    # editor is the principal a scheduled run of this query executes as.
+    updated_at: datetime
+    updated_by: uuid.UUID
+    updated_by_name: str | None = None
     last_run_at: datetime | None
 
 

@@ -1348,6 +1348,128 @@ async def test_create_saved_query_overwrites_by_name(
     assert len(listed.json()["items"]) == 1
 
 
+async def test_create_saved_query_can_refuse_to_overwrite(
+    authed_client: AsyncClient, workspace: Workspace
+):
+    """`on_conflict=error` lets the UI ask before replacing a shared query."""
+    first = await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries",
+        json={"name": "Report", "sql": "SELECT 1"},
+    )
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries?on_conflict=error",
+        json={"name": "report", "sql": "SELECT 2"},
+    )
+    assert resp.status_code == 409
+    body = resp.json()
+    assert body["error"] == "saved_query_exists"
+    assert body["details"] == {"id": first.json()["id"], "name": "Report"}
+
+    listed = await authed_client.get(f"/workspaces/{workspace.slug}/saved-queries")
+    assert [q["sql"] for q in listed.json()["items"]] == ["SELECT 1"]
+
+
+async def test_overwrite_matches_names_ignoring_case(
+    authed_client: AsyncClient, workspace: Workspace
+):
+    first = await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries",
+        json={"name": "Report", "sql": "SELECT 1"},
+    )
+    second = await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries",
+        json={"name": "  REPORT ", "sql": "SELECT 2"},
+    )
+    assert second.status_code == 200
+    assert second.json()["id"] == first.json()["id"]
+    assert second.json()["name"] == "REPORT"
+
+
+async def test_overwrite_keeps_the_creator_and_records_the_editor(
+    authed_client: AsyncClient, workspace: Workspace, user: User, db_session
+):
+    """The creator stays for attribution; the editor is who scheduled runs execute as."""
+    from api.services.auth import hash_password
+
+    first = await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries",
+        json={"name": "Report", "sql": "SELECT 1"},
+    )
+    assert first.json()["updated_by"] == str(user.id)
+
+    editor = User(
+        email="ed@queries.local", password_hash=hash_password("pw"), name="Ed", role="user"
+    )
+    db_session.add(editor)
+    await db_session.flush()
+    db_session.add(WorkspaceMember(workspace_id=workspace.id, user_id=editor.id, role="writer"))
+    await db_session.commit()
+    await authed_client.post("/auth/logout")
+    await authed_client.post("/auth/login", json={"email": "ed@queries.local", "password": "pw"})
+
+    replaced = await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries",
+        json={"name": "Report", "sql": "SELECT 2"},
+    )
+    body = replaced.json()
+    assert body["created_by"] == str(user.id)
+    assert body["updated_by"] == str(editor.id)
+    assert body["updated_at"] >= first.json()["updated_at"]
+
+    listed = (await authed_client.get(f"/workspaces/{workspace.slug}/saved-queries")).json()
+    assert listed["items"][0]["updated_by_name"] == "Ed"
+
+
+async def test_patching_sql_records_the_editor_but_renaming_does_not(
+    authed_client: AsyncClient, workspace: Workspace, user: User, db_session
+):
+    from api.models.query import SavedQuery as SavedQueryModel
+    from api.services.auth import hash_password
+
+    creator = User(
+        email="cr@queries.local", password_hash=hash_password("pw"), name="Cr", role="user"
+    )
+    db_session.add(creator)
+    await db_session.flush()
+    sq = SavedQueryModel(
+        workspace_id=workspace.id, name="Report", sql="SELECT 1", created_by=creator.id
+    )
+    db_session.add(sq)
+    await db_session.commit()
+    url = f"/workspaces/{workspace.slug}/saved-queries/{sq.id}"
+
+    renamed = await authed_client.patch(url, json={"name": "Renamed"})
+    assert renamed.json()["updated_by"] == str(creator.id)
+    edited = await authed_client.patch(url, json={"sql": "SELECT 2"})
+    assert edited.json()["updated_by"] == str(user.id)
+
+
+async def test_renaming_onto_another_saved_query_is_a_conflict(
+    authed_client: AsyncClient, workspace: Workspace
+):
+    await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries",
+        json={"name": "Taken", "sql": "SELECT 1"},
+    )
+    other = await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries",
+        json={"name": "Mine", "sql": "SELECT 2"},
+    )
+    resp = await authed_client.patch(
+        f"/workspaces/{workspace.slug}/saved-queries/{other.json()['id']}",
+        json={"name": "taken"},
+    )
+    assert resp.status_code == 409
+    assert resp.json()["error"] == "saved_query_exists"
+
+
+async def test_blank_saved_query_name_is_rejected(authed_client: AsyncClient, workspace: Workspace):
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries", json={"name": "   ", "sql": "SELECT 1"}
+    )
+    assert resp.status_code == 422
+
+
 async def test_saved_query_rename_and_delete_lifecycle(
     authed_client: AsyncClient, workspace: Workspace
 ):

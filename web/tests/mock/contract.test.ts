@@ -7,6 +7,8 @@ import { queriesApi } from "@/api/queries";
 import { storageBackendsApi } from "@/api/storage-backends";
 import { agentsApi } from "@/api/agents";
 import { semanticApi } from "@/api/semantic";
+import { worksheetsApi } from "@/api/worksheets";
+import { searchApi } from "@/api/search";
 
 // Each mocked endpoint must mirror the authoritative backend *Out schema. These
 // assert the realigned shapes; error paths use the built-in triggers + overrides.
@@ -313,5 +315,114 @@ describe("semantic contract", () => {
     await expect(
       semanticApi.importDocument("acme-analytics", "native", "models: []"),
     ).rejects.toMatchObject({ name: "ApiError", status: 422 });
+  });
+});
+
+describe("worksheets contract", () => {
+  it("lists only open tabs, left to right, when asked", async () => {
+    const open = await worksheetsApi.listOpen("acme-analytics");
+    expect(open.map((w) => w.id)).toEqual(["wk-1", "wk-2"]);
+    expect(open.every((w) => w.is_open)).toBe(true);
+  });
+
+  it("creates at the end of the tab strip with version 1", async () => {
+    const created = await worksheetsApi.create("acme-analytics", {
+      title: "New",
+    });
+    expect(created).toMatchObject({
+      id: "wk-new-1",
+      title: "New",
+      sql: "",
+      version: 1,
+      tab_position: 2,
+      owner_id: "u-1",
+    });
+  });
+
+  it("bumps the version on a content edit, not on metadata", async () => {
+    const edited = await worksheetsApi.update("acme-analytics", "wk-1", {
+      sql: "SELECT 2",
+      base_version: 1,
+    });
+    expect(edited.version).toBe(2);
+    const meta = await worksheetsApi.update("acme-analytics", "wk-1", {
+      catalog: "curated",
+    });
+    expect(meta.version).toBe(2);
+  });
+
+  it("answers a stale base_version with a 409 carrying the current worksheet", async () => {
+    await expect(
+      worksheetsApi.update("acme-analytics", "wk-2", {
+        sql: "SELECT 1",
+        base_version: 1,
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "worksheet_conflict",
+      details: { current: { id: "wk-2", version: 3 } },
+    });
+  });
+
+  it("requires base_version for a content edit", async () => {
+    await expect(
+      worksheetsApi.update("acme-analytics", "wk-1", { title: "x" }),
+    ).rejects.toMatchObject({ status: 422, code: "base_version_required" });
+  });
+});
+
+describe("saved queries overwrite contract", () => {
+  it("on_conflict=error is a 409 naming the existing query", async () => {
+    await expect(
+      queriesApi.save(
+        "acme-analytics",
+        { name: "DAILY events", sql: "SELECT 1" },
+        "error",
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "saved_query_exists",
+      details: { id: "sq-1", name: "Daily events" },
+    });
+  });
+
+  it("the default still replaces, ignoring case, and records the editor", async () => {
+    const saved = await queriesApi.save("acme-analytics", {
+      name: "daily events",
+      sql: "SELECT 2",
+    });
+    expect(saved).toMatchObject({ id: "sq-1", sql: "SELECT 2", updated_by: "u-1" });
+  });
+
+  it("dispatch sends timeout_s", async () => {
+    let body: Record<string, unknown> = {};
+    server.use(
+      http.post("/api/workspaces/:ws/queries", async ({ request }) => {
+        body = (await request.json()) as Record<string, unknown>;
+        return Response.json({ id: "q" }, { status: 202 });
+      }),
+    );
+    await queriesApi.dispatch("acme-analytics", "SELECT 1", "ag-1", {
+      timeout: 90,
+    });
+    expect(body).toMatchObject({ timeout_s: 90 });
+    expect(body).not.toHaveProperty("timeout");
+  });
+});
+
+describe("search contract", () => {
+  it("narrows to the requested types and honours the limit", async () => {
+    const report = await searchApi.report("acme-analytics", "e", {
+      types: ["table"],
+      limit: 2,
+    });
+    expect(report.items.every((r) => r.type === "table")).toBe(true);
+    expect(report.items.length).toBeLessThanOrEqual(2);
+    expect(report).toHaveProperty("has_more");
+  });
+
+  it("returns the envelope, not a bare array, for a blank query", async () => {
+    const res = await fetch("/api/workspaces/acme-analytics/search?q=");
+    expect(await res.json()).toEqual({ items: [], has_more: false });
   });
 });

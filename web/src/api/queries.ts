@@ -17,7 +17,8 @@ export const queriesApi = {
     post<Query>(`/workspaces/${ws}/queries`, {
       sql,
       agent_id: agentId,
-      timeout: opts?.timeout,
+      // Seconds. The API reads `timeout_s`; any other spelling is dropped.
+      timeout_s: opts?.timeout,
       saved_query_id: opts?.savedQueryId,
       // The worksheet's active catalog — USEd for unqualified table names.
       catalog: opts?.catalog,
@@ -93,10 +94,17 @@ export const queriesApi = {
   listSaved: (ws: string) =>
     getAllPages<SavedQuery>(`/workspaces/${ws}/saved-queries`),
 
+  // `onConflict: "error"` makes an existing name (ignoring case) a 409
+  // `saved_query_exists` instead of silently replacing a shared query.
   save: (
     ws: string,
-    data: { name: string; sql: string; default_agent_id?: string },
-  ) => post<SavedQuery>(`/workspaces/${ws}/saved-queries`, data),
+    data: { name: string; sql: string; default_agent_id?: string | null },
+    onConflict: "replace" | "error" = "replace",
+  ) =>
+    post<SavedQuery>(
+      `/workspaces/${ws}/saved-queries?on_conflict=${onConflict}`,
+      data,
+    ),
 
   updateSaved: (
     ws: string,

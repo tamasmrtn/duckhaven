@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, fireEvent, screen } from '@testing-library/react'
-import { ResultsTable } from '@/features/worksheet/ResultsTable'
+import { render, fireEvent, screen, within } from '@testing-library/react'
+import { ResultsTable, isNumericColumn } from '@/features/worksheet/ResultsTable'
 
 const rows = Array.from({ length: 50 }, (_, i) => ({ n: i }))
 
@@ -190,7 +190,10 @@ describe('ResultsTable sorting', () => {
     return screen
       .getAllByRole('row')
       .slice(1) // drop the header row
-      .map((row) => row.textContent)
+      // The data cells only: each row also carries its row number.
+      .map((row) =>
+        [...row.querySelectorAll('td')].map((td) => td.textContent).join(''),
+      )
   }
 
   it('cycles a column through descending, ascending, and back to unsorted on repeated clicks', () => {
@@ -253,5 +256,54 @@ describe('ResultsTable pre-run state', () => {
   it('shows a "No results yet" placeholder before any query has run', () => {
     render(<ResultsTable columns={[]} rows={[]} total={0} />)
     expect(screen.getByText('No results yet.')).toBeInTheDocument()
+  })
+})
+
+describe('ResultsTable layout', () => {
+  it('right-aligns numeric columns and leaves text left-aligned', () => {
+    render(
+      <ResultsTable
+        columns={['n_name', 'c']}
+        columnSchema={[
+          { name: 'n_name', type: 'VARCHAR' },
+          { name: 'c', type: 'BIGINT' },
+        ]}
+        rows={[{ n_name: 'ALGERIA', c: 1 }]}
+        total={1}
+      />,
+    )
+    expect(screen.getByRole('button', { name: 'Copy 1' })).toHaveClass('text-right')
+    expect(screen.getByRole('button', { name: 'Copy ALGERIA' })).toHaveClass('text-left')
+  })
+
+  it('treats DECIMAL with precision as numeric', () => {
+    expect(isNumericColumn('DECIMAL(38,10)', [], 'x')).toBe(true)
+    expect(isNumericColumn('UBIGINT', [], 'x')).toBe(true)
+    expect(isNumericColumn('DATE', [], 'x')).toBe(false)
+  })
+
+  it('falls back to the values when the agent sent no column types', () => {
+    expect(isNumericColumn(undefined, [{ x: 1 }, { x: null }], 'x')).toBe(true)
+    expect(isNumericColumn(undefined, [{ x: '1' }], 'x')).toBe(false)
+  })
+
+  it('numbers the rows without making the number a data cell', () => {
+    render(<ResultsTable columns={['n']} rows={[{ n: 7 }, { n: 8 }]} total={2} />)
+    const rows = screen.getAllByRole('row').slice(1)
+    expect(within(rows[1]).getByRole('rowheader')).toHaveTextContent('2')
+    expect(rows[1].querySelectorAll('td')).toHaveLength(1)
+  })
+
+  it('shows extra error actions beside the error', () => {
+    render(
+      <ResultsTable
+        columns={[]}
+        rows={[]}
+        total={0}
+        error="Agent not connected"
+        errorActions={<button type="button">Switch agent</button>}
+      />,
+    )
+    expect(screen.getByRole('button', { name: 'Switch agent' })).toBeInTheDocument()
   })
 })

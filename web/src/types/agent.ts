@@ -259,3 +259,68 @@ export function agentSupportsBackend(agent: Agent, kind: BackendKind): boolean {
   if (kind === "adls_gen2") return extensions.includes("azure");
   return extensions.includes("httpfs");
 }
+
+/** What a workspace needs from an agent: every catalog kind and storage backend it attaches. */
+export interface AgentRequirements {
+  catalogKinds?: CatalogKind[];
+  backends?: BackendKind[];
+}
+
+/**
+ * How an agent can serve a workspace right now, for grouping the picker and
+ * choosing a default:
+ * - `running` — connected and compatible; a run goes straight to it.
+ * - `startable` — a stopped elastic agent the API restarts for the run.
+ * - `incompatible` — up, but missing an extension a catalog or backend needs.
+ * - `unavailable` — offline and not something a run can start (a static agent,
+ *   or an elastic one mid-teardown or still provisioning).
+ */
+export type AgentAvailability =
+  | { kind: "running" }
+  | { kind: "startable" }
+  | { kind: "incompatible"; reason: string }
+  | { kind: "unavailable" };
+
+/** Whether the API restarts this agent when a run targets it while it is down. */
+export function agentRestartable(agent: Agent): boolean {
+  return (
+    !!agent.provider &&
+    (agent.lifecycle === "terminated" || agent.lifecycle === "failed")
+  );
+}
+
+/** The first thing `agent` lacks to serve `needs`, or null if it lacks nothing. */
+export function agentIncompatibility(
+  agent: Agent,
+  needs: AgentRequirements,
+): string | null {
+  for (const kind of needs.catalogKinds ?? []) {
+    if (!agentSupportsCatalogKind(agent, kind)) {
+      return `Missing extension for ${kind} catalogs: ${missingCatalogKindExtension(agent, kind)}`;
+    }
+  }
+  for (const backend of needs.backends ?? []) {
+    if (!agentSupportsBackend(agent, backend)) {
+      return `Missing extension for ${backend === "adls_gen2" ? "azure" : "httpfs"}`;
+    }
+  }
+  return null;
+}
+
+export function agentAvailability(
+  agent: Agent,
+  needs: AgentRequirements,
+): AgentAvailability {
+  // A stopped elastic agent advertises nothing until it dials home again, so
+  // its capabilities cannot be checked here; the API checks them on dispatch.
+  if (agent.status === "unavailable") {
+    return agentRestartable(agent)
+      ? { kind: "startable" }
+      : { kind: "unavailable" };
+  }
+  if (agent.lifecycle === "terminating" || agent.lifecycle === "provisioning") {
+    return { kind: "unavailable" };
+  }
+  const reason = agentIncompatibility(agent, needs);
+  return reason ? { kind: "incompatible", reason } : { kind: "running" };
+}

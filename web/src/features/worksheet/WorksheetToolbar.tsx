@@ -122,7 +122,9 @@ export function WorksheetToolbar(props: WorksheetToolbarProps) {
     onSaveAsMetric,
   } = props;
   return (
-    <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-1.5 shrink-0">
+    // py-2 matches the sidebar's padding, so the agent picker and the sidebar's
+    // search box (both 32px) line up exactly.
+    <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2 shrink-0">
       {leading}
       <AgentPicker
         ws={ws}

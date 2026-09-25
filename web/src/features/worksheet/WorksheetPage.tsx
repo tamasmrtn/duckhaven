@@ -32,7 +32,11 @@ import { ConflictBanner } from "./ConflictBanner";
 import { useOpenInWorksheet } from "./openInWorksheet";
 import { ResultsPane } from "./ResultsPane";
 import { SaveQueryDialog } from "./SaveQueryDialog";
-import { WorksheetRail } from "./sidebar/WorksheetRail";
+import {
+  RailSwitch,
+  useRailView,
+  WorksheetRail,
+} from "./sidebar/WorksheetRail";
 import { SqlEditor, type SqlEditorHandle } from "./SqlEditor";
 import { loadLastUsedAgent, resolveWorksheetAgent } from "./state/resolveAgent";
 import { useWorksheetRuntime } from "./state/useWorksheetRuntime";
@@ -166,6 +170,7 @@ export function WorksheetPage() {
   const [editorHeight, setEditorHeight] = useState(55); // percent
   const isMobile = useMediaQuery("(max-width: 767px)");
   const [railOpen, setRailOpen] = useState(false);
+  const [railView, setRailView] = useRailView();
 
   const onHorizMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -215,6 +220,7 @@ export function WorksheetPage() {
     <WorksheetRail
       ws={ws}
       workspaceName={workspace?.name}
+      view={railView}
       openIds={openIds}
       activeId={sheet?.id}
       onOpen={(id) => {
@@ -249,31 +255,48 @@ export function WorksheetPage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <WorksheetTabs
-        worksheets={sheets.worksheets}
-        activeId={sheet.id}
-        unsavedIds={unsavedIds}
-        onSelect={sheets.select}
-        onClose={(id) => void sheets.close(id)}
-        onRename={sheets.rename}
-        onNew={() => void sheets.create()}
-      />
+      {/* One row across the page, as in Databricks: the sidebar's switch sits
+          in a cell exactly as wide as the sidebar, so its right border and the
+          sidebar's form one straight divider, and one bottom border runs under
+          both. */}
+      <div className="flex h-9 shrink-0 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)]">
+        {!isMobile && (
+          <div
+            data-testid="rail-switch-cell"
+            className="flex shrink-0 items-center border-r border-[var(--border-subtle)] px-2"
+            style={{ width: leftWidth }}
+          >
+            <RailSwitch view={railView} onChange={setRailView} />
+          </div>
+        )}
+        <WorksheetTabs
+          worksheets={sheets.worksheets}
+          activeId={sheet.id}
+          unsavedIds={unsavedIds}
+          onSelect={sheets.select}
+          onClose={(id) => void sheets.close(id)}
+          onRename={sheets.rename}
+          onNew={() => void sheets.create()}
+        />
+      </div>
 
       <div className="flex flex-1 overflow-hidden">
         {!isMobile && (
-          <>
+          <div
+            data-testid="worksheet-rail"
+            className="relative shrink-0 border-r border-[var(--border-subtle)] bg-[var(--bg-surface)]"
+            style={{ width: leftWidth }}
+          >
+            {rail()}
+            {/* Straddles the border and takes no width of its own, so no gap
+                opens between the sidebar and the toolbar. */}
             <div
-              className="shrink-0 overflow-hidden border-r border-[var(--border-subtle)] bg-[var(--bg-surface)]"
-              style={{ width: leftWidth }}
-            >
-              {rail()}
-            </div>
-            <div
+              data-testid="rail-resize-handle"
               onMouseDown={onHorizMouseDown}
-              className="w-1 cursor-col-resize bg-transparent hover:bg-[var(--border-strong)] transition-colors shrink-0"
+              className="absolute inset-y-0 -right-[3px] z-10 w-1.5 cursor-col-resize bg-transparent transition-colors hover:bg-[var(--border-strong)]"
               aria-hidden
             />
-          </>
+          </div>
         )}
 
         <div className="editor-results-container flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -292,13 +315,19 @@ export function WorksheetPage() {
                       <PanelLeft className="size-4" />
                     </Button>
                   </SheetTrigger>
-                  <SheetContent side="left" className="w-80 p-0">
+                  <SheetContent
+                    side="left"
+                    className="flex w-80 flex-col gap-0 p-0"
+                  >
                     <SheetHeader className="border-b border-[var(--border-subtle)] px-4 py-3">
                       <SheetTitle className="text-sm">
                         Worksheets and catalog
                       </SheetTitle>
                     </SheetHeader>
-                    <div className="h-[calc(100%-3.25rem)] overflow-hidden">
+                    <div className="border-b border-[var(--border-subtle)] px-2 py-1.5">
+                      <RailSwitch view={railView} onChange={setRailView} />
+                    </div>
+                    <div className="min-h-0 flex-1 overflow-hidden">
                       {rail(() => setRailOpen(false))}
                     </div>
                   </SheetContent>

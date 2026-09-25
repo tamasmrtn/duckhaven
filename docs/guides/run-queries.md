@@ -15,9 +15,9 @@ agent does not change what the tab beside it shows or runs on. New worksheets ar
 **double-click a tab to rename it**.
 
 Closing a tab does not delete the worksheet. The **Worksheets** view of the sidebar (switch it with the
-*Worksheets | Catalog* control above the tree) lists every worksheet you have, open or closed, most recently edited
-first, alongside the workspace's shared [saved queries](saved-queries.md). Click one to open it as a tab. A blank,
-unnamed worksheet is simply discarded when you close it.
+*Worksheets | Catalog* control at the left end of the tab row) lists every worksheet you have, open or closed, most
+recently edited first, alongside the workspace's shared [saved queries](saved-queries.md). Click one to open it as
+a tab. A blank, unnamed worksheet is simply discarded when you close it.
 
 !!! note "Two windows on the same worksheet"
     If you edit a worksheet in two browser windows, the one that saves second is told the worksheet changed elsewhere

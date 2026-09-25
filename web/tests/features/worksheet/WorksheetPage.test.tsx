@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse, delay } from "msw";
 import { toast } from "sonner";
@@ -722,6 +722,64 @@ describe("WorksheetPage catalog and worksheet rail", () => {
   });
 });
 
+describe("WorksheetPage sidebar layout", () => {
+  // Regression: the switch sat in the sidebar's own header, a different
+  // height from the toolbar beside it, and a 4px resize column opened a gap
+  // between the two.
+  it("puts the sidebar switch in the tab row, in a cell as wide as the sidebar", async () => {
+    renderWithProviders({ initialRoute: WS_ROUTE });
+    const group = await screen.findByRole("group", { name: "Sidebar" });
+    const cell = screen.getByTestId("rail-switch-cell");
+
+    expect(cell).toContainElement(group);
+    expect(cell.parentElement).toContainElement(
+      screen.getByRole("tab", { name: /events\.sql/ }),
+    );
+    expect(cell.style.width).toBe(screen.getByTestId("worksheet-rail").style.width);
+    // The switch appears once, not again inside the sidebar.
+    expect(screen.getAllByRole("group", { name: "Sidebar" })).toHaveLength(1);
+  });
+
+  it("overlays the resize handle instead of giving it a column", async () => {
+    renderWithProviders({ initialRoute: WS_ROUTE });
+    const rail = await screen.findByTestId("worksheet-rail");
+    const handle = screen.getByTestId("rail-resize-handle");
+
+    expect(rail).toContainElement(handle);
+    expect(handle.className).toContain("absolute");
+  });
+
+  it("resizes the switch cell with the sidebar", async () => {
+    renderWithProviders({ initialRoute: WS_ROUTE });
+    const handle = await screen.findByTestId("rail-resize-handle");
+
+    fireEvent.mouseDown(handle, { clientX: 280 });
+    fireEvent.mouseMove(window, { clientX: 340 });
+    fireEvent.mouseUp(window);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("worksheet-rail").style.width).toBe("340px"),
+    );
+    expect(screen.getByTestId("rail-switch-cell").style.width).toBe("340px");
+  });
+
+  it("remembers the chosen sidebar view", async () => {
+    const user = userEvent.setup();
+    const { unmount } = renderWithProviders({ initialRoute: WS_ROUTE });
+    await user.click(
+      within(await screen.findByRole("group", { name: "Sidebar" })).getByRole(
+        "button",
+        { name: "Worksheets" },
+      ),
+    );
+    expect(await screen.findByRole("list", { name: "My worksheets" })).toBeInTheDocument();
+    unmount();
+
+    renderWithProviders({ initialRoute: WS_ROUTE });
+    expect(await screen.findByRole("list", { name: "My worksheets" })).toBeInTheDocument();
+  });
+});
+
 describe("WorksheetPage responsive", () => {
   const originalMatchMedia = window.matchMedia;
   afterEach(() => {
@@ -745,6 +803,26 @@ describe("WorksheetPage responsive", () => {
     mockViewport(true);
     renderWithProviders({ initialRoute: WS_ROUTE });
     expect(await screen.findByRole("button", { name: /show tables/i })).toBeInTheDocument();
+  });
+
+  it("keeps the sidebar switch inside the drawer on narrow screens", async () => {
+    mockViewport(true);
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: WS_ROUTE });
+    await screen.findByRole("tab", { name: /events\.sql/ });
+    expect(screen.queryByTestId("rail-switch-cell")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /show tables/i }));
+    const drawer = await screen.findByRole("dialog");
+    await user.click(
+      within(within(drawer).getByRole("group", { name: "Sidebar" })).getByRole(
+        "button",
+        { name: "Worksheets" },
+      ),
+    );
+    expect(
+      await within(drawer).findByRole("list", { name: "My worksheets" }),
+    ).toBeInTheDocument();
   });
 
   it("renders the inline sidebar without a drawer trigger on wide screens", async () => {

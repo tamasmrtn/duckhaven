@@ -36,7 +36,8 @@ export function WorksheetTabs({
   }
 
   return (
-    <div className="flex h-9 items-center gap-1 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 overflow-x-auto shrink-0">
+    // Fills the page's tab row, which owns the row's height and bottom border.
+    <div className="flex h-full min-w-0 flex-1 items-center gap-1 overflow-x-auto px-2">
       <Tabs value={activeId} onValueChange={onSelect}>
         <TabsList className="h-7 bg-transparent gap-0.5 p-0">
           {worksheets.map((sheet) => {

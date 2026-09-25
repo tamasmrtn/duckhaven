@@ -412,6 +412,11 @@ sample rows, or metadata.
 
 Notes:
 
+- **Same frame as the worksheet.** The page opens with the worksheet's 36 px top row instead of a page header: a
+  "Catalog" title cell exactly as wide as the tree (where the worksheet has its *Worksheets | Catalog* switch), then
+  the selected object's path. The tree therefore sits at the same place on both pages, and the detail panes use the
+  worksheet's toolbar padding and its *Results | Profile* tab style, as Databricks keeps its catalog panel identical
+  in the SQL editor and in Catalog Explorer. Other top-level pages keep the page header and pill tabs.
 - **Breadcrumb is clickable** all the way up. ⌘-click to open in a new tab.
 - **No edit-schema form** — the pencil icon top-right opens "Rename / Drop".
   Column changes are offered as generated `ALTER TABLE` SQL dropped into a

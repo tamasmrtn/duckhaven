@@ -203,7 +203,9 @@ describe("CatalogPage", () => {
     );
 
     // Opens a worksheet named for the table, holding the ALTER statement.
-    expect(await screen.findByRole("tab", { name: /^events(?!\.sql)/ })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("tab", { name: /^events(?!\.sql)/ }),
+    ).toBeInTheDocument();
     expect(WORKSHEETS.at(-1)?.sql).toMatch(/^ALTER TABLE .*"events"/);
   });
 
@@ -249,7 +251,9 @@ describe("CatalogPage", () => {
     });
     await user.click(buttons[0]);
 
-    expect(await screen.findByRole("tab", { name: /^events(?!\.sql)/ })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("tab", { name: /^events(?!\.sql)/ }),
+    ).toBeInTheDocument();
     expect(WORKSHEETS.at(-1)?.sql).toMatch(/AT \(VERSION =>/);
   });
 });
@@ -276,9 +280,7 @@ describe("CatalogPage tab deep-linking", () => {
       initialRoute: "/acme-analytics/catalog/acme_analytics/raw/events",
     });
 
-    await user.click(
-      await screen.findByRole("tab", { name: /permissions/i }),
-    );
+    await user.click(await screen.findByRole("tab", { name: /permissions/i }));
 
     await waitFor(() =>
       expect(router.state.location.search).toMatchObject({
@@ -343,9 +345,74 @@ describe("CatalogPage recently-viewed", () => {
   it("falls back to the selection placeholder when there is no history", async () => {
     renderWithProviders({ initialRoute: "/acme-analytics/catalog" });
 
-    expect(
-      await screen.findByText(/to view its details/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/to view its details/i)).toBeInTheDocument();
     expect(screen.queryByText("Recently viewed")).not.toBeInTheDocument();
+  });
+});
+
+// The catalog page mirrors the worksheet's layout, so moving between the two
+// does not shift the tree or change the scale of the panes.
+describe("CatalogPage layout", () => {
+  it("titles the page in a 36px row cell as wide as the tree, not a page header", async () => {
+    renderWithProviders({ initialRoute: CATALOG_ROUTE });
+    const title = await screen.findByRole("heading", { name: "Catalog" });
+
+    expect(title.className).toContain("text-sm");
+    const cell = title.parentElement!;
+    expect(cell.className).toContain("w-[280px]");
+    expect(cell.parentElement!.className).toContain("h-9");
+  });
+
+  it("shows no path on the landing state", async () => {
+    renderWithProviders({ initialRoute: CATALOG_ROUTE });
+    const title = await screen.findByRole("heading", { name: "Catalog" });
+
+    expect(title.parentElement!.parentElement!.children).toHaveLength(1);
+  });
+
+  it("puts the selected table's path in the title row, once", async () => {
+    renderWithProviders({
+      initialRoute: `${CATALOG_ROUTE}/acme_analytics/raw/events`,
+    });
+    const title = await screen.findByRole("heading", { name: "Catalog" });
+    await screen.findByRole("tab", { name: "Sample" });
+
+    const row = title.parentElement!.parentElement!;
+    expect(row).toHaveTextContent("acme-analytics");
+    expect(row).toHaveTextContent("acme_analytics");
+    expect(row).toHaveTextContent("raw");
+    expect(row).toHaveTextContent("events");
+    // Not repeated in the detail header below it.
+    const header = screen
+      .getByRole("button", { name: /alter table/i })
+      .closest(".border-b") as HTMLElement;
+    expect(within(header).queryByText("acme-analytics")).toBeNull();
+  });
+
+  it("puts a schema's path in the title row", async () => {
+    renderWithProviders({
+      initialRoute: `${CATALOG_ROUTE}/acme_analytics/raw`,
+    });
+    const title = await screen.findByRole("heading", { name: "Catalog" });
+    await screen.findByText("Tables");
+
+    const row = title.parentElement!.parentElement!;
+    expect(within(row).getByText("raw").className).toContain("font-medium");
+    expect(within(row).getByText("acme_analytics").className).not.toContain(
+      "font-medium",
+    );
+  });
+
+  it("styles the detail tabs like the worksheet's Results | Profile bar", async () => {
+    renderWithProviders({
+      initialRoute: `${CATALOG_ROUTE}/acme_analytics/raw/events`,
+    });
+    const tab = await screen.findByRole("tab", { name: "Sample" });
+
+    expect(tab.className).toContain("text-xs");
+    expect(tab.className).toContain(
+      "data-[state=active]:bg-[var(--bg-elevated)]",
+    );
+    expect(tab.parentElement!.className).not.toContain("bg-muted");
   });
 });

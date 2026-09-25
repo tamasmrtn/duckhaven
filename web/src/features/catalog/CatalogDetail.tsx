@@ -1,6 +1,9 @@
-import { Breadcrumb } from "@/components/ui/breadcrumb";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  detailTabClass,
+  detailTabsListClass,
+} from "@/features/catalog/detailTabs";
 import { useCatalogs } from "@/queries/catalogs";
 import { useSchemas, useTables } from "@/queries/schemas";
 import { StorageIcon } from "@/components/app/StorageIcon";
@@ -89,14 +92,8 @@ export function CatalogDetail({
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-4 shrink-0">
-        <Breadcrumb
-          items={[
-            { label: ws, emphasis: true },
-            { label: catalog, emphasis: true },
-          ]}
-        />
-        <div className="mt-2 flex items-center gap-2">
+      <div className="border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-2 shrink-0">
+        <div className="flex items-center gap-2">
           {cat && (
             <StorageIcon
               kind={cat.storage_backend_kind as BackendKind}
@@ -114,14 +111,14 @@ export function CatalogDetail({
         defaultValue="overview"
         className="flex flex-1 flex-col overflow-hidden gap-0"
       >
-        <TabsList className="m-2 h-8 w-fit shrink-0">
-          <TabsTrigger value="overview" className="text-xs">
+        <TabsList className={detailTabsListClass}>
+          <TabsTrigger value="overview" className={detailTabClass}>
             Overview
           </TabsTrigger>
-          <TabsTrigger value="details" className="text-xs">
+          <TabsTrigger value="details" className={detailTabClass}>
             Details
           </TabsTrigger>
-          <TabsTrigger value="permissions" className="text-xs">
+          <TabsTrigger value="permissions" className={detailTabClass}>
             Permissions
           </TabsTrigger>
         </TabsList>

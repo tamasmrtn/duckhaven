@@ -1,18 +1,20 @@
 """Cross-catalog search for the command palette (⌘K).
 
-Fans out over every catalog attached to the workspace, matching schema and
-table names by substring and reusing the exact grant redaction the
+Fans out over every catalog attached to the workspace, matching catalog,
+schema and table names by substring and reusing the exact grant redaction the
 schema/table list endpoints already apply (`schemas.py`'s `list_schemas` /
 `list_tables`) so a scoped-catalog grant can't be bypassed by searching
-instead of browsing. Also matches saved-query names. Deliberately narrow —
-this is the palette's data source, not a general-purpose search framework.
+instead of browsing. Also matches saved-query names. `types` narrows the
+report, which is how the catalog tree searches objects without saved queries.
+Deliberately narrow — the palette's and tree's data source, not a
+general-purpose search framework.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy import select
@@ -36,7 +38,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/workspaces")
 
 DEFAULT_LIMIT = 20
-MAX_LIMIT = 50
+# High enough for the catalog tree to show every match for a short prefix.
+MAX_LIMIT = 200
+
+ResultType = Literal["catalog", "schema", "table", "saved_query"]
 
 
 def _escape_like(s: str) -> str:
@@ -50,6 +55,10 @@ async def search_workspace(
     ws: Annotated[str, Path(alias="workspace")],
     q: str = Query(min_length=1, max_length=500),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    types: Annotated[
+        list[ResultType] | None,
+        Query(description="Only these kinds of object. Every kind when omitted."),
+    ] = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
@@ -70,8 +79,20 @@ async def search_workspace(
     needle = q.strip().lower()
     if not needle:
         return SearchResultsOut(items=[])
+    wanted = set(types or ("catalog", "schema", "table", "saved_query"))
 
     catalogs = await resolve_workspace_catalogs(db, workspace.id)
+    # Catalog names need no listing and no grant check: every attached catalog is
+    # already visible in the tree to every member.
+    results: list[SearchResultOut] = []
+    if "catalog" in wanted:
+        results.extend(
+            SearchResultOut(type="catalog", catalog=cat.slug, name=cat.slug)
+            for cat in catalogs
+            if needle in cat.slug.lower()
+        )
+    if not wanted & {"schema", "table"}:
+        catalogs = []
 
     # The listing calls hold no shared state, so they run concurrently; the
     # grant checks below share one AsyncSession and stay sequential.
@@ -93,7 +114,11 @@ async def search_workspace(
             raise schemas
         live.append((cat, schemas))
 
-    schema_lookup = [(cat, s) for cat, schemas in live for s in schemas]
+    # Listing every schema's tables is the expensive half; skip it when only
+    # schemas were asked for.
+    schema_lookup = (
+        [(cat, s) for cat, schemas in live for s in schemas] if "table" in wanted else []
+    )
     tables_per_schema = await asyncio.gather(
         *(backend_by_slug[cat.slug].list_tables(cat, s.name) for cat, s in schema_lookup),
         return_exceptions=True,
@@ -108,11 +133,12 @@ async def search_workspace(
             raise tables
         tables_by_schema[(cat.slug, s.name)] = tables
 
-    results: list[SearchResultOut] = []
     for cat, schemas in live:
         scoped = await grant_service.is_scoped(db, workspace.id, cat)
 
-        matched_schemas = [s for s in schemas if needle in s.name.lower()]
+        matched_schemas = (
+            [s for s in schemas if needle in s.name.lower()] if "schema" in wanted else []
+        )
         if scoped and matched_schemas:
             visible = await grant_service.visible_schemas(
                 db, workspace.id, cat, user.id, [s.name for s in matched_schemas]
@@ -122,7 +148,7 @@ async def search_workspace(
             results.append(SearchResultOut(type="schema", catalog=cat.slug, name=s.name))
 
         for s in schemas:
-            tables = tables_by_schema[(cat.slug, s.name)]
+            tables = tables_by_schema.get((cat.slug, s.name), [])
             matched_tables = [t for t in tables if needle in t.name.lower()]
             if not matched_tables:
                 continue
@@ -136,7 +162,7 @@ async def search_workspace(
                     SearchResultOut(type="table", catalog=cat.slug, schema_name=s.name, name=t.name)
                 )
 
-    if len(results) < limit:
+    if "saved_query" in wanted and len(results) < limit:
         sq_result = await db.execute(
             select(SavedQuery)
             .where(

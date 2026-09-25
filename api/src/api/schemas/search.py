@@ -9,12 +9,13 @@ class SearchResultOut(BaseModel):
 
     Deliberately minimal — just enough for the palette to show disambiguating
     parent-path context and build its destination route without a second
-    round-trip. Table/schema results are name-addressed (catalog/schema/table
-    have no separate routable id); saved queries carry their real id plus
+    round-trip. Catalog/schema/table results are name-addressed (they have no
+    separate routable id; a catalog result carries its slug in both `name` and
+    `catalog`); saved queries carry their real id plus
     enough to seed a worksheet tab the same way SavedQueriesPage does.
     """
 
-    type: Literal["schema", "table", "saved_query"]
+    type: Literal["catalog", "schema", "table", "saved_query"]
     name: str
     catalog: str | None = None
     schema_name: str | None = None

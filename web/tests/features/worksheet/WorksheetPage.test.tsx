@@ -253,6 +253,53 @@ describe("WorksheetPage autosave", () => {
     expect(sheet("wk-1").version).toBeGreaterThan(1);
   });
 
+  // wk-1 is at version 1: made, never edited.
+  it("shows no save status on a worksheet nobody has edited yet", async () => {
+    renderWithProviders({ initialRoute: WS_ROUTE });
+    await screen.findByRole("textbox", { name: "SQL editor" });
+
+    expect(screen.queryByText("Saved")).toBeNull();
+    expect(screen.queryByTitle("Worksheets save automatically")).toBeNull();
+  });
+
+  it("shows no save status on a new tab", async () => {
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: WS_ROUTE });
+    await screen.findByRole("tab", { name: /events\.sql/ });
+    const before = WORKSHEETS.length;
+    await user.click(screen.getByRole("button", { name: "New worksheet" }));
+
+    await waitFor(() => expect(WORKSHEETS).toHaveLength(before + 1));
+    const created = WORKSHEETS.at(-1)!;
+    await waitFor(() =>
+      expect(
+        screen.getByRole("tab", { name: new RegExp(created.title) }),
+      ).toHaveAttribute("data-state", "active"),
+    );
+    expect(screen.queryByText("Saved")).toBeNull();
+  });
+
+  it("shows the save status once the first edit is saved", async () => {
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: WS_ROUTE });
+    const editor = await screen.findByRole("textbox", { name: "SQL editor" });
+
+    await user.type(editor, " -- edit");
+
+    expect(
+      await screen.findByText("Saved", undefined, { timeout: 3000 }),
+    ).toHaveAttribute("title", "Worksheets save automatically");
+  });
+
+  it("shows the save status on a worksheet edited before", async () => {
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: WS_ROUTE });
+    // wk-2 is at version 3.
+    await user.click(await screen.findByRole("tab", { name: /funnel-draft/ }));
+
+    expect(await screen.findByText("Saved")).toBeInTheDocument();
+  });
+
   it("keeps an edit made just before leaving the page", async () => {
     const user = userEvent.setup();
     const { router } = renderWithProviders({ initialRoute: WS_ROUTE });

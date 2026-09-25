@@ -31,31 +31,39 @@ import type { BackendKind } from "@/types/storage-backend";
 import { CatalogSelect } from "./CatalogSelect";
 import type { SyncStatus } from "./state/worksheetSync";
 
-function SaveStatusText({ status }: { status: SyncStatus | undefined }) {
-  const content =
-    status === "saving" ? (
-      <>
-        <Loader2 className="size-3 animate-spin" /> Saving…
-      </>
-    ) : status === "error" ? (
-      <>
-        <CloudOff className="size-3 text-[var(--status-running)]" /> Offline —
-        retrying
-      </>
-    ) : status === "conflict" ? (
-      <>
-        <TriangleAlert className="size-3 text-[var(--status-running)]" /> Not
-        saved
-      </>
-    ) : (
-      <>
-        <Check className="size-3" /> Saved
-      </>
-    );
+function SaveStatusText({
+  status,
+  edited,
+}: {
+  status: SyncStatus | undefined;
+  edited: boolean;
+}) {
+  // A worksheet nobody has typed in yet has nothing to report, so "Saved"
+  // waits for the first edit, as in Snowsight and Databricks.
+  const quiet = !edited && (status === undefined || status === "idle");
+  const content = quiet ? null : status === "saving" ? (
+    <>
+      <Loader2 className="size-3 animate-spin" /> Saving…
+    </>
+  ) : status === "error" ? (
+    <>
+      <CloudOff className="size-3 text-[var(--status-running)]" /> Offline —
+      retrying
+    </>
+  ) : status === "conflict" ? (
+    <>
+      <TriangleAlert className="size-3 text-[var(--status-running)]" /> Not
+      saved
+    </>
+  ) : (
+    <>
+      <Check className="size-3" /> Saved
+    </>
+  );
   return (
     <span
       aria-live="polite"
-      title="Worksheets save automatically"
+      title={quiet ? undefined : "Worksheets save automatically"}
       className="flex items-center gap-1 text-2xs text-text-tertiary"
     >
       {content}
@@ -78,6 +86,8 @@ interface WorksheetToolbarProps {
   timeoutMinutes: number;
   onTimeoutChange: (minutes: number) => void;
   saveStatus: SyncStatus | undefined;
+  // The worksheet's content has been saved at least once since it was made.
+  edited: boolean;
   // Run
   isRunning: boolean;
   runDisabled: boolean;
@@ -109,6 +119,7 @@ export function WorksheetToolbar(props: WorksheetToolbarProps) {
     timeoutMinutes,
     onTimeoutChange,
     saveStatus,
+    edited,
     isRunning,
     runDisabled,
     willStart,
@@ -180,7 +191,7 @@ export function WorksheetToolbar(props: WorksheetToolbarProps) {
       </Popover>
 
       <div className="ml-auto flex items-center gap-1">
-        <SaveStatusText status={saveStatus} />
+        <SaveStatusText status={saveStatus} edited={edited} />
         {isRunning ? (
           <Button
             variant="outline"

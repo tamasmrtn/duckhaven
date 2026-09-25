@@ -349,6 +349,7 @@ export function WorksheetPage() {
               sheets.setMeta(sheet.id, { timeout_s: minutes * 60 })
             }
             saveStatus={sheets.status[sheet.id]}
+            edited={sheet.version > 1}
             isRunning={isRunning}
             runDisabled={isDispatching || !resolution.agentId}
             willStart={resolution.agentId !== null && resolution.willStart}

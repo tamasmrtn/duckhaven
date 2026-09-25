@@ -540,6 +540,27 @@ async def test_table_detail_surfaces_row_count_estimate_without_refresh(
     assert body["row_count_estimate"] == 42
 
 
+async def test_iceberg_size_comes_from_the_snapshot_summary(
+    auth_client: AsyncClient, backend: StorageBackend, fake_polaris: FakePolaris
+):
+    """No agent probe has measured the table, but its current snapshot says how many
+    bytes its data files hold, so the hover card need not show a dash."""
+    slug = await _make_workspace(auth_client, backend, "alpha")
+    await auth_client.post(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables",
+        json={"name": "events", "columns": [{"name": "id", "type": "BIGINT"}]},
+    )
+    fake_polaris.tables[(slug, "main", "events")].current_snapshot_summary = {
+        "operation": "append",
+        "total-files-size": "327155712",
+    }
+
+    body = (
+        await auth_client.get(f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables/events")
+    ).json()
+    assert body["size_bytes"] == 327155712
+
+
 async def test_table_detail_row_count_estimate_null_without_snapshots(
     auth_client: AsyncClient, backend: StorageBackend
 ):

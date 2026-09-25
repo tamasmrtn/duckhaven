@@ -148,6 +148,23 @@ async def _delete_table_meta(
         await db.delete(existing)
 
 
+def _size_bytes(table: CatalogTableInfo, meta: _TableMeta | None) -> int | None:
+    """What the catalog itself reports, else the sidecar's figure.
+
+    DuckLake reports a size directly, and an Iceberg table's current snapshot
+    summary carries `total-files-size`, the bytes of its live data files. Both are
+    current by construction. The sidecar is not: agents report no size yet, so it
+    holds only the zero written when DuckHaven created the table.
+    """
+    if table.size_bytes is not None:
+        return table.size_bytes
+    if table.current_snapshot_summary:
+        from_snapshot = _snapshot_metric(table.current_snapshot_summary, "total-files-size")
+        if from_snapshot is not None:
+            return from_snapshot
+    return meta.size_bytes if meta else None
+
+
 def _table_to_out(
     table: CatalogTableInfo,
     catalog: Catalog,
@@ -186,8 +203,7 @@ def _table_to_out(
             if table.current_snapshot_summary
             else None
         ),
-        # The agent probe wins; otherwise what the catalog knows for free (DuckLake).
-        size_bytes=(meta.size_bytes if meta and meta.size_bytes is not None else table.size_bytes),
+        size_bytes=_size_bytes(table, meta),
         owner=meta.owner if meta else None,
         last_write_at=meta.last_write_at if meta else None,
         last_write_by=meta.last_write_by if meta else None,

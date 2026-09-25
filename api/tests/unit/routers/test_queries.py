@@ -2493,3 +2493,21 @@ async def test_history_stamps_statement_type_on_newly_created_runs(
         await db_session.execute(select(Query).where(Query.sql == "CREATE TABLE fresh (a int)"))
     ).scalar_one()
     assert row.statement_type == "create"
+
+
+def test_only_the_name_index_counts_as_a_name_clash():
+    """A null or foreign-key violation on save must surface as the error it is,
+    not as a 409 claiming the name is taken."""
+    from sqlalchemy.exc import IntegrityError
+
+    from api.routers.queries import _is_name_clash
+
+    def err(message: str) -> IntegrityError:
+        return IntegrityError("INSERT", {}, Exception(message))
+
+    assert _is_name_clash(err('duplicate key value violates "uq_saved_queries_ws_lower_name"'))
+    assert _is_name_clash(
+        err("UNIQUE constraint failed: saved_queries.workspace_id, lower(saved_queries.name)")
+    )
+    assert not _is_name_clash(err('null value in column "updated_at" violates not-null'))
+    assert not _is_name_clash(err("insert or update violates foreign key constraint"))

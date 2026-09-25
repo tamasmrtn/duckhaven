@@ -178,3 +178,33 @@ def test_downgrade_drops_everything(migration_module):
 def test_revision_links_to_0046(migration_module):
     assert migration_module.revision == "0047"
     assert migration_module.down_revision == "0046"
+
+
+MIGRATION_0048 = MIGRATION.with_name("0048_saved_query_updated_at_default.py")
+
+
+def test_0048_lets_the_database_default_updated_at(migration_module):
+    """0047 left updated_at NOT NULL with no default, so an insert that relied on
+    the model's server default failed with a null violation on Postgres."""
+    spec = importlib.util.spec_from_file_location("migration_0048", MIGRATION_0048)
+    module_0048 = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module_0048)
+    assert (module_0048.revision, module_0048.down_revision) == ("0048", "0047")
+
+    engine = create_engine("sqlite://")
+    with engine.begin() as conn:
+        _seed(conn)
+        _run(conn, migration_module)
+        _run(conn, module_0048)
+        conn.execute(
+            text(
+                "INSERT INTO saved_queries (id, workspace_id, name, sql, created_by, "
+                "created_at, updated_by) VALUES ('q9', 'w2', 'fresh', 'SELECT 1', 'u1', "
+                "'2026-02-01', 'u1')"
+            )
+        )
+        updated_at = conn.execute(
+            text("SELECT updated_at FROM saved_queries WHERE id = 'q9'")
+        ).scalar_one()
+        assert updated_at is not None
+        _run(conn, module_0048, "downgrade")

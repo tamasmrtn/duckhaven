@@ -730,6 +730,15 @@ async def _saved_query_named(
     return (await db.execute(stmt)).scalar_one_or_none()
 
 
+def _is_name_clash(exc: IntegrityError) -> bool:
+    """Whether the write failed on the per-workspace unique name, and not on
+    some other constraint that a 409 "name taken" would misreport."""
+    return "uq_saved_queries_ws_lower_name" in str(exc.orig) or (
+        # SQLite names the columns rather than the index.
+        "saved_queries.workspace_id" in str(exc.orig) and "UNIQUE" in str(exc.orig)
+    )
+
+
 def _name_taken(existing: SavedQuery | None, name: str) -> HTTPException:
     detail: dict[str, object] = {
         "error": "saved_query_exists",
@@ -789,20 +798,26 @@ async def create_saved_query(
         sq.updated_at = datetime.now(UTC)
         response.status_code = status.HTTP_200_OK
     else:
+        now = datetime.now(UTC)
         sq = SavedQuery(
             workspace_id=workspace.id,
             name=body.name,
             sql=body.sql,
             default_agent_id=body.default_agent_id,
             created_by=user.id,
+            created_at=now,
             updated_by=user.id,
+            updated_at=now,
         )
         db.add(sq)
     try:
         await db.commit()
-    except IntegrityError:
-        # Another save claimed the name between the lookup and the commit.
+    except IntegrityError as exc:
+        # Another save claimed the name between the lookup and the commit. Any
+        # other integrity failure is not a naming problem, so it is not a 409.
         await db.rollback()
+        if not _is_name_clash(exc):
+            raise
         raise _name_taken(None, body.name) from None
     await db.refresh(sq)
     return sq
@@ -850,8 +865,10 @@ async def update_saved_query(
     sq.updated_at = datetime.now(UTC)
     try:
         await db.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         await db.rollback()
+        if not _is_name_clash(exc):
+            raise
         raise _name_taken(None, fields.get("name") or sq.name) from None
     await db.refresh(sq)
     return sq

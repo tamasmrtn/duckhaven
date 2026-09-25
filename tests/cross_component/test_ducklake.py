@@ -294,3 +294,43 @@ async def test_a_ducklake_catalog_works_in_a_held_sql_session(
         assert rows["rows"] == [{"c": 500}]
     finally:
         await api_client.delete(f"/api/sql/sessions/{session_id}")
+
+
+async def _metadata_row_versions(schema: str) -> dict[str, str]:
+    """`ducklake_metadata` key -> xmin. An UPDATE writes a new row version, so an
+    unchanged xmin proves the row was not rewritten."""
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    engine = create_async_engine(os.environ["DUCKLAKE_DATABASE_URL"])
+    try:
+        async with engine.connect() as conn:
+            rows = await conn.execute(
+                text(f'SELECT key, xmin::text FROM "{schema}".ducklake_metadata')
+            )
+            return dict(rows.all())
+    finally:
+        await engine.dispose()
+
+
+async def test_concurrent_attaches_do_not_rewrite_catalog_options(
+    api_client, workspace, healthy_agent, slug
+) -> None:
+    """Every attach re-applied the catalog options with `set_option`, which
+    updates `ducklake_metadata` even for an unchanged value. Concurrent attaches
+    then failed with "could not serialize access due to concurrent update"."""
+    catalog = await _make_ducklake(api_client, workspace, slug)
+    agent_id = healthy_agent["id"]
+    # The first attach creates the catalog's metadata and writes the options.
+    first = await _run(api_client, workspace, agent_id, f"SELECT 1 FROM {slug}.analytics.t")
+    assert first["status"] == "failed"  # no such table; the attach itself is the point
+
+    before = await _metadata_row_versions(catalog["metadata_schema"])
+
+    # Each one-shot query attaches every catalog in the workspace.
+    results = await asyncio.gather(
+        *(_run(api_client, workspace, agent_id, "SELECT 1") for _ in range(10))
+    )
+    assert all(r["status"] == "done" for r in results), results
+
+    assert await _metadata_row_versions(catalog["metadata_schema"]) == before

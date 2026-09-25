@@ -12,14 +12,21 @@ from agent.executor import runner
 
 
 class FakeConn:
-    """Records statements and bind lists."""
+    """Records statements and bind lists. `stored_options` is what
+    `ducklake_options()` returns, as DuckLake stores it."""
 
-    def __init__(self) -> None:
+    def __init__(self, stored_options: dict[str, str] | None = None) -> None:
         self.calls: list[tuple[str, list]] = []
+        self.stored_options = dict(stored_options or {})
+        self._rows: list[tuple] = []
 
     def execute(self, sql: str, params: list | None = None):
         self.calls.append((sql, params or []))
+        self._rows = list(self.stored_options.items()) if "ducklake_options" in sql else []
         return self
+
+    def fetchall(self) -> list[tuple]:
+        return self._rows
 
     def sql_text(self) -> str:
         return "\n".join(sql for sql, _ in self.calls)
@@ -226,6 +233,73 @@ def test_an_unknown_catalog_option_does_not_cost_us_the_attach():
     # The attach and the default namespace still happened.
     assert "ATTACH" in conn.sql_text()
     assert "CREATE SCHEMA IF NOT EXISTS" in conn.sql_text()
+
+
+def _set_option_calls(conn: FakeConn) -> list[list]:
+    return [params for sql, params in conn.calls if "set_option" in sql]
+
+
+def test_unchanged_catalog_options_are_not_rewritten():
+    """Every attach runs this; rewriting unchanged rows made concurrent attaches
+    collide on `ducklake_metadata`. `512MB` is stored as `512000000`."""
+    conn = FakeConn({"target_file_size": "512000000", "data_inlining_row_limit": "10"})
+    runner._attach_ducklake(conn, _ducklake_catalog())
+
+    assert _set_option_calls(conn) == []
+
+
+def test_only_a_changed_catalog_option_is_written():
+    conn = FakeConn({"target_file_size": "256000000", "data_inlining_row_limit": "10"})
+    runner._attach_ducklake(conn, _ducklake_catalog())
+
+    assert _set_option_calls(conn) == [["target_file_size", "512MB"]]
+
+
+def test_losing_a_concurrent_write_to_the_same_value_is_not_a_failure(caplog):
+    """Another attach wrote the value between our read and our write."""
+
+    class RacingConn(FakeConn):
+        def execute(self, sql: str, params: list | None = None):
+            if "set_option" in sql:
+                self.stored_options["target_file_size"] = "512000000"
+                raise RuntimeError("could not serialize access due to concurrent update")
+            return super().execute(sql, params)
+
+    conn = RacingConn({"target_file_size": "256000000", "data_inlining_row_limit": "10"})
+    with caplog.at_level("WARNING"):
+        runner._attach_ducklake(conn, _ducklake_catalog())
+
+    assert not [r for r in caplog.records if "Could not set DuckLake option" in r.message]
+
+
+def test_options_are_written_when_they_cannot_be_read():
+    """An extension without `ducklake_options()` falls back to writing them all."""
+
+    class NoReadConn(FakeConn):
+        def execute(self, sql: str, params: list | None = None):
+            if "ducklake_options" in sql:
+                raise RuntimeError("Catalog Error: Table Function ducklake_options does not exist")
+            return super().execute(sql, params)
+
+    conn = NoReadConn()
+    runner._attach_ducklake(conn, _ducklake_catalog())
+
+    assert len(_set_option_calls(conn)) == 2
+
+
+@pytest.mark.parametrize(
+    ("value", "stored"),
+    [
+        ("512MB", "512000000"),
+        ("1GB", "1000000000"),
+        ("2 MiB", "2097152"),
+        ("1.5kb", "1500"),
+        ("10", "10"),
+        ("true", "true"),
+    ],
+)
+def test_option_values_normalise_to_the_stored_form(value, stored):
+    assert runner._normalise_option_value(value) == stored
 
 
 def test_a_catalog_with_no_options_block_attaches_cleanly():

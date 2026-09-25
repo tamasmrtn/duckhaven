@@ -56,8 +56,8 @@ PostgreSQL login, created by the API and stored with the catalog.
 | `DUCKLAKE_DATABASE_URL` | `postgresql+asyncpg://duckhaven:…@postgres:5432/ducklake` | How the **API** reaches the catalog database, as the owner. Used to create each catalog's metadata schema, grant on it, and read metadata back. Never given to agents. Its connection pool follows the same `DB_POOL_*` settings as the control-plane database, and it honours `DB_AUTH_MODE`. |
 | `DUCKLAKE_AGENT_HOST` / `DUCKLAKE_AGENT_PORT` | `postgres` / `5432` | How **agents** reach the catalog database. Set the host to an address reachable from the agent host when agents run elsewhere. |
 | `DUCKLAKE_AGENT_DATABASE` | `ducklake` | Database holding the `ducklake_*` metadata schemas. |
-| `DUCKLAKE_DATA_INLINING_ROW_LIMIT` | `10` | Rows below which a write is stored in the catalog database instead of a Parquet file, avoiding a tiny Parquet object per small insert. Applied to every DuckLake catalog when an agent attaches it. |
-| `DUCKLAKE_TARGET_FILE_SIZE_MB` | `512` | Target Parquet file size for inserts and compaction, applied to every DuckLake catalog when an agent attaches it. Keep it consistent with the maintenance advisor's `target_file_bytes` ([Maintenance advisor](#maintenance-advisor)): if the writer aims at one size and the advisor scores against another, every table looks fragmented. |
+| `DUCKLAKE_DATA_INLINING_ROW_LIMIT` | `10` | Rows below which a write is stored in the catalog database instead of a Parquet file, avoiding a tiny Parquet object per small insert. Applied to every DuckLake catalog when an agent attaches it, and only written when the catalog's stored value differs. |
+| `DUCKLAKE_TARGET_FILE_SIZE_MB` | `512` | Target Parquet file size for inserts and compaction, applied to every DuckLake catalog when an agent attaches it (only written when the catalog's stored value differs). Keep it consistent with the maintenance advisor's `target_file_bytes` ([Maintenance advisor](#maintenance-advisor)): if the writer aims at one size and the advisor scores against another, every table looks fragmented. |
 
 ### Identity & SSO
 

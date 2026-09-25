@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -748,18 +749,77 @@ def _attach_ducklake(conn: duckdb.DuckDBPyConnection, cat: dict[str, Any]) -> No
     conn.execute(f'CREATE SCHEMA IF NOT EXISTS "{alias}"."{schema}"')
 
 
+_SIZE_UNITS = {
+    "kb": 1000,
+    "mb": 1000**2,
+    "gb": 1000**3,
+    "tb": 1000**4,
+    "kib": 1024,
+    "mib": 1024**2,
+    "gib": 1024**3,
+    "tib": 1024**4,
+}
+_SIZE_VALUE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([kmgt]i?b)\s*$", re.IGNORECASE)
+
+
+def _normalise_option_value(value: object) -> str:
+    """An option value in the form DuckLake stores it.
+
+    `set_option` takes sizes with a unit ("512MB") but stores bytes
+    ("512000000"), using DuckDB's rule: KB-TB are powers of 1000, KiB-TiB 1024.
+    """
+    text = str(value).strip()
+    if match := _SIZE_VALUE.match(text):
+        return str(int(float(match.group(1)) * _SIZE_UNITS[match.group(2).lower()]))
+    return text
+
+
+def _current_ducklake_options(conn: duckdb.DuckDBPyConnection, alias: str) -> dict[str, str]:
+    rows = conn.execute(
+        "SELECT option_name, value FROM ducklake_options(?) WHERE scope = 'GLOBAL'", [alias]
+    ).fetchall()
+    return {name: _normalise_option_value(value) for name, value in rows}
+
+
 def _apply_ducklake_options(
     conn: duckdb.DuckDBPyConnection, alias: str, options: dict[str, Any]
 ) -> None:
-    """Apply the catalog options the API vended, best-effort per option.
+    """Apply the catalog options the API vended, writing only those that differ.
 
-    Re-applying an unchanged value writes no snapshot, so this is safe per attach.
+    `set_option` updates `ducklake_metadata` even when the value is unchanged,
+    and every attach runs this. Concurrent attaches then collide on the same
+    rows ("could not serialize access due to concurrent update"), so the
+    current values are read first and the steady state writes nothing.
     """
+    if not options:
+        return
+    try:
+        current: dict[str, str] | None = _current_ducklake_options(conn, alias)
+    except Exception as exc:  # noqa: BLE001 - an older extension may lack the function
+        logger.debug("Could not read DuckLake options on %s: %s", alias, exc)
+        current = None
+
     for name, value in options.items():
+        wanted = _normalise_option_value(value)
+        if current is not None and current.get(name) == wanted:
+            continue
         try:
             conn.execute(f'CALL "{alias}".set_option(?, ?)', [name, str(value)])
         except Exception as exc:  # noqa: BLE001 - an older extension may not know it
+            if _option_now_matches(conn, alias, name, wanted):
+                # Another attach wrote the same value first.
+                logger.debug("DuckLake option %s on %s was set concurrently", name, alias)
+                continue
             logger.warning("Could not set DuckLake option %s on %s: %s", name, alias, exc)
+
+
+def _option_now_matches(
+    conn: duckdb.DuckDBPyConnection, alias: str, name: str, wanted: str
+) -> bool:
+    try:
+        return _current_ducklake_options(conn, alias).get(name) == wanted
+    except Exception:  # noqa: BLE001 - nothing to compare against
+        return False
 
 
 def _create_storage_secret(

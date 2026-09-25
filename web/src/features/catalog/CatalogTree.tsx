@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { createContext, useContext, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { toast } from "sonner";
 import {
   ChevronRight,
   ChevronDown,
+  ChevronsDownUp,
+  Loader2,
   Table2,
   Layers,
   Book,
@@ -35,6 +37,9 @@ import {
   HoverCardTrigger,
 } from "@/components/ui/hover-card";
 import { useSchemas, useTable, useTables } from "@/queries/schemas";
+import { useCatalogObjectSearch } from "@/queries/search";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { usePersistedSet } from "@/hooks/usePersistedSet";
 import { useRefreshCatalogStats } from "@/queries/schemas.mutations";
 import {
   useCatalogs,
@@ -56,6 +61,47 @@ import { StorageIcon } from "@/components/app/StorageIcon";
 import type { BackendKind } from "@/types/storage-backend";
 import { cn, formatBytes, formatRowCount } from "@/utils";
 import type { Catalog, CatalogTable } from "@/types/catalog";
+import type { SearchResult } from "@/types/search";
+
+// Which nodes are expanded, shared by every node in one tree and remembered per
+// workspace in this browser. Everything starts collapsed: an expanded default
+// catalog is one more thing to close before finding what you came for.
+interface TreeExpansion {
+  isOpen: (id: string) => boolean;
+  toggle: (id: string) => void;
+}
+
+const TreeExpansionContext = createContext<TreeExpansion>({
+  isOpen: () => false,
+  toggle: () => {},
+});
+
+const nodeId = {
+  catalog: (c: string) => `c:${c}`,
+  schema: (c: string, s: string) => `s:${c}.${s}`,
+  table: (c: string, s: string, t: string) => `t:${c}.${s}.${t}`,
+  infoSchema: (c: string) => `i:${c}`,
+};
+
+function useNodeOpen(id: string): [boolean, () => void] {
+  const { isOpen, toggle } = useContext(TreeExpansionContext);
+  return [isOpen(id), () => toggle(id)];
+}
+
+// Marks where the search text occurs in a name.
+function Highlight({ text, needle }: { text: string; needle: string }) {
+  const at = needle ? text.toLowerCase().indexOf(needle.toLowerCase()) : -1;
+  if (at < 0) return <>{text}</>;
+  return (
+    <>
+      {text.slice(0, at)}
+      <mark className="rounded-sm bg-[color-mix(in_oklab,var(--brand-yellow)_45%,transparent)] text-inherit">
+        {text.slice(at, at + needle.length)}
+      </mark>
+      {text.slice(at + needle.length)}
+    </>
+  );
+}
 
 // A table's row count, preferring the exact (explicitly refreshed) count and
 // falling back to the free snapshot-summary estimate, with a "~" marking the
@@ -124,14 +170,22 @@ function TableHoverCard({
             </dd>
             <dt className="text-text-tertiary">Format</dt>
             <dd className="truncate text-right">{detail?.format ?? "—"}</dd>
-            <dt className="text-text-tertiary">Owner</dt>
-            <dd className="truncate text-right">{detail?.owner ?? "—"}</dd>
-            <dt className="text-text-tertiary">Last write</dt>
-            <dd className="truncate text-right">
-              {detail?.last_write_at
-                ? new Date(detail.last_write_at).toLocaleString()
-                : "—"}
-            </dd>
+            {/* Known only for tables written through DuckHaven; a row of
+                dashes for everything else says nothing. */}
+            {detail?.owner && (
+              <>
+                <dt className="text-text-tertiary">Owner</dt>
+                <dd className="truncate text-right">{detail.owner}</dd>
+              </>
+            )}
+            {detail?.last_write_at && (
+              <>
+                <dt className="text-text-tertiary">Last write</dt>
+                <dd className="truncate text-right">
+                  {new Date(detail.last_write_at).toLocaleString()}
+                </dd>
+              </>
+            )}
           </dl>
         )}
         {/* Reach the rest of the object-detail experience without abandoning
@@ -173,6 +227,8 @@ interface TableNodeProps {
   schemaName: string;
   table: CatalogTable;
   onTableClick: (catalog: string, schema: string, table: string) => void;
+  // Search text to mark in the name, in search results.
+  highlight?: string;
 }
 
 function TableNode({
@@ -181,8 +237,11 @@ function TableNode({
   schemaName,
   table,
   onTableClick,
+  highlight = "",
 }: TableNodeProps) {
-  const [open, setOpen] = useState(false);
+  const [open, toggleOpen] = useNodeOpen(
+    nodeId.table(catalog, schemaName, table.name),
+  );
   const [hovered, setHovered] = useState(false);
   // Columns are not in the table-list payload, so fetch detail lazily on expand
   // or hover; the shared query key dedupes the two.
@@ -214,7 +273,7 @@ function TableNode({
             <div className="flex w-full items-center rounded text-text-secondary hover:bg-accent hover:text-text-primary">
               <button
                 type="button"
-                onClick={() => setOpen((v) => !v)}
+                onClick={toggleOpen}
                 className="shrink-0 rounded p-1 text-text-tertiary hover:text-text-primary focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
                 aria-expanded={open}
                 aria-label={open ? "Hide columns" : "Show columns"}
@@ -239,7 +298,9 @@ function TableNode({
                 className="flex min-w-0 flex-1 items-center gap-1.5 rounded py-1 pr-1.5 text-sm cursor-grab focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)] active:cursor-grabbing"
               >
                 <Table2 className="size-3.5 shrink-0 text-text-tertiary" />
-                <span className="truncate">{table.name}</span>
+                <span className="truncate">
+                  <Highlight text={table.name} needle={highlight} />
+                </span>
                 {table.row_count != null && (
                   <span className="ml-auto font-mono text-2xs text-text-tertiary font-tabular">
                     {formatRowCount(table.row_count)}
@@ -298,7 +359,6 @@ interface SchemaNodeProps {
   ws: string;
   catalog: string;
   schemaName: string;
-  filter: string;
   onTableClick: (catalog: string, schema: string, table: string) => void;
   onSchemaClick?: (catalog: string, schema: string) => void;
 }
@@ -307,22 +367,15 @@ function SchemaNode({
   ws,
   catalog,
   schemaName,
-  filter,
   onTableClick,
   onSchemaClick,
 }: SchemaNodeProps) {
-  const [open, setOpen] = useState(true);
+  const [open, toggleOpen] = useNodeOpen(nodeId.schema(catalog, schemaName));
   const { data: tables, isLoading } = useTables(
     ws,
     catalog,
     open ? schemaName : "",
   );
-
-  const filtered = (tables ?? []).filter(
-    (t) => !filter || t.name.toLowerCase().includes(filter.toLowerCase()),
-  );
-
-  if (filter && filtered.length === 0) return null;
 
   return (
     <div>
@@ -334,7 +387,7 @@ function SchemaNode({
         <div className="flex w-full items-center rounded text-sm font-medium text-text-primary hover:bg-accent">
           <button
             type="button"
-            onClick={() => setOpen((v) => !v)}
+            onClick={toggleOpen}
             className="shrink-0 rounded p-1 text-text-secondary hover:text-text-primary focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
             aria-expanded={open}
             aria-label={open ? "Collapse schema" : "Expand schema"}
@@ -348,9 +401,7 @@ function SchemaNode({
           <button
             type="button"
             onClick={() =>
-              onSchemaClick
-                ? onSchemaClick(catalog, schemaName)
-                : setOpen((v) => !v)
+              onSchemaClick ? onSchemaClick(catalog, schemaName) : toggleOpen()
             }
             className="flex min-w-0 flex-1 items-center gap-1.5 rounded py-1 pr-2 focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
           >
@@ -369,7 +420,7 @@ function SchemaNode({
                   className="my-1 h-5 w-full animate-shimmer rounded"
                 />
               ))
-            : filtered.map((table) => (
+            : (tables ?? []).map((table) => (
                 <TableNode
                   key={table.name}
                   ws={ws}
@@ -396,7 +447,6 @@ const INFORMATION_SCHEMA_VIEWS = ["schemata", "tables", "views"] as const;
 
 interface InformationSchemaNodeProps {
   catalog: string;
-  filter: string;
   onMetaViewClick?: (catalog: string, view: string) => void;
 }
 
@@ -405,36 +455,36 @@ interface InformationSchemaNodeProps {
 // sidebar); elsewhere the views are display-only.
 function InformationSchemaNode({
   catalog,
-  filter,
   onMetaViewClick,
 }: InformationSchemaNodeProps) {
-  const [open, setOpen] = useState(false);
-  const f = filter.toLowerCase();
-  const views = INFORMATION_SCHEMA_VIEWS.filter((v) => !f || v.includes(f));
-
-  // Hide the node entirely when a table search matches none of its views.
-  if (filter && views.length === 0 && !INFORMATION_SCHEMA.includes(f))
-    return null;
+  const [open, toggleOpen] = useNodeOpen(nodeId.infoSchema(catalog));
+  const views = INFORMATION_SCHEMA_VIEWS;
 
   return (
     <div>
+      {/* Laid out like a schema row (chevron column, then icon and name) so it
+          lines up with its siblings; the badge never shrinks or wraps. */}
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-sm font-medium text-text-primary hover:bg-accent focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+        onClick={toggleOpen}
+        className="flex w-full items-center rounded text-sm font-medium text-text-primary hover:bg-accent focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
         aria-expanded={open}
         title="Built-in, read-only metadata schema"
       >
-        {open ? (
-          <ChevronDown className="size-3.5 shrink-0 text-text-secondary" />
-        ) : (
-          <ChevronRight className="size-3.5 shrink-0 text-text-secondary" />
-        )}
-        <Layers className="size-3.5 shrink-0 text-[var(--brand-maya-blue)]" />
-        <span className="truncate">{INFORMATION_SCHEMA}</span>
-        <span className="ml-1 flex items-center gap-0.5 rounded bg-accent px-1 text-2xs text-text-tertiary">
-          <Lock className="size-2.5" />
-          read-only
+        <span className="shrink-0 p-1 text-text-secondary">
+          {open ? (
+            <ChevronDown className="size-3.5" />
+          ) : (
+            <ChevronRight className="size-3.5" />
+          )}
+        </span>
+        <span className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-2">
+          <Layers className="size-3.5 shrink-0 text-[var(--brand-maya-blue)]" />
+          <span className="truncate">{INFORMATION_SCHEMA}</span>
+          <span className="ml-auto flex shrink-0 items-center gap-0.5 whitespace-nowrap rounded bg-accent px-1 text-2xs font-normal text-text-tertiary">
+            <Lock className="size-2.5" />
+            read-only
+          </span>
         </span>
       </button>
 
@@ -469,8 +519,6 @@ function InformationSchemaNode({
 interface CatalogNodeProps {
   ws: string;
   catalog: Catalog;
-  filter: string;
-  defaultOpen: boolean;
   onTableClick: (catalog: string, schema: string, table: string) => void;
   onMetaViewClick?: (catalog: string, view: string) => void;
   onCatalogClick?: (catalog: string) => void;
@@ -480,14 +528,12 @@ interface CatalogNodeProps {
 function CatalogNode({
   ws,
   catalog,
-  filter,
-  defaultOpen,
   onTableClick,
   onMetaViewClick,
   onCatalogClick,
   onSchemaClick,
 }: CatalogNodeProps) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [open, toggleOpen] = useNodeOpen(nodeId.catalog(catalog.slug));
   const [createSchemaOpen, setCreateSchemaOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
   const [permsOpen, setPermsOpen] = useState(false);
@@ -524,7 +570,7 @@ function CatalogNode({
           <div className="flex w-full items-center rounded text-sm font-semibold text-text-primary hover:bg-accent">
             <button
               type="button"
-              onClick={() => setOpen((v) => !v)}
+              onClick={toggleOpen}
               className="shrink-0 rounded p-1 text-text-secondary hover:text-text-primary focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
               aria-expanded={open}
               aria-label={open ? "Collapse catalog" : "Expand catalog"}
@@ -538,9 +584,7 @@ function CatalogNode({
             <button
               type="button"
               onClick={() =>
-                onCatalogClick
-                  ? onCatalogClick(catalog.slug)
-                  : setOpen((v) => !v)
+                onCatalogClick ? onCatalogClick(catalog.slug) : toggleOpen()
               }
               className="flex min-w-0 flex-1 items-center gap-1.5 rounded py-1 pr-2 focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
             >
@@ -557,12 +601,12 @@ function CatalogNode({
                 />
               </span>
               {catalog.access_mode === "scoped" && (
-                <span className="ml-1 rounded bg-accent px-1 text-2xs text-text-tertiary">
+                <span className="ml-1 shrink-0 whitespace-nowrap rounded bg-accent px-1 text-2xs font-normal text-text-tertiary">
                   scoped
                 </span>
               )}
               {catalog.is_default && (
-                <span className="ml-1 rounded bg-accent px-1 text-2xs text-text-tertiary">
+                <span className="ml-1 shrink-0 whitespace-nowrap rounded bg-accent px-1 text-2xs font-normal text-text-tertiary">
                   default
                 </span>
               )}
@@ -606,7 +650,7 @@ function CatalogNode({
             ))
           ) : (
             <>
-              {schemas?.length === 0 && !filter && (
+              {schemas?.length === 0 && (
                 <p className="px-2 py-1 text-2xs text-text-tertiary">
                   No user schemas.
                 </p>
@@ -617,7 +661,6 @@ function CatalogNode({
                   ws={ws}
                   catalog={catalog.slug}
                   schemaName={s.name}
-                  filter={filter}
                   onTableClick={onTableClick}
                   onSchemaClick={onSchemaClick}
                 />
@@ -630,7 +673,6 @@ function CatalogNode({
               {catalog.access_mode !== "scoped" && (
                 <InformationSchemaNode
                   catalog={catalog.slug}
-                  filter={filter}
                   onMetaViewClick={onMetaViewClick}
                 />
               )}
@@ -660,9 +702,124 @@ function CatalogNode({
   );
 }
 
+// Search needs at least this much text; one letter matches almost everything.
+const MIN_SEARCH = 2;
+
+interface SearchResultsTreeProps {
+  ws: string;
+  needle: string;
+  results: SearchResult[];
+  hasMore: boolean;
+  onTableClick: (catalog: string, schema: string, table: string) => void;
+}
+
+/**
+ * Server-side search results laid out as the tree, with every path to a match
+ * open — so a table in a catalog nobody expanded is found, not just the rows
+ * already loaded.
+ */
+function SearchResultsTree({
+  ws,
+  needle,
+  results,
+  hasMore,
+  onTableClick,
+}: SearchResultsTreeProps) {
+  const grouped = useMemo(() => {
+    const byCatalog = new Map<
+      string,
+      Map<string, { name: string; tables: string[] }>
+    >();
+    const schemasOf = (catalog: string) => {
+      let schemas = byCatalog.get(catalog);
+      if (!schemas) {
+        schemas = new Map();
+        byCatalog.set(catalog, schemas);
+      }
+      return schemas;
+    };
+    for (const r of results) {
+      if (!r.catalog) continue;
+      const schemas = schemasOf(r.catalog);
+      if (r.type === "schema" || r.type === "table") {
+        const schemaName = r.type === "schema" ? r.name : (r.schema_name ?? "");
+        let schema = schemas.get(schemaName);
+        if (!schema) {
+          schema = { name: schemaName, tables: [] };
+          schemas.set(schemaName, schema);
+        }
+        if (r.type === "table") schema.tables.push(r.name);
+      }
+    }
+    return byCatalog;
+  }, [results]);
+
+  if (results.length === 0) {
+    return (
+      <p className="px-2 py-3 text-sm text-text-tertiary">
+        No catalogs, schemas or tables match “{needle}”.
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-0.5" aria-label="Search results">
+      {[...grouped].map(([catalog, schemas]) => (
+        <div key={catalog}>
+          <div className="flex items-center gap-1.5 px-1 py-1 text-sm font-semibold text-text-primary">
+            <ChevronDown className="size-3.5 shrink-0 text-text-secondary" />
+            <Book className="size-3.5 shrink-0 text-[var(--brand-slate-blue)]" />
+            <span className="truncate">
+              <Highlight text={catalog} needle={needle} />
+            </span>
+          </div>
+          <div className="ml-3 border-l border-[var(--border-subtle)] pl-2">
+            {[...schemas.values()].map((schema) => (
+              <div key={schema.name}>
+                <div className="flex items-center gap-1.5 px-1 py-1 text-sm font-medium text-text-primary">
+                  <ChevronDown className="size-3.5 shrink-0 text-text-secondary" />
+                  <Layers className="size-3.5 shrink-0 text-[var(--brand-maya-blue)]" />
+                  <span className="truncate">
+                    <Highlight text={schema.name} needle={needle} />
+                  </span>
+                </div>
+                {schema.tables.length > 0 && (
+                  <div className="ml-3 border-l border-[var(--border-subtle)] pl-2">
+                    {schema.tables.map((table) => (
+                      <TableNode
+                        key={table}
+                        ws={ws}
+                        catalog={catalog}
+                        schemaName={schema.name}
+                        // The list payload is not fetched in search mode; the
+                        // hover card and columns load the detail on demand.
+                        table={{ name: table, row_count: null } as CatalogTable}
+                        onTableClick={onTableClick}
+                        highlight={needle}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+      {hasMore && (
+        <p className="px-2 py-2 text-2xs text-text-tertiary">
+          Showing the first {results.length} matches — refine the search to see
+          the rest.
+        </p>
+      )}
+    </div>
+  );
+}
+
 interface CatalogTreeProps {
   ws: string;
-  workspaceName: string;
+  // Undefined while the workspace loads; the header shows a placeholder rather
+  // than the slug, which then flips to the real name.
+  workspaceName: string | undefined;
   onTableClick: (catalog: string, schema: string, table: string) => void;
   onMetaViewClick?: (catalog: string, view: string) => void;
   // When provided, clicking a catalog / schema label navigates to its detail
@@ -681,6 +838,14 @@ export function CatalogTree({
   onSchemaClick,
 }: CatalogTreeProps) {
   const [filter, setFilter] = useState("");
+  const needle = useDebouncedValue(filter.trim(), 250);
+  const searching = needle.length >= MIN_SEARCH;
+  const search = useCatalogObjectSearch(ws, searching ? needle : "");
+  const expanded = usePersistedSet(`dh-tree-expanded-${ws}`);
+  const expansion = useMemo<TreeExpansion>(
+    () => ({ isOpen: expanded.has, toggle: expanded.toggle }),
+    [expanded.has, expanded.toggle],
+  );
   const [createCatalogOpen, setCreateCatalogOpen] = useState(false);
   const [createSchemaOpen, setCreateSchemaOpen] = useState(false);
   const [attachCatalogOpen, setAttachCatalogOpen] = useState(false);
@@ -701,119 +866,164 @@ export function CatalogTree({
   }
 
   return (
-    <div className="flex h-full flex-col gap-2 p-2">
-      <Input
-        placeholder="Search tables…"
-        value={filter}
-        onChange={(e) => setFilter(e.target.value)}
-        className="h-8 text-sm"
-        aria-label="Search tables"
-      />
-
-      <div className="flex-1 overflow-auto">
-        <div className="mb-1 flex items-center justify-between gap-1 px-2 py-1">
-          <span className="truncate text-xs font-semibold text-text-secondary uppercase tracking-wide">
-            {workspaceName}
-          </span>
-          <div className="flex shrink-0 items-center gap-0.5">
-            <button
-              type="button"
-              onClick={handleRefresh}
-              disabled={refreshStats.isPending}
-              title="Refresh catalog"
-              aria-label="Refresh catalog"
-              className="rounded p-1 text-text-secondary hover:bg-accent hover:text-text-primary focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
-            >
-              <RefreshCw
-                className={cn(
-                  "size-3.5",
-                  refreshStats.isPending && "animate-spin",
-                )}
-              />
-            </button>
-            <button
-              type="button"
-              onClick={() => setAttachCatalogOpen(true)}
-              title="Attach catalog"
-              aria-label="Attach catalog"
-              className="rounded p-1 text-text-secondary hover:bg-accent hover:text-text-primary focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
-            >
-              <Link2 className="size-3.5" />
-            </button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  title="Create"
-                  aria-label="Create"
-                  className="rounded p-1 text-text-secondary hover:bg-accent hover:text-text-primary focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
-                >
-                  <Plus className="size-3.5" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onSelect={() => setCreateCatalogOpen(true)}>
-                  <Book className="size-3.5" />
-                  Create catalog
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => setCreateSchemaOpen(true)}>
-                  <Layers className="size-3.5" />
-                  Create schema
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
+    <TreeExpansionContext.Provider value={expansion}>
+      <div className="flex h-full flex-col gap-2 p-2">
+        <div className="relative">
+          <Input
+            placeholder="Search catalogs, schemas, tables…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            className="h-8 pr-7 text-sm"
+            aria-label="Search tables"
+          />
+          {searching && search.isFetching && (
+            <Loader2
+              className="absolute right-2 top-1/2 size-3.5 -translate-y-1/2 animate-spin text-text-tertiary"
+              aria-label="Searching"
+            />
+          )}
         </div>
 
-        {isLoading ? (
-          <div className="space-y-1 px-1">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <Skeleton
-                key={i}
-                className="h-6 w-full animate-shimmer rounded"
-              />
-            ))}
+        <div className="flex-1 overflow-auto">
+          <div className="mb-1 flex items-center justify-between gap-1 px-2 py-1">
+            {workspaceName ? (
+              <span className="truncate text-xs font-semibold text-text-secondary uppercase tracking-wide">
+                {workspaceName}
+              </span>
+            ) : (
+              <Skeleton className="h-3 w-24 animate-shimmer rounded" />
+            )}
+            <div className="flex shrink-0 items-center gap-0.5">
+              <button
+                type="button"
+                onClick={expanded.clear}
+                disabled={expanded.size === 0}
+                title="Collapse all"
+                aria-label="Collapse all"
+                className="rounded p-1 text-text-secondary hover:bg-accent hover:text-text-primary disabled:opacity-40 disabled:hover:bg-transparent focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+              >
+                <ChevronsDownUp className="size-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={handleRefresh}
+                disabled={refreshStats.isPending}
+                title="Refresh catalog"
+                aria-label="Refresh catalog"
+                className="rounded p-1 text-text-secondary hover:bg-accent hover:text-text-primary focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+              >
+                <RefreshCw
+                  className={cn(
+                    "size-3.5",
+                    refreshStats.isPending && "animate-spin",
+                  )}
+                />
+              </button>
+              <button
+                type="button"
+                onClick={() => setAttachCatalogOpen(true)}
+                title="Attach catalog"
+                aria-label="Attach catalog"
+                className="rounded p-1 text-text-secondary hover:bg-accent hover:text-text-primary focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+              >
+                <Link2 className="size-3.5" />
+              </button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    title="Create"
+                    aria-label="Create"
+                    className="rounded p-1 text-text-secondary hover:bg-accent hover:text-text-primary focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+                  >
+                    <Plus className="size-3.5" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onSelect={() => setCreateCatalogOpen(true)}>
+                    <Book className="size-3.5" />
+                    Create catalog
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => setCreateSchemaOpen(true)}>
+                    <Layers className="size-3.5" />
+                    Create schema
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </div>
-        ) : catalogs?.length === 0 ? (
-          <p className="px-2 py-3 text-sm text-text-tertiary">
-            No catalogs attached.
-          </p>
-        ) : (
-          <div className="space-y-0.5">
-            {catalogs?.map((c, i) => (
-              <CatalogNode
-                key={c.id}
-                ws={ws}
-                catalog={c}
-                filter={filter}
-                defaultOpen={c.is_default || (catalogs.length === 1 && i === 0)}
-                onTableClick={onTableClick}
-                onMetaViewClick={onMetaViewClick}
-                onCatalogClick={onCatalogClick}
-                onSchemaClick={onSchemaClick}
-              />
-            ))}
-          </div>
-        )}
-      </div>
 
-      <CreateCatalogDialog
-        ws={ws}
-        open={createCatalogOpen}
-        onOpenChange={setCreateCatalogOpen}
-      />
-      <CreateSchemaDialog
-        ws={ws}
-        allowCatalogChoice
-        open={createSchemaOpen}
-        onOpenChange={setCreateSchemaOpen}
-      />
-      <AttachCatalogDialog
-        ws={ws}
-        attachedSlugs={(catalogs ?? []).map((c) => c.slug)}
-        open={attachCatalogOpen}
-        onOpenChange={setAttachCatalogOpen}
-      />
-    </div>
+          {searching ? (
+            search.data ? (
+              <SearchResultsTree
+                ws={ws}
+                needle={needle}
+                results={search.data.items}
+                hasMore={search.data.has_more}
+                onTableClick={onTableClick}
+              />
+            ) : search.isError ? (
+              <p className="px-2 py-3 text-sm text-text-tertiary">
+                Search failed. Try again.
+              </p>
+            ) : (
+              <div className="space-y-1 px-1">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <Skeleton
+                    key={i}
+                    className="h-6 w-full animate-shimmer rounded"
+                  />
+                ))}
+              </div>
+            )
+          ) : isLoading ? (
+            <div className="space-y-1 px-1">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton
+                  key={i}
+                  className="h-6 w-full animate-shimmer rounded"
+                />
+              ))}
+            </div>
+          ) : catalogs?.length === 0 ? (
+            <p className="px-2 py-3 text-sm text-text-tertiary">
+              No catalogs attached.
+            </p>
+          ) : (
+            <div className="space-y-0.5">
+              {catalogs?.map((c) => (
+                <CatalogNode
+                  key={c.id}
+                  ws={ws}
+                  catalog={c}
+                  onTableClick={onTableClick}
+                  onMetaViewClick={onMetaViewClick}
+                  onCatalogClick={onCatalogClick}
+                  onSchemaClick={onSchemaClick}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        <CreateCatalogDialog
+          ws={ws}
+          open={createCatalogOpen}
+          onOpenChange={setCreateCatalogOpen}
+        />
+        <CreateSchemaDialog
+          ws={ws}
+          allowCatalogChoice
+          open={createSchemaOpen}
+          onOpenChange={setCreateSchemaOpen}
+        />
+        <AttachCatalogDialog
+          ws={ws}
+          attachedSlugs={(catalogs ?? []).map((c) => c.slug)}
+          open={attachCatalogOpen}
+          onOpenChange={setAttachCatalogOpen}
+        />
+      </div>
+    </TreeExpansionContext.Provider>
   );
 }

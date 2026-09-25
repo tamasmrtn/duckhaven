@@ -32,6 +32,7 @@ from api.models.sql_session import SqlSession
 from api.models.storage_backend import StorageBackend
 from api.models.table_metadata import TableMetadata
 from api.models.user import Credential, User
+from api.models.worksheet import Worksheet
 from api.models.workspace import Workspace, WorkspaceMember
 
 __all__ = [
@@ -70,4 +71,5 @@ __all__ = [
     "Workspace",
     "WorkspaceCatalog",
     "WorkspaceMember",
+    "Worksheet",
 ]

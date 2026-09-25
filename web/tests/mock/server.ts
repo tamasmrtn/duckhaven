@@ -17,6 +17,7 @@ import { serviceAccountHandlers } from '@/mock/handlers/service-accounts'
 import { maintenanceHandlers } from '@/mock/handlers/maintenance'
 import { lineageHandlers } from '@/mock/handlers/lineage'
 import { semanticHandlers } from '@/mock/handlers/semantic'
+import { worksheetHandlers } from '@/mock/handlers/worksheets'
 import { searchHandlers } from '@/mock/handlers/search'
 
 export const server = setupServer(
@@ -39,4 +40,5 @@ export const server = setupServer(
   ...lineageHandlers,
   ...semanticHandlers,
   ...searchHandlers,
+  ...worksheetHandlers,
 )

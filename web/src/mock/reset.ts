@@ -19,6 +19,7 @@ import { resetMetrics } from "./fixtures/metrics";
 import { resetMaintenance } from "./fixtures/maintenance";
 import { resetLineage } from "./fixtures/lineage";
 import { resetSemantic } from "./fixtures/semantic";
+import { resetWorksheets } from "./fixtures/worksheets";
 import { resetLiveQueries } from "./handlers/queries";
 import { resetSeed } from "./lib/seed";
 
@@ -39,6 +40,7 @@ export function resetMockState(): void {
   resetMaintenance();
   resetLineage();
   resetSemantic();
+  resetWorksheets();
   resetLiveQueries();
   resetSeed();
 }

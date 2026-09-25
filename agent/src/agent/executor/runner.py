@@ -903,10 +903,13 @@ def _attach_catalogs(
                 delegation = "vended_credentials" if backend_kind in _VENDED_BACKENDS else "none"
                 wh = str(cat["polaris_name"]).replace("'", "''")
                 alias = slug.replace('"', '""')
+                # PURGE_REQUESTED: the catalog's drop-with-purge flag only allows a
+                # purge, and DuckDB otherwise drops with purgeRequested=false, which
+                # leaves every data and metadata file on object storage.
                 conn.execute(
                     f"ATTACH '{wh}' AS \"{alias}\" "
                     f"(TYPE ICEBERG, SECRET {_ICEBERG_SECRET}, ENDPOINT '{cat_endpoint}', "
-                    f"ACCESS_DELEGATION_MODE '{delegation}')"
+                    f"ACCESS_DELEGATION_MODE '{delegation}', PURGE_REQUESTED true)"
                 )
         except Exception as exc:  # noqa: BLE001 - one bad catalog must not fail the query
             logger.warning("ATTACH failed for catalog %s: %s", slug, exc)

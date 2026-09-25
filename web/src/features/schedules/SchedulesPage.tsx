@@ -468,6 +468,7 @@ function ScheduleDialog({
           <div className="space-y-1.5">
             <Label className="text-sm">Agent</Label>
             <AgentPicker
+              ws={ws}
               value={agentId}
               onChange={setAgentId}
               workspaceCatalogKinds={catalogs.map((c) => c.kind)}

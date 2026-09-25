@@ -635,7 +635,8 @@ Named SQL saved in the workspace.
 
 ### `dh saved-query create`
 
-Save SQL under a name, replacing any query already using that name.
+Save SQL under a name, replacing any query already using that name. Names match ignoring case, so `report` replaces
+`Report`. The web UI asks before replacing; the CLI keeps replacing, as it always has.
 
 ```text
 <name>

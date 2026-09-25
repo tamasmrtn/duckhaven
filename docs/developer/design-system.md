@@ -691,8 +691,11 @@ evolves.
    tabbed (Snowflake-style) when a script has multiple statements?
    **Default: tabbed.** Stacking gets noisy past two statements.
 3. **Q-UI-3.** Should the agent picker remember per-worksheet *or* per-
-   workspace? **Default: per-worksheet** (matches "user picks engine
-   per query" — D15 of architecture).
+   workspace? **Resolved: per-worksheet**, stored on the server-side
+   worksheet, falling back to the agent last used in the workspace (per
+   browser). The picker is a status-first context chip: running agents
+   first, stopped elastic agents ("starts on run") next, incompatible
+   ones with their reason, unavailable ones folded away.
 4. **Q-UI-4.** Auto-suggest from catalog inside Monaco — pull schemas
    eagerly on workspace open or lazily on `.` keystroke? **Default:
    lazy**, with a 250 ms pre-fetch on schema-tree hover.

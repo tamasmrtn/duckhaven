@@ -166,8 +166,21 @@ Router/Query/Table, Monaco editor, Radix + shadcn/ui + Tailwind.
 | `src/mock/` | MSW handlers + fixtures used in `dev` (and tests) when the real API is absent. |
 
 The frontend's `AgentPicker` runs the same backend-compatibility check the
-control plane enforces server-side, so incompatible agents are visibly
-disabled before a query is even sent.
+control plane enforces server-side (`agentAvailability` in `src/types/agent.ts`),
+so incompatible agents are visibly disabled before a query is even sent.
+
+The worksheet (`src/features/worksheet/`) is split by concern:
+
+| Module | Responsibility |
+|---|---|
+| `WorksheetPage.tsx` | Layout and wiring only. |
+| `state/useWorksheets.ts` | The open tabs: bootstrap from the API (uploading legacy browser-only tabs once), active tab, open/close/rename, autosave wiring, conflicts. |
+| `state/worksheetSync.ts` | The autosave engine — a plain class, no React: debounce, one save in flight per worksheet, conflict pause, backoff. |
+| `state/resolveAgent.ts` | Pure agent choice for a worksheet; never an agent a run cannot reach. |
+| `state/useWorksheetRuntime.ts` | Per-tab results, progress and dispatch errors. |
+| `useRunWorksheet.ts` | Statement splitting and sequential dispatch, writing only to the worksheet that ran. |
+| `openInWorksheet.ts` | Opens SQL from elsewhere (catalog actions, saved queries, ⌘K) as a worksheet, focusing a linked one. |
+| `sidebar/` | The Worksheets \| Catalog rail and the worksheet browser. |
 
 ### 2.5 `deploy/` & `scripts/`
 
@@ -199,6 +212,9 @@ erDiagram
     workspaces ||--o{ workspace_members : has
     workspaces ||--o{ queries : runs
     workspaces ||--o{ saved_queries : stores
+    workspaces ||--o{ worksheets : holds
+    users ||--o{ worksheets : owns
+    saved_queries ||--o{ worksheets : "linked from"
     workspaces ||--o{ workspace_catalogs : attaches
     catalogs ||--o{ workspace_catalogs : "bound to (M:N)"
     catalogs ||--o{ table_metadata : "stats + ownership"
@@ -300,8 +316,24 @@ erDiagram
     saved_queries {
         uuid id
         uuid workspace_id
+        string name
         text sql
         uuid default_agent_id
+        uuid created_by
+        uuid updated_by
+    }
+    worksheets {
+        uuid id
+        uuid workspace_id
+        uuid owner_id
+        string title
+        text sql
+        uuid agent_id
+        string catalog
+        uuid saved_query_id
+        uuid last_query_id
+        bool is_open
+        int version
     }
     table_metadata {
         uuid id

@@ -6,17 +6,27 @@ from the catalog browser or with SQL — both are Polaris-backed.
 
 ## Browse
 
-The catalog browser shows a searchable tree: **workspace → catalog → schema → table** — the same tree the worksheet
-sidebar uses. Each attached catalog is a top-level node (the default one is badged) carrying a small **storage-backend
-icon** — a database glyph for the bundled object store, a box for AWS S3, a cloud for Azure ADLS Gen2 — so you can tell
-at a glance where a catalog's data lives (hover for the full label). Expand a node to reach its schemas and
-tables. Expand a table to traverse its columns and their types inline. Open a table to see the full detail: its columns
-and types, owner, row count and size, last-write provenance, and Iceberg facts (latest snapshot, whether delete files
-are present). You can preview sample rows without writing a query.
+The catalog browser shows a tree: **workspace → catalog → schema → table** — the same tree the worksheet sidebar uses.
+It starts collapsed and remembers what you expand, per workspace, in this browser; **Collapse all** in its header closes
+everything again. Each attached catalog is a top-level node (the default one is badged) carrying a small
+**storage-backend icon** — a database glyph for the bundled object store, a box for AWS S3, a cloud for Azure ADLS Gen2
+— so you can tell at a glance where a catalog's data lives (hover for the full label). Expand a node to reach its
+schemas and tables. Expand a table to traverse its columns and their types inline. Open a table to see the full detail:
+its columns and types, owner, row count and size, last-write provenance, and Iceberg facts (latest snapshot, whether
+delete files are present). You can preview sample rows without writing a query. Owner and last write are known only for
+tables written through DuckHaven, and are left out of the hover card otherwise; an Iceberg table's size comes from its
+current snapshot.
 
-Three buttons sit at the top of the tree: **refresh** re-reads the catalogs from Polaris — use it after a worksheet
-`CREATE SCHEMA`/`CREATE TABLE` so the new objects appear — **link** attaches an existing catalog, and **+** creates a
-new catalog. **Create schema** lives on each catalog node's right-click menu.
+**Search** the tree by typing at least two characters in the box above it. The search runs on the server across every
+attached catalog — including catalogs and schemas you have not expanded — matching catalog, schema and table names, and
+shows each match with its path opened out and the matching text highlighted. It respects
+[grants](../concepts/permissions.md): an object you could not open is never listed. Clear the box to return to the tree
+as you left it.
+
+The buttons at the top of the tree: **collapse all**; **refresh**, which reloads the tree and re-counts table rows —
+use it after a worksheet `CREATE SCHEMA`/`CREATE TABLE` so the new objects appear; **link**, which attaches an existing
+catalog; and **+**, which creates a new catalog or schema. **Create schema** also lives on each catalog node's
+right-click menu.
 
 ## Catalogs
 

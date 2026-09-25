@@ -49,6 +49,14 @@ own **Monitoring** page (Compute → *an agent*) showing those counters live, pl
 throughput, saturation, failures, utilization, and an up/down timeline. See
 [Monitoring](../operations/monitoring.md#per-agent-monitoring).
 
+The Compute page opens on the **active** agents — running, or on their way up or down — with **Stopped** (terminated,
+failed, or an offline operator-run host) and **All** one click away, and a search by name or host. A fleet that has
+run for a while accumulates stopped agents; they stay listed, not deleted, but out of the way. Last ping reads in
+seconds, minutes, hours or days.
+
+In a worksheet the agent picker groups agents the same way — see
+[Pick an agent](../guides/run-queries.md#pick-an-agent).
+
 **Compute** sits in the main navigation rather than under Admin, because watching an agent is not an administrative
 act: anyone granted `use` on an agent is entitled to its status and monitoring page, and needs no global permission to
 see them. The list shows only the agents you can see, and the fleet-level actions inside it — **New compute** and

@@ -46,3 +46,16 @@ async def test_client_route_falls_back_to_index(spa_app: FastAPI):
     resp = await _get(spa_app, "/local/admin/users")
     assert resp.status_code == 200
     assert "<title>spa</title>" in resp.text
+
+
+async def test_index_is_revalidated_on_every_load(spa_app: FastAPI):
+    """A heuristically cached index.html outlives an upgrade and points at asset
+    hashes the new build no longer serves, leaving a blank page."""
+    for path in ("/", "/index.html", "/local/worksheets"):
+        resp = await _get(spa_app, path)
+        assert resp.headers["cache-control"] == "no-cache", path
+
+
+async def test_hashed_assets_are_cached_for_good(spa_app: FastAPI):
+    resp = await _get(spa_app, "/assets/app.js")
+    assert resp.headers["cache-control"] == "public, max-age=31536000, immutable"

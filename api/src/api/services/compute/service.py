@@ -39,6 +39,12 @@ from api.models.workspace import Workspace
 from api.services.agent_dispatch import disconnect_agent
 from api.services.agent_telemetry import record_lifecycle_event
 from api.services.compute.backends import ProvisionRequest, get_backend
+from api.services.runtimes import (
+    AgentNotDispatchable,
+    assert_dispatchable,
+    assert_restartable,
+    image_for,
+)
 from api.services.workspace import resolve_workspace_catalogs
 
 logger = logging.getLogger(__name__)
@@ -64,9 +70,9 @@ async def resolve_pool_key(db: AsyncSession, workspace: Workspace) -> str:
     return ",".join(kinds)
 
 
-def _lock_key(pool_key: str) -> int:
+def _lock_key(pool_key: str, runtime_id: str) -> int:
     """A stable signed-64-bit advisory-lock key for a pool (pg needs a bigint)."""
-    digest = hashlib.blake2b(pool_key.encode(), digest_size=8).digest()
+    digest = hashlib.blake2b(f"{runtime_id}/{pool_key}".encode(), digest_size=8).digest()
     return int.from_bytes(digest, "big", signed=True)
 
 
@@ -89,7 +95,14 @@ def _instance_id(agent_id: uuid.UUID) -> str:
     return f"dh-agent-{agent_id.hex[:20]}-{secrets.token_hex(3)}"
 
 
-async def _count_active(db: AsyncSession, pool_key: str) -> int:
+async def _count_active(db: AsyncSession, pool_key: str, runtime_id: str) -> int:
+    """Pool agents already up or on their way, on this runtime.
+
+    Counted per runtime so that changing the default runtime provisions supply on
+    the new one straight away, instead of waiting for the old runtime's agents to
+    idle out. Parked work binds to either: the pool key is a storage shape, and
+    both serve it.
+    """
     return (
         await db.execute(
             sa.select(sa.func.count())
@@ -97,6 +110,7 @@ async def _count_active(db: AsyncSession, pool_key: str) -> int:
             .where(
                 Agent.provider.is_not(None),
                 Agent.pool_key == pool_key,
+                Agent.requested_runtime_id == runtime_id,
                 Agent.lifecycle.in_(_ACTIVE_LIFECYCLE),
             )
         )
@@ -108,22 +122,27 @@ async def ensure_agent(db: AsyncSession, pool_key: str) -> Agent | None:
 
     Returns the newly-provisioned agent, or ``None`` when supply already exists or
     the per-pool cap is reached. Concurrent callers coalesce on the advisory lock,
-    so exactly one provisions.
+    so exactly one provisions. Pool agents always run the deployment's default
+    runtime: nobody named an agent, so nobody chose anything else.
     """
     if not settings.elastic_compute_enabled:
         return None
+    runtime_id = settings.default_runtime
 
     # Serialize the check-then-provision against other callers for this pool.
     if db.bind.dialect.name == "postgresql":
-        await db.execute(sa.text("SELECT pg_advisory_xact_lock(:k)"), {"k": _lock_key(pool_key)})
+        await db.execute(
+            sa.text("SELECT pg_advisory_xact_lock(:k)"), {"k": _lock_key(pool_key, runtime_id)}
+        )
 
-    if await _count_active(db, pool_key) >= settings.elastic_max_agents_per_pool:
+    if await _count_active(db, pool_key, runtime_id) >= settings.elastic_max_agents_per_pool:
         return None
 
     return await _create_and_provision(
         db,
         name=f"elastic-{secrets.token_hex(4)}",
         pool_key=pool_key,
+        runtime_id=runtime_id,
         cpu=settings.elastic_default_cpu,
         memory_gb=settings.elastic_default_memory_gb,
         idle_timeout_s=None,
@@ -136,11 +155,12 @@ async def provision_elastic_agent(
     name: str,
     cpu: float,
     memory_gb: float,
+    runtime_id: str | None = None,
     idle_timeout_s: float | None = None,
     max_timeout_s: float | None = None,
     access_mode: str = "open",
 ) -> Agent | None:
-    """Provision one elastic agent at an explicit size (admin-initiated).
+    """Provision one elastic agent at an explicit size and runtime (admin-initiated).
 
     Unlike ``ensure_agent`` this is a deliberate action — no pool coalescing or cap
     — mirroring starting a compute cluster by hand. The agent is not bound to a pool
@@ -152,6 +172,9 @@ async def provision_elastic_agent(
     ``access_mode`` is applied to the row before the backend is asked for anything,
     so an agent created ``restricted`` is never briefly usable by everyone: it
     cannot register and pick up work in a window where the ACL says otherwise.
+
+    ``runtime_id`` defaults to the deployment's default runtime. Which runtimes an
+    admin may choose is the caller's decision (see routers/admin/agents).
     """
     if not settings.elastic_compute_enabled:
         return None
@@ -159,6 +182,7 @@ async def provision_elastic_agent(
         db,
         name=name,
         pool_key=None,
+        runtime_id=runtime_id or settings.default_runtime,
         cpu=cpu,
         memory_gb=memory_gb,
         idle_timeout_s=idle_timeout_s,
@@ -242,18 +266,25 @@ async def delete_agent(db: AsyncSession, agent: Agent) -> None:
 async def restart_elastic_agent(db: AsyncSession, agent: Agent) -> Agent | None:
     """Re-provision a terminated/failed elastic agent, reusing its row.
 
-    Restarting keeps the agent's identity (name, size, idle timeout) and gives it a
-    fresh instance + bootstrap token. Returns the agent, or ``None`` if it is not a
-    restartable elastic agent or elastic compute is disabled.
+    Restarting keeps the agent's identity (name, size, idle timeout, runtime) and
+    gives it a fresh instance + bootstrap token. The runtime's image is this
+    release's build of it, so a restart picks up the runtime's latest maintenance
+    update but never moves the agent to a different DuckDB line. Returns the agent,
+    or ``None`` if it is not a restartable elastic agent or elastic compute is
+    disabled. Raises ``RuntimeRetired`` if its runtime is no longer served.
     """
     if not settings.elastic_compute_enabled or agent.provider is None:
         return None
     if agent.lifecycle not in ("terminated", "failed"):
         return None
+    runtime = assert_restartable(agent)
 
     now = datetime.now(tz=UTC)
+    agent.requested_runtime_id = runtime.id
     agent.lifecycle = "provisioning"
     agent.status = "unavailable"
+    # The last instance's report describes that instance, not the next one.
+    agent.capabilities = None
     agent.provisioned_at = now
     agent.terminated_at = None
     agent.last_active_at = None
@@ -274,6 +305,7 @@ async def _create_and_provision(
     *,
     name: str,
     pool_key: str | None,
+    runtime_id: str,
     cpu: float,
     memory_gb: float,
     idle_timeout_s: float | None,
@@ -294,6 +326,7 @@ async def _create_and_provision(
         provider=settings.elastic_provider,
         lifecycle="provisioning",
         pool_key=pool_key,
+        requested_runtime_id=runtime_id,
         requested_cpu=cpu,
         requested_memory_gb=memory_gb,
         idle_timeout_s=idle_timeout_s,
@@ -357,9 +390,10 @@ async def _mint_and_provision(
     )
     await db.commit()
 
+    runtime_id = agent.requested_runtime_id or settings.default_runtime
     req = ProvisionRequest(
         instance_id=agent.instance_id,
-        image=settings.agent_image,
+        image=image_for(runtime_id),
         control_plane_url=settings.elastic_control_plane_url or "",
         bootstrap_token=token,
         cpu=cpu,
@@ -374,6 +408,7 @@ async def _mint_and_provision(
     with tracer.start_as_current_span("provision_agent") as span:
         span.set_attribute("duckhaven.agent_id", str(agent.id))
         span.set_attribute("duckhaven.compute_provider", provider)
+        span.set_attribute("duckhaven.runtime", runtime_id)
         span.set_attribute("duckhaven.requested_cpu", cpu)
         span.set_attribute("duckhaven.requested_memory_gb", memory_gb)
         try:
@@ -381,7 +416,7 @@ async def _mint_and_provision(
         except Exception as exc:
             span.record_exception(exc)
             span.set_status(Status(StatusCode.ERROR, "provision failed"))
-            record_agent_provision(provider, "failure")
+            record_agent_provision(provider, runtime_id, "failure")
             logger.exception("Elastic provision failed for agent %s", agent.id)
             agent.lifecycle = "failed"
             agent.terminated_at = datetime.now(tz=UTC)
@@ -390,11 +425,12 @@ async def _mint_and_provision(
             await db.commit()
             return None
 
-    record_agent_provision(provider, "success", time.monotonic() - started)
+    record_agent_provision(provider, runtime_id, "success", time.monotonic() - started)
     logger.info(
-        "Provisioned elastic agent %s (instance %s, size %svCPU/%sGiB)",
+        "Provisioned elastic agent %s (instance %s, runtime %s, size %svCPU/%sGiB)",
         agent.id,
         agent.instance_id,
+        runtime_id,
         cpu,
         memory_gb,
     )
@@ -546,7 +582,6 @@ async def bind_pending_sessions(db: AsyncSession, agent: Agent) -> int:
     failure isolation, as in ``bind_queued_work``.
     """
     # Lazy imports break the compute <-> sql_sessions import cycle at module load.
-    from api.services.agent_capabilities import agent_supports_catalog
     from api.services.sql_sessions.service import dispatch_open_session
 
     pending = (
@@ -581,20 +616,15 @@ async def bind_pending_sessions(db: AsyncSession, agent: Agent) -> int:
                 )
             if pool_keys[session.workspace_id] != agent.pool_key:
                 continue
-        elif agent.capabilities is not None and not all(
-            agent_supports_catalog(agent.capabilities, c.kind, c.storage_backend.kind)
-            for c in catalogs
-        ):
-            # Only reject an agent we *know* cannot serve the workspace. The open call
-            # could not check at all -- a row that failed while provisioning carries no
-            # capabilities and would have been rejected when it is merely cold -- and
-            # NULL still means "has not said yet" here: AGENT_STATUS is a frame the
-            # agent sends after the handshake this binder runs inside, so an agent
-            # terminated before it ever reported arrives with none. Treating that as
-            # incompatible stranded the session on a restart. If it genuinely cannot
-            # serve the catalogs, its own open fails and reports why.
+        # The open call could not check a targeted session: the agent it named was
+        # still starting, and a row that failed while provisioning carries no
+        # capabilities. This runs once the agent has reported them, so check now,
+        # before claiming, and fail the session with the reason.
+        try:
+            assert_dispatchable(agent, catalogs, for_session=True)
+        except AgentNotDispatchable as exc:
             session.status = "failed"
-            session.error = "agent_incompatible"
+            session.error = exc.code
             session.close_reason = "failed"
             session.closed_at = datetime.now(tz=UTC)
             continue

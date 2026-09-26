@@ -141,13 +141,13 @@ QUERY_QUEUE_REJECTED = Counter(
 
 AGENT_PROVISIONS = Counter(
     "duckhaven_agent_provisions",
-    "Elastic agent provisioning attempts, by backend and outcome (success/failure).",
-    ["replica_id", "provider", "outcome"],
+    "Elastic agent provisioning attempts, by backend, runtime and outcome (success/failure).",
+    ["replica_id", "provider", "runtime", "outcome"],
 )
 AGENT_PROVISIONING_SECONDS = Histogram(
     "duckhaven_agent_provisioning_seconds",
-    "Time from asking a backend for an elastic agent to the agent dialing home.",
-    ["replica_id", "provider"],
+    "Time a backend takes to accept an elastic agent's instance, by backend and runtime.",
+    ["replica_id", "provider", "runtime"],
     # Cold starts are tens of seconds, not milliseconds; the top bucket sits above
     # elastic_provisioning_deadline_s (300s) so timeouts land somewhere finite.
     buckets=(5, 10, 20, 30, 45, 60, 90, 120, 180, 300, 600),
@@ -323,16 +323,23 @@ def is_reap_leader() -> bool:
     return _reap_leader
 
 
-def record_agent_provision(provider: str, outcome: str, duration_s: float | None = None) -> None:
+def record_agent_provision(
+    provider: str, runtime: str, outcome: str, duration_s: float | None = None
+) -> None:
     """Count one provisioning attempt, and time it when it succeeded.
+
+    ``runtime`` is a label because each runtime is its own image: a registry
+    missing one of them fails only that runtime's provisioning.
 
     Only successes are timed: a failure's duration measures how long the backend
     took to say no, which would drag the cold-start percentiles an operator uses to
     decide whether to pre-warm.
     """
-    AGENT_PROVISIONS.labels(settings.replica_id, provider, outcome).inc()
+    AGENT_PROVISIONS.labels(settings.replica_id, provider, runtime, outcome).inc()
     if outcome == "success" and duration_s is not None:
-        AGENT_PROVISIONING_SECONDS.labels(settings.replica_id, provider).observe(duration_s)
+        AGENT_PROVISIONING_SECONDS.labels(settings.replica_id, provider, runtime).observe(
+            duration_s
+        )
 
 
 # The reaper's per-cycle counter names, mapped to the reason recorded on

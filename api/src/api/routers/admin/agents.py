@@ -15,6 +15,7 @@ from api.schemas.agent import (
     AgentMetricsOut,
     AgentMonitoringOut,
     AgentOut,
+    BootstrapCreate,
     BootstrapTokenOut,
     ComputeOptionsOut,
     ElasticAgentCreate,
@@ -27,10 +28,13 @@ from api.services.agent_dispatch import (
     gather_agent_metrics,
 )
 from api.services.agent_monitoring import DEFAULT_WINDOW, WINDOWS, build_monitoring
-from api.services.agent_view import build_agent_out
+from api.services.agent_view import build_agent_out, build_runtime_catalog_out
 from api.services.compute import pricing
 from api.services.compute import service as compute_service
 from api.services.permissions import Permission
+from api.services.runtimes import RuntimeRetired, image_for
+from duckhaven_shared.runtimes import RUNTIMES, Runtime
+from duckhaven_shared.runtimes import get as get_runtime
 
 router = APIRouter(prefix="/agents")
 
@@ -108,17 +112,52 @@ def _agent_dial_url(request: Request) -> str:
     return f"{ws_scheme}://{host}/agents/connect"
 
 
+def _selectable_runtime(runtime_id: str | None, *, allow_beta: bool = True) -> Runtime:
+    """The runtime new compute may be created on, or a 422 naming why not.
+
+    Deprecated and retired runtimes are closed to new compute, as a Databricks
+    runtime past end of support is. A beta one needs an explicit opt-in where the
+    caller is provisioning (``allow_beta``).
+    """
+    runtime = get_runtime(runtime_id or settings.default_runtime)
+    if runtime is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"error": "unknown_runtime", "detail": f"Unknown runtime {runtime_id!r}."},
+        )
+    if runtime.status in ("deprecated", "retired"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "error": "runtime_unavailable",
+                "detail": f"{runtime.display_name} is {runtime.status}; new compute can't use it.",
+            },
+        )
+    if runtime.status == "beta" and not allow_beta:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "error": "runtime_beta",
+                "detail": f"{runtime.display_name} is in beta; set allow_beta to use it.",
+            },
+        )
+    return runtime
+
+
 @router.post("/bootstrap", response_model=BootstrapTokenOut, status_code=status.HTTP_201_CREATED)
 async def bootstrap(
     request: Request,
+    body: BootstrapCreate | None = None,
     admin: User = Depends(require_permission(Permission.AGENTS_MANAGE)),
     db: AsyncSession = Depends(get_db),
 ) -> BootstrapTokenOut:
     """Mint a short-lived token an agent uses to register itself.
 
-    Returns the token with the WebSocket URL to dial and the agent image to run,
-    so the response is everything needed to start an agent. Single-use and
-    expiring; it is shown once and cannot be listed again."""
+    Returns the token with the WebSocket URL to dial and the agent image to run —
+    the requested runtime's, or the default's — so the response is everything
+    needed to start an agent. Single-use and expiring; it is shown once and cannot
+    be listed again."""
+    runtime = _selectable_runtime(body.runtime_id if body else None)
     token = f"dh_boot_{secrets.token_urlsafe(16)}"
     expires_at = datetime.now(tz=UTC) + BOOTSTRAP_TTL
     cred = Credential(
@@ -134,7 +173,8 @@ async def bootstrap(
         token=token,
         expires_at=expires_at,
         control_plane_url=_agent_dial_url(request),
-        agent_image=settings.agent_image,
+        agent_image=image_for(runtime.id),
+        runtime_id=runtime.id,
     )
 
 
@@ -162,6 +202,12 @@ async def compute_options(
         price_vcpu_hour=settings.elastic_azure_price_vcpu_hour,
         price_memory_gb_hour=settings.elastic_azure_price_memory_gb_hour,
         default_idle_minutes=round(settings.elastic_idle_timeout_s / 60),
+        runtimes=[
+            build_runtime_catalog_out(r)
+            for r in RUNTIMES.values()
+            if r.status not in ("deprecated", "retired")
+        ],
+        default_runtime=settings.default_runtime,
     )
 
 
@@ -233,6 +279,7 @@ async def create_elastic_agent(
                 ),
             },
         )
+    runtime = _selectable_runtime(body.runtime_id, allow_beta=body.allow_beta)
     idle_s = body.idle_timeout_minutes * 60 if body.idle_timeout_minutes else None
     name = body.name or f"elastic-{secrets.token_hex(3)}"
     agent = await compute_service.provision_elastic_agent(
@@ -240,6 +287,7 @@ async def create_elastic_agent(
         name=name,
         cpu=body.cpu,
         memory_gb=body.memory_gb,
+        runtime_id=runtime.id,
         idle_timeout_s=idle_s,
         max_timeout_s=body.max_timeout_s,
         access_mode=body.access_mode,
@@ -268,7 +316,13 @@ async def restart_elastic_agent(
                 "detail": "Only a terminated elastic agent can be restarted.",
             },
         )
-    restarted = await compute_service.restart_elastic_agent(db, agent)
+    try:
+        restarted = await compute_service.restart_elastic_agent(db, agent)
+    except RuntimeRetired as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": "runtime_retired", "detail": str(exc)},
+        ) from None
     if restarted is None:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

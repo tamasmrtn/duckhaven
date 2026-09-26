@@ -7,6 +7,9 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+from duckhaven_shared.runtimes import DEFAULT_RUNTIME_ID, RUNTIMES
+from duckhaven_shared.runtimes import get as get_runtime
+
 # Sentinel for the replica identity settings below: makes a replica work out who it is
 # at startup rather than being told.
 REPLICA_AUTO = "auto"
@@ -123,9 +126,21 @@ class Settings(BaseSettings):
     # so it cannot be read once and used. Replay is bounded either way -- creating
     # the first admin is refused outright once any user exists.
     setup_token: str | None = None
-    # Image self-hosters pull when running a new agent. Surfaced verbatim in
-    # the add-agent compose snippet (admin UI).
-    agent_image: str = "ghcr.io/tamasmrtn/duckhaven-agent:latest"
+    # Agent images, one per runtime (duckhaven_shared.runtimes): the image for
+    # runtime R is `{repository}:{tag}-duckdb{R}`. Used for elastic compute and in
+    # the add-agent compose snippet. An empty tag means this release's own version
+    # (`latest` for a dev build), so the API and the agents it starts match.
+    agent_image_repository: str = "ghcr.io/tamasmrtn/duckhaven-agent"
+    agent_image_tag: str = ""
+    # The runtime auto-provisioned elastic compute runs, and the one offered first
+    # when an admin creates compute. Must be a curated runtime that is generally
+    # available or deprecated: never a beta, never a retired one.
+    default_runtime: str = DEFAULT_RUNTIME_ID
+    # Deprecated: a full image reference that overrides the *default* runtime's
+    # image only — the way to run a local or benchmark build before runtimes
+    # existed. Empty means unset. Other runtimes always resolve from the
+    # repository and tag above.
+    agent_image: str = ""
     # Single-use token the bundled agent exchanges for a session credential on
     # first registration. When set, the API seeds it on startup (folds in the
     # former agent-bootstrap one-shot); unset disables seeding.
@@ -539,6 +554,17 @@ class Settings(BaseSettings):
         if self.replica_internal_url == REPLICA_AUTO:
             self.replica_internal_url = f"http://{_own_address()}:{REPLICA_INTERNAL_PORT}"
         return self
+
+    @field_validator("default_runtime")
+    @classmethod
+    def _check_default_runtime(cls, v: str) -> str:
+        """Refuse to start on a default that auto-provisioning could not honour."""
+        runtime = get_runtime(v)
+        if runtime is None:
+            raise ValueError(f"unknown runtime {v!r}; known: {', '.join(RUNTIMES)}")
+        if runtime.status in ("beta", "retired"):
+            raise ValueError(f"runtime {v!r} is {runtime.status} and cannot be the default")
+        return v
 
     @field_validator("oidc_providers", mode="before")
     @classmethod

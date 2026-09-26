@@ -20,9 +20,11 @@ from opentelemetry import trace
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.metrics import record_sql_session_closed, record_sql_session_opened, record_sql_statement
+from api.models.agent import Agent
 from api.models.catalog import Catalog
 from api.models.query import Query
 from api.models.sql_session import SqlSession
+from api.services import runtimes as runtime_service
 from api.services.agent_dispatch import send_to_agent
 from api.services.session_credentials import build_catalog_attach, build_polaris_block
 from duckhaven_shared.protocol import Frame, FrameType
@@ -49,7 +51,16 @@ async def dispatch_open_session(
     """Instruct the pinned agent to open + attach a held connection for a session.
 
     Carries the API-vended Polaris block (the credential seam) so the agent builds
-    its iceberg SECRET from API-supplied credentials, not its own config."""
+    its iceberg SECRET from API-supplied credentials, not its own config.
+
+    Raises ``AgentNotDispatchable`` if the agent may not hold this session — the
+    same check every query dispatch passes, plus a configuration lock that must
+    really apply, since a session runs under a relaxed statement policy."""
+    agent = await db.get(Agent, session.agent_id)
+    runtime_service.assert_dispatchable(agent, catalogs, for_session=True)
+    # Committed now: the open call re-reads the row while it waits for the ack.
+    session.runtime_id = runtime_service.runtime_id_of(agent)
+    await db.commit()
     payload: dict[str, object] = {
         "session_id": str(session.id),
         "active_catalog": session.active_catalog,
@@ -62,6 +73,7 @@ async def dispatch_open_session(
         attributes={
             "duckhaven.session_id": str(session.id),
             "duckhaven.agent_id": str(session.agent_id),
+            "duckhaven.runtime": session.runtime_id or "",
         },
     ):
         frame = Frame(

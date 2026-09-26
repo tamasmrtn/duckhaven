@@ -65,7 +65,9 @@ async def _seed(
     ws_obj = None
     if connect_agent:
         agent = Agent(
-            name="a", status="healthy", capabilities={"extensions": ["httpfs", "iceberg"]}
+            name="a",
+            status="healthy",
+            capabilities={"duckdb_version": "1.5.5", "extensions": ["httpfs", "iceberg"]},
         )
         db.add(agent)
         await db.flush()
@@ -160,7 +162,11 @@ async def _seed_scoped(db, *, sql: str, grant_tier: str | None):
                 tier=grant_tier,
             )
         )
-    agent = Agent(name="a", status="healthy", capabilities={"extensions": ["httpfs", "iceberg"]})
+    agent = Agent(
+        name="a",
+        status="healthy",
+        capabilities={"duckdb_version": "1.5.5", "extensions": ["httpfs", "iceberg"]},
+    )
     db.add(agent)
     await db.flush()
     registry.register(agent.id, FakeWS())  # type: ignore[arg-type]
@@ -260,7 +266,11 @@ async def test_schedule_agent_wins_over_default(session_factory):
     async with session_factory() as db:
         # Connect the schedule's chosen agent; give the saved query a different default.
         schedule, chosen, _ws = await _seed(db, next_run_at=_PAST)
-        other = Agent(name="other", status="healthy", capabilities={"extensions": []})
+        other = Agent(
+            name="other",
+            status="healthy",
+            capabilities={"duckdb_version": "1.5.5", "extensions": []},
+        )
         db.add(other)
         await db.flush()
         schedule.agent_id = chosen.id
@@ -508,7 +518,7 @@ async def _seed_with_agent(db, *, provider, lifecycle, connected):
     agent = Agent(
         name=f"a-{suffix}",
         status="unavailable",
-        capabilities={"extensions": ["httpfs", "iceberg"]},
+        capabilities={"duckdb_version": "1.5.5", "extensions": ["httpfs", "iceberg"]},
         provider=provider,
         lifecycle=lifecycle,
         requested_cpu=2,
@@ -618,9 +628,12 @@ async def test_parked_run_dispatches_when_the_agent_registers(session_factory, e
     await run_cycle(session_factory, now=_NOW)
     assert (await _only_run(session_factory)).agent_id is None
 
-    # The agent comes up.
+    # The agent comes up and reports what it is; the restart cleared the old
+    # instance's report, and binding only happens once there is a new one.
     async with session_factory() as db:
         fresh = await db.get(Agent, agent_id)
+        fresh.capabilities = {"duckdb_version": "1.5.5", "extensions": ["httpfs", "iceberg"]}
+        await db.commit()
         registry.register(fresh.id, FakeWS())  # type: ignore[arg-type]
         bound = await bind_scheduled_work(db, fresh)
 
@@ -730,3 +743,50 @@ async def test_bound_run_executes_as_the_last_editor(session_factory, elastic_en
         await bind_scheduled_work(db, fresh)
 
     assert principals == [editor_id]
+
+
+async def test_a_schedule_pinned_to_an_unsupported_runtime_fails_the_run(session_factory):
+    """A schedule names its agent, so the auto-pick's checks never ran for it: the
+    run was dispatched with no capability or runtime check at all. The dispatch
+    itself now refuses, and the run fails saying why."""
+    async with session_factory() as db:
+        _schedule, agent = await _seed_with_agent(db, provider=None, lifecycle=None, connected=True)
+        agent.capabilities = {
+            "duckdb_version": "9.9.0",
+            "engine_version": "v9.9.0",
+            "runtime_id": "9.9",
+            "extensions": ["httpfs", "iceberg"],
+        }
+        await db.commit()
+
+    await run_cycle(session_factory, now=_NOW)
+
+    run = await _only_run(session_factory)
+    assert run.status == "failed"
+    assert "supported runtime" in run.error
+
+
+async def test_restarting_an_agent_on_a_retired_runtime_fails_the_run(
+    session_factory, elastic_enabled, monkeypatch
+):
+    from dataclasses import replace
+
+    from duckhaven_shared import runtimes
+
+    monkeypatch.setitem(
+        runtimes.RUNTIMES,
+        "1.3",
+        replace(runtimes.RUNTIMES["1.5"], id="1.3", duckdb_line="1.3", status="retired"),
+    )
+    async with session_factory() as db:
+        _schedule, agent = await _seed_with_agent(
+            db, provider="null", lifecycle="terminated", connected=False
+        )
+        agent.requested_runtime_id = "1.3"
+        await db.commit()
+
+    await run_cycle(session_factory, now=_NOW)
+
+    run = await _only_run(session_factory)
+    assert run.status == "failed"
+    assert "retired" in run.error

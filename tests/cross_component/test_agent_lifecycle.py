@@ -19,6 +19,13 @@ async def test_agent_registers_and_reports_capabilities(healthy_agent) -> None:
     assert "iceberg" in caps["extensions"]
     assert caps["duckdb_version"]
     assert caps["cores"] >= 1
+    # The agent's runtime survives the round trip: reported over the control
+    # channel, judged by the API, and served back to the picker.
+    assert caps["runtime_id"] == "1.5"
+    assert caps["engine_version"].startswith("v1.5.")
+    assert caps["sandbox"] in ("verified", "disabled")
+    assert healthy_agent["runtime"]["id"] == "1.5"
+    assert healthy_agent["runtime"]["state"] == "ok"
 
 
 async def test_agent_disconnect_marks_unavailable(api_client, spawn_agent) -> None:

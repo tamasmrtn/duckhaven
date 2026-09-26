@@ -36,6 +36,7 @@ from api.models.workspace import Workspace
 from api.schemas.query import RowsPageOut
 from api.services import agent_access, session_credentials
 from api.services import grants as grant_service
+from api.services import runtimes as runtime_service
 from api.services.agent_capabilities import agent_supports_catalog
 from api.services.agent_dispatch import (
     connected_agent_ids,
@@ -122,6 +123,14 @@ async def dispatch_query(
     if not catalogs:
         raise ValueError("Workspace has no catalogs attached")
 
+    # The one check every dispatch path passes through — interactive runs, the
+    # scheduler, maintenance, and work parked while an agent was starting — so an
+    # agent missing an extension, or on a runtime that isn't trusted with work,
+    # never receives it however the query reached it.
+    agent = await db.get(Agent, query.agent_id)
+    runtime_service.assert_dispatchable(agent, catalogs)
+    query.runtime_id = runtime_service.runtime_id_of(agent)
+
     # Eager multi-attach: the agent ATTACHes every catalog bound to the
     # workspace under its slug and `USE`s the active one.
     if active_catalog is None:
@@ -162,6 +171,7 @@ async def dispatch_query(
         attributes={
             "duckhaven.query_id": str(query.id),
             "duckhaven.agent_id": str(query.agent_id),
+            "duckhaven.runtime": query.runtime_id or "",
             # null origin = a user's interactive query; else "scheduled"/etc.
             "duckhaven.origin": query.origin or "interactive",
         },
@@ -525,7 +535,11 @@ def decode_parquet_page(
 
 
 async def pick_agent_for(
-    db: AsyncSession, workspace: Workspace, *, principal_id: uuid.UUID | None = None
+    db: AsyncSession,
+    workspace: Workspace,
+    *,
+    principal_id: uuid.UUID | None = None,
+    for_session: bool = False,
 ) -> Agent | None:
     """A connected agent whose capabilities support *every* backend kind across
     the workspace's catalogs (all are attached on each query).
@@ -535,6 +549,12 @@ async def pick_agent_for(
     without it a caller denied agent A could simply omit ``agent_id`` and be routed
     to A anyway. ``None`` means a system actor with no principal to check against
     (the maintenance scanner), which is deliberately unfiltered.
+
+    Nobody named an agent, so nobody chose a runtime: the deployment's default
+    runtime is preferred, then other generally available ones, then deprecated
+    ones. An agent on a beta runtime is never picked here — only work that names
+    it runs there. ``for_session`` also skips agents whose configuration lock
+    failed, which cannot hold a SQL session.
     """
     connected = await connected_agent_ids(db)
     if not connected:
@@ -551,13 +571,32 @@ async def pick_agent_for(
     )
     if principal_id is not None:
         agents = await agent_access.usable_agents(db, principal_id, agents)
-    for agent in agents:
+    compatible = [
+        agent
+        for agent in agents
         if all(
             agent_supports_catalog(agent.capabilities, catalog_kind, backend_kind)
             for catalog_kind, backend_kind in pairs
-        ):
-            return agent
-    return None
+        )
+        and not (for_session and (agent.capabilities or {}).get("sandbox") == "failed")
+    ]
+    ranked = [
+        (rank, agent)
+        for agent in compatible
+        if (rank := runtime_service.auto_pick_rank(agent)) is not None
+    ]
+    if not ranked:
+        if compatible:
+            # Otherwise background work — maintenance, say — would stop without a
+            # trace whenever the only agents up are beta or unsupported ones.
+            logger.info(
+                "No agent to auto-pick for workspace %s: %d compatible agent(s), all on "
+                "beta or unsupported runtimes",
+                workspace.slug,
+                len(compatible),
+            )
+        return None
+    return min(ranked, key=lambda ranked_agent: ranked_agent[0])[1]
 
 
 async def run_sync_query(

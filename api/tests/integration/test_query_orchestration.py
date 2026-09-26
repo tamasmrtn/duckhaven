@@ -80,7 +80,11 @@ async def test_unknown_agent_is_404(admin_client, workspace_slug) -> None:
 
 async def test_disconnected_agent_is_503(admin_client, db_session, workspace_slug) -> None:
     # An agent row that exists but is not in the live registry.
-    agent = Agent(name="offline", status="unavailable", capabilities={"extensions": ["httpfs"]})
+    agent = Agent(
+        name="offline",
+        status="unavailable",
+        capabilities={"duckdb_version": "1.5.5", "extensions": ["httpfs"]},
+    )
     db_session.add(agent)
     await db_session.commit()
     await db_session.refresh(agent)

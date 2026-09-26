@@ -37,7 +37,11 @@ async def test_dispatch_injects_trace_context(db_session, span_exporter):
     await db_session.flush()
     ws, _catalog = await seed_workspace(db_session, user_id=user.id, slug="trace-ws")
 
-    agent = Agent(name="a", status="healthy", capabilities={"extensions": ["httpfs", "iceberg"]})
+    agent = Agent(
+        name="a",
+        status="healthy",
+        capabilities={"duckdb_version": "1.5.5", "extensions": ["httpfs", "iceberg"]},
+    )
     db_session.add(agent)
     await db_session.flush()
     ws_obj = FakeWS()
@@ -70,7 +74,11 @@ async def test_dispatch_span_labels_scheduled_origin(db_session, span_exporter):
     await db_session.flush()
     ws, _catalog = await seed_workspace(db_session, user_id=user.id, slug="sched-ws")
 
-    agent = Agent(name="a", status="healthy", capabilities={"extensions": ["httpfs", "iceberg"]})
+    agent = Agent(
+        name="a",
+        status="healthy",
+        capabilities={"duckdb_version": "1.5.5", "extensions": ["httpfs", "iceberg"]},
+    )
     db_session.add(agent)
     await db_session.flush()
     registry.register(agent.id, FakeWS())  # type: ignore[arg-type]

@@ -82,6 +82,16 @@ class GatewayError(Exception):
     """A governed REST call failed. The message is safe to surface to the model."""
 
 
+def _error_code(resp: httpx.Response) -> str | None:
+    """The ``error`` code of a governed error response, if it carries one."""
+    try:
+        body = resp.json()
+    except ValueError:
+        return None
+    detail = body.get("detail") if isinstance(body, dict) else None
+    return detail.get("error") if isinstance(detail, dict) else None
+
+
 def _translate(exc: httpx.HTTPStatusError) -> GatewayError:
     """Map a governed error response to a concise, model-friendly message."""
     resp = exc.response
@@ -99,6 +109,8 @@ def _translate(exc: httpx.HTTPStatusError) -> GatewayError:
         return GatewayError(f"Access denied: {detail}")
     if code == 404:
         return GatewayError(f"Not found (or not accessible): {detail}")
+    if code == 422 and _error_code(resp) == "agent_required":
+        return GatewayError("No compute agent is currently available to run SQL.")
     if code == 422:
         return GatewayError(f"Not allowed: {detail}")
     if code == 409:
@@ -465,13 +477,6 @@ class Gateway:
             return []
 
     # ── SQL execution ─────────────────────────────────────────────────────────
-    async def _pick_agent(self) -> str:
-        resp = await self._get("/agents")
-        for agent in resp.json():
-            if agent.get("status") == "healthy":
-                return agent["id"]
-        raise GatewayError("No compute agent is currently available to run SQL.")
-
     async def run_sql(self, sql: str, *, catalog: str | None, timeout_s: float) -> dict:
         """Submit a query, poll to completion, and return a capped result sample.
 
@@ -479,8 +484,10 @@ class Gateway:
         ``total`` row count, and a ``truncated`` flag. Raises :class:`GatewayError`
         with a model-friendly message on any governed rejection or failure.
         """
-        agent_id = await self._pick_agent()
-        body = {"sql": sql, "agent_id": agent_id, "timeout_s": timeout_s}
+        # No agent_id: the server picks one the way it does for any caller that
+        # doesn't care which — compatible with the workspace, on the default
+        # runtime first, never a beta one — and starts compute when elastic.
+        body = {"sql": sql, "timeout_s": timeout_s}
         if catalog:
             body["catalog"] = catalog
         resp = await self._client.post(f"/workspaces/{self._ws}/queries", json=body)

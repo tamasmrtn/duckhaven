@@ -59,7 +59,8 @@ import {
 } from "@/features/catalog/CatalogInfoDialog";
 import { StorageIcon } from "@/components/app/StorageIcon";
 import type { BackendKind } from "@/types/storage-backend";
-import { cn, formatBytes, formatRowCount } from "@/utils";
+import { formatTableSize } from "@/features/catalog/tableSize";
+import { cn, formatRowCount } from "@/utils";
 import type { Catalog, CatalogTable } from "@/types/catalog";
 import type { SearchResult } from "@/types/search";
 
@@ -160,9 +161,7 @@ function TableHoverCard({
             </dd>
             <dt className="text-text-tertiary">Size</dt>
             <dd className="truncate text-right font-mono font-tabular">
-              {detail?.size_bytes != null
-                ? formatBytes(detail.size_bytes)
-                : "—"}
+              {detail ? formatTableSize(detail) : "—"}
             </dd>
             <dt className="text-text-tertiary">Columns</dt>
             <dd className="truncate text-right font-mono font-tabular">

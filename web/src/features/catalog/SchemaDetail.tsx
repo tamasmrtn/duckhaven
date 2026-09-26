@@ -6,6 +6,12 @@ import {
 } from "@/features/catalog/detailTabs";
 import { useTables } from "@/queries/schemas";
 import { PermissionsPanel } from "@/features/catalog/PermissionsPanel";
+import {
+  formatTableSize,
+  INLINED_HINT,
+  isInlined,
+  totalTableSize,
+} from "@/features/catalog/tableSize";
 import { formatBytes } from "@/utils";
 
 function fmtNum(n: number | null | undefined) {
@@ -36,7 +42,7 @@ export function SchemaDetail({
 }) {
   const { data: tables, isLoading } = useTables(ws, catalog, schema);
   const totalRows = (tables ?? []).reduce((a, t) => a + (t.row_count ?? 0), 0);
-  const totalSize = (tables ?? []).reduce((a, t) => a + (t.size_bytes ?? 0), 0);
+  const size = totalTableSize(tables ?? []);
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -70,7 +76,14 @@ export function SchemaDetail({
             <div className="flex flex-wrap gap-3">
               <Stat label="Tables" value={tables?.length ?? 0} />
               <Stat label="Rows" value={fmtNum(totalRows)} />
-              <Stat label="Size" value={formatBytes(totalSize)} />
+              <Stat
+                label={
+                  size.known > 0 && size.known < size.count
+                    ? `Size · ${size.known} of ${size.count} tables`
+                    : "Size"
+                }
+                value={formatBytes(size.bytes)}
+              />
             </div>
           )}
         </TabsContent>
@@ -118,7 +131,9 @@ export function SchemaDetail({
                     {fmtNum(t.row_count)}
                   </td>
                   <td className="py-1.5 pr-3 text-xs text-text-secondary">
-                    {t.size_bytes == null ? "—" : formatBytes(t.size_bytes)}
+                    <span title={isInlined(t) ? INLINED_HINT : undefined}>
+                      {formatTableSize(t)}
+                    </span>
                   </td>
                   <td className="py-1.5 pr-3 text-xs text-text-secondary">
                     {t.format}

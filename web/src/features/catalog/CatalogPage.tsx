@@ -28,8 +28,12 @@ import { SemanticPanel } from "@/features/semantic/SemanticPanel";
 import { BrokenByDropWarning } from "@/features/semantic/BrokenByDropWarning";
 import { alterTemplate, selectTemplate } from "@/features/catalog/worksheetSql";
 import { tableFormatDisplay } from "@/features/catalog/catalogKind";
+import {
+  formatTableSize,
+  INLINED_HINT,
+  isInlined,
+} from "@/features/catalog/tableSize";
 import { useOpenInWorksheet } from "@/features/worksheet/openInWorksheet";
-import { formatBytes } from "@/utils";
 import {
   recordRecentlyViewed,
   getRecentlyViewed,
@@ -157,7 +161,9 @@ function TableDetail({
                   </>
                 )}{" "}
                 · {formatNumber(tableData.row_count)} rows ·{" "}
-                {formatBytes(tableData.size_bytes)}
+                <span title={isInlined(tableData) ? INLINED_HINT : undefined}>
+                  {formatTableSize(tableData)}
+                </span>
               </span>
             </div>
             {tableData.last_write_at && (

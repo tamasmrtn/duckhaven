@@ -100,7 +100,8 @@ SELECT * FROM raw.analytics.events AT (TIMESTAMP => TIMESTAMP '2026-09-01 00:00:
     DuckLake keeps changes below `DUCKLAKE_DATA_INLINING_ROW_LIMIT` (ten rows by default) in the catalog database
     instead of writing a Parquet file. Those snapshots still appear in the table's history — DuckHaven reads the
     catalog's own record of which table each one changed — but they contribute no data file, so they do not move the
-    file counts on the [maintenance](maintenance.md) page.
+    file counts on the [maintenance](maintenance.md) page. A table holding only such rows shows its size as
+    **Inlined** in the catalog browser, since it has no data files to measure.
 
 ## What DuckLake cannot do
 

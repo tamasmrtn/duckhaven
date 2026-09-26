@@ -9,6 +9,7 @@ import { useSchemas, useTables } from "@/queries/schemas";
 import { StorageIcon } from "@/components/app/StorageIcon";
 import { PermissionsPanel } from "@/features/catalog/PermissionsPanel";
 import { backendLabel } from "@/features/catalog/CatalogInfoDialog";
+import { totalTableSize } from "@/features/catalog/tableSize";
 import { formatBytes } from "@/utils";
 import type { BackendKind } from "@/types/storage-backend";
 import { catalogKindLabel, tableFormatLabel } from "./catalogKind";
@@ -30,7 +31,7 @@ function SchemaStatsRow({
 }) {
   const { data: tables, isLoading } = useTables(ws, catalog, schema);
   const count = tables?.length ?? 0;
-  const size = (tables ?? []).reduce((a, t) => a + (t.size_bytes ?? 0), 0);
+  const size = totalTableSize(tables ?? []);
   const rows = (tables ?? []).reduce((a, t) => a + (t.row_count ?? 0), 0);
   return (
     <tr className="border-b border-[var(--border-subtle)]">
@@ -44,7 +45,12 @@ function SchemaStatsRow({
         {isLoading ? "…" : fmtNum(rows)}
       </td>
       <td className="py-1.5 text-xs text-text-secondary">
-        {isLoading ? "…" : formatBytes(size)}
+        {isLoading
+          ? "…"
+          : formatBytes(size.bytes) +
+            (size.known > 0 && size.known < size.count
+              ? ` (${size.known} of ${size.count} tables)`
+              : "")}
       </td>
     </tr>
   );

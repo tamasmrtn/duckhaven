@@ -301,6 +301,36 @@ variable "duckhaven_image_tag" {
   type        = string
 }
 
+variable "default_runtime" {
+  description = <<-EOT
+    The agent runtime -- a DuckDB line plus its baked extensions -- that auto-provisioned
+    compute runs and the create-compute dialog preselects. Must be one of agent_runtimes,
+    and a generally available runtime in the DuckHaven release being deployed.
+  EOT
+  type        = string
+  default     = "1.5"
+
+  validation {
+    condition     = contains(var.agent_runtimes, var.default_runtime)
+    error_message = "default_runtime must be one of agent_runtimes, or its image is never pushed."
+  }
+}
+
+variable "agent_runtimes" {
+  description = <<-EOT
+    Every agent runtime to build and push to the registry (see the next_steps output).
+    An admin can only start compute on a runtime whose image the registry holds, so
+    list any runtime beyond the default that you want offered.
+  EOT
+  type        = list(string)
+  default     = ["1.5"]
+
+  validation {
+    condition     = length(var.agent_runtimes) > 0
+    error_message = "List at least the default runtime."
+  }
+}
+
 variable "api_min_replicas" {
   description = <<-EOT
     Replica floor. Two keeps the control plane available while one is replaced.

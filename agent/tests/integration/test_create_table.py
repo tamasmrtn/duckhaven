@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import duckdb
 import pytest
+from testkit.iceberg import iceberg_secret_sql
 
 pytestmark = pytest.mark.integration
 
@@ -32,11 +33,7 @@ def _attach(
     conn.execute("LOAD iceberg")
     conn.execute("INSTALL httpfs")
     conn.execute("LOAD httpfs")
-    conn.execute(
-        "CREATE SECRET dh_iceberg "
-        "(TYPE ICEBERG, CLIENT_ID ?, CLIENT_SECRET ?, OAUTH2_SERVER_URI ?)",
-        [client_id, client_secret, f"{base_url}/api/catalog/v1/oauth/tokens"],
-    )
+    conn.execute(iceberg_secret_sql(client_id, client_secret, base_url))
     # ATTACH does not accept bind parameters; inline the (trusted) values.
     wh = warehouse.replace("'", "''")
     endpoint = f"{base_url}/api/catalog".replace("'", "''")

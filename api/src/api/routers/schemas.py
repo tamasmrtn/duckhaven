@@ -153,8 +153,9 @@ def _size_bytes(table: CatalogTableInfo, meta: _TableMeta | None) -> int | None:
 
     DuckLake reports a size directly, and an Iceberg table's current snapshot
     summary carries `total-files-size`, the bytes of its live data files. Both are
-    current by construction. The sidecar is not: agents report no size yet, so it
-    holds only the zero written when DuckHaven created the table.
+    current by construction, but a listing loads no Iceberg snapshot, so there the
+    sidecar's figure is used: the live data-file bytes the agent's metadata probe
+    last summed, or the zero written when DuckHaven created the table.
     """
     if table.size_bytes is not None:
         return table.size_bytes
@@ -372,7 +373,7 @@ async def refresh_table_stats(
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> dict[str, int]:
-    """Probe row counts for tables in this catalog that have none yet."""
+    """Probe tables in this catalog whose row count or size is still unknown."""
     workspace, cat = target.workspace, target.catalog
 
     missing: list[tuple[str, str]] = []
@@ -381,7 +382,7 @@ async def refresh_table_stats(
         meta = await _load_table_meta(db, cat.id, s.name)
         for t in await backend.list_tables(cat, s.name):
             m = meta.get(t.name)
-            if m is None or m.row_count is None:
+            if m is None or m.row_count is None or _size_bytes(t, m) is None:
                 missing.append((s.name, t.name))
 
     # In scoped mode a row-count probe reads data, so only probe tables the

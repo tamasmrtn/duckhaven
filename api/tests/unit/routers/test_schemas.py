@@ -763,9 +763,10 @@ def _seed_worksheet_table(fake_polaris: FakePolaris, slug: str, schema: str, tab
     )
 
 
-def _patch_probe(monkeypatch) -> list[tuple[str, str]]:
+def _patch_probe(monkeypatch, size_bytes: int | None = None) -> list[tuple[str, str]]:
     """Stand in for the agent stats probe: record each (schema, table) probed and
-    upsert the count the websocket handler would have written, returning 'done'."""
+    upsert the count (and size, when given) the websocket handler would have
+    written, returning 'done'."""
     calls: list[tuple[str, str]] = []
 
     async def fake_pick_agent_for(db, workspace, *, principal_id=None):
@@ -796,6 +797,8 @@ def _patch_probe(monkeypatch) -> list[tuple[str, str]]:
             )
             db.add(existing)
         existing.row_count = 99
+        if size_bytes is not None:
+            existing.size_bytes = size_bytes
         await db.commit()
         return SimpleNamespace(status="done")
 
@@ -843,6 +846,33 @@ async def test_refresh_stats_noop_when_every_table_has_a_count(
     assert resp.status_code == 200
     assert resp.json()["probed"] == 0
     assert calls == []  # nothing missing → no agent work issued
+
+
+async def test_refresh_stats_reprobes_tables_whose_size_is_unknown(
+    auth_client: AsyncClient, backend: StorageBackend, fake_polaris: FakePolaris, monkeypatch
+):
+    """A counted Iceberg table with no size is probed again. Its listing has no
+    size, so the probe is the only way the schema overview gets one."""
+    slug = await _make_workspace(auth_client, backend, "alpha")
+    _seed_worksheet_table(fake_polaris, slug, "main", "ws_a")
+
+    # An agent that reports a count but no size leaves the size unknown...
+    _patch_probe(monkeypatch)
+    await auth_client.post(f"/workspaces/{slug}/catalogs/{slug}/refresh-stats")
+    calls = _patch_probe(monkeypatch, size_bytes=4096)
+    resp = await auth_client.post(f"/workspaces/{slug}/catalogs/{slug}/refresh-stats")
+
+    # ...so the next refresh probes the table again, and records its size.
+    assert resp.json()["probed"] == 1
+    assert calls == [("main", "ws_a")]
+    listed = await auth_client.get(f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables")
+    assert listed.json()[0]["size_bytes"] == 4096
+
+    # Once both are known, a refresh leaves it alone.
+    calls = _patch_probe(monkeypatch, size_bytes=4096)
+    resp = await auth_client.post(f"/workspaces/{slug}/catalogs/{slug}/refresh-stats")
+    assert resp.json()["probed"] == 0
+    assert calls == []
 
 
 async def test_refresh_stats_503_when_no_agent_connected(

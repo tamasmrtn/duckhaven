@@ -345,6 +345,10 @@ async def _upsert_table_stats(db: AsyncSession, query_id: uuid.UUID, frame: Fram
             existing.snapshot_at = datetime.fromisoformat(snapshot_at)
         if native.get("data_file_count") is not None:
             existing.data_file_count = native["data_file_count"]
+        # Iceberg only: its REST listing carries no sizes, so the probe's sum of
+        # live data-file bytes is the only figure a schema overview can use.
+        if native.get("data_file_size_bytes") is not None:
+            existing.size_bytes = native["data_file_size_bytes"]
         if native.get("has_deletes") is not None:
             existing.has_deletes = native["has_deletes"]
     await db.commit()

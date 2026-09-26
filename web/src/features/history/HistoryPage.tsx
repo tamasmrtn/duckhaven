@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { ArrowDown, ArrowUp, Clock, RefreshCw, Search, X } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PageHeader } from "@/components/ui/page-header";
+import { PageHeader, PageToolbar } from "@/components/ui/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
@@ -285,37 +285,42 @@ export function HistoryPage() {
     <div className="flex h-full flex-col">
       <PageHeader
         title="History"
+        description="Every query run in this workspace: its SQL, where it ran, and how it went."
         actions={
+          <Button
+            variant="outline"
+            size="icon"
+            className="size-8"
+            onClick={() => void refetch()}
+            disabled={isFetching}
+            title="Refresh"
+            aria-label="Refresh history"
+          >
+            <RefreshCw
+              className={cn("size-3.5", isFetching && "animate-spin")}
+            />
+          </Button>
+        }
+      />
+
+      <FilterBar
+        scope={
           <>
-            <div className="ml-auto flex items-center gap-3">
-              <AgentFilterCombobox
-                value={search.agent ?? null}
-                onChange={(id) => setFilter({ agent: id ?? undefined })}
-              />
-              <Segmented
-                label="filter by origin"
-                hideLabel
-                options={ORIGIN_OPTIONS}
-                value={search.origin ?? "all"}
-                onChange={(v) =>
-                  setFilter({ origin: v === "all" ? undefined : v })
-                }
-              />
-              <button
-                type="button"
-                onClick={() => void refetch()}
-                disabled={isFetching}
-                title="Refresh"
-                aria-label="Refresh history"
-                className="rounded p-1.5 text-text-secondary hover:bg-accent hover:text-text-primary"
-              >
-                <RefreshCw
-                  className={cn("size-3.5", isFetching && "animate-spin")}
-                />
-              </button>
-            </div>
+            <AgentFilterCombobox
+              value={search.agent ?? null}
+              onChange={(id) => setFilter({ agent: id ?? undefined })}
+            />
+            <Segmented
+              label="filter by origin"
+              hideLabel
+              options={ORIGIN_OPTIONS}
+              value={search.origin ?? "all"}
+              onChange={(v) =>
+                setFilter({ origin: v === "all" ? undefined : v })
+              }
+            />
             {isAdmin && (
-              <div className="flex items-center gap-3">
+              <>
                 {/* Defaults to the signed-in user, because that is the
                     default scope. Rendering null here showed "All users" while
                     the list was in fact scoped to one — the control and the
@@ -340,13 +345,10 @@ export function HistoryPage() {
                     setFilter({ scope: v === "all" ? "all" : undefined })
                   }
                 />
-              </div>
+              </>
             )}
           </>
         }
-      />
-
-      <FilterBar
         search={search}
         qDraft={qDraft}
         setQDraft={setQDraft}
@@ -409,7 +411,10 @@ export function HistoryPage() {
           </div>
         ) : (
           <>
-            <Table containerClassName="overflow-visible" className="text-sm">
+            <Table
+              containerClassName="overflow-visible"
+              className="table-gutter text-sm"
+            >
               <TableHeader className="sticky top-0 bg-[var(--bg-surface)] z-10">
                 <TableRow className="border-b border-[var(--border-subtle)] hover:bg-transparent">
                   {columns.map((c) => (
@@ -533,6 +538,7 @@ export function HistoryPage() {
 }
 
 function FilterBar({
+  scope,
   search,
   qDraft,
   setQDraft,
@@ -550,6 +556,8 @@ function FilterBar({
   hasFilters,
   onClear,
 }: {
+  // Who and where: agent, origin, user and workspace, ahead of the query filters.
+  scope: ReactNode;
   search: HistorySearch;
   qDraft: string;
   setQDraft: (v: string) => void;
@@ -572,7 +580,8 @@ function FilterBar({
   onClear: () => void;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border-subtle)] px-4 py-2">
+    <PageToolbar>
+      {scope}
       <div className="relative">
         <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-text-tertiary" />
         <Input
@@ -580,7 +589,7 @@ function FilterBar({
           onChange={(e) => setQDraft(e.target.value)}
           placeholder="Search SQL…"
           aria-label="search SQL"
-          className="h-7 w-56 pl-7 text-xs"
+          className="h-8 w-56 pl-7 text-xs"
         />
       </div>
 
@@ -589,7 +598,7 @@ function FilterBar({
         onChange={(e) => setIdDraft(e.target.value)}
         placeholder="Query ID…"
         aria-label="query ID"
-        className="h-7 w-36 text-xs"
+        className="h-8 w-36 text-xs"
       />
 
       <DropdownMenu>
@@ -598,7 +607,7 @@ function FilterBar({
             variant="outline"
             size="sm"
             aria-label="time range"
-            className="h-7 text-xs"
+            className="h-8 text-xs"
           >
             {RANGE_LABELS[range]}
           </Button>
@@ -648,7 +657,7 @@ function FilterBar({
                   : undefined,
               })
             }
-            className="h-7 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 text-xs text-text-primary"
+            className="h-8 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 text-xs text-text-primary"
           />
           <input
             type="datetime-local"
@@ -661,7 +670,7 @@ function FilterBar({
                   : undefined,
               })
             }
-            className="h-7 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 text-xs text-text-primary"
+            className="h-8 rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 text-xs text-text-primary"
           />
         </>
       )}
@@ -687,7 +696,7 @@ function FilterBar({
           onChange={(e) => setSlowerDraft(e.target.value)}
           placeholder="Slower than"
           aria-label="slower than"
-          className="h-7 w-28 text-xs"
+          className="h-8 w-28 text-xs"
         />
         <Select
           value={unit}
@@ -695,7 +704,7 @@ function FilterBar({
         >
           <SelectTrigger
             aria-label="duration unit"
-            className="h-7 w-16 text-xs"
+            className="h-8 w-16 text-xs"
           >
             <SelectValue />
           </SelectTrigger>
@@ -722,7 +731,7 @@ function FilterBar({
           Clear filters
         </button>
       )}
-    </div>
+    </PageToolbar>
   );
 }
 
@@ -745,7 +754,7 @@ function MultiSelect({
           variant="outline"
           size="sm"
           aria-label={label}
-          className="h-7 text-xs capitalize"
+          className="h-8 text-xs capitalize"
         >
           {selected.length === 0
             ? `Any ${label}`

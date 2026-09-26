@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { PageHeader } from "@/components/ui/page-header";
+import { PageHeader, PageToolbar } from "@/components/ui/page-header";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -84,31 +84,32 @@ export function SavedQueriesPage() {
         description="Shared with everyone in the workspace. Open one to edit it in a worksheet; Save there updates it here."
       />
 
-      <div className="flex-1 overflow-auto p-6">
-        {all.length > 0 && (
-          <div className="mb-4 flex flex-wrap items-center gap-3">
-            <div className="relative w-64">
-              <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-text-tertiary" />
-              <Input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search name or SQL…"
-                aria-label="Search saved queries"
-                className="h-8 pl-7 text-sm"
-              />
-            </div>
-            <Segmented
-              label="Sort"
-              value={sort}
-              onChange={setSort}
-              options={[
-                { value: "updated", label: "Updated" },
-                { value: "name", label: "Name" },
-                { value: "last_run", label: "Last run" },
-              ]}
+      {all.length > 0 && (
+        <PageToolbar>
+          <div className="relative w-56">
+            <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-text-tertiary" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search name or SQL…"
+              aria-label="Search saved queries"
+              className="h-8 pl-7 text-xs"
             />
           </div>
-        )}
+          <Segmented
+            label="Sort"
+            value={sort}
+            onChange={setSort}
+            options={[
+              { value: "updated", label: "Updated" },
+              { value: "name", label: "Name" },
+              { value: "last_run", label: "Last run" },
+            ]}
+          />
+        </PageToolbar>
+      )}
+
+      <div className="flex-1 overflow-auto p-6">
         {isLoading ? (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {Array.from({ length: 4 }).map((_, i) => (
@@ -122,7 +123,7 @@ export function SavedQueriesPage() {
         ) : queries.length === 0 ? (
           <EmptyState
             icon={BookMarked}
-            title="Save a worksheet to keep it here."
+            title="Save a worksheet to keep it here"
             description='Click "Save…" in the worksheet editor to name and save your query.'
           />
         ) : (

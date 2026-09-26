@@ -71,7 +71,7 @@ export function LakehouseHealthPage() {
         description="Continuous, explainable health scoring and maintenance recommendations."
       />
 
-      <div className="flex-1 overflow-auto p-4">
+      <div className="flex-1 overflow-auto p-6">
         {isLoading ? (
           <div className="space-y-4">
             <Skeleton className="h-44 w-full rounded-lg" />

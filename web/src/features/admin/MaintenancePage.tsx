@@ -56,8 +56,8 @@ export function MaintenancePage() {
 
   if (isLoading || !policy) {
     return (
-      <div className="p-4">
-        <Skeleton className="h-64 w-full rounded-lg" />
+      <div className="p-6">
+        <Skeleton className="h-64 w-full max-w-2xl rounded-lg" />
       </div>
     );
   }
@@ -78,8 +78,8 @@ export function MaintenancePage() {
   };
 
   return (
-    <div className="flex h-full flex-col overflow-auto p-4">
-      <div className="mx-auto w-full max-w-2xl space-y-4">
+    <div className="flex h-full flex-col overflow-auto p-6">
+      <div className="w-full max-w-2xl space-y-4">
         {/* Scanning */}
         <section className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4">
           <div className="flex items-center justify-between">

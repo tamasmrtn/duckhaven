@@ -635,7 +635,7 @@ describe("WorksheetPage results", () => {
 
     await user.click(screen.getByRole("tab", { name: /funnel-draft/ }));
     await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
-    expect(screen.getByText("No results yet.")).toBeInTheDocument();
+    expect(screen.getByText("No results yet")).toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: /events\.sql/ }));
     expect(await screen.findByRole("status")).toBeInTheDocument();
@@ -650,7 +650,7 @@ describe("WorksheetPage results", () => {
     await user.click(screen.getByLabelText("New worksheet"));
 
     await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
-    expect(screen.getByText("No results yet.")).toBeInTheDocument();
+    expect(screen.getByText("No results yet")).toBeInTheDocument();
   });
 
   it("restores a worksheet's last results after a reload", async () => {

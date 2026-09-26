@@ -29,7 +29,7 @@ describe("SavedQueriesPage", () => {
     );
     renderWithProviders({ initialRoute: ROUTE });
     expect(
-      await screen.findByText("Save a worksheet to keep it here."),
+      await screen.findByText("Save a worksheet to keep it here"),
     ).toBeInTheDocument();
   });
 

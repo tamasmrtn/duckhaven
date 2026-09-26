@@ -12,7 +12,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PageHeader } from "@/components/ui/page-header";
+import { PageHeader, PageToolbar } from "@/components/ui/page-header";
 import { Segmented } from "@/components/ui/segmented";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -494,7 +494,7 @@ export function AgentsPage() {
         }
       />
       {agents.length > 0 && (
-        <div className="flex flex-wrap items-center gap-3 border-b border-[var(--border-subtle)] px-6 py-2 shrink-0">
+        <PageToolbar>
           <Segmented
             label="Show"
             hideLabel
@@ -516,10 +516,10 @@ export function AgentsPage() {
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search name or host…"
               aria-label="Search agents"
-              className="h-7 pl-7 text-xs"
+              className="h-8 pl-7 text-xs"
             />
           </div>
-        </div>
+        </PageToolbar>
       )}
 
       <div className="flex-1 overflow-auto">
@@ -564,7 +564,7 @@ export function AgentsPage() {
                 : "No stopped agents."}
           </p>
         ) : (
-          <table className="w-full text-sm">
+          <table className="table-gutter w-full text-sm">
             <thead className="sticky top-0 bg-[var(--bg-surface)] z-10">
               <tr className="border-b border-[var(--border-subtle)]">
                 {[

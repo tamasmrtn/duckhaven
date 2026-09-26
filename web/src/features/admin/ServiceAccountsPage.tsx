@@ -3,6 +3,7 @@ import { Bot, Copy, KeyRound, MoreHorizontal, RefreshCw } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { PageToolbar } from "@/components/ui/page-header";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
   Dialog,
@@ -397,22 +398,26 @@ export function ServiceAccountsPage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="flex items-center justify-between border-b border-[var(--border-subtle)] px-6 py-3 shrink-0">
+      <PageToolbar className="justify-between">
         <p className="text-xs text-text-secondary">
           {accounts.length} service accounts
         </p>
-        <Button size="sm" className="h-8" onClick={() => setCreateOpen(true)}>
-          <Bot className="size-4" />
+        <Button
+          size="sm"
+          className="h-8 gap-1.5 text-xs"
+          onClick={() => setCreateOpen(true)}
+        >
+          <Bot className="size-3.5" />
           New service account
         </Button>
-      </div>
+      </PageToolbar>
 
       <CreateServiceAccountDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
       />
 
-      <div className="flex-1 overflow-auto p-4">
+      <div className="flex-1 overflow-auto p-6">
         {error && (
           <p className="mb-3 text-xs text-[var(--status-failed)]" role="alert">
             {error}
@@ -428,7 +433,7 @@ export function ServiceAccountsPage() {
             ))}
           </div>
         ) : accounts.length === 0 ? (
-          <EmptyState icon={Bot} title="No service accounts yet." />
+          <EmptyState icon={Bot} title="No service accounts yet" />
         ) : (
           <div className="space-y-2">
             {accounts.map((a) => (

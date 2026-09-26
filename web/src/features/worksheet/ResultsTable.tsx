@@ -217,7 +217,7 @@ export function ResultsTable({
   if (columns.length === 0) {
     return (
       <div className="flex h-full items-center justify-center">
-        <EmptyState icon={Table2} title="No results yet." />
+        <EmptyState icon={Table2} title="No results yet" />
       </div>
     );
   }

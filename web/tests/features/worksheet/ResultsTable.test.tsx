@@ -255,7 +255,7 @@ describe('ResultsTable sorting', () => {
 describe('ResultsTable pre-run state', () => {
   it('shows a "No results yet" placeholder before any query has run', () => {
     render(<ResultsTable columns={[]} rows={[]} total={0} />)
-    expect(screen.getByText('No results yet.')).toBeInTheDocument()
+    expect(screen.getByText('No results yet')).toBeInTheDocument()
   })
 })
 

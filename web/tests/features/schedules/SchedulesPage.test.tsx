@@ -95,7 +95,7 @@ describe("SchedulesPage", () => {
       http.get("/api/workspaces/:ws/schedules", () => HttpResponse.json([])),
     );
     renderWithProviders({ initialRoute: ROUTE });
-    expect(await screen.findByText("No schedules yet.")).toBeInTheDocument();
+    expect(await screen.findByText("No schedules yet")).toBeInTheDocument();
   });
 
   it("shows an empty state on the Runs tab when there are no runs", async () => {
@@ -110,7 +110,7 @@ describe("SchedulesPage", () => {
 
     await user.click(screen.getByRole("tab", { name: "Runs" }));
     expect(
-      await screen.findByText("No scheduled runs yet."),
+      await screen.findByText("No scheduled runs yet"),
     ).toBeInTheDocument();
   });
 });

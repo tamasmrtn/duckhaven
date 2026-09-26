@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Plus, Trash2, ShieldAlert, ShieldCheck, ShieldX } from "lucide-react";
 import { Banner } from "@/components/ui/banner";
+import { PageToolbar } from "@/components/ui/page-header";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -481,7 +482,7 @@ export function StorageBackendsPage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="flex items-center justify-between border-b border-[var(--border-subtle)] px-6 py-3 shrink-0">
+      <PageToolbar className="justify-between">
         <p className="text-xs text-text-secondary font-tabular">
           {plural(backends.length, "backend")}
         </p>
@@ -493,10 +494,10 @@ export function StorageBackendsPage() {
           <Plus className="size-3.5" />
           Register backend
         </Button>
-      </div>
+      </PageToolbar>
 
       {hasLocalBackend && (
-        <Banner className="mx-6 mt-3">
+        <Banner className="mx-6 my-3">
           <ShieldAlert className="size-3.5 text-[var(--brand-orange)]" />
           <span>
             Object storage backends are stored in the bundled object store on
@@ -508,7 +509,7 @@ export function StorageBackendsPage() {
 
       <div className="flex-1 overflow-auto">
         {isLoading ? (
-          <div className="space-y-1 p-4">
+          <div className="space-y-1 p-6">
             {Array.from({ length: 4 }).map((_, i) => (
               <Skeleton
                 key={i}
@@ -517,7 +518,7 @@ export function StorageBackendsPage() {
             ))}
           </div>
         ) : (
-          <table className="w-full text-sm">
+          <table className="table-gutter w-full text-sm">
             <thead className="sticky top-0 bg-[var(--bg-surface)] z-10">
               <tr className="border-b border-[var(--border-subtle)]">
                 {["Kind", "Name", "Root URI", "Access", "In use", ""].map(

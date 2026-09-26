@@ -169,9 +169,25 @@ mobile/tablet target):
 | Button (compact, inline in toolbars) | 28 | 8 |
 | Input | 32 | 10 |
 | Select / agent picker | 32 | 10 |
-| Tab | 32 | 12 |
+| Tab / segmented option group | 32 | 10 |
+| Tab / segmented option group inside an editor pane | 28 | 10 |
 | Top bar | 48 | 16 |
 | Status bar (worksheet bottom) | 28 | 12 |
+
+#### Page layout
+
+Every page outside the two editor pages (Worksheets, Catalog) is built from the same three rows, so moving between
+pages never shifts the title, the controls or the columns:
+
+1. **Header** (`PageHeader`): the title, a one-line description under it on every page, and the page's own actions at
+   the right as 32 px buttons. Admin adds its section nav as a row beneath.
+2. **Toolbar** (`PageToolbar`): filters, search and view tabs, on the page's 24 px gutter, every control 32 px tall.
+3. **Content**: cards and forms get `p-6`. A table runs edge to edge, and its `table-gutter` class puts its first and
+   last columns on the same 24 px gutter, so the title, the toolbar and the table's first column share one left edge.
+
+Tabs and segmented options are one control with one look (`Segmented`, and `Tabs`, which borrows its classes): 32 px on
+a page, 28 px inside an editor pane (the worksheet's Results | Profile, the catalog detail tabs, the sidebar switch).
+Empty-state titles are phrases without a closing full stop.
 
 ### 2.4 Radius, Borders, Elevation
 

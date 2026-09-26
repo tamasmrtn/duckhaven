@@ -4,7 +4,7 @@ import { CalendarClock, Plus } from "lucide-react";
 import { ApiError } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { PageHeader } from "@/components/ui/page-header";
+import { PageHeader, PageToolbar } from "@/components/ui/page-header";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -85,30 +85,35 @@ export function SchedulesPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <PageHeader title="Schedules" />
-
-      <Tabs defaultValue="schedules" className="flex min-h-0 flex-1 flex-col">
-        <div className="flex items-center justify-between px-6 pt-3">
-          <TabsList>
-            <TabsTrigger value="schedules">Schedules</TabsTrigger>
-            <TabsTrigger value="runs">Runs</TabsTrigger>
-          </TabsList>
+      <PageHeader
+        title="Schedules"
+        description="Saved queries that run on a cron cadence, and every run they have made."
+        actions={
           <Button
             size="sm"
-            className="h-8 gap-1.5"
+            className="h-8 gap-1.5 text-xs"
             onClick={() => setCreating(true)}
           >
             <Plus className="size-3.5" />
             New schedule
           </Button>
-        </div>
+        }
+      />
+
+      <Tabs defaultValue="schedules" className="flex min-h-0 flex-1 flex-col">
+        <PageToolbar>
+          <TabsList>
+            <TabsTrigger value="schedules">Schedules</TabsTrigger>
+            <TabsTrigger value="runs">Runs</TabsTrigger>
+          </TabsList>
+        </PageToolbar>
 
         <TabsContent
           value="schedules"
-          className="mt-3 min-h-0 flex-1 overflow-auto px-6 pb-6"
+          className="mt-0 min-h-0 flex-1 overflow-auto"
         >
           {isLoading ? (
-            <div className="space-y-1">
+            <div className="space-y-1 p-6">
               {Array.from({ length: 4 }).map((_, i) => (
                 <Skeleton
                   key={i}
@@ -119,11 +124,14 @@ export function SchedulesPage() {
           ) : schedules.length === 0 ? (
             <EmptyState
               icon={CalendarClock}
-              title="No schedules yet."
+              title="No schedules yet"
               description="Create a schedule to run a saved query on a cron cadence."
             />
           ) : (
-            <Table containerClassName="overflow-visible" className="text-sm">
+            <Table
+              containerClassName="overflow-visible"
+              className="table-gutter text-sm"
+            >
               <TableHeader className="sticky top-0 bg-[var(--bg-surface)] z-10">
                 <TableRow className="border-b border-[var(--border-subtle)] hover:bg-transparent">
                   {[
@@ -189,7 +197,7 @@ export function SchedulesPage() {
           )}
         </TabsContent>
 
-        <TabsContent value="runs" className="mt-3 min-h-0 flex-1 overflow-auto">
+        <TabsContent value="runs" className="mt-0 min-h-0 flex-1 overflow-auto">
           <RunsTab
             ws={ws}
             labelByScheduleId={labelByScheduleId}
@@ -225,7 +233,7 @@ function RunsTab({
 
   if (isLoading) {
     return (
-      <div className="space-y-1 px-6">
+      <div className="space-y-1 p-6">
         {Array.from({ length: 5 }).map((_, i) => (
           <Skeleton key={i} className="h-12 w-full animate-shimmer rounded" />
         ))}
@@ -236,14 +244,17 @@ function RunsTab({
     return (
       <EmptyState
         icon={CalendarClock}
-        title="No scheduled runs yet."
+        title="No scheduled runs yet"
         description="Runs from your schedules will appear here, newest first."
       />
     );
   }
 
   return (
-    <Table containerClassName="overflow-visible" className="text-sm">
+    <Table
+      containerClassName="overflow-visible"
+      className="table-gutter text-sm"
+    >
       <TableHeader className="sticky top-0 bg-[var(--bg-surface)] z-10">
         <TableRow className="border-b border-[var(--border-subtle)] hover:bg-transparent">
           {["Status", "Schedule", "Agent", "Rows", "Duration", "Started"].map(

@@ -22,6 +22,9 @@ export interface Query {
   // Set when the run is a statement inside a SQL session (origin="session");
   // maps a statement to the workload it belonged to.
   session_id?: string | null;
+  // The runtime (DuckDB line, e.g. "1.5") of the agent that ran it, recorded at
+  // dispatch. Absent before dispatch and on runs older than the field.
+  runtime_id?: string | null;
   row_count: number | null;
   duration_ms: number | null;
   result_bytes: number | null;

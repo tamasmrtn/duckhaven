@@ -1,4 +1,54 @@
-import type { Agent, AgentGrant, AgentGrantPrincipal } from "@/types/agent";
+import type {
+  Agent,
+  AgentGrant,
+  AgentGrantPrincipal,
+  AgentRuntime,
+  Runtime,
+} from "@/types/agent";
+
+/** The curated runtimes the mock control plane knows: 1.5 (default) and a 2.0 beta. */
+export const RUNTIMES: Runtime[] = [
+  {
+    id: "1.5",
+    display_name: "DuckDB 1.5",
+    duckdb_line: "1.5",
+    status: "ga",
+    extensions: ["httpfs", "azure", "iceberg", "ducklake", "postgres"],
+    ducklake_format: "1.0",
+    upstream_eol: "2026-11-01",
+    default: true,
+  },
+  {
+    id: "2.0",
+    display_name: "DuckDB 2.0",
+    duckdb_line: "2.0",
+    status: "beta",
+    extensions: ["httpfs", "azure", "iceberg", "ducklake", "postgres"],
+    ducklake_format: "1.0",
+    upstream_eol: null,
+    default: false,
+  },
+];
+
+/** How the mock control plane judges a runtime id, as the API's resolve() does. */
+export function agentRuntime(runtimeId: string | null): AgentRuntime {
+  const runtime = RUNTIMES.find((r) => r.id === runtimeId);
+  return runtime
+    ? {
+        id: runtime.id,
+        display_name: runtime.display_name,
+        status: runtime.status,
+        state: "ok",
+        default: runtime.default,
+      }
+    : {
+        id: runtimeId,
+        display_name: null,
+        status: null,
+        state: "unrecognized",
+        default: false,
+      };
+}
 
 // last_ping_at uses relative offsets so the "Ns ago" rendering stays stable
 // regardless of absolute clock. DELETE /credential mutates status, so the array
@@ -100,13 +150,22 @@ function makeAgents(): Agent[] {
 
 // The mock signs in as a full admin (`agents:manage`), which resolves to the top
 // tier on every agent — so the dev app exercises the unrestricted view. Tests
-// override `access_tier` per agent to render the narrower ones.
+// override `access_tier` per agent to render the narrower ones. Each agent's
+// runtime is its DuckDB line, the way the API infers it for an older image: the
+// 1.4 agent is on a line no curated runtime covers.
 function withAccess(agents: Agent[]): Agent[] {
-  return agents.map((a) => ({
-    ...a,
-    access_tier: "admin",
-    access_mode: "open",
-  }));
+  return agents.map((a) => {
+    const line = a.capabilities?.duckdb_version
+      .split(".")
+      .slice(0, 2)
+      .join(".");
+    return {
+      ...a,
+      access_tier: "admin",
+      access_mode: "open",
+      runtime: line ? agentRuntime(line) : null,
+    };
+  });
 }
 
 export let AGENTS: Agent[] = withAccess(makeAgents());

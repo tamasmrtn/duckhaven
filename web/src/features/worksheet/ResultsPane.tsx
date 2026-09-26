@@ -6,6 +6,11 @@ import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/app/StatusPill";
 import { useQuery_, useQueryRows } from "@/queries/queries";
 import type { Worksheet } from "@/types/worksheet";
+import {
+  segmentActiveClass,
+  segmentGroupClass,
+  segmentItemClass,
+} from "@/components/ui/segmented";
 import { cn, formatBytes } from "@/utils";
 import { ProfilePanel } from "./profile/ProfilePanel";
 import { ResultsTable } from "./ResultsTable";
@@ -73,8 +78,8 @@ export function ResultsPane({
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden border-t border-[var(--border-subtle)]">
-      <div className="flex flex-wrap items-center gap-3 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-1.5 shrink-0">
-        <div className="flex items-center gap-0.5" role="tablist">
+      <div className="flex flex-wrap items-center gap-3 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-1 shrink-0">
+        <div className={cn(segmentGroupClass, "h-7")} role="tablist">
           {(["results", "profile"] as const).map((tab) => (
             <button
               key={tab}
@@ -83,10 +88,9 @@ export function ResultsPane({
               aria-selected={resultsTab === tab}
               onClick={() => onResultsTab(tab)}
               className={cn(
-                "rounded px-2 py-0.5 text-xs font-medium capitalize",
-                resultsTab === tab
-                  ? "bg-[var(--bg-elevated)] text-text-primary"
-                  : "text-text-secondary hover:text-text-primary",
+                segmentItemClass,
+                "capitalize",
+                resultsTab === tab && segmentActiveClass,
               )}
             >
               {tab}

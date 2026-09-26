@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { PageHeader } from '@/components/ui/page-header'
+import { PageHeader, PageToolbar } from '@/components/ui/page-header'
 
 describe('PageHeader', () => {
   it('renders a title-only header', () => {
@@ -61,5 +61,18 @@ describe('PageHeader', () => {
   it('omits the description paragraph when none is given', () => {
     const { container } = render(<PageHeader title="Catalog" />)
     expect(container.querySelector('p')).not.toBeInTheDocument()
+  })
+})
+
+describe('PageToolbar', () => {
+  // Every page's second row sits on the same 24px gutter as its title.
+  it('renders its controls on the page gutter', () => {
+    render(
+      <PageToolbar>
+        <input aria-label="Search" />
+      </PageToolbar>,
+    )
+    const bar = screen.getByRole('textbox', { name: 'Search' }).parentElement!
+    expect(bar.className).toContain('px-6')
   })
 })

@@ -4,6 +4,7 @@ import * as React from "react";
 import * as TabsPrimitive from "@radix-ui/react-tabs";
 
 import { cn } from "@/utils";
+import { segmentGroupClass, segmentItemClass } from "@/components/ui/segmented";
 
 const Tabs = TabsPrimitive.Root;
 
@@ -13,10 +14,9 @@ const TabsList = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <TabsPrimitive.List
     ref={ref}
-    className={cn(
-      "inline-flex h-10 items-center justify-center rounded-md bg-muted p-1 text-muted-foreground",
-      className,
-    )}
+    // Tabs look like the Segmented control, so every set of options in the
+    // app reads the same. Pass `h-7` for the compact size inside a pane.
+    className={cn(segmentGroupClass, "h-8", className)}
     {...props}
   />
 ));
@@ -29,7 +29,8 @@ const TabsTrigger = React.forwardRef<
   <TabsPrimitive.Trigger
     ref={ref}
     className={cn(
-      "inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm",
+      segmentItemClass,
+      "ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-accent data-[state=active]:font-medium data-[state=active]:text-text-primary",
       className,
     )}
     {...props}

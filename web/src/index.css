@@ -63,6 +63,15 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* An edge-to-edge table: its first and last columns sit on the page's 24px
+     gutter, so its text lines up with the page title and toolbar above it. */
+  .table-gutter :is(th, td):first-child {
+    padding-left: 1.5rem;
+  }
+  .table-gutter :is(th, td):last-child {
+    padding-right: 1.5rem;
+  }
+
   /* Pulse animation for Run button dispatch */
   @keyframes run-pulse {
     0% {

@@ -1,9 +1,6 @@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  detailTabClass,
-  detailTabsListClass,
-} from "@/features/catalog/detailTabs";
+import { detailTabsListClass } from "@/features/catalog/detailTabs";
 import { useTables } from "@/queries/schemas";
 import { PermissionsPanel } from "@/features/catalog/PermissionsPanel";
 import {
@@ -55,15 +52,9 @@ export function SchemaDetail({
         className="flex flex-1 flex-col overflow-hidden gap-0"
       >
         <TabsList className={detailTabsListClass}>
-          <TabsTrigger value="overview" className={detailTabClass}>
-            Overview
-          </TabsTrigger>
-          <TabsTrigger value="details" className={detailTabClass}>
-            Details
-          </TabsTrigger>
-          <TabsTrigger value="permissions" className={detailTabClass}>
-            Permissions
-          </TabsTrigger>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="details">Details</TabsTrigger>
+          <TabsTrigger value="permissions">Permissions</TabsTrigger>
         </TabsList>
 
         <TabsContent

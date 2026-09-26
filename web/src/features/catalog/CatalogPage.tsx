@@ -17,10 +17,7 @@ import { CatalogDetail } from "@/features/catalog/CatalogDetail";
 import { SchemaDetail } from "@/features/catalog/SchemaDetail";
 import { ConfirmDropDialog } from "@/features/catalog/ConfirmDropDialog";
 import { SnapshotHistoryPanel } from "@/features/catalog/SnapshotHistoryPanel";
-import {
-  detailTabClass,
-  detailTabsListClass,
-} from "@/features/catalog/detailTabs";
+import { detailTabsListClass } from "@/features/catalog/detailTabs";
 import { PermissionsPanel } from "@/features/catalog/PermissionsPanel";
 import { TableHealthPanel } from "@/features/health/TableHealthPanel";
 import { LineagePanel } from "@/features/lineage/LineagePanel";
@@ -279,24 +276,12 @@ function TableDetail({
           className="flex flex-1 flex-col overflow-hidden gap-0"
         >
           <TabsList className={detailTabsListClass}>
-            <TabsTrigger value="sample" className={detailTabClass}>
-              Sample
-            </TabsTrigger>
-            <TabsTrigger value="history" className={detailTabClass}>
-              History
-            </TabsTrigger>
-            <TabsTrigger value="health" className={detailTabClass}>
-              Health
-            </TabsTrigger>
-            <TabsTrigger value="lineage" className={detailTabClass}>
-              Lineage
-            </TabsTrigger>
-            <TabsTrigger value="semantics" className={detailTabClass}>
-              Semantics
-            </TabsTrigger>
-            <TabsTrigger value="permissions" className={detailTabClass}>
-              Permissions
-            </TabsTrigger>
+            <TabsTrigger value="sample">Sample</TabsTrigger>
+            <TabsTrigger value="history">History</TabsTrigger>
+            <TabsTrigger value="health">Health</TabsTrigger>
+            <TabsTrigger value="lineage">Lineage</TabsTrigger>
+            <TabsTrigger value="semantics">Semantics</TabsTrigger>
+            <TabsTrigger value="permissions">Permissions</TabsTrigger>
           </TabsList>
           <TabsContent
             value="sample"

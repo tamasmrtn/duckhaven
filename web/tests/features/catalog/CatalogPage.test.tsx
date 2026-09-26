@@ -403,16 +403,17 @@ describe("CatalogPage layout", () => {
     );
   });
 
-  it("styles the detail tabs like the worksheet's Results | Profile bar", async () => {
+  it("uses the app's one tab look at the compact pane size", async () => {
     renderWithProviders({
       initialRoute: `${CATALOG_ROUTE}/acme_analytics/raw/events`,
     });
     const tab = await screen.findByRole("tab", { name: "Sample" });
+    const list = tab.parentElement!;
 
-    expect(tab.className).toContain("text-xs");
-    expect(tab.className).toContain(
-      "data-[state=active]:bg-[var(--bg-elevated)]",
-    );
-    expect(tab.parentElement!.className).not.toContain("bg-muted");
+    // The Segmented look (tabs.tsx), sized for a pane like Results | Profile.
+    expect(list.className).toContain("border");
+    expect(list.className).toContain("h-7");
+    expect(list.className).not.toContain("bg-muted");
+    expect(tab.className).toContain("data-[state=active]:bg-accent");
   });
 });

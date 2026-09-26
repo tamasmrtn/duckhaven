@@ -1,0 +1,3 @@
+# DuckDB 2.0 runtime (status: beta). A pre-release build until 2.0 ships: move
+# this to the release and re-run docs/developer/runtime-qualification.md.
+duckdb==2.0.0.dev2609250715

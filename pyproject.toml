@@ -38,6 +38,7 @@ pythonpath = ["tests"]
 markers = [
     "integration: integration tests requiring external services (UC, Postgres). Opt-in via `make test-integration`.",
     "cross_component: live API+agent tests over the control channel. Opt-in via `make test-cross-component`.",
+    "runtime_compat: data written on one agent runtime read on another. Opt-in via `make test-runtime-compat`.",
 ]
 
 [tool.coverage.run]

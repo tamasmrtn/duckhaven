@@ -17,12 +17,14 @@ delete files are present). You can preview sample rows without writing a query. 
 tables written through DuckHaven, and are left out of the hover card otherwise.
 
 A table's **size** is the bytes of its live data files, shown in B, KB, MB, GB or TB, whichever reads best. A DuckLake
-table reports it directly. An Iceberg table's detail page reads it from the current snapshot, but the lists of tables
-on a schema or catalog page get it from an agent's probe (see Refresh below), so an Iceberg table not yet probed shows
-"—". A schema's total counts only the tables whose size is known, and says so ("Size · 6 of 8 tables") when some are
-missing; it never counts an unknown size as zero. A DuckLake table whose rows are all
-[inlined](../concepts/ducklake.md) in the catalog database has no data files, so it shows **Inlined** rather than a
-misleading 0 B.
+table reports it directly. An Iceberg table's size is in its snapshot only when the engine that wrote it recorded one,
+and DuckDB does not, so an agent measures it: each time the table is opened or refreshed, it reads the Parquet footer of
+each data file, which records the file's exact size. Up to 100 files that total is exact; a wider table is sized from
+an evenly spaced sample of 100 files, scaled up. The [maintenance advisor](../concepts/maintenance.md) sizes files the
+same way, so the two agree. An Iceberg table not yet measured shows "—". A schema's total counts only the tables whose
+size is known, and says so ("Size · 6 of 8 tables") when some are missing; it never counts an unknown size as zero.
+A DuckLake table whose rows are all [inlined](../concepts/ducklake.md) in the catalog database has no data files, so it
+shows **Inlined** rather than a misleading 0 B.
 
 **Search** the tree by typing at least two characters in the box above it. The search runs on the server across every
 attached catalog — including catalogs and schemas you have not expanded — matching catalog, schema and table names, and
@@ -67,7 +69,7 @@ JOIN curated.analytics.users u ON e.user_id = u.id;
 
 Refresh also fills in row counts and sizes. A table's row count is measured by an agent and cached; tables created
 through the worksheet (rather than the create-table dialog) start out with no count and show blank in the tree. The
-same probe sums an Iceberg table's live data files, which is the only size the table lists can show. Refresh probes
+same probe measures an Iceberg table's size (see above). Refresh probes
 every table that still lacks a count or a size and records the result, so the numbers appear after the next refresh.
 It covers every catalog bound to the workspace, not only the default one. Tables that already have both are skipped,
 and the probe needs a connected agent — without one the tree still refreshes but the numbers stay blank.

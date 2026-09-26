@@ -16,6 +16,7 @@ import logging
 import re
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -265,31 +266,15 @@ def _iceberg_metadata(
     except Exception as exc:  # noqa: BLE001 - metadata is best-effort
         logger.warning("iceberg_snapshots failed for %s.%s: %s", schema, table, exc)
     try:
-        # Newer iceberg extensions moved data-vs-delete classification from
-        # `content` to `manifest_content`. Both columns exist in the new schema,
-        # so inspect which one the running extension exposes.
-        columns = _iceberg_columns(conn, ident)
-        classify = "manifest_content" if "manifest_content" in columns else "content"
-        # The size column name has varied across extension versions.
-        size_col = next(
-            (c for c in ("file_size_in_bytes", "file_size_bytes", "file_size") if c in columns),
-            None,
-        )
-        rows = conn.execute(
-            f"SELECT {classify}, count(*), sum({size_col or 'NULL'}) "
-            f"FROM iceberg_metadata({ident}) GROUP BY {classify}"
-        ).fetchall()
-        if rows:
-            counts = {str(content): n for content, n, _ in rows}
-            meta["data_file_count"] = counts.get("DATA", 0)
-            data_bytes = next((b for content, _, b in rows if str(content) == "DATA"), None)
-            if data_bytes is not None:
-                meta["data_file_size_bytes"] = int(data_bytes)
-            elif size_col is not None and "DATA" not in counts:
-                meta["data_file_size_bytes"] = 0
-            meta["has_deletes"] = any(
-                key in counts for key in ("DELETE", "POSITION_DELETES", "EQUALITY_DELETES")
-            )
+        files = _iceberg_files(conn, ident)
+        if files:
+            data = [f for f in files if f.content == "DATA"]
+            meta["data_file_count"] = len(data)
+            meta["has_deletes"] = any(f.content in _DELETE_CONTENTS for f in files)
+            # The listing carries no Iceberg sizes, so this is the table's only
+            # size outside its own detail page.
+            sizes = _data_file_sizes(conn, data, max_footer_reads=_PROBE_FOOTER_READS)
+            meta["data_file_size_bytes"] = sizes.total_bytes
     except Exception as exc:  # noqa: BLE001 - metadata is best-effort
         logger.warning("iceberg_metadata failed for %s.%s: %s", schema, table, exc)
     return meta
@@ -349,6 +334,86 @@ def _iceberg_columns(conn: duckdb.DuckDBPyConnection, ident: str) -> list[str]:
     return [
         d[0] for d in conn.execute(f"SELECT * FROM iceberg_metadata({ident}) LIMIT 0").description
     ]
+
+
+# `content` values that mark a delete file, across extension versions.
+_DELETE_CONTENTS = frozenset({"DELETE", "POSITION_DELETES", "EQUALITY_DELETES"})
+
+
+@dataclass(frozen=True)
+class _IcebergFile:
+    content: str
+    path: str | None
+    manifest: str | None
+    # From the metadata, when the extension exposes a size column (1.5.5 does not).
+    size: int | None
+
+
+def _iceberg_files(conn: duckdb.DuckDBPyConnection, ident: str) -> list[_IcebergFile]:
+    """Every file in the table's current snapshot, data and delete alike.
+
+    Loading the table this way also installs its vended storage credentials on
+    the connection, which the footer reads of ``_data_file_sizes`` need.
+    """
+    columns = _iceberg_columns(conn, ident)
+    # Newer extensions moved data-vs-delete classification from `content` to
+    # `manifest_content`. Both columns exist in the new schema.
+    classify = "manifest_content" if "manifest_content" in columns else "content"
+    # The size column name has varied across extension versions.
+    size_col = next(
+        (c for c in ("file_size_in_bytes", "file_size_bytes", "file_size") if c in columns),
+        None,
+    )
+    rows = conn.execute(
+        f"SELECT {classify}, file_path, manifest_path, {size_col or 'NULL'} "
+        f"FROM iceberg_metadata({ident})"
+    ).fetchall()
+    return [
+        _IcebergFile(str(r[0]), r[1], r[2], int(r[3]) if r[3] is not None else None) for r in rows
+    ]
+
+
+@dataclass(frozen=True)
+class _DataFileSizes:
+    """Sizes of a table's live data files: every file's, or an evenly spaced sample's."""
+
+    sizes: tuple[int, ...]
+    file_count: int
+    sampled: bool
+
+    @property
+    def avg_bytes(self) -> int | None:
+        return sum(self.sizes) // len(self.sizes) if self.sizes else None
+
+    @property
+    def total_bytes(self) -> int | None:
+        """All the data files' bytes; a sample is scaled up. None when unmeasured."""
+        if not self.file_count:
+            return 0
+        if not self.sizes:
+            return None
+        if self.sampled:
+            return (self.avg_bytes or 0) * self.file_count
+        return sum(self.sizes)
+
+
+def _data_file_sizes(
+    conn: duckdb.DuckDBPyConnection, files: list[_IcebergFile], *, max_footer_reads: int
+) -> _DataFileSizes:
+    """Measure data files: from the metadata when it carries sizes, else from at
+    most ``max_footer_reads`` Parquet footers. Zero reads means metadata only.
+
+    Shared by the metadata probe (a table's size) and the health probe (its
+    file-size distribution), which differ only in how many reads they afford.
+    """
+    listed = tuple(f.size for f in files if f.size is not None)
+    if listed:
+        return _DataFileSizes(listed, len(files), sampled=False)
+    paths = [f.path for f in files if f.path]
+    if not paths or max_footer_reads <= 0:
+        return _DataFileSizes((), len(files), sampled=False)
+    sizes, sampled = _parquet_file_sizes(conn, paths, max_reads=max_footer_reads)
+    return _DataFileSizes(tuple(sizes), len(files), sampled)
 
 
 def collect_table_health(
@@ -418,34 +483,20 @@ def collect_table_health(
     live_paths: list[str] = []
     manifests: set[str] = set()
     try:
-        columns = _iceberg_columns(conn, ident)
-        classify = "manifest_content" if "manifest_content" in columns else "content"
-        # The size column name has varied across extension versions.
-        size_col = next(
-            (c for c in ("file_size_in_bytes", "file_size_bytes", "file_size") if c in columns),
-            None,
-        )
-        size_expr = size_col or "NULL"
-        rows = conn.execute(
-            f"SELECT file_path, manifest_path, {size_expr} AS sz "
-            f"FROM iceberg_metadata({ident}) WHERE {classify} = 'DATA'"
-        ).fetchall()
-        manifests = {r[1] for r in rows if r[1] is not None}
-        sizes = [int(r[2]) for r in rows if r[2] is not None]
-        live_paths = [r[0] for r in rows if r[0] is not None]
-        health["data_file_count"] = len(rows)
+        data = [f for f in _iceberg_files(conn, ident) if f.content == "DATA"]
+        manifests = {f.manifest for f in data if f.manifest is not None}
+        live_paths = [f.path for f in data if f.path is not None]
+        health["data_file_count"] = len(data)
         health["manifest_count"] = len(manifests) or None
-        # No size column: fall back to Parquet footers on the deep tier only
-        # (one read per file). Wide tables are sampled, then scaled.
-        sampled = False
-        if not sizes and include_orphans and live_paths:
-            sizes, sampled = _parquet_file_sizes(conn, live_paths)
-        if sizes:
-            total = sum(sizes)
-            health["avg_file_bytes"] = total // len(sizes)
-            health["total_data_bytes"] = (total // len(sizes)) * len(rows) if sampled else total
-            small = sum(1 for s in sizes if s < target_file_bytes)
-            health["small_file_ratio"] = round(small / len(sizes), 4)
+        # Footers only on the deep tier: the frequent tier stays metadata-only.
+        sizes = _data_file_sizes(
+            conn, data, max_footer_reads=_MAX_FOOTER_READS if include_orphans else 0
+        )
+        if sizes.sizes:
+            health["avg_file_bytes"] = sizes.avg_bytes
+            health["total_data_bytes"] = sizes.total_bytes
+            small = sum(1 for size in sizes.sizes if size < target_file_bytes)
+            health["small_file_ratio"] = round(small / len(sizes.sizes), 4)
     except Exception as exc:  # noqa: BLE001 - metadata is best-effort
         logger.warning("iceberg_metadata aggregate failed for %s.%s: %s", schema, table, exc)
 
@@ -639,34 +690,35 @@ def _ducklake_orphans(
     return out
 
 
-# Bounds per-file footer reads on the deep tier; the distribution is well
-# estimated from a sample.
+# Footer reads a probe may spend sizing one table's data files; past this it
+# reads an evenly spaced sample and scales. The deep health tier runs rarely and
+# can afford many. The metadata probe runs whenever a table is opened, so few.
 _MAX_FOOTER_READS = 1000
+_PROBE_FOOTER_READS = 100
 
 
 def _parquet_file_sizes(
-    conn: duckdb.DuckDBPyConnection, paths: list[str]
+    conn: duckdb.DuckDBPyConnection, paths: list[str], *, max_reads: int
 ) -> tuple[list[int], bool]:
-    """Per-file sizes from the Parquet footers, for extension versions with no
-    size column. One ranged read per file, hence deep tier only.
+    """Exact per-file sizes from the Parquet footers, for extension versions
+    with no size column. One ranged read per file.
 
-    Returns ``(sizes, sampled)``; a sampled subset is evenly spaced, so the
-    caller can scale the total.
+    Returns ``(sizes, sampled)``. Past ``max_reads`` files an evenly spaced
+    subset is read and ``sampled`` is True, so the caller can scale the total.
     """
-    sampled = len(paths) > _MAX_FOOTER_READS
+    sampled = len(paths) > max_reads
     if sampled:
-        step = len(paths) / _MAX_FOOTER_READS
-        paths = [paths[int(i * step)] for i in range(_MAX_FOOTER_READS)]
+        step = len(paths) / max_reads
+        paths = [paths[int(i * step)] for i in range(max_reads)]
     try:
         rows = conn.execute(
-            "SELECT file_name, sum(total_compressed_size) AS sz "
-            "FROM parquet_metadata($files) GROUP BY file_name",
+            "SELECT file_size_bytes FROM parquet_file_metadata($files)",
             {"files": paths},
         ).fetchall()
     except Exception as exc:  # noqa: BLE001 - the size probe is best-effort
-        logger.warning("parquet_metadata size probe failed: %s", exc)
+        logger.warning("parquet footer size probe failed: %s", exc)
         return [], False
-    return [int(sz) for _, sz in rows if sz is not None], sampled
+    return [int(r[0]) for r in rows if r[0] is not None], sampled
 
 
 def _orphan_estimate(
@@ -1390,7 +1442,9 @@ def run_query_sync(
             }
 
         # When asked, compute true table stats on the same attached connection.
-        # size_bytes has no reliable cross-backend source yet, so it stays null.
+        # table_size_bytes has no cross-backend source, so it stays null: an
+        # Iceberg table's size travels with its native metadata below, and a
+        # DuckLake table's comes from its catalog.
         if stats_for:
             catalog = stats_for.get("catalog")
             schema = stats_for.get("schema")

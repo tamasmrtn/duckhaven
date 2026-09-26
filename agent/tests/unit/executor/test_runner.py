@@ -247,52 +247,99 @@ def test_iceberg_metadata_parses_snapshot_and_deletes():
     shape, classifying data/delete files via the newer `manifest_content`."""
     from agent.executor.runner import _iceberg_metadata
 
-    class FakeConn:
-        # Newer iceberg extension: `manifest_content` carries DATA/DELETE.
-        description = [("manifest_content",), ("file_size_in_bytes",)]
-
-        def execute(self, sql):
-            self.sql = sql
-            return self
-
-        def fetchone(self):  # iceberg_snapshots row
-            return (123456789, 1715780580000)
-
-        def fetchall(self):  # iceberg_metadata grouped by manifest_content
-            assert "sum(file_size_in_bytes)" in self.sql
-            return [("DATA", 128, 2_223_533_507), ("DELETE", 2, 4_096)]
-
-    meta = _iceberg_metadata(FakeConn(), "cat", "analytics", "events")
+    conn = _HealthConn(
+        files=[("s3://b/t/data/a.parquet", "m1", 100), ("s3://b/t/data/b.parquet", "m1", 200)],
+        delete_files=[("DELETE", "s3://b/t/data/d.parquet", "m2", 4096)],
+    )
+    meta = _iceberg_metadata(conn, "cat", "analytics", "events")
     assert meta["snapshot_id"] == 123456789
     assert meta["snapshot_at"].startswith("2024-")
-    assert meta["data_file_count"] == 128
-    # Data files only: delete files are not the table's data.
-    assert meta["data_file_size_bytes"] == 2_223_533_507
+    assert meta["data_file_count"] == 2
+    # The extension's size column, data files only: deletes are not the table's data.
+    assert meta["data_file_size_bytes"] == 300
     assert meta["has_deletes"] is True
+    assert conn.footer_reads == []  # sizes were listed, so no footer was read
 
 
-def test_iceberg_metadata_legacy_content_schema():
-    """Older iceberg extensions without `manifest_content` classify via the
-    `content` column (DATA/POSITION_DELETES/EQUALITY_DELETES)."""
+def test_iceberg_metadata_legacy_content_schema_sizes_from_footers():
+    """Older extensions classify via `content` (DATA/POSITION_DELETES/...), and
+    none that DuckHaven pins exposes a size column: the size comes from the
+    data files' Parquet footers."""
     from agent.executor.runner import _iceberg_metadata
 
-    class FakeConn:
-        description = [("content",), ("count",)]
-
-        def execute(self, sql):
-            return self
-
-        def fetchone(self):
-            return (1, 1715780580000)
-
-        def fetchall(self):
-            return [("DATA", 5, None), ("POSITION_DELETES", 1, None)]
-
-    meta = _iceberg_metadata(FakeConn(), "cat", "analytics", "events")
-    assert meta["data_file_count"] == 5
-    # This extension exposes no file-size column, so the size stays unknown.
-    assert meta["data_file_size_bytes"] is None
+    conn = _HealthConn(
+        files=[("s3://b/t/data/a.parquet", "m1", None), ("s3://b/t/data/b.parquet", "m1", None)],
+        delete_files=[("POSITION_DELETES", "s3://b/t/data/d.parquet", "m2", None)],
+        columns=("content", "file_path", "manifest_path"),
+        parquet_sizes=[("a.parquet", 1_000), ("b.parquet", 3_000), ("d.parquet", 99)],
+    )
+    meta = _iceberg_metadata(conn, "cat", "analytics", "events")
+    assert meta["data_file_count"] == 2
     assert meta["has_deletes"] is True
+    assert meta["data_file_size_bytes"] == 4_000
+    # Only data files are read, never the delete file.
+    assert conn.footer_reads == [["s3://b/t/data/a.parquet", "s3://b/t/data/b.parquet"]]
+
+
+def test_iceberg_metadata_samples_footers_on_a_wide_table():
+    """Opening a table must stay cheap: past the probe's cap it reads an evenly
+    spaced sample of footers and scales the total."""
+    from agent.executor.runner import _PROBE_FOOTER_READS, _iceberg_metadata
+
+    count = _PROBE_FOOTER_READS * 3 + 7
+    files = [(f"s3://b/t/data/{i}.parquet", "m1", None) for i in range(count)]
+    conn = _HealthConn(
+        files=files,
+        columns=("manifest_content", "file_path", "manifest_path"),
+        parquet_sizes=[(f"{i}.parquet", 1_000) for i in range(count)],
+    )
+    meta = _iceberg_metadata(conn, "cat", "analytics", "events")
+    assert len(conn.footer_reads[0]) == _PROBE_FOOTER_READS
+    assert meta["data_file_size_bytes"] == 1_000 * count
+
+
+def test_iceberg_metadata_keeps_its_counts_when_footers_fail():
+    """A failed footer read leaves the size unknown, not the whole probe."""
+    from agent.executor.runner import _iceberg_metadata
+
+    class NoFooters(_HealthConn):
+        def execute(self, sql, *args):
+            if "parquet_file_metadata" in sql:
+                raise RuntimeError("HTTP 403")
+            return super().execute(sql, *args)
+
+    conn = NoFooters(
+        files=[("s3://b/t/data/a.parquet", "m1", None)],
+        columns=("manifest_content", "file_path", "manifest_path"),
+    )
+    meta = _iceberg_metadata(conn, "cat", "analytics", "events")
+    assert meta["data_file_count"] == 1
+    assert meta["has_deletes"] is False
+    assert meta["data_file_size_bytes"] is None
+
+
+def test_iceberg_metadata_and_deep_health_agree_on_a_tables_size():
+    """Both probes size data files through the same code, so the table's size
+    in the catalog and its bytes on the health page are the same figure."""
+    from agent.executor.runner import _iceberg_metadata, collect_table_health
+
+    files = [(f"s3://b/t/data/{i}.parquet", "m1", None) for i in range(5)]
+    kwargs = {
+        "files": files,
+        "listed": [f[0] for f in files],
+        "columns": ("manifest_content", "file_path", "manifest_path"),
+        "parquet_sizes": [(f"{i}.parquet", 1_000 * (i + 1)) for i in range(5)],
+    }
+    meta = _iceberg_metadata(_HealthConn(**kwargs), "cat", "analytics", "events")
+    health = collect_table_health(
+        _HealthConn(**kwargs),
+        "cat",
+        "analytics",
+        "events",
+        target_file_bytes=128 * 1024**2,
+        include_orphans=True,
+    )
+    assert meta["data_file_size_bytes"] == health["total_data_bytes"] == 15_000
 
 
 def test_iceberg_metadata_best_effort_on_failure():
@@ -619,45 +666,55 @@ def test_capture_profile_best_effort_on_missing_or_bad_file(tmp_path):
 
 
 class _HealthConn:
-    """Routes the health probe's queries by inspecting the SQL text.
+    """Routes the metadata and health probes' queries by inspecting the SQL text.
 
-    ``iceberg_metadata`` has both a ``LIMIT 0`` column-introspection call and an
-    aggregate call; ``iceberg_snapshots`` is queried three ways (count, latest
-    snapshot id, oldest timestamp); ``glob`` lists the data and metadata
-    directories for orphan detection.
+    ``iceberg_metadata`` has both a ``LIMIT 0`` column-introspection call and a
+    file listing; ``iceberg_snapshots`` is queried four ways (count, latest
+    snapshot id, latest id with its timestamp, oldest timestamp); ``glob`` lists
+    the data and metadata directories for orphan detection; the footer size
+    probe reads ``parquet_file_metadata``.
     """
 
     def __init__(
         self,
         *,
         files,
+        delete_files=(),
         listed=None,
         metadata_listed=None,
         columns=("manifest_content", "file_path", "manifest_path", "file_size_in_bytes"),
         parquet_sizes=None,
         snapshot_count=7,
         latest_snapshot_id=123456789,
+        latest_timestamp_ms=1715780580000,
         oldest_timestamp_ms=None,
     ):
         self.files = files  # list of (file_path, manifest_path, size) for DATA files
+        self.delete_files = delete_files  # list of (content, file_path, manifest_path, size)
         self.listed = listed or []
         self.metadata_listed = metadata_listed or []
         self._columns = columns
         self.parquet_sizes = parquet_sizes or []  # (file_name, size) from the footers
         self.snapshot_count = snapshot_count
         self.latest_snapshot_id = latest_snapshot_id
+        self.latest_timestamp_ms = latest_timestamp_ms
         self.oldest_timestamp_ms = oldest_timestamp_ms
+        self.footer_reads: list[list[str]] = []  # the paths each footer probe read
         self._last = ""
 
     def execute(self, sql, *args):
         self._last = sql
         if "LIMIT 0" in sql:
             self.description = [(c,) for c in self._columns]
+        if "parquet_file_metadata" in sql:
+            self.footer_reads.append(list(args[0]["files"]))
         return self
 
     def fetchone(self):
         if "min(timestamp_ms)" in self._last:
             return (self.oldest_timestamp_ms,)
+        if "snapshot_id, timestamp_ms" in self._last:
+            return (self.latest_snapshot_id, self.latest_timestamp_ms)
         if "ORDER BY sequence_number DESC" in self._last:
             return (self.latest_snapshot_id,)
         if "iceberg_snapshots" in self._last:
@@ -669,10 +726,14 @@ class _HealthConn:
             if "/metadata/" in self._last:
                 return [(f,) for f in self.metadata_listed]
             return [(f,) for f in self.listed]
-        if "parquet_metadata" in self._last:
-            return self.parquet_sizes
+        if "parquet_file_metadata" in self._last:
+            sizes = dict(self.parquet_sizes)
+            read = self.footer_reads[-1]
+            return [(sizes[p.rsplit("/", 1)[-1]],) for p in read if p.rsplit("/", 1)[-1] in sizes]
         if "iceberg_metadata" in self._last:
-            return self.files
+            has_size = any("size" in c for c in self._columns)
+            data = [("DATA", p, m, sz if has_size else None) for p, m, sz in self.files]
+            return data + list(self.delete_files)
         return []
 
 

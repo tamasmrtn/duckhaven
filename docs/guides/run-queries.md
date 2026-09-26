@@ -36,9 +36,13 @@ choose another. Agents are listed by what a run can do with them:
 - **Stopped — starts on run** — an [elastic agent](../concepts/elastic-compute.md) that is shut down. Pick it and the
   Run button reads **Start & run**: DuckHaven starts the agent and runs your query once it is up.
 - **Can't serve this workspace** — up, but missing an extension a catalog or the
-  [storage backend](../concepts/storage-backends.md) needs. The reason is shown and the agent cannot be picked.
+  [storage backend](../concepts/storage-backends.md) needs, or not running a [runtime](../concepts/runtimes.md)
+  DuckHaven sends work to. The reason is shown and the agent cannot be picked.
 - **Unavailable** — offline or failed. These are folded away behind **Show N unavailable** so a long-lived fleet does
   not bury the agents that work; a search still finds them.
+
+Each row shows the agent's runtime and exact DuckDB version, for example *DuckDB 1.5 · v1.5.5*. An agent on a
+**Beta** runtime is marked as such.
 
 Search matches agent names and hosts. If you have the *operate* tier on an elastic agent, its **⋯** menu can **Start**
 it, or **Stop** it after asking for confirmation.
@@ -46,7 +50,11 @@ it, or **Stop** it after asking for confirmation.
 Each worksheet remembers the agent it last ran on. When that agent can no longer take a run, DuckHaven picks for you:
 the agent you last used in this workspace, else the first healthy agent that can serve it, else a stopped elastic agent
 it can start. It never picks an offline agent just because it is first in the list. If a run fails because the agent
-dropped off, the error offers **Switch agent**.
+dropped off, the error offers **Switch agent**. When it picks, it prefers the default runtime, and it never picks an
+agent on a beta runtime: a worksheet runs there only once you choose that agent yourself.
+
+Autocomplete lists the functions of the selected agent's DuckDB version, so a newer runtime's functions appear once you
+switch to an agent running it.
 
 The **catalog** chip beside it sets the catalog `USE`d for unqualified table names in this worksheet; it starts on the
 workspace default.

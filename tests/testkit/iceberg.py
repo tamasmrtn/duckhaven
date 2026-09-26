@@ -13,6 +13,40 @@ from __future__ import annotations
 import duckdb
 
 
+def iceberg_secret_sql(client_id: str, client_secret: str, base_url: str) -> str:
+    """The Iceberg OAuth2 secret, with its values inlined as escaped literals.
+
+    Inlined because DuckDB 2.0 refuses bind parameters in ``CREATE SECRET``
+    ("Unrecognized expression type PARAMETER"); every line accepts literals, and
+    these are test credentials, so there is nothing to keep out of the statement.
+    """
+
+    def lit(value: str) -> str:
+        return "'" + value.replace("'", "''") + "'"
+
+    return (
+        f"CREATE SECRET dh_iceberg (TYPE ICEBERG, CLIENT_ID {lit(client_id)}, "
+        f"CLIENT_SECRET {lit(client_secret)}, "
+        f"OAUTH2_SERVER_URI {lit(f'{base_url}/api/catalog/v1/oauth/tokens')})"
+    )
+
+
+def vended_credentials_are_secrets(conn: duckdb.DuckDBPyConnection) -> bool:
+    """Whether the iceberg extension registered Polaris's vended credentials as a
+    DuckDB secret, which is what lets a *direct* read of a table's files work.
+
+    DuckDB 1.5 does, once a table has been touched. The DuckDB 2.0 pre-release
+    keeps them inside the extension, so only Iceberg scans can use them, and the
+    agent's footer size probe and orphan listing get a 403. Recorded as a blocker
+    for promoting 2.0 in docs/developer/runtime-qualification.md.
+    """
+    return bool(
+        conn.execute("SELECT count(*) FROM duckdb_secrets() WHERE provider = 'iceberg'").fetchone()[
+            0
+        ]
+    )
+
+
 def attach_catalog(
     conn: duckdb.DuckDBPyConnection,
     base_url: str,
@@ -27,11 +61,7 @@ def attach_catalog(
     conn.execute("LOAD iceberg")
     conn.execute("INSTALL httpfs")
     conn.execute("LOAD httpfs")
-    conn.execute(
-        "CREATE SECRET dh_iceberg "
-        "(TYPE ICEBERG, CLIENT_ID ?, CLIENT_SECRET ?, OAUTH2_SERVER_URI ?)",
-        [client_id, client_secret, f"{base_url}/api/catalog/v1/oauth/tokens"],
-    )
+    conn.execute(iceberg_secret_sql(client_id, client_secret, base_url))
     # ATTACH does not accept bind parameters; inline the (trusted) values.
     wh = catalog.replace("'", "''")
     endpoint = f"{base_url}/api/catalog".replace("'", "''")
@@ -60,11 +90,7 @@ def attach_catalogs(
     conn.execute("LOAD iceberg")
     conn.execute("INSTALL httpfs")
     conn.execute("LOAD httpfs")
-    conn.execute(
-        "CREATE SECRET dh_iceberg "
-        "(TYPE ICEBERG, CLIENT_ID ?, CLIENT_SECRET ?, OAUTH2_SERVER_URI ?)",
-        [client_id, client_secret, f"{base_url}/api/catalog/v1/oauth/tokens"],
-    )
+    conn.execute(iceberg_secret_sql(client_id, client_secret, base_url))
     endpoint = f"{base_url}/api/catalog".replace("'", "''")
     for alias, polaris_name in catalogs:
         wh = polaris_name.replace("'", "''")

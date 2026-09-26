@@ -208,15 +208,13 @@ def test_duckdb_httpfs_reads_and_writes_through_the_store(s3, bucket, prefix, en
         con.execute("LOAD httpfs")
         host = endpoint.split("://", 1)[-1]
         use_ssl = "true" if endpoint.startswith("https://") else "false"
+        # Literals, not bind parameters: DuckDB 2.0 refuses `?` in CREATE SECRET.
+        key_id = os.getenv("OBJECT_STORE_ACCESS_KEY", "duckhaven")
+        secret = os.getenv("OBJECT_STORE_SECRET_KEY", "duckhaven")
+        region = os.getenv("POLARIS_S3_REGION", "us-east-1")
         con.execute(
-            "CREATE SECRET conformance (TYPE S3, KEY_ID ?, SECRET ?, ENDPOINT ?, "
-            f"URL_STYLE 'path', USE_SSL {use_ssl}, REGION ?)",
-            [
-                os.getenv("OBJECT_STORE_ACCESS_KEY", "duckhaven"),
-                os.getenv("OBJECT_STORE_SECRET_KEY", "duckhaven"),
-                host,
-                os.getenv("POLARIS_S3_REGION", "us-east-1"),
-            ],
+            f"CREATE SECRET conformance (TYPE S3, KEY_ID '{key_id}', SECRET '{secret}', "
+            f"ENDPOINT '{host}', URL_STYLE 'path', USE_SSL {use_ssl}, REGION '{region}')"
         )
         uri = f"s3://{bucket}/{prefix}written.parquet"
         con.execute(

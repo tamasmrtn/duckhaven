@@ -16,11 +16,15 @@ These pin the verified DuckDB 1.5.4 behaviour the sandbox relies on:
 import duckdb
 import pytest
 
+from agent import runtime
+from agent.executor import runner
 from agent.executor.runner import (
     _ALLOWED_CONFIGS,
+    _PROFILE_METRIC_GLOBS,
     _apply_sandbox,
     _is_sandbox_denial,
     open_and_attach,
+    sandbox_state,
 )
 
 
@@ -141,7 +145,10 @@ def test_locked_configuration_still_allows_profiling(tmp_path):
     conn = open_and_attach(lock_config=True)
     conn.execute("PRAGMA enable_profiling='json'")
     conn.execute(f"PRAGMA profiling_output='{tmp_path / 'profile.json'}'")
-    conn.execute('PRAGMA custom_profiling_settings=\'{"CPU_TIME": "true"}\'')
+    if runtime.PROFILE_SETTING == "tracked_metrics":
+        conn.execute(f"SET tracked_metrics = {_PROFILE_METRIC_GLOBS}")
+    else:
+        conn.execute('PRAGMA custom_profiling_settings=\'{"CPU_TIME": "true"}\'')
     conn.execute("SELECT 1")
     conn.execute("PRAGMA disable_profiling")
 
@@ -154,15 +161,46 @@ def test_locked_configuration_allows_secret_and_attach():
 
 
 def test_allowed_configs_covers_every_setting_the_runner_writes():
-    """`_ALLOWED_CONFIGS` is the contract between the lock and the runner."""
+    """`_ALLOWED_CONFIGS` is the contract between the lock and the runner. The
+    profiling option is whichever one this engine has, so the list is exact for
+    every DuckDB line rather than a union no single line accepts."""
     assert set(_ALLOWED_CONFIGS) == {
         "memory_limit",
         "threads",
         "TimeZone",
         "enable_profiling",
         "profiling_output",
-        "custom_profiling_settings",
+        runtime.PROFILE_SETTING,
     }
+
+
+def test_allowed_configs_names_only_options_this_engine_has():
+    """`SET allowed_configs` rejects the whole list on one unknown name, and the
+    lock is then never applied — the sandbox fails open (DuckDB 2.0 dropped
+    `custom_profiling_settings`, which a fixed list kept naming)."""
+    known = {
+        row[0] for row in duckdb.connect().execute("select name from duckdb_settings()").fetchall()
+    }
+    assert set(_ALLOWED_CONFIGS) <= known
+
+
+def test_sandbox_state_verifies_the_lock_on_a_real_engine():
+    assert sandbox_state(True) == "verified"
+
+
+def test_sandbox_state_is_disabled_when_the_operator_turns_the_lock_off():
+    assert sandbox_state(False) == "disabled"
+
+
+def test_sandbox_state_fails_when_the_lock_cannot_apply(monkeypatch):
+    """The fail-open this state exists to surface: one option the engine doesn't
+    know and the whole lock is skipped, with only a warning logged."""
+    monkeypatch.setattr(runner, "_ALLOWED_CONFIGS", (*_ALLOWED_CONFIGS, "no_such_option"))
+    sandbox_state.cache_clear()
+    try:
+        assert sandbox_state(True) == "failed"
+    finally:
+        sandbox_state.cache_clear()
 
 
 # ── Observability: distinguishing a sandbox denial from a user error ─────────
@@ -201,7 +239,9 @@ def test_ordinary_user_errors_are_not_reported_as_sandbox_denials(statement):
     """Otherwise every typo would look like an attempted escape in the logs."""
     conn = duckdb.connect()
     with pytest.raises(duckdb.Error) as exc:
-        conn.execute(statement)
+        # Fetched, not just executed: DuckDB 2.0 raises a SELECT's runtime error
+        # when its rows are pulled, not when the statement is issued.
+        conn.execute(statement).fetchall()
     assert not _is_sandbox_denial(exc.value)
 
 

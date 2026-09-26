@@ -11,6 +11,7 @@ no storage secrets of its own.
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import re
@@ -24,6 +25,7 @@ from typing import Any
 import certifi
 import duckdb
 
+from agent import runtime
 from agent.executor.plan import parse_profile
 
 logger = logging.getLogger(__name__)
@@ -71,6 +73,51 @@ _PROFILE_METRICS = (
     "TOTAL_BYTES_WRITTEN",
 )
 _PROFILE_SETTINGS_JSON = json.dumps({m: "true" for m in _PROFILE_METRICS})
+# DuckDB 2.0's `tracked_metrics` takes *glob patterns over its grouped metric
+# names*, not the names above. It accepts the old flat names silently and matches
+# nothing — profiling that collects nothing, with no error — so these four
+# groups, which `plan.parse_profile` maps back onto the 1.5 shape.
+_PROFILE_METRIC_GLOBS = "['query.*', 'system.*', 'io.*', 'operator.*']"
+
+
+def _sql_literal(value: Any) -> str:
+    """A value as an inline SQL literal: quoted strings, bare numbers and booleans,
+    and a MAP for a dict."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, dict):
+        pairs = ", ".join(f"{_sql_literal(str(k))}: {_sql_literal(v)}" for k, v in value.items())
+        return f"MAP {{{pairs}}}"
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _create_secret(
+    conn: duckdb.DuckDBPyConnection, statement: str, kind: str, options: dict[str, Any]
+) -> None:
+    """Run ``{statement} ({kind}, OPTION value, ...)`` without exposing the values.
+
+    Values are bind parameters wherever the engine takes them, so a credential
+    never appears in statement text — DuckDB quotes the statement in a parse
+    error, and those reach logs and the UI. DuckDB 2.0 refuses parameters in
+    `CREATE SECRET` (see agent.runtime), so there they are inlined as escaped
+    literals, and any error is scrubbed of them before it propagates.
+    """
+    if runtime.SECRET_BIND_PARAMETERS:
+        clauses = ", ".join(f"{name} ?" for name in options)
+        conn.execute(f"{statement} ({kind}, {clauses})", list(options.values()))
+        return
+    clauses = ", ".join(f"{name} {_sql_literal(value)}" for name, value in options.items())
+    try:
+        conn.execute(f"{statement} ({kind}, {clauses})")
+    except duckdb.Error as exc:
+        message = str(exc)
+        for value in options.values():
+            if isinstance(value, str) and value:
+                message = message.replace(value, "***").replace(value.replace("'", "''"), "***")
+        raise type(exc)(message) from None
+
 
 # Fixed identifier for the per-connection iceberg OAuth2 secret. Each catalog is
 # ATTACHed under its own slug alias (multi-attach), not a single fixed alias.
@@ -783,10 +830,17 @@ def _attach_ducklake(conn: duckdb.DuckDBPyConnection, cat: dict[str, Any]) -> No
     meta = cat.get("meta") or {}
     store = cat.get("storage") or {}
 
-    conn.execute(
-        f"CREATE OR REPLACE SECRET {_meta_secret(slug)} "
-        "(TYPE POSTGRES, HOST ?, PORT ?, DATABASE ?, USER ?, PASSWORD ?)",
-        [meta["host"], int(meta["port"]), meta["database"], meta["user"], meta["password"]],
+    _create_secret(
+        conn,
+        f"CREATE OR REPLACE SECRET {_meta_secret(slug)}",
+        "TYPE POSTGRES",
+        {
+            "HOST": meta["host"],
+            "PORT": int(meta["port"]),
+            "DATABASE": meta["database"],
+            "USER": meta["user"],
+            "PASSWORD": meta["password"],
+        },
     )
     if store:
         _create_storage_secret(conn, slug, store)
@@ -892,25 +946,30 @@ def _create_storage_secret(
     """
     name = _storage_secret(slug)
     if store.get("type") == "azure":
-        conn.execute(
-            f"CREATE OR REPLACE SECRET {name} "
-            "(TYPE AZURE, PROVIDER config, CONNECTION_STRING ?, ACCOUNT_NAME ?)",
-            [store["connection_string"], store["account_name"]],
+        _create_secret(
+            conn,
+            f"CREATE OR REPLACE SECRET {name}",
+            "TYPE AZURE, PROVIDER config",
+            {
+                "CONNECTION_STRING": store["connection_string"],
+                "ACCOUNT_NAME": store["account_name"],
+            },
         )
         return
-    conn.execute(
-        f"CREATE OR REPLACE SECRET {name} (TYPE S3, PROVIDER config, KEY_ID ?, SECRET ?, "
-        "SESSION_TOKEN ?, REGION ?, ENDPOINT ?, URL_STYLE ?, USE_SSL ?, SCOPE ?)",
-        [
-            store.get("key_id", ""),
-            store.get("secret", ""),
-            store.get("session_token", ""),
-            store.get("region", ""),
-            store.get("endpoint", ""),
-            store.get("url_style", "path"),
-            bool(store.get("use_ssl", False)),
-            store.get("scope", ""),
-        ],
+    _create_secret(
+        conn,
+        f"CREATE OR REPLACE SECRET {name}",
+        "TYPE S3, PROVIDER config",
+        {
+            "KEY_ID": store.get("key_id", ""),
+            "SECRET": store.get("secret", ""),
+            "SESSION_TOKEN": store.get("session_token", ""),
+            "REGION": store.get("region", ""),
+            "ENDPOINT": store.get("endpoint", ""),
+            "URL_STYLE": store.get("url_style", "path"),
+            "USE_SSL": bool(store.get("use_ssl", False)),
+            "SCOPE": store.get("scope", ""),
+        },
     )
 
 
@@ -937,20 +996,22 @@ def _attach_catalogs(
     # the event-loop thread by the caller: this runs in a worker thread, where
     # OpenTelemetry's contextvar "current span" is not propagated.
     if trace_headers and endpoint:
-        conn.execute(
-            f"CREATE OR REPLACE SECRET {_TRACE_HEADERS_SECRET} "
-            "(TYPE HTTP, EXTRA_HTTP_HEADERS ?, SCOPE ?)",
-            [trace_headers, endpoint],
+        _create_secret(
+            conn,
+            f"CREATE OR REPLACE SECRET {_TRACE_HEADERS_SECRET}",
+            "TYPE HTTP",
+            {"EXTRA_HTTP_HEADERS": trace_headers, "SCOPE": endpoint},
         )
     if has_iceberg:
-        conn.execute(
-            f"CREATE SECRET {_ICEBERG_SECRET} "
-            "(TYPE ICEBERG, CLIENT_ID ?, CLIENT_SECRET ?, OAUTH2_SERVER_URI ?)",
-            [
-                polaris["client_id"],
-                polaris["client_secret"],
-                f"{endpoint}/api/catalog/v1/oauth/tokens",
-            ],
+        _create_secret(
+            conn,
+            f"CREATE SECRET {_ICEBERG_SECRET}",
+            "TYPE ICEBERG",
+            {
+                "CLIENT_ID": polaris["client_id"],
+                "CLIENT_SECRET": polaris["client_secret"],
+                "OAUTH2_SERVER_URI": f"{endpoint}/api/catalog/v1/oauth/tokens",
+            },
         )
     # ATTACH takes no bind parameters; inline as quoted, escaped literals.
     cat_endpoint = f"{endpoint}/api/catalog".replace("'", "''")
@@ -1010,7 +1071,7 @@ _KNOWN_FILESYSTEMS = frozenset(
 # runs AFTER the sandbox is applied:
 #   memory_limit / threads              -> _run_one_statement, per statement
 #   enable_profiling / profiling_output /
-#     custom_profiling_settings         -> _run_one_statement's profile capture
+#     the profiling-metrics setting     -> _run_one_statement's profile capture
 #   TimeZone                            -> the `SET timezone` the API statement
 #                                          policy deliberately admits
 # Everything else — disabled_filesystems, enable_external_access,
@@ -1018,13 +1079,23 @@ _KNOWN_FILESYSTEMS = frozenset(
 # allow_unsigned_extensions, and `allowed_configs`/`lock_configuration` themselves
 # — becomes un-widenable for the life of the connection. `SET search_path`/`SET
 # schema`/`USE` are unaffected: they are not configuration options.
-_ALLOWED_CONFIGS = (
-    "memory_limit",
-    "threads",
-    "TimeZone",
-    "enable_profiling",
-    "profiling_output",
-    "custom_profiling_settings",
+#
+# Kept to the options this engine actually has. `SET allowed_configs` rejects the
+# *whole list* when it names one it doesn't know, and when it does
+# `lock_configuration` is never reached — the sandbox fails open. The profiling
+# option is named differently per DuckDB line (see agent.runtime), so a fixed list
+# locks one line and silently unlocks the other.
+_ALLOWED_CONFIGS = tuple(
+    name
+    for name in (
+        "memory_limit",
+        "threads",
+        "TimeZone",
+        "enable_profiling",
+        "profiling_output",
+        runtime.PROFILE_SETTING,
+    )
+    if name in runtime.SETTINGS
 )
 
 
@@ -1093,6 +1164,30 @@ def _apply_sandbox(
             conn.execute("SET lock_configuration=true")
         except duckdb.Error as exc:
             logger.warning("Could not lock DuckDB configuration: %s", exc)
+
+
+@functools.cache
+def sandbox_state(lock_config: bool) -> str:
+    """Whether this engine really locks its configuration: ``verified``, ``failed``,
+    or ``disabled`` when the operator turned the lock off.
+
+    ``_apply_sandbox`` only *logs* a lock it could not apply, so every query keeps
+    running on an unlocked engine. That is the right failure for a one-shot query,
+    but the control plane must be able to tell: a SQL session runs under a relaxed
+    statement policy on the strength of this lock. So the same code path is run
+    once on a scratch connection and the result is read back, not assumed.
+    """
+    if not lock_config:
+        return "disabled"
+    with duckdb.connect() as conn:
+        _apply_sandbox(conn, None, lock_config=True)
+        try:
+            locked = conn.execute("select current_setting('lock_configuration')").fetchone()[0]
+        except duckdb.Error:
+            locked = False
+    if not locked:
+        logger.error("DuckDB configuration lock did not apply; SQL sessions will be refused")
+    return "verified" if locked else "failed"
 
 
 def open_and_attach(
@@ -1294,7 +1389,10 @@ def _run_one_statement(
             if enable_profiling:
                 conn.execute("PRAGMA enable_profiling='json'")
                 conn.execute(f"PRAGMA profiling_output='{profile_path}'")
-                conn.execute(f"PRAGMA custom_profiling_settings='{_PROFILE_SETTINGS_JSON}'")
+                if runtime.PROFILE_SETTING == "tracked_metrics":
+                    conn.execute(f"SET tracked_metrics = {_PROFILE_METRIC_GLOBS}")
+                else:
+                    conn.execute(f"PRAGMA custom_profiling_settings='{_PROFILE_SETTINGS_JSON}'")
             # Materialize through the relational API rather than a string-built
             # `COPY ({sql}) TO …`. `COPY`'s source may only be a table name or a
             # query, so every other shape `_is_single_select` admits — `DESCRIBE`,

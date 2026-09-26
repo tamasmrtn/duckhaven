@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags, set_span_in_context
 
+from agent import runtime
 from agent.executor import runner as runner_module
 from duckhaven_shared.telemetry import inject_trace_context
 
@@ -116,7 +117,12 @@ def test_iceberg_attach_requests_purge_on_drop(fake_conn: FakeConn, tmp_path: Pa
     assert "PURGE_REQUESTED true" in attach_cmd
 
 
-def test_s3_loads_httpfs_and_vends_credentials(fake_conn: FakeConn, tmp_path: Path):
+def test_s3_loads_httpfs_and_vends_credentials(
+    fake_conn: FakeConn, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    # The bind-parameter form, which every engine that accepts it gets; the
+    # inlined form DuckDB 2.0 needs is covered by the `_create_secret` tests.
+    monkeypatch.setattr(runtime, "SECRET_BIND_PARAMETERS", True)
     runner_module.run_query_sync(
         "SELECT 1",
         tmp_path / "out.parquet",
@@ -235,7 +241,12 @@ def test_no_catalogs_means_no_attach(fake_conn: FakeConn, tmp_path: Path):
 # disconnected trace instead of joining the query's.
 
 
-def test_attach_creates_trace_headers_secret_when_span_active(fake_conn: FakeConn, tmp_path: Path):
+def test_attach_creates_trace_headers_secret_when_span_active(
+    fake_conn: FakeConn, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    # The bind-parameter form, which every engine that accepts it gets; the
+    # inlined form DuckDB 2.0 needs is covered by the `_create_secret` tests.
+    monkeypatch.setattr(runtime, "SECRET_BIND_PARAMETERS", True)
     # `trace_headers` is passed in explicitly, as the real callers do: they
     # capture it on the event-loop thread (where the span is current) before
     # handing work to run_in_executor, since contextvars are not propagated
@@ -387,3 +398,66 @@ def test_non_credential_error_is_not_retried(monkeypatch: pytest.MonkeyPatch, tm
         )
     # Only the first connection was opened — no re-vend on a non-credential error.
     assert len(made) == 1
+
+
+# ── Secrets on engines that refuse bind parameters (DuckDB 2.0) ──────────────
+
+
+def test_inlined_secret_values_create_a_working_secret(monkeypatch):
+    """The literal path, on a real engine: quotes escaped, booleans bare, a dict as
+    a MAP — the forms DuckDB 2.0 needs since it refuses `?` in CREATE SECRET."""
+    import duckdb
+
+    from agent import runtime
+
+    monkeypatch.setattr(runtime, "SECRET_BIND_PARAMETERS", False)
+    conn = duckdb.connect()
+    conn.execute("LOAD httpfs")
+    runner_module._create_secret(
+        conn,
+        "CREATE SECRET s3",
+        "TYPE S3, PROVIDER config",
+        {"KEY_ID": "k", "SECRET": "it's", "USE_SSL": False, "SCOPE": "s3://b/p/"},
+    )
+    runner_module._create_secret(
+        conn,
+        "CREATE SECRET hdr",
+        "TYPE HTTP",
+        {"EXTRA_HTTP_HEADERS": {"traceparent": "00-a-b-01"}, "SCOPE": "http://polaris:8181"},
+    )
+    secrets = dict(conn.execute("select name, secret_string from duckdb_secrets()").fetchall())
+    assert "scope=s3://b/p/" in secrets["s3"]
+    assert "traceparent" in secrets["hdr"]
+
+
+def test_inlined_secret_values_are_scrubbed_from_errors(monkeypatch):
+    """DuckDB quotes the statement in a parse error; an inlined credential must not
+    ride that message into the logs or the UI."""
+    import duckdb
+
+    from agent import runtime
+
+    monkeypatch.setattr(runtime, "SECRET_BIND_PARAMETERS", False)
+
+    class EchoingConn:
+        def execute(self, sql, params=None):
+            raise duckdb.ParserException(f"Parser Error: syntax error\n\nLINE 1: {sql}")
+
+    with pytest.raises(duckdb.ParserException) as excinfo:
+        runner_module._create_secret(
+            EchoingConn(), "CREATE SECRET m", "TYPE POSTGRES", {"PASSWORD": "pa'ss", "HOST": "db"}
+        )
+    assert "pa'ss" not in str(excinfo.value)
+    assert "pa''ss" not in str(excinfo.value)
+    assert "***" in str(excinfo.value)
+
+
+def test_bound_secret_values_never_reach_statement_text(monkeypatch):
+    from agent import runtime
+
+    monkeypatch.setattr(runtime, "SECRET_BIND_PARAMETERS", True)
+    conn = FakeConn()
+    runner_module._create_secret(conn, "CREATE SECRET m", "TYPE POSTGRES", {"PASSWORD": "pw"})
+    (sql, params) = conn.commands[0]
+    assert sql == "CREATE SECRET m (TYPE POSTGRES, PASSWORD ?)"
+    assert params == ["pw"]

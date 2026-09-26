@@ -910,3 +910,144 @@ async def test_late_dial_home_does_not_revive_a_failed_agent(ws_client, db_engin
             (await db.execute(select(Credential).where(Credential.agent_id == aid))).scalars().all()
         )
         assert left == []
+
+
+# ── Registration and the agent's first report ────────────────────────────────
+
+
+async def _connect_and_report(ws_client, token: str, status: dict | None, *, on_auth=None):
+    """Authenticate, optionally run ``on_auth`` before reporting, then send one
+    AGENT_STATUS and give the server a moment to act on it."""
+    import asyncio
+
+    from httpx_ws import aconnect_ws
+
+    async with AsyncClient(transport=ws_client, base_url="http://test") as c:
+        async with aconnect_ws("http://test/agents/connect", c) as ws:
+            await ws.send_text(json.dumps({"type": "auth", "payload": {"token": token}}))
+            await asyncio.wait_for(ws.receive_text(), timeout=5.0)
+            await asyncio.sleep(0.1)
+            if on_auth is not None:
+                await on_auth()
+            if status is not None:
+                await ws.send_text(json.dumps({"type": "agent_status", "payload": status}))
+                await asyncio.sleep(0.3)
+
+
+async def _precreated_elastic(db_engine, token: str, **fields) -> uuid.UUID:
+    from datetime import datetime, timedelta
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.models.user import Credential
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    async with factory() as db:
+        agent = Agent(
+            name="elastic",
+            status="unavailable",
+            provider="null",
+            lifecycle="provisioning",
+            instance_id=f"dh-agent-{token}",
+            provisioned_at=datetime.now(tz=UTC),
+            requested_runtime_id="1.5",
+            **fields,
+        )
+        db.add(agent)
+        await db.flush()
+        db.add(
+            Credential(
+                agent_id=agent.id,
+                kind="agent_bootstrap",
+                token=token,
+                expires_at=datetime.now(tz=UTC) + timedelta(hours=1),
+            )
+        )
+        await db.commit()
+        return agent.id
+
+
+_STATUS_1_5 = {
+    "duckdb_version": "1.5.5 (with duckdb 1.5.5)",
+    "engine_version": "v1.5.5",
+    "runtime_id": "1.5",
+    "extensions": ["httpfs", "iceberg"],
+    "memory_limit_gb": 4.0,
+    "cores": 2,
+}
+
+
+async def test_parked_work_binds_only_once_the_agent_has_reported(
+    ws_client, db_engine, monkeypatch
+):
+    """Binding at auth_ok judged an agent by capabilities it had not reported yet —
+    NULL, or the previous instance's after a restart — so every check passed or
+    failed on nothing. The binders now wait for the agent's first AGENT_STATUS."""
+    from api.services.compute import service as compute_service
+
+    seen: list = []
+
+    async def spy(db, agent):
+        seen.append(agent.capabilities)
+        return 0
+
+    for name in ("bind_pending_sessions", "bind_queued_work", "bind_targeted_work"):
+        monkeypatch.setattr(compute_service, name, spy)
+    monkeypatch.setattr(compute_service, "bind_scheduled_work", spy)
+    await _precreated_elastic(db_engine, "dh_boot_order1", pool_key="object_store")
+
+    async def nothing_bound_yet():
+        assert seen == []
+
+    await _connect_and_report(ws_client, "dh_boot_order1", _STATUS_1_5, on_auth=nothing_bound_yet)
+
+    assert len(seen) == 4
+    assert all(caps["runtime_id"] == "1.5" for caps in seen)
+
+
+async def test_a_pool_agent_on_the_wrong_runtime_is_terminated(ws_client, db_engine, monkeypatch):
+    """It would hold the pool's only slot while being refused every piece of work."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.services.compute import service as compute_service
+
+    bound: list = []
+
+    async def spy(db, agent):
+        bound.append(agent.id)
+        return 0
+
+    monkeypatch.setattr(compute_service, "bind_queued_work", spy)
+    agent_id = await _precreated_elastic(db_engine, "dh_boot_wrong1", pool_key="object_store")
+    wrong = {**_STATUS_1_5, "runtime_id": "9.9", "engine_version": "v9.9.0"}
+
+    await _connect_and_report(ws_client, "dh_boot_wrong1", wrong)
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    async with factory() as db:
+        agent = await db.get(Agent, agent_id)
+        assert agent.lifecycle == "terminated"
+    assert bound == []
+
+
+async def test_a_reconnect_forgets_the_previous_report(ws_client, db_engine):
+    """A static agent can come back re-imaged; until it reports again nothing is
+    routed on what it said last time."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.models.user import Credential
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    async with factory() as db:
+        agent = Agent(name="static", status="unavailable", capabilities=_STATUS_1_5)
+        db.add(agent)
+        await db.flush()
+        agent_id = agent.id
+        db.add(Credential(agent_id=agent_id, kind="agent_session", token="dh_sess_forget"))
+        await db.commit()
+
+    async def cleared():
+        async with factory() as db:
+            assert (await db.get(Agent, agent_id)).capabilities is None
+
+    await _connect_and_report(ws_client, "dh_sess_forget", None, on_auth=cleared)

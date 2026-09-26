@@ -199,3 +199,52 @@ def test_the_default_runtime_must_be_curated_and_not_beta(extra_runtimes, value)
 
     with pytest.raises(ValidationError):
         Settings(default_runtime=value)
+
+
+# ── DuckLake formats ──────────────────────────────────────────────────────────
+#
+# Measured against the real extensions: 1.5 creates and opens format 1.0; 2.0
+# opens 1.0 without migrating it but creates 1.1-dev1, which 1.5 cannot open.
+
+
+def _ducklake(slug="lake"):
+    return _catalog(kind="ducklake", slug=slug)
+
+
+def _dispatch(caps, formats, catalogs=None):
+    caps["extensions"] = ["httpfs", "iceberg", "ducklake", "postgres_scanner"]
+    svc.assert_dispatchable(_agent(caps), catalogs or [_ducklake()], ducklake_formats=formats)
+
+
+def test_a_newer_runtime_may_use_a_catalog_in_a_format_it_opens():
+    _dispatch(_caps("2.0", "v2.0.1"), {"lake": "1.0"})
+
+
+def test_a_newer_runtime_may_not_create_a_catalog_the_default_cannot_open():
+    """Every query attaches every catalog, creating any that don't exist yet — in
+    the attaching runtime's format. A 2.0 agent going first would lock every 1.5
+    agent out of the catalog."""
+    with pytest.raises(svc.AgentNotDispatchable) as exc:
+        _dispatch(_caps("2.0", "v2.0.1"), {"lake": None})
+    assert exc.value.code == "ducklake_format_unsupported"
+    assert "create" in exc.value.detail
+
+
+def test_an_older_runtime_is_refused_a_format_it_cannot_open():
+    with pytest.raises(svc.AgentNotDispatchable) as exc:
+        _dispatch(_caps("1.5", "v1.5.5"), {"lake": "1.1-dev1"})
+    assert exc.value.code == "ducklake_format_unsupported"
+
+
+def test_the_default_runtime_may_create_a_catalog():
+    _dispatch(_caps("1.5", "v1.5.5"), {"lake": None})
+
+
+def test_iceberg_catalogs_are_not_format_checked():
+    _dispatch(_caps("2.0", "v2.0.1"), {}, catalogs=[_catalog()])
+
+
+def test_after_the_default_moves_an_older_runtime_may_still_create_catalogs(monkeypatch):
+    """Once 2.0 is the default, a 1.5 agent's new catalogs (1.0) are ones 2.0 opens."""
+    monkeypatch.setattr(settings, "default_runtime", "2.0")
+    _dispatch(_caps("1.5", "v1.5.5"), {"lake": None})

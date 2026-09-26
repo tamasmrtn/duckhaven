@@ -22,6 +22,7 @@ This module answers four questions:
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -130,6 +131,7 @@ def assert_dispatchable(
     catalogs: list,
     *,
     for_session: bool = False,
+    ducklake_formats: Mapping[str, str | None] | None = None,
 ) -> None:
     """Raise ``AgentNotDispatchable`` unless this agent may run work for these catalogs.
 
@@ -138,6 +140,9 @@ def assert_dispatchable(
     A session additionally needs a configuration lock that really applies: it runs
     under a relaxed statement policy on the strength of it. An agent that doesn't
     report its sandbox (older images) is taken as before.
+
+    ``ducklake_formats`` (by slug, from ``catalog_backends.ducklake``) gates the
+    DuckLake catalogs; see ``_assert_ducklake_formats``. Omitted, they aren't checked.
     """
     resolved = resolve(agent)
     if resolved.state == "retired":
@@ -160,12 +165,62 @@ def assert_dispatchable(
                 f"Agent '{agent.name}' is missing the '{missing}' extension required "
                 f"by catalog '{catalog.slug}' ({catalog.kind} on {kind}).",
             )
+    if ducklake_formats is not None and resolved.runtime is not None:
+        _assert_ducklake_formats(agent, resolved.runtime, catalogs, ducklake_formats)
     if for_session and (agent.capabilities or {}).get("sandbox") == "failed":
         raise AgentNotDispatchable(
             "agent_sandbox_unverified",
             f"Agent '{agent.name}' could not lock its DuckDB configuration, "
             "so it cannot hold a SQL session.",
         )
+
+
+def _assert_ducklake_formats(
+    agent: Agent,
+    runtime: Runtime,
+    catalogs: list,
+    formats: Mapping[str, str | None],
+) -> None:
+    """A DuckLake catalog's format only ever moves forward, and a newer extension can
+    create a format an older one cannot open.
+
+    So an agent may attach a catalog only in a format its runtime opens as-is. A
+    catalog with no format yet is created by whichever agent attaches it first —
+    every query attaches every catalog — so only a runtime whose own format the
+    default runtime can open may be first, or the default runtime would be locked
+    out of the catalog it created.
+    """
+    default = runtimes.get(settings.default_runtime)
+    for catalog in catalogs:
+        if catalog.slug not in formats:
+            continue
+        found = formats[catalog.slug]
+        if found is None:
+            ok = default is None or runtime.ducklake_format in default.ducklake_formats
+            why = (
+                f"it would create DuckLake catalog '{catalog.slug}' in format "
+                f"{runtime.ducklake_format}, which the default runtime cannot open"
+            )
+        else:
+            ok = found in runtime.ducklake_formats
+            why = f"DuckLake catalog '{catalog.slug}' is in format {found}, which it cannot open"
+        if not ok:
+            raise AgentNotDispatchable(
+                "ducklake_format_unsupported",
+                f"Agent '{agent.name}' runs {runtime.display_name}, and {why}.",
+            )
+
+
+async def check_dispatchable(agent: Agent, catalogs: list, *, for_session: bool = False) -> None:
+    """``assert_dispatchable`` with the DuckLake catalogs' formats looked up."""
+    from api.services.catalog_backends.ducklake import catalog_formats
+
+    assert_dispatchable(
+        agent,
+        catalogs,
+        for_session=for_session,
+        ducklake_formats=await catalog_formats(catalogs),
+    )
 
 
 def auto_pick_rank(agent: Agent) -> int | None:

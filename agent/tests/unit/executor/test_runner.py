@@ -249,21 +249,25 @@ def test_iceberg_metadata_parses_snapshot_and_deletes():
 
     class FakeConn:
         # Newer iceberg extension: `manifest_content` carries DATA/DELETE.
-        description = [("manifest_content",), ("count",)]
+        description = [("manifest_content",), ("file_size_in_bytes",)]
 
         def execute(self, sql):
+            self.sql = sql
             return self
 
         def fetchone(self):  # iceberg_snapshots row
             return (123456789, 1715780580000)
 
         def fetchall(self):  # iceberg_metadata grouped by manifest_content
-            return [("DATA", 128), ("DELETE", 2)]
+            assert "sum(file_size_in_bytes)" in self.sql
+            return [("DATA", 128, 2_223_533_507), ("DELETE", 2, 4_096)]
 
     meta = _iceberg_metadata(FakeConn(), "cat", "analytics", "events")
     assert meta["snapshot_id"] == 123456789
     assert meta["snapshot_at"].startswith("2024-")
     assert meta["data_file_count"] == 128
+    # Data files only: delete files are not the table's data.
+    assert meta["data_file_size_bytes"] == 2_223_533_507
     assert meta["has_deletes"] is True
 
 
@@ -282,10 +286,12 @@ def test_iceberg_metadata_legacy_content_schema():
             return (1, 1715780580000)
 
         def fetchall(self):
-            return [("DATA", 5), ("POSITION_DELETES", 1)]
+            return [("DATA", 5, None), ("POSITION_DELETES", 1, None)]
 
     meta = _iceberg_metadata(FakeConn(), "cat", "analytics", "events")
     assert meta["data_file_count"] == 5
+    # This extension exposes no file-size column, so the size stays unknown.
+    assert meta["data_file_size_bytes"] is None
     assert meta["has_deletes"] is True
 
 
@@ -301,6 +307,7 @@ def test_iceberg_metadata_best_effort_on_failure():
         "snapshot_id": None,
         "snapshot_at": None,
         "data_file_count": None,
+        "data_file_size_bytes": None,
         "has_deletes": None,
     }
 

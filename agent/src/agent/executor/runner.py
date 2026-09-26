@@ -237,7 +237,8 @@ def _iceberg_metadata(
 ) -> dict[str, Any]:
     """Best-effort Iceberg-native metadata for a table in the attached catalog.
 
-    Returns snapshot id and timestamp, data-file count and a has-deletes flag.
+    Returns snapshot id and timestamp, data-file count and bytes, and a
+    has-deletes flag.
     Each field degrades to None on its own probe failure. The catalog must be
     ATTACHed already.
     """
@@ -246,6 +247,7 @@ def _iceberg_metadata(
         "snapshot_id": None,
         "snapshot_at": None,
         "data_file_count": None,
+        "data_file_size_bytes": None,
         "has_deletes": None,
     }
     try:
@@ -266,17 +268,25 @@ def _iceberg_metadata(
         # Newer iceberg extensions moved data-vs-delete classification from
         # `content` to `manifest_content`. Both columns exist in the new schema,
         # so inspect which one the running extension exposes.
-        columns = [
-            d[0]
-            for d in conn.execute(f"SELECT * FROM iceberg_metadata({ident}) LIMIT 0").description
-        ]
+        columns = _iceberg_columns(conn, ident)
         classify = "manifest_content" if "manifest_content" in columns else "content"
+        # The size column name has varied across extension versions.
+        size_col = next(
+            (c for c in ("file_size_in_bytes", "file_size_bytes", "file_size") if c in columns),
+            None,
+        )
         rows = conn.execute(
-            f"SELECT {classify}, count(*) FROM iceberg_metadata({ident}) GROUP BY {classify}"
+            f"SELECT {classify}, count(*), sum({size_col or 'NULL'}) "
+            f"FROM iceberg_metadata({ident}) GROUP BY {classify}"
         ).fetchall()
         if rows:
-            counts = {str(content): n for content, n in rows}
+            counts = {str(content): n for content, n, _ in rows}
             meta["data_file_count"] = counts.get("DATA", 0)
+            data_bytes = next((b for content, _, b in rows if str(content) == "DATA"), None)
+            if data_bytes is not None:
+                meta["data_file_size_bytes"] = int(data_bytes)
+            elif size_col is not None and "DATA" not in counts:
+                meta["data_file_size_bytes"] = 0
             meta["has_deletes"] = any(
                 key in counts for key in ("DELETE", "POSITION_DELETES", "EQUALITY_DELETES")
             )

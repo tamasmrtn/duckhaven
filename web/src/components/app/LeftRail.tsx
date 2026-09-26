@@ -30,7 +30,9 @@ export function LeftRail({ ws }: LeftRailProps) {
         aria-label="Main navigation"
       >
         {items.map(({ segment, icon: Icon, label, matchSegment }) => {
-          const active = pathname.includes(`/${matchSegment}`);
+          // The route's own segment (/$ws/<segment>/…), not any substring:
+          // "/catalog" also occurs in /admin/catalog-access.
+          const active = pathname.split("/")[2] === matchSegment;
           return (
             <Tooltip key={segment}>
               <TooltipTrigger asChild>

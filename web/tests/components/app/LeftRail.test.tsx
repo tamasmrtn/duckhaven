@@ -1,11 +1,12 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 // LeftRail only consumes these two router hooks; stub them so the nav can be
-// rendered in isolation for an icon assertion.
+// rendered in isolation. Tests may point it at another path.
+const route = vi.hoisted(() => ({ pathname: '/acme/worksheets' }))
 vi.mock('@tanstack/react-router', () => ({
-  useRouterState: () => ({ location: { pathname: '/acme/worksheets' } }),
+  useRouterState: () => ({ location: { pathname: route.pathname } }),
   useNavigate: () => vi.fn(),
 }))
 
@@ -56,5 +57,21 @@ describe('LeftRail icons', () => {
     expect(getByLabelText('Compute')).toBeTruthy()
     // `me` never resolves in this isolated render, so no permissions are held.
     expect(queryByLabelText('Admin')).toBeNull()
+  })
+})
+
+describe('LeftRail active item', () => {
+  // Regression: matching "/catalog" anywhere in the path lit Catalog up on
+  // Admin > Catalog access (/acme/admin/catalog-access) as well as Admin.
+  it('marks the destination by its own route segment only', () => {
+    route.pathname = '/acme/admin/catalog-access'
+    renderRail()
+    expect(screen.getByRole('button', { name: 'Catalog' })).not.toHaveAttribute('aria-current')
+  })
+
+  it('still marks a destination on its nested pages', () => {
+    route.pathname = '/acme/catalog/tpch/sf10'
+    renderRail()
+    expect(screen.getByRole('button', { name: 'Catalog' })).toHaveAttribute('aria-current', 'page')
   })
 })

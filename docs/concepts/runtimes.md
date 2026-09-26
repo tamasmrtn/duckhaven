@@ -4,6 +4,11 @@ A **runtime** is the DuckDB an agent runs, together with the extensions baked in
 agent image that DuckHaven builds and tests, named after its DuckDB line: `1.5` is DuckDB 1.5.x with the standard
 extensions (`httpfs`, `azure`, `iceberg`, `ducklake`, `postgres`).
 
+| Runtime | Status | Notes |
+|---|---|---|
+| DuckDB 1.5 | Generally available, the default | Upstream support ends 2026-11-01. |
+| DuckDB 2.0 | Beta | Built from a 2.0 pre-release until 2.0 ships. See its [qualification record](../developer/runtime-qualification.md#duckdb-20-beta). |
+
 Runtimes exist because DuckDB versions are not interchangeable. A new line changes performance (sometimes for the
 better and sometimes not, depending on the workload), changes behaviour the agent relies on, and changes what it can
 read and write. Pinning the version per agent lets you try a new line on one agent while the rest of the fleet stays
@@ -84,14 +89,17 @@ Agents on different runtimes can read and write the same catalogs, with limits:
   (`sql_not_allowed`) even when it is sent to an agent on that newer line. This goes away once that line becomes
   the default.
 - **DuckLake catalog formats move one way.** A DuckLake catalog's metadata format is tied to the `ducklake`
-  extension's version. A newer extension can upgrade an older catalog, but the upgrade can't be undone, and an
-  older runtime can't read the result. DuckHaven never asks for that upgrade, so a newer runtime whose extension
-  needs a newer format is refused on an older catalog rather than migrating it silently. Every current runtime
-  reads and writes format `1.0`.
-
-!!! note "One runtime today"
-    DuckHaven currently ships a single runtime, DuckDB 1.5, which is also the default. DuckDB 2.0 will be added as a
-    beta runtime once it is released.
+  extension's version. A newer extension can upgrade an older catalog, but the upgrade can't be undone, and an older
+  runtime can't open the result. DuckHaven never asks for that upgrade. It also checks, on every dispatch, that the
+  agent's runtime opens the catalog's format as-is (`ducklake_format_unsupported` otherwise). That check has a
+  consequence for new catalogs: every query attaches every catalog in its workspace, and a catalog that doesn't exist
+  yet is created by whichever agent attaches it first, in that agent's format. So only a runtime whose format the
+  default runtime can open may be the first to touch a new catalog. DuckDB 1.5 creates and opens format `1.0`.
+  DuckDB 2.0 opens `1.0` without changing it, but creates `1.1-dev1`, which 1.5 can't open. So a 2.0 agent works on
+  existing DuckLake catalogs but isn't allowed to create new ones.
+- **A beta runtime may run background checks differently.** For example, the DuckDB 2.0 pre-release can't size a
+  table's files for the maintenance advisor. Background work only runs on agents the server picks, which are never
+  beta, so this doesn't reach you. Such differences are listed in each runtime's qualification record.
 
 ## Related
 

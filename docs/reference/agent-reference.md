@@ -33,13 +33,21 @@ the queueing knobs (`MEMORY_HEADROOM_FRACTION`, `MAX_QUEUE_DEPTH`,
 
 ## Extensions and Backend Compatibility
 
-The agent image pre-installs these DuckDB extensions at build time:
+Every agent image is built for one **runtime**: a DuckDB line plus the extensions baked into the image, listed
+in `shared/src/duckhaven_shared/runtimes.py`. The agent has no internet access, so it can only use the
+extensions its image already has. The `1.5` runtime pre-installs:
 
 | Extension | Required for |
 |---|---|
 | `httpfs` | S3 storage backends |
 | `azure` | ADLS Gen 2 storage backends |
-| `iceberg` | Apache Iceberg reads/writes + Polaris REST catalog attach |
+| `iceberg` | Apache Iceberg reads/writes + Polaris REST catalog attach (also brings in `avro`) |
+| `ducklake` | DuckLake catalogs |
+| `postgres` | DuckLake's Postgres metadata database (advertised as `postgres_scanner`) |
+
+Along with its extensions, the agent reports its runtime, its exact DuckDB version, and whether DuckDB's
+configuration lock actually applied (`verified`, `failed`, or `disabled` when `SANDBOX_LOCK_CONFIGURATION` is
+off).
 
 The agent advertises its loaded extensions to the control plane on connect. The
 frontend engine picker shows which backends each agent can serve. For example,
@@ -63,7 +71,8 @@ export BOOTSTRAP_TOKEN=dh_boot_...
 uv run python -m agent.main
 ```
 
-Ensure DuckDB ≥1.5 is installed and the extensions above are available.
+A checkout runs on the DuckDB version in `uv.lock`, which is the default runtime's line. Make sure the
+extensions above are installed in `~/.duckdb` (for example with `make build-agent` or a one-off `INSTALL`).
 
 ## Multiple Agents
 

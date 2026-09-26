@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -19,6 +20,20 @@ class AgentCapabilities(BaseModel):
     # agents, which is what the absence of a feature means. See
     # api.services.agent_capabilities.
     protocol_features: list[str] = []
+    # The curated runtime this agent's image was built as (duckhaven_shared.runtimes),
+    # or, for an image built before runtimes existed, the one its DuckDB line
+    # matches. None when neither applies.
+    runtime_id: str | None = None
+    # The engine's own `select version()` ("v1.5.5"), which unlike
+    # `duckdb_version` is the spelling to derive the DuckDB line from.
+    engine_version: str | None = None
+    # The DuckHaven release the image was built from.
+    agent_version: str | None = None
+    # DuckDB's platform string, e.g. "linux_amd64".
+    platform: str | None = None
+    # Whether the DuckDB configuration lock really applies on this engine:
+    # "verified", "failed", or "disabled" by the operator. None from older agents.
+    sandbox: Literal["verified", "failed", "disabled"] | None = None
 
 
 class CatalogAttach(BaseModel):

@@ -186,9 +186,10 @@ def _preinstall_agent_extensions() -> None:
     probe only ``LOAD``s (relying on pre-installed extensions), so without this
     ``httpfs`` is never advertised and dispatch is rejected as agent_incompatible.
 
-    The list must track the image's: ``ducklake`` and ``postgres`` are gated at
-    dispatch for a DuckLake catalog, so omitting them here rejects every
-    DuckLake test as agent_incompatible rather than failing it usefully.
+    The list is the default runtime's, the same one the image bakes:
+    ``ducklake`` and ``postgres`` are gated at dispatch for a DuckLake catalog, so
+    omitting them here would reject every DuckLake test as agent_incompatible
+    rather than failing it usefully.
     """
     subprocess.run(
         [
@@ -198,8 +199,8 @@ def _preinstall_agent_extensions() -> None:
             "duckhaven-agent",
             "python",
             "-c",
-            "import duckdb; c = duckdb.connect(); "
-            "exts = ('httpfs', 'azure', 'iceberg', 'ducklake', 'postgres'); "
+            "import duckdb; from duckhaven_shared import runtimes; c = duckdb.connect(); "
+            "exts = runtimes.RUNTIMES[runtimes.DEFAULT_RUNTIME_ID].extensions; "
             "[c.execute(f'INSTALL {e}') for e in exts]; "
             "[c.execute(f'LOAD {e}') for e in exts]",
         ],

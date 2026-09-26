@@ -105,17 +105,21 @@ def test_backups_cover_the_ducklake_catalog():
     assert "pg_database WHERE datname = 'ducklake'" in backup
 
 
-def test_agent_image_bakes_the_ducklake_extensions():
+def test_every_runtime_bakes_the_ducklake_extensions():
     """The agent is on an `internal: true` network and cannot reach
-    extensions.duckdb.org, so an unbaked extension is one it can never have."""
-    for ext in ("ducklake", "postgres"):
-        assert f"'{ext}'" in AGENT_DOCKERFILE, ext
+    extensions.duckdb.org, so an unbaked extension is one it can never have. The
+    image bakes, and the agent advertises, exactly its runtime's list."""
+    from duckhaven_shared.runtimes import RUNTIMES
+
+    for runtime in RUNTIMES.values():
+        for ext in ("ducklake", "postgres"):
+            assert ext in runtime.extensions, (runtime.id, ext)
 
 
-def test_agent_advertises_the_ducklake_extensions():
-    """Dispatch is gated on the advertised set."""
-    for ext in ("ducklake", "postgres"):
-        assert f'"{ext}"' in CHANNEL, ext
+def test_agent_image_and_probe_read_the_runtime_manifest():
+    """Neither keeps a list of its own that could drift from the manifest."""
+    assert "install_runtime.py" in AGENT_DOCKERFILE
+    assert "baked.extensions" in CHANNEL
 
 
 def test_capability_matcher_expects_the_advertised_postgres_name():

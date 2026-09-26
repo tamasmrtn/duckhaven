@@ -10,12 +10,23 @@ export function plural(n: number, word: string, suffix = "s") {
   return `${n} ${word}${n === 1 ? "" : suffix}`;
 }
 
-/** Format a byte count into a short, legible string (KB/MB/GB). */
+const BYTE_UNITS = ["KB", "MB", "GB", "TB"];
+
+/**
+ * Format a byte count in the largest unit that keeps it at 1 or more:
+ * 512 → "512 B", 2554 → "2.5 KB", 2.2e9 → "2.1 GB", 8e12 → "7.3 TB".
+ */
 export function formatBytes(n: number | null) {
   if (n == null) return "—";
-  if (n >= 1_073_741_824) return `${(n / 1_073_741_824).toFixed(1)} GB`;
-  if (n >= 1_048_576) return `${(n / 1_048_576).toFixed(1)} MB`;
-  return `${(n / 1024).toFixed(0)} KB`;
+  if (n < 1024) return `${n} B`;
+  let value = n / 1024;
+  let unit = 0;
+  // Step up before the value would round to "1024.0" in the smaller unit.
+  while (value >= 1023.95 && unit < BYTE_UNITS.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(1)} ${BYTE_UNITS[unit]}`;
 }
 
 /** Format a row count with a K/M/B suffix, e.g. 1234567 → "1.2M". */

@@ -13,7 +13,10 @@ dependencies = [
     "pydantic-settings>=2.0",
     "duckhaven-shared",
     "httpx>=0.28",
-    "duckdb>=1.5",
+    # Pinned to the default runtime's line, the same as the agent's: the API
+    # parses SQL and decodes result pages with this DuckDB, so it moves with the
+    # default runtime and never on its own.
+    "duckdb>=1.5.5,<1.6",
     # DuckDB's Python client imports pytz to attach tzinfo when materializing a
     # TIMESTAMP WITH TIME ZONE cell (decode_parquet_page); it isn't pulled in
     # transitively, so bundle it explicitly. See issue #162.

@@ -8,6 +8,13 @@ updates:
     labels:
       - dependencies
       - python
+    ignore:
+      # DuckDB's line is the default runtime (duckhaven_shared.runtimes), moved
+      # deliberately with the manifest and the API; patch releases still flow.
+      - dependency-name: "duckdb"
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
     groups:
       python-minor-patch:
         update-types:

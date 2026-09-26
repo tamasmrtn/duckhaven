@@ -1,6 +1,7 @@
 """run_statement_sync runs one statement on a held connection without closing it."""
 
 import duckdb
+import pytest
 
 from agent.executor.runner import run_statement_sync
 
@@ -56,3 +57,17 @@ def test_profile_records_session_reservation(tmp_path):
     assert stats["profile"] is not None
     assert stats["profile"]["summary"]["reserved_memory_bytes"] == _MEM
     assert stats["profile"]["summary"]["reserved_threads"] == _THREADS
+
+
+def test_a_script_ending_in_a_failing_select_fails(tmp_path):
+    """A script's trailing SELECT streams, so an error on a late row surfaces only
+    when that row is fetched. Reading just the first row used to report the
+    script as a success (on DuckDB 2.0, even a first-row error is deferred)."""
+    conn = duckdb.connect()
+    script = (
+        "CREATE TABLE t AS SELECT 1 AS n; "
+        "SELECT CASE WHEN i = 999999 THEN CAST('abc' AS INTEGER) ELSE i END "
+        "FROM range(1000000) r(i)"
+    )
+    with pytest.raises(duckdb.Error, match="abc"):
+        _run(conn, script, tmp_path / "s.parquet")

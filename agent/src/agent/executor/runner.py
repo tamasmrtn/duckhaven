@@ -1436,7 +1436,15 @@ def _run_one_statement(
             # DDL/DML (and multi-statement scripts) produce no result grid. Run
             # the body directly: DuckDB returns an affected-row count for
             # INSERT/UPDATE/DELETE and no result set for pure DDL.
-            affected = conn.execute(sql).fetchone()
+            cursor = conn.execute(sql)
+            affected = cursor.fetchone()
+            # Drain whatever else the last statement produced. A script ending in
+            # a SELECT streams it, so an error on a later row surfaces only when
+            # that row is fetched — stopping at the first row reported a failed
+            # script as a success (DuckDB 2.0 defers even a first-row error until
+            # the fetch).
+            while cursor.fetchmany(10_000):
+                pass
             duration_ms = int((time.monotonic() - start) * 1000)
             row_count = affected[0] if affected and isinstance(affected[0], int) else 0
     except duckdb.Error as exc:

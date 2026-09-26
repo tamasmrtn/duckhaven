@@ -258,5 +258,6 @@ nav:
       - Contributing: developer/contributing.md
       - Writing docs: developer/writing-docs.md
       - Testing: developer/testing.md
+      - Runtime qualification: developer/runtime-qualification.md
       - Releasing: developer/releasing.md
       - Design system: developer/design-system.md

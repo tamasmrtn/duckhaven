@@ -40,7 +40,7 @@ connection, so an agent that comes back re-imaged is judged by what it runs afte
 ## Extensions
 
 Each agent image is built for one [runtime](runtimes.md), with its DuckDB extensions installed in the image. The agent
-has no internet access, so it can use only those. The `1.5` runtime includes:
+has no internet access, so it can use only those. The `1.5` and `2.0` runtimes both include:
 
 | Extension | Needed for |
 |---|---|

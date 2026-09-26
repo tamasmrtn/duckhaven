@@ -42,6 +42,21 @@ harness installs them itself; for `make test-integration-agent` they come from y
 cache. An agent missing either is rejected at dispatch as `agent_incompatible` rather than failing the
 assertion you were interested in, so a whole suite can look like it passed when it never ran.
 
+### Other agent runtimes
+
+The main virtualenv runs the default [runtime](../concepts/runtimes.md)'s DuckDB, from `uv.lock`. Every other
+runtime gets its own virtualenv, `.venv-duckdb<id>`, with its pinned DuckDB installed over the locked environment:
+
+```bash
+make test-agent-runtime RUNTIME=2.0                     # agent unit tests on DuckDB 2.0
+make test-agent-runtime RUNTIME=2.0 AGENT_TESTS=agent/tests/integration PYTEST_ARGS="-m integration"
+make test-runtime-compat                                # data written on one runtime, read on another
+```
+
+CI runs the unit and integration suites on every non-default runtime, and the compatibility suite nightly. Don't swap
+DuckDB inside the main virtualenv by hand: a plain `uv run` quietly syncs it back to the locked version. See
+[Runtime qualification](runtime-qualification.md) for what a new DuckDB line has to pass.
+
 ### Elastic compute in the cross-component layer
 
 Scale-out can only be observed where compute is *absent*, so the elastic tests cannot share the main

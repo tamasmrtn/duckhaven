@@ -80,3 +80,27 @@ export function PageHeader({
     </div>
   );
 }
+
+/**
+ * The row of filters, search and view options under a page's header. It sits
+ * on the page's 24px gutter, and its controls use the 32px size (`h-8`) of the
+ * header's own buttons, so every page's second row reads the same.
+ */
+export function PageToolbar({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex shrink-0 flex-wrap items-center gap-2 border-b border-[var(--border-subtle)] px-6 py-2",
+        className,
+      )}
+    >
+      {children}
+    </div>
+  );
+}

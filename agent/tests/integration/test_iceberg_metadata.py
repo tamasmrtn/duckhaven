@@ -47,8 +47,8 @@ def _attach(
 async def test_iceberg_metadata_on_written_table(
     polaris_base_url: str, polaris_creds, polaris_s3_catalog: tuple[str, str]
 ) -> None:
-    """After a write, the probe reports a snapshot id, a data-file count, and
-    no row-level deletes for a table written by plain INSERTs."""
+    """After a write, the probe reports a snapshot id, a data-file count and
+    size, and no row-level deletes for a table written by plain INSERTs."""
     catalog, ns = polaris_s3_catalog
     conn = duckdb.connect()
     try:
@@ -63,4 +63,6 @@ async def test_iceberg_metadata_on_written_table(
     assert meta["snapshot_id"] is not None
     assert meta["snapshot_at"] is not None
     assert meta["data_file_count"] is not None and meta["data_file_count"] >= 1
+    # A real Parquet file: the running extension exposes a size column.
+    assert meta["data_file_size_bytes"] is not None and meta["data_file_size_bytes"] > 0
     assert meta["has_deletes"] is False

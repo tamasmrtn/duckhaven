@@ -3,7 +3,6 @@ import { useParams, useNavigate, useSearch } from "@tanstack/react-router";
 import { Pencil, ExternalLink, Trash2, Clock } from "lucide-react";
 import { toast } from "sonner";
 import { Breadcrumb } from "@/components/ui/breadcrumb";
-import { PageHeader } from "@/components/ui/page-header";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -18,18 +17,20 @@ import { CatalogDetail } from "@/features/catalog/CatalogDetail";
 import { SchemaDetail } from "@/features/catalog/SchemaDetail";
 import { ConfirmDropDialog } from "@/features/catalog/ConfirmDropDialog";
 import { SnapshotHistoryPanel } from "@/features/catalog/SnapshotHistoryPanel";
+import { detailTabsListClass } from "@/features/catalog/detailTabs";
 import { PermissionsPanel } from "@/features/catalog/PermissionsPanel";
 import { TableHealthPanel } from "@/features/health/TableHealthPanel";
 import { LineagePanel } from "@/features/lineage/LineagePanel";
 import { SemanticPanel } from "@/features/semantic/SemanticPanel";
 import { BrokenByDropWarning } from "@/features/semantic/BrokenByDropWarning";
-import {
-  alterTemplate,
-  selectTemplate,
-  stashWorksheetSql,
-} from "@/features/catalog/worksheetSql";
+import { alterTemplate, selectTemplate } from "@/features/catalog/worksheetSql";
 import { tableFormatDisplay } from "@/features/catalog/catalogKind";
-import { formatBytes } from "@/utils";
+import {
+  formatTableSize,
+  INLINED_HINT,
+  isInlined,
+} from "@/features/catalog/tableSize";
+import { useOpenInWorksheet } from "@/features/worksheet/openInWorksheet";
 import {
   recordRecentlyViewed,
   getRecentlyViewed,
@@ -117,9 +118,9 @@ function TableDetail({
     recordRecentlyViewed(ws, { type: "table", catalog, schema, name: table });
   }, [ws, catalog, schema, table]);
 
+  const openWorksheet = useOpenInWorksheet(ws);
   function openInWorksheet(sql: string) {
-    stashWorksheetSql(ws, sql);
-    navigate({ to: "/$ws/worksheets", params: { ws } });
+    void openWorksheet({ sql, title: table });
   }
 
   if (isLoading) {
@@ -137,17 +138,8 @@ function TableDetail({
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* Header */}
-      <div className="border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-4 shrink-0">
-        <Breadcrumb
-          items={[
-            { label: ws, emphasis: true },
-            { label: catalog },
-            { label: schema },
-            { label: table, emphasis: true },
-          ]}
-        />
-
-        <div className="mt-3 flex items-start justify-between">
+      <div className="border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-2 shrink-0">
+        <div className="flex items-start justify-between">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
               {workspace && (
@@ -166,7 +158,9 @@ function TableDetail({
                   </>
                 )}{" "}
                 · {formatNumber(tableData.row_count)} rows ·{" "}
-                {formatBytes(tableData.size_bytes)}
+                <span title={isInlined(tableData) ? INLINED_HINT : undefined}>
+                  {formatTableSize(tableData)}
+                </span>
               </span>
             </div>
             {tableData.last_write_at && (
@@ -183,7 +177,7 @@ function TableDetail({
             <Button
               variant="outline"
               size="sm"
-              className="h-7 gap-1.5 text-xs"
+              className="h-8 gap-1.5 text-xs"
               onClick={() =>
                 openInWorksheet(alterTemplate(schema, table, catalog))
               }
@@ -194,7 +188,7 @@ function TableDetail({
             <Button
               variant="outline"
               size="sm"
-              className="h-7 gap-1.5 text-xs"
+              className="h-8 gap-1.5 text-xs"
               onClick={() =>
                 openInWorksheet(selectTemplate(schema, table, catalog))
               }
@@ -205,7 +199,7 @@ function TableDetail({
             <Button
               variant="outline"
               size="sm"
-              className="h-7 gap-1.5 text-xs"
+              className="h-8 gap-1.5 text-xs"
               onClick={() => setDropOpen(true)}
             >
               <Trash2 className="size-3" />
@@ -245,16 +239,16 @@ function TableDetail({
                     key={col.name}
                     className="border-b border-[var(--border-subtle)]"
                   >
-                    <td className="py-1.5 pr-2 font-mono text-xs text-text-tertiary font-tabular">
+                    <td className="py-1 pr-2 font-mono text-xs text-text-tertiary font-tabular">
                       {col.position}
                     </td>
-                    <td className="py-1.5 pr-2 font-mono text-xs text-text-primary">
+                    <td className="py-1 pr-2 font-mono text-xs text-text-primary">
                       {col.name}
                     </td>
-                    <td className="py-1.5 pr-2 text-xs text-[var(--brand-maya-blue)]">
+                    <td className="py-1 pr-2 text-xs text-[var(--brand-maya-blue)]">
                       {col.type}
                     </td>
-                    <td className="py-1.5 text-xs text-text-tertiary">
+                    <td className="py-1 text-xs text-text-tertiary">
                       {col.nullable ? "Y" : "N"}
                     </td>
                   </tr>
@@ -281,25 +275,13 @@ function TableDetail({
           }
           className="flex flex-1 flex-col overflow-hidden gap-0"
         >
-          <TabsList className="m-2 h-8 w-fit shrink-0">
-            <TabsTrigger value="sample" className="text-xs">
-              Sample
-            </TabsTrigger>
-            <TabsTrigger value="history" className="text-xs">
-              History
-            </TabsTrigger>
-            <TabsTrigger value="health" className="text-xs">
-              Health
-            </TabsTrigger>
-            <TabsTrigger value="lineage" className="text-xs">
-              Lineage
-            </TabsTrigger>
-            <TabsTrigger value="semantics" className="text-xs">
-              Semantics
-            </TabsTrigger>
-            <TabsTrigger value="permissions" className="text-xs">
-              Permissions
-            </TabsTrigger>
+          <TabsList className={detailTabsListClass}>
+            <TabsTrigger value="sample">Sample</TabsTrigger>
+            <TabsTrigger value="history">History</TabsTrigger>
+            <TabsTrigger value="health">Health</TabsTrigger>
+            <TabsTrigger value="lineage">Lineage</TabsTrigger>
+            <TabsTrigger value="semantics">Semantics</TabsTrigger>
+            <TabsTrigger value="permissions">Permissions</TabsTrigger>
           </TabsList>
           <TabsContent
             value="sample"
@@ -432,7 +414,27 @@ export function CatalogPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <PageHeader title="Catalog" />
+      {/* The worksheet's top row, rebuilt: a title cell exactly as wide as the
+          tree (where the worksheet has its Worksheets | Catalog switch), then
+          the selected object's path (where it has its tabs). The tree sits at
+          the same place on both pages, as Databricks keeps its catalog panel
+          in the SQL editor and in Catalog Explorer. */}
+      <div className="flex h-9 shrink-0 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)]">
+        <div className="flex w-[280px] shrink-0 items-center border-r border-[var(--border-subtle)] px-4">
+          <h1 className="text-sm font-semibold">Catalog</h1>
+        </div>
+        {catalog && (
+          <Breadcrumb
+            className="min-w-0 px-4"
+            items={[
+              { label: ws, emphasis: true },
+              { label: catalog, emphasis: !schema },
+              ...(schema ? [{ label: schema, emphasis: !table }] : []),
+              ...(table ? [{ label: table, emphasis: true }] : []),
+            ]}
+          />
+        )}
+      </div>
       <div className="flex flex-1 overflow-hidden">
         {/* Catalog tree — the same component the worksheet sidebar uses.
             Fixed at 280px to match the worksheet's resizable sidebar's
@@ -440,7 +442,7 @@ export function CatalogPage() {
         <div className="w-[280px] shrink-0 overflow-hidden border-r border-[var(--border-subtle)] bg-[var(--bg-surface)]">
           <CatalogTree
             ws={ws}
-            workspaceName={workspace?.name ?? ws}
+            workspaceName={workspace?.name}
             onCatalogClick={(c) =>
               navigate({
                 to: "/$ws/catalog/$catalog",
@@ -476,7 +478,7 @@ export function CatalogPage() {
           ) : catalog ? (
             <CatalogDetail ws={ws} catalog={catalog} />
           ) : recentlyViewed.length > 0 ? (
-            <div className="flex h-full flex-col gap-2 overflow-auto p-6">
+            <div className="flex h-full flex-col gap-2 overflow-auto p-4">
               <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
                 Recently viewed
               </p>

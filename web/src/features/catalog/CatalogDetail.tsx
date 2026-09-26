@@ -1,11 +1,12 @@
-import { Breadcrumb } from "@/components/ui/breadcrumb";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { detailTabsListClass } from "@/features/catalog/detailTabs";
 import { useCatalogs } from "@/queries/catalogs";
 import { useSchemas, useTables } from "@/queries/schemas";
 import { StorageIcon } from "@/components/app/StorageIcon";
 import { PermissionsPanel } from "@/features/catalog/PermissionsPanel";
 import { backendLabel } from "@/features/catalog/CatalogInfoDialog";
+import { totalTableSize } from "@/features/catalog/tableSize";
 import { formatBytes } from "@/utils";
 import type { BackendKind } from "@/types/storage-backend";
 import { catalogKindLabel, tableFormatLabel } from "./catalogKind";
@@ -27,7 +28,7 @@ function SchemaStatsRow({
 }) {
   const { data: tables, isLoading } = useTables(ws, catalog, schema);
   const count = tables?.length ?? 0;
-  const size = (tables ?? []).reduce((a, t) => a + (t.size_bytes ?? 0), 0);
+  const size = totalTableSize(tables ?? []);
   const rows = (tables ?? []).reduce((a, t) => a + (t.row_count ?? 0), 0);
   return (
     <tr className="border-b border-[var(--border-subtle)]">
@@ -41,7 +42,12 @@ function SchemaStatsRow({
         {isLoading ? "…" : fmtNum(rows)}
       </td>
       <td className="py-1.5 text-xs text-text-secondary">
-        {isLoading ? "…" : formatBytes(size)}
+        {isLoading
+          ? "…"
+          : formatBytes(size.bytes) +
+            (size.known > 0 && size.known < size.count
+              ? ` (${size.known} of ${size.count} tables)`
+              : "")}
       </td>
     </tr>
   );
@@ -89,14 +95,8 @@ export function CatalogDetail({
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-4 shrink-0">
-        <Breadcrumb
-          items={[
-            { label: ws, emphasis: true },
-            { label: catalog, emphasis: true },
-          ]}
-        />
-        <div className="mt-2 flex items-center gap-2">
+      <div className="border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-2 shrink-0">
+        <div className="flex items-center gap-2">
           {cat && (
             <StorageIcon
               kind={cat.storage_backend_kind as BackendKind}
@@ -114,16 +114,10 @@ export function CatalogDetail({
         defaultValue="overview"
         className="flex flex-1 flex-col overflow-hidden gap-0"
       >
-        <TabsList className="m-2 h-8 w-fit shrink-0">
-          <TabsTrigger value="overview" className="text-xs">
-            Overview
-          </TabsTrigger>
-          <TabsTrigger value="details" className="text-xs">
-            Details
-          </TabsTrigger>
-          <TabsTrigger value="permissions" className="text-xs">
-            Permissions
-          </TabsTrigger>
+        <TabsList className={detailTabsListClass}>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="details">Details</TabsTrigger>
+          <TabsTrigger value="permissions">Permissions</TabsTrigger>
         </TabsList>
 
         <TabsContent

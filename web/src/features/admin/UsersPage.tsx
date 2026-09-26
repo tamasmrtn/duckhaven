@@ -3,6 +3,7 @@ import { MoreHorizontal, UserPlus, Users } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { PageToolbar } from "@/components/ui/page-header";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
   Dialog,
@@ -310,17 +311,21 @@ export function UsersPage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="flex items-center justify-between border-b border-[var(--border-subtle)] px-6 py-3 shrink-0">
+      <PageToolbar className="justify-between">
         <p className="text-xs text-text-secondary">{users.length} users</p>
-        <Button size="sm" className="h-8" onClick={() => setCreateOpen(true)}>
-          <UserPlus className="size-4" />
+        <Button
+          size="sm"
+          className="h-8 gap-1.5 text-xs"
+          onClick={() => setCreateOpen(true)}
+        >
+          <UserPlus className="size-3.5" />
           Add user
         </Button>
-      </div>
+      </PageToolbar>
 
       <CreateUserDialog open={createOpen} onOpenChange={setCreateOpen} />
 
-      <div className="flex-1 overflow-auto p-4">
+      <div className="flex-1 overflow-auto p-6">
         {isLoading ? (
           <div className="space-y-2">
             {Array.from({ length: 4 }).map((_, i) => (
@@ -331,7 +336,7 @@ export function UsersPage() {
             ))}
           </div>
         ) : users.length === 0 ? (
-          <EmptyState icon={Users} title="No users yet." />
+          <EmptyState icon={Users} title="No users yet" />
         ) : (
           <div className="space-y-2">
             {users.map((u) => (

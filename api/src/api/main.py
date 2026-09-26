@@ -40,6 +40,7 @@ from api.routers import (
     semantic,
     setup,
     sql_sessions,
+    worksheets,
     workspaces,
 )
 from api.routers import (
@@ -311,6 +312,7 @@ api_app.include_router(grants.router, tags=["grants"])
 api_app.include_router(lineage.router, tags=["lineage"])
 api_app.include_router(semantic.router, tags=["semantic"])
 api_app.include_router(queries.router, tags=["queries"])
+api_app.include_router(worksheets.router, tags=["worksheets"])
 api_app.include_router(sql_sessions.router, tags=["sql-sessions"])
 api_app.include_router(schedules.router, tags=["schedules"])
 api_app.include_router(agents.router, tags=["agents"])
@@ -334,16 +336,28 @@ class SPAStaticFiles(StaticFiles):
     """Serve index.html for client-side routes, so the router handles deep links
     and refreshes. Missing files that look like assets (anything with a file
     extension) return a real 404 instead of HTML, so broken asset URLs surface
-    as errors rather than being masked as an HTTP 200 index.html."""
+    as errors rather than being masked as an HTTP 200 index.html.
+
+    Caching follows the build's naming. index.html is revalidated on every load:
+    without a Cache-Control a browser caches it heuristically for hours, and
+    after an upgrade keeps loading asset hashes that no longer exist — a blank
+    page. Files under assets/ carry a content hash in their name, so they never
+    change and can be cached for good."""
 
     async def get_response(self, path: str, scope: Scope) -> Response:
         try:
-            return await super().get_response(path, scope)
+            response = await super().get_response(path, scope)
         except StarletteHTTPException as exc:
             last_segment = path.rsplit("/", 1)[-1]
             if exc.status_code == 404 and "." not in last_segment:
-                return await super().get_response("index.html", scope)
-            raise
+                response = await super().get_response("index.html", scope)
+            else:
+                raise
+        if str(getattr(response, "path", "")).endswith("index.html"):
+            response.headers["Cache-Control"] = "no-cache"
+        elif path.startswith("assets/"):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
 
 
 @asynccontextmanager

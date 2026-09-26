@@ -16,6 +16,7 @@ import {
   useTableHealth,
 } from "@/queries/maintenance";
 import type { HealthFactor } from "@/types/maintenance";
+import { formatBytes } from "@/utils";
 import { HealthScoreGauge } from "./HealthScoreGauge";
 import { RecommendationCard } from "./RecommendationCard";
 import { BAND_COLOR } from "./healthStyles";
@@ -141,15 +142,11 @@ export function TableHealthPanel({
                   <YAxis
                     tick={{ fontSize: 11, fill: "var(--text-tertiary)" }}
                     width={60}
-                    tickFormatter={(v) =>
-                      `${(Number(v) / 1024 ** 3).toFixed(1)}G`
-                    }
+                    tickFormatter={(v) => formatBytes(Number(v))}
                   />
                   <Tooltip
                     labelFormatter={(l) => new Date(Number(l)).toLocaleString()}
-                    formatter={(v) =>
-                      `${(Number(v) / 1024 ** 3).toFixed(2)} GB`
-                    }
+                    formatter={(v) => formatBytes(Number(v))}
                   />
                   <Line
                     type="monotone"

@@ -39,7 +39,7 @@ export function AgentFilterCombobox({
           role="combobox"
           aria-expanded={open}
           aria-label="filter by agent"
-          className="h-7 w-[180px] justify-between gap-1 text-xs"
+          className="h-8 w-[180px] justify-between gap-1 text-xs"
         >
           <span className="truncate">
             {selected ? selected.name : "All agents"}

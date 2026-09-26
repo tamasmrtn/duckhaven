@@ -1,14 +1,24 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import { screen, waitFor, within, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@tests/mock/server";
 import { renderWithProviders } from "@tests/utils";
 import { recordRecentlyViewed } from "@/utils/recentlyViewed";
+import { WORKSHEETS } from "@/mock/fixtures/worksheets";
 
 const CATALOG_ROUTE = "/acme-analytics/catalog";
 
 describe("CatalogPage", () => {
+  // The tree starts collapsed and remembers what was opened: begin with the
+  // default catalog and its `raw` schema open.
+  beforeEach(() => {
+    localStorage.setItem(
+      "dh-tree-expanded-acme-analytics",
+      JSON.stringify(["c:acme_analytics", "s:acme_analytics.raw"]),
+    );
+  });
+
   it("creates a schema via the catalog right-click menu", async () => {
     const user = userEvent.setup();
     renderWithProviders({ initialRoute: CATALOG_ROUTE });
@@ -45,7 +55,7 @@ describe("CatalogPage", () => {
     await user.type(screen.getByLabelText(/column name/i), "id");
     await user.click(screen.getByRole("button", { name: /^create$/i }));
 
-    // The tree auto-expands schemas, so the new table appears on refetch.
+    // `raw` is expanded, so the new table appears on refetch.
     await waitFor(() => {
       expect(screen.getByText("pageviews")).toBeInTheDocument();
     });
@@ -82,8 +92,9 @@ describe("CatalogPage", () => {
 
   it("renders a schema with no tables and the selection placeholder", async () => {
     server.use(
-      http.get("/api/workspaces/:ws/schemas/:schema/tables", () =>
-        HttpResponse.json([]),
+      http.get(
+        "/api/workspaces/:ws/catalogs/:catalog/schemas/:schema/tables",
+        () => HttpResponse.json([]),
       ),
     );
     renderWithProviders({ initialRoute: CATALOG_ROUTE });
@@ -191,8 +202,11 @@ describe("CatalogPage", () => {
       await screen.findByRole("button", { name: /alter table/i }),
     );
 
-    // Navigates to the worksheet, seeding a new tab from the catalog action.
-    expect(await screen.findByText(/from catalog/i)).toBeInTheDocument();
+    // Opens a worksheet named for the table, holding the ALTER statement.
+    expect(
+      await screen.findByRole("tab", { name: /^events(?!\.sql)/ }),
+    ).toBeInTheDocument();
+    expect(WORKSHEETS.at(-1)?.sql).toMatch(/^ALTER TABLE .*"events"/);
   });
 
   it("lists snapshot history under the History tab", async () => {
@@ -237,7 +251,10 @@ describe("CatalogPage", () => {
     });
     await user.click(buttons[0]);
 
-    expect(await screen.findByText(/from catalog/i)).toBeInTheDocument();
+    expect(
+      await screen.findByRole("tab", { name: /^events(?!\.sql)/ }),
+    ).toBeInTheDocument();
+    expect(WORKSHEETS.at(-1)?.sql).toMatch(/AT \(VERSION =>/);
   });
 });
 
@@ -263,9 +280,7 @@ describe("CatalogPage tab deep-linking", () => {
       initialRoute: "/acme-analytics/catalog/acme_analytics/raw/events",
     });
 
-    await user.click(
-      await screen.findByRole("tab", { name: /permissions/i }),
-    );
+    await user.click(await screen.findByRole("tab", { name: /permissions/i }));
 
     await waitFor(() =>
       expect(router.state.location.search).toMatchObject({
@@ -330,9 +345,75 @@ describe("CatalogPage recently-viewed", () => {
   it("falls back to the selection placeholder when there is no history", async () => {
     renderWithProviders({ initialRoute: "/acme-analytics/catalog" });
 
-    expect(
-      await screen.findByText(/to view its details/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/to view its details/i)).toBeInTheDocument();
     expect(screen.queryByText("Recently viewed")).not.toBeInTheDocument();
+  });
+});
+
+// The catalog page mirrors the worksheet's layout, so moving between the two
+// does not shift the tree or change the scale of the panes.
+describe("CatalogPage layout", () => {
+  it("titles the page in a 36px row cell as wide as the tree, not a page header", async () => {
+    renderWithProviders({ initialRoute: CATALOG_ROUTE });
+    const title = await screen.findByRole("heading", { name: "Catalog" });
+
+    expect(title.className).toContain("text-sm");
+    const cell = title.parentElement!;
+    expect(cell.className).toContain("w-[280px]");
+    expect(cell.parentElement!.className).toContain("h-9");
+  });
+
+  it("shows no path on the landing state", async () => {
+    renderWithProviders({ initialRoute: CATALOG_ROUTE });
+    const title = await screen.findByRole("heading", { name: "Catalog" });
+
+    expect(title.parentElement!.parentElement!.children).toHaveLength(1);
+  });
+
+  it("puts the selected table's path in the title row, once", async () => {
+    renderWithProviders({
+      initialRoute: `${CATALOG_ROUTE}/acme_analytics/raw/events`,
+    });
+    const title = await screen.findByRole("heading", { name: "Catalog" });
+    await screen.findByRole("tab", { name: "Sample" });
+
+    const row = title.parentElement!.parentElement!;
+    expect(row).toHaveTextContent("acme-analytics");
+    expect(row).toHaveTextContent("acme_analytics");
+    expect(row).toHaveTextContent("raw");
+    expect(row).toHaveTextContent("events");
+    // Not repeated in the detail header below it.
+    const header = screen
+      .getByRole("button", { name: /alter table/i })
+      .closest(".border-b") as HTMLElement;
+    expect(within(header).queryByText("acme-analytics")).toBeNull();
+  });
+
+  it("puts a schema's path in the title row", async () => {
+    renderWithProviders({
+      initialRoute: `${CATALOG_ROUTE}/acme_analytics/raw`,
+    });
+    const title = await screen.findByRole("heading", { name: "Catalog" });
+    await screen.findByText("Tables");
+
+    const row = title.parentElement!.parentElement!;
+    expect(within(row).getByText("raw").className).toContain("font-medium");
+    expect(within(row).getByText("acme_analytics").className).not.toContain(
+      "font-medium",
+    );
+  });
+
+  it("uses the app's one tab look at the compact pane size", async () => {
+    renderWithProviders({
+      initialRoute: `${CATALOG_ROUTE}/acme_analytics/raw/events`,
+    });
+    const tab = await screen.findByRole("tab", { name: "Sample" });
+    const list = tab.parentElement!;
+
+    // The Segmented look (tabs.tsx), sized for a pane like Results | Profile.
+    expect(list.className).toContain("border");
+    expect(list.className).toContain("h-7");
+    expect(list.className).not.toContain("bg-muted");
+    expect(tab.className).toContain("data-[state=active]:bg-accent");
   });
 });

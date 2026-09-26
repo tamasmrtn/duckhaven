@@ -1,19 +1,22 @@
 import logging
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
 from fastapi import Query as QueryParam
 from opentelemetry import trace
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from api.config import settings
 from api.deps import get_current_user, get_db
 from api.models.agent import Agent
 from api.models.query import Query, SavedQuery
 from api.models.user import User
+from api.models.worksheet import Worksheet
 from api.schemas.page import Page
 from api.schemas.query import (
     QueryCreate,
@@ -126,9 +129,16 @@ async def create_query(
             and agent.lifecycle in ("terminated", "failed")
         ):
             return await _create_starting_query(db, workspace, user.id, body, agent)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Agent not connected"
+        failed = Query(
+            workspace_id=workspace.id,
+            agent_id=agent.id,
+            user_id=user.id,
+            sql=body.sql,
+            timeout_s=body.timeout_s,
+            active_catalog=body.catalog,
         )
+        db.add(failed)
+        raise await _agent_not_connected(db, failed)
 
     # Every catalog bound to the workspace is attached on each query, so the
     # agent must support every catalog's kind and storage backend kind.
@@ -170,7 +180,31 @@ async def create_query(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"error": "grant_denied", "detail": str(exc)},
         ) from exc
+    except query_service.AgentUnavailable:
+        # Presence is read with a TTL, so the agent can lose its socket between the
+        # probe above and the send. Same answer as the probe, rather than a 500.
+        raise await _agent_not_connected(db, query) from None
     return query
+
+
+async def _agent_not_connected(db: AsyncSession, query: Query) -> HTTPException:
+    """Record `query` as a failed run and build the 503 for an unreachable agent.
+
+    The run is committed before the error is raised so History shows the attempt
+    -- otherwise a worksheet reports a failure that leaves no trace anywhere.
+    """
+    query.status = "failed"
+    query.error = "Agent not connected"
+    query.finished_at = datetime.now(UTC)
+    await db.commit()
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail={
+            "error": "unavailable",
+            "detail": "Agent not connected",
+            "query_id": str(query.id),
+        },
+    )
 
 
 async def _stamp_saved_query_run(db: AsyncSession, workspace, saved_query_id) -> None:
@@ -651,7 +685,7 @@ async def list_saved_queries(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> Page[SavedQueryOut]:
-    """The workspace's saved queries, newest first, with who saved each one.
+    """The workspace's saved queries, newest first, with who saved and last edited each.
 
     Shared, not per-user: a saved query belongs to the workspace, so any member
     sees all of them."""
@@ -659,11 +693,13 @@ async def list_saved_queries(
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     await assert_workspace_member(db, workspace.id, user.id)
-    # Join the creator so the list can show who saved each query (attribution).
+    # Join the creator and the last editor so the list can attribute both.
+    editor = aliased(User)
     rows, next_cursor, has_more = await paginate(
         db,
-        select(SavedQuery, User.name)
+        select(SavedQuery, User.name, editor.name)
         .join(User, SavedQuery.created_by == User.id)
+        .join(editor, SavedQuery.updated_by == editor.id)
         .where(SavedQuery.workspace_id == workspace.id),
         sort=[SavedQuery.created_at.desc(), SavedQuery.id.desc()],
         limit=limit,
@@ -671,12 +707,46 @@ async def list_saved_queries(
     )
     return Page[SavedQueryOut](
         items=[
-            SavedQueryOut.model_validate(sq).model_copy(update={"created_by_name": name})
-            for sq, name in rows
+            SavedQueryOut.model_validate(sq).model_copy(
+                update={"created_by_name": name, "updated_by_name": editor_name}
+            )
+            for sq, name, editor_name in rows
         ],
         cursor=next_cursor,
         has_more=has_more,
     )
+
+
+async def _saved_query_named(
+    db: AsyncSession, workspace_id: uuid.UUID, name: str, *, exclude: uuid.UUID | None = None
+) -> SavedQuery | None:
+    """The saved query already using `name` in this workspace, ignoring case."""
+    stmt = select(SavedQuery).where(
+        SavedQuery.workspace_id == workspace_id,
+        func.lower(SavedQuery.name) == name.lower(),
+    )
+    if exclude is not None:
+        stmt = stmt.where(SavedQuery.id != exclude)
+    return (await db.execute(stmt)).scalar_one_or_none()
+
+
+def _is_name_clash(exc: IntegrityError) -> bool:
+    """Whether the write failed on the per-workspace unique name, and not on
+    some other constraint that a 409 "name taken" would misreport."""
+    return "uq_saved_queries_ws_lower_name" in str(exc.orig) or (
+        # SQLite names the columns rather than the index.
+        "saved_queries.workspace_id" in str(exc.orig) and "UNIQUE" in str(exc.orig)
+    )
+
+
+def _name_taken(existing: SavedQuery | None, name: str) -> HTTPException:
+    detail: dict[str, object] = {
+        "error": "saved_query_exists",
+        "detail": f"A saved query named '{name}' already exists in this workspace",
+    }
+    if existing is not None:
+        detail.update(id=str(existing.id), name=existing.name)
+    return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
 
 
 @router.post(
@@ -692,14 +762,22 @@ async def create_saved_query(
     ws: Annotated[str, Path(alias="workspace")],
     body: SavedQueryCreate,
     response: Response,
+    on_conflict: Literal["replace", "error"] = QueryParam(
+        default="replace",
+        description=(
+            "What to do when a saved query with this name (ignoring case) exists: "
+            "`replace` its SQL and default agent, or fail with 409 `saved_query_exists`."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> SavedQuery:
-    """Save SQL under a name, replacing any query already using that name.
+    """Save SQL under a name.
 
-    Overwrite-by-name is deliberate: saving over "report" updates that query
-    rather than accumulating duplicates. 201 when it created one, 200 when it
-    replaced one. Requires `writer`."""
+    By default an existing query with the same name (ignoring case) is replaced
+    rather than duplicated: 201 when a query was created, 200 when one was
+    replaced. Pass `on_conflict=error` to get a 409 instead, so a client can ask
+    before overwriting a query someone else shares. Requires `writer`."""
     workspace = await get_workspace(db, ws)
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
@@ -707,29 +785,40 @@ async def create_saved_query(
     # A default agent is a live dispatch path (the scheduler falls back to it), so
     # it needs the same `use` tier as choosing the agent on a schedule.
     await assert_can_assign_agent(db, user, body.default_agent_id)
-    # Overwrite by name: saving over an existing name updates that query instead
-    # of creating a duplicate ("report v1", "report v2", ...).
-    result = await db.execute(
-        select(SavedQuery).where(
-            SavedQuery.workspace_id == workspace.id,
-            SavedQuery.name == body.name,
-        )
-    )
-    sq = result.scalar_one_or_none()
+    sq = await _saved_query_named(db, workspace.id, body.name)
     if sq is not None:
+        if on_conflict == "error":
+            raise _name_taken(sq, body.name)
+        # Replacing keeps the creator for attribution; the editor becomes the
+        # principal scheduled runs execute as.
+        sq.name = body.name
         sq.sql = body.sql
         sq.default_agent_id = body.default_agent_id
+        sq.updated_by = user.id
+        sq.updated_at = datetime.now(UTC)
         response.status_code = status.HTTP_200_OK
     else:
+        now = datetime.now(UTC)
         sq = SavedQuery(
             workspace_id=workspace.id,
             name=body.name,
             sql=body.sql,
             default_agent_id=body.default_agent_id,
             created_by=user.id,
+            created_at=now,
+            updated_by=user.id,
+            updated_at=now,
         )
         db.add(sq)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        # Another save claimed the name between the lookup and the commit. Any
+        # other integrity failure is not a naming problem, so it is not a 409.
+        await db.rollback()
+        if not _is_name_clash(exc):
+            raise
+        raise _name_taken(None, body.name) from None
     await db.refresh(sq)
     return sq
 
@@ -746,7 +835,9 @@ async def update_saved_query(
 ) -> SavedQuery:
     """Change a saved query's name, SQL or default agent. Requires `writer`.
 
-    A partial update: omitted fields are left alone."""
+    A partial update: omitted fields are left alone. Changing the SQL or the
+    default agent makes the caller the query's editor, which is the principal its
+    scheduled runs execute as. Renaming onto another query's name is a 409."""
     workspace = await get_workspace(db, ws)
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
@@ -763,9 +854,22 @@ async def update_saved_query(
     fields = body.model_dump(exclude_unset=True)
     if "default_agent_id" in fields:
         await assert_can_assign_agent(db, user, fields["default_agent_id"])
+    if fields.get("name") is not None:
+        clash = await _saved_query_named(db, workspace.id, fields["name"], exclude=sq.id)
+        if clash is not None:
+            raise _name_taken(clash, fields["name"])
     for key, value in fields.items():
         setattr(sq, key, value)
-    await db.commit()
+    if "sql" in fields or "default_agent_id" in fields:
+        sq.updated_by = user.id
+    sq.updated_at = datetime.now(UTC)
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        if not _is_name_clash(exc):
+            raise
+        raise _name_taken(None, fields.get("name") or sq.name) from None
     await db.refresh(sq)
     return sq
 
@@ -794,5 +898,10 @@ async def delete_saved_query(
     sq = result.scalar_one_or_none()
     if sq is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Saved query not found")
+    # Worksheets linked to it keep their SQL and become plain drafts. Done here as
+    # well as by the FK's ON DELETE SET NULL, which SQLite does not enforce.
+    await db.execute(
+        update(Worksheet).where(Worksheet.saved_query_id == sq.id).values(saved_query_id=None)
+    )
     await db.delete(sq)
     await db.commit()

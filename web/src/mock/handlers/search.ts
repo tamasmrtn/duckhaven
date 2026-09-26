@@ -15,10 +15,16 @@ export const searchHandlers = [
     const ws = findWorkspace(params.ws as string);
     if (!ws) return httpError(404, "Workspace not found");
 
-    const needle = (new URL(request.url).searchParams.get("q") ?? "")
-      .trim()
-      .toLowerCase();
-    if (!needle) return HttpResponse.json([]);
+    const url = new URL(request.url);
+    const needle = (url.searchParams.get("q") ?? "").trim().toLowerCase();
+    if (!needle) return HttpResponse.json({ items: [], has_more: false });
+    const requested = url.searchParams.getAll("types");
+    const wanted = new Set(
+      requested.length
+        ? requested
+        : ["catalog", "schema", "table", "saved_query"],
+    );
+    const limit = Number(url.searchParams.get("limit") ?? 20);
 
     const results: SearchResult[] = [];
     const def = defaultCatalogSlug(ws.id);
@@ -31,12 +37,21 @@ export const searchHandlers = [
     ];
 
     for (const { slug, list } of catalogStores) {
+      if (wanted.has("catalog") && slug.toLowerCase().includes(needle)) {
+        results.push({ type: "catalog", catalog: slug, name: slug });
+      }
       for (const schema of list) {
-        if (schema.name.toLowerCase().includes(needle)) {
+        if (
+          wanted.has("schema") &&
+          schema.name.toLowerCase().includes(needle)
+        ) {
           results.push({ type: "schema", catalog: slug, name: schema.name });
         }
         for (const table of schema.tables) {
-          if (table.name.toLowerCase().includes(needle)) {
+          if (
+            wanted.has("table") &&
+            table.name.toLowerCase().includes(needle)
+          ) {
             results.push({
               type: "table",
               catalog: slug,
@@ -49,6 +64,7 @@ export const searchHandlers = [
     }
 
     for (const sq of SAVED_QUERIES) {
+      if (!wanted.has("saved_query")) break;
       if (sq.workspace_id === ws.id && sq.name.toLowerCase().includes(needle)) {
         results.push({
           type: "saved_query",
@@ -62,8 +78,8 @@ export const searchHandlers = [
 
     // A search report: truncated by limit, no cursor to walk.
     return HttpResponse.json({
-      items: results.slice(0, 20),
-      has_more: results.length > 20,
+      items: results.slice(0, limit),
+      has_more: results.length > limit,
     });
   }),
 ];

@@ -43,6 +43,8 @@ export function useQueryRows(id: string | null, enabled = true) {
     rows: pages.flatMap((p) => p.rows),
     total: pages[0]?.total ?? 0,
     isLoading: query.isLoading,
+    // 410 once the agent has dropped the result; 503 while it is offline.
+    error: query.error,
     fetchNextPage: query.fetchNextPage,
     hasNextPage: query.hasNextPage,
     isFetchingNextPage: query.isFetchingNextPage,
@@ -93,11 +95,15 @@ export function useSavedQueries(ws: string) {
 export function useSaveQuery(ws: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: {
+    mutationFn: ({
+      onConflict,
+      ...data
+    }: {
       name: string;
       sql: string;
-      default_agent_id?: string;
-    }) => queriesApi.save(ws, data),
+      default_agent_id?: string | null;
+      onConflict?: "replace" | "error";
+    }) => queriesApi.save(ws, data, onConflict),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["workspace", ws, "saved-queries"] });
     },

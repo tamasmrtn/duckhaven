@@ -1,5 +1,4 @@
 import { type ReactNode, useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
 import {
   Plus,
   Table2,
@@ -26,11 +25,8 @@ import { CreateSchemaDialog } from "./CreateSchemaDialog";
 import { CreateTableDialog } from "./CreateTableDialog";
 import { ConfirmDropDialog } from "./ConfirmDropDialog";
 import { PermissionsDialog } from "./PermissionsDialog";
-import {
-  alterTemplate,
-  selectTemplate,
-  stashWorksheetSql,
-} from "./worksheetSql";
+import { alterTemplate, selectTemplate } from "./worksheetSql";
+import { useOpenInWorksheet } from "@/features/worksheet/openInWorksheet";
 
 export type CatalogNode =
   | { kind: "catalog" }
@@ -53,7 +49,6 @@ export function CatalogNodeMenu({
   children: ReactNode;
   onDropped?: () => void;
 }) {
-  const navigate = useNavigate();
   const [createSchemaOpen, setCreateSchemaOpen] = useState(false);
   const [createTableOpen, setCreateTableOpen] = useState(false);
   const [dropOpen, setDropOpen] = useState(false);
@@ -71,9 +66,12 @@ export function CatalogNodeMenu({
     node.kind === "table" ? node.schema : "",
   );
 
+  const openWorksheet = useOpenInWorksheet(ws);
   function openInWorksheet(sql: string) {
-    stashWorksheetSql(ws, sql);
-    navigate({ to: "/$ws/worksheets", params: { ws } });
+    void openWorksheet({
+      sql,
+      title: node.kind === "table" ? node.table : catalog,
+    });
   }
 
   async function recount(table: string) {

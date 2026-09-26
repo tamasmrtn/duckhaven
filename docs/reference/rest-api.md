@@ -43,6 +43,8 @@ A server old enough to lack this endpoint returns **404**; treat that as the old
 | `workspaces` | Create and list workspaces and members |
 | `catalog` | Catalogs (create/attach/detach/drop), [storage migrations](#catalog-storage-migrations), schemas, tables, table detail, sample rows, snapshot history |
 | `queries` | Submit queries, page result rows, profiles, saved queries, history |
+| `worksheets` | Your private, autosaved [worksheets](#worksheets) (the editor's tabs) |
+| `search` | Find catalogs, schemas, tables and saved queries by name ([search](#search-endpoint)) |
 | `lineage` | Read a table's [lineage](../concepts/lineage.md) graph; import and retire external lineage |
 | `semantic` | Define, validate, publish and query [semantic models](../concepts/semantic-layer.md) |
 | `agents` | List the agents you may use, with their capabilities |
@@ -355,6 +357,76 @@ Any workspace member may use every filter above against their own workspace, inc
 otherwise `403`.
 
 Runs whose `origin` is `sample`, `metadata` or `maintenance` are never returned.
+
+### Runs rejected for an unreachable agent
+
+`POST /api/workspaces/{workspace}/queries` naming an agent that is not connected (and is not a stopped elastic agent the
+API can start) answers **503** `unavailable` with the message `Agent not connected`. The attempt is recorded as a
+**failed** query first, so it appears in history; its id is in `details.query_id`:
+
+```json
+{ "error": "unavailable", "message": "Agent not connected", "details": { "query_id": "…" } }
+```
+
+## Worksheets
+
+A worksheet is one editor tab: a private draft that belongs to its owner. Every route is scoped to the caller — another
+member's worksheet is a **404**, exactly like one that does not exist. Any workspace member may keep worksheets,
+readers included.
+
+| Method and path | Does |
+|---|---|
+| `GET /api/workspaces/{workspace}/worksheets` | Your worksheets, as a [page](#pagination) |
+| `POST /api/workspaces/{workspace}/worksheets` | Create one (**201**). An open worksheet is appended as the last tab |
+| `GET /api/workspaces/{workspace}/worksheets/{worksheet_id}` | One worksheet, open or closed |
+| `PATCH /api/workspaces/{workspace}/worksheets/{worksheet_id}` | Autosave content, or change metadata |
+| `DELETE /api/workspaces/{workspace}/worksheets/{worksheet_id}` | Delete it (**204**). A linked saved query is unaffected |
+
+The list takes `status` (`open` or `closed`, repeatable; both when omitted), `saved_query_id`, `q` (a case-insensitive
+title substring), `sort` (`updated_at`, `title` or `position`) and `dir`. `updated_at` sorts newest first by default.
+
+### Saving content without losing a concurrent edit
+
+`sql` and `title` are **content** and are versioned. Send the `version` you last read as `base_version`:
+
+```json
+{ "sql": "SELECT 1", "base_version": 4 }
+```
+
+A match saves the content and increments `version`. If the worksheet has moved on — another window saved it — the
+answer is **409** `worksheet_conflict`, with the current worksheet in `details.current`, so a client can offer to load
+it or to save its own edit against the new version. Content without `base_version` is a **422**
+`base_version_required`.
+
+Everything else — `agent_id`, `catalog`, `timeout_s`, `saved_query_id`, `last_query_id`, `is_open`, `tab_position` — is
+**metadata**: last write wins, no version needed, and neither `version` nor `updated_at` moves. An explicit `null`
+clears a nullable field. `saved_query_id` and `last_query_id` must name a saved query or query in the same workspace
+(**422** otherwise), and `agent_id` must be an agent you may use.
+
+## Saved queries
+
+`POST /api/workspaces/{workspace}/saved-queries` saves SQL under a name. Names are unique per workspace **ignoring
+case**. What happens when the name is taken is up to `on_conflict`:
+
+- `replace` (the default) replaces that query's SQL and default agent and answers **200**; a new name is **201**.
+- `error` answers **409** `saved_query_exists`, with the existing query's `id` and `name` in `details`, so a client can
+  ask before overwriting a query others rely on.
+
+`PATCH .../saved-queries/{saved_query_id}` renames or edits one; renaming onto a taken name is a **409** as well.
+
+Saved queries carry `updated_at` and `updated_by` alongside `created_by`. Changing the SQL or the default agent makes
+the caller `updated_by` — and a [scheduled run](../guides/schedule-queries.md#whose-data-grants-a-run-uses) is checked
+against `updated_by`'s data grants, not the creator's.
+
+## Search endpoint
+
+`GET /api/workspaces/{workspace}/search?q=` finds catalogs, schemas, tables and saved queries whose names contain `q`,
+ignoring case. Results are filtered by your grants. It returns `{"items": [...], "has_more": …}`: `limit` (default 20,
+up to 200) caps the report, and there is no cursor — narrow the query instead.
+
+`types` (repeatable: `catalog`, `schema`, `table`, `saved_query`) limits the report to those kinds, and skips work the
+others would need: asking for catalogs and schemas only never lists tables. The worksheet's catalog tree searches with
+`types=catalog&types=schema&types=table&limit=200`.
 
 ## Semantic layer
 

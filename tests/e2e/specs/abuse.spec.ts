@@ -26,8 +26,11 @@ test("refreshing during execution recovers to a usable worksheet", async ({
 });
 
 test("a second tab opens an independent worksheet", async ({ worksheetPage }) => {
+  // Worksheets persist on the server, so count relative to what is open.
+  await expect(worksheetPage.worksheetTabs.first()).toBeVisible();
+  const before = await worksheetPage.worksheetTabs.count();
   await worksheetPage.newTabButton.click();
-  await expect(worksheetPage.worksheetTabs).toHaveCount(2);
+  await expect(worksheetPage.worksheetTabs).toHaveCount(before + 1);
   // Each tab runs independently.
   const rows = await worksheetPage.runAndReadRows("SELECT 2 AS two");
   expect(rows).toEqual([["2"]]);

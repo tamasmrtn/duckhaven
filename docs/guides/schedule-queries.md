@@ -93,6 +93,18 @@ If the schedule should outlive its creator's access, either grant the creator ac
 again, or have someone who does hold access recreate the schedule — the new schedule
 runs as them.
 
+### Whose data grants a run uses
+
+Access to the **agent** is checked against the schedule's creator, as above. Access to the **data** — which catalogs,
+schemas and tables the SQL may read or write, in a [scoped catalog](../concepts/permissions.md) — is checked against
+the person who **last changed the saved query's SQL** (or its default agent).
+
+That is deliberate. The grants that apply are those of whoever wrote the statement that runs, so a writer cannot edit
+someone else's saved query and have it run with that person's grants. When the SQL has only ever been edited by the
+person who saved it — including every saved query created before this rule — nothing changes. If a colleague with
+narrower grants edits the SQL, runs that need more than they may read start failing with a grant error in the **Runs**
+tab; have someone with the right grants save the query again.
+
 ## Notes
 
 - The finest effective cadence is once per minute (the scheduler tick floor).

@@ -1,5 +1,7 @@
+export type SearchResultType = "catalog" | "schema" | "table" | "saved_query";
+
 export interface SearchResult {
-  type: "schema" | "table" | "saved_query";
+  type: SearchResultType;
   name: string;
   catalog?: string | null;
   schema_name?: string | null;

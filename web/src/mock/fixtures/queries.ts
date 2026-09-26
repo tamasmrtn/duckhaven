@@ -340,6 +340,8 @@ function makeSavedQueries(): SavedQuery[] {
       default_agent_id: "ag-1",
       created_by: "u-1",
       created_at: "2026-05-01T00:00:00Z",
+      updated_at: "2026-05-01T00:00:00Z",
+      updated_by: "u-1",
       last_run_at: "2026-05-15T10:00:00Z",
     },
     {
@@ -350,6 +352,8 @@ function makeSavedQueries(): SavedQuery[] {
       default_agent_id: "ag-1",
       created_by: "u-1",
       created_at: "2026-04-20T00:00:00Z",
+      updated_at: "2026-05-02T00:00:00Z",
+      updated_by: "u-2",
       last_run_at: "2026-05-14T14:00:00Z",
     },
     {
@@ -360,6 +364,8 @@ function makeSavedQueries(): SavedQuery[] {
       default_agent_id: "ag-2",
       created_by: "u-2",
       created_at: "2026-05-10T00:00:00Z",
+      updated_at: "2026-05-10T00:00:00Z",
+      updated_by: "u-2",
       last_run_at: "2026-05-13T11:00:00Z",
     },
   ];

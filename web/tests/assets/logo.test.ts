@@ -6,7 +6,12 @@ import { describe, expect, it } from "vitest";
 // background padding baked into the canvas and no viewBox, which made the mark
 // render tiny everywhere it was used (TopBar, login, etc.). These assertions
 // fail if an un-cropped export is reintroduced.
-const logos = ["logo-light.svg", "logo-dark.svg"];
+const logos = [
+  "logo-light.svg",
+  "logo-dark.svg",
+  "logo-mark-light.svg",
+  "logo-mark-dark.svg",
+];
 
 describe.each(logos)("brand asset %s", (file) => {
   const svg = readFileSync(resolve("src/assets", file), "utf8");
@@ -19,5 +24,16 @@ describe.each(logos)("brand asset %s", (file) => {
     // The original padded export filled the whole canvas with these colors.
     expect(svg).not.toContain('fill="#F8FAF9"');
     expect(svg).not.toContain('fill="#0E1520"');
+  });
+});
+
+// The top bar shows the mark alone, sized as a square; a non-square viewBox
+// would letterbox it and shrink it again.
+describe.each(["logo-mark-light.svg", "logo-mark-dark.svg"])("brand mark %s", (file) => {
+  const svg = readFileSync(resolve("src/assets", file), "utf8");
+
+  it("is square", () => {
+    const [, , w, h] = svg.match(/viewBox="([^"]+)"/)![1].split(/\s+/).map(Number);
+    expect(w).toBeCloseTo(h, 1);
   });
 });

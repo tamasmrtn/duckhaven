@@ -45,7 +45,7 @@ describe("UsersPage", () => {
   it("shows the empty state when there are no users", async () => {
     server.use(http.get("/api/admin/users", () => HttpResponse.json([])));
     renderWithProviders({ initialRoute: USERS_ROUTE });
-    expect(await screen.findByText("No users yet.")).toBeInTheDocument();
+    expect(await screen.findByText("No users yet")).toBeInTheDocument();
   });
 
   it("creates a local user through the Add user dialog", async () => {

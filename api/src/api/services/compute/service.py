@@ -34,6 +34,7 @@ from api.models.query import Query, SavedQuery, Schedule
 from api.models.sql_session import SqlSession
 from api.models.table_metadata import TableMetadata
 from api.models.user import Credential
+from api.models.worksheet import Worksheet
 from api.models.workspace import Workspace
 from api.services.agent_dispatch import disconnect_agent
 from api.services.agent_telemetry import record_lifecycle_event
@@ -224,6 +225,9 @@ async def delete_agent(db: AsyncSession, agent: Agent) -> None:
         sa.update(SavedQuery)
         .where(SavedQuery.default_agent_id == agent.id)
         .values(default_agent_id=None)
+    )
+    await db.execute(
+        sa.update(Worksheet).where(Worksheet.agent_id == agent.id).values(agent_id=None)
     )
     await db.execute(
         sa.update(TableMetadata)
@@ -750,9 +754,9 @@ async def bind_scheduled_work(db: AsyncSession, agent: Agent) -> int:
             await db.get(SavedQuery, schedule.saved_query_id) if schedule.saved_query_id else None
         )
         try:
-            # Grants are evaluated against the saved query's creator, matching the
-            # scheduler's own dispatch path.
-            await dispatch_query(db, query, principal_id=saved.created_by if saved else None)
+            # Grants are evaluated against the saved query's last editor, matching
+            # the scheduler's own dispatch path.
+            await dispatch_query(db, query, principal_id=saved.updated_by if saved else None)
             bound += 1
         except Exception:
             logger.exception("Failed to bind scheduled query %s to agent %s", query.id, agent.id)

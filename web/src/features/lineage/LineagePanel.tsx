@@ -296,12 +296,14 @@ export function LineagePanel({
       <div className="flex flex-wrap items-center gap-4 px-4 py-2 shrink-0">
         <Segmented
           label="Direction"
+          size="sm"
           options={DIRECTIONS}
           value={direction}
           onChange={setDirection}
         />
         <Segmented
           label="Depth"
+          size="sm"
           options={DEPTHS.map((d) => ({ value: d, label: String(d) }))}
           value={depth}
           onChange={setDepth}

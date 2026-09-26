@@ -148,9 +148,11 @@ variables.
   files referenced by the *current* snapshot's metadata. Files referenced only by older snapshots (still valid for
   time travel) can appear orphaned, and there is no age window — DuckDB exposes no file modification time — so these
   recommendations are flagged low confidence and are an estimate to investigate, never an instruction to delete.
-- **File sizes are estimated on the deep tier, for Iceberg.** DuckDB's `iceberg` extension does not expose a data-file
-  size column, so the deep scan reads Parquet footers to size files; on very wide tables it samples a bounded subset and
-  scales the total, so the small-file ratio and average are estimates. A [DuckLake](ducklake.md) catalog has no such
+- **File sizes come from Parquet footers on the deep tier, for Iceberg.** DuckDB's `iceberg` extension does not expose a
+  data-file size column, so the deep scan reads each data file's Parquet footer, which records its exact size. On very
+  wide tables it samples a bounded subset and scales the total, so the small-file ratio and average are then
+  estimates. The catalog browser sizes Iceberg tables with the same footer reads, on a smaller sample, so a table's size
+  there matches its data bytes here. A [DuckLake](ducklake.md) catalog has no such
   limit — file sizes are columns in its catalog database, so its sizes and small-file ratio are exact and available on
   the cheap tier, and its orphan count is the exact list of files DuckLake has scheduled for deletion rather than a
   `glob` comparison.

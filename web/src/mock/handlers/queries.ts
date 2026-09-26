@@ -9,6 +9,7 @@ import {
 import { findWorkspace } from "../fixtures/workspaces";
 import { SQL_METADATA } from "../fixtures/sqlMetadata";
 import { CURRENT_USER, ALL_USERS } from "../fixtures/users";
+import { AGENTS } from "../fixtures/agents";
 import { nextId } from "../lib/seed";
 import { httpError, validationError } from "../lib/errors";
 
@@ -76,12 +77,39 @@ export const queryHandlers = [
       sql: string;
       agent_id: string;
       saved_query_id?: string;
+      timeout_s?: number;
     };
     if (!sqlAllowed(body.sql)) {
       return validationError(
         "sql_not_allowed",
         "Only read-only SELECT/WITH statements are allowed.",
       );
+    }
+
+    // Mirror the backend: an offline static agent is a 503, and the rejected
+    // attempt is recorded as a failed run so History can show it.
+    const target = AGENTS.find((a) => a.id === body.agent_id);
+    if (target && target.status === "unavailable" && !target.provider) {
+      const failedId = nextId("q");
+      const now = new Date().toISOString();
+      liveQueries[failedId] = {
+        id: failedId,
+        workspace_id: ws.id,
+        agent_id: body.agent_id,
+        user_id: CURRENT_USER.id,
+        sql: body.sql,
+        status: "failed",
+        row_count: null,
+        duration_ms: null,
+        result_bytes: null,
+        error: "Agent not connected",
+        progress: null,
+        started_at: now,
+        finished_at: now,
+      };
+      return validationError("unavailable", "Agent not connected", 503, {
+        query_id: failedId,
+      });
     }
 
     // Mirror the backend: a run from a saved query stamps its last_run_at.
@@ -294,6 +322,8 @@ export const queryHandlers = [
         ...q,
         created_by_name:
           ALL_USERS.find((u) => u.id === q.created_by)?.name ?? null,
+        updated_by_name:
+          ALL_USERS.find((u) => u.id === q.updated_by)?.name ?? null,
       })),
     );
   }),
@@ -306,25 +336,45 @@ export const queryHandlers = [
       const body = (await request.json()) as {
         name: string;
         sql: string;
-        default_agent_id?: string;
+        default_agent_id?: string | null;
       };
-      // Overwrite by name: saving over an existing name updates that query.
+      const name = body.name.trim();
+      const onConflict =
+        new URL(request.url).searchParams.get("on_conflict") ?? "replace";
+      const now = new Date().toISOString();
+      // Names are unique per workspace ignoring case. By default saving over one
+      // replaces it; `on_conflict=error` asks for a 409 instead.
       const existing = SAVED_QUERIES.find(
-        (q) => q.workspace_id === ws.id && q.name === body.name,
+        (q) =>
+          q.workspace_id === ws.id &&
+          q.name.toLowerCase() === name.toLowerCase(),
       );
       if (existing) {
+        if (onConflict === "error") {
+          return validationError(
+            "saved_query_exists",
+            `A saved query named '${name}' already exists in this workspace`,
+            409,
+            { id: existing.id, name: existing.name },
+          );
+        }
+        existing.name = name;
         existing.sql = body.sql;
         existing.default_agent_id = body.default_agent_id ?? null;
+        existing.updated_at = now;
+        existing.updated_by = CURRENT_USER.id;
         return HttpResponse.json(existing, { status: 200 });
       }
       const saved = {
         id: nextId("sq"),
-        name: body.name,
+        name,
         sql: body.sql,
         workspace_id: ws.id,
         default_agent_id: body.default_agent_id ?? null,
         created_by: CURRENT_USER.id,
-        created_at: new Date().toISOString(),
+        created_at: now,
+        updated_at: now,
+        updated_by: CURRENT_USER.id,
         last_run_at: null,
       };
       SAVED_QUERIES.push(saved);
@@ -346,10 +396,29 @@ export const queryHandlers = [
         sql?: string;
         default_agent_id?: string;
       };
-      if (body.name !== undefined) saved.name = body.name;
+      if (body.name !== undefined) {
+        const clash = SAVED_QUERIES.find(
+          (q) =>
+            q.workspace_id === ws.id &&
+            q.id !== saved.id &&
+            q.name.toLowerCase() === body.name!.trim().toLowerCase(),
+        );
+        if (clash) {
+          return validationError(
+            "saved_query_exists",
+            `A saved query named '${body.name}' already exists in this workspace`,
+            409,
+            { id: clash.id, name: clash.name },
+          );
+        }
+        saved.name = body.name.trim();
+      }
       if (body.sql !== undefined) saved.sql = body.sql;
       if (body.default_agent_id !== undefined)
         saved.default_agent_id = body.default_agent_id;
+      if (body.sql !== undefined || body.default_agent_id !== undefined)
+        saved.updated_by = CURRENT_USER.id;
+      saved.updated_at = new Date().toISOString();
       return HttpResponse.json(saved);
     },
   ),

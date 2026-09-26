@@ -78,18 +78,18 @@ export function SemanticPage() {
         actions={
           <Button
             size="sm"
-            className="h-7 gap-1.5 text-xs"
+            className="h-8 gap-1.5 text-xs"
             onClick={() => setOpen(true)}
           >
-            <Plus className="size-3" />
+            <Plus className="size-3.5" />
             New model
           </Button>
         }
       />
 
-      <div className="min-h-0 flex-1 overflow-auto px-6 py-4">
+      <div className="min-h-0 flex-1 overflow-auto">
         {isLoading ? (
-          <div className="space-y-2">
+          <div className="space-y-2 p-6">
             <Skeleton className="h-8 w-full" />
             <Skeleton className="h-8 w-full" />
           </div>
@@ -109,9 +109,12 @@ export function SemanticPage() {
             }
           />
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
+          <Table
+            containerClassName="overflow-visible"
+            className="table-gutter text-sm"
+          >
+            <TableHeader className="sticky top-0 z-10 bg-[var(--bg-surface)]">
+              <TableRow className="border-b border-[var(--border-subtle)] hover:bg-transparent">
                 <TableHead>Model</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Source</TableHead>

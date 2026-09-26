@@ -1,16 +1,17 @@
-import { useState } from "react";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { useMemo, useState } from "react";
+import { useParams } from "@tanstack/react-router";
 import {
   BookMarked,
   Clock,
   ExternalLink,
   Pencil,
+  Search,
   Trash2,
   User,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { PageHeader } from "@/components/ui/page-header";
+import { PageHeader, PageToolbar } from "@/components/ui/page-header";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -27,30 +28,86 @@ import {
   useUpdateSavedQuery,
   useDeleteSavedQuery,
 } from "@/queries/queries";
-import { stashWorksheetQuery } from "@/features/catalog/worksheetSql";
+import { Segmented } from "@/components/ui/segmented";
+import { useOpenInWorksheet } from "@/features/worksheet/openInWorksheet";
 import type { SavedQuery } from "@/types/saved-query";
+import { relativeTime } from "@/utils/relativeTime";
+
+type SortKey = "updated" | "name" | "last_run";
+
+function sortQueries(queries: SavedQuery[], key: SortKey): SavedQuery[] {
+  const by = (v: string | null | undefined) => v ?? "";
+  return [...queries].sort((a, b) =>
+    key === "name"
+      ? a.name.localeCompare(b.name)
+      : key === "last_run"
+        ? by(b.last_run_at).localeCompare(by(a.last_run_at))
+        : by(b.updated_at).localeCompare(by(a.updated_at)),
+  );
+}
 
 export function SavedQueriesPage() {
   const { ws } = useParams({ from: "/$ws/saved-queries" });
-  const navigate = useNavigate();
-  const { data: queries = [], isLoading } = useSavedQueries(ws);
+  const { data: all = [], isLoading } = useSavedQueries(ws);
   const [renaming, setRenaming] = useState<SavedQuery | null>(null);
   const [deleting, setDeleting] = useState<SavedQuery | null>(null);
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<SortKey>("updated");
+  const openWorksheet = useOpenInWorksheet(ws);
 
-  // Worksheet hand-off: stash the SQL (plus the saved agent and id) and
-  // navigate to the worksheet, which seeds a new tab from the stash on mount.
+  const queries = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    const matched = needle
+      ? all.filter(
+          (q) =>
+            q.name.toLowerCase().includes(needle) ||
+            q.sql.toLowerCase().includes(needle),
+        )
+      : all;
+    return sortQueries(matched, sort);
+  }, [all, search, sort]);
+
+  // Opens the saved query's worksheet, focusing one already linked to it.
   function openInWorksheet(q: SavedQuery) {
-    stashWorksheetQuery(ws, {
+    void openWorksheet({
       sql: q.sql,
-      agentId: q.default_agent_id ?? undefined,
+      title: q.name,
       savedQueryId: q.id,
+      agentId: q.default_agent_id ?? null,
     });
-    navigate({ to: "/$ws/worksheets", params: { ws } });
   }
 
   return (
     <div className="flex h-full flex-col">
-      <PageHeader title="Saved queries" />
+      <PageHeader
+        title="Saved queries"
+        description="Shared with everyone in the workspace. Open one to edit it in a worksheet; Save there updates it here."
+      />
+
+      {all.length > 0 && (
+        <PageToolbar>
+          <div className="relative w-56">
+            <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-text-tertiary" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search name or SQL…"
+              aria-label="Search saved queries"
+              className="h-8 pl-7 text-xs"
+            />
+          </div>
+          <Segmented
+            label="Sort"
+            value={sort}
+            onChange={setSort}
+            options={[
+              { value: "updated", label: "Updated" },
+              { value: "name", label: "Name" },
+              { value: "last_run", label: "Last run" },
+            ]}
+          />
+        </PageToolbar>
+      )}
 
       <div className="flex-1 overflow-auto p-6">
         {isLoading ? (
@@ -59,10 +116,14 @@ export function SavedQueriesPage() {
               <Skeleton key={i} className="h-32 animate-shimmer rounded-md" />
             ))}
           </div>
+        ) : all.length > 0 && queries.length === 0 ? (
+          <p className="text-sm text-text-tertiary">
+            No saved queries match “{search.trim()}”.
+          </p>
         ) : queries.length === 0 ? (
           <EmptyState
             icon={BookMarked}
-            title="Save a worksheet to keep it here."
+            title="Save a worksheet to keep it here"
             description='Click "Save…" in the worksheet editor to name and save your query.'
           />
         ) : (
@@ -108,10 +169,22 @@ export function SavedQueriesPage() {
                         Saved by {q.created_by_name}
                       </span>
                     )}
+                    {q.updated_at && (
+                      <span
+                        className="flex items-center gap-1.5"
+                        title={new Date(q.updated_at).toLocaleString()}
+                      >
+                        <Pencil className="size-3" />
+                        Updated {relativeTime(q.updated_at)}
+                        {q.updated_by_name &&
+                          q.updated_by_name !== q.created_by_name &&
+                          ` by ${q.updated_by_name}`}
+                      </span>
+                    )}
                     {q.last_run_at && (
                       <span className="flex items-center gap-1.5">
                         <Clock className="size-3" />
-                        Last run {new Date(q.last_run_at).toLocaleDateString()}
+                        Last run {relativeTime(q.last_run_at)}
                       </span>
                     )}
                   </div>
@@ -156,17 +229,27 @@ function RenameDialog({
 }) {
   const update = useUpdateSavedQuery(ws);
   const [name, setName] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   // Seed the input each time a different query opens the dialog.
   const [seededId, setSeededId] = useState<string | null>(null);
   if (query && query.id !== seededId) {
     setSeededId(query.id);
     setName(query.name);
+    setError(null);
   }
 
   async function handleRename() {
     if (!query || !name.trim()) return;
-    await update.mutateAsync({ id: query.id, data: { name: name.trim() } });
+    try {
+      await update.mutateAsync({ id: query.id, data: { name: name.trim() } });
+    } catch (err) {
+      // Names are unique per workspace, ignoring case.
+      setError(
+        err instanceof Error ? err.message : "Couldn't rename the query.",
+      );
+      return;
+    }
     onClose();
   }
 
@@ -186,10 +269,18 @@ function RenameDialog({
           <Input
             id="rename-name"
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setName(e.target.value);
+              setError(null);
+            }}
             autoFocus
             onKeyDown={(e) => e.key === "Enter" && handleRename()}
           />
+          {error && (
+            <p role="alert" className="text-xs text-[var(--status-failed)]">
+              {error}
+            </p>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>

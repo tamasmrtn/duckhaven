@@ -1,8 +1,14 @@
-import { Breadcrumb } from "@/components/ui/breadcrumb";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { detailTabsListClass } from "@/features/catalog/detailTabs";
 import { useTables } from "@/queries/schemas";
 import { PermissionsPanel } from "@/features/catalog/PermissionsPanel";
+import {
+  formatTableSize,
+  INLINED_HINT,
+  isInlined,
+  totalTableSize,
+} from "@/features/catalog/tableSize";
 import { formatBytes } from "@/utils";
 
 function fmtNum(n: number | null | undefined) {
@@ -11,7 +17,9 @@ function fmtNum(n: number | null | undefined) {
 
 function Stat({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="rounded-md border border-[var(--border-subtle)] px-4 py-3">
+    // Grows with its value: a large schema's row count is wider than a fixed
+    // third of the row.
+    <div className="min-w-[10rem] rounded-md border border-[var(--border-subtle)] px-4 py-3">
       <p className="text-2xl font-semibold text-text-primary font-tabular">
         {value}
       </p>
@@ -31,35 +39,22 @@ export function SchemaDetail({
 }) {
   const { data: tables, isLoading } = useTables(ws, catalog, schema);
   const totalRows = (tables ?? []).reduce((a, t) => a + (t.row_count ?? 0), 0);
-  const totalSize = (tables ?? []).reduce((a, t) => a + (t.size_bytes ?? 0), 0);
+  const size = totalTableSize(tables ?? []);
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-4 shrink-0">
-        <Breadcrumb
-          items={[
-            { label: ws, emphasis: true },
-            { label: catalog },
-            { label: schema, emphasis: true },
-          ]}
-        />
-        <p className="mt-2 text-xs text-text-secondary">Schema</p>
+      <div className="border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-2 shrink-0">
+        <p className="text-xs text-text-secondary">Schema</p>
       </div>
 
       <Tabs
         defaultValue="overview"
         className="flex flex-1 flex-col overflow-hidden gap-0"
       >
-        <TabsList className="m-2 h-8 w-fit shrink-0">
-          <TabsTrigger value="overview" className="text-xs">
-            Overview
-          </TabsTrigger>
-          <TabsTrigger value="details" className="text-xs">
-            Details
-          </TabsTrigger>
-          <TabsTrigger value="permissions" className="text-xs">
-            Permissions
-          </TabsTrigger>
+        <TabsList className={detailTabsListClass}>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="details">Details</TabsTrigger>
+          <TabsTrigger value="permissions">Permissions</TabsTrigger>
         </TabsList>
 
         <TabsContent
@@ -69,10 +64,17 @@ export function SchemaDetail({
           {isLoading ? (
             <Skeleton className="h-24 w-full" />
           ) : (
-            <div className="grid max-w-lg grid-cols-3 gap-3">
+            <div className="flex flex-wrap gap-3">
               <Stat label="Tables" value={tables?.length ?? 0} />
               <Stat label="Rows" value={fmtNum(totalRows)} />
-              <Stat label="Size" value={formatBytes(totalSize)} />
+              <Stat
+                label={
+                  size.known > 0 && size.known < size.count
+                    ? `Size · ${size.known} of ${size.count} tables`
+                    : "Size"
+                }
+                value={formatBytes(size.bytes)}
+              />
             </div>
           )}
         </TabsContent>
@@ -120,7 +122,9 @@ export function SchemaDetail({
                     {fmtNum(t.row_count)}
                   </td>
                   <td className="py-1.5 pr-3 text-xs text-text-secondary">
-                    {t.size_bytes == null ? "—" : formatBytes(t.size_bytes)}
+                    <span title={isInlined(t) ? INLINED_HINT : undefined}>
+                      {formatTableSize(t)}
+                    </span>
                   </td>
                   <td className="py-1.5 pr-3 text-xs text-text-secondary">
                     {t.format}

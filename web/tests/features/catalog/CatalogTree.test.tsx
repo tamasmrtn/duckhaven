@@ -31,9 +31,16 @@ configure({ asyncUtilTimeout: 3000 });
 // TanStack's <Link>, which needs a real router context — a single-route
 // router standing in for the app shell is enough for that, without pulling
 // in the full app route tree these are otherwise isolated component tests.
+// The tree starts collapsed and remembers what was opened; most tests start from
+// the default catalog's `raw` schema already open, as a returning user would.
+const EXPANDED_KEY = "dh-tree-expanded-acme-analytics";
+const RAW_OPEN = ["c:acme_analytics", "s:acme_analytics.raw"];
+
 function renderTree(
   onTableClick: (catalog: string, schema: string, table: string) => void,
+  { expanded = RAW_OPEN }: { expanded?: string[] } = {},
 ) {
+  if (expanded.length) localStorage.setItem(EXPANDED_KEY, JSON.stringify(expanded));
   const queryClient = createTestQueryClient();
   const rootRoute = createRootRoute({
     component: () => (
@@ -85,23 +92,77 @@ describe("CatalogTree", () => {
     );
   });
 
-  it("filters table rows by the search box", async () => {
-    renderTree(() => {});
+  it("starts with every catalog collapsed", async () => {
+    // Regression: the default catalog and all its schemas used to open on
+    // every visit, so finding anything else meant closing them first.
+    renderTree(() => {}, { expanded: [] });
 
-    // Schemas auto-expand, so sibling tables are visible up front.
-    await screen.findByRole("button", { name: /events/i });
-    expect(
-      screen.getByRole("button", { name: /page_views/i }),
-    ).toBeInTheDocument();
+    const toggle = await screen.findAllByRole("button", { name: "Expand catalog" });
+    expect(toggle).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: /events/i })).not.toBeInTheDocument();
+  });
 
-    await userEvent.type(screen.getByLabelText("Search tables"), "events");
-
-    await waitFor(() => {
-      expect(
-        screen.queryByRole("button", { name: /page_views/i }),
-      ).not.toBeInTheDocument();
+  it("remembers what was expanded across visits", async () => {
+    const first = renderTree(() => {}, { expanded: [] });
+    const [defaultCatalog] = await screen.findAllByRole("button", {
+      name: "Expand catalog",
     });
-    expect(screen.getByRole("button", { name: /events/i })).toBeInTheDocument();
+    await userEvent.click(defaultCatalog);
+    await screen.findByRole("button", { name: /^raw$/i });
+    first.unmount();
+
+    renderTree(() => {}, { expanded: [] });
+    expect(await screen.findByRole("button", { name: /^raw$/i })).toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem(EXPANDED_KEY) ?? "[]")).toContain(
+      "c:acme_analytics",
+    );
+  });
+
+  it("collapses everything at once", async () => {
+    renderTree(() => {});
+    await screen.findByRole("button", { name: /events/i });
+
+    await userEvent.click(screen.getByRole("button", { name: "Collapse all" }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /events/i })).not.toBeInTheDocument(),
+    );
+    expect(localStorage.getItem(EXPANDED_KEY)).toBeNull();
+  });
+
+  it("searches on the server and finds tables in catalogs nobody expanded", async () => {
+    // Regression: the box used to filter only rows already loaded, so a table
+    // in a collapsed catalog could not be found.
+    renderTree(() => {}, { expanded: [] });
+    await screen.findAllByRole("button", { name: "Expand catalog" });
+
+    await userEvent.type(screen.getByLabelText("Search tables"), "revenue");
+
+    const results = await screen.findByLabelText("Search results");
+    // `curated.marts.revenue_daily` lives in the non-default catalog.
+    expect(within(results).getByText("curated")).toBeInTheDocument();
+    expect(within(results).getByText("marts")).toBeInTheDocument();
+    expect(within(results).getByRole("button", { name: /revenue_daily/i })).toBeInTheDocument();
+    expect(within(results).getByText("revenue", { selector: "mark" })).toBeInTheDocument();
+  });
+
+  it("returns to the remembered tree when the search is cleared", async () => {
+    renderTree(() => {});
+    await screen.findByRole("button", { name: /events/i });
+    const box = screen.getByLabelText("Search tables");
+
+    await userEvent.type(box, "revenue");
+    await screen.findByLabelText("Search results");
+    await userEvent.clear(box);
+
+    expect(await screen.findByRole("button", { name: /events/i })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Search results")).not.toBeInTheDocument();
+  });
+
+  it("says when nothing matches", async () => {
+    renderTree(() => {});
+    await userEvent.type(await screen.findByLabelText("Search tables"), "zzz_nothing");
+    expect(await screen.findByText(/No catalogs, schemas or tables match/)).toBeInTheDocument();
   });
 
   it("expands a table to reveal its columns", async () => {
@@ -167,8 +228,10 @@ describe("CatalogTree", () => {
     const infoNode = screen.getByRole("button", {
       name: /information_schema/i,
     });
-    // Read-only signalling: a lock icon and a "read-only" badge.
-    expect(within(infoNode).getByText(/read-only/i)).toBeInTheDocument();
+    // Read-only signalling: a lock icon and a "read-only" badge that never
+    // shrinks onto a second line in a narrow sidebar.
+    const badge = within(infoNode).getByText(/read-only/i);
+    expect(badge).toHaveClass("shrink-0", "whitespace-nowrap");
     expect(infoNode.querySelector("svg.lucide-lock")).toBeTruthy();
 
     // Expanding reveals the supported views.
@@ -236,6 +299,7 @@ describe("CatalogTree", () => {
 
   it("seeds a scoped query when an information_schema view is clicked", async () => {
     const onMetaViewClick = vi.fn();
+    localStorage.setItem(EXPANDED_KEY, JSON.stringify(RAW_OPEN));
     const { wrapper: Wrapper } = createWrapper();
     render(
       <CatalogTree

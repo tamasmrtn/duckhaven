@@ -3,6 +3,7 @@ import { ArrowRight, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { PageToolbar } from "@/components/ui/page-header";
 import {
   Dialog,
   DialogContent,
@@ -63,18 +64,19 @@ export function CatalogMigrationsPage() {
   );
 
   return (
-    <div className="h-full overflow-auto p-6">
-      <h2 className="text-md font-semibold">Storage migrations</h2>
-      <p className="mt-1 text-sm text-text-secondary">
-        Move a catalog's data to a different storage backend. The catalog stays
-        read-only (writes are rejected) until the migration finishes and cuts
-        over automatically.
-      </p>
+    <div className="flex h-full flex-col overflow-hidden">
+      <PageToolbar>
+        <p className="text-xs text-text-secondary">
+          Move a catalog's data to a different storage backend. The catalog
+          stays read-only (writes are rejected) until the migration finishes and
+          cuts over automatically.
+        </p>
+      </PageToolbar>
 
-      <div className="mt-4 overflow-hidden rounded-md border border-[var(--border-subtle)]">
-        <table className="w-full text-sm">
-          <thead className="bg-[var(--bg-surface)] text-left text-text-secondary">
-            <tr>
+      <div className="flex-1 overflow-auto">
+        <table className="table-gutter w-full text-sm">
+          <thead className="sticky top-0 z-10 bg-[var(--bg-surface)] text-left text-xs text-text-secondary">
+            <tr className="border-b border-[var(--border-subtle)]">
               <th className="px-4 py-2 font-medium">Catalog</th>
               <th className="px-4 py-2 font-medium">Current backend</th>
               <th className="px-4 py-2" />
@@ -89,7 +91,7 @@ export function CatalogMigrationsPage() {
               </tr>
             )}
             {catalogs?.map((c) => (
-              <tr key={c.id} className="border-t border-[var(--border-subtle)]">
+              <tr key={c.id} className="border-b border-[var(--border-subtle)]">
                 <td className="px-4 py-2 font-medium">{c.slug}</td>
                 <td className="px-4 py-2 text-text-secondary">
                   {c.storage_backend_name ?? c.storage_backend_kind}
@@ -99,11 +101,16 @@ export function CatalogMigrationsPage() {
                     <Button
                       size="sm"
                       variant="outline"
+                      className="h-7 text-xs"
                       onClick={() => setSelectedCatalogId(c.id)}
                     >
                       Migrations
                     </Button>
-                    <Button size="sm" onClick={() => setDialogCatalog(c)}>
+                    <Button
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => setDialogCatalog(c)}
+                    >
                       Migrate…
                     </Button>
                   </div>
@@ -112,16 +119,18 @@ export function CatalogMigrationsPage() {
             ))}
           </tbody>
         </table>
-      </div>
 
-      {selectedCatalogId && (
-        <MigrationPanel
-          catalogId={selectedCatalogId}
-          catalogSlug={
-            catalogs?.find((c) => c.id === selectedCatalogId)?.slug ?? ""
-          }
-        />
-      )}
+        {selectedCatalogId && (
+          <div className="px-6 pb-6">
+            <MigrationPanel
+              catalogId={selectedCatalogId}
+              catalogSlug={
+                catalogs?.find((c) => c.id === selectedCatalogId)?.slug ?? ""
+              }
+            />
+          </div>
+        )}
+      </div>
 
       <MigrateDialog
         catalog={dialogCatalog}

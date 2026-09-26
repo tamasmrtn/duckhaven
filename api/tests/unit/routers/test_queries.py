@@ -75,6 +75,46 @@ async def test_create_query_agent_not_connected(
         json={"sql": "SELECT 1", "agent_id": str(agent.id)},
     )
     assert resp.status_code == 503
+    assert resp.json()["message"] == "Agent not connected"
+
+
+async def test_an_unreachable_agent_leaves_a_failed_run_in_history(
+    authed_client: AsyncClient, workspace: Workspace, agent: Agent
+):
+    """The rejected attempt is recorded, so History explains the worksheet's error."""
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(agent.id), "catalog": "lake"},
+    )
+    query_id = resp.json()["details"]["query_id"]
+
+    run = (await authed_client.get(f"/queries/{query_id}")).json()
+    assert run["status"] == "failed"
+    assert run["error"] == "Agent not connected"
+    assert run["agent_id"] == str(agent.id)
+    history = (await authed_client.get(f"/workspaces/{workspace.slug}/queries")).json()
+    assert [q["id"] for q in history["items"]] == [query_id]
+
+
+async def test_agent_lost_between_probe_and_send_is_a_503_not_a_500(
+    authed_client: AsyncClient, workspace: Workspace, connected_agent, monkeypatch
+):
+    from api.services import query as query_service
+
+    agent, _ws = connected_agent
+
+    async def lose_the_socket(*_args, **_kwargs):
+        raise query_service.AgentUnavailable("Agent not connected")
+
+    monkeypatch.setattr(query_service, "dispatch_query", lose_the_socket)
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(agent.id)},
+    )
+
+    assert resp.status_code == 503
+    run = (await authed_client.get(f"/queries/{resp.json()['details']['query_id']}")).json()
+    assert run["status"] == "failed"
 
 
 async def test_create_query_rejects_disallowed_sql(
@@ -1348,6 +1388,128 @@ async def test_create_saved_query_overwrites_by_name(
     assert len(listed.json()["items"]) == 1
 
 
+async def test_create_saved_query_can_refuse_to_overwrite(
+    authed_client: AsyncClient, workspace: Workspace
+):
+    """`on_conflict=error` lets the UI ask before replacing a shared query."""
+    first = await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries",
+        json={"name": "Report", "sql": "SELECT 1"},
+    )
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries?on_conflict=error",
+        json={"name": "report", "sql": "SELECT 2"},
+    )
+    assert resp.status_code == 409
+    body = resp.json()
+    assert body["error"] == "saved_query_exists"
+    assert body["details"] == {"id": first.json()["id"], "name": "Report"}
+
+    listed = await authed_client.get(f"/workspaces/{workspace.slug}/saved-queries")
+    assert [q["sql"] for q in listed.json()["items"]] == ["SELECT 1"]
+
+
+async def test_overwrite_matches_names_ignoring_case(
+    authed_client: AsyncClient, workspace: Workspace
+):
+    first = await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries",
+        json={"name": "Report", "sql": "SELECT 1"},
+    )
+    second = await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries",
+        json={"name": "  REPORT ", "sql": "SELECT 2"},
+    )
+    assert second.status_code == 200
+    assert second.json()["id"] == first.json()["id"]
+    assert second.json()["name"] == "REPORT"
+
+
+async def test_overwrite_keeps_the_creator_and_records_the_editor(
+    authed_client: AsyncClient, workspace: Workspace, user: User, db_session
+):
+    """The creator stays for attribution; the editor is who scheduled runs execute as."""
+    from api.services.auth import hash_password
+
+    first = await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries",
+        json={"name": "Report", "sql": "SELECT 1"},
+    )
+    assert first.json()["updated_by"] == str(user.id)
+
+    editor = User(
+        email="ed@queries.local", password_hash=hash_password("pw"), name="Ed", role="user"
+    )
+    db_session.add(editor)
+    await db_session.flush()
+    db_session.add(WorkspaceMember(workspace_id=workspace.id, user_id=editor.id, role="writer"))
+    await db_session.commit()
+    await authed_client.post("/auth/logout")
+    await authed_client.post("/auth/login", json={"email": "ed@queries.local", "password": "pw"})
+
+    replaced = await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries",
+        json={"name": "Report", "sql": "SELECT 2"},
+    )
+    body = replaced.json()
+    assert body["created_by"] == str(user.id)
+    assert body["updated_by"] == str(editor.id)
+    assert body["updated_at"] >= first.json()["updated_at"]
+
+    listed = (await authed_client.get(f"/workspaces/{workspace.slug}/saved-queries")).json()
+    assert listed["items"][0]["updated_by_name"] == "Ed"
+
+
+async def test_patching_sql_records_the_editor_but_renaming_does_not(
+    authed_client: AsyncClient, workspace: Workspace, user: User, db_session
+):
+    from api.models.query import SavedQuery as SavedQueryModel
+    from api.services.auth import hash_password
+
+    creator = User(
+        email="cr@queries.local", password_hash=hash_password("pw"), name="Cr", role="user"
+    )
+    db_session.add(creator)
+    await db_session.flush()
+    sq = SavedQueryModel(
+        workspace_id=workspace.id, name="Report", sql="SELECT 1", created_by=creator.id
+    )
+    db_session.add(sq)
+    await db_session.commit()
+    url = f"/workspaces/{workspace.slug}/saved-queries/{sq.id}"
+
+    renamed = await authed_client.patch(url, json={"name": "Renamed"})
+    assert renamed.json()["updated_by"] == str(creator.id)
+    edited = await authed_client.patch(url, json={"sql": "SELECT 2"})
+    assert edited.json()["updated_by"] == str(user.id)
+
+
+async def test_renaming_onto_another_saved_query_is_a_conflict(
+    authed_client: AsyncClient, workspace: Workspace
+):
+    await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries",
+        json={"name": "Taken", "sql": "SELECT 1"},
+    )
+    other = await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries",
+        json={"name": "Mine", "sql": "SELECT 2"},
+    )
+    resp = await authed_client.patch(
+        f"/workspaces/{workspace.slug}/saved-queries/{other.json()['id']}",
+        json={"name": "taken"},
+    )
+    assert resp.status_code == 409
+    assert resp.json()["error"] == "saved_query_exists"
+
+
+async def test_blank_saved_query_name_is_rejected(authed_client: AsyncClient, workspace: Workspace):
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/saved-queries", json={"name": "   ", "sql": "SELECT 1"}
+    )
+    assert resp.status_code == 422
+
+
 async def test_saved_query_rename_and_delete_lifecycle(
     authed_client: AsyncClient, workspace: Workspace
 ):
@@ -2331,3 +2493,21 @@ async def test_history_stamps_statement_type_on_newly_created_runs(
         await db_session.execute(select(Query).where(Query.sql == "CREATE TABLE fresh (a int)"))
     ).scalar_one()
     assert row.statement_type == "create"
+
+
+def test_only_the_name_index_counts_as_a_name_clash():
+    """A null or foreign-key violation on save must surface as the error it is,
+    not as a 409 claiming the name is taken."""
+    from sqlalchemy.exc import IntegrityError
+
+    from api.routers.queries import _is_name_clash
+
+    def err(message: str) -> IntegrityError:
+        return IntegrityError("INSERT", {}, Exception(message))
+
+    assert _is_name_clash(err('duplicate key value violates "uq_saved_queries_ws_lower_name"'))
+    assert _is_name_clash(
+        err("UNIQUE constraint failed: saved_queries.workspace_id, lower(saved_queries.name)")
+    )
+    assert not _is_name_clash(err('null value in column "updated_at" violates not-null'))
+    assert not _is_name_clash(err("insert or update violates foreign key constraint"))

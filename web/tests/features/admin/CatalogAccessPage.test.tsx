@@ -8,8 +8,9 @@ describe("CatalogAccessPage", () => {
   it("lists the workspace catalogs with an access-mode control", async () => {
     renderWithProviders({ initialRoute: ROUTE });
 
+    // The Admin nav names the section; the page opens on what the modes mean.
     expect(
-      await screen.findByRole("heading", { name: "Catalog access" }),
+      await screen.findByText(/access is narrowed by per-object grants/),
     ).toBeInTheDocument();
     // The access-mode column header and at least one catalog row's selector,
     // shown once the catalog list resolves.

@@ -26,14 +26,19 @@ export interface SqlEditorHandle {
   showDiff: (oldSql: string, newSql: string) => void;
   // Clear any inline diff rendering.
   clearDiff: () => void;
+  // Free the model kept for a closed worksheet (see `path`).
+  disposeModel: (path: string) => void;
 }
 
 interface SqlEditorProps {
   value: string;
+  // One Monaco model per path, so each worksheet keeps its own undo history,
+  // cursor and scroll position when tabs are switched.
+  path?: string;
   onChange: (value: string) => void;
   // Invoked by the Ctrl/Cmd+Enter command with the run payload.
   onRun?: (payload: string) => void;
-  // Invoked by the Ctrl/Cmd+S command to open the Save dialog.
+  // Invoked by the Ctrl/Cmd+S command.
   onSave?: () => void;
   readOnly?: boolean;
 }
@@ -97,7 +102,7 @@ const DUCKHAVEN_LIGHT_THEME = {
 };
 
 export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
-  function SqlEditor({ value, onChange, onRun, onSave, readOnly }, ref) {
+  function SqlEditor({ value, path, onChange, onRun, onSave, readOnly }, ref) {
     const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
     const monacoRef = useRef<Parameters<OnMount>[1] | null>(null);
     const decorationsRef = useRef<string[]>([]);
@@ -227,6 +232,13 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
         });
       },
       clearDiff: clearDiffZones,
+      disposeModel: (modelPath: string) => {
+        const monaco = monacoRef.current;
+        if (!monaco) return;
+        const model = monaco.editor.getModel(monaco.Uri.parse(modelPath));
+        // Never the model on screen: the editor would be left without one.
+        if (model && model !== editorRef.current?.getModel()) model.dispose();
+      },
     }));
 
     const handleBeforeMount: BeforeMount = (monaco) => {
@@ -244,8 +256,8 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
       // lazily-fetched columns arrive.
       setActiveEditor(editor);
 
-      // Ctrl+S / Cmd+S: open the Save dialog (the muscle-memory "save"). Format
-      // moves to Monaco's standard Shift+Alt+F.
+      // Ctrl+S / Cmd+S: save — in place for a worksheet linked to a saved
+      // query, else the Save dialog. Format moves to Monaco's Shift+Alt+F.
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
         onSaveRef.current?.();
       });
@@ -295,6 +307,7 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
       <Editor
         height="100%"
         defaultLanguage="sql"
+        path={path}
         value={value}
         onChange={(v) => onChange(v ?? "")}
         beforeMount={handleBeforeMount}

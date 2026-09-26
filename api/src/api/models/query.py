@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -116,9 +117,22 @@ class SavedQuery(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    # When the SQL, name or default agent last changed, and by whom. `updated_by`
+    # is the principal scheduled runs execute as: the author of the SQL that runs,
+    # not whoever first created the name.
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     workspace: Mapped[Workspace] = relationship(back_populates="saved_queries")
+
+    # Names are unique per workspace regardless of case, so overwrite-by-name and
+    # the "replace?" confirmation agree on what counts as the same query.
+    __table_args__ = (
+        Index("uq_saved_queries_ws_lower_name", "workspace_id", func.lower(name), unique=True),
+    )
 
 
 class Schedule(Base):
@@ -175,3 +189,10 @@ def _classify_statement_type(_mapper, _connection, target: Query) -> None:
     """
     if target.statement_type is None and target.sql:
         target.statement_type = classify_statement(target.sql)
+
+
+@event.listens_for(SavedQuery, "before_insert")
+def _default_saved_query_editor(_mapper, _connection, target: SavedQuery) -> None:
+    """A new saved query's last editor is its creator unless a caller says otherwise."""
+    if target.updated_by is None:
+        target.updated_by = target.created_by

@@ -85,6 +85,55 @@ async def test_matches_tables_and_schemas_by_substring(
     assert schema_hit["name"] == "marketing"
 
 
+async def test_matches_catalogs_by_name(
+    auth_client: AsyncClient, backend: StorageBackend, fake_polaris
+):
+    slug = await _make_workspace(auth_client, backend, slug="orders-ws")
+    catalog = slug.replace("-", "_")
+
+    items = (await auth_client.get(f"/workspaces/{slug}/search", params={"q": "orders"})).json()[
+        "items"
+    ]
+
+    assert {"type": "catalog", "catalog": catalog, "name": catalog}.items() <= items[0].items()
+
+
+async def test_types_narrows_the_report(
+    auth_client: AsyncClient, backend: StorageBackend, fake_polaris
+):
+    """The catalog tree asks for objects only; saved queries stay out."""
+    slug = await _make_workspace(auth_client, backend)
+    await auth_client.post(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas", json={"name": "leads_raw"}
+    )
+    await auth_client.post(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/leads_raw/tables",
+        json={"name": "leads", "columns": _COLS},
+    )
+    await auth_client.post(
+        f"/workspaces/{slug}/saved-queries", json={"name": "leads report", "sql": "SELECT 1"}
+    )
+
+    tree = await auth_client.get(
+        f"/workspaces/{slug}/search",
+        params=[("q", "lead"), ("types", "schema"), ("types", "table")],
+    )
+    tables_only = await auth_client.get(
+        f"/workspaces/{slug}/search", params={"q": "lead", "types": "table"}
+    )
+
+    assert {r["type"] for r in tree.json()["items"]} == {"schema", "table"}
+    assert [r["type"] for r in tables_only.json()["items"]] == ["table"]
+
+
+async def test_the_tree_may_ask_for_up_to_200_results(
+    auth_client: AsyncClient, backend: StorageBackend, fake_polaris
+):
+    slug = await _make_workspace(auth_client, backend)
+    resp = await auth_client.get(f"/workspaces/{slug}/search", params={"q": "a", "limit": 200})
+    assert resp.status_code == 200
+
+
 async def test_matches_saved_queries_by_name(
     auth_client: AsyncClient, backend: StorageBackend, fake_polaris
 ):

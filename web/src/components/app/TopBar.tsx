@@ -8,9 +8,12 @@ import {
   LogOut,
   User,
 } from "lucide-react";
-import logoLight from "@/assets/logo-light.svg";
-import logoDark from "@/assets/logo-dark.svg";
+// The mark alone: at top-bar height the full logo's wordmark shrinks to a few
+// unreadable pixels, and the workspace name sits right beside it anyway.
+import markLight from "@/assets/logo-mark-light.svg";
+import markDark from "@/assets/logo-mark-dark.svg";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -65,16 +68,16 @@ export function TopBar({
         aria-label="Switch workspace"
       >
         <img
-          src={logoLight}
+          src={markLight}
           alt="DuckHaven"
-          className="h-6 w-auto block dark:hidden"
+          className="size-7 shrink-0 block dark:hidden"
         />
         <img
-          src={logoDark}
+          src={markDark}
           alt="DuckHaven"
-          className="h-6 w-auto hidden dark:block"
+          className="size-7 shrink-0 hidden dark:block"
         />
-        {workspace && (
+        {workspace ? (
           <>
             <span className="truncate font-medium">{workspace.name}</span>
             <StorageIcon
@@ -82,6 +85,8 @@ export function TopBar({
               className="size-3.5 shrink-0 text-text-secondary"
             />
           </>
+        ) : (
+          <Skeleton className="h-3.5 w-24 animate-shimmer rounded" />
         )}
         <ChevronDown className="size-3.5 shrink-0 text-text-secondary" />
       </button>

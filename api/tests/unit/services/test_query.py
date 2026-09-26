@@ -281,6 +281,40 @@ async def test_query_done_still_reads_the_iceberg_key(db_session):
     assert meta.has_deletes is False
 
 
+async def test_query_done_stores_the_iceberg_probe_size(db_session):
+    """The probe's sum of live data-file bytes becomes the table's size: the
+    Iceberg listing has none, so without it a schema's size read as 0."""
+    ws, catalog = await _make_workspace(db_session)
+    query = Query(workspace_id=ws.id, sql="SELECT 1", status="running", origin="sample")
+    db_session.add(query)
+    await db_session.commit()
+    await db_session.refresh(query)
+
+    frame = Frame(
+        type=FrameType.QUERY_DONE,
+        payload={
+            "query_id": str(query.id),
+            "status": "done",
+            "stats_table": {"catalog": catalog.slug, "schema": "main", "table": "events"},
+            "table_row_count": 59_986_052,
+            "table_size_bytes": None,
+            "iceberg": {"data_file_count": 481, "data_file_size_bytes": 2_223_533_507},
+        },
+    )
+    await query_service.handle_agent_frame(db_session, frame)
+
+    meta = (
+        await db_session.execute(
+            select(TableMetadata).where(
+                TableMetadata.catalog_id == catalog.id,
+                TableMetadata.schema_name == "main",
+                TableMetadata.table_name == "events",
+            )
+        )
+    ).scalar_one()
+    assert meta.size_bytes == 2_223_533_507
+
+
 async def test_query_done_persists_profile(db_session):
     ws, _catalog = await _make_workspace(db_session)
     query = Query(workspace_id=ws.id, sql="SELECT 1", status="running")

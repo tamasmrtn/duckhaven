@@ -169,9 +169,25 @@ mobile/tablet target):
 | Button (compact, inline in toolbars) | 28 | 8 |
 | Input | 32 | 10 |
 | Select / agent picker | 32 | 10 |
-| Tab | 32 | 12 |
+| Tab / segmented option group | 32 | 10 |
+| Tab / segmented option group inside an editor pane | 28 | 10 |
 | Top bar | 48 | 16 |
 | Status bar (worksheet bottom) | 28 | 12 |
+
+#### Page layout
+
+Every page outside the two editor pages (Worksheets, Catalog) is built from the same three rows, so moving between
+pages never shifts the title, the controls or the columns:
+
+1. **Header** (`PageHeader`): the title, a one-line description under it on every page, and the page's own actions at
+   the right as 32 px buttons. Admin adds its section nav as a row beneath.
+2. **Toolbar** (`PageToolbar`): filters, search and view tabs, on the page's 24 px gutter, every control 32 px tall.
+3. **Content**: cards and forms get `p-6`. A table runs edge to edge, and its `table-gutter` class puts its first and
+   last columns on the same 24 px gutter, so the title, the toolbar and the table's first column share one left edge.
+
+Tabs and segmented options are one control with one look (`Segmented`, and `Tabs`, which borrows its classes): 32 px on
+a page, 28 px inside an editor pane (the worksheet's Results | Profile, the catalog detail tabs, the sidebar switch).
+Empty-state titles are phrases without a closing full stop.
 
 ### 2.4 Radius, Borders, Elevation
 
@@ -412,6 +428,11 @@ sample rows, or metadata.
 
 Notes:
 
+- **Same frame as the worksheet.** The page opens with the worksheet's 36 px top row instead of a page header: a
+  "Catalog" title cell exactly as wide as the tree (where the worksheet has its *Worksheets | Catalog* switch), then
+  the selected object's path. The tree therefore sits at the same place on both pages, and the detail panes use the
+  worksheet's toolbar padding and its *Results | Profile* tab style, as Databricks keeps its catalog panel identical
+  in the SQL editor and in Catalog Explorer. Other top-level pages keep the page header and pill tabs.
 - **Breadcrumb is clickable** all the way up. ⌘-click to open in a new tab.
 - **No edit-schema form** — the pencil icon top-right opens "Rename / Drop".
   Column changes are offered as generated `ALTER TABLE` SQL dropped into a
@@ -691,8 +712,11 @@ evolves.
    tabbed (Snowflake-style) when a script has multiple statements?
    **Default: tabbed.** Stacking gets noisy past two statements.
 3. **Q-UI-3.** Should the agent picker remember per-worksheet *or* per-
-   workspace? **Default: per-worksheet** (matches "user picks engine
-   per query" — D15 of architecture).
+   workspace? **Resolved: per-worksheet**, stored on the server-side
+   worksheet, falling back to the agent last used in the workspace (per
+   browser). The picker is a status-first context chip: running agents
+   first, stopped elastic agents ("starts on run") next, incompatible
+   ones with their reason, unavailable ones folded away.
 4. **Q-UI-4.** Auto-suggest from catalog inside Monaco — pull schemas
    eagerly on workspace open or lazily on `.` keystroke? **Default:
    lazy**, with a 250 ms pre-fetch on schema-tree hover.

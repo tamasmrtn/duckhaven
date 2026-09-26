@@ -6,6 +6,11 @@ import {
 } from "@tanstack/react-router";
 import { useMe } from "@/queries/auth";
 import { PageHeader } from "@/components/ui/page-header";
+import {
+  segmentActiveClass,
+  segmentGroupClass,
+  segmentItemClass,
+} from "@/components/ui/segmented";
 import { cn } from "@/utils";
 
 // Which global permission each admin section needs. Compute is deliberately
@@ -70,8 +75,12 @@ export function AdminLayout() {
     <div className="flex h-full flex-col">
       <PageHeader
         title="Admin"
+        description="Storage, users, service accounts and catalog access for this deployment, and lakehouse maintenance."
         secondaryRow={
-          <nav className="mt-3 flex gap-1" aria-label="Admin sections">
+          <nav
+            className={cn(segmentGroupClass, "mt-3 h-8")}
+            aria-label="Admin sections"
+          >
             {visibleTabs.map(({ segment, label }) => {
               const active = pathname.includes(`/admin/${segment}`);
               return (
@@ -81,12 +90,7 @@ export function AdminLayout() {
                   onClick={() =>
                     void navigate({ to: `/${ws}/admin/${segment}` as "/" })
                   }
-                  className={cn(
-                    "rounded-md px-3 py-1.5 text-sm transition-colors",
-                    active
-                      ? "bg-accent text-text-primary font-medium"
-                      : "text-text-secondary hover:bg-accent/50 hover:text-text-primary",
-                  )}
+                  className={cn(segmentItemClass, active && segmentActiveClass)}
                   aria-current={active ? "page" : undefined}
                 >
                   {label}

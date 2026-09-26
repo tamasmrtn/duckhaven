@@ -96,7 +96,7 @@ describe("SessionsPage", () => {
     renderWithProviders({ initialRoute: ROUTE });
 
     expect(
-      await screen.findByText("SQL connections are not enabled."),
+      await screen.findByText("SQL connections are not enabled"),
     ).toBeInTheDocument();
   });
 
@@ -106,7 +106,7 @@ describe("SessionsPage", () => {
     );
     renderWithProviders({ initialRoute: ROUTE });
 
-    expect(await screen.findByText("No live connections.")).toBeInTheDocument();
+    expect(await screen.findByText("No live connections")).toBeInTheDocument();
   });
 
   it("shows a different empty state on the All tab", async () => {
@@ -117,6 +117,6 @@ describe("SessionsPage", () => {
     renderWithProviders({ initialRoute: ROUTE });
 
     await user.click(await screen.findByRole("tab", { name: "All" }));
-    expect(await screen.findByText("No connections yet.")).toBeInTheDocument();
+    expect(await screen.findByText("No connections yet")).toBeInTheDocument();
   });
 });

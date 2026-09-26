@@ -1,4 +1,4 @@
-import { useMemo, useState, type UIEvent } from "react";
+import { useMemo, useState, type ReactNode, type UIEvent } from "react";
 import {
   useTable,
   tableFeatures,
@@ -37,6 +37,30 @@ interface ResultsTableProps {
   // Undefined outside the worksheet (e.g. CatalogPage's read-only sample
   // preview reuses this component too) — the button only renders when set.
   onFixWithAssistant?: () => void;
+  // Extra controls beside the error, e.g. switching to a reachable agent.
+  errorActions?: ReactNode;
+}
+
+// DuckDB's numeric logical types, as the agent spells them in the column schema.
+const NUMERIC_TYPE =
+  /^(U?(TINYINT|SMALLINT|INTEGER|INT|BIGINT|HUGEINT)|FLOAT|REAL|DOUBLE|DECIMAL(\(\d+,\s*\d+\))?|NUMERIC.*)$/i;
+
+/** Whether a column holds numbers, so it can be right-aligned like a spreadsheet. */
+export function isNumericColumn(
+  type: string | undefined,
+  rows: QueryRow[],
+  column: string,
+): boolean {
+  if (type) return NUMERIC_TYPE.test(type.trim());
+  // No schema (an older agent): judge by the loaded values.
+  let seen = false;
+  for (const row of rows.slice(0, 50)) {
+    const v = row[column];
+    if (v === null || v === undefined) continue;
+    if (typeof v !== "number") return false;
+    seen = true;
+  }
+  return seen;
 }
 
 function cellDisplay(value: unknown): string {
@@ -82,6 +106,7 @@ export function ResultsTable({
   isLoadingMore,
   columnSchema,
   onFixWithAssistant,
+  errorActions,
 }: ResultsTableProps) {
   const [sorting, setSorting] = useState<SortingState>([]);
 
@@ -99,6 +124,13 @@ export function ResultsTable({
       onLoadMore();
     }
   }
+  const numeric = useMemo(
+    () =>
+      new Set(
+        columns.filter((c) => isNumericColumn(typeByColumn.get(c), rows, c)),
+      ),
+    [columns, typeByColumn, rows],
+  );
   const colDefs: ColumnDef<typeof tableFeatureSet, QueryRow>[] = columns.map(
     (col) => ({
       accessorKey: col,
@@ -112,7 +144,8 @@ export function ResultsTable({
             type="button"
             onClick={() => copyValue(display)}
             className={cn(
-              "block w-full truncate text-left font-mono text-xs font-tabular",
+              "block w-full truncate font-mono text-xs font-tabular",
+              numeric.has(col) ? "text-right" : "text-left",
               isNull ? "text-text-tertiary italic" : "text-text-primary",
             )}
             title={display}
@@ -141,17 +174,20 @@ export function ResultsTable({
             <AlertCircle className="size-5 shrink-0" />
             <p className="text-sm font-medium">Query failed</p>
           </div>
-          {onFixWithAssistant && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 gap-1.5 text-xs"
-              onClick={onFixWithAssistant}
-            >
-              <Sparkles className="size-3.5" />
-              Fix with Assistant
-            </Button>
-          )}
+          <div className="flex items-center gap-1.5">
+            {errorActions}
+            {onFixWithAssistant && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 text-xs"
+                onClick={onFixWithAssistant}
+              >
+                <Sparkles className="size-3.5" />
+                Fix with Assistant
+              </Button>
+            )}
+          </div>
         </div>
         <pre
           role="alert"
@@ -181,7 +217,7 @@ export function ResultsTable({
   if (columns.length === 0) {
     return (
       <div className="flex h-full items-center justify-center">
-        <EmptyState icon={Table2} title="No results yet." />
+        <EmptyState icon={Table2} title="No results yet" />
       </div>
     );
   }
@@ -239,25 +275,38 @@ export function ResultsTable({
 
       {/* Table */}
       <div className="flex-1 overflow-auto" onScroll={handleScroll}>
-        <table className="w-full text-sm">
+        {/* Columns size to their content (up to a cap) instead of splitting
+            the width evenly; the table still fills the pane when narrow. */}
+        <table className="w-max min-w-full text-sm">
           <thead className="sticky top-0 bg-[var(--bg-surface)] z-10">
             {table.getHeaderGroups().map((hg) => (
               <tr
                 key={hg.id}
                 className="border-b border-[var(--border-subtle)]"
               >
+                <th
+                  aria-label="Row number"
+                  className="sticky left-0 z-10 w-10 bg-[var(--bg-surface)] px-2"
+                />
                 {hg.headers.map((h) => {
                   const sortDir = h.column.getIsSorted();
                   const type = typeByColumn.get(h.column.id);
+                  const right = numeric.has(h.column.id);
                   return (
                     <th
                       key={h.id}
-                      className="whitespace-nowrap px-3 py-1.5 text-left text-xs font-medium text-text-secondary"
+                      className={cn(
+                        "whitespace-nowrap px-3 py-1.5 text-xs font-medium text-text-secondary",
+                        right ? "text-right" : "text-left",
+                      )}
                     >
                       <button
                         type="button"
                         onClick={h.column.getToggleSortingHandler()}
-                        className="flex items-center gap-1"
+                        className={cn(
+                          "flex items-center gap-1",
+                          right && "ml-auto",
+                        )}
                       >
                         <span>
                           {flexRender(
@@ -296,8 +345,16 @@ export function ResultsTable({
                   i % 2 === 0 ? "bg-transparent" : "bg-[var(--bg-surface)]/50",
                 )}
               >
+                {/* A header cell, not data: copy, CSV and anything reading the
+                    grid's <td>s see only the result's own columns. */}
+                <th
+                  scope="row"
+                  className="sticky left-0 w-10 select-none bg-[var(--bg-canvas)] px-2 text-right font-mono text-2xs font-normal text-text-tertiary"
+                >
+                  {i + 1}
+                </th>
                 {row.getAllCells().map((cell) => (
-                  <td key={cell.id} className="px-3 py-1 max-w-[200px]">
+                  <td key={cell.id} className="px-3 py-1 max-w-[320px]">
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>
                 ))}

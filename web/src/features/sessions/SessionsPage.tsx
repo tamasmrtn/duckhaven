@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import { Plug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { PageHeader } from "@/components/ui/page-header";
+import { PageHeader, PageToolbar } from "@/components/ui/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -48,20 +48,23 @@ export function SessionsPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <PageHeader title="Connections" />
+      <PageHeader
+        title="Connections"
+        description="SQL sessions from tools such as dbt and dlt, each with every statement it ran."
+      />
 
       <Tabs defaultValue="live" className="flex min-h-0 flex-1 flex-col">
-        <div className="flex items-center justify-between px-6 pt-3">
+        <PageToolbar>
           <TabsList>
             <TabsTrigger value="live">Live</TabsTrigger>
             <TabsTrigger value="all">All</TabsTrigger>
           </TabsList>
-        </div>
+        </PageToolbar>
 
-        <TabsContent value="live" className="mt-3 min-h-0 flex-1 overflow-auto">
+        <TabsContent value="live" className="mt-0 min-h-0 flex-1 overflow-auto">
           <SessionsTable ws={ws} live />
         </TabsContent>
-        <TabsContent value="all" className="mt-3 min-h-0 flex-1 overflow-auto">
+        <TabsContent value="all" className="mt-0 min-h-0 flex-1 overflow-auto">
           <SessionsTable ws={ws} />
         </TabsContent>
       </Tabs>
@@ -86,7 +89,7 @@ function SessionsTable({ ws, live = false }: { ws: string; live?: boolean }) {
     return (
       <EmptyState
         icon={Plug}
-        title="SQL connections are not enabled."
+        title="SQL connections are not enabled"
         description="Set SQL_SESSIONS_ENABLED=true on the API to let dbt and dlt open connections."
       />
     );
@@ -106,13 +109,13 @@ function SessionsTable({ ws, live = false }: { ws: string; live?: boolean }) {
     return live ? (
       <EmptyState
         icon={Plug}
-        title="No live connections."
+        title="No live connections"
         description="An open connection holds an agent slot for its whole life; none are held right now."
       />
     ) : (
       <EmptyState
         icon={Plug}
-        title="No connections yet."
+        title="No connections yet"
         description="Connections opened by dbt, dlt, or the SQL connector appear here, newest first."
       />
     );
@@ -132,7 +135,10 @@ function SessionsTable({ ws, live = false }: { ws: string; live?: boolean }) {
 
   return (
     <>
-      <Table containerClassName="overflow-visible" className="text-sm">
+      <Table
+        containerClassName="overflow-visible"
+        className="table-gutter text-sm"
+      >
         <TableHeader className="sticky top-0 bg-[var(--bg-surface)] z-10">
           <TableRow className="border-b border-[var(--border-subtle)] hover:bg-transparent">
             {columns.map((h, i) => (
@@ -178,7 +184,7 @@ function SessionsTable({ ws, live = false }: { ws: string; live?: boolean }) {
               <TableCell className="px-4 py-2 font-mono text-xs text-text-secondary font-tabular">
                 {(s.statement_count ?? 0).toLocaleString()}
               </TableCell>
-              <TableCell className="px-4 py-2 font-mono text-2xs text-text-tertiary">
+              <TableCell className="whitespace-nowrap px-4 py-2 font-mono text-2xs text-text-tertiary">
                 {formatWhen(s.opened_at ?? s.created_at)}
               </TableCell>
               <TableCell className="px-4 py-2 text-2xs text-text-tertiary">

@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { Copy, Cpu, Loader2, RefreshCw, Server } from "lucide-react";
+import { Copy, Cpu, Loader2, RefreshCw, Search, Server } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
@@ -12,6 +12,8 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PageHeader, PageToolbar } from "@/components/ui/page-header";
+import { Segmented } from "@/components/ui/segmented";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -28,9 +30,35 @@ import {
   useCreateElasticAgent,
 } from "@/queries/agents";
 import { useMe } from "@/queries/auth";
-import type { AgentAccessMode, BootstrapToken } from "@/types/agent";
+import type { Agent, AgentAccessMode, BootstrapToken } from "@/types/agent";
 import { cn, plural } from "@/utils";
 import { agentDotClass, formatCost, relativeTime } from "./agentFormat";
+
+type FleetFilter = "active" | "stopped" | "all";
+
+// Up or on its way up (or down): an agent a run could reach or soon will. Every
+// other agent is stopped — terminated, failed, or an offline static host — and
+// a long-lived fleet accumulates those, so the page opens on the active ones.
+export function isActiveAgent(agent: Agent): boolean {
+  return (
+    agent.status !== "unavailable" ||
+    agent.lifecycle === "provisioning" ||
+    agent.lifecycle === "terminating"
+  );
+}
+
+const STATUS_RANK: Record<Agent["status"], number> = {
+  healthy: 0,
+  degraded: 1,
+  unavailable: 2,
+};
+
+function fleetOrder(a: Agent, b: Agent): number {
+  const active = Number(isActiveAgent(b)) - Number(isActiveAgent(a));
+  if (active) return active;
+  const rank = STATUS_RANK[a.status] - STATUS_RANK[b.status];
+  return rank || a.name.localeCompare(b.name);
+}
 
 function buildComposeSnippet(token: BootstrapToken, name?: string): string {
   return [
@@ -415,33 +443,84 @@ export function AgentsPage() {
   // permission — a per-agent grant, however high, never confers it.
   const { data: me } = useMe();
   const canManageFleet = (me?.permissions ?? []).includes("agents:manage");
+  const [filter, setFilter] = useState<FleetFilter>("active");
+  const [search, setSearch] = useState("");
+
+  const activeCount = agents.filter(isActiveAgent).length;
+  const shown = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    return agents
+      .filter((a) =>
+        filter === "all"
+          ? true
+          : filter === "active"
+            ? isActiveAgent(a)
+            : !isActiveAgent(a),
+      )
+      .filter(
+        (a) =>
+          !needle ||
+          a.name.toLowerCase().includes(needle) ||
+          (a.capabilities?.host ?? "").toLowerCase().includes(needle),
+      )
+      .sort(fleetOrder);
+  }, [agents, filter, search]);
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="flex items-center justify-between border-b border-[var(--border-subtle)] px-6 py-3 shrink-0">
-        <p className="text-xs text-text-secondary font-tabular">
-          {plural(agents.length, "agent")}
-        </p>
-        {canManageFleet && (
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              className="h-8 text-xs"
-              onClick={() => setComputeOpen(true)}
-            >
-              New compute
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-8 text-xs"
-              onClick={() => setBootstrapOpen(true)}
-            >
-              Generate bootstrap
-            </Button>
+      <PageHeader
+        title="Compute"
+        description={`${plural(agents.length, "agent")} · ${activeCount} active`}
+        actions={
+          canManageFleet && (
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                className="h-8 text-xs"
+                onClick={() => setComputeOpen(true)}
+              >
+                New compute
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 text-xs"
+                onClick={() => setBootstrapOpen(true)}
+              >
+                Generate bootstrap
+              </Button>
+            </div>
+          )
+        }
+      />
+      {agents.length > 0 && (
+        <PageToolbar>
+          <Segmented
+            label="Show"
+            hideLabel
+            value={filter}
+            onChange={setFilter}
+            options={[
+              { value: "active", label: `Active (${activeCount})` },
+              {
+                value: "stopped",
+                label: `Stopped (${agents.length - activeCount})`,
+              },
+              { value: "all", label: `All (${agents.length})` },
+            ]}
+          />
+          <div className="relative w-56">
+            <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-text-tertiary" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search name or host…"
+              aria-label="Search agents"
+              className="h-8 pl-7 text-xs"
+            />
           </div>
-        )}
-      </div>
+        </PageToolbar>
+      )}
 
       <div className="flex-1 overflow-auto">
         {isLoading ? (
@@ -476,8 +555,16 @@ export function AgentsPage() {
               ) : undefined
             }
           />
+        ) : shown.length === 0 ? (
+          <p className="px-6 py-4 text-sm text-text-tertiary">
+            {search.trim()
+              ? "No agents match that search."
+              : filter === "active"
+                ? "No agent is running. Stopped agents are under Stopped."
+                : "No stopped agents."}
+          </p>
         ) : (
-          <table className="w-full text-sm">
+          <table className="table-gutter w-full text-sm">
             <thead className="sticky top-0 bg-[var(--bg-surface)] z-10">
               <tr className="border-b border-[var(--border-subtle)]">
                 {[
@@ -500,7 +587,7 @@ export function AgentsPage() {
               </tr>
             </thead>
             <tbody>
-              {agents.map((agent, i) => (
+              {shown.map((agent, i) => (
                 <tr
                   key={agent.id}
                   onClick={() =>

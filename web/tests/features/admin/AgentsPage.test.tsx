@@ -9,23 +9,49 @@ import { AGENTS } from '@/mock/fixtures/agents'
 const AGENTS_ROUTE = '/acme-analytics/compute'
 
 describe('AgentsPage', () => {
-  it('renders the full agent list', async () => {
+  it('renders the full agent list under All', async () => {
+    const user = userEvent.setup()
     renderWithProviders({ initialRoute: AGENTS_ROUTE })
-    // Wait for the list to appear (MSW returns agents)
     await screen.findByText('agent-a')
+    await user.click(screen.getByRole('button', { name: `All (${AGENTS.length})` }))
     for (const agent of AGENTS) {
       expect(screen.getByText(agent.name)).toBeInTheDocument()
     }
   })
 
-  it('shows the correct agent count', async () => {
+  it('titles the page and counts the fleet', async () => {
     renderWithProviders({ initialRoute: AGENTS_ROUTE })
-    await screen.findByText(`${AGENTS.length} agents`)
+    expect(await screen.findByRole('heading', { name: 'Compute' })).toBeInTheDocument()
+    const active = AGENTS.filter((a) => a.status !== 'unavailable').length
+    await screen.findByText(`${AGENTS.length} agents · ${active} active`)
+  })
+
+  it('opens on the active agents and keeps stopped ones one click away', async () => {
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: AGENTS_ROUTE })
+    await screen.findByText('agent-a')
+    // agent-c is an offline static agent.
+    expect(screen.queryByText('agent-c')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Stopped (1)' }))
+    expect(screen.getByText('agent-c')).toBeInTheDocument()
+    expect(screen.queryByText('agent-a')).not.toBeInTheDocument()
+  })
+
+  it('filters by name', async () => {
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: AGENTS_ROUTE })
+    await screen.findByText('agent-a')
+    await user.type(screen.getByRole('textbox', { name: 'Search agents' }), 'warehouse')
+    expect(screen.getByText('warehouse-a')).toBeInTheDocument()
+    expect(screen.queryByText('agent-a')).not.toBeInTheDocument()
   })
 
   it('exposes each agent status via an accessible label, not color alone', async () => {
+    const user = userEvent.setup()
     renderWithProviders({ initialRoute: AGENTS_ROUTE })
     await screen.findByText('agent-a')
+    await user.click(screen.getByRole('button', { name: `All (${AGENTS.length})` }))
     // The status indicator dots carry their textual state for assistive tech.
     expect(screen.getAllByRole('img', { name: 'healthy' }).length).toBeGreaterThan(0)
     expect(screen.getByRole('img', { name: 'unavailable' })).toBeInTheDocument()

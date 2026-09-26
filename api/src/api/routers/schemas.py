@@ -148,6 +148,24 @@ async def _delete_table_meta(
         await db.delete(existing)
 
 
+def _size_bytes(table: CatalogTableInfo, meta: _TableMeta | None) -> int | None:
+    """What the catalog itself reports, else the sidecar's figure.
+
+    DuckLake reports a size directly, and an Iceberg table's current snapshot
+    summary carries `total-files-size`, the bytes of its live data files. Both are
+    current by construction, but a listing loads no Iceberg snapshot, so there the
+    sidecar's figure is used: the live data-file bytes the agent's metadata probe
+    last summed, or the zero written when DuckHaven created the table.
+    """
+    if table.size_bytes is not None:
+        return table.size_bytes
+    if table.current_snapshot_summary:
+        from_snapshot = _snapshot_metric(table.current_snapshot_summary, "total-files-size")
+        if from_snapshot is not None:
+            return from_snapshot
+    return meta.size_bytes if meta else None
+
+
 def _table_to_out(
     table: CatalogTableInfo,
     catalog: Catalog,
@@ -186,8 +204,7 @@ def _table_to_out(
             if table.current_snapshot_summary
             else None
         ),
-        # The agent probe wins; otherwise what the catalog knows for free (DuckLake).
-        size_bytes=(meta.size_bytes if meta and meta.size_bytes is not None else table.size_bytes),
+        size_bytes=_size_bytes(table, meta),
         owner=meta.owner if meta else None,
         last_write_at=meta.last_write_at if meta else None,
         last_write_by=meta.last_write_by if meta else None,
@@ -356,7 +373,7 @@ async def refresh_table_stats(
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> dict[str, int]:
-    """Probe row counts for tables in this catalog that have none yet."""
+    """Probe tables in this catalog whose row count or size is still unknown."""
     workspace, cat = target.workspace, target.catalog
 
     missing: list[tuple[str, str]] = []
@@ -365,7 +382,7 @@ async def refresh_table_stats(
         meta = await _load_table_meta(db, cat.id, s.name)
         for t in await backend.list_tables(cat, s.name):
             m = meta.get(t.name)
-            if m is None or m.row_count is None:
+            if m is None or m.row_count is None or _size_bytes(t, m) is None:
                 missing.append((s.name, t.name))
 
     # In scoped mode a row-count probe reads data, so only probe tables the

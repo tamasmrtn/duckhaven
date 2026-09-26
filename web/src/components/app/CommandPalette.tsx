@@ -17,6 +17,7 @@ import {
   CommandSeparator,
 } from "@/components/ui/command";
 import {
+  Book,
   Table2,
   Layers,
   BookMarked as SavedQueryIcon,
@@ -28,7 +29,7 @@ import { useWorkspaceSearch } from "@/queries/search";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { getRecentlyViewed, isRoutableEntry } from "@/utils/recentlyViewed";
 import { objectPath } from "@/utils/objectPath";
-import { stashWorksheetQuery } from "@/features/catalog/worksheetSql";
+import { useOpenInWorksheet } from "@/features/worksheet/openInWorksheet";
 import { navItems } from "./navItems";
 import { StorageIcon } from "./StorageIcon";
 import type { SearchResult } from "@/types/search";
@@ -49,6 +50,7 @@ export function CommandPalette({
   const { data: me } = useMe();
   const isAdmin = (me?.permissions?.length ?? 0) > 0;
 
+  const openWorksheet = useOpenInWorksheet(currentWs ?? "");
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebouncedValue(query, 200);
   const searching = query.trim().length >= 2;
@@ -73,12 +75,13 @@ export function CommandPalette({
 
   function openSavedQuery(r: SearchResult) {
     if (!currentWs || !r.id || r.sql == null) return;
-    stashWorksheetQuery(currentWs, {
+    close();
+    void openWorksheet({
       sql: r.sql,
-      agentId: r.default_agent_id ?? undefined,
+      title: r.name,
       savedQueryId: r.id,
+      agentId: r.default_agent_id ?? null,
     });
-    go(`/${encodeURIComponent(currentWs)}/worksheets`);
   }
 
   const needle = query.trim().toLowerCase();
@@ -91,6 +94,9 @@ export function CommandPalette({
       (!needle || item.label.toLowerCase().includes(needle)),
   );
 
+  const catalogResults = results.filter(
+    (r): r is SearchResult & { type: "catalog" } => r.type === "catalog",
+  );
   const schemaResults = results.filter(
     (r): r is SearchResult & { type: "schema" } => r.type === "schema",
   );
@@ -149,6 +155,22 @@ export function CommandPalette({
                     <span className="ml-auto truncate text-2xs text-text-tertiary">
                       {r.catalog}.{r.schema}
                     </span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
+
+            {catalogResults.length > 0 && (
+              <CommandGroup heading="Catalogs">
+                {catalogResults.map((r) => (
+                  <CommandItem
+                    key={`catalog-${r.name}`}
+                    value={`catalog ${r.name}`}
+                    onSelect={() => go(objectPath(currentWs!, r))}
+                    className="gap-2"
+                  >
+                    <Book className="size-4 text-text-secondary" />
+                    <span className="truncate">{r.name}</span>
                   </CommandItem>
                 ))}
               </CommandGroup>

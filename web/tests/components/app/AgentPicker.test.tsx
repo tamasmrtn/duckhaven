@@ -260,3 +260,54 @@ describe('AgentPicker catalog-kind compatibility', () => {
     expect(screen.queryByText(/Missing extension for/i)).not.toBeInTheDocument()
   })
 })
+
+describe('AgentPicker runtimes', () => {
+  const runtime = (over: Record<string, unknown> = {}) => ({
+    id: '1.5',
+    display_name: 'DuckDB 1.5',
+    status: 'ga',
+    state: 'ok',
+    default: true,
+    ...over,
+  })
+
+  it('shows each agent\'s runtime and marks a beta one', async () => {
+    server.use(
+      http.get('/api/agents', () =>
+        HttpResponse.json([
+          { ...RUNNING, runtime: runtime() },
+          {
+            ...RUNNING,
+            id: 'ag-beta',
+            name: 'trying-2-0',
+            capabilities: { ...CAPS, duckdb_version: '2.0.0', engine_version: 'v2.0.0' },
+            runtime: runtime({ id: '2.0', display_name: 'DuckDB 2.0', status: 'beta', default: false }),
+          },
+        ]),
+      ),
+    )
+    renderPicker()
+    await openPicker()
+
+    expect(await screen.findByText(/DuckDB 1\.5 · 1\.5\.4/)).toBeInTheDocument()
+    expect(screen.getByText(/DuckDB 2\.0 · v2\.0\.0/)).toBeInTheDocument()
+    expect(screen.getByText('Beta')).toBeInTheDocument()
+  })
+
+  it('puts an agent on an unsupported runtime among those that can\'t serve the workspace', async () => {
+    server.use(
+      http.get('/api/agents', () =>
+        HttpResponse.json([
+          { ...RUNNING, runtime: runtime({ id: '9.9', display_name: null, status: null, state: 'unrecognized' }) },
+        ]),
+      ),
+    )
+    const { onChange } = renderPicker()
+    const user = await openPicker()
+
+    expect(await screen.findByText("Can't serve this workspace")).toBeInTheDocument()
+    expect(screen.getByText('Not running a supported runtime')).toBeInTheDocument()
+    await user.click(screen.getByText('warehouse-a'))
+    expect(onChange).not.toHaveBeenCalled()
+  })
+})

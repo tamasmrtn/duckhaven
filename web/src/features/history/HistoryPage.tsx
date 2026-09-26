@@ -470,6 +470,13 @@ export function HistoryPage() {
                     {!all && <SqlCell query={q} />}
                     <TableCell className="px-4 py-2 font-mono text-xs text-text-secondary">
                       {agentName.get(q.agent_id) ?? shortId(q.agent_id)}
+                      {/* The engine that ran it: an agent can be re-imaged, and
+                          agents on different runtimes run different DuckDBs. */}
+                      {q.runtime_id && (
+                        <span className="ml-1.5 text-text-tertiary">
+                          · DuckDB {q.runtime_id}
+                        </span>
+                      )}
                     </TableCell>
                     <TableCell className="px-4 py-2 text-xs text-text-secondary">
                       {q.user_name ?? "—"}

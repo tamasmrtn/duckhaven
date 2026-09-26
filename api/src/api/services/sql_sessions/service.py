@@ -57,7 +57,7 @@ async def dispatch_open_session(
     same check every query dispatch passes, plus a configuration lock that must
     really apply, since a session runs under a relaxed statement policy."""
     agent = await db.get(Agent, session.agent_id)
-    runtime_service.assert_dispatchable(agent, catalogs, for_session=True)
+    await runtime_service.check_dispatchable(agent, catalogs, for_session=True)
     # Committed now: the open call re-reads the row while it waits for the ack.
     session.runtime_id = runtime_service.runtime_id_of(agent)
     await db.commit()

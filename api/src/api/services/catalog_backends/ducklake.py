@@ -110,6 +110,52 @@ async def ping() -> None:
         await conn.execute(text("SELECT 1"))
 
 
+# A catalog's DuckLake format ("version" in its ducklake_metadata table), once
+# known. It never changes under DuckHaven, which never asks the extension to
+# migrate a catalog, so a known format is cached for the life of the process.
+_formats: dict[Any, str] = {}
+
+
+async def catalog_format(catalog: Catalog) -> str | None:
+    """The format a DuckLake catalog's metadata is in, or None if it has none yet.
+
+    The ``ducklake_*`` tables are created by the extension on the first ATTACH, in
+    the format of whichever runtime attached first. None therefore means "not
+    created yet" — and, conservatively, "could not be read", which restricts the
+    catalog to runtimes whose own format the default runtime can open.
+    """
+    if (known := _formats.get(catalog.id)) is not None:
+        return known
+    schema = catalog.metadata_schema
+    if not schema:
+        return None
+    try:
+        async with get_engine().connect() as conn:
+            row = (
+                await conn.execute(
+                    text(
+                        f"SELECT value FROM {_quote(schema)}.ducklake_metadata "
+                        "WHERE key = 'version'"
+                    )
+                )
+            ).first()
+    except Exception as exc:  # noqa: BLE001 - an unknown format is handled conservatively
+        if not _is_missing_relation(exc):
+            logger.warning("Could not read DuckLake catalog %s format: %s", catalog.slug, exc)
+        return None
+    if row is None:
+        return None
+    _formats[catalog.id] = row[0]
+    return row[0]
+
+
+async def catalog_formats(catalogs: list[Catalog]) -> dict[str, str | None]:
+    """``catalog_format`` for each DuckLake catalog among ``catalogs``, by slug."""
+    from api.models.catalog import KIND_DUCKLAKE
+
+    return {c.slug: await catalog_format(c) for c in catalogs if c.kind == KIND_DUCKLAKE}
+
+
 async def dispose_engine() -> None:
     """Close the pool. Called from the app lifespan and by tests."""
     global _engine

@@ -51,6 +51,7 @@ def build_runtime_out(agent: Agent) -> AgentRuntimeOut:
         display_name=runtime.display_name if runtime else None,
         status=runtime.status if runtime else None,
         state=resolved.state,
+        default=runtime is not None and runtime.id == settings.default_runtime,
     )
 
 

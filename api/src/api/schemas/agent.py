@@ -59,6 +59,9 @@ class AgentRuntimeOut(BaseModel):
     display_name: str | None
     status: RuntimeStatus | None
     state: Literal["pending", "ok", "inferred", "mismatch", "unrecognized", "retired"]
+    # Whether it is the deployment's default runtime, which the server prefers when
+    # it picks an agent itself; clients choosing a fallback rank the same way.
+    default: bool = False
 
 
 class AgentOut(BaseModel):

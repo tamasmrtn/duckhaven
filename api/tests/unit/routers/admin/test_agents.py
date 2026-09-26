@@ -771,6 +771,7 @@ async def test_new_compute_runs_the_default_runtime_unless_told_otherwise(
         "display_name": "DuckDB 1.5",
         "status": "ga",
         "state": "pending",
+        "default": True,
     }
     assert provisioned_images[-1].endswith("-duckdb1.5")
 

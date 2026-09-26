@@ -40,6 +40,9 @@ class SqlSession(Base):
     requested_agent_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("agents.id", ondelete="SET NULL"), nullable=True
     )
+    # The runtime (DuckDB line) of the agent that opened the session, stamped at
+    # open; each statement's query row copies it.
+    runtime_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # Requesting principal (null for system-originated sessions); drives
     # per-statement grant checks (grants.assert_query_access).
     user_id: Mapped[uuid.UUID | None] = mapped_column(

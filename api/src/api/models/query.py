@@ -36,6 +36,9 @@ class Query(Base):
     requested_agent_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("agents.id", ondelete="SET NULL"), nullable=True
     )
+    # The runtime (DuckDB line) that ran this, stamped at dispatch. `agent_id`
+    # can't answer that later: a static agent can be re-imaged onto another one.
+    runtime_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     sql: Mapped[str] = mapped_column(Text, nullable=False)
     # Coarse kind of statement, classified from `sql` at insert time by the

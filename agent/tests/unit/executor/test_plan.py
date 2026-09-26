@@ -50,6 +50,50 @@ CANNED_PROFILE = {
 }
 
 
+# The same statement's profile as DuckDB 2.0 writes it (trimmed from a real
+# v2.0.0-alpha43385 capture of the materialize path): metrics grouped under
+# query/system/io, operator fields renamed, and the plan under an extra
+# RESULT_COLLECTOR 1.5 never reported.
+CANNED_PROFILE_2_0 = {
+    "io": {"total_bytes_read": 1024, "total_bytes_written": 0},
+    "query": {"cpu_time": 1.25, "sql": "", "total_rows_scanned": 50000, "total_time": 0.5},
+    "system": {
+        "blocked_thread_time": 0.25,
+        "peak_buffer_memory": 268435456,
+        "peak_temp_dir_size": 79495168,
+        "total_memory_allocated": 1310720,
+    },
+    "operator": [
+        {
+            "type": "RESULT_COLLECTOR",
+            "intermediate_rows": 0,
+            "intermediate_size_bytes": 0,
+            "timing": 3.9e-06,
+            "extra_info": {},
+            "children": [
+                {
+                    "type": "ORDER_BY",
+                    "intermediate_rows": 30,
+                    "intermediate_size_bytes": 4096,
+                    "timing": 0.3,
+                    "extra_info": {"Order By": "c DESC", "Estimated Cardinality": "100"},
+                    "children": [
+                        {
+                            "type": "TABLE_SCAN",
+                            "intermediate_rows": 50000,
+                            "intermediate_size_bytes": 400000,
+                            "rows_scanned": 50000,
+                            "timing": 0.1,
+                            "extra_info": {},
+                        }
+                    ],
+                }
+            ],
+        }
+    ],
+}
+
+
 def test_parse_explain_reads_type_and_estimated_cardinality():
     tree = parse_explain(CANNED_EXPLAIN)
     assert tree.type == "HASH_GROUP_BY"
@@ -138,3 +182,32 @@ def test_blocked_thread_time_defaults_to_zero_when_absent():
     """A profile captured before the metric was requested still parses."""
     summary, _ = parse_profile(CANNED_PROFILE)
     assert summary.blocked_thread_time_ms == 0.0
+
+
+def test_duckdb_2_profile_parses_to_the_1_5_shape():
+    """A profile from an agent on either DuckDB line reads the same downstream."""
+    summary, tree = parse_profile(CANNED_PROFILE_2_0)
+    assert summary.latency_ms == 500.0
+    assert summary.cpu_time_ms == 1250.0
+    # Taken from the top operator, as 1.5 does, not from the collector wrapper.
+    assert summary.rows_returned == 30
+    assert summary.result_bytes == 4096
+    assert summary.peak_memory_bytes == 268435456
+    assert summary.spill_bytes == 79495168
+    assert summary.memory_allocated_bytes == 1310720
+    assert summary.bytes_read == 1024
+    assert summary.blocked_thread_time_ms == 250.0
+    assert tree.type == "ORDER_BY"
+    assert tree.rows_produced == 30
+    assert tree.time_ms == 300.0
+    assert tree.estimated_cardinality == 100
+    scan = tree.children[0]
+    assert scan.type == "TABLE_SCAN"
+    assert scan.rows_scanned == 50000
+
+
+def test_both_profile_shapes_yield_the_same_summary():
+    one_five, _ = parse_profile(CANNED_PROFILE)
+    two_zero, _ = parse_profile(CANNED_PROFILE_2_0)
+    for field in ("latency_ms", "cpu_time_ms", "rows_returned", "peak_memory_bytes", "spill_bytes"):
+        assert getattr(one_five, field) == getattr(two_zero, field), field

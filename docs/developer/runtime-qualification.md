@@ -37,6 +37,30 @@ DuckDB 2.0, a benchmark conclusion reversed completely, so results never carry o
    serve an explicitly targeted query, open a SQL session, and be skipped by auto-pick while in beta.
 8. **Benchmark** it against the default runtime (`benchmarks/tpch`), on the release build.
 
+## Changing the default runtime
+
+The default runtime is the one the API itself runs, the bundled agent runs, and auto-provisioned compute runs. Moving
+it is a release, not a setting. Do it only once the new runtime has passed every check above **on its release
+build**, including the benchmark. For a new line `N` replacing `O`:
+
+1. Move `uv.lock` to line `N`. Change the `duckdb` pin in both `api/pyproject.toml` and `agent/pyproject.toml`, then
+   run `uv lock`. The API parses SQL and decodes result pages with this DuckDB, so it moves too.
+2. Give `O` its own pin: `agent/runtimes/O.in` with its exact version, then `make runtimes-lock`. Remove `N.in` and
+   `N.txt`, since `N` now comes from the lock.
+3. In `shared/src/duckhaven_shared/runtimes.py`, set `DEFAULT_RUNTIME_ID = "N"`, make `N` `ga`, and mark `O`
+   `deprecated`.
+4. Change the defaults that name the runtime: `DEFAULT_RUNTIME` in `deploy/docker-compose.yml` and
+   `deploy/docker-compose.ha.yml`, `default_runtime` and `agent_runtimes` in Terraform, and the `-duckdbN` e2e tag in
+   `.github/workflows/ci.yml`. `tests/deploy/test_compose_runtimes.py` fails until they agree with the manifest.
+5. Check DuckLake. If `N` creates a format `O` can't open, then once `N` is the default, `O` agents lose any catalog
+   `N` creates. That is acceptable only because `O` is on its way out. Existing catalogs keep their format, since
+   nothing migrates them.
+6. In the release notes, say that the unsuffixed `:latest` and `:X.Y.Z` agent tags now mean `N`. That affects any
+   static agent run from them.
+
+One DuckHaven minor release later, retire `O`: set it to `retired` for one release, so an agent still running it is
+refused with that reason, and remove it from the manifest in the release after.
+
 ## DuckDB 2.0 (beta)
 
 Qualified on 2026-09-26 against the pre-release `v2.0.0-alpha43385` (PyPI `duckdb==2.0.0.dev2609250715`), since 2.0

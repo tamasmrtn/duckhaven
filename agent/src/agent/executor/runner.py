@@ -1074,6 +1074,10 @@ _KNOWN_FILESYSTEMS = frozenset(
 #     the profiling-metrics setting     -> _run_one_statement's profile capture
 #   TimeZone                            -> the `SET timezone` the API statement
 #                                          policy deliberately admits
+#   current_transaction_invalidation_   -> DuckDB 2.0's `ducklake` sets it around
+#     policy                               every statement; locked, each DuckLake
+#                                          query fails as an aborted transaction.
+#                                          Governs error handling, not access.
 # Everything else — disabled_filesystems, enable_external_access,
 # secret_directory, extension_directory, home_directory, custom_extension_repository,
 # allow_unsigned_extensions, and `allowed_configs`/`lock_configuration` themselves
@@ -1094,6 +1098,7 @@ _ALLOWED_CONFIGS = tuple(
         "enable_profiling",
         "profiling_output",
         runtime.PROFILE_SETTING,
+        "current_transaction_invalidation_policy",
     )
     if name in runtime.SETTINGS
 )

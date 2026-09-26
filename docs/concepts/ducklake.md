@@ -82,6 +82,11 @@ DuckHaven, and are created by the DuckDB extension the first time an agent attac
 DuckHaven reads those tables directly to browse a catalog. It never writes them by hand: every change goes through the
 extension, because only the extension implements DuckLake's transaction protocol.
 
+The layout of those tables is versioned with the extension, and migrating it is one-way: a newer `ducklake` can
+upgrade an older catalog, and an older one can't read the result. DuckHaven never asks for that upgrade. When agents
+on different [runtimes](runtimes.md) share a catalog, see
+[Mixing runtimes on the same data](runtimes.md#mixing-runtimes-on-the-same-data).
+
 ## Snapshots are catalog-wide
 
 An Iceberg snapshot belongs to one table. A **DuckLake snapshot is a commit against the whole catalog** — creating a

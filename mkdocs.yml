@@ -108,6 +108,7 @@ nav:
       - DuckLake: concepts/ducklake.md
       - Agents: concepts/agents.md
       - Elastic compute: concepts/elastic-compute.md
+      - Runtimes: concepts/runtimes.md
       - Storage backends: concepts/storage-backends.md
       - Query execution: concepts/query-execution.md
       - SQL sessions: concepts/sql-sessions.md

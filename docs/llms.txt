@@ -27,6 +27,7 @@
 - [DuckLake](https://tamasmrtn.github.io/duckhaven/concepts/ducklake/): DuckLake is the second kind of catalog DuckHaven can create.
 - [Agents](https://tamasmrtn.github.io/duckhaven/concepts/agents/): DuckDB compute agents you pick per query.
 - [Elastic compute](https://tamasmrtn.github.io/duckhaven/concepts/elastic-compute/): Provisioning agents on demand and terminating them when they go idle.
+- [Runtimes](https://tamasmrtn.github.io/duckhaven/concepts/runtimes/): A runtime is the DuckDB an agent runs, together with the extensions baked into its image.
 - [Storage backends](https://tamasmrtn.github.io/duckhaven/concepts/storage-backends/): Where Iceberg data physically lives, and how credentials reach an agent.
 - [Query execution](https://tamasmrtn.github.io/duckhaven/concepts/query-execution/): Queueing, memory estimation, and concurrency.
 - [SQL sessions](https://tamasmrtn.github.io/duckhaven/concepts/sql-sessions/): Persistent connections for dbt, dlt and BI tools, brokered through the API.

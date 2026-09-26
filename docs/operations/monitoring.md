@@ -151,8 +151,8 @@ the conventional `_total` suffix in the exposition (e.g. `duckhaven_queries_tota
 | `duckhaven_agent_estimates_abandoned` | gauge | (same) | Query-cost estimates the agent gave up on because DuckDB's planner stopped responding. Each one costs the agent a worker thread and a CPU core until it restarts, and the affected query is sized from a default rather than its real estimate — so this should stay flat. A rising value on one agent is a reason to restart it. |
 | `duckhaven_agent_active_profile_info` | gauge | (same) + `profile` | Active concurrency profile (value always `1`). |
 | `duckhaven_agents` | gauge | `provider`, `lifecycle` | Elastic agents by backend and lifecycle state. Reported by the reap leader only, so it is a cluster-wide count — do not sum it across replicas. |
-| `duckhaven_agent_provisions_total` | counter | `replica_id`, `provider`, `outcome` | Elastic provisioning attempts (`outcome`: `success`/`failure`). |
-| `duckhaven_agent_provisioning_seconds` | histogram | `replica_id`, `provider` | Time to provision an elastic agent. Successes only — a failure's duration measures how long the backend took to say no, which would distort the cold-start percentiles. |
+| `duckhaven_agent_provisions_total` | counter | `replica_id`, `provider`, `runtime`, `outcome` | Elastic provisioning attempts (`outcome`: `success`/`failure`). |
+| `duckhaven_agent_provisioning_seconds` | histogram | `replica_id`, `provider`, `runtime` | Time the backend took to create the instance, not the full cold start. Successes only. |
 | `duckhaven_agents_reaped_total` | counter | `replica_id`, `reason` | Elastic agents torn down by the reaper (`reason`: `idle`/`max_lifetime`/`provisioning_timeout`/`orphan`/`dead_row`). |
 | `duckhaven_db_pool_size` | gauge | `replica_id`, `pool` | Configured connection-pool size. `pool` is `main` or `ducklake`, the latter only once a DuckLake catalog has been browsed. |
 | `duckhaven_db_pool_checked_out` | gauge | (same) | Connections checked out. Saturating the `ducklake` pool reads as slow browsing, not slow queries. |

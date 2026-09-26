@@ -19,7 +19,7 @@ needs no inbound connectivity to them).
 ```yaml
 services:
   duckhaven-agent:
-    image: ghcr.io/tamasmrtn/duckhaven-agent:latest
+    image: ghcr.io/tamasmrtn/duckhaven-agent:1.4.0-duckdb1.5
     restart: unless-stopped
     environment:
       CONTROL_PLANE_URL: wss://duckhaven.example.com/agents/connect
@@ -34,6 +34,12 @@ volumes:
 The token is one-shot and expires in 24 hours. The control-plane URL is
 derived from the request headers, so a TLS-fronted deploy gets `wss://`
 automatically.
+
+The image is the chosen [runtime](../concepts/runtimes.md)'s, at the control plane's own
+version: `-duckdb1.5` is the DuckDB 1.5 runtime. The default runtime is used unless you pick
+another. An agent reports its runtime when it connects, and DuckHaven only sends work to
+runtimes it knows. So introduce a new runtime only after upgrading the control plane to a
+release that ships it.
 
 ## Run on the new host
 

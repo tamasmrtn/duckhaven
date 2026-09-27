@@ -27,7 +27,7 @@ jobs:
           output: trivy-api.sarif
           severity: CRITICAL,HIGH
           exit-code: '0'
-      - uses: github/codeql-action/upload-sarif@v4.38.0
+      - uses: github/codeql-action/upload-sarif@v4.38.2
         with:
           sarif_file: trivy-api.sarif
           category: trivy-api
@@ -71,7 +71,7 @@ jobs:
           output: trivy-agent.sarif
           severity: CRITICAL,HIGH
           exit-code: '0'
-      - uses: github/codeql-action/upload-sarif@v4.38.0
+      - uses: github/codeql-action/upload-sarif@v4.38.2
         with:
           sarif_file: trivy-agent.sarif
           category: trivy-agent-${{ matrix.runtime }}

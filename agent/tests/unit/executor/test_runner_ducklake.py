@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pytest
 
+from agent import runtime
 from agent.executor import runner
 
 
@@ -89,9 +90,11 @@ def test_ducklake_attach_emits_the_expected_statements():
     assert 'CREATE SCHEMA IF NOT EXISTS "raw"."analytics"' in text
 
 
-def test_the_postgres_password_never_appears_in_statement_text():
+def test_the_postgres_password_never_appears_in_statement_text(monkeypatch):
     """DuckLake echoes the connection string on a failed attach, so an inline
-    password would surface in errors and logs. It is a secret bind parameter."""
+    password would surface in errors and logs. It is a secret bind parameter
+    wherever the engine accepts one (DuckDB 2.0 doesn't; see `_create_secret`)."""
+    monkeypatch.setattr(runtime, "SECRET_BIND_PARAMETERS", True)
     conn = FakeConn()
     runner._attach_ducklake(conn, _ducklake_catalog())
     assert "s3cr3t-pw" not in conn.sql_text()
@@ -99,9 +102,10 @@ def test_the_postgres_password_never_appears_in_statement_text():
     assert any("s3cr3t-pw" in [str(p) for p in params] for _, params in conn.calls)
 
 
-def test_the_storage_secret_is_scoped_to_the_catalog_prefix():
+def test_the_storage_secret_is_scoped_to_the_catalog_prefix(monkeypatch):
     """All of a workspace's catalogs share one connection, so SCOPE keeps one
     catalog's credential off another's data."""
+    monkeypatch.setattr(runtime, "SECRET_BIND_PARAMETERS", True)
     conn = FakeConn()
     runner._attach_ducklake(conn, _ducklake_catalog("raw"))
     secret_call = next(c for c in conn.calls if "TYPE S3" in c[0])

@@ -134,8 +134,17 @@ route and the `-dev` tag.
 
 ```bash
 docker build -f api/Dockerfile -t duckhaven-api:dev .
-docker build -f agent/Dockerfile -t duckhaven-agent:dev .
+make build-agent                 # the default runtime
+make build-agent RUNTIME=2.0     # any other runtime in the manifest
 ```
+
+The agent is built per runtime: `DUCKHAVEN_RUNTIME` picks the DuckDB line and the extensions to bake in,
+from `shared/src/duckhaven_shared/runtimes.py`. `make build-agent` tags the result the way the API resolves
+images (`ghcr.io/tamasmrtn/duckhaven-agent:latest-duckdb<runtime>`, plus `:latest` for the default
+runtime), so a local stack uses your build instead of pulling the published one. The build fails if the
+image ends up on the wrong DuckDB line or any extension doesn't load. A runtime other than the default pins its
+DuckDB in `agent/runtimes/<runtime>.in`, and `make runtimes-lock` compiles that to the hash-locked `.txt` the
+build installs.
 
 Both builds must run from the repository root, because the Dockerfiles copy the
 shared workspace manifests. Note that `.dockerignore` is a separate list from

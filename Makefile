@@ -8,6 +8,7 @@
         lint format docs-index eval-synth eval-judged eval-compare \
         migrate migrate-new migrate-down \
         compose-up compose-down compose-logs compose-pull \
+        runtimes-lock build-agent \
         clean
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
@@ -303,6 +304,31 @@ compose-logs:
 
 compose-pull:
 	cd deploy && docker compose pull
+
+# ── Agent runtimes ────────────────────────────────────────────────────────────
+# A runtime is one agent image per DuckDB line (duckhaven_shared.runtimes). The
+# default runtime's DuckDB comes from uv.lock; every other runtime pins its own in
+# agent/runtimes/<id>.in, compiled here to a hash-locked <id>.txt the image build
+# installs. CI fails if a .txt is stale, so rerun this after editing an .in file.
+runtimes-lock:
+	@for f in agent/runtimes/*.in; do \
+		[ -e "$$f" ] || continue; \
+		uv pip compile --universal --generate-hashes --no-header --quiet "$$f" -o "$${f%.in}.txt"; \
+	done
+
+# Build one runtime's agent image locally: `make build-agent RUNTIME=2.0`. Tagged
+# the way the API resolves images (`<tag>-duckdb<id>`), so elastic compute uses
+# this build instead of pulling the published one; the default runtime also gets
+# the unsuffixed tag the bundled compose agent has always used.
+AGENT_REPO ?= ghcr.io/tamasmrtn/duckhaven-agent
+AGENT_TAG ?= latest
+# Deferred (`=`), so only targets that use it pay for the lookup.
+DEFAULT_RUNTIME_ID = $(shell uv run --no-sync python -c "from duckhaven_shared.runtimes import DEFAULT_RUNTIME_ID; print(DEFAULT_RUNTIME_ID)")
+RUNTIME ?= $(DEFAULT_RUNTIME_ID)
+build-agent:
+	docker build -f agent/Dockerfile --build-arg DUCKHAVEN_RUNTIME=$(RUNTIME) \
+		-t $(AGENT_REPO):$(AGENT_TAG)-duckdb$(RUNTIME) \
+		$(if $(filter $(RUNTIME),$(DEFAULT_RUNTIME_ID)),-t $(AGENT_REPO):$(AGENT_TAG)) .
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 clean:

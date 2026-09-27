@@ -108,6 +108,8 @@ def test_get_capabilities_loads_and_advertises_query_extensions(monkeypatch):
 
     monkeypatch.setattr(duckdb, "connect", lambda *a, **k: FakeConn())
     monkeypatch.setattr(duckdb, "version", lambda: "v-test")
+    # The sandbox self-check runs a real engine; it has its own tests.
+    monkeypatch.setattr(ch_module, "sandbox_state", lambda lock_config: "verified")
 
     caps = ch_module._get_capabilities()
 
@@ -142,6 +144,8 @@ def test_get_capabilities_reports_detected_cpu(monkeypatch):
 
     monkeypatch.setattr(duckdb, "connect", lambda *a, **k: FakeConn())
     monkeypatch.setattr(duckdb, "version", lambda: "v-test")
+    # The sandbox self-check runs a real engine; it has its own tests.
+    monkeypatch.setattr(ch_module, "sandbox_state", lambda lock_config: "verified")
     monkeypatch.setattr(
         ch_module,
         "cpu_capability",
@@ -153,6 +157,26 @@ def test_get_capabilities_reports_detected_cpu(monkeypatch):
     assert caps.cores == 4
     assert caps.cpu_model == "Test CPU"
     assert caps.cpu_cores_physical == 2
+
+
+def test_get_capabilities_reports_the_runtime(monkeypatch):
+    """The runtime identity, engine version and sandbox state reach the control
+    plane, which routes and gates on them."""
+    import agent.control.channel as ch_module
+    from agent import runtime
+
+    monkeypatch.setattr(runtime, "RUNTIME_ID", "1.5")
+    monkeypatch.setattr(runtime, "APP_VERSION", "1.2.3")
+    monkeypatch.setattr(ch_module, "sandbox_state", lambda lock_config: "failed")
+
+    caps = ch_module._get_capabilities()
+
+    assert caps.runtime_id == "1.5"
+    assert caps.agent_version == "1.2.3"
+    assert caps.engine_version == runtime.ENGINE_VERSION
+    assert caps.engine_version.startswith("v")
+    assert caps.platform == runtime.PLATFORM
+    assert caps.sandbox == "failed"
 
 
 async def test_pushes_metrics_samples(tmp_path, monkeypatch):

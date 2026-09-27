@@ -32,11 +32,27 @@ jobs:
           sarif_file: trivy-api.sarif
           category: trivy-api
 
+  agent-runtimes:
+    name: List agent runtimes
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.runtimes.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: runtimes
+        run: echo "matrix=$(python3 scripts/runtime_matrix.py)" >> "$GITHUB_OUTPUT"
+
+  # Every runtime is its own image with its own DuckDB and extension binaries,
+  # so each is scanned.
   trivy-agent:
-    name: Scan duckhaven-agent
+    name: Scan duckhaven-agent (DuckDB ${{ matrix.runtime }})
+    needs: [agent-runtimes]
     runs-on: ubuntu-latest
     permissions:
       security-events: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.agent-runtimes.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v7
       - uses: docker/build-push-action@v7
@@ -45,6 +61,8 @@ jobs:
           file: agent/Dockerfile
           push: false
           load: true
+          build-args: |
+            DUCKHAVEN_RUNTIME=${{ matrix.runtime }}
           tags: duckhaven-agent:scan
       - uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -56,4 +74,4 @@ jobs:
       - uses: github/codeql-action/upload-sarif@v4.38.0
         with:
           sarif_file: trivy-agent.sarif
-          category: trivy-agent
+          category: trivy-agent-${{ matrix.runtime }}

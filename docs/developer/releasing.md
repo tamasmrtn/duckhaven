@@ -43,7 +43,7 @@ git push origin v0.3.0
 | Workflow | Output |
 |---|---|
 | `release.yml` | A GitHub Release whose notes are generated from conventional commits by [git-cliff](https://git-cliff.org/) (`cliff.toml`). Marked **prerelease** when the tag contains `-`. |
-| `build.yml` | Multi-arch (`linux/amd64`, `linux/arm64`) images pushed to `ghcr.io/<owner>/duckhaven-api` and `ghcr.io/<owner>/duckhaven-agent`, tagged `:X.Y.Z`, `:X.Y`, and `:X`. |
+| `build.yml` | Multi-arch (`linux/amd64`, `linux/arm64`) images pushed to `ghcr.io/<owner>/duckhaven-api` and `ghcr.io/<owner>/duckhaven-agent`, tagged `:X.Y.Z`, `:X.Y`, and `:X`. The agent is built once per runtime (see below). |
 
 The changelog includes Features, Bug Fixes, Performance, Refactoring,
 Documentation, and Maintenance entries; `ci`, `test`, and `style` commits are
@@ -51,6 +51,22 @@ omitted, and non-conventional commits are filtered out.
 
 Note: the `:latest` image tag is only published on pushes to `main`, **not** on
 release tags. Tagging a release does not move `:latest`.
+
+### Agent images per runtime
+
+The agent is built once for every runtime in `shared/src/duckhaven_shared/runtimes.py` that isn't
+retired. A runtime is a DuckDB line (such as `1.5`) plus the fixed set of extensions baked into that image.
+Each build gets tags with a `-duckdb<runtime>` suffix, which is what the control plane asks for when it
+starts compute:
+
+| Tag | Published on |
+|---|---|
+| `:X.Y.Z-duckdb<runtime>`, `:X.Y-duckdb<runtime>`, `:X-duckdb<runtime>` | release tags |
+| `:latest-duckdb<runtime>` | pushes to `main` |
+
+The **default** runtime's image also gets the plain `:X.Y.Z`, `:X.Y`, `:X` and `:latest` tags, so a static
+agent that pulls one of those keeps getting the image it always has. The build matrix is read from the
+manifest by `scripts/runtime_matrix.py`, so adding a runtime there is all it takes to publish it.
 
 ## Verify the release
 

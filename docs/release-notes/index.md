@@ -8,7 +8,8 @@ DuckHaven releases are cut by pushing a `vX.Y.Z` Git tag — the tag is the sour
   [Conventional Commits](https://www.conventionalcommits.org/) by [git-cliff](https://git-cliff.org/) and published at
   the project's [Releases page](https://github.com/tamasmrtn/duckhaven/releases).
 - **Container images** — multi-arch images are published per release to `ghcr.io/tamasmrtn/duckhaven-api` and
-  `ghcr.io/tamasmrtn/duckhaven-agent`, tagged `:vX.Y.Z`, `:vX.Y`, and `:vX`.
+  `ghcr.io/tamasmrtn/duckhaven-agent`, tagged `:X.Y.Z`, `:X.Y`, and `:X` (without the Git tag's `v`). The agent
+  is also published once per runtime, with a `-duckdb<runtime>` suffix. See [Releasing](../developer/releasing.md).
 
 ## Versioning
 

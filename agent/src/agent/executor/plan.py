@@ -164,12 +164,67 @@ def parse_explain(physical_plan: list[dict[str, Any]] | dict[str, Any]) -> Norma
     return _walk(root, _explain_fields)
 
 
+def _rename_grouped_node(node: dict[str, Any]) -> dict[str, Any]:
+    """One DuckDB 2.0 operator node in the 1.5 field names ``_profile_fields`` reads."""
+    return {
+        "operator_type": node.get("type", ""),
+        "operator_name": node.get("type", ""),
+        "operator_timing": node.get("timing"),
+        "operator_cardinality": node.get("intermediate_rows"),
+        "operator_rows_scanned": node.get("rows_scanned"),
+        "result_set_size": node.get("intermediate_size_bytes"),
+        "extra_info": node.get("extra_info") or {},
+        "children": [_rename_grouped_node(c) for c in node.get("children") or []],
+    }
+
+
+def _flatten_grouped_profile(profile: dict[str, Any]) -> dict[str, Any]:
+    """Map DuckDB 2.0's grouped profile onto the 1.5 flat shape.
+
+    2.0 moves the query-level metrics under ``query``/``system``/``io``, renames
+    every operator field, and roots the plan at an ``operator`` list whose head is
+    a ``RESULT_COLLECTOR`` that 1.5 never reported. Unwrapping that collector
+    makes the tree — and the query-level ``rows_returned``/``result_set_size``,
+    which 1.5 takes from the top operator — identical to what 1.5 produces for
+    the same statement, so nothing downstream needs to know which ran it.
+    """
+    query = profile.get("query") or {}
+    system = profile.get("system") or {}
+    io = profile.get("io") or {}
+    roots = profile.get("operator") or []
+    if isinstance(roots, dict):
+        roots = [roots]
+    if len(roots) == 1 and roots[0].get("type") == "RESULT_COLLECTOR":
+        roots = roots[0].get("children") or []
+    top = roots[0] if roots else {}
+    return {
+        # Seconds, the same unit 1.5 uses.
+        "latency": query.get("total_time"),
+        "cpu_time": query.get("cpu_time"),
+        "rows_returned": top.get("intermediate_rows"),
+        "result_set_size": top.get("intermediate_size_bytes"),
+        "system_peak_buffer_memory": system.get("peak_buffer_memory"),
+        "system_peak_temp_dir_size": system.get("peak_temp_dir_size"),
+        "total_memory_allocated": system.get("total_memory_allocated"),
+        "blocked_thread_time": system.get("blocked_thread_time"),
+        "total_bytes_read": io.get("total_bytes_read"),
+        "total_bytes_written": io.get("total_bytes_written"),
+        "children": [_rename_grouped_node(n) for n in roots],
+    }
+
+
 def parse_profile(profile: dict[str, Any]) -> tuple[QuerySummary, NormalizedNode]:
     """Parse the DuckDB JSON profile into a query summary + operator tree.
 
     The profile root (QUERY_ROOT) carries the query-level metrics and has no
     ``operator_type``; the executed plan begins at its single child.
+
+    DuckDB 2.0's grouped profile is recognised by its own marker groups rather
+    than by a version, so a profile captured by an agent on either line parses
+    under either.
     """
+    if "operator" in profile and ("query" in profile or "system" in profile):
+        profile = _flatten_grouped_profile(profile)
 
     def _num(key: str) -> float:
         val = profile.get(key)

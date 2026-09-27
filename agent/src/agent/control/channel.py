@@ -15,6 +15,7 @@ from opentelemetry.trace import Status, StatusCode
 from pydantic import ValidationError
 from websockets.exceptions import ConnectionClosed
 
+from agent import runtime
 from agent.auth import TokenHolder, load_session_token, save_session_token
 from agent.config import settings
 from agent.control import session
@@ -33,6 +34,7 @@ from agent.executor.runner import (
     apply_memory_limit,
     is_cheap_statement,
     open_and_attach,
+    sandbox_state,
 )
 from agent.executor.supervisor import StatementAbandoned, run_query, run_statement
 from agent.metrics.system import (
@@ -41,6 +43,7 @@ from agent.metrics.system import (
     effective_cores,
     effective_memory_bytes,
 )
+from duckhaven_shared import runtimes
 from duckhaven_shared.concurrency import BUCKET_FRACTIONS
 from duckhaven_shared.protocol import Frame, FrameType
 from duckhaven_shared.schemas import AgentCapabilities
@@ -135,10 +138,13 @@ def _get_capabilities() -> AgentCapabilities:
 
     conn = duckdb.connect()
     version = duckdb.version()
-    # Load the pre-installed query extensions so they are advertised as
+    # Load the runtime's pre-installed extensions so they are advertised as
     # available; a fresh connection lists only built-ins under `WHERE loaded`.
     # `postgres` loads under that name and reports itself as `postgres_scanner`.
-    for ext in ("httpfs", "azure", "iceberg", "ducklake", "postgres"):
+    # An engine no curated runtime matches (a checkout on another DuckDB) is
+    # probed for the default runtime's set, which is what a checkout carries.
+    baked = runtimes.get(runtime.RUNTIME_ID) or runtimes.RUNTIMES[runtimes.DEFAULT_RUNTIME_ID]
+    for ext in baked.extensions:
         try:
             conn.execute(f"LOAD {ext}")
         except duckdb.Error:
@@ -160,6 +166,11 @@ def _get_capabilities() -> AgentCapabilities:
         cpu_cores_physical=cpu["cpu_cores_physical"],
         host=platform.node() or None,
         protocol_features=list(_PROTOCOL_FEATURES),
+        runtime_id=runtime.RUNTIME_ID,
+        engine_version=runtime.ENGINE_VERSION,
+        agent_version=runtime.APP_VERSION,
+        platform=runtime.PLATFORM,
+        sandbox=sandbox_state(settings.sandbox_lock_configuration),
     )
 
 

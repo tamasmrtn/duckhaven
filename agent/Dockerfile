@@ -27,18 +27,32 @@ COPY shared/src shared/src
 COPY agent/src agent/src
 RUN uv sync --frozen --no-dev --no-editable --package duckhaven-agent
 
-# Pre-install the DuckDB extensions the agent uses at runtime so the first query
-# doesn't pay the download tax and `_get_capabilities` can advertise them on
-# connect (closes G-D17-c). Extensions land in $HOME/.duckdb; HOME is pinned to
-# the runtime user's home so the runtime stage resolves them with no download.
+# Which runtime this image is (duckhaven_shared.runtimes): a DuckDB line plus its
+# extension set. The default runtime's DuckDB is the one uv.lock resolved above;
+# any other runtime overrides it here from its hash-locked pin, deliberately AFTER
+# the frozen sync so every other dependency stays exactly as locked.
+ARG DUCKHAVEN_RUNTIME=1.5
+ARG DUCKHAVEN_APP_VERSION=0.0.0-dev
+COPY agent/runtimes agent/runtimes
+RUN if [ -f "agent/runtimes/${DUCKHAVEN_RUNTIME}.txt" ]; then \
+        uv pip install --python /app/.venv/bin/python --require-hashes --no-deps \
+            -r "agent/runtimes/${DUCKHAVEN_RUNTIME}.txt"; \
+    fi
+
+# Pre-install the runtime's DuckDB extensions so the first query doesn't pay the
+# download tax and `_get_capabilities` can advertise them on connect (closes
+# G-D17-c). Extensions land in $HOME/.duckdb; HOME is pinned to the runtime
+# user's home so the runtime stage resolves them with no download. Required
+# anyway: the agent's `internal: true` network cannot reach extensions.duckdb.org.
 #
-# Required for `ducklake`/`postgres`: the agent's `internal: true` network
-# cannot reach extensions.duckdb.org.
+# The script fails the build if the DuckDB line is wrong or any extension does
+# not load, and writes runtime.json: the identity the agent reports, baked into
+# the image rather than read from the environment so it cannot be overridden.
 ENV HOME=/home/duckhaven
+COPY agent/docker/install_runtime.py /tmp/install_runtime.py
 RUN mkdir -p /home/duckhaven && \
-    /app/.venv/bin/python -c "import duckdb; c = duckdb.connect(); \
-    [c.execute(f'INSTALL {ext}') for ext in ('httpfs','azure','iceberg','ducklake','postgres')]; \
-    [c.execute(f'LOAD {ext}') for ext in ('httpfs','azure','iceberg','ducklake','postgres')]"
+    /app/.venv/bin/python /tmp/install_runtime.py \
+        "${DUCKHAVEN_RUNTIME}" "${DUCKHAVEN_APP_VERSION}" /app/runtime.json
 
 # Pre-created here since the runtime stage has no shell to mkdir/chown in;
 # copied with --chown below.
@@ -62,6 +76,11 @@ COPY --chown=65532:65532 --from=builder /app/.venv /app/.venv
 
 # Pre-installed DuckDB extensions, owned by the runtime user.
 COPY --chown=65532:65532 --from=builder /home/duckhaven/.duckdb /home/duckhaven/.duckdb
+
+# The runtime identity the agent reports (see install_runtime.py).
+COPY --chown=65532:65532 --from=builder /app/runtime.json /app/runtime.json
+ARG DUCKHAVEN_RUNTIME=1.5
+LABEL org.duckhaven.runtime="${DUCKHAVEN_RUNTIME}"
 
 # Pre-created in the builder stage (see comment there) — no shell here to mkdir/chown.
 COPY --chown=65532:65532 --from=builder /var/duckhaven-agent/results /var/duckhaven-agent/results

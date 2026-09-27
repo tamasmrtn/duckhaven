@@ -12,6 +12,54 @@ export interface AgentCapabilities {
   cpu_cores_physical: number | null;
   tailscale_ip: string | null;
   host: string | null;
+  protocol_features?: string[];
+  // What the agent reports about its runtime; absent on images built before
+  // runtimes existed.
+  runtime_id?: string | null;
+  engine_version?: string | null;
+  agent_version?: string | null;
+  platform?: string | null;
+  // Whether DuckDB's configuration lock really applied; `disabled` is the
+  // operator's choice, `failed` means SQL sessions are refused on this agent.
+  sandbox?: "verified" | "failed" | "disabled" | null;
+}
+
+/**
+ * A runtime's lifecycle: `beta` is only used when named, never picked
+ * automatically; `deprecated` still runs but is closed to new compute; `retired`
+ * is refused.
+ */
+export type RuntimeStatus = "beta" | "ga" | "deprecated" | "retired";
+
+/** One curated agent runtime: a DuckDB line plus its baked extensions. */
+export interface Runtime {
+  id: string;
+  display_name: string;
+  duckdb_line: string;
+  status: RuntimeStatus;
+  extensions: string[];
+  ducklake_format: string | null;
+  upstream_eol: string | null;
+  // Whether auto-provisioned compute runs it in this deployment.
+  default: boolean;
+}
+
+/**
+ * The control plane's view of an agent's runtime. `ok` and `inferred` (an image
+ * from before runtimes, matched by its DuckDB line) are trusted with work;
+ * `mismatch`, `unrecognized` and `retired` are refused; `pending` means the agent
+ * has not reported yet.
+ */
+export type AgentRuntimeState =
+  "pending" | "ok" | "inferred" | "mismatch" | "unrecognized" | "retired";
+
+export interface AgentRuntime {
+  id: string | null;
+  display_name: string | null;
+  status: RuntimeStatus | null;
+  state: AgentRuntimeState;
+  // The deployment's default runtime, which the server prefers when it picks.
+  default?: boolean;
 }
 
 export interface MetricsSample {
@@ -83,6 +131,7 @@ export interface Agent {
   // caller has no tier on is never returned, so in practice this is always set.
   access_tier?: AgentTier | null;
   access_mode?: AgentAccessMode;
+  runtime?: AgentRuntime | null;
 }
 
 /** One principal's tier on one agent. Exactly one of the id pairs is set. */
@@ -201,6 +250,10 @@ export interface ComputeOptions {
   price_vcpu_hour: number;
   price_memory_gb_hour: number;
   default_idle_minutes: number;
+  // Runtimes new compute may use (never deprecated or retired ones), and the one
+  // to preselect.
+  runtimes?: Runtime[];
+  default_runtime?: string | null;
 }
 
 export interface CreateElasticAgentBody {
@@ -212,6 +265,10 @@ export interface CreateElasticAgentBody {
   // everyone — it would otherwise register and start taking work before anyone
   // reached the Access tab. Omitted means `open`.
   access_mode?: AgentAccessMode;
+  // Omitted means the deployment's default runtime. A beta runtime needs
+  // `allow_beta`, so nobody lands on a pre-release DuckDB by accident.
+  runtime_id?: string;
+  allow_beta?: boolean;
 }
 
 export interface BootstrapToken {
@@ -219,6 +276,37 @@ export interface BootstrapToken {
   expires_at: string;
   control_plane_url: string;
   agent_image: string;
+  runtime_id: string;
+}
+
+/** The runtime the control plane trusts this agent with, as a short label. */
+export function runtimeLabel(agent: Agent): string | null {
+  const name = agent.runtime?.display_name ?? null;
+  const engine =
+    agent.capabilities?.engine_version ?? agent.capabilities?.duckdb_version;
+  if (name && engine) return `${name} · ${engine}`;
+  return name ?? (engine ? `DuckDB ${engine}` : null);
+}
+
+/** Why work is refused on this agent's runtime, or null when it isn't. */
+export function runtimeRefusal(agent: Agent): string | null {
+  const runtime = agent.runtime;
+  if (!runtime) return null;
+  switch (runtime.state) {
+    case "retired":
+      return `Runtime ${runtime.display_name ?? runtime.id} is retired`;
+    case "mismatch":
+      return "Running a different runtime than it was created with";
+    case "unrecognized":
+      return "Not running a supported runtime";
+    default:
+      return null;
+  }
+}
+
+/** Whether this agent runs a beta runtime, reached only by naming it. */
+export function isBetaRuntime(agent: Agent): boolean {
+  return agent.runtime?.status === "beta";
 }
 
 // Mirrors _CATALOG_KIND_EXTENSIONS in api/src/api/services/agent_capabilities.py.
@@ -281,11 +369,15 @@ export type AgentAvailability =
   | { kind: "incompatible"; reason: string }
   | { kind: "unavailable" };
 
-/** Whether the API restarts this agent when a run targets it while it is down. */
+/**
+ * Whether the API restarts this agent when a run targets it while it is down —
+ * never on a retired runtime, which can't start again.
+ */
 export function agentRestartable(agent: Agent): boolean {
   return (
     !!agent.provider &&
-    (agent.lifecycle === "terminated" || agent.lifecycle === "failed")
+    (agent.lifecycle === "terminated" || agent.lifecycle === "failed") &&
+    agent.runtime?.status !== "retired"
   );
 }
 
@@ -321,6 +413,6 @@ export function agentAvailability(
   if (agent.lifecycle === "terminating" || agent.lifecycle === "provisioning") {
     return { kind: "unavailable" };
   }
-  const reason = agentIncompatibility(agent, needs);
+  const reason = runtimeRefusal(agent) ?? agentIncompatibility(agent, needs);
   return reason ? { kind: "incompatible", reason } : { kind: "running" };
 }

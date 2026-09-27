@@ -150,4 +150,85 @@ describe("resolveWorksheetAgent", () => {
     });
     expect(result).toMatchObject({ agentId: "azure" });
   });
+  describe("runtimes", () => {
+    const onRuntime = (
+      id: string,
+      runtime: Partial<NonNullable<Agent["runtime"]>>,
+    ) =>
+      agent(id, {
+        runtime: {
+          id: "1.5",
+          display_name: "DuckDB 1.5",
+          status: "ga",
+          state: "ok",
+          default: false,
+          ...runtime,
+        },
+      });
+
+    it("prefers the default runtime, as the server does when it picks", () => {
+      const result = resolveWorksheetAgent({
+        ...base,
+        agents: [
+          onRuntime("other-ga", { id: "1.6" }),
+          onRuntime("default", { default: true }),
+        ],
+      });
+      expect(result).toMatchObject({ agentId: "default", source: "healthy" });
+    });
+
+    it("never falls back to a beta runtime", () => {
+      const result = resolveWorksheetAgent({
+        ...base,
+        agents: [onRuntime("beta", { id: "2.0", status: "beta" })],
+      });
+      expect(result).toEqual({ agentId: null, reason: "none-compatible" });
+    });
+
+    it("keeps a worksheet that names a beta agent on it", () => {
+      const result = resolveWorksheetAgent({
+        ...base,
+        worksheetAgentId: "beta",
+        agents: [
+          onRuntime("beta", { id: "2.0", status: "beta" }),
+          onRuntime("default", { default: true }),
+        ],
+      });
+      expect(result).toMatchObject({ agentId: "beta", source: "worksheet" });
+    });
+
+    it("does not carry a beta agent over from another worksheet", () => {
+      const result = resolveWorksheetAgent({
+        ...base,
+        lastUsedAgentId: "beta",
+        agents: [
+          onRuntime("beta", { id: "2.0", status: "beta" }),
+          onRuntime("default", { default: true }),
+        ],
+      });
+      expect(result).toMatchObject({ agentId: "default", source: "healthy" });
+    });
+
+    it("ranks a deprecated runtime after a generally available one", () => {
+      const result = resolveWorksheetAgent({
+        ...base,
+        agents: [
+          onRuntime("old", { id: "1.4", status: "deprecated" }),
+          onRuntime("current", { id: "1.6" }),
+        ],
+      });
+      expect(result).toMatchObject({ agentId: "current" });
+    });
+
+    it("skips an agent on an unsupported runtime", () => {
+      const result = resolveWorksheetAgent({
+        ...base,
+        agents: [
+          onRuntime("custom", { id: "9.9", state: "unrecognized" }),
+          onRuntime("default", { default: true }),
+        ],
+      });
+      expect(result).toMatchObject({ agentId: "default" });
+    });
+  });
 });

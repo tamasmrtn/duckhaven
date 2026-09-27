@@ -78,7 +78,6 @@ export function WorksheetPage() {
     sheet?.catalog && catalogs.some((c) => c.slug === sheet.catalog)
       ? sheet.catalog
       : defaultCatalog;
-  useSqlCompletion(ws, catalog);
 
   const backend = workspace?.storage_backend_kind;
   const needs = useMemo(
@@ -95,6 +94,16 @@ export function WorksheetPage() {
     ...needs,
   });
   const agent = agents.find((a) => a.id === resolution.agentId);
+  // Autocomplete lists the functions of the DuckDB the next run will use:
+  // agents on different runtimes run different versions. A stopped agent can't
+  // answer, so the server picks one meanwhile.
+  useSqlCompletion(
+    ws,
+    catalog,
+    resolution.agentId && !resolution.willStart
+      ? resolution.agentId
+      : undefined,
+  );
 
   const refreshCatalog = useCallback(() => {
     void qc.invalidateQueries({ queryKey: ["workspace", ws, "catalog"] });

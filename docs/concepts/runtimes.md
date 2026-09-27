@@ -14,7 +14,8 @@ where it is, and roll back by stopping that agent.
 The runtime is a property of an agent, not of a workspace or a query. It is chosen for each piece of compute and stays
 with it:
 
-- **Elastic compute** runs the runtime it was created with. An admin picks it when creating compute. A restart keeps
+- **Elastic compute** runs the runtime it was created with. An admin picks it in **Compute → New compute**; a beta
+  runtime has to be acknowledged before the agent is created. A restart keeps
   it, but picks up this release's newest build of that runtime, the way a maintenance update would. An agent never
   moves to a different DuckDB line on its own.
 - **A static agent** is whatever image its operator runs. The *Add an agent* snippet names the runtime's image
@@ -71,7 +72,9 @@ For a **SQL session**, the agent must also confirm that DuckDB's configuration l
 and on some DuckDB versions the lock can fail silently. An operator who turned the lock off on purpose
 (`SANDBOX_LOCK_CONFIGURATION=false`) is not refused.
 
-Every query and session records the runtime that ran it.
+Every query and session records the runtime that ran it. History shows it next to the agent's name. The Compute page
+shows each agent's runtime and exact DuckDB version, and flags one that is beta, deprecated, or refused work. An
+agent's own page also says whether its configuration lock applied.
 
 ## Mixing runtimes on the same data
 

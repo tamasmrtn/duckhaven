@@ -13,7 +13,8 @@ needs no inbound connectivity to them).
 ## Generate a snippet from the admin UI
 
 1. Sign in as an admin on the control plane.
-2. **Compute → Generate bootstrap**.
+2. **Compute → Generate bootstrap**. If the control plane offers more than one
+   [runtime](../concepts/runtimes.md), choose it here. The default runtime is preselected.
 3. Copy the rendered `docker-compose.yml` snippet. Example shape:
 
 ```yaml

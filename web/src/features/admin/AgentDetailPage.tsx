@@ -10,6 +10,8 @@ import {
   Trash2,
   Unplug,
 } from "lucide-react";
+import { RuntimeBadge } from "@/components/app/RuntimeBadge";
+import { Banner } from "@/components/ui/banner";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -29,11 +31,16 @@ import {
   useDisconnectAgent,
   useRestartAgent,
   useRevokeAgent,
+  useRuntimes,
   useTerminateAgent,
 } from "@/queries/agents";
 import { useAgentMonitoring } from "@/queries/agents";
 import type { Agent, AgentStatus } from "@/types/agent";
-import { agentTierAtLeast } from "@/types/agent";
+import {
+  agentRestartable,
+  agentTierAtLeast,
+  runtimeRefusal,
+} from "@/types/agent";
 import { AgentAccessTab } from "./AgentAccessTab";
 import { formatCost } from "./agentFormat";
 import { MonitoringTab } from "./monitoring/MonitoringTab";
@@ -52,6 +59,34 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
     </div>
   );
 }
+
+/**
+ * Why this agent's runtime needs attention, in a sentence, or null. Deprecated
+ * runtimes still run but are closed to new compute; the upstream end-of-support
+ * date says how long that stays comfortable.
+ */
+function RuntimeNotice({ agent }: { agent: Agent }) {
+  const { data: runtimes = [] } = useRuntimes();
+  const refusal = runtimeRefusal(agent);
+  if (refusal) {
+    return <Banner>{refusal}. The control plane sends it no work.</Banner>;
+  }
+  if (agent.runtime?.status !== "deprecated") return null;
+  const eol = runtimes.find((r) => r.id === agent.runtime?.id)?.upstream_eol;
+  return (
+    <Banner>
+      {agent.runtime.display_name} is deprecated
+      {eol ? ` (upstream support ended ${eol})` : ""}. It keeps running, but new
+      compute can't use it — move this workload to a current runtime.
+    </Banner>
+  );
+}
+
+const SANDBOX_LABEL = {
+  verified: "locked",
+  disabled: "lock off (operator)",
+  failed: "lock failed — no SQL sessions",
+} as const;
 
 function OverviewTab({ agent }: { agent: Agent }) {
   const { data: computeOptions } = useComputeOptions();
@@ -75,10 +110,8 @@ function OverviewTab({ agent }: { agent: Agent }) {
   // shortest window, which is the one an operator checking on a live problem means.
   const { data: recent } = useAgentMonitoring(agent.id, "1h");
 
-  const restartable =
-    canOperate &&
-    !!agent.provider &&
-    (agent.lifecycle === "terminated" || agent.lifecycle === "failed");
+  // Never on a retired runtime: it can't start again.
+  const restartable = canOperate && agentRestartable(agent);
   const terminable =
     canOperate &&
     !!agent.provider &&
@@ -86,6 +119,7 @@ function OverviewTab({ agent }: { agent: Agent }) {
 
   return (
     <>
+      <RuntimeNotice agent={agent} />
       <div className="grid gap-4 md:grid-cols-2">
         {agent.provider && (
           <section className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4">
@@ -94,6 +128,9 @@ function OverviewTab({ agent }: { agent: Agent }) {
             </p>
             <div className="space-y-1 text-sm">
               <Field label="Lifecycle" value={agent.lifecycle ?? "—"} />
+              {agent.runtime?.display_name && (
+                <Field label="Runtime" value={agent.runtime.display_name} />
+              )}
               {agent.requested_cpu != null &&
                 agent.requested_memory_gb != null && (
                   <Field
@@ -125,7 +162,30 @@ function OverviewTab({ agent }: { agent: Agent }) {
           </p>
           {agent.capabilities ? (
             <div className="space-y-1 text-sm">
-              <Field label="DuckDB" value={agent.capabilities.duckdb_version} />
+              <Field
+                label="Runtime"
+                value={
+                  <span className="flex items-center justify-end gap-1.5">
+                    {agent.runtime?.display_name ??
+                      agent.runtime?.id ??
+                      "unknown"}
+                    <RuntimeBadge agent={agent} />
+                  </span>
+                }
+              />
+              <Field
+                label="DuckDB"
+                value={
+                  agent.capabilities.engine_version ??
+                  agent.capabilities.duckdb_version
+                }
+              />
+              {agent.capabilities.sandbox && (
+                <Field
+                  label="Sandbox"
+                  value={SANDBOX_LABEL[agent.capabilities.sandbox]}
+                />
+              )}
               <Field
                 label="Memory cap"
                 value={`${agent.capabilities.memory_limit_gb} GB`}

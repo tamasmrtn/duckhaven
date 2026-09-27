@@ -22,7 +22,8 @@ Agents can be run by an operator (static) or provisioned automatically and torn 
 
 On connect (and on every heartbeat) an agent advertises its capabilities: DuckDB version, loaded extensions, memory
 ceiling, cores, and host. DuckHaven matches agents to a workspace's [storage backend](storage-backends.md) by required
-extension (for example, `azure` for ADLS), and incompatible agents are shown disabled before a query is sent.
+extension (for example, `azure` for ADLS), and incompatible agents are shown disabled before a query is sent. An
+agent's **Overview** tab (Compute → *an agent*) lists what it reported, with an ⓘ beside each item that explains it.
 
 An agent also reports its **[runtime](runtimes.md)**: the DuckDB line and extension set its image was built as.
 Work goes only to agents on a runtime DuckHaven trusts. When nobody names an agent, the server prefers the default

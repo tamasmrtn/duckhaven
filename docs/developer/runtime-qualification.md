@@ -70,7 +70,7 @@ is not released yet (planned for 2026-10-21).
 |---|---|
 | Build | Every extension loads (`httpfs`, `azure`, `iceberg`, `ducklake`, `postgres`). Image 391 MB against 346 MB for 1.5. |
 | Unit tests | All pass. |
-| Integration tests | All pass except two expected failures, see *vended credentials* below. |
+| Integration tests | All pass except two that fail: the table-size and orphan probes, see *vended credentials* below. |
 | Sandbox | `verified`. |
 | DuckLake | Creates format `1.1-dev1`, opens `1.0` and `1.1-dev1`. It opens and writes a 1.0 catalog without migrating it. 1.5 cannot open a 1.1-dev1 catalog. The dispatch gate therefore keeps 2.0 agents from creating catalogs while 1.5 is the default. DuckHaven's metadata SQL reads 1.1-dev1 unchanged: the format only adds columns, and renames columns in tables DuckHaven never reads directly. |
 | Across runtimes | All pass. |

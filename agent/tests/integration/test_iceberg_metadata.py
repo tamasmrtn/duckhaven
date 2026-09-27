@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import duckdb
 import pytest
-from testkit.iceberg import vended_credentials_are_secrets
 
 from agent.executor import runner
 
@@ -57,11 +56,6 @@ async def test_iceberg_metadata_on_written_table(
         conn.execute("LOAD httpfs")
         _attach(conn, polaris_base_url, catalog, ns, polaris_creds)
         conn.execute("INSERT INTO events VALUES (1, 'one'), (2, 'two')")
-        if not vended_credentials_are_secrets(conn):
-            pytest.xfail(
-                "This DuckDB keeps vended credentials inside the iceberg extension, so the "
-                "footer size probe cannot read the files; see runtime-qualification.md"
-            )
         meta = runner._iceberg_metadata(conn, catalog, ns, "events")
     finally:
         conn.close()

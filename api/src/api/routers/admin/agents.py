@@ -115,9 +115,9 @@ def _agent_dial_url(request: Request) -> str:
 def _selectable_runtime(runtime_id: str | None, *, allow_beta: bool = True) -> Runtime:
     """The runtime new compute may be created on, or a 422 naming why not.
 
-    Deprecated and retired runtimes are closed to new compute, as a Databricks
-    runtime past end of support is. A beta one needs an explicit opt-in where the
-    caller is provisioning (``allow_beta``).
+    Deprecated and retired runtimes are closed to new compute: a runtime past its end
+    of support is no longer offered, even while agents already on it keep running. A
+    beta one needs an explicit opt-in where the caller is provisioning (``allow_beta``).
     """
     runtime = get_runtime(runtime_id or settings.default_runtime)
     if runtime is None:

@@ -11,8 +11,8 @@ where it is, and roll back by stopping that agent.
 
 ## A runtime belongs to compute
 
-The runtime is a property of an agent, not of a workspace or a query. It works the way a Databricks cluster's runtime
-version does:
+The runtime is a property of an agent, not of a workspace or a query. It is chosen for each piece of compute and stays
+with it:
 
 - **Elastic compute** runs the runtime it was created with. An admin picks it when creating compute. A restart keeps
   it, but picks up this release's newest build of that runtime, the way a maintenance update would. An agent never

@@ -33,6 +33,7 @@ from api.services.agent_access import tier_at_least, tier_for_principal
 from api.services.agent_dispatch import is_agent_connected
 from api.services.compute import service as compute_service
 from api.services.query import dispatch_query, pick_agent_for
+from api.services.runtimes import RuntimeRetired
 from api.services.scheduler.cron import next_run
 
 logger = logging.getLogger(__name__)
@@ -235,7 +236,10 @@ async def _resolve_agent(
         if await is_agent_connected(db, chosen):
             return _Resolution(agent=agent)
         if agent.provider is not None and agent.lifecycle in ("terminated", "failed"):
-            started = await compute_service.restart_elastic_agent(db, agent)
+            try:
+                started = await compute_service.restart_elastic_agent(db, agent)
+            except RuntimeRetired as exc:
+                return _Resolution(error=str(exc))
             if started is None:
                 return _Resolution(error="Could not start the configured agent")
             logger.info("Schedule %s starting terminated agent %s", schedule.id, agent.id)

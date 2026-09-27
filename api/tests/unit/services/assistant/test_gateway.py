@@ -269,3 +269,33 @@ async def test_table_lineage_omits_columns_for_when_not_asked():
     async with httpx.AsyncClient(base_url="http://assistant.internal") as client:
         await _gateway(client=client).table_lineage("warehouse", "public", "orders")
     assert "columns_for" not in route.calls.last.request.url.params
+
+
+# --- SQL execution ------------------------------------------------------------
+
+
+@respx.mock
+async def test_run_sql_lets_the_server_choose_the_agent():
+    """It used to take the first healthy agent from any workspace — possibly one
+    that can't serve this one's catalogs, or a beta runtime. The server's own
+    choice checks both."""
+    submitted = respx.post("http://assistant.internal/workspaces/ws/queries").mock(
+        return_value=httpx.Response(202, json={"id": "q1", "status": "done"})
+    )
+    respx.get("http://assistant.internal/queries/q1/rows").mock(
+        return_value=httpx.Response(200, json={"columns": [], "rows": [], "total": 0})
+    )
+    async with httpx.AsyncClient(base_url="http://assistant.internal") as client:
+        await _gateway(client=client).run_sql("SELECT 1", catalog=None, timeout_s=5)
+
+    body = submitted.calls.last.request.content
+    assert b"agent_id" not in body
+
+
+def test_translate_says_plainly_when_no_agent_can_run_sql():
+    err = _translate(
+        _status_error(
+            422, {"detail": {"error": "agent_required", "detail": "agent_id is required"}}
+        )
+    )
+    assert str(err) == "No compute agent is currently available to run SQL."

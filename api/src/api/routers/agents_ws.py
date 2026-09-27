@@ -75,6 +75,55 @@ async def _elastic_result_host(
     return await resolve_result_host(agent), True
 
 
+async def _on_first_report(db: AsyncSession, agent_id: uuid.UUID) -> None:
+    """Act on what a freshly connected agent says it is.
+
+    An elastic agent that turns out to be the wrong runtime is terminated when it
+    belongs to a pool: it would otherwise count against the pool's cap while being
+    refused every piece of work, and the pool would never provision a replacement.
+    Otherwise, work parked while it was starting is dispatched to it — each piece
+    still subject to the dispatch checks, now that its capabilities are known.
+    """
+    agent_row = await db.get(Agent, agent_id)
+    if agent_row is None:
+        return
+    from api.services.runtimes import DISPATCHABLE_STATES, resolve
+
+    state = resolve(agent_row).state
+    if state not in DISPATCHABLE_STATES:
+        logger.warning(
+            "Agent %s reports an unsupported runtime (%s): %s",
+            agent_id,
+            state,
+            {k: (agent_row.capabilities or {}).get(k) for k in ("runtime_id", "engine_version")},
+        )
+    if agent_row.provider is None:
+        return
+
+    from api.services.compute.service import (
+        bind_pending_sessions,
+        bind_queued_work,
+        bind_scheduled_work,
+        bind_targeted_work,
+        terminate_agent,
+    )
+
+    if agent_row.pool_key is not None and state in ("mismatch", "unrecognized"):
+        await terminate_agent(db, agent_row, reason="runtime_mismatch")
+        return
+    # Sessions first: a parked session has a client blocked on an open HTTP
+    # request, while a parked run's client is already polling.
+    await bind_pending_sessions(db, agent_row)
+    await bind_queued_work(db, agent_row)
+    # Interactive runs submitted against this agent while it was terminated,
+    # which restarted it.
+    await bind_targeted_work(db, agent_row)
+    # Scheduled runs parked while this agent was restarted for them. Separate
+    # from the pool binder: those match a pool key, these match the agent a
+    # schedule explicitly names.
+    await bind_scheduled_work(db, agent_row)
+
+
 @router.websocket("/agents/connect")
 async def agent_connect(
     ws: WebSocket,
@@ -149,6 +198,10 @@ async def agent_connect(
                     "status": "healthy",
                     "last_active_at": datetime.now(tz=UTC),
                     "result_port": result_port_int,
+                    # Whatever this agent reported last time may no longer be true
+                    # — a static agent can come back re-imaged onto another runtime
+                    # — so nothing is routed on it until it reports afresh.
+                    "capabilities": None,
                 }
                 # Only overwrite a known address with another one. resolve_result_host
                 # returns None on any transient cloud error, so writing it
@@ -191,6 +244,9 @@ async def agent_connect(
                             last_active_at=datetime.now(tz=UTC),
                             result_host=result_host,
                             result_port=result_port_int,
+                            # A restarted instance may be a newer build: the old
+                            # instance's report says nothing about this one.
+                            capabilities=None,
                         )
                     )
                     if revived.rowcount == 0:
@@ -257,29 +313,12 @@ async def agent_connect(
             # could serve work" is the same fact for both kinds, and it is what the
             # monitoring page's running/not-running timeline is built from.
             await record_lifecycle_event_now(db, agent_id, "connected")
-            # If an elastic agent just came up, dispatch any queued work parked
-            # while it was provisioning.
-            agent_row = await db.get(Agent, agent_id)
-            if agent_row is not None and agent_row.provider is not None:
-                from api.services.compute.service import (
-                    bind_pending_sessions,
-                    bind_queued_work,
-                    bind_scheduled_work,
-                    bind_targeted_work,
-                )
-
-                # Sessions first: a parked session has a client blocked on an open
-                # HTTP request, while a parked run's client is already polling.
-                await bind_pending_sessions(db, agent_row)
-                await bind_queued_work(db, agent_row)
-                # Interactive runs submitted against this agent while it was
-                # terminated, which restarted it.
-                await bind_targeted_work(db, agent_row)
-                # Scheduled runs parked while this agent was restarted for them.
-                # Separate from the pool binder: those match a pool key, these
-                # match the agent a schedule explicitly names.
-                await bind_scheduled_work(db, agent_row)
         last_presence_refresh = datetime.now(tz=UTC)
+        # Work parked while this agent was starting is bound once it has said what
+        # it is — its first AGENT_STATUS, which it sends right after auth_ok — and
+        # not at auth_ok itself, when its capabilities are still unknown and every
+        # extension and runtime check would be judging nothing.
+        reported = False
 
         async for raw_msg in ws.iter_text():
             # Each frame is isolated: a per-frame session keeps no pooled
@@ -315,6 +354,9 @@ async def agent_connect(
                             )
                         )
                         await db.commit()
+                        if not reported:
+                            reported = True
+                            await _on_first_report(db, agent_id)
 
                 elif msg_frame.type == FrameType.METRICS_SAMPLE:
                     # High-frequency live utilization: the ring buffer keeps the last

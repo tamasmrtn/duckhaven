@@ -49,7 +49,11 @@ async def workspace(db_session, user: User):
 @pytest_asyncio.fixture
 async def agent(db_session):
     # All backends (object_store is the bundled S3 store) require httpfs.
-    a = Agent(name="test-agent", status="healthy", capabilities={"extensions": ["httpfs"]})
+    a = Agent(
+        name="test-agent",
+        status="healthy",
+        capabilities={"duckdb_version": "1.5.5", "extensions": ["httpfs"]},
+    )
     db_session.add(a)
     await db_session.commit()
     await db_session.refresh(a)
@@ -230,7 +234,7 @@ async def test_dispatch_payload_carries_backend_and_no_credentials(
     import json
 
     agent, mock_ws = connected_agent
-    agent.capabilities = {"extensions": ["httpfs"]}  # required for s3 (G-D17-b)
+    agent.capabilities = {"duckdb_version": "1.5.5", "extensions": ["httpfs"]}  # s3 (G-D17-b)
     db_session.add(agent)
 
     await seed_workspace(
@@ -271,7 +275,10 @@ async def test_dispatch_rejects_agent_missing_extension(
     """A cloud-backed workspace cannot dispatch to an agent that lacks the
     required DuckDB extension; the query is never created or sent (G-D17-b)."""
     agent, mock_ws = connected_agent
-    agent.capabilities = {"extensions": ["httpfs", "iceberg"]}  # no azure
+    agent.capabilities = {
+        "duckdb_version": "1.5.5",
+        "extensions": ["httpfs", "iceberg"],
+    }  # no azure
     db_session.add(agent)
 
     await seed_workspace(
@@ -619,7 +626,9 @@ async def test_admin_can_filter_by_agent_across_workspaces(
     )
     db_session.add(admin)
     other_agent = Agent(
-        name="other-agent", status="healthy", capabilities={"extensions": ["httpfs"]}
+        name="other-agent",
+        status="healthy",
+        capabilities={"duckdb_version": "1.5.5", "extensions": ["httpfs"]},
     )
     db_session.add(other_agent)
     await db_session.flush()
@@ -1705,7 +1714,7 @@ async def test_elastic_pool_provisions_when_the_picked_agent_has_gone(
     agent = Agent(
         name="ghost",
         status="healthy",
-        capabilities={"extensions": ["httpfs"]},
+        capabilities={"duckdb_version": "1.5.5", "extensions": ["httpfs"]},
         owner_id="api",
         owner_url="http://127.0.0.1:8000",
         last_ping_at=datetime.now(tz=UTC),
@@ -1930,7 +1939,7 @@ async def terminated_elastic_agent(db_session):
     a = Agent(
         name="cold-target",
         status="unavailable",
-        capabilities={"extensions": ["httpfs"]},
+        capabilities={"duckdb_version": "1.5.5", "extensions": ["httpfs"]},
         provider="null",
         lifecycle="terminated",
         pool_key="object_store",
@@ -2511,3 +2520,111 @@ def test_only_the_name_index_counts_as_a_name_clash():
     )
     assert not _is_name_clash(err('null value in column "updated_at" violates not-null'))
     assert not _is_name_clash(err("insert or update violates foreign key constraint"))
+
+
+# --- runtimes ---
+
+
+async def test_without_an_agent_id_the_server_picks_one_even_without_elastic(
+    authed_client: AsyncClient, workspace: Workspace, connected_agent
+):
+    """A caller that doesn't care which agent runs its SQL (the assistant, a
+    script) needn't pick one: the server chooses, default runtime first."""
+    agent, mock_ws = connected_agent
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries", json={"sql": "SELECT 1"}
+    )
+    assert resp.status_code == 202, resp.text
+    assert resp.json()["agent_id"] == str(agent.id)
+    assert len(mock_ws.sent) == 1
+
+
+async def test_a_query_records_the_runtime_that_ran_it(
+    authed_client: AsyncClient, workspace: Workspace, connected_agent, db_session
+):
+    agent, _ = connected_agent
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(agent.id)},
+    )
+    assert resp.status_code == 202
+    from api.models.query import Query
+
+    query = await db_session.get(Query, uuid.UUID(resp.json()["id"]))
+    await db_session.refresh(query)
+    # A pre-runtime agent on the 1.5 line is inferred to be the 1.5 runtime.
+    assert query.runtime_id == "1.5"
+
+
+async def test_an_agent_on_an_unsupported_runtime_is_refused_up_front(
+    authed_client: AsyncClient, workspace: Workspace, connected_agent, db_session
+):
+    agent, mock_ws = connected_agent
+    agent.capabilities = {
+        "duckdb_version": "9.9.0",
+        "engine_version": "v9.9.0",
+        "runtime_id": "9.9",
+        "extensions": ["httpfs"],
+    }
+    await db_session.commit()
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(agent.id)},
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"] == "runtime_unsupported"
+    assert mock_ws.sent == []
+
+
+async def test_a_run_naming_an_agent_on_a_retired_runtime_is_refused(
+    authed_client: AsyncClient,
+    workspace,
+    db_session,
+    terminated_elastic_agent,
+    elastic_enabled,
+    monkeypatch,
+):
+    """It can never start again, so the run is refused rather than parked forever."""
+    from dataclasses import replace
+
+    import sqlalchemy as sa
+
+    from api.models.query import Query
+    from duckhaven_shared import runtimes
+
+    monkeypatch.setitem(
+        runtimes.RUNTIMES,
+        "1.3",
+        replace(runtimes.RUNTIMES["1.5"], id="1.3", duckdb_line="1.3", status="retired"),
+    )
+    terminated_elastic_agent.requested_runtime_id = "1.3"
+    await db_session.commit()
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(terminated_elastic_agent.id)},
+    )
+    assert resp.status_code == 409
+    assert resp.json()["error"] == "runtime_retired"
+    assert (await db_session.execute(sa.select(Query))).scalars().all() == []
+
+
+async def test_sql_metadata_for_a_named_agent_that_is_not_connected_is_503(
+    authed_client: AsyncClient, workspace: Workspace, agent: Agent
+):
+    """The editor asks for its own agent's dictionary; with that agent down it
+    falls back to its static keywords instead of showing another runtime's."""
+    resp = await authed_client.get(
+        f"/workspaces/{workspace.slug}/sql-metadata", params={"agent_id": str(agent.id)}
+    )
+    assert resp.status_code == 503
+
+
+async def test_sql_metadata_for_an_unknown_agent_is_404(
+    authed_client: AsyncClient, workspace: Workspace
+):
+    resp = await authed_client.get(
+        f"/workspaces/{workspace.slug}/sql-metadata", params={"agent_id": str(uuid.uuid4())}
+    )
+    assert resp.status_code == 404

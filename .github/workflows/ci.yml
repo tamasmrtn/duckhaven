@@ -294,7 +294,10 @@ jobs:
           context: .
           file: agent/Dockerfile
           load: true
-          tags: ghcr.io/tamasmrtn/duckhaven-agent:ci-e2e
+          # The bundled agent runs the default runtime's suffixed tag.
+          tags: |
+            ghcr.io/tamasmrtn/duckhaven-agent:ci-e2e
+            ghcr.io/tamasmrtn/duckhaven-agent:ci-e2e-duckdb1.5
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Start the full stack

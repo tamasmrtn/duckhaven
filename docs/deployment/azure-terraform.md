@@ -206,7 +206,10 @@ does not cover fails at plan time and tells you to set `location_short` yourself
    this rather than letting the apply fail halfway.
 3. **Images in the registry.** A Container App whose image cannot be pulled never
    becomes healthy, so build and push `duckhaven-api` and `duckhaven-agent` between the
-   registry apply and the app apply. The two Polaris images are mirrored by the apply
+   registry apply and the app apply. The agent is built once per
+   [runtime](../concepts/runtimes.md) in `agent_runtimes` (default `["1.5"]`), tagged
+   `<tag>-duckdb<runtime>`. The `next_steps` output prints every build and push command.
+   `default_runtime` must be one of them. The two Polaris images are mirrored by the apply
    itself, using a server-side `az acr import`; set `polaris_mirror_images = false` to
    do that yourself.
 4. **Provider registration.** A fresh subscription may spend several minutes

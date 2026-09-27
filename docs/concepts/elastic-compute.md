@@ -39,6 +39,15 @@ specific agent — over the API, omit `agent_id`):
 An agent is matched to demand by its **pool key** — the set of storage-backend kinds it supports — so
 one provisioned agent serves every workspace with the same storage shape.
 
+Pool agents run the deployment's **default [runtime](runtimes.md)** (`DEFAULT_RUNTIME`): nobody named an agent, so
+nobody chose a DuckDB version. The pool's cap is counted per runtime. After you change the default, new supply is
+provisioned on the new runtime straight away, while agents on the old one keep serving until the idle reaper takes
+them down.
+
+An agent registers before it reports what it is, so the parked work waits until it has reported. Then each run is
+dispatched with the same checks as any other: the agent must have the catalogs' extensions and a runtime that is
+trusted with work. A pool agent that reports the wrong runtime is terminated rather than left holding the pool's slot.
+
 Note that the pool key describes *capability*, not tenancy: it is what an agent can attach, not who
 may use it. Access is the separate, explicit mechanism described in
 [Per-agent access](permissions.md#per-agent-access). Auto-provisioned pool agents start **open**, so
@@ -56,6 +65,10 @@ The same dialog chooses **who can use it** — anyone signed in, or only the peo
 to. Deciding that at creation rather than on the Access tab afterwards matters; see
 [Per-agent access](permissions.md#per-agent-access).
 
+It also chooses the **[runtime](runtimes.md)**, meaning the DuckDB version and extensions the agent runs. The default
+runtime is preselected. A beta runtime needs an explicit opt-in, and deprecated or retired runtimes aren't offered.
+The runtime stays with the agent: every restart brings it back on the same runtime.
+
 ### Starting a terminated agent by naming it
 
 Naming a specific elastic agent the reaper has torn down **starts it** rather than
@@ -67,6 +80,10 @@ It has to work this way. The reaper terminated the agent *because* nothing was u
 so refusing the next run would make an idle-terminated agent permanently unusable — and
 for a [schedule](../guides/schedule-queries.md) bound to one, every run would fail on the
 consequence of the previous one succeeding.
+
+It comes back on the runtime it was created with, running this release's newest build of that runtime.
+If that runtime has since been retired, the run is refused (`runtime_retired`) instead of parked, since the agent
+can never start again.
 
 This needs only the `use` tier: sending work is dispatch, not a lifecycle operation.
 Restarting an agent deliberately, with no work to justify it, still needs `operate`; see

@@ -83,7 +83,7 @@ async def _seed_running_elastic_agent(db, pool_key="object_store"):
     agent = Agent(
         name="e",
         status="healthy",
-        capabilities={"extensions": ["httpfs"]},
+        capabilities={"duckdb_version": "1.5.5", "extensions": ["httpfs"]},
         provider="null",
         lifecycle="running",
         pool_key=pool_key,
@@ -419,7 +419,7 @@ async def test_concurrent_binds_dispatch_a_queued_query_once(
         second = Agent(
             name="e2",
             status="healthy",
-            capabilities={"extensions": ["httpfs"]},
+            capabilities={"duckdb_version": "1.5.5", "extensions": ["httpfs"]},
             provider="null",
             lifecycle="running",
             pool_key="object_store",
@@ -701,7 +701,7 @@ async def test_bind_pending_sessions_fails_an_incompatible_targeted_session(
         agent = Agent(
             name="no-httpfs",
             status="healthy",
-            capabilities={"extensions": []},
+            capabilities={"duckdb_version": "1.5.5", "extensions": []},
             provider="null",
             lifecycle="running",
             instance_id="dh-bind-incompat",
@@ -749,7 +749,7 @@ async def test_concurrent_binds_open_a_pending_session_once(
         second = Agent(
             name="e2",
             status="healthy",
-            capabilities={"extensions": ["httpfs"]},
+            capabilities={"duckdb_version": "1.5.5", "extensions": ["httpfs"]},
             provider="null",
             lifecycle="running",
             pool_key="object_store",
@@ -904,16 +904,12 @@ async def test_failed_targeted_dispatch_releases_the_claim(
         assert query.agent_id is None
 
 
-async def test_bind_pending_sessions_binds_when_capabilities_are_not_reported_yet(
+async def test_bind_pending_sessions_fails_a_session_on_an_unsupported_runtime(
     session_factory, elastic_on, monkeypatch
 ):
-    """A restarting agent has not necessarily told us what it can do yet.
-
-    `AGENT_STATUS` is a frame the agent sends *after* the handshake, and this binder
-    runs inside that handshake, so `capabilities` is legitimately NULL for an agent
-    that was terminated before it ever reported. Treating that as incompatible
-    stranded the session: `agent_supports_backend(None, ...)` is False.
-    """
+    """The binder runs once the agent has reported (the first AGENT_STATUS), so it
+    knows the agent's runtime: a session is not opened on one that isn't trusted
+    with work, and fails naming why rather than stranding in `pending`."""
     from api.models.agent import Agent
     from api.models.sql_session import SqlSession
     from api.services.compute import service
@@ -929,12 +925,18 @@ async def test_bind_pending_sessions_binds_when_capabilities_are_not_reported_ye
     async with session_factory() as db:
         ws, _ = await seed_workspace(db, user_id=uuid.uuid4())
         agent = Agent(
-            name="not-yet-reported",
+            name="wrong-runtime",
             status="healthy",
-            capabilities=None,
+            capabilities={
+                "duckdb_version": "9.9.0",
+                "engine_version": "v9.9.0",
+                "runtime_id": "9.9",
+                "extensions": ["httpfs", "iceberg"],
+            },
             provider="null",
             lifecycle="running",
-            instance_id="dh-bind-nocaps",
+            instance_id="dh-bind-wrong-runtime",
+            requested_runtime_id="1.5",
         )
         db.add(agent)
         await db.flush()
@@ -942,8 +944,10 @@ async def test_bind_pending_sessions_binds_when_capabilities_are_not_reported_ye
         await db.commit()
         session_id = session.id
 
-        assert await service.bind_pending_sessions(db, agent) == 1
+        assert await service.bind_pending_sessions(db, agent) == 0
 
-    assert opened == [session_id]
+    assert opened == []
     async with session_factory() as db:
-        assert (await db.get(SqlSession, session_id)).status == "opening"
+        row = await db.get(SqlSession, session_id)
+        assert row.status == "failed"
+        assert row.error == "runtime_unsupported"

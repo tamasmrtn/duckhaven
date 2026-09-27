@@ -67,7 +67,9 @@ async def _seed(db, fake_polaris, *, connect_agent: bool = True) -> tuple[Worksp
     ws_obj = FakeWS()
     if connect_agent:
         agent = Agent(
-            name="a", status="healthy", capabilities={"extensions": ["httpfs", "iceberg"]}
+            name="a",
+            status="healthy",
+            capabilities={"duckdb_version": "1.5.5", "extensions": ["httpfs", "iceberg"]},
         )
         db.add(agent)
         await db.flush()

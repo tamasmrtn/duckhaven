@@ -7,9 +7,10 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, StringConstrain
 
 class QueryCreate(BaseModel):
     sql: str
-    # A specific agent (the worksheet engine picker), or omitted to target the
-    # elastic pool: the API dispatches to a compatible connected agent, or parks
-    # the run queued and provisions one on demand (requires elastic compute).
+    # A specific agent (the worksheet engine picker), or omitted to let the server
+    # choose: a compatible connected agent on the default runtime first. With
+    # elastic compute, a run with none connected parks queued and one is
+    # provisioned on demand.
     agent_id: uuid.UUID | None = None
     timeout_s: float = 600.0
     # When the run originates from a saved query, its id is sent so the backend
@@ -76,6 +77,9 @@ class QueryOut(BaseModel):
     # a statement back to the workload it belonged to. Null for interactive and
     # scheduled runs.
     session_id: uuid.UUID | None = None
+    # The runtime (DuckDB line, e.g. "1.5") of the agent that ran it, recorded at
+    # dispatch. Null before dispatch and for runs older than the field.
+    runtime_id: str | None = None
     row_count: int | None
     duration_ms: int | None
     result_bytes: int | None = None

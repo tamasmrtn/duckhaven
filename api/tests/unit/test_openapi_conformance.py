@@ -44,6 +44,8 @@ BOUNDED_COLLECTIONS = {
     "/admin/storage-backends",
     # Bounded by the build: a literal tuple in the router, not data.
     "/catalog-kinds",
+    # Bounded by the build too: the curated runtime manifest.
+    "/runtimes",
     "/admin/users/{user_id}/workspaces",
     "/admin/service-accounts/{service_account_id}/pats",
     "/me/pats",

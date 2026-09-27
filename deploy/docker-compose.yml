@@ -237,6 +237,11 @@ services:
       # auto-register without an operator minting one in the admin UI (folds in
       # the former agent-bootstrap one-shot; idempotent re-seed on restart).
       AGENT_BOOTSTRAP_TOKEN: ${AGENT_BOOTSTRAP_TOKEN:-dh_boot_localdev_seed}
+      # The runtime auto-provisioned compute runs, and the tag agent images are
+      # resolved at (`<tag>-duckdb<runtime>`): the add-agent snippet and elastic
+      # compute use the same images as the bundled agent below.
+      DEFAULT_RUNTIME: ${DEFAULT_RUNTIME:-1.5}
+      AGENT_IMAGE_TAG: ${DUCKHAVEN_IMAGE_TAG:-latest}
       # Plain-HTTP deployment by default; the browser drops Secure cookies over
       # HTTP, which would break login. Set true only behind a TLS terminator.
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
@@ -316,7 +321,10 @@ services:
   # The API seeds the bootstrap token during its own startup, so a healthy api is
   # sufficient — no separate bootstrap service to wait on.
   agent:
-    image: ghcr.io/tamasmrtn/duckhaven-agent:${DUCKHAVEN_IMAGE_TAG:-latest}
+    # The default runtime's image (a DuckDB line plus its extensions), named
+    # explicitly so the bundled agent and the API's DEFAULT_RUNTIME change together,
+    # and only when .env says so.
+    image: ghcr.io/tamasmrtn/duckhaven-agent:${DUCKHAVEN_IMAGE_TAG:-latest}-duckdb${DEFAULT_RUNTIME:-1.5}
     restart: unless-stopped
     # Memory cap so the cgroup-aware detection has a concrete memory.max to read
     # end to end. Remove or raise via AGENT_MEM_LIMIT= for an unconstrained agent

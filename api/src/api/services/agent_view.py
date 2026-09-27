@@ -9,9 +9,12 @@ rather than derived here: it is a property of the *request*, not of the agent.
 
 from __future__ import annotations
 
+from api.config import settings
 from api.models.agent import Agent
-from api.schemas.agent import AgentCapabilitiesOut, AgentOut
+from api.schemas.agent import AgentCapabilitiesOut, AgentOut, AgentRuntimeOut, RuntimeOut
+from api.services import runtimes
 from api.services.compute import pricing
+from duckhaven_shared.runtimes import Runtime
 
 
 def build_agent_out(agent: Agent, *, status: str, access_tier: str | None = None) -> AgentOut:
@@ -36,4 +39,30 @@ def build_agent_out(agent: Agent, *, status: str, access_tier: str | None = None
         requested_max_timeout_s=agent.requested_max_timeout_s,
         access_tier=access_tier,
         access_mode=agent.access_mode,
+        runtime=build_runtime_out(agent),
+    )
+
+
+def build_runtime_out(agent: Agent) -> AgentRuntimeOut:
+    resolved = runtimes.resolve(agent)
+    runtime = resolved.runtime
+    return AgentRuntimeOut(
+        id=runtime.id if runtime else (agent.capabilities or {}).get("runtime_id"),
+        display_name=runtime.display_name if runtime else None,
+        status=runtime.status if runtime else None,
+        state=resolved.state,
+    )
+
+
+def build_runtime_catalog_out(runtime: Runtime) -> RuntimeOut:
+    """One entry of the runtime list, marked with whether it is this deployment's default."""
+    return RuntimeOut(
+        id=runtime.id,
+        display_name=runtime.display_name,
+        duckdb_line=runtime.duckdb_line,
+        status=runtime.status,
+        extensions=list(runtime.extensions),
+        ducklake_format=runtime.ducklake_format,
+        upstream_eol=runtime.upstream_eol,
+        default=runtime.id == settings.default_runtime,
     )

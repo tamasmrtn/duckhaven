@@ -42,7 +42,11 @@ async def authed_client(client: AsyncClient, user: User):
 
 @pytest_asyncio.fixture
 async def connected_agent(db_session):
-    a = Agent(name="test-agent", status="healthy", capabilities={"extensions": ["httpfs"]})
+    a = Agent(
+        name="test-agent",
+        status="healthy",
+        capabilities={"duckdb_version": "1.5.5", "extensions": ["httpfs"]},
+    )
     db_session.add(a)
     await db_session.commit()
     await db_session.refresh(a)

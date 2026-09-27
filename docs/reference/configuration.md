@@ -181,6 +181,19 @@ advisory lock, like the scheduler, so leave it enabled everywhere.
 | `SQL_STATEMENT_FIRST_PAGE_LIMIT` | `200` | Result rows returned on the statement response itself, sparing a client the second call to `GET /queries/{id}/rows` — which is otherwise unavoidable, since the column names arrive with the rows. `0` disables it deployment-wide; a request may ask for its own number or opt out. Bounded because a statement response is not a bulk transport: a larger result pages from the first page as usual. See [Getting the rows with the answer](../concepts/sql-sessions.md#getting-the-rows-with-the-answer). |
 | `SQL_STATEMENT_MAX_WAIT_TIMEOUT_S` | `60` | Ceiling on what a client may request via `wait_timeout_s`, on the statement call and on `GET /queries/{id}`. Bounds how long a caller can make the API hold a request open. |
 
+### Agent images and runtimes
+
+Which agent image runs where. Every [runtime](../concepts/runtimes.md) is its own image,
+`<AGENT_IMAGE_REPOSITORY>:<AGENT_IMAGE_TAG>-duckdb<runtime>`. The API uses it to start elastic compute and to fill in
+the *Add an agent* snippet, and the bundled compose agent runs the default runtime's image.
+
+| Variable | Default | Description |
+|---|---|---|
+| `DEFAULT_RUNTIME` | `1.5` | The runtime auto-provisioned compute runs, the one the create-compute dialog preselects, and the one the server prefers when it picks an agent itself. The API refuses to start if this names an unknown, beta or retired runtime. In the compose stack it also picks the bundled agent's image, so the two change together. |
+| `AGENT_IMAGE_REPOSITORY` | `ghcr.io/tamasmrtn/duckhaven-agent` | Where agent images are pulled from. Point it at a private registry (for example your ACR) that holds every runtime you offer. |
+| `AGENT_IMAGE_TAG` | the API's own version | The release tag agent images are resolved at, so agents match the API that starts them. A development build (`0.0.0-dev`) uses `latest`. The compose stack sets it to `DUCKHAVEN_IMAGE_TAG`. |
+| `AGENT_IMAGE` | — | **Deprecated.** A full image reference that replaces the *default* runtime's image only, which was how a local or benchmark build was run before runtimes existed. Other runtimes always resolve from the two settings above. Empty means unset. |
+
 ### Elastic compute
 
 Lets the control plane provision [agents](../concepts/agents.md) on demand instead of requiring them to be run by an

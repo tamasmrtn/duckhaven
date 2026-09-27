@@ -46,6 +46,8 @@ class SqlSessionOut(BaseModel):
     workspace_id: uuid.UUID
     status: str
     agent_id: uuid.UUID | None
+    # The runtime (DuckDB line) of the agent holding the session, recorded at open.
+    runtime_id: str | None = None
     user_id: uuid.UUID | None = None
     active_catalog: str | None
     # Scoped object-storage prefix a load may COPY to/from (dlt staging).

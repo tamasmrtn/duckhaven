@@ -876,3 +876,42 @@ async def test_runtimes_are_listed_for_any_signed_in_user(admin_client: AsyncCli
     assert set(by_id) == {"1.5", "2.0", "1.4", "1.3"}
     assert by_id["1.5"]["default"] is True
     assert by_id["2.0"]["status"] == "beta"
+
+
+# ── Status from presence, not from the stored column ─────────────────────────
+
+
+async def test_a_gone_agent_whose_row_still_says_healthy_shows_unavailable(
+    admin_client: AsyncClient, db_session
+):
+    """When the API holding an agent's socket stops before recording the
+    disconnect, the row keeps saying `healthy` and nothing writes it back. The
+    list and the detail page used to show that stale value."""
+    agent = Agent(name="gone", status="healthy")
+    db_session.add(agent)
+    await db_session.commit()
+
+    listed = {a["id"]: a for a in (await admin_client.get("/admin/agents")).json()}
+    assert listed[str(agent.id)]["status"] == "unavailable"
+    detail = (await admin_client.get(f"/admin/agents/{agent.id}")).json()
+    assert detail["status"] == "unavailable"
+    picker = {a["id"]: a for a in (await admin_client.get("/agents")).json()}
+    assert picker[str(agent.id)]["status"] == "unavailable"
+
+
+async def test_a_connected_agent_shows_healthy_before_its_row_catches_up(
+    admin_client: AsyncClient, db_session
+):
+    from api.services.agent_registry import registry
+
+    agent = Agent(name="just-connected", status="unavailable")
+    db_session.add(agent)
+    await db_session.commit()
+    registry.register(agent.id, object())  # type: ignore[arg-type]
+    try:
+        detail = (await admin_client.get(f"/admin/agents/{agent.id}")).json()
+        assert detail["status"] == "healthy"
+        listed = {a["id"]: a for a in (await admin_client.get("/admin/agents")).json()}
+        assert listed[str(agent.id)]["status"] == "healthy"
+    finally:
+        registry.unregister(agent.id)

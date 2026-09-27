@@ -28,7 +28,11 @@ from api.services.agent_dispatch import (
     gather_agent_metrics,
 )
 from api.services.agent_monitoring import DEFAULT_WINDOW, WINDOWS, build_monitoring
-from api.services.agent_view import build_agent_out, build_runtime_catalog_out
+from api.services.agent_view import (
+    build_agent_out,
+    build_runtime_catalog_out,
+    effective_status,
+)
 from api.services.compute import pricing
 from api.services.compute import service as compute_service
 from api.services.permissions import Permission
@@ -60,10 +64,11 @@ async def list_all_agents(
     for agent in agents:
         if agent.id not in tiers:
             continue
-        effective_status = agent.status
-        if str(agent.id) in connected and effective_status == "unavailable":
-            effective_status = "healthy"
-        out.append(build_agent_out(agent, status=effective_status, access_tier=tiers[agent.id]))
+        out.append(
+            build_agent_out(
+                agent, status=effective_status(agent, connected), access_tier=tiers[agent.id]
+            )
+        )
     return out
 
 
@@ -221,12 +226,8 @@ async def get_agent(
 ) -> AgentOut:
     """One agent, for its detail page."""
     agent = resolved.agent
-    # Same reconciliation as the list: a connected agent whose row still says
-    # unavailable has simply not had its status written back yet.
-    effective_status = agent.status
-    if str(agent.id) in await connected_agent_ids(db) and effective_status == "unavailable":
-        effective_status = "healthy"
-    return build_agent_out(agent, status=effective_status, access_tier=resolved.tier)
+    status = effective_status(agent, await connected_agent_ids(db))
+    return build_agent_out(agent, status=status, access_tier=resolved.tier)
 
 
 @router.get("/{agent_id}/monitoring", response_model=AgentMonitoringOut)

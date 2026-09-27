@@ -17,6 +17,20 @@ from api.services.compute import pricing
 from duckhaven_shared.runtimes import Runtime
 
 
+def effective_status(agent: Agent, connected: set[str]) -> str:
+    """The status to show for an agent, from whether it is connected right now.
+
+    The stored ``status`` column lags presence both ways. A connected agent's row
+    can still say ``unavailable`` before its first write lands. And a row can keep
+    saying ``healthy`` after the agent is gone when the API that held its socket
+    stopped before recording the disconnect: nothing else ever writes the row
+    back. ``connected`` (``agent_dispatch.connected_agent_ids``) is the truth.
+    """
+    if str(agent.id) not in connected:
+        return "unavailable"
+    return "healthy" if agent.status == "unavailable" else agent.status
+
+
 def build_agent_out(agent: Agent, *, status: str, access_tier: str | None = None) -> AgentOut:
     caps = AgentCapabilitiesOut(**agent.capabilities) if agent.capabilities else None
     cost = None

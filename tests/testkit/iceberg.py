@@ -31,22 +31,6 @@ def iceberg_secret_sql(client_id: str, client_secret: str, base_url: str) -> str
     )
 
 
-def vended_credentials_are_secrets(conn: duckdb.DuckDBPyConnection) -> bool:
-    """Whether the iceberg extension registered Polaris's vended credentials as a
-    DuckDB secret, which is what lets a *direct* read of a table's files work.
-
-    DuckDB 1.5 does, once a table has been touched. The DuckDB 2.0 pre-release
-    keeps them inside the extension, so only Iceberg scans can use them, and the
-    agent's footer size probe and orphan listing get a 403. Recorded as a blocker
-    for promoting 2.0 in docs/developer/runtime-qualification.md.
-    """
-    return bool(
-        conn.execute("SELECT count(*) FROM duckdb_secrets() WHERE provider = 'iceberg'").fetchone()[
-            0
-        ]
-    )
-
-
 def attach_catalog(
     conn: duckdb.DuckDBPyConnection,
     base_url: str,

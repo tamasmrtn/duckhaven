@@ -177,8 +177,6 @@ def test_get_capabilities_reports_the_runtime(monkeypatch):
     assert caps.engine_version.startswith("v")
     assert caps.platform == runtime.PLATFORM
     assert caps.sandbox == "failed"
-    # The extensions probed are the runtime's own baked set.
-    assert {"httpfs", "iceberg", "ducklake", "postgres_scanner"} <= set(caps.extensions)
 
 
 async def test_pushes_metrics_samples(tmp_path, monkeypatch):

@@ -43,6 +43,8 @@ def test_profile_setting_is_one_this_engine_has():
 def test_secret_bind_parameters_are_detected_on_this_engine():
     """Detected, not assumed: the probe must agree with what the engine does."""
     conn = duckdb.connect()
+    # INSTALL as well: a fresh machine (CI) has no extensions cached.
+    conn.execute("INSTALL httpfs")
     conn.execute("LOAD httpfs")
     try:
         conn.execute("CREATE TEMPORARY SECRET t (TYPE HTTP, BEARER_TOKEN ?)", ["x"])

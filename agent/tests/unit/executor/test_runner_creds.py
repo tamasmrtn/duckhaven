@@ -412,6 +412,8 @@ def test_inlined_secret_values_create_a_working_secret(monkeypatch):
 
     monkeypatch.setattr(runtime, "SECRET_BIND_PARAMETERS", False)
     conn = duckdb.connect()
+    # INSTALL as well: a fresh machine (CI) has no extensions cached.
+    conn.execute("INSTALL httpfs")
     conn.execute("LOAD httpfs")
     runner_module._create_secret(
         conn,

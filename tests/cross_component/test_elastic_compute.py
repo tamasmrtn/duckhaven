@@ -109,8 +109,10 @@ async def test_pool_query_parks_then_runs_when_compute_arrives(
     done = await _poll(lambda: _finished(elastic_client, query["id"]), timeout=90.0)
     assert done is not None, "parked query never finished after compute arrived"
     assert done["status"] == "done", done
-    # It ran on the agent the control plane provisioned for it.
+    # It ran on the agent the control plane provisioned for it, on the default
+    # runtime, and only once that agent had reported what it is.
     assert done["agent_id"] == agent["id"]
+    assert done["runtime_id"] == "1.5"
 
     rows = (await elastic_client.get(f"/api/queries/{query['id']}/rows")).json()
     assert rows["rows"] == [{"n": 1}]

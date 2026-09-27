@@ -45,7 +45,6 @@ from api.services import query as query_service
 from api.services import session_credentials, staging_presign
 from api.services import statement_policy as policy
 from api.services.agent_access import assert_agent_tier
-from api.services.agent_capabilities import agent_supports_catalog, missing_extension
 from api.services.agent_dispatch import is_agent_connected
 from api.services.compute import service as compute_service
 from api.services.grants import GrantDenied, assert_query_access
@@ -54,6 +53,12 @@ from api.services.paging import paginate
 from api.services.permissions import Permission
 from api.services.query import pick_agent_for
 from api.services.rbac import has_permission
+from api.services.runtimes import (
+    AgentNotDispatchable,
+    RuntimeRetired,
+    assert_dispatchable,
+    assert_restartable,
+)
 from api.services.sql_classify import classify_parsed
 from api.services.sql_guard import is_read_only
 from api.services.sql_sessions import service as session_service
@@ -195,17 +200,13 @@ async def open_session(
         # about the agent's state.
         await assert_agent_tier(db, user, agent, "use")
         if await is_agent_connected(db, agent.id):
-            for catalog in catalogs:
-                backend_kind = catalog.storage_backend.kind
-                if not agent_supports_catalog(agent.capabilities, catalog.kind, backend_kind):
-                    missing = missing_extension(agent.capabilities, catalog.kind, backend_kind)
-                    raise HTTPException(
-                        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                        detail={
-                            "error": "agent_incompatible",
-                            "detail": f"Agent '{agent.name}' is missing the '{missing}' extension.",
-                        },
-                    )
+            try:
+                assert_dispatchable(agent, catalogs, for_session=True)
+            except AgentNotDispatchable as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail={"error": exc.code, "detail": exc.detail},
+                ) from None
         elif _is_restartable_elastic(agent):
             # Start it and park, rather than failing: the reaper took this agent down
             # *because* nothing was using it, so refusing here would make an
@@ -213,14 +214,22 @@ async def open_session(
             # already applies to an unattended run). Capabilities are deliberately not
             # checked -- a row that failed while provisioning carries none, so the
             # check would reject a perfectly restartable agent. The binder checks them
-            # once the agent is up and has reported them.
+            # once the agent is up and has reported them. A retired runtime is the one
+            # thing known now: it can never start again.
+            try:
+                assert_restartable(agent)
+            except RuntimeRetired as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={"error": "runtime_retired", "detail": str(exc)},
+                ) from None
             requested_agent_id, restarting, agent = agent.id, agent, None
         else:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Agent not connected"
             )
     else:
-        agent = await pick_agent_for(db, workspace, principal_id=user.id)
+        agent = await pick_agent_for(db, workspace, principal_id=user.id, for_session=True)
         if agent is None and not settings.elastic_compute_enabled:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -276,13 +285,24 @@ async def open_session(
                 },
                 headers={"Retry-After": "5"},
             )
-    elif not await session_service.dispatch_open_session(db, session, catalogs):
-        session.status = "failed"
-        session.error = "agent not connected"
-        await db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Agent not connected"
-        )
+    else:
+        try:
+            opened = await session_service.dispatch_open_session(db, session, catalogs)
+        except AgentNotDispatchable as exc:
+            session.status = "failed"
+            session.error = exc.code
+            await db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail={"error": exc.code, "detail": exc.detail},
+            ) from None
+        if not opened:
+            session.status = "failed"
+            session.error = "agent not connected"
+            await db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Agent not connected"
+            )
 
     if body.wait_timeout_s is not None:
         wait_s = body.wait_timeout_s
@@ -573,6 +593,7 @@ async def run_statement(
         origin="session",
         statement_type=classify_parsed(parsed_statements),
         session_id=session.id,
+        runtime_id=session.runtime_id,
         # Persisted so the reaper can bound this statement server-side; the agent
         # enforces the same budget around execution.
         timeout_s=body.timeout_s,

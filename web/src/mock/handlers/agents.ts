@@ -3,6 +3,8 @@ import {
   AGENTS,
   AGENT_GRANTS,
   AGENT_GRANT_PRINCIPALS,
+  RUNTIMES,
+  agentRuntime,
 } from "../fixtures/agents";
 import { makeEmptyMonitoring, makeMonitoring } from "../fixtures/monitoring";
 import { nextBootstrapToken } from "../lib/seed";
@@ -52,12 +54,24 @@ export const agentHandlers = [
     return HttpResponse.json(AGENTS);
   }),
 
-  http.post("/api/admin/agents/bootstrap", () => {
+  http.get("/api/runtimes", () => {
+    return HttpResponse.json(RUNTIMES);
+  }),
+
+  http.post("/api/admin/agents/bootstrap", async ({ request }) => {
+    const body = (await request.json().catch(() => null)) as {
+      runtime_id?: string;
+    } | null;
+    const runtimeId = body?.runtime_id ?? "1.5";
+    if (!RUNTIMES.some((r) => r.id === runtimeId)) {
+      return httpError(422, `Unknown runtime '${runtimeId}'.`);
+    }
     return HttpResponse.json({
       token: nextBootstrapToken(),
       expires_at: new Date(Date.now() + 86400000).toISOString(),
       control_plane_url: "ws://localhost:8000/agents/connect",
-      agent_image: "ghcr.io/tamasmrtn/duckhaven-agent:latest",
+      agent_image: `ghcr.io/tamasmrtn/duckhaven-agent:latest-duckdb${runtimeId}`,
+      runtime_id: runtimeId,
     });
   }),
 
@@ -75,6 +89,8 @@ export const agentHandlers = [
       price_vcpu_hour: PRICE_VCPU,
       price_memory_gb_hour: PRICE_MEM,
       default_idle_minutes: 15,
+      runtimes: RUNTIMES,
+      default_runtime: "1.5",
     });
   }),
 
@@ -85,6 +101,8 @@ export const agentHandlers = [
       idle_timeout_minutes?: number;
       name?: string;
       access_mode?: AgentAccessMode;
+      runtime_id?: string;
+      allow_beta?: boolean;
     };
     if (
       body.cpu < 1 ||
@@ -93,6 +111,14 @@ export const agentHandlers = [
       body.memory_gb > 16
     ) {
       return httpError(422, "Invalid size");
+    }
+    const runtime = RUNTIMES.find((r) => r.id === (body.runtime_id ?? "1.5"));
+    if (!runtime) return httpError(422, "Unknown runtime");
+    if (runtime.status === "beta" && !body.allow_beta) {
+      return httpError(
+        422,
+        `${runtime.display_name} is in beta; set allow_beta.`,
+      );
     }
     elasticSeq += 1;
     const agent: Agent = {
@@ -114,6 +140,8 @@ export const agentHandlers = [
       // agent — including one they just created restricted.
       access_tier: "admin",
       access_mode: body.access_mode ?? "open",
+      // Not reported yet: the runtime it was started as.
+      runtime: { ...agentRuntime(runtime.id), state: "pending" },
     };
     AGENTS.push(agent);
     return HttpResponse.json(agent, { status: 202 });

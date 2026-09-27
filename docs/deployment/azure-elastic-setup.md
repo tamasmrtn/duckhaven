@@ -110,6 +110,12 @@ ELASTIC_DEFAULT_CPU=2
 ELASTIC_DEFAULT_MEMORY_GB=4
 ```
 
+Each container group runs its agent's [runtime](../concepts/runtimes.md) image,
+`<AGENT_IMAGE_REPOSITORY>:<AGENT_IMAGE_TAG>-duckdb<runtime>`. A private registry has to hold every runtime you
+want to offer, not only the default: an admin who creates compute on a runtime whose image is missing gets a
+provisioning failure. Set `AGENT_IMAGE_REPOSITORY` to your registry's `duckhaven-agent` repository. The tag
+defaults to the control plane's own version.
+
 If the agent image lives in a private registry, point DuckHaven at a user-assigned managed identity
 that holds `AcrPull` on it. Each container group is created carrying that identity and pulls its
 image as itself, so there is no registry password to store or rotate — and none appears in the

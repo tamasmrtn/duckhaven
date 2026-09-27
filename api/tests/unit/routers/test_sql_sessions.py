@@ -50,7 +50,11 @@ async def workspace(db_session, user: User):
 
 @pytest_asyncio.fixture
 async def agent(db_session):
-    a = Agent(name="sess-agent", status="healthy", capabilities={"extensions": ["httpfs"]})
+    a = Agent(
+        name="sess-agent",
+        status="healthy",
+        capabilities={"duckdb_version": "1.5.5", "extensions": ["httpfs"]},
+    )
     db_session.add(a)
     await db_session.commit()
     await db_session.refresh(a)
@@ -819,7 +823,7 @@ async def terminated_agent(db_session):
     a = Agent(
         name="cold-agent",
         status="unavailable",
-        capabilities={"extensions": ["httpfs"]},
+        capabilities={"duckdb_version": "1.5.5", "extensions": ["httpfs"]},
         provider="null",
         lifecycle="terminated",
         pool_key="object_store",
@@ -996,7 +1000,7 @@ async def test_continue_returns_202_then_the_session_opens(
     monkeypatch.setattr(session_service, "dispatch_open_session", fake_dispatch)
     agent_row = [a for a in await _agent_rows(db_session) if a.provider is not None][0]
     agent_row.lifecycle = "running"
-    agent_row.capabilities = {"extensions": ["httpfs"]}
+    agent_row.capabilities = {"duckdb_version": "1.5.5", "extensions": ["httpfs"]}
     await db_session.commit()
     assert await compute_service.bind_pending_sessions(db_session, agent_row) == 1
 
@@ -1367,3 +1371,53 @@ async def test_first_page_limit_above_the_cap_is_rejected(
         json={"sql": "SELECT 1", "first_page_limit": 5000},
     )
     assert resp.status_code == 422, resp.text
+
+
+# --- runtimes ---
+
+
+async def test_an_agent_whose_lock_failed_cannot_hold_a_session(
+    authed_client, db_session, workspace, connected_agent, enabled
+):
+    """A session runs under a relaxed statement policy on the strength of the
+    agent's configuration lock; an agent reporting that its lock failed is refused."""
+    connected_agent.capabilities = {
+        **connected_agent.capabilities,
+        "runtime_id": "1.5",
+        "engine_version": "v1.5.5",
+        "sandbox": "failed",
+    }
+    await db_session.commit()
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/sql/sessions", json={"agent_id": str(connected_agent.id)}
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"] == "agent_sandbox_unverified"
+
+
+async def test_a_session_and_its_statements_record_the_runtime(
+    authed_client, db_session, workspace, connected_agent, enabled
+):
+    """The real dispatch stamps the session; each statement copies it."""
+    import sqlalchemy as sa
+
+    from api.models.query import Query
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/sql/sessions",
+        json={
+            "agent_id": str(connected_agent.id),
+            "wait_timeout_s": 0,
+            "on_wait_timeout": "continue",
+        },
+    )
+    session = await db_session.get(SqlSession, uuid.UUID(resp.json()["id"]))
+    await db_session.refresh(session)
+    assert session.runtime_id == "1.5"
+
+    session.status = "open"
+    await db_session.commit()
+    await authed_client.post(f"/sql/sessions/{session.id}/statements", json={"sql": "SELECT 1"})
+    statement = (await db_session.execute(sa.select(Query))).scalars().one()
+    assert statement.runtime_id == "1.5"

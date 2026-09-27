@@ -261,6 +261,137 @@ describe('AgentDetailPage', () => {
       expect(within(section).getByText('Failed').nextSibling).toHaveTextContent('4')
     })
 
+    it('shows the runtime, exact engine and whether the sandbox lock applied', async () => {
+      server.use(
+        http.get('/api/admin/agents/ag-1', () =>
+          HttpResponse.json({
+            id: 'ag-1',
+            name: 'agent-a',
+            status: 'healthy',
+            capabilities: {
+              duckdb_version: '1.5.5 (with duckdb 1.5.5)',
+              engine_version: 'v1.5.5',
+              runtime_id: '1.5',
+              sandbox: 'failed',
+              extensions: ['httpfs', 'iceberg'],
+              memory_limit_gb: 6,
+              cores: 4,
+              host: 'homeserver-01',
+            },
+            last_ping_at: new Date().toISOString(),
+            created_at: new Date().toISOString(),
+            access_tier: 'admin',
+            access_mode: 'open',
+            runtime: { id: '1.5', display_name: 'DuckDB 1.5', status: 'ga', state: 'ok', default: true },
+          }),
+        ),
+      )
+      const user = userEvent.setup()
+      renderWithProviders({ initialRoute: STATIC })
+      await user.click(await screen.findByRole('tab', { name: /overview/i }))
+
+      const section = (await screen.findByText('Capabilities')).closest('section')!
+      expect(within(section).getByText('Runtime').nextSibling).toHaveTextContent('DuckDB 1.5')
+      expect(within(section).getByText('DuckDB').nextSibling).toHaveTextContent('v1.5.5')
+      expect(within(section).getByText('Sandbox').nextSibling).toHaveTextContent(
+        'lock failed — no SQL sessions',
+      )
+    })
+
+    it('lists every extension in full rather than truncating the line', async () => {
+      const user = userEvent.setup()
+      renderWithProviders({ initialRoute: STATIC })
+      await user.click(await screen.findByRole('tab', { name: /overview/i }))
+
+      const list = await screen.findByRole('list', { name: 'Extensions' })
+      // agent-a (ag-1) advertises three extensions; each is its own item.
+      expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+        'iceberg',
+        'httpfs',
+        'azure',
+      ])
+    })
+
+    it('explains each capability from the ⓘ beside it', async () => {
+      const user = userEvent.setup()
+      renderWithProviders({ initialRoute: STATIC })
+      await user.click(await screen.findByRole('tab', { name: /overview/i }))
+
+      for (const label of ['Runtime', 'DuckDB', 'Memory cap', 'Cores', 'Host', 'Extensions']) {
+        expect(
+          await screen.findByRole('button', { name: `What is ${label}?` }),
+        ).toBeInTheDocument()
+      }
+      // Keyboard focus opens it, not only a mouse hover.
+      screen.getByRole('button', { name: 'What is Extensions?' }).focus()
+      expect(
+        (await screen.findAllByText(/httpfs for S3 and the bundled object store/)).length,
+      ).toBeGreaterThan(0)
+    })
+
+    it('warns about a deprecated runtime and names its upstream end of support', async () => {
+      server.use(
+        http.get('/api/runtimes', () =>
+          HttpResponse.json([
+            {
+              id: '1.4',
+              display_name: 'DuckDB 1.4',
+              duckdb_line: '1.4',
+              status: 'deprecated',
+              extensions: [],
+              ducklake_format: null,
+              upstream_eol: '2026-11-17',
+              default: false,
+            },
+          ]),
+        ),
+        http.get('/api/admin/agents/ag-1', () =>
+          HttpResponse.json({
+            id: 'ag-1',
+            name: 'agent-a',
+            status: 'healthy',
+            capabilities: { duckdb_version: '1.4.3', extensions: [], memory_limit_gb: 6, cores: 4 },
+            last_ping_at: new Date().toISOString(),
+            created_at: new Date().toISOString(),
+            access_tier: 'admin',
+            runtime: { id: '1.4', display_name: 'DuckDB 1.4', status: 'deprecated', state: 'ok' },
+          }),
+        ),
+      )
+      const user = userEvent.setup()
+      renderWithProviders({ initialRoute: STATIC })
+      await user.click(await screen.findByRole('tab', { name: /overview/i }))
+
+      expect(
+        await screen.findByText(/DuckDB 1\.4 is deprecated \(upstream support ended 2026-11-17\)/),
+      ).toBeInTheDocument()
+    })
+
+    it('offers no restart for an agent on a retired runtime', async () => {
+      server.use(
+        http.get('/api/admin/agents/ag-5', () =>
+          HttpResponse.json({
+            id: 'ag-5',
+            name: 'warehouse-a',
+            status: 'unavailable',
+            capabilities: null,
+            last_ping_at: null,
+            created_at: new Date().toISOString(),
+            provider: 'azure_aci',
+            lifecycle: 'terminated',
+            access_tier: 'operate',
+            runtime: { id: '1.3', display_name: 'DuckDB 1.3', status: 'retired', state: 'pending' },
+          }),
+        ),
+      )
+      const user = userEvent.setup()
+      renderWithProviders({ initialRoute: ELASTIC })
+      await user.click(await screen.findByRole('tab', { name: /overview/i }))
+
+      await screen.findByText('Elastic compute')
+      expect(screen.queryByRole('button', { name: /restart agent/i })).not.toBeInTheDocument()
+    })
+
     it('restarts a terminated elastic agent', async () => {
       let restarted = false
       server.use(

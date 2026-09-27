@@ -259,9 +259,21 @@ resource "azurerm_container_app" "api" {
         value = azurerm_subnet.aci.id
       }
 
+      # Provisioned agents run `<repository>:<tag>-duckdb<runtime>`: one image per
+      # runtime (a DuckDB line plus its extensions), at the same tag as the API.
       env {
-        name  = "AGENT_IMAGE"
-        value = "${azurerm_container_registry.main.login_server}/${local.agent_image_repository}:${var.duckhaven_image_tag}"
+        name  = "AGENT_IMAGE_REPOSITORY"
+        value = "${azurerm_container_registry.main.login_server}/${local.agent_image_repository}"
+      }
+
+      env {
+        name  = "AGENT_IMAGE_TAG"
+        value = var.duckhaven_image_tag
+      }
+
+      env {
+        name  = "DEFAULT_RUNTIME"
+        value = var.default_runtime
       }
 
       # How a provisioned container group pulls the agent image: the control plane

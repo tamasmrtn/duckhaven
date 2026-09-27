@@ -62,6 +62,9 @@ x-api-base: &api-base
     AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-}
     AZURE_CLIENT_SECRET: ${AZURE_CLIENT_SECRET:-}
     AGENT_BOOTSTRAP_TOKEN: ${AGENT_BOOTSTRAP_TOKEN:-dh_boot_localdev_seed}
+    # See docker-compose.yml: the runtime and image tag agents are resolved at.
+    DEFAULT_RUNTIME: ${DEFAULT_RUNTIME:-1.5}
+    AGENT_IMAGE_TAG: ${DUCKHAVEN_IMAGE_TAG:-latest}
     COOKIE_SECURE: ${COOKIE_SECURE:-false}
     # Shared secret guarding the private /internal dispatch endpoints between
     # replicas. Required for cross-replica agent dispatch to work.
@@ -324,7 +327,10 @@ services:
   # Bundled agent dials Caddy; it lands on one replica and reconnects to another
   # if that replica drains or dies.
   agent:
-    image: ghcr.io/tamasmrtn/duckhaven-agent:${DUCKHAVEN_IMAGE_TAG:-latest}
+    # The default runtime's image (a DuckDB line plus its extensions), named
+    # explicitly so the bundled agent and the API's DEFAULT_RUNTIME change together,
+    # and only when .env says so.
+    image: ghcr.io/tamasmrtn/duckhaven-agent:${DUCKHAVEN_IMAGE_TAG:-latest}-duckdb${DEFAULT_RUNTIME:-1.5}
     restart: unless-stopped
     mem_limit: ${AGENT_MEM_LIMIT:-4g}
     # Sandbox hardening, identical to the dev compose file. Because the API

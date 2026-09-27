@@ -31,7 +31,6 @@ from api.services import query as query_service
 from api.services import query_history
 from api.services import sql_metadata as sql_metadata_service
 from api.services.agent_access import assert_agent_tier, assert_can_assign_agent
-from api.services.agent_capabilities import agent_supports_catalog, missing_extension
 from api.services.agent_dispatch import is_agent_connected, send_to_agent
 from api.services.compute import service as compute_service
 from api.services.grants import GrantDenied
@@ -39,6 +38,12 @@ from api.services.migration.service import workspace_has_active_migration
 from api.services.paging import paginate
 from api.services.permissions import Permission
 from api.services.rbac import has_permission
+from api.services.runtimes import (
+    AgentNotDispatchable,
+    RuntimeRetired,
+    assert_dispatchable,
+    assert_restartable,
+)
 from api.services.sql_classify import STATEMENT_TYPES
 from api.services.sql_guard import SQLNotAllowed, assert_allowed, is_read_only
 from api.services.sql_sessions import service as sql_session_service
@@ -105,23 +110,30 @@ async def create_query(
             },
         )
 
-    # Elastic-pool target: no specific agent chosen. Dispatch to a compatible
+    # No specific agent chosen. With elastic compute, dispatch to a compatible
     # connected agent if one exists, else park the run queued and provision one.
+    # Without it, pick the connected agent the server would choose — default
+    # runtime first, never a beta one — so a caller that doesn't care which agent
+    # runs its SQL (the assistant, a script) needn't pick one itself.
     if body.agent_id is None:
-        if not settings.elastic_compute_enabled:
+        if settings.elastic_compute_enabled:
+            return await _create_elastic_query(db, workspace, user.id, body)
+        agent = await query_service.pick_agent_for(db, workspace, principal_id=user.id)
+        if agent is None:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail={"error": "agent_required", "detail": "agent_id is required"},
             )
-        return await _create_elastic_query(db, workspace, user.id, body)
-
-    result = await db.execute(select(Agent).where(Agent.id == body.agent_id))
-    agent = result.scalar_one_or_none()
-    if agent is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-    # Before the connectivity probe, so a caller without access learns nothing about
-    # the agent's state (and an invisible agent 404s exactly like a missing one).
-    await assert_agent_tier(db, user, agent, "use")
+        body.agent_id = agent.id
+    else:
+        result = await db.execute(select(Agent).where(Agent.id == body.agent_id))
+        agent = result.scalar_one_or_none()
+        if agent is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+        # Before the connectivity probe, so a caller without access learns nothing
+        # about the agent's state (and an invisible agent 404s exactly like a
+        # missing one).
+        await assert_agent_tier(db, user, agent, "use")
     if not await is_agent_connected(db, body.agent_id):
         if (
             settings.elastic_compute_enabled
@@ -140,23 +152,12 @@ async def create_query(
         db.add(failed)
         raise await _agent_not_connected(db, failed)
 
-    # Every catalog bound to the workspace is attached on each query, so the
-    # agent must support every catalog's kind and storage backend kind.
-    catalogs = await resolve_workspace_catalogs(db, workspace.id)
-    for catalog in catalogs:
-        kind = catalog.storage_backend.kind
-        if not agent_supports_catalog(agent.capabilities, catalog.kind, kind):
-            missing = missing_extension(agent.capabilities, catalog.kind, kind)
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail={
-                    "error": "agent_incompatible",
-                    "detail": (
-                        f"Agent '{agent.name}' is missing the '{missing}' extension required "
-                        f"by catalog '{catalog.slug}' ({catalog.kind} on {kind})."
-                    ),
-                },
-            )
+    # Checked here, before a query row exists, so a refusal leaves nothing behind.
+    # dispatch_query applies the same check on every other path.
+    try:
+        assert_dispatchable(agent, await resolve_workspace_catalogs(db, workspace.id))
+    except AgentNotDispatchable as exc:
+        raise _not_dispatchable(exc) from None
 
     await _stamp_saved_query_run(db, workspace, body.saved_query_id)
 
@@ -185,6 +186,21 @@ async def create_query(
         # probe above and the send. Same answer as the probe, rather than a 500.
         raise await _agent_not_connected(db, query) from None
     return query
+
+
+def _not_dispatchable(exc: AgentNotDispatchable) -> HTTPException:
+    """The 422 for an agent the dispatch checks refuse (extensions or runtime)."""
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        detail={"error": exc.code, "detail": exc.detail},
+    )
+
+
+def _runtime_retired(exc: RuntimeRetired) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={"error": "runtime_retired", "detail": str(exc)},
+    )
 
 
 async def _agent_not_connected(db: AsyncSession, query: Query) -> HTTPException:
@@ -245,7 +261,12 @@ async def _create_starting_query(
     ``origin`` stays null: this is an interactive run, and History must not report
     it as anything else. Compatibility is checked when the agent registers, not
     here: a row that failed while provisioning advertises no capabilities at all.
+    Only a retired runtime is refused up front, since it can never start again.
     """
+    try:
+        assert_restartable(agent)
+    except RuntimeRetired as exc:
+        raise _runtime_retired(exc) from None
     await _stamp_saved_query_run(db, workspace, body.saved_query_id)
     query = Query(
         workspace_id=workspace.id,
@@ -319,6 +340,8 @@ async def _create_elastic_query(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={"error": "grant_denied", "detail": str(exc)},
             ) from exc
+        except AgentNotDispatchable as exc:
+            raise _not_dispatchable(exc) from None
         except query_service.AgentUnavailable:
             # Presence is read from Postgres with a TTL, so the agent picked above can
             # have lost its socket already -- and a terminating agent keeps its
@@ -379,21 +402,37 @@ async def _set_concurrency(
 @router.get("/workspaces/{workspace}/sql-metadata", response_model=SqlMetadataOut)
 async def get_sql_metadata(
     ws: Annotated[str, Path(alias="workspace")],
+    agent_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> SqlMetadataOut:
     """DuckDB function/keyword/type dictionary for editor autocomplete.
 
-    Sourced live from a connected agent (cached per DuckDB version). Returns 503
-    when no compatible agent is connected so the editor falls back to its static
-    keyword list rather than caching an empty dictionary.
+    Sourced live from a connected agent (cached per DuckDB version). Pass
+    ``agent_id`` — the worksheet's selected agent — to get *that* agent's
+    dictionary: agents on different runtimes run different DuckDB versions, with
+    different functions. Returns 503 when no compatible agent is connected so the
+    editor falls back to its static keyword list rather than caching an empty
+    dictionary.
     """
     workspace = await get_workspace(db, ws)
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
     await assert_workspace_member(db, workspace.id, user.id)
 
-    agent = await query_service.pick_agent_for(db, workspace, principal_id=user.id)
+    if agent_id is not None:
+        agent = await db.get(Agent, agent_id)
+        if agent is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+        await assert_agent_tier(db, user, agent, "use")
+        try:
+            assert_dispatchable(agent, await resolve_workspace_catalogs(db, workspace.id))
+        except AgentNotDispatchable:
+            agent = None
+        if agent is not None and not await is_agent_connected(db, agent.id):
+            agent = None
+    else:
+        agent = await query_service.pick_agent_for(db, workspace, principal_id=user.id)
     if agent is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

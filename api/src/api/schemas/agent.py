@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -18,6 +18,50 @@ class AgentCapabilitiesOut(BaseModel):
     cpu_cores_physical: int | None = None
     tailscale_ip: str | None = None
     host: str | None = None
+    protocol_features: list[str] = []
+    # What the agent reports about its runtime (see duckhaven_shared.schemas);
+    # all null for an agent image built before runtimes existed.
+    runtime_id: str | None = None
+    engine_version: str | None = None
+    agent_version: str | None = None
+    platform: str | None = None
+    sandbox: Literal["verified", "failed", "disabled"] | None = None
+
+
+RuntimeStatus = Literal["beta", "ga", "deprecated", "retired"]
+
+
+class RuntimeOut(BaseModel):
+    """One curated agent runtime: a DuckDB line plus its baked extensions."""
+
+    id: str
+    display_name: str
+    duckdb_line: str
+    status: RuntimeStatus
+    extensions: list[str]
+    ducklake_format: str | None
+    upstream_eol: date | None
+    # Whether auto-provisioned compute runs this runtime in this deployment.
+    default: bool
+
+
+class AgentRuntimeOut(BaseModel):
+    """The runtime an agent runs, as the control plane judges it.
+
+    ``state`` says whether it is trusted with work: ``ok`` and ``inferred`` (an
+    image from before runtimes, matched by its DuckDB line) are; ``mismatch``,
+    ``unrecognized`` and ``retired`` are shown but refused; ``pending`` means the
+    agent hasn't reported yet (for elastic compute, ``id`` is then the runtime it
+    was started as).
+    """
+
+    id: str | None
+    display_name: str | None
+    status: RuntimeStatus | None
+    state: Literal["pending", "ok", "inferred", "mismatch", "unrecognized", "retired"]
+    # Whether it is the deployment's default runtime, which the server prefers when
+    # it picks an agent itself; clients choosing a fallback rank the same way.
+    default: bool = False
 
 
 class AgentOut(BaseModel):
@@ -49,6 +93,7 @@ class AgentOut(BaseModel):
     # Whether this agent's ACL gates the `use` tier ("restricted") or every
     # authenticated caller may target it ("open").
     access_mode: str = "open"
+    runtime: AgentRuntimeOut | None = None
 
 
 class ComputeOptionsOut(BaseModel):
@@ -72,6 +117,10 @@ class ComputeOptionsOut(BaseModel):
     price_vcpu_hour: float
     price_memory_gb_hour: float
     default_idle_minutes: int
+    # Runtimes new compute may be created on (retired and deprecated ones are not
+    # offered), and the one to preselect.
+    runtimes: list[RuntimeOut] = []
+    default_runtime: str | None = None
 
 
 class ElasticAgentCreate(BaseModel):
@@ -93,6 +142,10 @@ class ElasticAgentCreate(BaseModel):
     # register and start taking work in that window. Defaults to `open`, which is
     # how every agent behaved before per-agent access existed.
     access_mode: AgentAccessMode = "open"
+    # The runtime to run; omit for the deployment's default. A beta runtime needs
+    # `allow_beta`, so nobody lands on a pre-release DuckDB by accident.
+    runtime_id: str | None = None
+    allow_beta: bool = False
 
 
 class MetricsSampleOut(BaseModel):
@@ -175,8 +228,14 @@ class BootstrapTokenOut(BaseModel):
     # WebSocket URL the new agent should dial (derived from the request's
     # Host / X-Forwarded-Proto so it Just Works behind a TLS terminator).
     control_plane_url: str
-    # Image the agent compose snippet pins to.
+    # Image the agent compose snippet pins to: the requested runtime's.
     agent_image: str
+    runtime_id: str
+
+
+class BootstrapCreate(BaseModel):
+    # The runtime the new agent should run; omit for the deployment's default.
+    runtime_id: str | None = None
 
 
 # --- Per-agent access control -------------------------------------------------

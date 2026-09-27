@@ -505,7 +505,11 @@ async def test_lineage_failure_does_not_break_frame_handling(db_session, monkeyp
 
 async def test_pick_agent_for(db_session):
     ws, _catalog = await _make_workspace(db_session)
-    agent = Agent(name="a", status="healthy", capabilities={"extensions": ["iceberg", "httpfs"]})
+    agent = Agent(
+        name="a",
+        status="healthy",
+        capabilities={"duckdb_version": "1.5.5", "extensions": ["iceberg", "httpfs"]},
+    )
     db_session.add(agent)
     await db_session.commit()
     await db_session.refresh(agent)

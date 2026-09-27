@@ -7,9 +7,9 @@ agents use the deployment's default. Everything that needs to know what a runtim
 contains reads it from here — the agent image build, the agent's capability probe,
 the API's routing, and CI's build matrix — so the list cannot drift between them.
 
-The exact DuckDB patch is deliberately not recorded. It rides DuckHaven releases the
-way a maintenance update rides a Databricks runtime: ``1.5`` means "the newest 1.5.x
-this release was built with". The agent reports the patch it actually runs.
+The exact DuckDB patch is deliberately not recorded. It rides DuckHaven releases as a
+maintenance update of the runtime: ``1.5`` means "the newest 1.5.x this release was
+built with". The agent reports the patch it actually runs.
 
 Only the extension *install* names live here. What a catalog kind or storage backend
 *requires* is a different question, answered by ``api.services.agent_capabilities``.

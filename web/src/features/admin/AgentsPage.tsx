@@ -11,6 +11,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader, PageToolbar } from "@/components/ui/page-header";
 import { Segmented } from "@/components/ui/segmented";
@@ -30,7 +31,14 @@ import {
   useCreateElasticAgent,
 } from "@/queries/agents";
 import { useMe } from "@/queries/auth";
-import type { Agent, AgentAccessMode, BootstrapToken } from "@/types/agent";
+import { RuntimeBadge } from "@/components/app/RuntimeBadge";
+import {
+  runtimeLabel,
+  type Agent,
+  type AgentAccessMode,
+  type BootstrapToken,
+  type Runtime,
+} from "@/types/agent";
 import { cn, plural } from "@/utils";
 import { agentDotClass, formatCost, relativeTime } from "./agentFormat";
 
@@ -82,6 +90,43 @@ function buildComposeSnippet(token: BootstrapToken, name?: string): string {
   ].join("\n");
 }
 
+/**
+ * Which runtime — DuckDB line plus its extensions — an agent will run. The
+ * deployment's default comes first and is preselected by the caller; a beta
+ * runtime is labelled so nobody picks a pre-release DuckDB unawares.
+ */
+function RuntimeSelect({
+  id,
+  runtimes,
+  value,
+  onChange,
+}: {
+  id: string;
+  runtimes: Runtime[];
+  value: string;
+  onChange: (runtimeId: string) => void;
+}) {
+  const ordered = [...runtimes].sort(
+    (a, b) => Number(b.default) - Number(a.default),
+  );
+  return (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger id={id} aria-label="Runtime">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {ordered.map((r) => (
+          <SelectItem key={r.id} value={r.id}>
+            {r.display_name}
+            {r.status === "beta" ? " (Beta)" : ""}
+            {r.default ? " — default" : ""}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 interface BootstrapModalProps {
   open: boolean;
   onClose: () => void;
@@ -89,12 +134,16 @@ interface BootstrapModalProps {
 
 function BootstrapModal({ open, onClose }: BootstrapModalProps) {
   const bootstrap = useBootstrapAgent();
+  const { data: options } = useComputeOptions();
+  const runtimes = options?.runtimes ?? [];
   const [token, setToken] = useState<BootstrapToken | null>(null);
   const [name, setName] = useState("");
+  const [runtimeId, setRuntimeId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const chosenRuntime = runtimeId ?? options?.default_runtime ?? null;
 
   function handleGenerate() {
-    bootstrap.mutate(undefined, {
+    bootstrap.mutate(chosenRuntime ?? undefined, {
       onSuccess: (data) => setToken(data),
     });
   }
@@ -109,6 +158,7 @@ function BootstrapModal({ open, onClose }: BootstrapModalProps) {
   function handleClose() {
     setToken(null);
     setName("");
+    setRuntimeId(null);
     setCopied(false);
     onClose();
   }
@@ -144,6 +194,21 @@ function BootstrapModal({ open, onClose }: BootstrapModalProps) {
                 blank, and cannot be changed after the agent registers.
               </p>
             </div>
+            {runtimes.length > 1 && chosenRuntime && (
+              <div className="space-y-1.5">
+                <Label htmlFor="bootstrap-runtime">Runtime</Label>
+                <RuntimeSelect
+                  id="bootstrap-runtime"
+                  runtimes={runtimes}
+                  value={chosenRuntime}
+                  onChange={setRuntimeId}
+                />
+                <p className="text-2xs text-text-tertiary">
+                  The DuckDB version and extensions the agent's image carries.
+                  Its image tag in the snippet follows this choice.
+                </p>
+              </div>
+            )}
             <Button
               onClick={handleGenerate}
               disabled={bootstrap.isPending}
@@ -215,7 +280,14 @@ function CreateComputeModal({ open, onClose }: CreateComputeModalProps) {
   const [idleMinutes, setIdleMinutes] = useState<number | null>(null);
   const [name, setName] = useState("");
   const [accessMode, setAccessMode] = useState<AgentAccessMode>("open");
+  const [runtimeId, setRuntimeId] = useState<string | null>(null);
+  const [betaAccepted, setBetaAccepted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const runtimes = options?.runtimes ?? [];
+  const chosenRuntimeId = runtimeId ?? options?.default_runtime ?? null;
+  const chosenRuntime = runtimes.find((r) => r.id === chosenRuntimeId) ?? null;
+  const isBeta = chosenRuntime?.status === "beta";
 
   const currency = options?.currency ?? null;
   // Initialize the sliders from the server ranges once options load.
@@ -233,6 +305,8 @@ function CreateComputeModal({ open, onClose }: CreateComputeModalProps) {
     setIdleMinutes(null);
     setName("");
     setAccessMode("open");
+    setRuntimeId(null);
+    setBetaAccepted(false);
     setError(null);
     onClose();
   }
@@ -246,6 +320,8 @@ function CreateComputeModal({ open, onClose }: CreateComputeModalProps) {
         idle_timeout_minutes: idleValue,
         name: name.trim() || undefined,
         access_mode: accessMode,
+        runtime_id: chosenRuntimeId ?? undefined,
+        allow_beta: isBeta ? true : undefined,
       });
       handleClose();
     } catch (err) {
@@ -402,6 +478,43 @@ function CreateComputeModal({ open, onClose }: CreateComputeModalProps) {
               </p>
             </div>
 
+            {runtimes.length > 1 && chosenRuntimeId && (
+              <div className="space-y-1.5">
+                <Label htmlFor="compute-runtime">Runtime</Label>
+                <RuntimeSelect
+                  id="compute-runtime"
+                  runtimes={runtimes}
+                  value={chosenRuntimeId}
+                  onChange={(id) => {
+                    setRuntimeId(id);
+                    setBetaAccepted(false);
+                  }}
+                />
+                <p className="text-2xs text-text-tertiary">
+                  The DuckDB version and extensions it runs. It keeps this
+                  runtime every time it restarts.
+                </p>
+                {isBeta && (
+                  <label
+                    htmlFor="compute-beta"
+                    className="flex items-start gap-2 rounded-md border border-[var(--status-running)]/40 p-2 text-2xs text-text-secondary"
+                  >
+                    <Checkbox
+                      id="compute-beta"
+                      checked={betaAccepted}
+                      onCheckedChange={(v) => setBetaAccepted(v === true)}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      {chosenRuntime?.display_name} is in beta. Only work that
+                      names this agent runs on it, and SQL that only this DuckDB
+                      version understands may still be refused.
+                    </span>
+                  </label>
+                )}
+              </div>
+            )}
+
             {error && (
               <p className="text-xs text-[var(--status-failed)]">{error}</p>
             )}
@@ -414,7 +527,9 @@ function CreateComputeModal({ open, onClose }: CreateComputeModalProps) {
           </Button>
           <Button
             onClick={handleCreate}
-            disabled={!options?.enabled || create.isPending}
+            disabled={
+              !options?.enabled || create.isPending || (isBeta && !betaAccepted)
+            }
           >
             {create.isPending ? (
               <span className="flex items-center gap-1.5">
@@ -570,7 +685,7 @@ export function AgentsPage() {
                 {[
                   "Status",
                   "Name",
-                  "DuckDB",
+                  "Runtime",
                   "Host",
                   "Extensions",
                   "Mem",
@@ -632,8 +747,13 @@ export function AgentsPage() {
                       )}
                     </span>
                   </td>
-                  <td className="px-4 py-2 font-mono text-xs">
-                    {agent.capabilities?.duckdb_version ?? "—"}
+                  <td className="px-4 py-2 text-xs">
+                    <span className="flex items-center gap-1.5">
+                      <span className="font-mono">
+                        {runtimeLabel(agent) ?? "—"}
+                      </span>
+                      <RuntimeBadge agent={agent} />
+                    </span>
                   </td>
                   <td className="px-4 py-2 text-xs text-text-secondary">
                     {agent.capabilities?.host ?? "—"}

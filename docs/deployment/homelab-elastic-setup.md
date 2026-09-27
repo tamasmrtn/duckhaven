@@ -157,6 +157,11 @@ They read `AZURE` for historical reasons but apply to whichever provider is conf
 | `ELASTIC_DEFAULT_MEMORY_GB` | `4` | Memory per agent, same |
 | `ELASTIC_AGENT_ENV` | `{}` | JSON object of extra environment for every provisioned agent, for anything you tuned on a static one |
 
+Provisioned agents run their [runtime](../concepts/runtimes.md)'s image,
+`ghcr.io/tamasmrtn/duckhaven-agent:<DUCKHAVEN_IMAGE_TAG>-duckdb<runtime>`, which is pulled the first time
+it is needed. `DEFAULT_RUNTIME` picks the pool's runtime and the bundled agent's. To run a local build,
+`make build-agent RUNTIME=<runtime>` tags it the way the API looks it up.
+
 The lifecycle knobs — `ELASTIC_IDLE_TIMEOUT_S`, `ELASTIC_MAX_LIFETIME_S`,
 `ELASTIC_MAX_AGENTS_PER_POOL` and the rest — are provider-independent and documented in the
 [configuration reference](../reference/configuration.md).

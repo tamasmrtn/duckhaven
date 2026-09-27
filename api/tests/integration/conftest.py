@@ -337,7 +337,7 @@ async def connected_agent(db_session: AsyncSession) -> AsyncIterator[tuple[Agent
         name="stub-agent",
         status="healthy",
         capabilities={
-            "duckdb_version": "1.0.0",
+            "duckdb_version": "1.5.5",
             "extensions": ["httpfs", "iceberg"],
             "memory_limit_gb": 6.0,
             "cores": 4,

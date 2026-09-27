@@ -108,8 +108,11 @@ services:
       ELASTIC_PROVIDER: docker
       ELASTIC_DOCKER_HOST: tcp://docker-socket-proxy:2375
       ELASTIC_DOCKER_NETWORK: duckhaven_internal
-      # The image provisioned agents run. Defaults to the stack's tag.
-      AGENT_IMAGE: ${AGENT_IMAGE:-ghcr.io/tamasmrtn/duckhaven-agent:${DUCKHAVEN_IMAGE_TAG:-latest}}
+      # Provisioned agents run their runtime's image at the stack's tag
+      # (DEFAULT_RUNTIME / AGENT_IMAGE_TAG, set in docker-compose.yml). AGENT_IMAGE
+      # is a deprecated override for the default runtime only -- a local or
+      # benchmark build -- and empty means unset.
+      AGENT_IMAGE: ${AGENT_IMAGE:-}
       # Where a provisioned agent dials home. Elastic provisioning has no HTTP
       # request to derive this from, so it must be stated.
       ELASTIC_CONTROL_PLANE_URL: ws://api:8000/agents/connect

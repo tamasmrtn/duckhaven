@@ -67,6 +67,11 @@ class Agent(Base):
     # at the code default (600s). NULL falls back to the agent image's own default.
     # Persisted so a restart re-provisions with the same ceiling, like requested_cpu.
     requested_max_timeout_s: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # The runtime (duckhaven_shared.runtimes) this elastic agent is provisioned and
+    # restarted as: which DuckDB line and extensions its image carries. Persisted
+    # like requested_cpu so a restart keeps it. NULL for a static agent, whose
+    # runtime is whatever image its operator runs, reported in `capabilities`.
+    requested_runtime_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     provisioned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     terminated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

@@ -723,3 +723,195 @@ async def test_a_restricted_new_agent_is_hidden_from_others(
         listed = await other.get("/agents")
         assert [a for a in listed.json() if a["id"] == agent_id] == []
         assert (await other.get(f"/admin/agents/{agent_id}")).status_code == 404
+
+
+# ── Runtimes ──────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def more_runtimes(monkeypatch):
+    """A beta and a deprecated runtime alongside the real default."""
+    from dataclasses import replace
+
+    from duckhaven_shared import runtimes
+
+    base = runtimes.RUNTIMES["1.5"]
+    for rid, status in (("2.0", "beta"), ("1.4", "deprecated"), ("1.3", "retired")):
+        monkeypatch.setitem(
+            runtimes.RUNTIMES,
+            rid,
+            replace(base, id=rid, display_name=f"DuckDB {rid}", duckdb_line=rid, status=status),
+        )
+
+
+@pytest.fixture
+def provisioned_images(monkeypatch):
+    from api.services.compute.backends import get_backend
+
+    images: list[str] = []
+    backend = get_backend("null")
+    original = backend.provision
+
+    async def recording(req):
+        images.append(req.image)
+        return await original(req)
+
+    monkeypatch.setattr(backend, "provision", recording)
+    return images
+
+
+async def test_new_compute_runs_the_default_runtime_unless_told_otherwise(
+    admin_client: AsyncClient, db_session, elastic_enabled, provisioned_images
+):
+    resp = await admin_client.post("/admin/agents/elastic", json={"cpu": 1, "memory_gb": 4})
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["runtime"] == {
+        "id": "1.5",
+        "display_name": "DuckDB 1.5",
+        "status": "ga",
+        "state": "pending",
+        "default": True,
+    }
+    assert provisioned_images[-1].endswith("-duckdb1.5")
+
+
+async def test_a_beta_runtime_needs_an_explicit_opt_in(
+    admin_client: AsyncClient, db_session, elastic_enabled, more_runtimes, provisioned_images
+):
+    refused = await admin_client.post(
+        "/admin/agents/elastic", json={"cpu": 1, "memory_gb": 4, "runtime_id": "2.0"}
+    )
+    assert refused.status_code == 422
+    assert refused.json()["error"] == "runtime_beta"
+
+    resp = await admin_client.post(
+        "/admin/agents/elastic",
+        json={"cpu": 1, "memory_gb": 4, "runtime_id": "2.0", "allow_beta": True},
+    )
+    assert resp.status_code == 202
+    assert resp.json()["runtime"]["id"] == "2.0"
+    assert provisioned_images[-1].endswith("-duckdb2.0")
+    agent = await db_session.get(Agent, uuid.UUID(resp.json()["id"]))
+    assert agent.requested_runtime_id == "2.0"
+
+
+@pytest.mark.parametrize(
+    ("runtime_id", "error"),
+    [("1.4", "runtime_unavailable"), ("1.3", "runtime_unavailable"), ("9.9", "unknown_runtime")],
+)
+async def test_new_compute_cannot_use_a_closed_or_unknown_runtime(
+    admin_client: AsyncClient, elastic_enabled, more_runtimes, runtime_id, error
+):
+    resp = await admin_client.post(
+        "/admin/agents/elastic",
+        json={"cpu": 1, "memory_gb": 4, "runtime_id": runtime_id, "allow_beta": True},
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"] == error
+
+
+async def test_compute_options_offer_only_runtimes_open_to_new_compute(
+    admin_client: AsyncClient, more_runtimes
+):
+    body = (await admin_client.get("/admin/agents/compute-options")).json()
+    assert body["default_runtime"] == "1.5"
+    assert [r["id"] for r in body["runtimes"]] == ["1.5", "2.0"]
+    default = body["runtimes"][0]
+    assert default["default"] is True
+    assert "ducklake" in default["extensions"]
+
+
+async def test_the_add_agent_snippet_follows_the_chosen_runtime(
+    admin_client: AsyncClient, more_runtimes
+):
+    default = (await admin_client.post("/admin/agents/bootstrap")).json()
+    assert default["runtime_id"] == "1.5"
+    assert default["agent_image"].endswith("-duckdb1.5")
+
+    beta = (await admin_client.post("/admin/agents/bootstrap", json={"runtime_id": "2.0"})).json()
+    assert beta["runtime_id"] == "2.0"
+    assert beta["agent_image"].endswith("-duckdb2.0")
+
+
+async def test_restart_keeps_the_runtime_and_refuses_a_retired_one(
+    admin_client: AsyncClient, db_session, elastic_enabled, more_runtimes, provisioned_images
+):
+    from datetime import UTC, datetime
+
+    def terminated(runtime_id: str) -> Agent:
+        return Agent(
+            name=f"rt-{runtime_id}",
+            status="unavailable",
+            provider="null",
+            lifecycle="terminated",
+            requested_cpu=1,
+            requested_memory_gb=4,
+            requested_runtime_id=runtime_id,
+            capabilities={"duckdb_version": "1.5.4", "extensions": []},
+            terminated_at=datetime.now(tz=UTC),
+        )
+
+    kept, retired = terminated("2.0"), terminated("1.3")
+    db_session.add_all([kept, retired])
+    await db_session.commit()
+
+    resp = await admin_client.post(f"/admin/agents/{kept.id}/restart")
+    assert resp.status_code == 202
+    assert provisioned_images[-1].endswith("-duckdb2.0")
+    await db_session.refresh(kept)
+    # The previous instance's report says nothing about the next one.
+    assert kept.capabilities is None
+
+    refused = await admin_client.post(f"/admin/agents/{retired.id}/restart")
+    assert refused.status_code == 409
+    assert refused.json()["error"] == "runtime_retired"
+
+
+async def test_runtimes_are_listed_for_any_signed_in_user(admin_client: AsyncClient, more_runtimes):
+    resp = await admin_client.get("/runtimes")
+    assert resp.status_code == 200
+    by_id = {r["id"]: r for r in resp.json()}
+    # Retired ones included, so an agent still running one can be labelled.
+    assert set(by_id) == {"1.5", "2.0", "1.4", "1.3"}
+    assert by_id["1.5"]["default"] is True
+    assert by_id["2.0"]["status"] == "beta"
+
+
+# ── Status from presence, not from the stored column ─────────────────────────
+
+
+async def test_a_gone_agent_whose_row_still_says_healthy_shows_unavailable(
+    admin_client: AsyncClient, db_session
+):
+    """When the API holding an agent's socket stops before recording the
+    disconnect, the row keeps saying `healthy` and nothing writes it back. The
+    list and the detail page used to show that stale value."""
+    agent = Agent(name="gone", status="healthy")
+    db_session.add(agent)
+    await db_session.commit()
+
+    listed = {a["id"]: a for a in (await admin_client.get("/admin/agents")).json()}
+    assert listed[str(agent.id)]["status"] == "unavailable"
+    detail = (await admin_client.get(f"/admin/agents/{agent.id}")).json()
+    assert detail["status"] == "unavailable"
+    picker = {a["id"]: a for a in (await admin_client.get("/agents")).json()}
+    assert picker[str(agent.id)]["status"] == "unavailable"
+
+
+async def test_a_connected_agent_shows_healthy_before_its_row_catches_up(
+    admin_client: AsyncClient, db_session
+):
+    from api.services.agent_registry import registry
+
+    agent = Agent(name="just-connected", status="unavailable")
+    db_session.add(agent)
+    await db_session.commit()
+    registry.register(agent.id, object())  # type: ignore[arg-type]
+    try:
+        detail = (await admin_client.get(f"/admin/agents/{agent.id}")).json()
+        assert detail["status"] == "healthy"
+        listed = {a["id"]: a for a in (await admin_client.get("/admin/agents")).json()}
+        assert listed[str(agent.id)]["status"] == "healthy"
+    finally:
+        registry.unregister(agent.id)

@@ -46,7 +46,16 @@ export function useAgentMonitoring(id: string, window: MonitoringWindow) {
 
 export function useBootstrapAgent() {
   return useMutation({
-    mutationFn: agentsApi.bootstrap,
+    mutationFn: (runtimeId?: string) => agentsApi.bootstrap(runtimeId),
+  });
+}
+
+export function useRuntimes() {
+  return useQuery({
+    queryKey: ["runtimes"],
+    queryFn: agentsApi.runtimes,
+    // The manifest only changes with a release.
+    staleTime: Infinity,
   });
 }
 

@@ -62,6 +62,10 @@ pages:
   title: Elastic compute
   section: Concepts
   summary: Provisioning agents on demand and terminating them when they go idle.
+- path: concepts/runtimes.md
+  title: Runtimes
+  section: Concepts
+  summary: A runtime is the DuckDB an agent runs, together with the extensions baked into its image.
 - path: concepts/storage-backends.md
   title: Storage backends
   section: Concepts

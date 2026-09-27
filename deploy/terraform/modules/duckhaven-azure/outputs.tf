@@ -144,9 +144,12 @@ output "next_steps" {
     # 1. Build and push the DuckHaven images (from the repo root), if you have not yet.
     az acr login -n ${azurerm_container_registry.main.name}
     docker build --platform linux/amd64 -f api/Dockerfile   -t ${azurerm_container_registry.main.login_server}/${local.api_image_repository}:${var.duckhaven_image_tag} .
-    docker build --platform linux/amd64 -f agent/Dockerfile -t ${azurerm_container_registry.main.login_server}/${local.agent_image_repository}:${var.duckhaven_image_tag} .
     docker push ${azurerm_container_registry.main.login_server}/${local.api_image_repository}:${var.duckhaven_image_tag}
-    docker push ${azurerm_container_registry.main.login_server}/${local.agent_image_repository}:${var.duckhaven_image_tag}
+    # One agent image per runtime.
+    %{~for runtime in var.agent_runtimes}
+    docker build --platform linux/amd64 -f agent/Dockerfile --build-arg DUCKHAVEN_RUNTIME=${runtime} -t ${azurerm_container_registry.main.login_server}/${local.agent_image_repository}:${var.duckhaven_image_tag}-duckdb${runtime} .
+    docker push ${azurerm_container_registry.main.login_server}/${local.agent_image_repository}:${var.duckhaven_image_tag}-duckdb${runtime}
+    %{~endfor}
 
     # 2. Create the API's database login role. Must succeed before the API can start.
     ${local.postgres_managed_here

@@ -203,6 +203,43 @@ describe("agents contract", () => {
       agentsApi.monitoring("ag-5", "7d" as "8h"),
     ).rejects.toMatchObject({ name: "ApiError", status: 422 });
   });
+
+  it("GET /runtimes is RuntimeOut-shaped, with exactly one default", async () => {
+    const runtimes = await agentsApi.runtimes();
+    for (const r of runtimes) {
+      expect(Object.keys(r).sort()).toEqual([
+        "default",
+        "display_name",
+        "duckdb_line",
+        "ducklake_format",
+        "extensions",
+        "id",
+        "status",
+        "upstream_eol",
+      ]);
+    }
+    expect(runtimes.filter((r) => r.default)).toHaveLength(1);
+  });
+
+  it("an agent carries AgentRuntimeOut, and bootstrap names its runtime", async () => {
+    const agent = await agentsApi.adminGet("ag-5");
+    expect(Object.keys(agent.runtime!).sort()).toEqual([
+      "default",
+      "display_name",
+      "id",
+      "state",
+      "status",
+    ]);
+    const token = await agentsApi.bootstrap("2.0");
+    expect(token.runtime_id).toBe("2.0");
+    expect(token.agent_image).toMatch(/-duckdb2\.0$/);
+  });
+
+  it("compute options offer runtimes and the default", async () => {
+    const options = await agentsApi.computeOptions();
+    expect(options.default_runtime).toBe("1.5");
+    expect(options.runtimes?.map((r) => r.id)).toContain("1.5");
+  });
 });
 
 describe("semantic contract", () => {

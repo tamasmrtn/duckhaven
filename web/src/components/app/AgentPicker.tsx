@@ -36,6 +36,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { RuntimeBadge } from "@/components/app/RuntimeBadge";
 import { StorageLabel } from "@/components/app/StorageIcon";
 import {
   useAgents,
@@ -45,6 +46,7 @@ import {
 import {
   agentAvailability,
   agentTierAtLeast,
+  runtimeLabel,
   type Agent,
   type AgentAvailability,
 } from "@/types/agent";
@@ -137,7 +139,7 @@ function AgentRow({
   const gb = memoryGb(agent);
   const cores = agent.capabilities?.cores ?? agent.requested_cpu;
   const detail = [
-    agent.capabilities ? `DuckDB ${agent.capabilities.duckdb_version}` : null,
+    runtimeLabel(agent),
     cores ? `${cores} cores` : null,
     agent.provider ? "elastic" : null,
   ]
@@ -150,6 +152,7 @@ function AgentRow({
         <span className="truncate font-medium text-sm" title={agent.name}>
           {agent.name}
         </span>
+        <RuntimeBadge agent={agent} className="shrink-0" />
         {duplicateName && (
           <span className="shrink-0 font-mono text-2xs text-text-tertiary">
             {agent.capabilities?.host ?? agent.id.slice(0, 8)}

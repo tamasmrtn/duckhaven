@@ -29,7 +29,9 @@ docker compose pull
 docker compose up -d
 ```
 
-Tags published per release: `:vX.Y.Z`, `:vX.Y`, `:vX`.
+Tags published per release: `:X.Y.Z`, `:X.Y`, `:X` (without the Git tag's `v`). Agent images are
+also published per [runtime](../concepts/runtimes.md), as `:X.Y.Z-duckdb<runtime>`, and the
+bundled agent runs the default runtime's.
 
 ## One-time: updating past the Chainguard base image migration
 
@@ -63,6 +65,29 @@ known-good tag and `docker compose up -d`.
 Update each agent host independently (the protocol is forward-compatible):
 
 ```bash
-docker pull ghcr.io/tamasmrtn/duckhaven-agent:latest
+docker pull ghcr.io/tamasmrtn/duckhaven-agent:latest-duckdb1.5
 docker restart duckhaven-agent
 ```
+
+Pull the tag for the runtime the host runs. Plain `:latest` keeps working as the default runtime's
+image. **Upgrade the control plane first** whenever a release adds a runtime you want to use: an
+agent reporting a runtime the control plane doesn't know yet is refused work until the control
+plane is upgraded too.
+
+Elastic compute follows the control plane on its own. A provisioned or restarted agent runs its
+runtime's image at the control plane's version, so after an upgrade each agent picks up the new
+build the next time it starts. Agents that are already running keep their old build until the idle
+reaper stops them, or you do. On the Docker backend a `:latest-duckdb…` tag is only pulled when the
+host doesn't have it, so if you ride `:latest`, `docker compose pull` those images yourself.
+
+## Changing the default runtime
+
+The default runtime (`DEFAULT_RUNTIME` in `.env`) is what the bundled agent and auto-provisioned
+compute run. To move it, for example from a runtime that is being deprecated:
+
+1. Set `DEFAULT_RUNTIME` to the new runtime and `docker compose up -d`. The bundled agent is
+   recreated on the new image, and the API starts provisioning pool compute on it.
+2. Existing elastic agents keep their runtime. Pool agents on the old one idle out; recreate compute
+   you created by hand if it should move.
+3. Check [DuckLake catalog formats](../concepts/runtimes.md#mixing-runtimes-on-the-same-data) first:
+   an agent on a runtime whose DuckLake format differs from a catalog's is refused on that catalog.

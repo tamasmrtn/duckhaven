@@ -335,6 +335,13 @@ sandbox with `SET`: `disabled_filesystems`, `enable_external_access`, `secret_di
 the connection, as does the lock itself. A small exception list keeps writable only what the agent needs afterwards —
 the per-statement memory/thread slice, the profiler, and the `SET timezone` the statement policy admits.
 
+The lock is checked, not assumed. DuckDB rejects the whole exception list if it names one setting the engine doesn't
+have, and the lock is then never applied. That happened in practice: DuckDB 2.0 renamed the profiler's setting. So
+the agent builds the list from the settings its engine actually has, applies the lock once at startup, reads it back,
+and reports `verified`, `failed`, or `disabled` (turned off by the operator). A session is refused
+(`agent_sandbox_unverified`) on an agent whose lock `failed`, and the server's own choice of agent skips it. See
+[Runtimes](runtimes.md).
+
 `SANDBOX_DISABLED_FILESYSTEMS` can additionally disable a whole DuckDB filesystem. It is **off by default** because the
 agent reads [staged files](#staging-files-presigned-urls) over presigned HTTP(S) URLs, and disabling `HTTPFileSystem`
 would break that. Set it to `HTTPFileSystem` on a deployment that does not use staging. (Contrary to earlier guidance,

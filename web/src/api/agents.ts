@@ -10,6 +10,7 @@ import type {
   ComputeOptions,
   CreateElasticAgentBody,
   MonitoringWindow,
+  Runtime,
 } from "@/types/agent";
 
 export const agentsApi = {
@@ -25,7 +26,14 @@ export const agentsApi = {
   monitoring: (id: string, window: MonitoringWindow) =>
     get<AgentMonitoring>(`/admin/agents/${id}/monitoring?window=${window}`),
 
-  bootstrap: () => post<BootstrapToken>("/admin/agents/bootstrap"),
+  // The snippet's image is the chosen runtime's; omitted means the default.
+  bootstrap: (runtimeId?: string) =>
+    post<BootstrapToken>(
+      "/admin/agents/bootstrap",
+      runtimeId ? { runtime_id: runtimeId } : undefined,
+    ),
+
+  runtimes: () => get<Runtime[]>("/runtimes"),
 
   computeOptions: () => get<ComputeOptions>("/admin/agents/compute-options"),
 

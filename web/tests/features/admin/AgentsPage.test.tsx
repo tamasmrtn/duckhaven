@@ -93,6 +93,28 @@ describe('AgentsPage', () => {
     })
   })
 
+  it('names the chosen runtime\'s image in the snippet', async () => {
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: AGENTS_ROUTE })
+    await user.click(await screen.findByRole('button', { name: /generate bootstrap/i }))
+    await user.click(await screen.findByRole('combobox', { name: /runtime/i }))
+    await user.click(await screen.findByRole('option', { name: /duckdb 2\.0/i }))
+    await user.click(screen.getByRole('button', { name: /generate snippet/i }))
+
+    const snippet = await screen.findByTestId('agent-compose-snippet')
+    expect(snippet.textContent).toContain('image: ghcr.io/tamasmrtn/duckhaven-agent:latest-duckdb2.0')
+  })
+
+  it('shows each agent\'s runtime, and flags one no runtime covers', async () => {
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: AGENTS_ROUTE })
+    await screen.findByText('agent-a')
+    expect(screen.getAllByText('DuckDB 1.5 · 1.5.2').length).toBeGreaterThan(0)
+    // agent-c runs DuckDB 1.4, which no curated runtime covers.
+    await user.click(screen.getByRole('button', { name: 'Stopped (1)' }))
+    expect(screen.getByText('Unsupported')).toBeInTheDocument()
+  })
+
   it('renders a copy-pasteable compose snippet after generating', async () => {
     const user = userEvent.setup()
     renderWithProviders({ initialRoute: AGENTS_ROUTE })
@@ -258,6 +280,8 @@ describe('AgentsPage', () => {
           // Sent on every create; `open` is the default and matches how every
           // agent behaved before per-agent access existed.
           access_mode: 'open',
+          // The deployment's default runtime, preselected.
+          runtime_id: '1.5',
         }),
       )
       expect(await screen.findByText('analytics-warehouse')).toBeInTheDocument()
@@ -281,6 +305,35 @@ describe('AgentsPage', () => {
 
       await waitFor(() =>
         expect(posted).toMatchObject({ access_mode: 'restricted' }),
+      )
+    })
+
+    it('creates compute on the chosen runtime, defaulting to the deployment default', async () => {
+      let posted: Record<string, unknown> | null = null
+      server.use(
+        http.post('/api/admin/agents/elastic', async ({ request }) => {
+          posted = (await request.json()) as Record<string, unknown>
+          return HttpResponse.json({ id: 'ag-new' }, { status: 202 })
+        }),
+      )
+      const user = userEvent.setup()
+      renderWithProviders({ initialRoute: AGENTS_ROUTE })
+
+      await user.click(await screen.findByRole('button', { name: /new compute/i }))
+      const runtime = await screen.findByRole('combobox', { name: /runtime/i })
+      expect(runtime).toHaveTextContent('DuckDB 1.5 — default')
+
+      await user.click(runtime)
+      await user.click(await screen.findByRole('option', { name: /duckdb 2\.0 \(beta\)/i }))
+      // A beta runtime needs an explicit acknowledgement before create is allowed.
+      const create = screen.getByRole('button', { name: /create compute/i })
+      expect(create).toBeDisabled()
+      await user.click(screen.getByRole('checkbox'))
+      expect(create).toBeEnabled()
+      await user.click(create)
+
+      await waitFor(() =>
+        expect(posted).toMatchObject({ runtime_id: '2.0', allow_beta: true }),
       )
     })
 

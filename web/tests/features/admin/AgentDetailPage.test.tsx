@@ -298,6 +298,37 @@ describe('AgentDetailPage', () => {
       )
     })
 
+    it('lists every extension in full rather than truncating the line', async () => {
+      const user = userEvent.setup()
+      renderWithProviders({ initialRoute: STATIC })
+      await user.click(await screen.findByRole('tab', { name: /overview/i }))
+
+      const list = await screen.findByRole('list', { name: 'Extensions' })
+      // agent-a (ag-1) advertises three extensions; each is its own item.
+      expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+        'iceberg',
+        'httpfs',
+        'azure',
+      ])
+    })
+
+    it('explains each capability from the ⓘ beside it', async () => {
+      const user = userEvent.setup()
+      renderWithProviders({ initialRoute: STATIC })
+      await user.click(await screen.findByRole('tab', { name: /overview/i }))
+
+      for (const label of ['Runtime', 'DuckDB', 'Memory cap', 'Cores', 'Host', 'Extensions']) {
+        expect(
+          await screen.findByRole('button', { name: `What is ${label}?` }),
+        ).toBeInTheDocument()
+      }
+      // Keyboard focus opens it, not only a mouse hover.
+      screen.getByRole('button', { name: 'What is Extensions?' }).focus()
+      expect(
+        (await screen.findAllByText(/httpfs for S3 and the bundled object store/)).length,
+      ).toBeGreaterThan(0)
+    })
+
     it('warns about a deprecated runtime and names its upstream end of support', async () => {
       server.use(
         http.get('/api/runtimes', () =>

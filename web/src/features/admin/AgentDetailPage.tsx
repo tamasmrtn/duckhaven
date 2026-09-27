@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   CheckCircle2,
   Circle,
+  Info,
   Power,
   RotateCw,
   Trash2,
@@ -24,6 +25,12 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   useAdminAgent,
   useComputeOptions,
@@ -51,14 +58,68 @@ const statusIcon: Record<AgentStatus, React.ReactNode> = {
   unavailable: <Circle className="size-4 text-[var(--status-failed)]" />,
 };
 
-function Field({ label, value }: { label: string; value: React.ReactNode }) {
+/** An ⓘ next to a field's label that explains it on hover or keyboard focus. */
+function FieldHelp({ label, help }: { label: string; help: string }) {
+  return (
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label={`What is ${label}?`}
+            className="rounded-sm text-text-tertiary hover:text-text-secondary focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+          >
+            <Info className="size-3.5" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs text-xs">{help}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+function FieldLabel({ label, help }: { label: string; help?: string }) {
+  return (
+    <span className="flex items-center gap-1.5 text-text-secondary">
+      {label}
+      {help && <FieldHelp label={label} help={help} />}
+    </span>
+  );
+}
+
+function Field({
+  label,
+  value,
+  help,
+}: {
+  label: string;
+  value: React.ReactNode;
+  help?: string;
+}) {
   return (
     <div className="flex justify-between gap-4">
-      <span className="text-text-secondary">{label}</span>
+      <FieldLabel label={label} help={help} />
       <span className="font-mono text-xs font-tabular text-right">{value}</span>
     </div>
   );
 }
+
+// What each capability means, for the ⓘ beside it. Written for someone who
+// knows what a query is but not how an agent is put together.
+const CAPABILITY_HELP = {
+  runtime:
+    "The DuckDB version and extensions this agent's image was built with. DuckHaven only sends work to agents on a runtime it supports, and never picks one on a beta runtime unless you choose that agent.",
+  duckdb: "The exact DuckDB engine version the agent is running.",
+  sandbox:
+    "Whether DuckDB's configuration lock applied here. Locked means a query can't change the agent's security settings. If the lock failed, SQL sessions are refused on this agent; \"lock off\" means an operator turned it off.",
+  memory:
+    "The memory this agent can use for queries: its container's memory limit, or the machine's total memory when the container has none.",
+  cores:
+    "The CPU cores this agent runs queries on: its container's CPU limit, or the machine's cores when the container has none.",
+  host: "The name of the machine or container the agent runs on.",
+  extensions:
+    "The DuckDB extensions loaded on this agent. Each catalog and storage type needs its own: httpfs for S3 and the bundled object store, azure for ADLS, iceberg for Iceberg catalogs, and ducklake with postgres_scanner for DuckLake.",
+} as const;
 
 /**
  * Why this agent's runtime needs attention, in a sentence, or null. Deprecated
@@ -164,6 +225,7 @@ function OverviewTab({ agent }: { agent: Agent }) {
             <div className="space-y-1 text-sm">
               <Field
                 label="Runtime"
+                help={CAPABILITY_HELP.runtime}
                 value={
                   <span className="flex items-center justify-end gap-1.5">
                     {agent.runtime?.display_name ??
@@ -175,6 +237,7 @@ function OverviewTab({ agent }: { agent: Agent }) {
               />
               <Field
                 label="DuckDB"
+                help={CAPABILITY_HELP.duckdb}
                 value={
                   agent.capabilities.engine_version ??
                   agent.capabilities.duckdb_version
@@ -183,25 +246,45 @@ function OverviewTab({ agent }: { agent: Agent }) {
               {agent.capabilities.sandbox && (
                 <Field
                   label="Sandbox"
+                  help={CAPABILITY_HELP.sandbox}
                   value={SANDBOX_LABEL[agent.capabilities.sandbox]}
                 />
               )}
               <Field
                 label="Memory cap"
+                help={CAPABILITY_HELP.memory}
                 value={`${agent.capabilities.memory_limit_gb} GB`}
               />
-              <Field label="Cores" value={agent.capabilities.cores} />
-              {agent.capabilities.host && (
-                <Field label="Host" value={agent.capabilities.host} />
-              )}
               <Field
-                label="Extensions"
-                value={
-                  <span className="block max-w-[240px] truncate">
-                    {agent.capabilities.extensions.join(", ")}
-                  </span>
-                }
+                label="Cores"
+                help={CAPABILITY_HELP.cores}
+                value={agent.capabilities.cores}
               />
+              {agent.capabilities.host && (
+                <Field
+                  label="Host"
+                  help={CAPABILITY_HELP.host}
+                  value={agent.capabilities.host}
+                />
+              )}
+              {/* A row of its own, wrapping: a one-line value was cut off
+                  after the first few extensions. */}
+              <div className="space-y-1.5 pt-1">
+                <FieldLabel
+                  label="Extensions"
+                  help={CAPABILITY_HELP.extensions}
+                />
+                <ul aria-label="Extensions" className="flex flex-wrap gap-1">
+                  {agent.capabilities.extensions.map((ext) => (
+                    <li
+                      key={ext}
+                      className="rounded bg-[var(--bg-elevated)] px-1.5 py-0.5 font-mono text-2xs text-text-secondary"
+                    >
+                      {ext}
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </div>
           ) : (
             <p className="text-sm text-text-tertiary">

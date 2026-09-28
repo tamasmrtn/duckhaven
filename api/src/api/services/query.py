@@ -128,7 +128,7 @@ async def dispatch_query(
     # agent missing an extension, or on a runtime that isn't trusted with work,
     # never receives it however the query reached it.
     agent = await db.get(Agent, query.agent_id)
-    runtime_service.assert_dispatchable(agent, catalogs)
+    await runtime_service.check_dispatchable(agent, catalogs)
     query.runtime_id = runtime_service.runtime_id_of(agent)
 
     # Eager multi-attach: the agent ATTACHes every catalog bound to the
@@ -571,6 +571,19 @@ async def pick_agent_for(
     )
     if principal_id is not None:
         agents = await agent_access.usable_agents(db, principal_id, agents)
+    from api.services.catalog_backends.ducklake import catalog_formats
+
+    formats = await catalog_formats(catalogs)
+
+    def dispatchable(agent: Agent) -> bool:
+        try:
+            runtime_service.assert_dispatchable(
+                agent, catalogs, for_session=for_session, ducklake_formats=formats
+            )
+        except runtime_service.AgentNotDispatchable:
+            return False
+        return True
+
     compatible = [
         agent
         for agent in agents
@@ -578,7 +591,7 @@ async def pick_agent_for(
             agent_supports_catalog(agent.capabilities, catalog_kind, backend_kind)
             for catalog_kind, backend_kind in pairs
         )
-        and not (for_session and (agent.capabilities or {}).get("sandbox") == "failed")
+        and dispatchable(agent)
     ]
     ranked = [
         (rank, agent)

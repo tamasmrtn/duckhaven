@@ -8,7 +8,7 @@
         lint format docs-index eval-synth eval-judged eval-compare \
         migrate migrate-new migrate-down \
         compose-up compose-down compose-logs compose-pull \
-        runtimes-lock build-agent \
+        runtimes-lock build-agent test-agent-runtime test-runtime-compat \
         clean
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
@@ -315,6 +315,27 @@ runtimes-lock:
 		[ -e "$$f" ] || continue; \
 		uv pip compile --universal --generate-hashes --no-header --quiet "$$f" -o "$${f%.in}.txt"; \
 	done
+
+# Run the agent's unit tests on another runtime's DuckDB, in its own virtualenv
+# (`.venv-duckdb<id>`) so the main one stays on the default runtime:
+# `make test-agent-runtime RUNTIME=2.0`. AGENT_TESTS/PYTEST_ARGS select other
+# suites, e.g. AGENT_TESTS=agent/tests/integration PYTEST_ARGS="-m integration".
+AGENT_TESTS ?= agent/tests/unit
+PYTEST_ARGS ?=
+test-agent-runtime:
+	UV_PROJECT_ENVIRONMENT=.venv-duckdb$(RUNTIME) uv sync --frozen --all-packages --quiet --python 3.14
+	uv pip install --quiet --python .venv-duckdb$(RUNTIME)/bin/python --require-hashes --no-deps \
+		-r agent/runtimes/$(RUNTIME).txt
+	.venv-duckdb$(RUNTIME)/bin/python -m pytest $(AGENT_TESTS) $(PYTEST_ARGS)
+
+# Cross-runtime compatibility: data written on one runtime read on another, for
+# every non-default runtime against the default. Needs Postgres + Polaris + the
+# object store (as the integration tests do) and DUCKLAKE_DATABASE_URL.
+test-runtime-compat:
+	@for runtime in $$(python3 scripts/runtime_matrix.py --others); do \
+		$(MAKE) --no-print-directory test-agent-runtime RUNTIME=$$runtime AGENT_TESTS=--version >/dev/null; \
+	done
+	uv run pytest tests/runtime_compat/ -v -m runtime_compat
 
 # Build one runtime's agent image locally: `make build-agent RUNTIME=2.0`. Tagged
 # the way the API resolves images (`<tag>-duckdb<id>`), so elastic compute uses

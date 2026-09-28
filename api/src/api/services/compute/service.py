@@ -41,8 +41,8 @@ from api.services.agent_telemetry import record_lifecycle_event
 from api.services.compute.backends import ProvisionRequest, get_backend
 from api.services.runtimes import (
     AgentNotDispatchable,
-    assert_dispatchable,
     assert_restartable,
+    check_dispatchable,
     image_for,
 )
 from api.services.workspace import resolve_workspace_catalogs
@@ -621,7 +621,7 @@ async def bind_pending_sessions(db: AsyncSession, agent: Agent) -> int:
         # capabilities. This runs once the agent has reported them, so check now,
         # before claiming, and fail the session with the reason.
         try:
-            assert_dispatchable(agent, catalogs, for_session=True)
+            await check_dispatchable(agent, catalogs, for_session=True)
         except AgentNotDispatchable as exc:
             session.status = "failed"
             session.error = exc.code

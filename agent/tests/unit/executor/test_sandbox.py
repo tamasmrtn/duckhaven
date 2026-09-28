@@ -164,14 +164,17 @@ def test_allowed_configs_covers_every_setting_the_runner_writes():
     """`_ALLOWED_CONFIGS` is the contract between the lock and the runner. The
     profiling option is whichever one this engine has, so the list is exact for
     every DuckDB line rather than a union no single line accepts."""
-    assert set(_ALLOWED_CONFIGS) == {
+    wanted = {
         "memory_limit",
         "threads",
         "TimeZone",
         "enable_profiling",
         "profiling_output",
         runtime.PROFILE_SETTING,
+        # Only on DuckDB 2.0, whose `ducklake` sets it around every statement.
+        "current_transaction_invalidation_policy",
     }
+    assert set(_ALLOWED_CONFIGS) == wanted & runtime.SETTINGS
 
 
 def test_allowed_configs_names_only_options_this_engine_has():

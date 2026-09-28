@@ -56,8 +56,8 @@ from api.services.rbac import has_permission
 from api.services.runtimes import (
     AgentNotDispatchable,
     RuntimeRetired,
-    assert_dispatchable,
     assert_restartable,
+    check_dispatchable,
 )
 from api.services.sql_classify import classify_parsed
 from api.services.sql_guard import is_read_only
@@ -201,7 +201,7 @@ async def open_session(
         await assert_agent_tier(db, user, agent, "use")
         if await is_agent_connected(db, agent.id):
             try:
-                assert_dispatchable(agent, catalogs, for_session=True)
+                await check_dispatchable(agent, catalogs, for_session=True)
             except AgentNotDispatchable as exc:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

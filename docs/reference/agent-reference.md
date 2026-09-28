@@ -35,7 +35,7 @@ the queueing knobs (`MEMORY_HEADROOM_FRACTION`, `MAX_QUEUE_DEPTH`,
 
 Every agent image is built for one **runtime**: a DuckDB line plus the extensions baked into the image, listed
 in `shared/src/duckhaven_shared/runtimes.py`. The agent has no internet access, so it can only use the
-extensions its image already has. The `1.5` runtime pre-installs:
+extensions its image already has. The `1.5` and `2.0` runtimes both pre-install:
 
 | Extension | Required for |
 |---|---|

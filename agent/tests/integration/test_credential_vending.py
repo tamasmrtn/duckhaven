@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import duckdb
 import pytest
+from testkit.iceberg import iceberg_secret_sql
 
 pytestmark = pytest.mark.integration
 
@@ -67,11 +68,7 @@ async def test_invalid_polaris_credentials_fail_attach(
         conn.execute("LOAD httpfs")
         endpoint = f"{polaris_base_url}/api/catalog"
         with pytest.raises(duckdb.Error):
-            conn.execute(
-                "CREATE SECRET dh_iceberg "
-                "(TYPE ICEBERG, CLIENT_ID ?, CLIENT_SECRET ?, OAUTH2_SERVER_URI ?)",
-                ["root", "wrong-secret", f"{polaris_base_url}/api/catalog/v1/oauth/tokens"],
-            )
+            conn.execute(iceberg_secret_sql("root", "wrong-secret", polaris_base_url))
             conn.execute(
                 f"ATTACH '{catalog}' AS dh_catalog (TYPE ICEBERG, SECRET dh_iceberg, "
                 f"ENDPOINT '{endpoint}', ACCESS_DELEGATION_MODE 'vended_credentials')"

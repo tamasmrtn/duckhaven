@@ -173,6 +173,7 @@ nav:
       - Local development: developer/development.md
       - Contributing: developer/contributing.md
       - Testing: developer/testing.md
+      - Runtime qualification: developer/runtime-qualification.md
       - Releasing: developer/releasing.md
       - Design system: developer/design-system.md
   - Release notes: release-notes/index.md

@@ -128,6 +128,16 @@ jobs:
             --cov-config=pyproject.toml \
             --cov-report=xml:coverage.xml \
             --cov-report=term-missing
+      # Every other agent runtime runs the same suite on its own DuckDB, in its
+      # own virtualenv, so a break on a newer line (a renamed setting, a new
+      # profile shape) fails here rather than in a deployment.
+      - name: Run agent tests on the other runtimes
+        run: |
+          for runtime in $(python3 scripts/runtime_matrix.py --others); do
+            echo "::group::DuckDB $runtime"
+            make test-agent-runtime RUNTIME="$runtime" PYTEST_ARGS="-q"
+            echo "::endgroup::"
+          done
       - name: Coverage comment
         if: github.event_name == 'pull_request'
         uses: MishaKav/pytest-coverage-comment@main
@@ -203,6 +213,16 @@ jobs:
         env:
           POLARIS_S3_BUCKET: s3://warehouse
         run: make test-integration-api test-integration-agent
+      - name: Agent integration tests on the other runtimes
+        env:
+          POLARIS_S3_BUCKET: s3://warehouse
+        run: |
+          for runtime in $(python3 scripts/runtime_matrix.py --others); do
+            echo "::group::DuckDB $runtime"
+            make test-agent-runtime RUNTIME="$runtime" \
+              AGENT_TESTS=agent/tests/integration PYTEST_ARGS="-q -m integration"
+            echo "::endgroup::"
+          done
 
   cross-component:
     name: Cross-component tests

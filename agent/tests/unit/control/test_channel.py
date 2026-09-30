@@ -273,6 +273,35 @@ async def test_dispatch_clamps_to_operator_ceilings(tmp_path, monkeypatch):
     assert captured["timeout_s"] == 60.0
 
 
+async def test_one_shot_executing_count_tracks_the_run_and_survives_failure(tmp_path, monkeypatch):
+    """The executing count rises for the run itself and falls again whether the
+    query succeeds or raises, so a failure never leaves the agent looking busy."""
+    import agent.control.channel as ch_module
+
+    seen: list[int] = []
+
+    async def fake_run_query(sql, result_path, timeout_s, **kwargs):
+        seen.append(ch_module._one_shot_running)
+        if sql == "boom":
+            raise RuntimeError("Binder Error: nope")
+        result_path.write_bytes(b"PAR1fake")
+        return {"row_count": 0, "duration_ms": 0}
+
+    monkeypatch.setattr(ch_module, "run_query", fake_run_query)
+
+    class FakeWS:
+        async def send(self, msg: str) -> None:
+            pass
+
+    for sql in ("SELECT 1", "boom"):
+        await ch_module._handle_dispatch(
+            FakeWS(), {"query_id": str(uuid.uuid4()), "sql": sql}, tmp_path, _admission()
+        )
+
+    assert seen == [1, 1]
+    assert ch_module._one_shot_running == 0
+
+
 async def _serve_bootstrap_exchange(websocket, session_token: str = "tok-abc"):
     """Mock control-plane: accept auth, send auth_ok, then accept one more frame."""
     raw = await websocket.recv()

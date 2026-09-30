@@ -84,4 +84,24 @@ class MetricsSample(BaseModel):
     # agent restarts, so a rising number is worth alerting on. Defaulted for
     # back-compat with older agents.
     estimates_abandoned: int = 0
+    # Everything below is None from an agent too old to measure it, which the
+    # control plane must show as "not measured", never as zero.
+    #
+    # Wall seconds this sample covers (since the previous one, or since the agent
+    # reconnected), so a rollup can tell a full minute from a partial one.
+    interval_s: float | None = None
+    # Highest memory level reached during the interval, not just at the sample
+    # instant: short spikes between two samples are what exhaust memory.
+    memory_peak_percent: float | None = None
+    # Queries actually running a statement right now. Unlike running_queries, an
+    # idle held SQL session (a dbt/BI connection waiting for its next statement) is
+    # not counted; it is in idle_sessions instead.
+    executing_queries: int | None = None
+    idle_sessions: int | None = None
+    # OOM kills in the agent's cgroup during the interval, and since the cgroup
+    # started. The cumulative values are what Prometheus counters are built from,
+    # so a scrape interval can never miss an event.
+    oom_kills: int | None = None
+    oom_kills_total: int | None = None
+    cpu_seconds_total: float | None = None
     sampled_at: datetime

@@ -670,3 +670,54 @@ async def test_refresh_schema_is_skipped_not_hung_when_the_estimate_pool_is_exha
 
     assert _last(ws).payload["status"] == "done"
     assert not called, "refreshed schema despite the estimate pool being exhausted"
+
+
+async def test_push_metrics_counts_an_idle_held_session_as_idle_not_executing(monkeypatch):
+    """An open dbt/BI connection holds an admission slot, so running_queries counts
+    it; the monitoring page must not, or an idle connection reads as a busy agent."""
+    import agent.control.channel as ch
+
+    admission = _admission()
+    await ch._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
+    monkeypatch.setattr(ch.settings, "metrics_sample_interval_s", 0)
+
+    class _Stop(Exception):
+        pass
+
+    seen: dict = {}
+
+    class _Sampler:
+        def sample(self, **kwargs):
+            seen.update(kwargs)
+            raise _Stop
+
+    with pytest.raises(_Stop):
+        await ch._push_metrics(_FakeWS(), _Sampler(), admission)
+
+    assert seen["running_queries"] == 1
+    assert seen["executing_queries"] == 0
+    assert seen["idle_sessions"] == 1
+
+
+async def test_push_metrics_counts_a_statement_running_on_a_session(monkeypatch):
+    import agent.control.channel as ch
+
+    admission = _admission()
+    await ch._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
+    monkeypatch.setattr(ch.settings, "metrics_sample_interval_s", 0)
+    seen: dict = {}
+
+    class _Stop(Exception):
+        pass
+
+    class _Sampler:
+        def sample(self, **kwargs):
+            seen.update(kwargs)
+            raise _Stop
+
+    async with session.get("s1").lock:  # the lock is held for a statement's whole run
+        with pytest.raises(_Stop):
+            await ch._push_metrics(_FakeWS(), _Sampler(), admission)
+
+    assert seen["executing_queries"] == 1
+    assert seen["idle_sessions"] == 0

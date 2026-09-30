@@ -210,6 +210,10 @@ _estimates_in_flight = 0
 # Estimates given up on. Reported in METRICS_SAMPLE; each one is also a thread and
 # a core lost until the agent restarts, so a rising number is worth alerting on.
 _estimates_abandoned = 0
+# One-shot queries past admission and executing. The admission count also holds
+# every open SQL session's reservation, idle or not, so it cannot say how many
+# statements are actually running.
+_one_shot_running = 0
 
 # The pool EXPLAIN-based estimates run on, kept apart from query execution. Work
 # that can block for an unbounded time has no business sharing the interpreter's
@@ -1064,6 +1068,8 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
     progress = Frame(type=FrameType.QUERY_PROGRESS, payload={"query_id": query_id})
     await ws.send(progress.model_dump_json())
 
+    global _one_shot_running
+    _one_shot_running += 1
     try:
         stats = await run_query(
             sql,
@@ -1132,6 +1138,7 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
             payload={"query_id": query_id, "status": "failed", "error": str(exc)},
         )
     finally:
+        _one_shot_running -= 1
         admission.release(reservation)
         _in_flight.pop(query_id, None)
 
@@ -1170,6 +1177,8 @@ async def _push_metrics(ws, sampler: MetricsSampler, admission: Admission) -> No
                     "Released a statement waiting for budget: %d parked, nothing running",
                     admission.growth_waiting + 1,
                 )
+        # A session statement parked for memory holds its lock but is not running.
+        executing_sessions = session.executing_count()
         sample = sampler.sample(
             running_queries=admission.running_count,
             queued_queries=admission.queued_count,
@@ -1177,6 +1186,9 @@ async def _push_metrics(ws, sampler: MetricsSampler, admission: Admission) -> No
             session_count=session.count(),
             growth_waiting=admission.growth_waiting,
             estimates_abandoned=_estimates_abandoned,
+            executing_queries=_one_shot_running
+            + max(0, executing_sessions - admission.growth_waiting),
+            idle_sessions=session.count() - executing_sessions,
         )
         frame = Frame(type=FrameType.METRICS_SAMPLE, payload=sample.model_dump(mode="json"))
         await ws.send(frame.model_dump_json())
@@ -1196,6 +1208,10 @@ async def run_control_channel(
             if settings.session_token_path
             else results_dir / ".session-token"
         )
+
+    # One sampler for the agent's lifetime, so its memory-peak poll is started once
+    # rather than per connection; rebased on every reconnect.
+    sampler = MetricsSampler(memory_poll_interval_s=settings.metrics_memory_poll_interval_s)
 
     # One admission manager for the agent's lifetime; the in-memory queue + the
     # active concurrency profile persist across reconnects (reset on restart).
@@ -1261,7 +1277,8 @@ async def run_control_channel(
                 await session.clear_all(admission)
 
                 # Push live utilization on its own cadence; cancelled on disconnect.
-                metrics_task = asyncio.create_task(_push_metrics(ws, MetricsSampler(), admission))
+                sampler.rebase()
+                metrics_task = asyncio.create_task(_push_metrics(ws, sampler, admission))
                 try:
                     await _consume(ws, results_dir, admission)
                 finally:

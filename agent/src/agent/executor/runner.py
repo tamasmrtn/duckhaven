@@ -1485,6 +1485,7 @@ def run_query_sync(
     trace_headers: dict[str, str] | None = None,
     disabled_filesystems: str | None = None,
     lock_config: bool = False,
+    admission_wait_ms: float = 0.0,
 ) -> dict[str, Any]:
     """Run a query through DuckDB.
 
@@ -1539,6 +1540,7 @@ def run_query_sync(
             memory_bytes=memory_bytes,
             threads=threads,
             enable_profiling=enable_profiling,
+            admission_wait_ms=admission_wait_ms,
         )
 
         if maintain_for:

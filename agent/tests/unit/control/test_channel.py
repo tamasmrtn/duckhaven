@@ -302,6 +302,37 @@ async def test_one_shot_executing_count_tracks_the_run_and_survives_failure(tmp_
     assert ch_module._one_shot_running == 0
 
 
+async def test_dispatch_reports_its_admission_wait_in_the_profile(tmp_path, monkeypatch):
+    """One-shot runs used to report admission_wait_ms = 0 whatever they waited."""
+    import agent.control.channel as ch_module
+
+    captured: dict = {}
+
+    async def fake_run_query(sql, result_path, timeout_s, **kwargs):
+        captured.update(kwargs)
+        result_path.write_bytes(b"PAR1fake")
+        return {"row_count": 0, "duration_ms": 0}
+
+    monkeypatch.setattr(ch_module, "run_query", fake_run_query)
+    admission = _admission()
+    real_acquire = admission.acquire
+
+    async def slow_acquire(*args, **kwargs):
+        await asyncio.sleep(0.05)
+        return await real_acquire(*args, **kwargs)
+
+    monkeypatch.setattr(admission, "acquire", slow_acquire)
+
+    class FakeWS:
+        async def send(self, msg: str) -> None:
+            pass
+
+    await ch_module._handle_dispatch(
+        FakeWS(), {"query_id": str(uuid.uuid4()), "sql": "SELECT 1"}, tmp_path, admission
+    )
+    assert captured["admission_wait_ms"] >= 40
+
+
 async def _serve_bootstrap_exchange(websocket, session_token: str = "tok-abc"):
     """Mock control-plane: accept auth, send auth_ok, then accept one more frame."""
     raw = await websocket.recv()

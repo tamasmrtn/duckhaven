@@ -413,8 +413,9 @@ async def test_exec_statement_acks_before_running(tmp_path):
         ws, {"session_id": "s1", "query_id": "stmt1", "sql": "SELECT 1 AS n"}, tmp_path, admission
     )
     types = [f.type for f in _frames(ws)]
-    assert types == [FrameType.STATEMENT_ACK, FrameType.QUERY_DONE]
-    assert _frames(ws)[0].payload["query_id"] == "stmt1"
+    # Receipt, then "started executing" (past the session lock), then the result.
+    assert types == [FrameType.STATEMENT_ACK, FrameType.QUERY_PROGRESS, FrameType.QUERY_DONE]
+    assert [f.payload["query_id"] for f in _frames(ws)] == ["stmt1"] * 3
 
 
 async def test_exec_statement_acks_before_taking_the_session_lock(tmp_path):

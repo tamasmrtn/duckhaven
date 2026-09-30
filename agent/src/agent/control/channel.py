@@ -829,6 +829,15 @@ async def _handle_exec_statement(
             # Inside the lock: the size applies to this statement only, and the
             # session runs one statement at a time.
             estimate_key = await _resize_for_statement(state, sql, admission, timeout_s)
+            # The statement starts executing now: past the session lock and any
+            # wait for memory to grow into. The control plane stamps running_at
+            # from this, so its wait/run split and its concurrency see the run
+            # while it is in progress rather than only once it has finished.
+            await ws.send(
+                Frame(
+                    type=FrameType.QUERY_PROGRESS, payload={"query_id": statement_id}
+                ).model_dump_json()
+            )
             # `peak_memory_bytes` is only this statement's own peak if nothing has
             # raised the connection's watermark yet; after that the runner reports
             # a delta (see `runner._apply_watermarks`). Read it before the run,
@@ -1028,6 +1037,7 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
                 disabled_filesystems=settings.sandbox_disabled_filesystems,
                 lock_config=settings.sandbox_lock_configuration,
             )
+            wait_started = time.monotonic()
             reservation: Reservation = await admission.acquire(_build_request(estimate, admission))
             # One-shot dispatch is the module docstring's own motivating
             # scenario (a cold object-storage scan re-reading its Parquet with
@@ -1040,6 +1050,7 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
                 reservation, _elastic_target(admission, reservation.memory_bytes)
             )
         else:
+            wait_started = time.monotonic()
             reservation = await admission.acquire()
     except QueueFull:
         if conn is not None:
@@ -1063,6 +1074,9 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
         _in_flight.pop(query_id, None)
         raise
 
+    # Time spent in the admission queue only: the EXPLAIN estimate before it is
+    # planning, not waiting for capacity.
+    admission_wait_ms = (time.monotonic() - wait_started) * 1000
     await admission.apply_pending_resizes()
 
     progress = Frame(type=FrameType.QUERY_PROGRESS, payload={"query_id": query_id})
@@ -1091,6 +1105,7 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
             enable_profiling=settings.profiling_enabled,
             disabled_filesystems=settings.sandbox_disabled_filesystems,
             lock_config=settings.sandbox_lock_configuration,
+            admission_wait_ms=admission_wait_ms,
         )
         done_payload: dict[str, object] = {
             "query_id": query_id,

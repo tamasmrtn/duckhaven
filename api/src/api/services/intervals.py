@@ -8,8 +8,7 @@ buckets with any activity" changes with the bucket size (the same agent read 0 %
 across buckets and therefore identical at every zoom level:
 
 * ``spread`` distributes interval-seconds over buckets. Divided by a bucket's length
-  it is the time-weighted average concurrency (Little's law, and the "load" Snowflake
-  reports for its warehouses).
+  it is the time-weighted average concurrency (Little's law).
 * ``merge``/``intersect`` give the measure of a union ("busy" = time at least one
   query was running) and restrict it to spans (time the agent was up).
 * ``sweep`` does all of that for many overlapping intervals in one pass: per bucket,

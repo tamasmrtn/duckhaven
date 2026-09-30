@@ -78,7 +78,7 @@ Everything with a start and an end is measured exactly, from timestamps, rather 
 |---|---|
 | Busy | The total length of time at least one query was running, while the agent was up. Two queries side by side count once. |
 | Up / idle | From the agent's lifecycle trail; idle is up minus busy. |
-| Concurrency averages | Query-seconds in each state divided by the bucket's seconds (Little's law) — the same "load" Snowflake reports for its warehouses. |
+| Concurrency averages | Query-seconds in each state divided by the bucket's seconds (Little's law): the time-weighted average number of queries in that state. |
 | Peak running | The true maximum overlap of running queries within the bucket. |
 | Wait | From a query's submission to when it started running: the admission queue, planning, and any time compute was starting. |
 | CPU | The agent's cgroup CPU counter, averaged over each 2-second interval, then over the bucket. |

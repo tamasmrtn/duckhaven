@@ -262,6 +262,7 @@ async def handle_agent_frame(db: AsyncSession, frame: Frame, polaris=None) -> No
                 status_val,
                 frame.payload.get("duration_ms"),
                 frame.payload.get("result_bytes"),
+                frame.payload.get("error"),
             )
             if status_val == "failed":
                 record_query_queue_rejection(frame.payload.get("error"))

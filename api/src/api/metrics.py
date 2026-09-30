@@ -58,6 +58,12 @@ QUERIES_TOTAL = Counter(
     "User queries reaching a terminal state, by outcome.",
     ["replica_id", "status"],
 )
+QUERY_FAILURES = Counter(
+    "duckhaven_query_failures",
+    "User queries that failed, by classified cause (sql_error is the query's own "
+    "mistake; the rest are the platform's).",
+    ["replica_id", "reason"],
+)
 QUERY_DURATION = Histogram(
     "duckhaven_query_duration_seconds",
     "Wall-clock duration of completed user queries.",
@@ -206,8 +212,15 @@ def record_query_submitted() -> None:
     QUERIES_SUBMITTED.labels(settings.replica_id).inc()
 
 
-def record_query_completion(status: str, duration_ms: int | None, result_bytes: int | None) -> None:
+def record_query_completion(
+    status: str,
+    duration_ms: int | None,
+    result_bytes: int | None,
+    error: str | None = None,
+) -> None:
     QUERIES_TOTAL.labels(settings.replica_id, status).inc()
+    if status == "failed":
+        QUERY_FAILURES.labels(settings.replica_id, classify_failure(error)).inc()
     if status != "done":
         return
     if duration_ms is not None:

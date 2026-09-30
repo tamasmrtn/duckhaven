@@ -135,6 +135,17 @@ async def test_failed_query_counts_but_skips_histograms(db_session):
     ) == dur_before
 
 
+async def test_failures_are_counted_by_cause(db_session):
+    """A failure ratio for alerting can leave the users' own SQL mistakes out."""
+    q = await _make_query(db_session, origin=None)
+    before = _value("duckhaven_query_failures_total", {"replica_id": RID, "reason": "sql_error"})
+    frame = await _done_frame(q.id, status="failed")
+    frame.payload["error"] = "Catalog Error: Table with name nope does not exist!"
+    await query_service.handle_agent_frame(db_session, frame)
+    after = _value("duckhaven_query_failures_total", {"replica_id": RID, "reason": "sql_error"})
+    assert (after or 0) - (before or 0) == 1
+
+
 async def test_internal_queries_excluded(db_session):
     # Both sides are coerced the same way. A counter no test in this worker has
     # touched yet reads back as None rather than 0, so coercing only `before`

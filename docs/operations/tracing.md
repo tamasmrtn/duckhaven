@@ -33,13 +33,6 @@ execution — not two disconnected halves.
   expose it beyond localhost. The HA stack ships no Grafana — add a Tempo datasource pointing at `http://tempo:3200`
   to your own Grafana, next to the Prometheus datasource you already run for the metrics.
 
-!!! warning "Tempo 3.x upgrades are one-way"
-    The bundled Tempo is 3.x. It reads trace data written by 2.x, so an existing `tempo_data` volume carries over,
-    but 3.x cannot be rolled back to 2.x once it has started on that volume. Tempo 3.x also dropped the `compactor`
-    config block: retention is now `backend_worker.compaction.block_retention` in `deploy/tempo/tempo.yaml`. If you
-    keep your own copy of that file, run `tempo-cli migrate config` against it before upgrading — a 2.x config
-    makes 3.x refuse to start.
-
 To export to a different OTLP backend (another collector, or a SaaS), point `OTEL_EXPORTER_OTLP_ENDPOINT` at it or
 edit the collector's exporter block — the services only ever talk to the collector.
 

@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from api.config import settings
 from api.models.agent import Agent
 from api.services.agent_registry import registry
+from api.services.agent_telemetry import record_lifecycle_event
 
 logger = logging.getLogger(__name__)
 
@@ -51,14 +52,20 @@ async def claim_agent_owner(db: AsyncSession, agent_id: uuid.UUID) -> None:
     await db.commit()
 
 
-async def release_agent_owner(db: AsyncSession, agent_id: uuid.UUID) -> None:
-    """Clear ownership so no replica is considered to hold the socket anymore."""
-    await db.execute(
+async def release_agent_owner(db: AsyncSession, agent_id: uuid.UUID) -> bool:
+    """Clear ownership so no replica is considered to hold the socket anymore.
+
+    Only this replica's own claim is cleared. An agent that has already reconnected
+    to another replica belongs to that replica now, and a late teardown here must
+    not mark it unavailable. Returns whether this replica still owned it.
+    """
+    released = await db.execute(
         sa.update(Agent)
-        .where(Agent.id == agent_id)
+        .where(Agent.id == agent_id, Agent.owner_id == settings.replica_id)
         .values(owner_id=None, owner_url=None, status="unavailable")
     )
     await db.commit()
+    return released.rowcount == 1
 
 
 async def connected_agent_ids(db: AsyncSession) -> set[str]:
@@ -161,17 +168,26 @@ async def drain_local_agents(session_factory: async_sessionmaker[AsyncSession]) 
     Called on graceful shutdown: closing with 1012 (Service Restart) prompts each
     agent to reconnect to a live replica immediately, and clearing ownership means
     no query is routed to this dying replica in the meantime.
+
+    Each drained agent gets a ``disconnected`` (reason ``replica_shutdown``) here,
+    because the lifespan does not wait for the socket handlers' own teardown, which
+    is the only other place one is written.
     """
     ids = [uuid.UUID(a) for a in registry.connected_ids()]
     for agent_id in ids:
         await registry.close(agent_id)
     if ids:
         async with session_factory() as db:
-            await db.execute(
-                sa.update(Agent)
-                .where(Agent.id.in_(ids))
-                .values(owner_id=None, owner_url=None, status="unavailable")
-            )
+            owned = (
+                await db.execute(
+                    sa.update(Agent)
+                    .where(Agent.id.in_(ids), Agent.owner_id == settings.replica_id)
+                    .values(owner_id=None, owner_url=None, status="unavailable")
+                    .returning(Agent.id)
+                )
+            ).scalars()
+            for agent_id in owned:
+                record_lifecycle_event(db, agent_id, "disconnected", reason="replica_shutdown")
             await db.commit()
 
 

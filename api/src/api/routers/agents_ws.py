@@ -13,11 +13,11 @@ from api.deps import get_session_factory
 from api.models.agent import Agent
 from api.models.user import Credential
 from api.services.agent_dispatch import claim_agent_owner, release_agent_owner
+from api.services.agent_presence import close_unfinished_run
 from api.services.agent_registry import registry
 from api.services.agent_telemetry import (
     accumulate,
     flush_minute,
-    purge_expired_metrics,
     record_lifecycle_event_now,
     take_pending,
 )
@@ -309,6 +309,10 @@ async def agent_connect(
         # replica can route dispatch frames here.
         async with session_factory() as db:
             await claim_agent_owner(db, agent_id)
+            # A previous run that ended without a disconnect (its replica crashed
+            # before the sweeper noticed) is closed at its last proof of life, so
+            # the timeline never bridges the outage as uptime.
+            await close_unfinished_run(db, agent_id)
             # Recorded for static agents too: "the socket was up and this agent
             # could serve work" is the same fact for both kinds, and it is what the
             # monitoring page's running/not-running timeline is built from.
@@ -369,7 +373,6 @@ async def agent_connect(
                     if closed is not None:
                         async with session_factory() as db:
                             await flush_minute(db, agent_id, closed)
-                            await purge_expired_metrics(db)
                     # Metrics arrive every couple of seconds, so they're a
                     # reliable liveness signal: refresh the cluster-wide presence
                     # watermark (throttled) so peer replicas see this agent as
@@ -422,11 +425,19 @@ async def agent_connect(
     except Exception:
         logger.exception("Agent WebSocket handler failed for agent %s", agent_id)
     finally:
-        if agent_id:
+        # A newer socket for this agent has already replaced this one on this
+        # replica (a fast reconnect). Its teardown is not an agent going away, so it
+        # must not unregister, release, or record anything on the newer socket's
+        # behalf.
+        superseded = agent_id is not None and registry.get(agent_id) not in (None, ws)
+        if agent_id and not superseded:
             registry.unregister(agent_id)
             async with session_factory() as db:
-                await release_agent_owner(db, agent_id)
-                await record_lifecycle_event_now(db, agent_id, "disconnected")
+                # Only an agent this replica still owned went away from here; one
+                # that already reconnected elsewhere, or that a drain has released
+                # and recorded, is not disconnected again.
+                if await release_agent_owner(db, agent_id):
+                    await record_lifecycle_event_now(db, agent_id, "disconnected")
                 # Write the minute still open when the socket dropped — the one an
                 # operator looks at first after an agent goes away.
                 pending = take_pending(agent_id)

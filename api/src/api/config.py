@@ -385,6 +385,10 @@ class Settings(BaseSettings):
     # pinged within this window. The TTL covers a replica that died without
     # clearing its ownership rows.
     agent_presence_ttl_s: float = 90.0
+    # How often the presence sweeper looks for agents whose watermark went stale
+    # without a clean disconnect (a crashed replica, a lost network) and closes
+    # their lifecycle trail, so the monitoring timeline stops showing them as up.
+    agent_presence_sweep_interval_s: float = 30.0
     # SQLAlchemy connection pool. pool_pre_ping discards connections to a failed
     # Postgres primary after failover so the app reconnects transparently; the
     # sizing bounds per-replica connections against the Postgres max.

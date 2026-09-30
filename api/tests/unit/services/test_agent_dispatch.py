@@ -5,10 +5,11 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
+import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from api.config import settings
-from api.models.agent import Agent
+from api.models.agent import Agent, AgentLifecycleEvent
 from api.services import agent_dispatch
 from api.services.agent_dispatch import (
     claim_agent_owner,
@@ -41,7 +42,8 @@ def _clean_registry():
 
 
 async def _seed_agent(db, **kwargs) -> Agent:
-    agent = Agent(name="a", status="unavailable", **kwargs)
+    kwargs.setdefault("status", "unavailable")
+    agent = Agent(name="a", **kwargs)
     db.add(agent)
     await db.commit()
     await db.refresh(agent)
@@ -63,7 +65,7 @@ async def test_claim_and_release_owner(db_session, _own_replica):
     assert agent.status == "healthy"
     assert agent.last_ping_at is not None
 
-    await release_agent_owner(db_session, agent.id)
+    assert await release_agent_owner(db_session, agent.id) is True
     await db_session.refresh(agent)
     assert agent.owner_url is None and agent.owner_id is None
     assert agent.status == "unavailable"
@@ -155,7 +157,10 @@ async def test_drain_local_agents_closes_and_releases(db_session, db_engine, _ow
     """Graceful shutdown closes local sockets and clears their ownership so other
     replicas take over."""
     agent = await _seed_agent(
-        db_session, owner_url=settings.replica_internal_url, last_ping_at=datetime.now(tz=UTC)
+        db_session,
+        owner_id=settings.replica_id,
+        owner_url=settings.replica_internal_url,
+        last_ping_at=datetime.now(tz=UTC),
     )
     ws = FakeWS()
     registry.register(agent.id, ws)
@@ -167,3 +172,40 @@ async def test_drain_local_agents_closes_and_releases(db_session, db_engine, _ow
     await db_session.refresh(agent)
     assert agent.owner_url is None
     assert agent.status == "unavailable"
+    # The lifespan doesn't wait for the socket handler's own teardown, so the drain
+    # is what records the agent going away.
+    events = (await db_session.execute(sa.select(AgentLifecycleEvent))).scalars().all()
+    assert [(e.agent_id, e.event, e.reason) for e in events] == [
+        (agent.id, "disconnected", "replica_shutdown")
+    ]
+
+
+async def test_drain_leaves_agents_another_replica_now_owns(db_session, db_engine, _own_replica):
+    """An agent that already reconnected elsewhere is neither released nor recorded
+    as disconnected by this replica's drain."""
+    agent = await _seed_agent(
+        db_session,
+        owner_id="peer",
+        owner_url="http://peer:8000",
+        status="healthy",
+        last_ping_at=datetime.now(tz=UTC),
+    )
+    registry.register(agent.id, FakeWS())
+
+    await drain_local_agents(async_sessionmaker(db_engine, expire_on_commit=False))
+
+    await db_session.refresh(agent)
+    assert agent.owner_url == "http://peer:8000"
+    assert agent.status == "healthy"
+    assert (await db_session.execute(sa.select(AgentLifecycleEvent))).first() is None
+
+
+async def test_release_only_clears_this_replicas_claim(db_session, _own_replica):
+    """A late teardown on the old replica must not mark a reconnected agent unavailable."""
+    agent = await _seed_agent(
+        db_session, owner_id="peer", owner_url="http://peer:8000", status="healthy"
+    )
+    assert await release_agent_owner(db_session, agent.id) is False
+    await db_session.refresh(agent)
+    assert agent.owner_url == "http://peer:8000"
+    assert agent.status == "healthy"

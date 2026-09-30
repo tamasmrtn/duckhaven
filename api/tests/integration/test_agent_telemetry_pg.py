@@ -209,3 +209,50 @@ async def test_query_charts_read_through_the_new_index(db_session, agent, worksp
     assert data["summary"]["completed"] == 5
     assert data["summary"]["failed"] == 1
     assert [(f["reason"], f["count"]) for f in data["failures"]] == [("queue_full", 1)]
+
+
+async def test_presence_sweep_and_lifecycle_purge_on_real_postgres(
+    db_session, pg_engine, agent, monkeypatch
+):
+    """The sweeper's leadership lock is exclusive and released, its backdated close
+    lands on a timestamptz column, and the lifecycle purge's correlated DELETE keeps
+    the seed event."""
+    import random
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.models.agent import AgentLifecycleEvent
+    from api.services import agent_presence
+
+    monkeypatch.setattr(agent_presence, "_PRESENCE_LOCK_KEY", random.randint(1, 2**31 - 1))
+    monkeypatch.setattr(settings, "agent_metrics_retention_hours", 24.0)
+    factory = async_sessionmaker(pg_engine, expire_on_commit=False)
+
+    async with agent_presence.presence_leadership(factory) as first:
+        async with agent_presence.presence_leadership(factory) as second:
+            assert first is True and second is False
+    async with agent_presence.presence_leadership(factory) as again:
+        assert again is True
+
+    now = datetime.now(tz=UTC)
+    stale = now - timedelta(hours=1)
+    agent.last_ping_at = stale
+    record_lifecycle_event(db_session, agent.id, "connected", at=now - timedelta(hours=72))
+    record_lifecycle_event(db_session, agent.id, "disconnected", at=now - timedelta(hours=60))
+    record_lifecycle_event(db_session, agent.id, "connected", at=now - timedelta(hours=2))
+    await db_session.commit()
+
+    assert await agent_presence.sweep_presence(db_session, now) == 1
+    await purge_expired_metrics(db_session)
+
+    rows = (
+        (await db_session.execute(select(AgentLifecycleEvent).order_by(AgentLifecycleEvent.at)))
+        .scalars()
+        .all()
+    )
+    assert [(r.event, r.reason) for r in rows] == [
+        ("disconnected", None),
+        ("connected", None),
+        ("disconnected", "presence_lost"),
+    ]
+    assert rows[-1].at == stale

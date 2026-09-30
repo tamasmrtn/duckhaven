@@ -41,14 +41,21 @@ def record_lifecycle_event(
     event: str,
     *,
     reason: str | None = None,
+    at: datetime | None = None,
 ) -> None:
     """Append one lifecycle transition for ``agent_id``. The caller commits.
 
     Synchronous because it only stages a row — it rides along on whichever commit
     the caller was already going to make, so recording a transition never adds a
     round trip to a scale-out or a socket handshake.
+
+    ``at`` backdates the event; left out, the database stamps it now. Only a
+    transition noticed after the fact (a lapsed presence) needs it.
     """
-    db.add(AgentLifecycleEvent(agent_id=agent_id, event=event, reason=reason))
+    row = AgentLifecycleEvent(agent_id=agent_id, event=event, reason=reason)
+    if at is not None:
+        row.at = at
+    db.add(row)
 
 
 async def record_lifecycle_event_now(
@@ -232,14 +239,57 @@ async def flush_minute(db: AsyncSession, agent_id: uuid.UUID, acc: MinuteAccumul
         await db.rollback()
 
 
-async def purge_expired_metrics(db: AsyncSession) -> int:
-    """Delete rollup rows past the retention window. Runs at most hourly.
+async def latest_events(
+    db: AsyncSession, agent_ids: list[uuid.UUID] | None = None
+) -> dict[uuid.UUID, AgentLifecycleEvent]:
+    """Each agent's most recent lifecycle event, optionally for a subset of agents."""
+    events = AgentLifecycleEvent.__table__
+    newest = (
+        sa.select(events.c.agent_id, sa.func.max(events.c.at).label("at"))
+        .group_by(events.c.agent_id)
+        .subquery()
+    )
+    stmt = sa.select(AgentLifecycleEvent).join(
+        newest,
+        sa.and_(
+            AgentLifecycleEvent.agent_id == newest.c.agent_id,
+            AgentLifecycleEvent.at == newest.c.at,
+        ),
+    )
+    if agent_ids is not None:
+        stmt = stmt.where(AgentLifecycleEvent.agent_id.in_(agent_ids))
+    return {event.agent_id: event for event in (await db.execute(stmt)).scalars()}
 
-    Piggybacks on the flush path instead of taking a loop of its own: the flush
-    already happens once a minute per connected agent, and an advisory lock keeps
-    concurrent replicas from all issuing the same DELETE. On a dialect without
-    advisory locks (SQLite, under tests) the in-process hourly guard is enough,
-    because there is only one process.
+
+async def _purge_lifecycle_events(db: AsyncSession, cutoff: datetime) -> int:
+    """Delete lifecycle events past the cutoff, keeping each agent's newest one.
+
+    That newest pre-cutoff event is the seed the monitoring timeline replays from:
+    an agent quietly connected for a month has no event inside any window, and
+    without it the whole timeline would read "no data".
+    """
+    events = AgentLifecycleEvent.__table__
+    newer = sa.alias(events, "newer")
+    has_newer_before_cutoff = sa.exists().where(
+        newer.c.agent_id == events.c.agent_id,
+        newer.c.at < cutoff,
+        newer.c.at > events.c.at,
+    )
+    deleted = await db.execute(
+        sa.delete(events).where(events.c.at < cutoff, has_newer_before_cutoff)
+    )
+    return deleted.rowcount
+
+
+async def purge_expired_metrics(db: AsyncSession) -> int:
+    """Delete rollup rows and lifecycle events past the retention window.
+
+    Runs at most hourly, from the presence sweeper's loop, so it still happens when
+    no agent is connected. An advisory lock keeps concurrent replicas from all
+    issuing the same DELETE. On a dialect without advisory locks (SQLite, under
+    tests) the in-process hourly guard is enough, because there is only one process.
+
+    Returns the number of rollup rows deleted.
     """
     now = datetime.now(tz=UTC)
     if _state.last_purge is not None and (now - _state.last_purge) < timedelta(hours=1):
@@ -257,13 +307,18 @@ async def purge_expired_metrics(db: AsyncSession) -> int:
         deleted = await db.execute(
             sa.delete(AgentMetricsMinute).where(AgentMetricsMinute.minute < cutoff)
         )
+        events_deleted = await _purge_lifecycle_events(db, cutoff)
         await db.commit()
     finally:
         if db.bind.dialect.name == "postgresql":
             await db.execute(sa.text("SELECT pg_advisory_unlock(:k)"), {"k": _PURGE_LOCK_KEY})
             await db.commit()
-    if deleted.rowcount:
-        logger.info("Purged %d expired agent metric rows", deleted.rowcount)
+    if deleted.rowcount or events_deleted:
+        logger.info(
+            "Purged %d expired agent metric rows and %d lifecycle events",
+            deleted.rowcount,
+            events_deleted,
+        )
     return deleted.rowcount
 
 

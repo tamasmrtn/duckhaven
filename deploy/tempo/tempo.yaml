@@ -19,6 +19,10 @@ storage:
     wal:
       path: /var/tempo/wal
 
-compactor:
+# Tempo 3.x replaced the `compactor` block with a backend scheduler and worker
+# that run in-process in this single-binary setup. Block retention is a worker
+# setting (the scheduler has a copy of the key that does nothing); without it
+# blocks are kept for 14 days rather than 72h.
+backend_worker:
   compaction:
     block_retention: 72h

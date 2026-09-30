@@ -236,13 +236,13 @@ RESET duckhaven_concurrency;           -- back to the default (auto)
 
 ### Monitoring
 
-**Compute →** *(pick an agent)* **→ Monitoring** shows live **Running
-queries** and **Queued queries** counters, and a **Peak query count** chart over
-the last 1–24 hours. A persistently non-zero queued band means the agent is
-saturated: raise the slot count (e.g. switch to `decaying_3`) only if per-query
-memory still suffices, or add another agent. The **Failures & rejections** chart
-on the same page separates saturation (`queue_full`, `queued_timeout`) from
-per-query problems like `out_of_memory`. See [Monitoring](monitoring.md).
+**Compute →** *(pick an agent)* **→ Monitoring** shows live **Executing** and
+**Queued** counters, and a **Concurrency** chart over up to the last 7 days. A
+persistent **waiting to run** layer means the agent is saturated: raise the slot
+count (e.g. switch to `decaying_3`) only if per-query memory still suffices, or
+add another agent. The **Queries** chart on the same page separates saturation
+(`queue_full`, `queued_timeout`) from per-query problems like `out_of_memory`,
+and from mistakes in the SQL itself. See [Monitoring](monitoring.md).
 
 ---
 

@@ -191,6 +191,21 @@ async def drain_local_agents(session_factory: async_sessionmaker[AsyncSession]) 
             await db.commit()
 
 
+async def _fetch_peer_metrics(owner_url: str, agent_id) -> list[dict]:
+    """One agent's live samples from the peer replica that holds its socket."""
+    url = f"{owner_url.rstrip('/')}/internal/agents/{agent_id}/metrics"
+    try:
+        async with httpx.AsyncClient(timeout=_FORWARD_TIMEOUT_S) as client:
+            resp = await client.get(
+                url, headers={"X-Internal-Secret": settings.internal_api_secret}
+            )
+        if resp.status_code == 200:
+            return resp.json().get("metrics") or []
+    except httpx.HTTPError as exc:
+        logger.warning("Metrics fetch for agent %s failed: %s", agent_id, exc)
+    return []
+
+
 async def gather_agent_metrics(db: AsyncSession) -> dict[str, list[dict]]:
     """Live metric ring buffers for every connected agent, across replicas.
 
@@ -214,16 +229,30 @@ async def gather_agent_metrics(db: AsyncSession) -> dict[str, list[dict]]:
         )
     ).all()
     for agent_id, owner_url in peers:
-        url = f"{owner_url.rstrip('/')}/internal/agents/{agent_id}/metrics"
-        try:
-            async with httpx.AsyncClient(timeout=_FORWARD_TIMEOUT_S) as client:
-                resp = await client.get(
-                    url, headers={"X-Internal-Secret": settings.internal_api_secret}
-                )
-            if resp.status_code == 200:
-                samples = resp.json().get("metrics") or []
-                if samples:
-                    buffers[str(agent_id)] = samples
-        except httpx.HTTPError as exc:
-            logger.warning("Metrics fetch for agent %s failed: %s", agent_id, exc)
+        samples = await _fetch_peer_metrics(owner_url, agent_id)
+        if samples:
+            buffers[str(agent_id)] = samples
     return buffers
+
+
+async def agent_recent_samples(db: AsyncSession, agent_id: uuid.UUID) -> list[dict]:
+    """One agent's live samples (the last few minutes at full resolution), wherever
+    its socket is held. Empty when it is not connected or its owner can't be asked."""
+    local = registry.recent_metrics().get(str(agent_id))
+    if local is not None:
+        return local
+    if not settings.internal_api_secret:
+        return []
+    cutoff = datetime.now(tz=UTC) - timedelta(seconds=settings.agent_presence_ttl_s)
+    owner_url = (
+        await db.execute(
+            sa.select(Agent.owner_url).where(
+                Agent.id == agent_id,
+                Agent.owner_url.is_not(None),
+                Agent.owner_url != settings.replica_internal_url,
+                Agent.last_ping_at.is_not(None),
+                Agent.last_ping_at >= cutoff,
+            )
+        )
+    ).scalar_one_or_none()
+    return await _fetch_peer_metrics(owner_url, agent_id) if owner_url else []

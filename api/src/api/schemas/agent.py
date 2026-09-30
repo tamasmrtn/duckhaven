@@ -171,62 +171,84 @@ class AgentMetricsOut(BaseModel):
     samples: list[MetricsSampleOut]
 
 
-class PeakQueryPointOut(BaseModel):
+class MonitoringBucketOut(BaseModel):
+    """One bucket of every series. Flat, so all charts index the same row."""
+
     t: datetime
-    running: int
-    queued: int
-
-
-class CompletedQueryPointOut(BaseModel):
-    t: datetime
-    per_minute: float
-
-
-class ActivityPointOut(BaseModel):
-    t: datetime
-    # down | starting | query | other | ready | unknown. "unknown" means no lifecycle
-    # trail covers this bucket (an agent older than the trail), which is deliberately
-    # distinct from "down" — we do not know, rather than knowing it was off.
-    state: str
-
-
-class FailurePointOut(BaseModel):
-    t: datetime
-    reason: str
-    count: int
-
-
-class UtilizationPointOut(BaseModel):
-    t: datetime
-    # All null for a bucket the agent reported nothing in, so the chart draws a gap
-    # rather than a line through zero it never actually measured.
+    # Length of the bucket in seconds; shorter than bucket_seconds for the last one
+    # when the range ends inside it (``partial``), e.g. the minute in progress now.
+    seconds: float
+    partial: bool
+    # Where the agent's time went. These sum to ``seconds``. "unknown" means no
+    # lifecycle record covers it, which is deliberately distinct from "down".
+    busy_s: float
+    idle_s: float
+    starting_s: float
+    down_s: float
+    unknown_s: float
+    # Average number of queries in each state over the bucket (query-seconds divided
+    # by bucket seconds). Additive, so they can be stacked.
+    running_avg: float
+    queued_avg: float
+    compute_wait_avg: float
+    # Most queries running at any single instant in the bucket.
+    peak_running: int
+    # Queries that finished in the bucket, by outcome; failures by classified cause.
+    done: int
+    cancelled: int
+    failed: dict[str, int]
+    # Nearest-rank p95 of how long queries that started running in the bucket had
+    # waited, and how many there were. Null when none started.
+    wait_p95_ms: int | None = None
+    wait_n: int
+    # Sampled resources. Null when the agent reported nothing in the bucket, so the
+    # chart draws a gap rather than a line through a zero never measured.
     cpu_avg: float | None = None
     cpu_max: float | None = None
     mem_avg: float | None = None
     mem_max: float | None = None
+    oom_kills: int | None = None
+    # Share of the bucket the samples actually cover; null from older agents.
+    coverage: float | None = None
+
+
+class MonitoringSpanOut(BaseModel):
+    start: datetime
+    end: datetime
+    # up | starting | down | unknown
+    state: str
 
 
 class MonitoringSummaryOut(BaseModel):
     uptime_s: int
-    # Share of connected time that had query activity; null when never connected.
+    busy_s: int
+    idle_s: int
+    # Share of up time with at least one query running; null when never up.
     busy_ratio: float | None = None
-    completed: int
+    finished: int
     failed: int
-    idle_timeout_minutes: int | None = None
+    cancelled: int
+    failed_by_reason: dict[str, int]
+    wait_p95_ms: int | None = None
+    wait_n: int
+    peak_running: int
+    cpu_peak: float | None = None
+    mem_peak: float | None = None
+    # The newest moment the resource series describe; null when none reported.
+    resources_as_of: datetime | None = None
 
 
 class AgentMonitoringOut(BaseModel):
-    """Every series for one agent over one window, on a shared bucket grid."""
+    """Every series for one agent over one range, on a shared bucket grid."""
 
-    window: str
+    # The preset asked for, or null for a custom (zoomed) range.
+    preset: str | None = None
+    range_start: datetime
+    range_end: datetime
     bucket_seconds: int
-    start: datetime
-    end: datetime
-    peak_query_count: list[PeakQueryPointOut]
-    completed_query_count: list[CompletedQueryPointOut]
-    activity: list[ActivityPointOut]
-    failures: list[FailurePointOut]
-    utilization: list[UtilizationPointOut]
+    generated_at: datetime
+    buckets: list[MonitoringBucketOut]
+    spans: list[MonitoringSpanOut]
     summary: MonitoringSummaryOut
 
 

@@ -104,6 +104,7 @@ class MinuteAccumulator:
     # minute stays "not measured" rather than reading as zero.
     covered_s: float | None = None
     oom_kills: int | None = None
+    last_sampled_at: datetime | None = None
 
     def add(self, sample: dict) -> None:
         cpu = float(sample.get("cpu_percent") or 0.0)
@@ -120,6 +121,8 @@ class MinuteAccumulator:
         self.session_max = max(self.session_max, int(sample.get("session_count") or 0))
         self.covered_s = _add_optional(self.covered_s, sample.get("interval_s"))
         self.oom_kills = _add_optional(self.oom_kills, sample.get("oom_kills"))
+        at = _sampled_at(sample)
+        self.last_sampled_at = at if self.last_sampled_at is None else max(self.last_sampled_at, at)
         self.count += 1
 
 
@@ -139,8 +142,8 @@ class _RollupState:
 _state = _RollupState()
 
 
-def _minute_of(sample: dict) -> datetime:
-    """The minute a sample belongs to, from the agent's own clock when it gave one.
+def _sampled_at(sample: dict) -> datetime:
+    """When a sample was taken, from the agent's own clock when it gave one.
 
     Agents stamp ``sampled_at``; falling back to the control plane's clock only
     matters for an agent too old to send it, where a sub-second skew is irrelevant
@@ -150,12 +153,25 @@ def _minute_of(sample: dict) -> datetime:
     if isinstance(raw, str):
         try:
             parsed = datetime.fromisoformat(raw)
-            at = parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
         except ValueError:
-            at = datetime.now(tz=UTC)
-    else:
-        at = datetime.now(tz=UTC)
-    return at.replace(second=0, microsecond=0)
+            pass
+    return datetime.now(tz=UTC)
+
+
+def _minute_of(sample: dict) -> datetime:
+    """The minute a sample belongs to."""
+    return _sampled_at(sample).replace(second=0, microsecond=0)
+
+
+def accumulate_into(minutes: dict[datetime, MinuteAccumulator], sample: dict) -> None:
+    """Fold one sample into a caller-owned map of minutes (no module state, no I/O).
+
+    What the monitoring page uses to summarise live samples for the minute the
+    rollup has not written yet.
+    """
+    minute = _minute_of(sample)
+    minutes.setdefault(minute, MinuteAccumulator(minute=minute)).add(sample)
 
 
 def accumulate(agent_id: uuid.UUID, sample: dict) -> MinuteAccumulator | None:

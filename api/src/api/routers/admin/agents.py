@@ -27,7 +27,7 @@ from api.services.agent_dispatch import (
     disconnect_agent,
     gather_agent_metrics,
 )
-from api.services.agent_monitoring import DEFAULT_WINDOW, WINDOWS, build_monitoring
+from api.services.agent_monitoring import MIN_RANGE, PRESETS, build_monitoring
 from api.services.agent_view import (
     build_agent_out,
     build_runtime_catalog_out,
@@ -232,22 +232,37 @@ async def get_agent(
 
 @router.get("/{agent_id}/monitoring", response_model=AgentMonitoringOut)
 async def agent_monitoring(
-    window: str = DEFAULT_WINDOW,
+    window: str | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
     resolved: ResolvedAgent = Depends(require_agent_tier("use")),
     db: AsyncSession = Depends(get_db),
 ) -> AgentMonitoringOut:
-    """Every chart on the agent's Monitoring tab, for one time window.
+    """Every chart on the agent's Monitoring tab, for one time range.
 
-    One response rather than one per chart: the series share a bucket grid, so
-    splitting them would let a slow request leave two charts describing different
-    stretches of time.
+    Either a preset ``window`` (default 8h, ending now) or an explicit ``start`` and
+    ``end`` (a zoomed range), not both. One response rather than one per chart: the
+    series share a bucket grid, so splitting them would let a slow request leave two
+    charts describing different stretches of time.
     """
-    if window not in WINDOWS:
+    if window is not None and window not in PRESETS:
         raise HTTPException(
             status_code=422,
-            detail=f"Unknown window {window!r}; expected one of {', '.join(WINDOWS)}",
+            detail=f"Unknown window {window!r}; expected one of {', '.join(PRESETS)}",
         )
-    return AgentMonitoringOut(**await build_monitoring(db, resolved.agent, window))
+    if (start is None) != (end is None):
+        raise HTTPException(status_code=422, detail="Give both start and end, or neither")
+    if start is not None and end is not None:
+        if window is not None:
+            raise HTTPException(status_code=422, detail="Give a window or a range, not both")
+        if end - start < MIN_RANGE:
+            raise HTTPException(
+                status_code=422,
+                detail=f"A range must span at least {int(MIN_RANGE.total_seconds() // 60)} minutes",
+            )
+    return AgentMonitoringOut(
+        **await build_monitoring(db, resolved.agent, window=window, start=start, end=end)
+    )
 
 
 @router.post("/elastic", response_model=AgentOut, status_code=status.HTTP_202_ACCEPTED)

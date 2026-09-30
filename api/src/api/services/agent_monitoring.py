@@ -1,114 +1,160 @@
 """Aggregate one agent's telemetry into the series the monitoring page draws.
 
 Every series shares one bucket grid so the charts line up vertically and a single
-time filter governs all of them — the property that makes a stack of charts read as
+time range governs all of them — the property that makes a stack of charts read as
 one story rather than five unrelated pictures.
 
-**Why the bucketing happens in Python.** The obvious ``GROUP BY date_trunc(...)``
-does not compile on SQLite, and the unit suite runs entirely on
-``sqlite+aiosqlite:///:memory:``. Aggregating in the API keeps one code path under
-test and in production. It costs a narrow-column scan of at most a day of rows,
-served by ``ix_queries_agent_finished``; the rollup side is minute-grained and so is
-bounded at 1,440 rows a day however busy the agent was.
+**Exact where the data allows it.** Anything with a start and an end is computed from
+its exact interval rather than from samples:
 
-**Why peak concurrency comes from the rollup, not from query timestamps.** The agent
-holds queries in its own admission deque, and a query waiting there is queued in a
-way no control-plane timestamp records. Reconstructing concurrency from
-``running_at``/``finished_at`` would therefore undercount exactly the saturation an
-operator is looking for. The rollup carries the agent's own reported depth, so the
-chart is a max over each window rather than an exact interval sweep.
+* *Lifecycle* (up / starting / down / unknown) replays the agent's lifecycle trail
+  into exact spans.
+* *Query activity* comes from the ``queries`` rows themselves. A one-shot query's
+  ``running_at`` is stamped when the agent reports it past admission, and a session
+  statement's when it starts executing, so ``started_at → running_at`` is the time
+  it waited (in the agent's admission queue, or for compute that was still
+  starting) and ``running_at → finished_at`` the time it ran. From those intervals:
+  average concurrency per bucket (Little's law: query-seconds ÷ bucket seconds),
+  the true peak (a sweep line), and busy time (the measure of their union within
+  the time the agent was up). None of it depends on the bucket size, so the same
+  history reads the same at every zoom level; the old bucket-flag "busy %" read
+  anywhere from 0 % to 67 % for one agent.
+* *Resources* (CPU, memory) can only be sampled; they come from the per-minute
+  rollup, plus the agent's live samples for the minute not yet written, so the
+  right-hand edge of the charts is seconds old rather than a minute.
+
+Aggregation happens in Python rather than in ``GROUP BY date_trunc(...)`` so the
+unit suite (SQLite) runs the same code path as production.
 """
 
 from __future__ import annotations
 
+import bisect
+import math
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import sqlalchemy as sa
+from sqlalchemy import Float
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.sql.expression import FunctionElement
 
+from api.config import settings
 from api.models.agent import Agent, AgentLifecycleEvent, AgentMetricsMinute
 from api.models.query import Query
+from api.services.agent_dispatch import agent_recent_samples, is_agent_connected
+from api.services.agent_telemetry import MinuteAccumulator, accumulate_into
+from api.services.intervals import Interval, measure, merge, nearest_rank, spread, sweep
 from api.services.query_failure import classify_failure
 from api.services.query_history import HIDDEN_ORIGINS
 
-# window -> (span, bucket). Bucket sizes keep every chart between 60 and 144 points:
-# enough to show shape, few enough to stay legible and to render without thinning.
-# A single fixed bucket cannot do that across the range: five minutes would leave a
-# 1-hour window just 12 points, and a 24-hour window nearly 300.
-WINDOWS: dict[str, tuple[timedelta, timedelta]] = {
-    "1h": (timedelta(hours=1), timedelta(minutes=1)),
-    "3h": (timedelta(hours=3), timedelta(minutes=2)),
-    "8h": (timedelta(hours=8), timedelta(minutes=5)),
-    "12h": (timedelta(hours=12), timedelta(minutes=5)),
-    "24h": (timedelta(hours=24), timedelta(minutes=10)),
+PRESETS: dict[str, timedelta] = {
+    "1h": timedelta(hours=1),
+    "3h": timedelta(hours=3),
+    "8h": timedelta(hours=8),
+    "12h": timedelta(hours=12),
+    "24h": timedelta(hours=24),
+    "3d": timedelta(days=3),
+    "7d": timedelta(days=7),
 }
 DEFAULT_WINDOW = "8h"
+# A custom range narrower than this has too few buckets to show a shape.
+MIN_RANGE = timedelta(minutes=5)
 
+# Candidate bucket sizes, smallest first. The chosen one is the smallest that keeps a
+# range to at most MAX_BUCKETS points: enough to show shape, few enough to read. It
+# reproduces the old fixed table (1h → 1 min … 24h → 10 min) and gives 3d → 30 min
+# and 7d → 2 h.
+_BUCKET_STEPS = [timedelta(minutes=m) for m in (1, 2, 5, 10, 15, 30, 60, 120, 180, 360)]
+MAX_BUCKETS = 150
+
+# Lifecycle states. "unknown" means no lifecycle record covers the time — an agent
+# older than the trail — which is deliberately distinct from "down".
+STATE_UP = "up"
+STATE_STARTING = "starting"
+STATE_DOWN = "down"
+STATE_UNKNOWN = "unknown"
+
+_EVENT_STATE = {
+    "provisioning": STATE_STARTING,
+    "connected": STATE_UP,
+    "disconnected": STATE_DOWN,
+    "terminating": STATE_DOWN,
+    "terminated": STATE_DOWN,
+    "failed": STATE_DOWN,
+}
 
 _TERMINAL = ("done", "failed", "cancelled")
-_FAILED = ("failed", "cancelled")
 
-# What the agent was doing during a bucket, most to least significant. A bucket in
-# which anything ran is "query" even if the agent was mostly idle within it —
-# the chart answers "was this agent earning its keep", and a burst says yes.
-ACTIVITY_DOWN = "down"
-ACTIVITY_STARTING = "starting"
-ACTIVITY_QUERY = "query"
-ACTIVITY_OTHER = "other"
-ACTIVITY_READY = "ready"
-# No lifecycle trail covers this bucket. Distinct from "down" on purpose: an agent
-# that predates the trail has no recorded history, and drawing that as downtime
-# would invent an outage that never happened.
-ACTIVITY_UNKNOWN = "unknown"
 
-# Lifecycle event -> the connectivity state it puts the agent into.
-_EVENT_STATE = {
-    "provisioning": ACTIVITY_STARTING,
-    "connected": ACTIVITY_READY,
-    "disconnected": ACTIVITY_DOWN,
-    "terminating": ACTIVITY_DOWN,
-    "terminated": ACTIVITY_DOWN,
-    "failed": ACTIVITY_DOWN,
-}
+def choose_bucket(span: timedelta) -> timedelta:
+    for step in _BUCKET_STEPS:
+        if math.ceil(span / step) <= MAX_BUCKETS:
+            return step
+    return _BUCKET_STEPS[-1]
 
 
 @dataclass(frozen=True)
 class Grid:
-    """The shared bucket grid every series is projected onto."""
+    """The shared bucket grid every series is projected onto.
 
-    start: datetime
+    Interior edges are aligned to the bucket size rather than to "now", so the
+    x-axis is stable as the page polls. The grid covers exactly the requested range:
+    the first bucket starts at ``start`` and the last ends at ``end`` (never in the
+    future), so either may be shorter than a full bucket.
+    """
+
+    edges: list[datetime]
     end: datetime
     bucket: timedelta
-    edges: list[datetime]
-
-    def index_of(self, at: datetime) -> int | None:
-        """Which bucket a timestamp falls in, or None if outside the window."""
-        if at < self.start or at >= self.end:
-            return None
-        return int((at - self.start) / self.bucket)
 
     @property
-    def count(self) -> int:
-        return len(self.edges)
+    def start(self) -> datetime:
+        return self.edges[0]
+
+    def seconds(self, i: int) -> float:
+        bucket_end = self.edges[i + 1] if i + 1 < len(self.edges) else self.end
+        return (bucket_end - self.edges[i]).total_seconds()
+
+    def index_of(self, at: datetime) -> int | None:
+        if at < self.start or at >= self.end:
+            return None
+        return bisect.bisect_right(self.edges, at) - 1
+
+    def epoch_edges(self) -> list[float]:
+        return [e.timestamp() for e in self.edges]
 
 
-def build_grid(window: str, now: datetime | None = None) -> Grid:
-    """Bucket edges for ``window``, aligned to the bucket size.
-
-    Aligning to the bucket rather than to "now" keeps the x-axis stable as the page
-    polls: without it every refresh shifts every bucket by a few seconds and the
-    bars visibly jitter.
-    """
-    span, bucket = WINDOWS[window]
-    now = now or datetime.now(tz=UTC)
+def build_grid(start: datetime, end: datetime) -> Grid:
+    bucket = choose_bucket(end - start)
     bucket_s = int(bucket.total_seconds())
-    aligned = datetime.fromtimestamp((int(now.timestamp()) // bucket_s + 1) * bucket_s, tz=UTC)
-    start = aligned - span
-    edges = [start + bucket * i for i in range(int(span / bucket))]
-    return Grid(start=start, end=aligned, bucket=bucket, edges=edges)
+    aligned = datetime.fromtimestamp(int(start.timestamp()) // bucket_s * bucket_s, tz=UTC)
+    edges: list[datetime] = [start]
+    edge = aligned + bucket
+    while edge < end:
+        edges.append(edge)
+        edge += bucket
+    return Grid(edges=edges, end=end, bucket=bucket)
+
+
+def resolve_range(
+    window: str | None,
+    start: datetime | None,
+    end: datetime | None,
+    now: datetime | None = None,
+) -> tuple[str | None, datetime, datetime]:
+    """(preset, start, end) for a request. The caller has already validated the
+    combination; this clamps the end to now and the start to retention."""
+    now = now or datetime.now(tz=UTC)
+    if start is None or end is None:
+        preset = window or DEFAULT_WINDOW
+        return preset, now - PRESETS[preset], now
+    end = min(_aware(end), now)
+    oldest = now - timedelta(hours=settings.agent_metrics_retention_hours)
+    return None, max(_aware(start), oldest), end
 
 
 def _aware(value: datetime) -> datetime:
@@ -116,54 +162,103 @@ def _aware(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
-async def _load_rollup(
-    db: AsyncSession, agent_id: uuid.UUID, grid: Grid
-) -> list[AgentMetricsMinute]:
+def _ts(value: datetime) -> float:
+    # Hot: called for every timestamp of every query in the range.
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.timestamp()
+
+
+# ── Loading ──────────────────────────────────────────────────────────────────
+
+
+class _Epoch(FunctionElement):
+    """A timestamp as float epoch seconds, NULL-preserving.
+
+    Spelled per dialect: Postgres has ``EXTRACT(EPOCH ...)``, SQLite (the unit-test
+    database, storing UTC text) goes through ``julianday``, to the millisecond.
+    """
+
+    inherit_cache = True
+    type = Float()
+
+
+@compiles(_Epoch, "postgresql")
+def _epoch_pg(element, compiler, **kw) -> str:
+    (value,) = list(element.clauses)
+    return f"CAST(EXTRACT(EPOCH FROM {compiler.process(value, **kw)}) AS DOUBLE PRECISION)"
+
+
+@compiles(_Epoch, "sqlite")
+@compiles(_Epoch)
+def _epoch_sqlite(element, compiler, **kw) -> str:
+    (value,) = list(element.clauses)
+    # julianday's day fraction is not exact in binary; rounding to the millisecond
+    # keeps a timestamp on a bucket edge from landing in the bucket before it.
+    return f"ROUND((julianday({compiler.process(value, **kw)}) - 2440587.5) * 86400.0, 3)"
+
+
+async def _load_rollup(db: AsyncSession, agent_id: uuid.UUID, grid: Grid) -> list[sa.Row]:
+    t = AgentMetricsMinute
     return list(
         (
             await db.execute(
-                sa.select(AgentMetricsMinute)
-                .where(
-                    AgentMetricsMinute.agent_id == agent_id,
-                    AgentMetricsMinute.minute >= grid.start,
-                    AgentMetricsMinute.minute < grid.end,
+                sa.select(
+                    t.minute,
+                    t.cpu_avg,
+                    t.cpu_max,
+                    t.mem_avg,
+                    t.mem_max,
+                    t.sample_count,
+                    t.covered_s,
+                    t.oom_kills,
                 )
-                .order_by(AgentMetricsMinute.minute)
-            )
-        )
-        .scalars()
-        .all()
-    )
-
-
-async def _load_queries(db: AsyncSession, agent_id: uuid.UUID, grid: Grid) -> list[sa.Row]:
-    """Only the columns the charts read, over the window's finished runs."""
-    return list(
-        (
-            await db.execute(
-                sa.select(Query.finished_at, Query.status, Query.error)
-                .where(
-                    Query.agent_id == agent_id,
-                    Query.finished_at.is_not(None),
-                    Query.finished_at >= grid.start,
-                    Query.finished_at < grid.end,
-                    Query.status.in_(_TERMINAL),
-                    sa.or_(Query.origin.is_(None), Query.origin.not_in(HIDDEN_ORIGINS)),
-                )
-                .order_by(Query.finished_at)
+                .where(t.agent_id == agent_id, t.minute >= grid.start, t.minute < grid.end)
+                .order_by(t.minute)
             )
         ).all()
     )
 
 
+async def _load_queries(db: AsyncSession, agent_id: uuid.UUID, grid: Grid) -> list[sa.Row]:
+    """Every visible query whose life overlaps the range, finished or not.
+
+    Includes runs parked for this agent while it was still starting (``agent_id``
+    is only set once one is bound), so the time they waited for compute shows.
+    The error text is only fetched where it is used, for failed rows, and the
+    timestamps arrive as epoch seconds: a busy agent's week is hundreds of thousands
+    of rows, and building a datetime for each of them was a third of the page's cost.
+    """
+
+    def branch(owner_clause: sa.ColumnElement[bool]) -> sa.Select:
+        return sa.select(
+            _Epoch(Query.started_at),
+            _Epoch(Query.running_at),
+            _Epoch(Query.finished_at),
+            Query.status,
+            sa.case((Query.status == "failed", Query.error), else_=None).label("error"),
+        ).where(
+            owner_clause,
+            Query.started_at < grid.end,
+            sa.or_(Query.finished_at.is_(None), Query.finished_at >= grid.start),
+            sa.or_(Query.origin.is_(None), Query.origin.not_in(HIDDEN_ORIGINS)),
+        )
+
+    stmt = sa.union_all(
+        branch(Query.agent_id == agent_id),
+        branch(sa.and_(Query.agent_id.is_(None), Query.requested_agent_id == agent_id)),
+    )
+    return list((await db.execute(stmt)).all())
+
+
 async def _load_events(
     db: AsyncSession, agent_id: uuid.UUID, grid: Grid
 ) -> tuple[str, list[AgentLifecycleEvent]]:
-    """Events inside the window, plus the state the agent was already in at its start.
+    """Events inside the range, plus the state the agent was already in at its start.
 
     The seed matters more than the events: an agent that has been quietly connected
-    for a week has no events *in* an 8-hour window, and without the preceding one
-    the whole timeline would render as unknown.
+    for a week has no events *in* an 8-hour range, and without the preceding one the
+    whole timeline would render as unknown.
     """
     prior = (
         await db.execute(
@@ -188,179 +283,294 @@ async def _load_events(
         .scalars()
         .all()
     )
-    seed = _EVENT_STATE.get(prior, ACTIVITY_UNKNOWN) if prior else ACTIVITY_UNKNOWN
+    seed = _EVENT_STATE.get(prior, STATE_UNKNOWN) if prior else STATE_UNKNOWN
     return seed, inside
 
 
-def _connectivity_per_bucket(
-    grid: Grid, seed: str, events: list[AgentLifecycleEvent]
-) -> tuple[list[str], float]:
-    """Per-bucket connectivity, and total seconds spent connected in the window.
+# ── Lifecycle spans ──────────────────────────────────────────────────────────
 
-    A bucket takes the state that covered most of it, rather than the state at its
-    leading edge: an agent that comes up two seconds into a ten-minute bucket was
-    up for that bucket in every sense a reader cares about.
+
+def _spans(
+    grid: Grid,
+    seed: str,
+    events: list[AgentLifecycleEvent],
+    *,
+    present: bool,
+    last_ping_at: datetime | None,
+) -> list[tuple[float, float, str]]:
+    """Exact (start, end, state) spans covering the grid, in epoch seconds.
+
+    If the trail says the agent is still up but it is not actually present, the up
+    span ends at its last proof of life. The presence sweeper will record that
+    shortly; this keeps the page right in the meantime.
     """
-    # (state, start, end) spans covering the whole window.
-    spans: list[tuple[str, datetime, datetime]] = []
-    current, cursor = seed, grid.start
+    spans: list[tuple[float, float, str]] = []
+    current, cursor = seed, grid.start.timestamp()
     for event in events:
-        at = max(_aware(event.at), grid.start)
+        at = max(_ts(event.at), grid.start.timestamp())
         if at > cursor:
-            spans.append((current, cursor, at))
+            spans.append((cursor, at, current))
         current = _EVENT_STATE.get(event.event, current)
-        cursor = at
-    spans.append((current, cursor, grid.end))
-
-    per_bucket: list[str] = []
-    uptime_s = 0.0
-    for edge in grid.edges:
-        bucket_end = edge + grid.bucket
-        overlap: dict[str, float] = defaultdict(float)
-        for state, span_start, span_end in spans:
-            covered = (min(bucket_end, span_end) - max(edge, span_start)).total_seconds()
-            if covered > 0:
-                overlap[state] += covered
-                if state == ACTIVITY_READY:
-                    uptime_s += covered
-        per_bucket.append(max(overlap, key=overlap.get) if overlap else ACTIVITY_UNKNOWN)
-    return per_bucket, uptime_s
+        cursor = max(cursor, at)
+    end = grid.end.timestamp()
+    if current == STATE_UP and not present and last_ping_at is not None:
+        lost = min(max(_ts(last_ping_at), cursor), end)
+        if lost > cursor:
+            spans.append((cursor, lost, current))
+        current, cursor = STATE_DOWN, lost
+    if end > cursor:
+        spans.append((cursor, end, current))
+    return spans
 
 
-def _bucketed_rollup(grid: Grid, rows: list[AgentMetricsMinute]) -> dict[int, dict]:
-    """Fold minute rows into buckets: max for peaks, sample-weighted mean for averages."""
-    out: dict[int, dict] = {}
-    for row in rows:
-        idx = grid.index_of(_aware(row.minute))
-        if idx is None:
-            continue
-        acc = out.setdefault(
+def _of_state(spans: list[tuple[float, float, str]], *states: str) -> list[Interval]:
+    return merge((s, e) for s, e, state in spans if state in states)
+
+
+# ── Resources ────────────────────────────────────────────────────────────────
+
+
+def _live_minutes(samples: list[dict], after: datetime | None) -> list[MinuteAccumulator]:
+    """Fold live samples into minutes not yet written to the rollup."""
+    minutes: dict[datetime, MinuteAccumulator] = {}
+    for sample in samples:
+        accumulate_into(minutes, sample)
+    return [acc for minute, acc in sorted(minutes.items()) if after is None or minute > after]
+
+
+_RESOURCE_KEYS = ("cpu_avg", "cpu_max", "mem_avg", "mem_max", "oom_kills", "coverage")
+
+
+def _resource_buckets(grid: Grid, rows: list, live: list[MinuteAccumulator]) -> list[dict]:
+    per: dict[int, dict] = {}
+
+    def fold(
+        minute: datetime,
+        cpu_avg: float,
+        cpu_max: float,
+        mem_avg: float,
+        mem_max: float,
+        count: int,
+        covered: float | None,
+        ooms: int | None,
+    ) -> None:
+        idx = grid.index_of(_aware(minute))
+        if idx is None or not count:
+            return
+        acc = per.setdefault(
             idx,
-            {
-                "running": 0,
-                "queued": 0,
-                "sessions": 0,
-                "cpu_max": 0.0,
-                "mem_max": 0.0,
-                "cpu_weighted": 0.0,
-                "mem_weighted": 0.0,
-                "samples": 0,
-            },
+            {"cpu_w": 0.0, "mem_w": 0.0, "n": 0, "cpu_max": 0.0, "mem_max": 0.0},
         )
-        acc["running"] = max(acc["running"], row.running_max)
-        acc["queued"] = max(acc["queued"], row.queued_max)
-        acc["sessions"] = max(acc["sessions"], row.session_max)
-        acc["cpu_max"] = max(acc["cpu_max"], row.cpu_max)
-        acc["mem_max"] = max(acc["mem_max"], row.mem_max)
-        acc["cpu_weighted"] += row.cpu_avg * row.sample_count
-        acc["mem_weighted"] += row.mem_avg * row.sample_count
-        acc["samples"] += row.sample_count
+        acc["cpu_w"] += cpu_avg * count
+        acc["mem_w"] += mem_avg * count
+        acc["n"] += count
+        acc["cpu_max"] = max(acc["cpu_max"], cpu_max)
+        acc["mem_max"] = max(acc["mem_max"], mem_max)
+        if covered is not None:
+            acc["covered"] = acc.get("covered", 0.0) + covered
+        if ooms is not None:
+            acc["oom"] = acc.get("oom", 0) + ooms
+
+    for r in rows:
+        fold(
+            r.minute,
+            r.cpu_avg,
+            r.cpu_max,
+            r.mem_avg,
+            r.mem_max,
+            r.sample_count,
+            r.covered_s,
+            r.oom_kills,
+        )
+    for a in live:
+        fold(
+            a.minute,
+            a.cpu_sum / a.count if a.count else 0.0,
+            a.cpu_max,
+            a.mem_sum / a.count if a.count else 0.0,
+            a.mem_max,
+            a.count,
+            a.covered_s,
+            a.oom_kills,
+        )
+
+    out = []
+    for i in range(len(grid.edges)):
+        acc = per.get(i)
+        if not acc:
+            # Not measured: null, so the chart draws a gap rather than claiming 0 %.
+            out.append(dict.fromkeys(_RESOURCE_KEYS))
+            continue
+        covered = acc.get("covered")
+        out.append(
+            {
+                "cpu_avg": round(acc["cpu_w"] / acc["n"], 2),
+                "cpu_max": round(acc["cpu_max"], 2),
+                "mem_avg": round(acc["mem_w"] / acc["n"], 2),
+                "mem_max": round(acc["mem_max"], 2),
+                "oom_kills": acc.get("oom"),
+                "coverage": (
+                    round(min(1.0, covered / grid.seconds(i)), 3) if covered is not None else None
+                ),
+            }
+        )
     return out
 
 
-def _utilization_point(edge: datetime, metrics: dict | None) -> dict:
-    """One CPU/memory point, all-null for a bucket the agent reported nothing in.
-
-    Nulls rather than zeros: a gap in the line says "not measured", where a zero
-    would claim the agent sat at 0% CPU during an outage it was not even up for.
-    """
-    if not metrics or not metrics["samples"]:
-        return {"t": edge, "cpu_avg": None, "cpu_max": None, "mem_avg": None, "mem_max": None}
-    return {
-        "t": edge,
-        "cpu_avg": round(metrics["cpu_weighted"] / metrics["samples"], 2),
-        "cpu_max": round(metrics["cpu_max"], 2),
-        "mem_avg": round(metrics["mem_weighted"] / metrics["samples"], 2),
-        "mem_max": round(metrics["mem_max"], 2),
-    }
+# ── Assembly ─────────────────────────────────────────────────────────────────
 
 
-async def build_monitoring(db: AsyncSession, agent: Agent, window: str) -> dict:
-    """Every series for one agent over one window, on a shared bucket grid."""
-    grid = build_grid(window)
-    rollup = _bucketed_rollup(grid, await _load_rollup(db, agent.id, grid))
+async def build_monitoring(
+    db: AsyncSession,
+    agent: Agent,
+    *,
+    window: str | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    now: datetime | None = None,
+) -> dict:
+    """Every series for one agent over one range, on a shared bucket grid."""
+    now = now or datetime.now(tz=UTC)
+    preset, range_start, range_end = resolve_range(window, start, end, now)
+    grid = build_grid(range_start, range_end)
+    edges = grid.epoch_edges()
+    end_s = grid.end.timestamp()
+    n = len(edges)
+
+    rows = await _load_rollup(db, agent.id, grid)
+    live = _live_minutes(
+        await agent_recent_samples(db, agent.id) if range_end >= now - timedelta(minutes=2) else [],
+        _aware(rows[-1].minute) if rows else None,
+    )
+    resources = _resource_buckets(grid, rows, live)
     queries = await _load_queries(db, agent.id, grid)
     seed, events = await _load_events(db, agent.id, grid)
-    connectivity, uptime_s = _connectivity_per_bucket(grid, seed, events)
+    present = await is_agent_connected(db, agent.id)
+    spans = _spans(grid, seed, events, present=present, last_ping_at=agent.last_ping_at)
 
-    completed = [0] * grid.count
-    failures: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
-    failed_total = 0
-    for finished_at, status, error in queries:
-        idx = grid.index_of(_aware(finished_at))
-        if idx is None:
-            continue
-        completed[idx] += 1
-        if status in _FAILED:
-            failed_total += 1
-            reason = "cancelled" if status == "cancelled" else classify_failure(error)
-            failures[idx][reason] += 1
+    up = _of_state(spans, STATE_UP)
+    unknown = _of_state(spans, STATE_UNKNOWN)
+    starting = _of_state(spans, STATE_STARTING)
+    down = _of_state(spans, STATE_DOWN)
+    # Where the trail can't say, the agent can still be *seen* to have been up.
+    reachable = merge([*up, *unknown])
+    compute_absent = merge([*starting, *down])
 
-    bucket_minutes = grid.bucket.total_seconds() / 60
-    bucket_s = grid.bucket.total_seconds()
+    runs: list[Interval] = []
+    waits: list[Interval] = []
+    wait_ended: list[tuple[float, float]] = []  # (when the wait ended, wait seconds)
+    done = [0] * n
+    cancelled = [0] * n
+    failed: list[dict[str, int]] = [defaultdict(int) for _ in range(n)]
+    for started, ran, finished, status, error in queries:
+        wait_end = ran if ran is not None else (finished if finished is not None else end_s)
+        waits.append((started, max(started, wait_end)))
+        if ran is not None:
+            runs.append((ran, finished if finished is not None else end_s))
+            wait_ended.append((ran, max(0.0, ran - started)))
+        if finished is not None and status in _TERMINAL and edges[0] <= finished < end_s:
+            idx = bisect.bisect_right(edges, finished) - 1
+            if idx >= 0:
+                if status == "done":
+                    done[idx] += 1
+                elif status == "cancelled":
+                    cancelled[idx] += 1
+                else:
+                    failed[idx][classify_failure(error)] += 1
 
-    # Refine connectivity into what the agent was actually doing. Only a bucket the
-    # agent was up for can be busy; "starting" and "down" stay as they are.
-    activity: list[dict] = []
-    busy_buckets = 0
-    up_buckets = 0
-    for idx, edge in enumerate(grid.edges):
-        state = connectivity[idx]
-        metrics = rollup.get(idx)
-        # An agent that reported telemetry, or finished a query, was demonstrably
-        # up — whatever the lifecycle trail does or doesn't say. Without this an
-        # agent older than the trail reads as "no data" for its whole history even
-        # though we hold minute-by-minute proof it was working, which is a
-        # different kind of wrong from claiming an outage.
-        if state == ACTIVITY_UNKNOWN and (metrics or completed[idx]):
-            state = ACTIVITY_READY
-            uptime_s += bucket_s
-        if state == ACTIVITY_READY:
-            up_buckets += 1
-            if completed[idx] or (metrics and (metrics["running"] or metrics["queued"])):
-                state = ACTIVITY_QUERY
-                busy_buckets += 1
-            elif metrics and metrics["sessions"]:
-                state = ACTIVITY_OTHER
-        activity.append({"t": edge, "state": state})
+    # Only time the agent was reachable counts as running: a row still marked
+    # running after the agent went away stops counting where the agent stopped.
+    run_sweep = sweep(runs, reachable, edges, end_s, widen_instants=True)
+    running_s, busy_s, peaks = run_sweep.seconds, run_sweep.covered, run_sweep.peak
+    busy_unknown_s = sweep(runs, unknown, edges, end_s, widen_instants=True).covered
+    queued_s = sweep(waits, reachable, edges, end_s).seconds
+    compute_wait_s = sweep(waits, compute_absent, edges, end_s).seconds
+    up_s = spread(up, edges, end_s)
+    unknown_s = spread(unknown, edges, end_s)
+    starting_s = spread(starting, edges, end_s)
+    down_s = spread(down, edges, end_s)
 
-    return {
-        "window": window,
-        "bucket_seconds": int(grid.bucket.total_seconds()),
-        "start": grid.start,
-        "end": grid.end,
-        "peak_query_count": [
+    waits_by_bucket: list[list[float]] = [[] for _ in range(n)]
+    for ended, seconds in wait_ended:
+        if edges[0] <= ended < end_s:
+            waits_by_bucket[bisect.bisect_right(edges, ended) - 1].append(seconds)
+
+    buckets = []
+    for i, edge in enumerate(grid.edges):
+        length = grid.seconds(i)
+        bucket_wait = nearest_rank(waits_by_bucket[i], 0.95)
+        buckets.append(
             {
                 "t": edge,
-                "running": rollup.get(i, {}).get("running", 0),
-                "queued": rollup.get(i, {}).get("queued", 0),
+                "seconds": round(length, 3),
+                "partial": length < grid.bucket.total_seconds(),
+                # Where the agent's time went; these sum to the bucket length.
+                "busy_s": round(busy_s[i], 3),
+                "idle_s": round(max(0.0, up_s[i] - (busy_s[i] - busy_unknown_s[i])), 3),
+                "starting_s": round(starting_s[i], 3),
+                "down_s": round(down_s[i], 3),
+                "unknown_s": round(max(0.0, unknown_s[i] - busy_unknown_s[i]), 3),
+                # Average number of queries in each state over the bucket.
+                "running_avg": round(running_s[i] / length, 3) if length else 0.0,
+                "queued_avg": round(queued_s[i] / length, 3) if length else 0.0,
+                "compute_wait_avg": round(compute_wait_s[i] / length, 3) if length else 0.0,
+                "peak_running": peaks[i],
+                "done": done[i],
+                "cancelled": cancelled[i],
+                "failed": dict(sorted(failed[i].items())),
+                "wait_p95_ms": round(bucket_wait * 1000) if bucket_wait is not None else None,
+                "wait_n": len(waits_by_bucket[i]),
+                **resources[i],
             }
-            for i, edge in enumerate(grid.edges)
-        ],
-        "completed_query_count": [
-            {"t": edge, "per_minute": round(completed[i] / bucket_minutes, 3)}
-            for i, edge in enumerate(grid.edges)
-        ],
-        "activity": activity,
-        "failures": [
-            {"t": grid.edges[i], "reason": reason, "count": count}
-            for i in sorted(failures)
-            for reason, count in sorted(failures[i].items())
-        ],
-        "utilization": [
-            _utilization_point(edge, rollup.get(i)) for i, edge in enumerate(grid.edges)
-        ],
+        )
+
+    uptime_s = measure(up) + sum(busy_unknown_s)
+    busy_total = sum(busy_s)
+    failed_by_reason: dict[str, int] = defaultdict(int)
+    for bucket_failures in failed:
+        for reason, count in bucket_failures.items():
+            failed_by_reason[reason] += count
+    all_waits = [w for bucket_waits in waits_by_bucket for w in bucket_waits]
+    window_wait = nearest_rank(all_waits, 0.95)
+    measured_cpu = [b["cpu_max"] for b in buckets if b["cpu_max"] is not None]
+    measured_mem = [b["mem_max"] for b in buckets if b["mem_max"] is not None]
+    newest_rollup = _aware(rows[-1].minute) + timedelta(minutes=1) if rows else None
+    newest_live = max((_live_as_of(a) for a in live), default=None)
+
+    return {
+        "preset": preset,
+        "range_start": range_start,
+        "range_end": range_end,
+        "bucket_seconds": int(grid.bucket.total_seconds()),
+        "generated_at": now,
+        "buckets": buckets,
+        "spans": [{"start": _dt(s), "end": _dt(e), "state": st} for s, e, st in spans],
         "summary": {
             "uptime_s": round(uptime_s),
-            # Share of *connected* time with query activity — the idle-vs-busy split
-            # that says whether the idle timeout is set too generously. None when the
-            # agent was never up, where a ratio would be a division by zero dressed
-            # up as "0% busy".
-            "busy_ratio": round(busy_buckets / up_buckets, 3) if up_buckets else None,
-            "completed": sum(completed),
-            "failed": failed_total,
-            "idle_timeout_minutes": (
-                int(agent.idle_timeout_s // 60) if agent.idle_timeout_s else None
+            "busy_s": round(busy_total),
+            "idle_s": round(max(0.0, uptime_s - busy_total)),
+            # Share of up time with at least one query running. None when the agent
+            # was never up: a ratio there would be a division by zero dressed as 0 %.
+            "busy_ratio": round(busy_total / uptime_s, 3) if uptime_s else None,
+            "finished": sum(done) + sum(cancelled) + sum(failed_by_reason.values()),
+            "failed": sum(failed_by_reason.values()),
+            "cancelled": sum(cancelled),
+            "failed_by_reason": dict(sorted(failed_by_reason.items())),
+            "wait_p95_ms": round(window_wait * 1000) if window_wait is not None else None,
+            "wait_n": len(all_waits),
+            "peak_running": max(peaks, default=0),
+            "cpu_peak": max(measured_cpu, default=None),
+            "mem_peak": max(measured_mem, default=None),
+            "resources_as_of": max(
+                (t for t in (newest_rollup, newest_live) if t is not None), default=None
             ),
         },
     }
+
+
+def _live_as_of(acc: MinuteAccumulator) -> datetime:
+    return acc.last_sampled_at or acc.minute
+
+
+def _dt(epoch: float) -> datetime:
+    return datetime.fromtimestamp(epoch, tz=UTC)

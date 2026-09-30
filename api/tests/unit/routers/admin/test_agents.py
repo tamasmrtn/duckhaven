@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
@@ -449,46 +450,73 @@ async def test_literal_paths_are_not_shadowed_by_the_id_route(admin_client: Asyn
     assert (await admin_client.get("/admin/agents/compute-options")).status_code == 200
 
 
-async def test_monitoring_returns_every_series_on_one_grid(admin_client: AsyncClient, db_session):
-    agent = Agent(name="mon-agent", status="healthy")
+async def _mon_agent(db_session, name: str) -> Agent:
+    agent = Agent(name=name, status="healthy")
     db_session.add(agent)
     await db_session.commit()
     await db_session.refresh(agent)
+    return agent
+
+
+async def test_monitoring_returns_every_series_on_one_grid(admin_client: AsyncClient, db_session):
+    agent = await _mon_agent(db_session, "mon-agent")
 
     resp = await admin_client.get(f"/admin/agents/{agent.id}/monitoring?window=1h")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["window"] == "1h"
+    assert data["preset"] == "1h"
     assert data["bucket_seconds"] == 60
-    # The shared grid is the point: charts stacked vertically must line up.
-    lengths = {
-        len(data["peak_query_count"]),
-        len(data["completed_query_count"]),
-        len(data["activity"]),
-        len(data["utilization"]),
-    }
-    assert lengths == {60}
-    assert data["summary"]["completed"] == 0
+    # One flat row per bucket is what keeps stacked charts aligned.
+    assert 60 <= len(data["buckets"]) <= 61
+    assert {"busy_s", "running_avg", "cpu_avg", "done"} <= set(data["buckets"][0])
+    assert data["summary"]["finished"] == 0
 
 
 async def test_monitoring_defaults_to_eight_hours(admin_client: AsyncClient, db_session):
-    agent = Agent(name="mon-default", status="healthy")
-    db_session.add(agent)
-    await db_session.commit()
-    await db_session.refresh(agent)
-
+    agent = await _mon_agent(db_session, "mon-default")
     resp = await admin_client.get(f"/admin/agents/{agent.id}/monitoring")
     assert resp.status_code == 200
-    assert resp.json()["window"] == "8h"
+    assert resp.json()["preset"] == "8h"
 
 
-async def test_monitoring_rejects_an_unknown_window(admin_client: AsyncClient, db_session):
-    agent = Agent(name="mon-bad-window", status="healthy")
-    db_session.add(agent)
-    await db_session.commit()
-    await db_session.refresh(agent)
-
+async def test_monitoring_offers_seven_days_at_two_hour_buckets(
+    admin_client: AsyncClient, db_session
+):
+    """Retention is a week, so the page can show one."""
+    agent = await _mon_agent(db_session, "mon-7d")
     resp = await admin_client.get(f"/admin/agents/{agent.id}/monitoring?window=7d")
+    assert resp.status_code == 200
+    assert resp.json()["bucket_seconds"] == 7200
+
+
+async def test_monitoring_accepts_a_zoomed_range(admin_client: AsyncClient, db_session):
+    agent = await _mon_agent(db_session, "mon-zoom")
+    end = datetime.now(tz=UTC).replace(microsecond=0) - timedelta(hours=1)
+    start = end - timedelta(minutes=30)
+    resp = await admin_client.get(
+        f"/admin/agents/{agent.id}/monitoring",
+        params={"start": start.isoformat(), "end": end.isoformat()},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["preset"] is None
+    assert data["bucket_seconds"] == 60
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"window": "2w"},
+        {"window": "1h", "start": "2026-09-30T10:00:00Z", "end": "2026-09-30T11:00:00Z"},
+        {"start": "2026-09-30T10:00:00Z"},
+        {"start": "2026-09-30T11:00:00Z", "end": "2026-09-30T10:00:00Z"},
+        {"start": "2026-09-30T10:00:00Z", "end": "2026-09-30T10:02:00Z"},
+    ],
+    ids=["unknown-window", "window-and-range", "start-only", "backwards", "too-narrow"],
+)
+async def test_monitoring_rejects_an_unusable_range(admin_client: AsyncClient, db_session, params):
+    agent = await _mon_agent(db_session, "mon-bad-range")
+    resp = await admin_client.get(f"/admin/agents/{agent.id}/monitoring", params=params)
     assert resp.status_code == 422
 
 

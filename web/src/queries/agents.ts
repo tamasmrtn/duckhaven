@@ -1,9 +1,16 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useQuery,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { agentsApi } from "@/api/agents";
+import type { AgentQueriesParams } from "@/api/agents";
 import type {
   AgentAccessMode,
   AgentGrantUpsert,
-  MonitoringWindow,
+  AgentMonitoring,
+  MonitoringRange,
 } from "@/types/agent";
 
 export function useAgents() {
@@ -30,16 +37,47 @@ export function useAdminAgent(id: string) {
   });
 }
 
-export function useAgentMonitoring(id: string, window: MonitoringWindow) {
-  return useQuery({
-    queryKey: ["admin", "agents", id, "monitoring", window],
-    queryFn: () => agentsApi.monitoring(id, window),
-    // Slower than the 2s live tiles on purpose: the coarsest bucket is a minute,
-    // so a faster poll would redraw identical bars and fight the user's cursor
-    // for the tooltip they are reading.
-    refetchInterval: 30000,
-    // Hold the previous window's data while the next one loads, so switching the
-    // filter dims the charts instead of collapsing the page to skeletons.
+/**
+ * How often a monitoring range is worth refetching.
+ *
+ * Its right-hand edge is live — the server fills the minute in progress from the
+ * agent's own samples — so a range ending now polls at 15s, fast enough to follow
+ * and slow enough not to fight the cursor for a tooltip. A multi-day range is
+ * drawn in 30-minute or 2-hour buckets that barely move in a minute, and a zoomed
+ * range that ends in the past never changes at all.
+ */
+export function monitoringRefetchInterval(
+  range: MonitoringRange,
+  now = Date.now(),
+): number | false {
+  if ("window" in range) {
+    return range.window === "3d" || range.window === "7d" ? 60_000 : 15_000;
+  }
+  return now - Date.parse(range.end) > 2 * 60_000 ? false : 15_000;
+}
+
+export function useAgentMonitoring(id: string, range: MonitoringRange) {
+  return useQuery<AgentMonitoring>({
+    queryKey: ["admin", "agents", id, "monitoring", range],
+    queryFn: () => agentsApi.monitoring(id, range),
+    refetchInterval: () => monitoringRefetchInterval(range),
+    // Hold the previous range's data while the next one loads, so switching the
+    // range dims the charts instead of collapsing the page to skeletons.
+    placeholderData: (prev) => prev,
+  });
+}
+
+/** The agent's runs in a range or bucket, sorted by cost, a page at a time. */
+export function useAgentQueries(
+  id: string,
+  params: Omit<AgentQueriesParams, "cursor">,
+) {
+  return useInfiniteQuery({
+    queryKey: ["admin", "agents", id, "queries", params],
+    queryFn: ({ pageParam }) =>
+      agentsApi.queries(id, { ...params, cursor: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.cursor ?? undefined,
     placeholderData: (prev) => prev,
   });
 }

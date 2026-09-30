@@ -31,6 +31,10 @@ import { QueryProfilePage } from "@/features/query-profile/QueryProfilePage";
 import { AdminLayout } from "@/features/admin/AdminLayout";
 import { AgentsPage } from "@/features/admin/AgentsPage";
 import { AgentDetailPage } from "@/features/admin/AgentDetailPage";
+import {
+  parseMonitoringSearch,
+  type MonitoringSearch,
+} from "@/features/admin/monitoring/range";
 import { StorageBackendsPage } from "@/features/admin/StorageBackendsPage";
 import { CatalogMigrationsPage } from "@/features/admin/CatalogMigrationsPage";
 import { UsersPage } from "@/features/admin/UsersPage";
@@ -228,6 +232,10 @@ const computeDetailRoute = createRoute({
   getParentRoute: () => wsRoute,
   path: "/compute/$agentId",
   component: AgentDetailPage,
+  // The Monitoring tab's range (a preset, or a zoomed from/to), so an incident
+  // view can be bookmarked and shared.
+  validateSearch: (search: Record<string, unknown>): MonitoringSearch =>
+    parseMonitoringSearch(search),
 });
 
 const settingsRoute = createRoute({

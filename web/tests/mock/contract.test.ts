@@ -154,54 +154,124 @@ describe("agents contract", () => {
   });
 
   it("monitoring mirrors AgentMonitoringOut, on one shared bucket grid", async () => {
-    const data = await agentsApi.monitoring("ag-5", "8h");
+    const data = await agentsApi.monitoring("ag-5", { window: "8h" });
     expect(Object.keys(data).sort()).toEqual([
-      "activity",
       "bucket_seconds",
-      "completed_query_count",
-      "end",
-      "failures",
-      "peak_query_count",
-      "start",
+      "buckets",
+      "generated_at",
+      "preset",
+      "range_end",
+      "range_start",
+      "spans",
       "summary",
-      "utilization",
-      "window",
     ]);
     expect(data.bucket_seconds).toBe(300);
-    // Every series is projected onto the same grid — the property that lets the
-    // charts be stacked and read against each other.
-    const n = data.peak_query_count.length;
-    expect(data.completed_query_count).toHaveLength(n);
-    expect(data.activity).toHaveLength(n);
-    expect(data.utilization).toHaveLength(n);
+    // One flat row per bucket, so every chart indexes the same grid.
+    expect(Object.keys(data.buckets[0]).sort()).toEqual([
+      "busy_s",
+      "cancelled",
+      "compute_wait_avg",
+      "coverage",
+      "cpu_avg",
+      "cpu_max",
+      "done",
+      "down_s",
+      "failed",
+      "idle_s",
+      "mem_avg",
+      "mem_max",
+      "oom_kills",
+      "partial",
+      "peak_running",
+      "queued_avg",
+      "running_avg",
+      "seconds",
+      "starting_s",
+      "t",
+      "unknown_s",
+      "wait_n",
+      "wait_p95_ms",
+    ]);
     expect(Object.keys(data.summary).sort()).toEqual([
       "busy_ratio",
-      "completed",
+      "busy_s",
+      "cancelled",
+      "cpu_peak",
       "failed",
-      "idle_timeout_minutes",
+      "failed_by_reason",
+      "finished",
+      "idle_s",
+      "mem_peak",
+      "peak_running",
+      "resources_as_of",
       "uptime_s",
+      "wait_n",
+      "wait_p95_ms",
     ]);
+    // The grid covers exactly the range: the buckets' lengths add up to it.
+    const span =
+      (Date.parse(data.range_end) - Date.parse(data.range_start)) / 1000;
+    const covered = data.buckets.reduce((sum, b) => sum + b.seconds, 0);
+    expect(covered).toBeCloseTo(span, 0);
   });
 
-  it("each window carries the bucket size the backend documents", async () => {
+  it("each preset carries the bucket size the backend chooses", async () => {
     for (const [window, bucket] of [
       ["1h", 60],
       ["3h", 120],
       ["8h", 300],
       ["12h", 300],
       ["24h", 600],
+      ["3d", 1800],
+      ["7d", 7200],
     ] as const) {
-      const data = await agentsApi.monitoring("ag-5", window);
+      const data = await agentsApi.monitoring("ag-5", { window });
       expect(data.bucket_seconds).toBe(bucket);
-      expect(data.peak_query_count.length).toBeGreaterThanOrEqual(60);
-      expect(data.peak_query_count.length).toBeLessThanOrEqual(144);
+      expect(data.buckets.length).toBeLessThanOrEqual(151);
     }
   });
 
-  it("rejects an unknown window with a 422, like the API", async () => {
+  it("rejects what the API rejects with a 422", async () => {
     await expect(
-      agentsApi.monitoring("ag-5", "7d" as "8h"),
+      agentsApi.monitoring("ag-5", { window: "2w" as "8h" }),
     ).rejects.toMatchObject({ name: "ApiError", status: 422 });
+    await expect(
+      agentsApi.monitoring("ag-5", {
+        start: "2026-09-30T10:00:00Z",
+        end: "2026-09-30T10:02:00Z",
+      }),
+    ).rejects.toMatchObject({ name: "ApiError", status: 422 });
+  });
+
+  it("GET /admin/agents/:id/queries is a Page of AgentQueryOut", async () => {
+    const page = await agentsApi.queries("ag-5", {
+      start: "2026-09-30T10:00:00Z",
+      end: "2026-09-30T11:00:00Z",
+      sort: "peak_memory",
+      dir: "desc",
+    });
+    expect(Object.keys(page).sort()).toEqual(["cursor", "has_more", "items"]);
+    expect(Object.keys(page.items[0]).sort()).toEqual([
+      "bytes_read",
+      "cpu_time_ms",
+      "duration_ms",
+      "error",
+      "failure_reason",
+      "finished_at",
+      "id",
+      "origin",
+      "peak_memory_bytes",
+      "row_count",
+      "running_at",
+      "spill_bytes",
+      "sql",
+      "started_at",
+      "statement_type",
+      "status",
+      "user_name",
+      "wait_ms",
+      "workspace_id",
+    ]);
   });
 
   it("GET /runtimes is RuntimeOut-shaped, with exactly one default", async () => {

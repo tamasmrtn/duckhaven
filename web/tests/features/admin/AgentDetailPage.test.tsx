@@ -20,49 +20,28 @@ describe('AgentDetailPage', () => {
     )
   })
 
-  it('renders every chart on the shared time grid', async () => {
+  it('renders every panel on the shared time grid', async () => {
     renderWithProviders({ initialRoute: ELASTIC })
 
-    expect(await screen.findByTestId('chart-peak-query-count')).toBeInTheDocument()
-    expect(screen.getByTestId('chart-completed-query-count')).toBeInTheDocument()
-    expect(screen.getByTestId('chart-activity')).toBeInTheDocument()
-    expect(screen.getByTestId('chart-utilization')).toBeInTheDocument()
-    // The mock's busy stretch produces failures, so this chart renders too.
-    expect(screen.getByTestId('chart-failures')).toBeInTheDocument()
+    for (const id of ['timeline', 'queries', 'concurrency', 'cpu', 'memory']) {
+      expect(await screen.findByTestId(`chart-${id}`)).toBeInTheDocument()
+    }
+    // The old per-bucket flag charts are gone.
+    expect(screen.queryByTestId('chart-peak-query-count')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('chart-activity')).not.toBeInTheDocument()
   })
 
-  it('defaults to the 8-hour window and reports its bucket size', async () => {
+  it('defaults to the 8-hour range and reports its bucket size', async () => {
     renderWithProviders({ initialRoute: ELASTIC })
 
     expect(await screen.findByText(/last 8 hours/i)).toBeInTheDocument()
     expect(await screen.findByText(/5-minute buckets/i)).toBeInTheDocument()
   })
 
-  it('refetches with the chosen window and rebuckets', async () => {
-    const requested: string[] = []
-    server.use(
-      http.get('/api/admin/agents/:id/monitoring', ({ request }) => {
-        const w = new URL(request.url).searchParams.get('window') ?? '8h'
-        requested.push(w)
-        return HttpResponse.json(makeMonitoring(w as '1h'))
-      }),
-    )
+  it('offers every preset up to the week that is retained', async () => {
     const user = userEvent.setup()
     renderWithProviders({ initialRoute: ELASTIC })
-    await screen.findByTestId('chart-peak-query-count')
-
-    await user.click(screen.getByRole('combobox', { name: /time range/i }))
-    await user.click(await screen.findByRole('option', { name: /last 1 hour/i }))
-
-    await waitFor(() => expect(requested).toContain('1h'))
-    // A finer window means finer buckets, which is the whole point of switching.
-    expect(await screen.findByText(/1-minute buckets/i)).toBeInTheDocument()
-  })
-
-  it('offers exactly the five documented windows', async () => {
-    const user = userEvent.setup()
-    renderWithProviders({ initialRoute: ELASTIC })
-    await screen.findByTestId('chart-peak-query-count')
+    await screen.findByTestId('chart-timeline')
 
     await user.click(screen.getByRole('combobox', { name: /time range/i }))
 
@@ -73,167 +52,227 @@ describe('AgentDetailPage', () => {
       'Last 8 hours',
       'Last 12 hours',
       'Last 24 hours',
+      'Last 3 days',
+      'Last 7 days',
     ])
   })
 
-  it('shows live running/queued counts from the 2s sampler', async () => {
+  it('refetches with the chosen range and rebuckets', async () => {
+    const requested: string[] = []
+    server.use(
+      http.get('/api/admin/agents/:id/monitoring', ({ request }) => {
+        const w = new URL(request.url).searchParams.get('window') ?? '8h'
+        requested.push(w)
+        return HttpResponse.json(makeMonitoring({ window: w as '7d' }))
+      }),
+    )
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: ELASTIC })
+    await screen.findByTestId('chart-timeline')
+
+    await user.click(screen.getByRole('combobox', { name: /time range/i }))
+    await user.click(await screen.findByRole('option', { name: /last 7 days/i }))
+
+    await waitFor(() => expect(requested).toContain('7d'))
+    expect(await screen.findByText(/2-hour buckets/i)).toBeInTheDocument()
+  })
+
+  it('opens a zoomed range from the URL, with a way back', async () => {
+    const seen: URLSearchParams[] = []
+    server.use(
+      http.get('/api/admin/agents/:id/monitoring', ({ request }) => {
+        const q = new URL(request.url).searchParams
+        seen.push(q)
+        return HttpResponse.json(
+          makeMonitoring(
+            q.get('start')
+              ? { start: q.get('start')!, end: q.get('end')! }
+              : { window: '8h' },
+          ),
+        )
+      }),
+    )
+    const user = userEvent.setup()
+    renderWithProviders({
+      initialRoute: `${ELASTIC}?from=2026-09-30T10:00:00.000Z&to=2026-09-30T11:00:00.000Z`,
+    })
+
+    await waitFor(() => expect(seen.at(-1)?.get('start')).toBe('2026-09-30T10:00:00.000Z'))
+    expect(seen.at(-1)?.get('window')).toBeNull()
+
+    await user.click(await screen.findByRole('button', { name: /reset zoom/i }))
+    await waitFor(() => expect(seen.at(-1)?.get('start')).toBeNull())
+  })
+
+  it('shows what is executing now, with idle connections beside it, not in it', async () => {
+    server.use(
+      http.get('/api/admin/agents/metrics', () =>
+        HttpResponse.json([
+          {
+            agent_id: 'ag-1',
+            name: 'agent-a',
+            samples: [
+              {
+                cpu_percent: 34,
+                memory_percent: 40,
+                running_queries: 3,
+                queued_queries: 0,
+                active_profile: 'auto',
+                executing_queries: 1,
+                idle_sessions: 2,
+                sampled_at: new Date().toISOString(),
+              },
+            ],
+          },
+        ]),
+      ),
+    )
     renderWithProviders({ initialRoute: STATIC })
 
-    // The ring buffer answers "right now"; the minute-grained rollup cannot.
-    expect(await screen.findByTestId('live-running-queries')).toBeInTheDocument()
-    expect(screen.getByTestId('live-queued-queries')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('live-executing')).toHaveTextContent('1'))
+    expect(screen.getByText('+2 idle connections')).toBeInTheDocument()
+    expect(screen.getByTestId('live-cpu')).toHaveTextContent('34%')
   })
 
-  it('summarises uptime, busy share and the idle timeout together', async () => {
+  it('reads "—" for what an older agent cannot measure, never 0', async () => {
+    server.use(
+      http.get('/api/admin/agents/metrics', () =>
+        HttpResponse.json([
+          {
+            agent_id: 'ag-1',
+            name: 'agent-a',
+            samples: [
+              {
+                cpu_percent: 5,
+                memory_percent: 10,
+                running_queries: 1,
+                queued_queries: 0,
+                active_profile: 'auto',
+                sampled_at: new Date().toISOString(),
+              },
+            ],
+          },
+        ]),
+      ),
+    )
+    renderWithProviders({ initialRoute: STATIC })
+
+    await waitFor(() => expect(screen.getByTestId('live-cpu')).toHaveTextContent('5%'))
+    expect(screen.getByTestId('live-executing')).toHaveTextContent('—')
+  })
+
+  it('summarises the range without advising on the idle timeout', async () => {
     renderWithProviders({ initialRoute: ELASTIC })
 
-    // These three only mean something next to each other: the busy share is what
-    // says whether the idle timeout is set too generously.
-    const activity = await screen.findByText(/^Up .*% busy.*idle timeout/)
-    expect(activity).toBeInTheDocument()
+    const summary = await screen.findByLabelText(/range summary/i)
+    for (const label of ['Up', 'Busy', 'Idle', 'Queries', 'p95 wait', 'Peak memory']) {
+      expect(within(summary).getByText(label)).toBeInTheDocument()
+    }
+    expect(screen.queryByText(/shorter idle timeout/i)).not.toBeInTheDocument()
   })
 
-  it('labels activity states in the legend, never by colour alone', async () => {
+  it('labels timeline states in the legend, never by colour alone', async () => {
     renderWithProviders({ initialRoute: ELASTIC })
-    const chart = await screen.findByTestId('chart-activity')
-    const section = chart.closest('section')!
+    const section = (await screen.findByTestId('chart-timeline')).closest('section')!
 
-    expect(within(section).getByText('Query activity')).toBeInTheDocument()
-    expect(within(section).getByText('Ready')).toBeInTheDocument()
+    expect(within(section).getByText('Busy')).toBeInTheDocument()
+    expect(within(section).getByText('Idle')).toBeInTheDocument()
+    expect(within(section).getByText('Not running')).toBeInTheDocument()
   })
 
-  it('surfaces the utilization peak, not just the bucket average', async () => {
+  it('distinguishes "no record" from downtime', async () => {
     server.use(
       http.get('/api/admin/agents/:id/monitoring', () =>
-        HttpResponse.json({
-          ...makeMonitoring('1h'),
-          // A one-second allocation spike inside an otherwise-quiet minute:
-          // exactly the shape an OOM leaves behind.
-          utilization: [
-            { t: new Date().toISOString(), cpu_avg: 5, cpu_max: 12, mem_avg: 7, mem_max: 92 },
-          ],
-        }),
+        HttpResponse.json(makeEmptyMonitoring({ window: '8h' })),
       ),
     )
     renderWithProviders({ initialRoute: ELASTIC })
 
-    const chart = await screen.findByTestId('chart-utilization')
-    const section = chart.closest('section')!
-    // Averaging buries the spike — an agent that touched 92% would otherwise
-    // read as a calm 7% line, right beside the failure it caused.
-    expect(within(section).getByText('Memory peak')).toBeInTheDocument()
-    expect(within(section).getByText('92%')).toBeInTheDocument()
-    expect(within(section).getByText('12%')).toBeInTheDocument()
-  })
-
-  it('distinguishes "no recorded history" from downtime', async () => {
-    server.use(
-      http.get('/api/admin/agents/:id/monitoring', () =>
-        HttpResponse.json(makeEmptyMonitoring('8h')),
-      ),
-    )
-    renderWithProviders({ initialRoute: ELASTIC })
-
-    const chart = await screen.findByTestId('chart-activity')
-    const section = chart.closest('section')!
-    // An agent older than the lifecycle trail must not be drawn as an outage.
-    expect(within(section).getByText('No data')).toBeInTheDocument()
+    const section = (await screen.findByTestId('chart-timeline')).closest('section')!
+    expect(within(section).getByText('No record')).toBeInTheDocument()
     expect(within(section).queryByText('Not running')).not.toBeInTheDocument()
   })
 
-  it('omits the failures chart when nothing failed', async () => {
+  it('shows "—", not 0 %, for a resource nothing measured', async () => {
     server.use(
       http.get('/api/admin/agents/:id/monitoring', () =>
-        HttpResponse.json({ ...makeMonitoring('8h'), failures: [] }),
+        HttpResponse.json(makeEmptyMonitoring({ window: '8h' })),
       ),
     )
     renderWithProviders({ initialRoute: ELASTIC })
 
-    await screen.findByTestId('chart-peak-query-count')
-    // An empty stacked bar is noise; the chart earns its space only when there
-    // is something to explain.
-    expect(screen.queryByTestId('chart-failures')).not.toBeInTheDocument()
+    const section = (await screen.findByTestId('chart-memory')).closest('section')!
+    expect(within(section).getByText('Peak').nextSibling).toHaveTextContent('—')
+    expect(within(section).queryByText('0%')).not.toBeInTheDocument()
   })
 
-  it('prompts to widen the range when the window is empty', async () => {
-    server.use(
-      http.get('/api/admin/agents/:id/monitoring', () =>
-        HttpResponse.json(makeEmptyMonitoring('8h')),
-      ),
-    )
+  it('surfaces the memory peak and marks out-of-memory events', async () => {
     renderWithProviders({ initialRoute: ELASTIC })
 
-    expect(await screen.findByText(/no queries in this window/i)).toBeInTheDocument()
+    const section = (await screen.findByTestId('chart-memory')).closest('section')!
+    const data = makeMonitoring({ window: '8h' })
+    expect(within(section).getByText('Peak').nextSibling).toHaveTextContent(
+      `${Math.round(data.summary.mem_peak!)}%`,
+    )
+    expect(within(section).getByText(/OOM: out-of-memory/)).toBeInTheDocument()
   })
 
-  it('lists this agent’s runs for the selected window', async () => {
-    let params: URLSearchParams | null = null
+  it('separates the query’s own SQL errors from the platform’s failures', async () => {
+    renderWithProviders({ initialRoute: ELASTIC })
+
+    const section = (await screen.findByTestId('chart-queries')).closest('section')!
+    expect(within(section).getByText('SQL error')).toBeInTheDocument()
+    expect(within(section).getByText('Failed')).toBeInTheDocument()
+    expect(within(section).getByText(/Failed by cause: .*queue full/)).toBeInTheDocument()
+  })
+
+  it('lists the agent’s runs in the range, sortable by what they cost', async () => {
+    const requests: URLSearchParams[] = []
     server.use(
-      http.get('/api/workspaces/:ws/queries', ({ request }) => {
-        params = new URL(request.url).searchParams
+      http.get('/api/admin/agents/:id/queries', ({ request }) => {
+        requests.push(new URL(request.url).searchParams)
         return HttpResponse.json({
           items: [
-          {
-            id: 'q-1',
-            workspace_id: 'ws-1',
-            agent_id: 'ag-5',
-            user_name: 'Ada',
-            sql: 'select 1',
-            status: 'done',
-            row_count: 1,
-            duration_ms: 2000,
-            result_bytes: 10,
-            error: null,
-            started_at: '2026-07-28T10:00:00Z',
-            running_at: '2026-07-28T10:00:03Z',
-            finished_at: '2026-07-28T10:00:05Z',
-          },
-        ],
+            {
+              id: 'q-1',
+              workspace_id: 'ws-1',
+              user_name: 'Ada',
+              sql: 'select big',
+              status: 'done',
+              origin: null,
+              statement_type: 'SELECT',
+              started_at: '2026-07-28T10:00:00Z',
+              running_at: '2026-07-28T10:00:03Z',
+              finished_at: '2026-07-28T10:00:05Z',
+              duration_ms: 2000,
+              wait_ms: 3000,
+              row_count: 1,
+              error: null,
+              failure_reason: null,
+              peak_memory_bytes: 3 * 1024 ** 3,
+              cpu_time_ms: 1500,
+              spill_bytes: 0,
+              bytes_read: 0,
+            },
+          ],
           cursor: null,
           has_more: false,
         })
       }),
     )
+    const user = userEvent.setup()
     renderWithProviders({ initialRoute: ELASTIC })
 
-    expect(await screen.findByText('select 1')).toBeInTheDocument()
-    // Scoped to this agent and bounded by the same window the charts drew.
-    await waitFor(() => expect(params?.get('agent_id')).toBe('ag-5'))
-    expect(params?.get('since')).toBeTruthy()
-    expect(params?.get('until')).toBeTruthy()
-  })
-
-  it('splits a run’s duration into queue wait and execution', async () => {
-    server.use(
-      http.get('/api/workspaces/:ws/queries', () =>
-        HttpResponse.json({
-          items: [
-          {
-            id: 'q-slow',
-            workspace_id: 'ws-1',
-            agent_id: 'ag-5',
-            user_name: 'Ada',
-            sql: 'select pg_sleep(1)',
-            status: 'done',
-            row_count: 1,
-            duration_ms: 2000,
-            result_bytes: 10,
-            error: null,
-            started_at: '2026-07-28T10:00:00Z',
-            running_at: '2026-07-28T10:00:03Z',
-            finished_at: '2026-07-28T10:00:05Z',
-          },
-        ],
-          cursor: null,
-          has_more: false,
-        }),
-      ),
-    )
-    renderWithProviders({ initialRoute: ELASTIC })
-
+    expect(await screen.findByText('select big')).toBeInTheDocument()
+    expect(screen.getByText('3.0 GB')).toBeInTheDocument()
     // "3s queued, 2s running" is a different problem from "5s of slow SQL".
-    const duration = await screen.findByTitle(/queued 3\.0s .* running 2\.0s/i)
-    expect(duration).toBeInTheDocument()
+    expect(screen.getByTitle(/queued 3\.0s .* running 2\.0s/i)).toBeInTheDocument()
+    expect(requests[0].get('start')).toBeTruthy()
+    expect(requests[0].get('sort')).toBe('started_at')
+
+    await user.click(screen.getByRole('combobox', { name: /sort queries/i }))
+    await user.click(await screen.findByRole('option', { name: /most memory/i }))
+    await waitFor(() => expect(requests.at(-1)?.get('sort')).toBe('peak_memory'))
   })
 
   describe('overview tab', () => {
@@ -241,13 +280,11 @@ describe('AgentDetailPage', () => {
       server.use(
         http.get('/api/admin/agents/:id/monitoring', () =>
           HttpResponse.json({
-            ...makeMonitoring('1h'),
+            ...makeMonitoring({ window: '1h' }),
             summary: {
-              uptime_s: 3600,
-              busy_ratio: 0.5,
-              completed: 12,
+              ...makeMonitoring({ window: '1h' }).summary,
+              finished: 12,
               failed: 4,
-              idle_timeout_minutes: 20,
             },
           }),
         ),

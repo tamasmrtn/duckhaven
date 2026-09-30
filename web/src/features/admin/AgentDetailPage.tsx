@@ -169,7 +169,7 @@ function OverviewTab({ agent }: { agent: Agent }) {
 
   // "Recent errors" used to be a hardcoded 0. It is now the real count over the
   // shortest window, which is the one an operator checking on a live problem means.
-  const { data: recent } = useAgentMonitoring(agent.id, "1h");
+  const { data: recent } = useAgentMonitoring(agent.id, { window: "1h" });
 
   // Never on a retired runtime: it can't start again.
   const restartable = canOperate && agentRestartable(agent);
@@ -298,7 +298,7 @@ function OverviewTab({ agent }: { agent: Agent }) {
             Last hour
           </p>
           <div className="space-y-1 text-sm">
-            <Field label="Completed" value={recent?.summary.completed ?? "—"} />
+            <Field label="Completed" value={recent?.summary.finished ?? "—"} />
             <Field
               label="Failed"
               value={

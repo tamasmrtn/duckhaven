@@ -25,7 +25,12 @@ export function formatDuration(ms: number | null): string {
  * breakdown — the difference between "the query is slow" and "the agent was
  * busy", which are different fixes.
  */
-export function DurationCell({ query }: { query: Query }) {
+type Timed = Pick<
+  Query,
+  "started_at" | "running_at" | "finished_at" | "duration_ms"
+>;
+
+export function DurationCell({ query }: { query: Timed }) {
   return (
     <TableCell className="px-4 py-2 font-mono text-xs text-text-secondary font-tabular">
       <span title={durationBreakdown(query)}>
@@ -35,7 +40,7 @@ export function DurationCell({ query }: { query: Query }) {
   );
 }
 
-export function durationBreakdown(query: Query): string {
+export function durationBreakdown(query: Timed): string {
   const submitted = Date.parse(query.started_at);
   const started = query.running_at ? Date.parse(query.running_at) : null;
   if (started === null || Number.isNaN(started)) {
@@ -55,7 +60,7 @@ export function durationBreakdown(query: Query): string {
 }
 
 /** The SQL, truncated, with its error beneath. */
-export function SqlCell({ query }: { query: Query }) {
+export function SqlCell({ query }: { query: Pick<Query, "sql" | "error"> }) {
   return (
     <TableCell className="px-4 py-2 max-w-xs">
       <pre className="truncate font-mono text-xs text-text-primary">

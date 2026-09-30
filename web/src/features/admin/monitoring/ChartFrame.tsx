@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import {
   formatAbsoluteTimestamp,
-  formatClockTick,
+  formatWindowTick,
   windowTicks,
 } from "../metricsTime";
 
@@ -40,7 +40,11 @@ export function ChartFrame({
         </div>
         {legend}
       </div>
-      <div className={height} data-testid={testId}>
+      {/* A clicked chart takes focus; show the ring for keyboard focus only. */}
+      <div
+        className={`${height} [&_*:focus:not(:focus-visible)]:outline-none`}
+        data-testid={testId}
+      >
         {children}
       </div>
     </section>
@@ -83,12 +87,13 @@ export function Legend({
 /** Shared x-axis config: a real time scale with round clock ticks. */
 export function timeAxisProps(startMs: number, endMs: number) {
   return {
-    dataKey: "t",
+    dataKey: "x",
     type: "number" as const,
     scale: "time" as const,
     domain: [startMs, endMs],
     ticks: windowTicks(startMs, endMs),
-    tickFormatter: (value: number) => formatClockTick(Number(value)),
+    tickFormatter: (value: number) =>
+      formatWindowTick(Number(value), endMs - startMs),
     tick: { fontSize: 11, fill: "var(--text-tertiary)" },
     tickLine: false,
     axisLine: { stroke: "var(--border-subtle)" },

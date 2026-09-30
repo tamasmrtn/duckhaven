@@ -1,25 +1,21 @@
+import type { ReactNode } from "react";
 import {
   Area,
   Bar,
   BarChart,
   CartesianGrid,
-  Cell,
   ComposedChart,
   Line,
-  LineChart,
+  ReferenceArea,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
-import type {
-  ActivityPoint,
-  ActivityState,
-  AgentMonitoring,
-} from "@/types/agent";
-import { useIsDark } from "@/hooks/useIsDark";
+import type { AgentMonitoring, MonitoringBucket } from "@/types/agent";
 import { formatDuration } from "../metricsTime";
-import { ACTIVITY, QUEUE_DEPTH, resolve, seriesColor } from "./chartColors";
+import { LOAD, OUTCOME, RESOURCE, TIMELINE, resolve } from "./chartColors";
 import {
   ChartFrame,
   GRID_PROPS,
@@ -29,285 +25,206 @@ import {
   timeAxisProps,
 } from "./ChartFrame";
 
-const ms = (iso: string) => Date.parse(iso);
-
-// 2px of surface between touching marks, per the mark spec: neighbours read as
-// separate because of the gap, not because of a stroke drawn around them.
-const SURFACE_GAP = 2;
-const BAR_RADIUS: [number, number, number, number] = [4, 4, 0, 0];
-
-/** Peak concurrent queries — the saturation chart. */
-export function PeakQueryCountChart({ data }: { data: AgentMonitoring }) {
-  const dark = useIsDark();
-  const running = resolve(QUEUE_DEPTH.running, dark);
-  const queued = resolve(QUEUE_DEPTH.queued, dark);
-  const rows = data.peak_query_count.map((p) => ({ ...p, t: ms(p.t) }));
-  const peakRunning = Math.max(0, ...rows.map((r) => r.running));
-  const peakQueued = Math.max(0, ...rows.map((r) => r.queued));
-
-  return (
-    <ChartFrame
-      title="Peak query count"
-      subtitle="Highest concurrent depth the agent reported in each bucket."
-      testId="chart-peak-query-count"
-      legend={
-        <Legend
-          items={[
-            { label: "Peak running", color: running, value: `${peakRunning}` },
-            { label: "Peak queued", color: queued, value: `${peakQueued}` },
-          ]}
-        />
-      }
-    >
-      <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={rows} barCategoryGap={SURFACE_GAP}>
-          <CartesianGrid {...GRID_PROPS} />
-          <XAxis {...timeAxisProps(ms(data.start), ms(data.end))} />
-          <YAxis {...Y_AXIS_PROPS} allowDecimals={false} />
-          <Tooltip {...TOOLTIP_PROPS} />
-          {/* Queued sits on top of running: the reader's question is "did work
-              pile up", and a stack answers it by total height. */}
-          <Bar
-            dataKey="running"
-            name="Running"
-            stackId="depth"
-            fill={running}
-            maxBarSize={24}
-            isAnimationActive={false}
-          />
-          <Bar
-            dataKey="queued"
-            name="Queued"
-            stackId="depth"
-            fill={queued}
-            maxBarSize={24}
-            radius={BAR_RADIUS}
-            isAnimationActive={false}
-          />
-        </BarChart>
-      </ResponsiveContainer>
-    </ChartFrame>
-  );
+/** One bucket, with its position on the shared time axis. */
+export interface BucketRow extends MonitoringBucket {
+  x: number; // bucket start, epoch ms
+  mid: number; // bucket midpoint: where a bar for the whole bucket is centred
+  end: number;
 }
 
-/** Throughput — queries finishing per minute. */
-export function CompletedQueryCountChart({ data }: { data: AgentMonitoring }) {
-  const dark = useIsDark();
-  const rows = data.completed_query_count.map((p) => ({ ...p, t: ms(p.t) }));
-
-  return (
-    <ChartFrame
-      title="Completed query count"
-      subtitle="Queries per minute, including failed and cancelled runs."
-      testId="chart-completed-query-count"
-    >
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={rows}>
-          <CartesianGrid {...GRID_PROPS} />
-          <XAxis {...timeAxisProps(ms(data.start), ms(data.end))} />
-          <YAxis
-            {...Y_AXIS_PROPS}
-            // Rounding the domain up to a whole query keeps the ticks whole too.
-            // Left to itself recharts divides the exact data max into fifths and
-            // labels them 0.65 / 1.3 / 1.95 — precision nobody reads on an axis.
-            domain={[0, (max: number) => Math.max(1, Math.ceil(max))]}
-          />
-          <Tooltip
-            {...TOOLTIP_PROPS}
-            cursor={{ stroke: "var(--border-strong)", strokeWidth: 1 }}
-            formatter={(value) => [`${value}/min`, "Completed"]}
-          />
-          {/* One series, so no legend box — the title already names it. */}
-          <Line
-            type="monotone"
-            dataKey="per_minute"
-            name="Completed"
-            stroke={seriesColor(0, dark)}
-            strokeWidth={2}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            dot={false}
-            isAnimationActive={false}
-          />
-        </LineChart>
-      </ResponsiveContainer>
-    </ChartFrame>
-  );
+export interface ChartHandlers {
+  onMouseDown: (state: { activeTooltipIndex?: unknown }) => void;
+  onMouseMove: (state: { activeTooltipIndex?: unknown }) => void;
+  onMouseUp: (state: { activeTooltipIndex?: unknown }) => void;
+  onMouseLeave: () => void;
 }
 
-const ACTIVITY_LABEL: Record<ActivityState, string> = {
-  query: "Query activity",
-  other: "Other activity",
-  ready: "Ready",
-  starting: "Starting",
-  down: "Not running",
-  unknown: "No data",
-};
+/** Everything a panel needs, computed once for the whole stack. */
+export interface PanelContext {
+  data: AgentMonitoring;
+  rows: BucketRow[];
+  // `rows` plus a closing point at the range end: a step line drawn "after"
+  // each point needs it, or the last bucket gets no width.
+  stepRows: BucketRow[];
+  startMs: number;
+  endMs: number;
+  downSpans: [number, number][];
+  // The bucket still filling in now, if the range ends at "now".
+  live: [number, number] | null;
+  selected: [number, number] | null;
+  dragging: [number, number] | null;
+  handlers: ChartHandlers;
+  bucketLabel: string; // "5-minute", "2-hour"
+  cores: number | null;
+  memoryGb: number | null;
+  dark: boolean;
+}
 
-const ACTIVITY_HELP: Record<ActivityState, string> = {
-  query: "Queries were running or queued.",
-  other: "Up with no queries — held SQL connections or result fetching.",
-  ready: "Up and idle. This is the time an idle timeout reclaims.",
-  starting: "Provisioning; not yet accepting work.",
-  down: "No agent running.",
-  unknown: "Before this agent started recording lifecycle events.",
-};
+export function toRows(data: AgentMonitoring): {
+  rows: BucketRow[];
+  stepRows: BucketRow[];
+} {
+  const bucketMs = data.bucket_seconds * 1000;
+  const rows = data.buckets.map((b) => {
+    const x = Date.parse(b.t);
+    const end = x + b.seconds * 1000;
+    // Bars sit at the *nominal* bucket centre, even for a first or last bucket
+    // the range cuts short: Recharts sizes every bar from the closest pair of
+    // points, and a short bucket's true centre would halve them all.
+    const mid = Math.floor(x / bucketMs) * bucketMs + bucketMs / 2;
+    return { ...b, x, end, mid };
+  });
+  const last = rows[rows.length - 1];
+  const stepRows = last
+    ? [...rows, { ...last, x: last.end, mid: last.end }]
+    : rows;
+  return { rows, stepRows };
+}
 
-// Order matters: the legend reads busiest to quietest, which is the same order
-// the single-hue ramp steps through, so the colour ordering is self-explaining.
-const ACTIVITY_ORDER: ActivityState[] = [
-  "query",
-  "other",
-  "ready",
-  "starting",
-  "down",
-  "unknown",
-];
+const NOT_MEASURED = "—";
+
+/** A zero drawn as no mark, so it also drops out of the tooltip's list. */
+function orNothing(value: number): number | undefined {
+  return value ? value : undefined;
+}
 
 /**
- * When the agent was up, and what it was doing — the idle-vs-busy chart.
- *
- * Drawn as full-height bars of a constant value rather than a proper band chart:
- * each bucket is one categorical state, so the only visual variable is colour, and
- * a constant-height bar keeps the marks on the same time scale as the charts above
- * without inventing a y-axis nobody reads.
+ * Context drawn behind every panel: the stretches the agent was not running, the
+ * bucket still in progress, the selected bucket and a drag in flight. Returned as
+ * an array of reference areas so each chart can spread it among its children.
  */
-export function ActivityChart({ data }: { data: AgentMonitoring }) {
-  const dark = useIsDark();
-  const rows = data.activity.map((p: ActivityPoint) => ({
-    t: ms(p.t),
-    state: p.state,
-    v: 1,
-  }));
-  const present = ACTIVITY_ORDER.filter((s) =>
-    data.activity.some((p) => p.state === s),
-  );
-  const bucketCounts = ACTIVITY_ORDER.reduce<Record<string, number>>(
-    (acc, state) => {
-      acc[state] = data.activity.filter((p) => p.state === state).length;
-      return acc;
-    },
-    {},
-  );
+function backdrop(ctx: PanelContext, yMax?: number): ReactNode[] {
+  const down = resolve(TIMELINE.down, ctx.dark);
+  const areas: ReactNode[] = ctx.downSpans.map(([x1, x2]) => (
+    <ReferenceArea
+      key={`down-${x1}`}
+      x1={x1}
+      x2={x2}
+      y2={yMax}
+      fill={down}
+      fillOpacity={0.6}
+      stroke="none"
+      ifOverflow="hidden"
+    />
+  ));
+  if (ctx.live) {
+    areas.push(
+      <ReferenceArea
+        key="live"
+        x1={ctx.live[0]}
+        x2={ctx.live[1]}
+        y2={yMax}
+        fill="var(--border-subtle)"
+        fillOpacity={0.35}
+        stroke="var(--border-strong)"
+        strokeDasharray="3 3"
+        ifOverflow="hidden"
+      />,
+    );
+  }
+  for (const [key, span, opacity] of [
+    ["selected", ctx.selected, 0.25],
+    ["dragging", ctx.dragging, 0.35],
+  ] as const) {
+    if (span) {
+      areas.push(
+        <ReferenceArea
+          key={key}
+          x1={span[0]}
+          x2={span[1]}
+          y2={yMax}
+          fill="var(--accent)"
+          fillOpacity={opacity}
+          stroke="none"
+          ifOverflow="hidden"
+        />,
+      );
+    }
+  }
+  return areas;
+}
 
-  const busy = data.summary.busy_ratio;
-  const idleTimeout = data.summary.idle_timeout_minutes;
+// Not synced: a shared tooltip opened one box per panel, each covering the next.
+// The panels already share one time axis, which is what lines them up.
+function chartProps(ctx: PanelContext) {
+  return {
+    ...ctx.handlers,
+    style: { cursor: "crosshair" },
+  };
+}
+
+function sum(rows: BucketRow[], pick: (r: BucketRow) => number): number {
+  return rows.reduce((total, r) => total + pick(r), 0);
+}
+
+function pct(value: number | null | undefined): string {
+  return value == null ? NOT_MEASURED : `${Math.round(value)}%`;
+}
+
+// ── Timeline ────────────────────────────────────────────────────────────────
+
+const STATES = [
+  { key: "busy_s", label: "Busy", color: TIMELINE.busy },
+  { key: "idle_s", label: "Idle", color: TIMELINE.idle },
+  { key: "starting_s", label: "Starting", color: TIMELINE.starting },
+  { key: "down_s", label: "Not running", color: TIMELINE.down },
+  { key: "unknown_s", label: "No record", color: TIMELINE.unknown },
+] as const;
+
+/**
+ * Where the agent's time went, per bucket: the share it was busy (a query was
+ * running), idle, starting, not running, or with no lifecycle record. Exact
+ * seconds from the API, so a bucket that was busy for ten seconds shows a sliver,
+ * not a full bar.
+ */
+export function TimelinePanel({ ctx }: { ctx: PanelContext }) {
+  const rows = ctx.rows.map((r) => {
+    const out: Record<string, number | undefined> = { x: r.mid };
+    for (const s of STATES) {
+      out[s.key] = r.seconds ? orNothing(r[s.key] / r.seconds) : undefined;
+    }
+    return out;
+  });
+  const totals = STATES.map((s) => ({
+    ...s,
+    total: sum(ctx.rows, (r) => r[s.key]),
+  })).filter((s) => s.total > 0);
 
   return (
     <ChartFrame
-      title="Agent activity"
+      title="Timeline"
+      subtitle="Share of each bucket the agent was busy (a query running), idle, starting or not running."
       height="h-16"
-      subtitle={
-        <>
-          {`Up ${formatDuration(data.summary.uptime_s)}`}
-          {busy !== null && ` · ${Math.round(busy * 100)}% busy`}
-          {idleTimeout !== null && ` · idle timeout ${idleTimeout} min`}
-          {busy !== null && busy < 0.25 && idleTimeout !== null && (
-            <span className="ml-1 text-[var(--status-running)]">
-              — mostly idle while up; a shorter idle timeout would reclaim it.
-            </span>
-          )}
-        </>
-      }
-      testId="chart-activity"
+      testId="chart-timeline"
       legend={
         <Legend
-          items={present.map((state) => ({
-            label: ACTIVITY_LABEL[state],
-            color: resolve(ACTIVITY[state], dark),
-            value: `${bucketCounts[state]}`,
+          items={totals.map((s) => ({
+            label: s.label,
+            color: resolve(s.color, ctx.dark),
+            value: formatDuration(s.total),
           }))}
         />
       }
     >
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={rows} barCategoryGap={SURFACE_GAP}>
-          <XAxis {...timeAxisProps(ms(data.start), ms(data.end))} />
+        <BarChart data={rows} barCategoryGap={0} {...chartProps(ctx)}>
+          <XAxis {...timeAxisProps(ctx.startMs, ctx.endMs)} hide />
           <YAxis hide domain={[0, 1]} />
           <Tooltip
             {...TOOLTIP_PROPS}
-            formatter={(_v, _n, item) => {
-              const state = item?.payload?.state as ActivityState;
-              return [ACTIVITY_HELP[state], ACTIVITY_LABEL[state]];
-            }}
+            formatter={(value, name) => [
+              `${Math.round(Number(value) * 100)}%`,
+              name,
+            ]}
           />
-          <Bar dataKey="v" isAnimationActive={false} radius={[2, 2, 2, 2]}>
-            {rows.map((row) => (
-              <Cell
-                key={row.t}
-                fill={resolve(ACTIVITY[row.state], dark)}
-                // The one state whose colour alone would be ambiguous also gets a
-                // hatch, so "we have no record" can never be mistaken for "it was off".
-                {...(row.state === "unknown"
-                  ? { fillOpacity: 0.8, stroke: "var(--border-subtle)" }
-                  : {})}
-              />
-            ))}
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
-    </ChartFrame>
-  );
-}
-
-/** Why runs failed, over time. */
-export function FailuresChart({ data }: { data: AgentMonitoring }) {
-  const dark = useIsDark();
-  // Reasons keep a stable slot for the whole window, so a colour never changes
-  // meaning when a reason appears or disappears from a later bucket.
-  const reasons = Array.from(
-    new Set(data.failures.map((f) => f.reason)),
-  ).sort();
-  const totals = Object.fromEntries(
-    reasons.map((r) => [
-      r,
-      data.failures
-        .filter((f) => f.reason === r)
-        .reduce((sum, f) => sum + f.count, 0),
-    ]),
-  );
-
-  const byBucket = new Map<number, Record<string, number>>();
-  for (const failure of data.failures) {
-    const t = ms(failure.t);
-    const row = byBucket.get(t) ?? { t };
-    row[failure.reason] = (row[failure.reason] ?? 0) + failure.count;
-    byBucket.set(t, row);
-  }
-  const rows = Array.from(byBucket.values()).sort((a, b) => a.t - b.t);
-
-  if (!reasons.length) return null;
-
-  return (
-    <ChartFrame
-      title="Failures & rejections"
-      subtitle="Failed and cancelled runs, by cause."
-      testId="chart-failures"
-      legend={
-        <Legend
-          items={reasons.map((reason, i) => ({
-            label: reason.replace(/_/g, " "),
-            color: seriesColor(i, dark),
-            value: `${totals[reason]}`,
-          }))}
-        />
-      }
-    >
-      <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={rows} barCategoryGap={SURFACE_GAP}>
-          <CartesianGrid {...GRID_PROPS} />
-          <XAxis {...timeAxisProps(ms(data.start), ms(data.end))} />
-          <YAxis {...Y_AXIS_PROPS} />
-          <Tooltip {...TOOLTIP_PROPS} />
-          {reasons.map((reason, i) => (
+          {backdrop(ctx, 1)}
+          {STATES.map((s) => (
             <Bar
-              key={reason}
-              dataKey={reason}
-              name={reason.replace(/_/g, " ")}
-              stackId="failures"
-              fill={seriesColor(i, dark)}
-              maxBarSize={24}
-              radius={i === reasons.length - 1 ? BAR_RADIUS : undefined}
+              key={s.key}
+              dataKey={s.key}
+              name={s.label}
+              stackId="time"
+              fill={resolve(s.color, ctx.dark)}
               isAnimationActive={false}
             />
           ))}
@@ -317,103 +234,261 @@ export function FailuresChart({ data }: { data: AgentMonitoring }) {
   );
 }
 
-/**
- * CPU and memory over the window, from the per-minute rollup.
- *
- * Each series is a line at the bucket's average with a wash up to its peak. The
- * peak is the point: a query that exhausts memory and dies does so in under a
- * second, and averaging that minute buries it — an agent that touched 90% reads
- * as a calm 7% line. The band is what makes a spike that caused a failure
- * visible next to the failure itself.
- */
-export function UtilizationChart({ data }: { data: AgentMonitoring }) {
-  const dark = useIsDark();
-  const rows = data.utilization.map((p) => ({
-    ...p,
-    t: ms(p.t),
-    // Recharts draws a range area from a [low, high] pair. Null when the bucket
-    // went unmeasured, so the band breaks with the line rather than collapsing
-    // to the axis.
-    cpu_band: p.cpu_avg === null ? null : [p.cpu_avg, p.cpu_max ?? p.cpu_avg],
-    mem_band: p.mem_avg === null ? null : [p.mem_avg, p.mem_max ?? p.mem_avg],
+// ── Queries ─────────────────────────────────────────────────────────────────
+
+function platformFailures(failed: Record<string, number>): number {
+  return Object.entries(failed).reduce(
+    (total, [reason, n]) => (reason === "sql_error" ? total : total + n),
+    0,
+  );
+}
+
+/** Queries that finished in each bucket, by outcome. */
+export function QueriesPanel({ ctx }: { ctx: PanelContext }) {
+  const rows = ctx.rows.map((r) => ({
+    x: r.mid,
+    failed: orNothing(platformFailures(r.failed)),
+    cancelled: orNothing(r.cancelled),
+    sql_error: orNothing(r.failed.sql_error ?? 0),
+    done: orNothing(r.done),
+    causes: r.failed,
   }));
-  const cpu = seriesColor(0, dark);
-  const mem = seriesColor(1, dark);
-  const peakCpu = Math.max(0, ...rows.map((r) => r.cpu_max ?? 0));
-  const peakMem = Math.max(0, ...rows.map((r) => r.mem_max ?? 0));
+  const series = [
+    { key: "failed", label: "Failed", color: OUTCOME.failed },
+    { key: "cancelled", label: "Cancelled", color: OUTCOME.cancelled },
+    { key: "sql_error", label: "SQL error", color: OUTCOME.sql_error },
+    { key: "done", label: "Succeeded", color: OUTCOME.done },
+  ] as const;
+  const causes = Object.entries(ctx.data.summary.failed_by_reason).filter(
+    ([reason]) => reason !== "sql_error",
+  );
 
   return (
     <ChartFrame
-      title="Utilization"
-      subtitle="Line is the bucket average, shading its peak. Gaps are buckets the agent reported nothing in."
-      testId="chart-utilization"
+      title="Queries"
+      subtitle={
+        <>
+          {`Finished per ${ctx.bucketLabel} bucket. "SQL error" is a mistake in the query itself; "Failed" is the platform's.`}
+          {causes.length > 0 && (
+            <span className="ml-1 text-text-secondary">
+              Failed by cause:{" "}
+              {causes
+                .map(([reason, n]) => `${reason.replace(/_/g, " ")} ${n}`)
+                .join(" · ")}
+            </span>
+          )}
+        </>
+      }
+      testId="chart-queries"
+      legend={
+        <Legend
+          items={series.map((s) => ({
+            label: s.label,
+            color: resolve(s.color, ctx.dark),
+            value: `${rows.reduce((total, r) => total + (r[s.key] ?? 0), 0)}`,
+          }))}
+        />
+      }
+    >
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={rows} barCategoryGap={2} {...chartProps(ctx)}>
+          <CartesianGrid {...GRID_PROPS} />
+          <XAxis {...timeAxisProps(ctx.startMs, ctx.endMs)} />
+          <YAxis {...Y_AXIS_PROPS} allowDecimals={false} />
+          <Tooltip
+            {...TOOLTIP_PROPS}
+            formatter={(value, name, item) => {
+              if (name !== "Failed" || !value) return [value, name];
+              const detail = Object.entries(
+                (item?.payload?.causes ?? {}) as Record<string, number>,
+              )
+                .filter(([reason]) => reason !== "sql_error")
+                .map(([reason, n]) => `${reason.replace(/_/g, " ")} ${n}`)
+                .join(", ");
+              return [`${value} (${detail})`, name];
+            }}
+          />
+          {backdrop(ctx)}
+          {series.map((s, i) => (
+            <Bar
+              key={s.key}
+              dataKey={s.key}
+              name={s.label}
+              stackId="outcome"
+              fill={resolve(s.color, ctx.dark)}
+              maxBarSize={24}
+              radius={i === series.length - 1 ? [4, 4, 0, 0] : undefined}
+              isAnimationActive={false}
+            />
+          ))}
+        </BarChart>
+      </ResponsiveContainer>
+    </ChartFrame>
+  );
+}
+
+// ── Concurrency ─────────────────────────────────────────────────────────────
+
+/**
+ * How many queries were running and waiting, on average over each bucket, with
+ * the true peak. The averages are exact (query-seconds over bucket seconds), so
+ * they stack; the waiting layers are the saturation signal.
+ */
+export function ConcurrencyPanel({ ctx }: { ctx: PanelContext }) {
+  const seconds = sum(ctx.rows, (r) => r.seconds) || 1;
+  const avg = (key: "running_avg" | "queued_avg" | "compute_wait_avg") =>
+    (sum(ctx.rows, (r) => r[key] * r.seconds) / seconds).toFixed(2);
+  const wait = ctx.data.summary.wait_p95_ms;
+  const layers = [
+    { key: "running_avg", label: "Running", color: LOAD.running },
+    { key: "queued_avg", label: "Waiting to run", color: LOAD.queued },
+    {
+      key: "compute_wait_avg",
+      label: "Waiting for compute",
+      color: LOAD.compute,
+    },
+  ] as const;
+
+  return (
+    <ChartFrame
+      title="Concurrency"
+      subtitle={`Average queries in each state per ${ctx.bucketLabel} bucket; the dashed line is the most running at any instant. p95 wait before running: ${
+        wait == null ? NOT_MEASURED : formatDuration(wait / 1000)
+      }.`}
+      testId="chart-concurrency"
       legend={
         <Legend
           items={[
-            { label: "CPU peak", color: cpu, value: `${Math.round(peakCpu)}%` },
+            ...layers.map((l) => ({
+              label: `${l.label} (avg)`,
+              color: resolve(l.color, ctx.dark),
+              value: avg(l.key),
+            })),
             {
-              label: "Memory peak",
-              color: mem,
-              value: `${Math.round(peakMem)}%`,
+              label: "Peak running",
+              color: "var(--text-secondary)",
+              value: `${ctx.data.summary.peak_running}`,
             },
           ]}
         />
       }
     >
       <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart data={rows}>
+        <ComposedChart data={ctx.stepRows} {...chartProps(ctx)}>
           <CartesianGrid {...GRID_PROPS} />
-          <XAxis {...timeAxisProps(ms(data.start), ms(data.end))} />
+          <XAxis {...timeAxisProps(ctx.startMs, ctx.endMs)} />
+          <YAxis {...Y_AXIS_PROPS} allowDecimals />
+          <Tooltip
+            {...TOOLTIP_PROPS}
+            formatter={(value, name, item) => {
+              if (name === "Peak running") return [value, name];
+              const row = item?.payload as BucketRow | undefined;
+              const suffix =
+                name === "Waiting to run" && row?.wait_p95_ms != null
+                  ? ` (p95 wait ${formatDuration(row.wait_p95_ms / 1000)})`
+                  : "";
+              return [`${Number(value).toFixed(2)}${suffix}`, name];
+            }}
+          />
+          {backdrop(ctx)}
+          {layers.map((l) => (
+            <Area
+              key={l.key}
+              type="stepAfter"
+              dataKey={l.key}
+              name={l.label}
+              stackId="load"
+              stroke="none"
+              fill={resolve(l.color, ctx.dark)}
+              fillOpacity={0.85}
+              isAnimationActive={false}
+              activeDot={false}
+            />
+          ))}
+          <Line
+            type="stepAfter"
+            dataKey="peak_running"
+            name="Peak running"
+            stroke="var(--text-secondary)"
+            strokeWidth={1.5}
+            strokeDasharray="4 3"
+            dot={false}
+            isAnimationActive={false}
+          />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </ChartFrame>
+  );
+}
+
+// ── CPU and memory ──────────────────────────────────────────────────────────
+
+function ResourcePanel({
+  ctx,
+  title,
+  subtitle,
+  avgKey,
+  maxKey,
+  peak,
+  color,
+  testId,
+  markers,
+}: {
+  ctx: PanelContext;
+  title: string;
+  subtitle: string;
+  avgKey: "cpu_avg" | "mem_avg";
+  maxKey: "cpu_max" | "mem_max";
+  peak: number | null;
+  color: string;
+  testId: string;
+  markers?: ReactNode[];
+}) {
+  const rows = ctx.stepRows.map((r) => ({
+    ...r,
+    // A [low, high] pair draws the peak band; null breaks it with the line.
+    band: r[avgKey] == null ? null : [r[avgKey], r[maxKey] ?? r[avgKey]],
+  }));
+
+  return (
+    <ChartFrame
+      title={title}
+      subtitle={subtitle}
+      testId={testId}
+      // One series, so no identity legend: just its headline number.
+      legend={<Legend items={[{ label: "Peak", color, value: pct(peak) }]} />}
+    >
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={rows} {...chartProps(ctx)}>
+          <CartesianGrid {...GRID_PROPS} />
+          <XAxis {...timeAxisProps(ctx.startMs, ctx.endMs)} />
           <YAxis {...Y_AXIS_PROPS} domain={[0, 100]} unit="%" width={44} />
           <Tooltip
             {...TOOLTIP_PROPS}
-            cursor={{ stroke: "var(--border-strong)", strokeWidth: 1 }}
             formatter={(value, name) => {
-              if (value == null) return ["—", name];
-              // The band's value is the [avg, peak] pair it was built from.
-              if (Array.isArray(value)) return [`${value[1]}%`, name];
-              return [`${value}%`, name];
+              if (value == null) return [NOT_MEASURED, name];
+              if (Array.isArray(value)) return [pct(value[1]), "Peak"];
+              return [pct(Number(value)), name];
             }}
           />
-          {/* Bands first so the average lines draw over them. A wash, not a
-              saturated block — it is context for the line, not a second series. */}
+          {backdrop(ctx, 100)}
+          {markers}
           <Area
-            dataKey="cpu_band"
-            name="CPU peak"
+            type="stepAfter"
+            dataKey="band"
+            name="Peak"
             stroke="none"
-            fill={cpu}
-            fillOpacity={0.15}
-            connectNulls={false}
-            isAnimationActive={false}
-            activeDot={false}
-          />
-          <Area
-            dataKey="mem_band"
-            name="Memory peak"
-            stroke="none"
-            fill={mem}
-            fillOpacity={0.15}
+            fill={color}
+            fillOpacity={0.18}
             connectNulls={false}
             isAnimationActive={false}
             activeDot={false}
           />
           <Line
-            type="monotone"
-            dataKey="cpu_avg"
-            name="CPU avg"
-            stroke={cpu}
-            strokeWidth={2}
-            dot={false}
-            // Null means "not measured": break the line rather than drawing
-            // through a zero the agent never reported.
-            connectNulls={false}
-            isAnimationActive={false}
-          />
-          <Line
-            type="monotone"
-            dataKey="mem_avg"
-            name="Memory avg"
-            stroke={mem}
+            type="stepAfter"
+            dataKey={avgKey}
+            name="Average"
+            stroke={color}
             strokeWidth={2}
             dot={false}
             connectNulls={false}
@@ -422,5 +497,61 @@ export function UtilizationChart({ data }: { data: AgentMonitoring }) {
         </ComposedChart>
       </ResponsiveContainer>
     </ChartFrame>
+  );
+}
+
+export function CpuPanel({ ctx }: { ctx: PanelContext }) {
+  const of = ctx.cores ? ` of ${ctx.cores} vCPU` : "";
+  return (
+    <ResourcePanel
+      ctx={ctx}
+      title="CPU"
+      subtitle={`%${of}. Line: average per ${ctx.bucketLabel} bucket. Band: highest 2-second reading. Gaps: nothing measured.`}
+      avgKey="cpu_avg"
+      maxKey="cpu_max"
+      peak={ctx.data.summary.cpu_peak}
+      color={resolve(RESOURCE.cpu, ctx.dark)}
+      testId="chart-cpu"
+    />
+  );
+}
+
+/**
+ * Memory, with a marker wherever the kernel killed a process for it or a query
+ * failed out of memory — the event the peak band exists to explain.
+ */
+export function MemoryPanel({ ctx }: { ctx: PanelContext }) {
+  const of = ctx.memoryGb ? ` of ${ctx.memoryGb} GB` : "";
+  const ooms = ctx.rows.filter(
+    (r) => (r.oom_kills ?? 0) > 0 || (r.failed.out_of_memory ?? 0) > 0,
+  );
+  const markers = ooms.map((r) => (
+    <ReferenceLine
+      key={`oom-${r.x}`}
+      x={r.mid}
+      stroke="var(--status-failed)"
+      strokeWidth={1.5}
+      label={{
+        value: "OOM",
+        position: "insideTopRight",
+        fontSize: 10,
+        fill: "var(--status-failed)",
+      }}
+    />
+  ));
+  return (
+    <ResourcePanel
+      ctx={ctx}
+      title="Memory"
+      subtitle={`%${of}. Line: average per ${ctx.bucketLabel} bucket. Band: highest level reached, including between samples.${
+        ooms.length ? " OOM: out-of-memory kill or failure." : ""
+      }`}
+      avgKey="mem_avg"
+      maxKey="mem_max"
+      peak={ctx.data.summary.mem_peak}
+      color={resolve(RESOURCE.memory, ctx.dark)}
+      testId="chart-memory"
+      markers={markers}
+    />
   );
 }

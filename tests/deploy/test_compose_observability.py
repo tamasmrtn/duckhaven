@@ -47,12 +47,30 @@ def test_polaris_otel_enabled_and_pointed_at_the_collector():
         assert "QUARKUS_OTEL_EXPORTER_OTLP_ENDPOINT" in env
 
 
-def test_tempo_image_defaults_to_a_pinned_version_not_latest():
-    # deploy/tempo/tempo.yaml is on Tempo's 2.x config schema (a monolithic
-    # `compactor` block); 3.0 replaced that with a disaggregated
-    # backend-scheduler/backend-worker split and crash-loops against it. Every
-    # other bundled image floats on :latest — Tempo must not, until tempo.yaml
-    # is migrated to the 3.x schema.
+def test_tempo_image_defaults_to_a_3x_release():
+    # tempo.yaml is on the 3.x config schema, which 2.x cannot parse, so the
+    # default must be a 3.x release — never :latest, never the old 2.x pin.
     for compose in (DEV, HA):
         image = compose["services"]["tempo"]["image"]
         assert "TEMPO_IMAGE_TAG:-latest" not in image
+        assert "TEMPO_IMAGE_TAG:-3." in image
+
+
+def test_tempo_config_uses_the_3x_schema_and_keeps_72h_retention():
+    with (DEPLOY / "tempo" / "tempo.yaml").open() as f:
+        config = yaml.safe_load(f)
+    # 3.x removed the monolithic `compactor` block and refuses to start on it.
+    assert "compactor" not in config
+    # Retention is a backend-worker setting; without it blocks live for 14 days.
+    assert config["backend_worker"]["compaction"]["block_retention"] == "72h"
+
+
+def test_collector_exporter_uses_the_non_deprecated_otlp_grpc_name():
+    # The collector deprecated the bare `otlp` exporter name as an alias for
+    # `otlp_grpc` and warns on every start. The receiver keeps the name `otlp`.
+    with (DEPLOY / "otel" / "otel-collector.yaml").open() as f:
+        config = yaml.safe_load(f)
+    assert "otlp_grpc" in config["exporters"]
+    assert "otlp" not in config["exporters"]
+    assert config["service"]["pipelines"]["traces"]["exporters"] == ["otlp_grpc"]
+    assert "otlp" in config["receivers"]

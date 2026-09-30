@@ -154,6 +154,14 @@ class MetricsSampleOut(BaseModel):
     running_queries: int = 0
     queued_queries: int = 0
     active_profile: str = "auto"
+    session_count: int = 0
+    growth_waiting: int = 0
+    # None from an agent too old to measure them (see duckhaven_shared MetricsSample).
+    memory_peak_percent: float | None = None
+    executing_queries: int | None = None
+    idle_sessions: int | None = None
+    oom_kills: int | None = None
+    interval_s: float | None = None
     sampled_at: datetime
 
 

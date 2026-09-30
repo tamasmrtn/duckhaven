@@ -164,6 +164,52 @@ async def test_agent_gauges_from_local_registry(client: AsyncClient, db_session)
     assert _value("duckhaven_agent_active_profile_info", {**labels, "profile": "decaying_3"}) == 1
 
 
+async def test_new_agent_measurements_are_exported(client: AsyncClient, db_session):
+    """Executing vs idle sessions, the interval memory peak, and cumulative CPU and
+    OOM counters — counters so no scrape interval can miss an event."""
+    agent = Agent(name="measured-agent", status="healthy")
+    db_session.add(agent)
+    await db_session.commit()
+    registry.register(agent.id, object())  # type: ignore[arg-type]
+    registry.record_metrics(
+        agent.id,
+        _sample(
+            executing_queries=1,
+            idle_sessions=2,
+            memory_peak_percent=71.5,
+            cpu_seconds_total=1234.5,
+            oom_kills_total=3,
+        ),
+    )
+
+    await client.get("/metrics")
+
+    labels = {"replica_id": RID, "agent_id": str(agent.id), "agent_name": "measured-agent"}
+    assert _value("duckhaven_agent_executing_queries", labels) == 1
+    assert _value("duckhaven_agent_idle_sessions", labels) == 2
+    assert _value("duckhaven_agent_memory_peak_percent", labels) == 71.5
+    assert _value("duckhaven_agent_cpu_seconds_total", labels) == 1234.5
+    assert _value("duckhaven_agent_oom_kills_total", labels) == 3
+
+
+async def test_an_older_agent_has_no_series_for_what_it_cannot_measure(
+    client: AsyncClient, db_session
+):
+    """Absent, not zero: a zero OOM counter would claim a measurement never taken."""
+    agent = Agent(name="old-agent", status="healthy")
+    db_session.add(agent)
+    await db_session.commit()
+    registry.register(agent.id, object())  # type: ignore[arg-type]
+    registry.record_metrics(agent.id, _sample())
+
+    await client.get("/metrics")
+
+    labels = {"replica_id": RID, "agent_id": str(agent.id), "agent_name": "old-agent"}
+    assert _value("duckhaven_agent_up", labels) == 1
+    assert _value("duckhaven_agent_executing_queries", labels) is None
+    assert _value("duckhaven_agent_oom_kills_total", labels) is None
+
+
 async def test_peer_owned_agents_not_reported(client: AsyncClient, db_session):
     """HA: a replica reports only agents it owns (in its local ring buffer), so a
     peer-owned agent never appears here and `sum()` across replicas cannot double."""

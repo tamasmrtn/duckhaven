@@ -256,3 +256,23 @@ async def test_presence_sweep_and_lifecycle_purge_on_real_postgres(
         ("disconnected", "presence_lost"),
     ]
     assert rows[-1].at == stale
+
+
+async def test_split_minute_merges_coverage_and_oom_kills_on_real_postgres(db_session, agent):
+    """The NULL-aware merge (coalesce + value) for the columns added in 0050."""
+    minute = "2026-07-28T10:00:"
+    for second, oom in (("02", None), ("30", 1), ("40", 2)):
+        payload = {
+            "sampled_at": f"{minute}{second}+00:00",
+            "cpu_percent": 1.0,
+            "memory_percent": 1.0,
+            "interval_s": 2.0,
+        }
+        if oom is not None:
+            payload["oom_kills"] = oom
+        accumulate(agent.id, payload)
+        await flush_minute(db_session, agent.id, take_pending(agent.id))
+
+    row = (await db_session.execute(select(AgentMetricsMinute))).scalar_one()
+    assert row.covered_s == 6.0
+    assert row.oom_kills == 3

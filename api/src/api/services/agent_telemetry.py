@@ -100,18 +100,34 @@ class MinuteAccumulator:
     queued_max: int = 0
     session_max: int = 0
     count: int = 0
+    # None until an agent that measures them reports a value: an older agent's
+    # minute stays "not measured" rather than reading as zero.
+    covered_s: float | None = None
+    oom_kills: int | None = None
 
     def add(self, sample: dict) -> None:
         cpu = float(sample.get("cpu_percent") or 0.0)
         mem = float(sample.get("memory_percent") or 0.0)
+        # The peak reached between samples, when the agent tracks one; otherwise
+        # the level at the sample instant is the best available.
+        peak = sample.get("memory_peak_percent")
         self.cpu_sum += cpu
         self.mem_sum += mem
         self.cpu_max = max(self.cpu_max, cpu)
-        self.mem_max = max(self.mem_max, mem)
+        self.mem_max = max(self.mem_max, mem, float(peak) if peak is not None else mem)
         self.running_max = max(self.running_max, int(sample.get("running_queries") or 0))
         self.queued_max = max(self.queued_max, int(sample.get("queued_queries") or 0))
         self.session_max = max(self.session_max, int(sample.get("session_count") or 0))
+        self.covered_s = _add_optional(self.covered_s, sample.get("interval_s"))
+        self.oom_kills = _add_optional(self.oom_kills, sample.get("oom_kills"))
         self.count += 1
+
+
+def _add_optional(total: float | None, value: float | None) -> float | None:
+    """Sum that stays None until a real value arrives."""
+    if value is None:
+        return total
+    return value if total is None else total + value
 
 
 @dataclass
@@ -192,6 +208,10 @@ async def flush_minute(db: AsyncSession, agent_id: uuid.UUID, acc: MinuteAccumul
         """The larger of the stored value and ours, spelled portably."""
         return sa.case((col > value, col), else_=value)
 
+    def add_to(col: sa.Column, value: float | None):
+        """Stored + ours, where either may be unmeasured (NULL)."""
+        return col if value is None else sa.func.coalesce(col, 0) + value
+
     def _merge_update() -> sa.Update:
         total = table.c.sample_count + acc.count
         return (
@@ -206,6 +226,8 @@ async def flush_minute(db: AsyncSession, agent_id: uuid.UUID, acc: MinuteAccumul
                 queued_max=keep_max(table.c.queued_max, acc.queued_max),
                 session_max=keep_max(table.c.session_max, acc.session_max),
                 sample_count=total,
+                covered_s=add_to(table.c.covered_s, acc.covered_s),
+                oom_kills=add_to(table.c.oom_kills, acc.oom_kills),
             )
         )
 
@@ -226,6 +248,8 @@ async def flush_minute(db: AsyncSession, agent_id: uuid.UUID, acc: MinuteAccumul
                     queued_max=acc.queued_max,
                     session_max=acc.session_max,
                     sample_count=acc.count,
+                    covered_s=acc.covered_s,
+                    oom_kills=acc.oom_kills,
                 )
             )
         await db.commit()

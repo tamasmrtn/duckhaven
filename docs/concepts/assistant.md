@@ -131,8 +131,8 @@ rejects before a compute agent ever sees them.
 
 It is also told to answer these questions from that summary rather than from general knowledge of other data
 platforms, to say plainly when it does not know instead of guessing, and to describe anything experimental or
-unshipped in those words rather than as available. DuckHaven differs from Snowflake and Databricks in ways that
-matter, and a confident wrong answer about one of those differences is worse than no answer.
+unshipped in those words rather than as available. DuckHaven differs from other data platforms in ways that matter,
+and a confident wrong answer about one of those differences is worse than no answer.
 
 Beyond that summary, the assistant carries an **index of this documentation** — every page's path and title, grouped
 by section — and can both **search** the full text of every page and **open** any of them in full. Asked something the

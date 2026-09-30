@@ -264,7 +264,7 @@ export function WorksheetPage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      {/* One row across the page, as in Databricks: the sidebar's switch sits
+      {/* One row across the page: the sidebar's switch sits
           in a cell exactly as wide as the sidebar, so its right border and the
           sidebar's form one straight divider, and one bottom border runs under
           both. */}

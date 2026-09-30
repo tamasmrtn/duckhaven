@@ -181,7 +181,7 @@ function AgentRow({
 /**
  * The compute "context chip": which agent the next run goes to.
  *
- * Status first, in the manner of a Databricks warehouse menu. Agents that can
+ * Status first. Agents that can
  * take a run now come first; stopped elastic agents next (the API starts them);
  * then agents that cannot serve this workspace; the rest — offline, failed,
  * mid-teardown — stay folded away so a long-lived fleet does not bury the one

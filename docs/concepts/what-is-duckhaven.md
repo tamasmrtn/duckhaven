@@ -13,8 +13,8 @@ That's DuckHaven. One Docker Compose stack, and those three projects become a sy
 ## The problem it solves
 
 Running a lakehouse has usually meant adopting somebody else's. The open components are all there, but wiring them into
-something you'd let colleagues loose on is a platform project most teams cannot justify — so they rent Snowflake's or
-Databricks' instead, and hand over the data and the bill along with it.
+something you'd let colleagues loose on is a platform project most teams cannot justify — so they rent one from a
+vendor instead, and hand over the data and the bill along with it.
 
 That trade is rarely revisited once it is made. DuckHaven is the argument that you do not have to make it.
 

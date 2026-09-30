@@ -40,7 +40,7 @@ JOIN curated.analytics.users u ON e.user_id = u.id;
 ## Inspecting metadata (`information_schema`)
 
 Every catalog exposes a built-in, **read-only** `information_schema` — present by default, the way Snowflake gives every
-database an `INFORMATION_SCHEMA` and Databricks gives every catalog an `information_schema`. You never create it and you
+database an `INFORMATION_SCHEMA`. You never create it and you
 cannot write to it; it simply describes the objects in the catalogs attached to your worksheet. It is **always
 present**, not the working schema — bare `schema.table` names still resolve against your catalog's data (default
 `analytics`), exactly as before.

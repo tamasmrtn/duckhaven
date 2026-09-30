@@ -39,7 +39,7 @@ function SaveStatusText({
   edited: boolean;
 }) {
   // A worksheet nobody has typed in yet has nothing to report, so "Saved"
-  // waits for the first edit, as in Snowsight and Databricks.
+  // waits for the first edit, as in Snowsight.
   const quiet = !edited && (status === undefined || status === "idle");
   const content = quiet ? null : status === "saving" ? (
     <>

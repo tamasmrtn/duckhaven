@@ -100,7 +100,7 @@ level:
 | `reader` | Everything `metadata` can, plus read rows (query / sample) |
 | `writer` | Everything `reader` can, plus write and run DDL |
 
-Two rules keep resolution predictable, matching Snowflake:
+Two rules keep resolution predictable:
 
 - **Grants only narrow, never widen.** A principal's effective tier is capped at
   their workspace role — a schema-level `writer` grant cannot promote a workspace
@@ -245,8 +245,8 @@ dropped.
 
 - **No row- or column-level security.** Object-level grants reach down to the
   catalog, schema, and table (see [Scoped access](#scoped-access)),
-  but not to individual rows or columns — the same boundary Snowflake draws
-  between object grants and row filters / column masks.
+  but not to individual rows or columns: there are no row filters or column
+  masks.
 - **No group-based *data* grants.** A catalog grant targets a principal (member or
   service account) directly; there is no grantable group concept for data access.
   [Per-agent access](#per-agent-access) is the one exception — it can name a

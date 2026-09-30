@@ -38,7 +38,7 @@ the size.
 
 ### What we take from each reference
 
-| From hosted SQL editors | From Snowflake Snowsight | From DuckDB itself |
+| From hosted SQL editors | From hosted worksheet UIs | From DuckDB itself |
 |---|---|---|
 | Tabbed worksheets, command palette (Cmd/Ctrl-K) | Per-worksheet context bar (warehouse + role → here: **agent + workspace**) | Lemon yellow brand, railroad/junction motif |
 | Catalog browser permanently docked left | Worksheet explorer as a flat searchable list | Monospace identifiers, dark code blocks with syntax tokens |
@@ -144,7 +144,7 @@ durations, byte counts.
 
 ### 2.3 Spacing & Sizing
 
-4-pt grid. Density is closer to Linear than to Snowflake.
+4-pt grid. Density is closer to Linear than to a data warehouse console.
 
 | Token | px |
 |---|---|
@@ -299,8 +299,7 @@ expanded state is remembered per user.
 User menu (top-right): name, "Theme: light/dark/system", "Sign out".
 
 The yellow duck mark in the top-left **does not** navigate — clicking it
-opens the workspace switcher (Snowflake-style), the most common
-destination-change action.
+opens the workspace switcher, the most common destination-change action.
 
 ---
 
@@ -708,8 +707,8 @@ evolves.
 
 1. **Q-UI-1.** Workspace switcher: surface storage backend kind as an
    icon (current sketch) or as a colored capsule? **Default: icon.**
-2. **Q-UI-2.** Show per-statement results stacked or tabbed (Snowflake-style)
-   when a script has multiple statements?
+2. **Q-UI-2.** Show per-statement results stacked or tabbed when a script has
+   multiple statements?
    **Default: tabbed.** Stacking gets noisy past two statements.
 3. **Q-UI-3.** Should the agent picker remember per-worksheet *or* per-
    workspace? **Resolved: per-worksheet**, stored on the server-side

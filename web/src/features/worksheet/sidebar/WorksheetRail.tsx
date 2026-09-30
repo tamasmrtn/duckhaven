@@ -70,7 +70,7 @@ interface WorksheetRailProps {
 
 /**
  * The worksheet's left pane: the catalog tree, or the list of worksheets and
- * saved queries, as in Snowsight's editor sidebar. It has no header of its own:
+ * saved queries. It has no header of its own:
  * the switch between the two lives in the tab row above it, so the pane and the
  * editor share one top row and one divider.
  */

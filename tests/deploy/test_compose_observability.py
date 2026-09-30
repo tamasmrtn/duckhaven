@@ -63,3 +63,14 @@ def test_tempo_config_uses_the_3x_schema_and_keeps_72h_retention():
     assert "compactor" not in config
     # Retention is a backend-worker setting; without it blocks live for 14 days.
     assert config["backend_worker"]["compaction"]["block_retention"] == "72h"
+
+
+def test_collector_exporter_uses_the_non_deprecated_otlp_grpc_name():
+    # The collector deprecated the bare `otlp` exporter name as an alias for
+    # `otlp_grpc` and warns on every start. The receiver keeps the name `otlp`.
+    with (DEPLOY / "otel" / "otel-collector.yaml").open() as f:
+        config = yaml.safe_load(f)
+    assert "otlp_grpc" in config["exporters"]
+    assert "otlp" not in config["exporters"]
+    assert config["service"]["pipelines"]["traces"]["exporters"] == ["otlp_grpc"]
+    assert "otlp" in config["receivers"]

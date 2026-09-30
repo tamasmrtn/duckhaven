@@ -12,7 +12,7 @@ processors:
   batch: {}
 
 exporters:
-  otlp:
+  otlp_grpc:
     endpoint: tempo:4317
     tls:
       insecure: true
@@ -22,4 +22,4 @@ service:
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [otlp]
+      exporters: [otlp_grpc]

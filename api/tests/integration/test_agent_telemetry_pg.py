@@ -297,3 +297,56 @@ async def test_split_minute_merges_coverage_and_oom_kills_on_real_postgres(db_se
     row = (await db_session.execute(select(AgentMetricsMinute))).scalar_one()
     assert row.covered_s == 6.0
     assert row.oom_kills == 3
+
+
+async def test_resource_sorts_compile_and_order_on_real_postgres(db_session, agent, workspace):
+    """The profile JSONB path, the BigInteger cast (peaks past 2 GiB) and the
+    nulls-last keyset for the per-agent query list."""
+    from api.services import query_history
+
+    now = datetime.now(tz=UTC)
+    for sql, peak in (("big", 5_000_000_000), ("none", None), ("small", 1_000)):
+        db_session.add(
+            Query(
+                workspace_id=workspace.id,
+                agent_id=agent.id,
+                sql=sql,
+                status="done",
+                started_at=now - timedelta(minutes=5),
+                running_at=now - timedelta(minutes=4),
+                finished_at=now - timedelta(minutes=3),
+                profile={"summary": {"peak_memory_bytes": peak}} if peak else None,
+            )
+        )
+    await db_session.commit()
+
+    value = query_history.sort_expr("peak_memory")
+    rows = (
+        await db_session.execute(
+            select(Query.sql, value, query_history.wait_expr())
+            .where(Query.agent_id == agent.id)
+            .order_by(*query_history.order_by("peak_memory", "desc"))
+        )
+    ).all()
+    assert [(r[0], r[1]) for r in rows] == [
+        ("big", 5_000_000_000),
+        ("small", 1_000),
+        ("none", None),
+    ]
+    assert {r[2] for r in rows} == {60_000}
+
+    # Resume after the first row with a keyset cursor, as the endpoint does.
+    after = query_history.keyset_predicate(
+        "peak_memory",
+        "desc",
+        5_000_000_000,
+        (await db_session.execute(select(Query.id).where(Query.sql == "big"))).scalar_one(),
+    )
+    rest = (
+        await db_session.execute(
+            select(Query.sql)
+            .where(Query.agent_id == agent.id, after)
+            .order_by(*query_history.order_by("peak_memory", "desc"))
+        )
+    ).scalars()
+    assert list(rest) == ["small", "none"]

@@ -252,6 +252,35 @@ class AgentMonitoringOut(BaseModel):
     summary: MonitoringSummaryOut
 
 
+class AgentQueryOut(BaseModel):
+    """One run on an agent, with what it cost — the Monitoring tab's table."""
+
+    id: uuid.UUID
+    workspace_id: uuid.UUID
+    user_name: str | None = None
+    sql: str
+    status: str
+    origin: str | None = None
+    statement_type: str | None = None
+    started_at: datetime
+    running_at: datetime | None = None
+    finished_at: datetime | None = None
+    duration_ms: int | None = None
+    # Submission until it started running (admission queue, compute starting).
+    wait_ms: int | None = None
+    row_count: int | None = None
+    error: str | None = None
+    # Classified cause for a failed run (see services.query_failure).
+    failure_reason: str | None = None
+    # From the run's profile, as DuckDB reported them; null without a profile
+    # (profiling off, DDL, or a run older than profiling). For a statement in a SQL
+    # session, peak memory is how far it raised the connection's own peak.
+    peak_memory_bytes: int | None = None
+    cpu_time_ms: float | None = None
+    spill_bytes: int | None = None
+    bytes_read: int | None = None
+
+
 class BootstrapTokenOut(BaseModel):
     token: str
     expires_at: datetime

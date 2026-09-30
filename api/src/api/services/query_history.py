@@ -21,14 +21,27 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from sqlalchemy import ColumnElement, Integer, String, and_, cast, func, or_, tuple_
+from sqlalchemy import BigInteger, ColumnElement, Integer, String, and_, cast, func, or_, tuple_
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql.expression import FunctionElement
 
 from api.models.query import Query
 
 SortKey = Literal["started_at", "duration"]
+# The per-agent list (the Monitoring tab's table) also sorts by what a run cost:
+# how long it waited, and the resources DuckDB reported in its profile.
+AgentSortKey = Literal[
+    "started_at", "duration", "wait", "peak_memory", "cpu_time", "spill", "bytes_read"
+]
 SortDir = Literal["asc", "desc"]
+
+# Profile summary fields behind the resource sorts (see agent executor/plan.py).
+_PROFILE_SORTS = {
+    "peak_memory": "peak_memory_bytes",
+    "cpu_time": "cpu_time_ms",
+    "spill": "spill_bytes",
+    "bytes_read": "bytes_read",
+}
 
 # The five states a run can be in. Mirrors the QueryStatus union the frontend
 # declares in web/src/types/query.ts; there is no enum on the column itself.
@@ -105,6 +118,38 @@ def duration_expr() -> ColumnElement[int]:
     )
 
 
+def wait_expr() -> ColumnElement[int]:
+    """How long a run waited before it started running, in milliseconds.
+
+    Submission to ``running_at``: the admission queue, and compute starting when
+    none was up. A run that never started waited until it finished (or failed).
+    """
+    # Rounded before the cast: SQLite's julianday arithmetic lands a hair under a
+    # whole millisecond, which a bare integer cast would truncate.
+    return cast(
+        func.round(
+            _DurationMs(func.coalesce(Query.running_at, Query.finished_at), Query.started_at)
+        ),
+        Integer,
+    )
+
+
+def profile_expr(field: str) -> ColumnElement[int]:
+    """One integer field of the run's profile summary; null without a profile."""
+    return cast(Query.profile[("summary", field)].as_float(), BigInteger)
+
+
+def sort_expr(sort: AgentSortKey) -> ColumnElement:
+    """The value a list is ordered by, selected alongside each row for the cursor."""
+    if sort == "started_at":
+        return Query.started_at
+    if sort == "duration":
+        return duration_expr()
+    if sort == "wait":
+        return wait_expr()
+    return profile_expr(_PROFILE_SORTS[sort])
+
+
 def _escape_like(term: str) -> str:
     """Neutralize LIKE metacharacters so a search term matches literally.
 
@@ -132,7 +177,7 @@ def encode_cursor(row_id: uuid.UUID, value: datetime | int | None) -> str:
     return base64.urlsafe_b64encode(f"{raw}|{row_id}".encode()).decode()
 
 
-def decode_cursor(cursor: str, sort: SortKey) -> tuple[datetime | int | None, uuid.UUID]:
+def decode_cursor(cursor: str, sort: AgentSortKey) -> tuple[datetime | int | None, uuid.UUID]:
     """Reverse :func:`encode_cursor`, or raise :class:`InvalidCursor`.
 
     A malformed cursor is rejected rather than silently treated as "start from
@@ -146,31 +191,31 @@ def decode_cursor(cursor: str, sort: SortKey) -> tuple[datetime | int | None, uu
     except (ValueError, binascii.Error, UnicodeDecodeError) as exc:
         raise InvalidCursor("Malformed cursor") from exc
 
-    if sort == "duration":
+    if sort != "started_at":
         if raw == "null":
             return None, row_id
         try:
             return int(raw), row_id
         except ValueError as exc:
-            raise InvalidCursor("Cursor does not match sort=duration") from exc
+            raise InvalidCursor(f"Cursor does not match sort={sort}") from exc
     try:
         return datetime.fromisoformat(raw), row_id
     except ValueError as exc:
         raise InvalidCursor("Cursor does not match sort=started_at") from exc
 
 
-def order_by(sort: SortKey, direction: SortDir) -> list[ColumnElement]:
+def order_by(sort: AgentSortKey, direction: SortDir) -> list[ColumnElement]:
     """Ordering clauses, always with ``id`` as the deterministic tiebreaker.
 
     Without the tiebreaker two runs sharing a timestamp — common, since a
     session dispatches statements in a burst — could come back in either order,
     and a cursor anchored to one of them would skip or repeat the other.
 
-    Duration sorts nulls last in *both* directions, so runs whose duration is
-    unknown never head a "slowest first" list.
+    Every sort but ``started_at`` puts nulls last in *both* directions, so runs whose
+    duration (or wait, or resource use) is unknown never head a "worst first" list.
     """
-    if sort == "duration":
-        column = duration_expr()
+    if sort != "started_at":
+        column = sort_expr(sort)
         if direction == "asc":
             return [column.asc().nulls_last(), Query.id.asc()]
         return [column.desc().nulls_last(), Query.id.desc()]
@@ -180,7 +225,7 @@ def order_by(sort: SortKey, direction: SortDir) -> list[ColumnElement]:
 
 
 def keyset_predicate(
-    sort: SortKey, direction: SortDir, value: datetime | int | None, row_id: uuid.UUID
+    sort: AgentSortKey, direction: SortDir, value: datetime | int | None, row_id: uuid.UUID
 ) -> ColumnElement[bool]:
     """Rows strictly after ``(value, row_id)`` in the given ordering."""
     if sort == "started_at":
@@ -192,7 +237,7 @@ def keyset_predicate(
             return tuple_(Query.started_at, Query.id) > anchor
         return tuple_(Query.started_at, Query.id) < anchor
 
-    column = duration_expr()
+    column = sort_expr(sort)
     if value is None:
         # Already in the nulls-last tail: only other null-duration rows remain,
         # separated from this one by id alone.

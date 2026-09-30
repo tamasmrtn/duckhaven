@@ -3,24 +3,28 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
 from api.deps import get_current_user, get_db, require_agent_tier, require_permission
 from api.models.agent import Agent
+from api.models.query import Query as QueryRow
 from api.models.user import Credential, User
 from api.schemas.agent import (
     AgentMetricsOut,
     AgentMonitoringOut,
     AgentOut,
+    AgentQueryOut,
     BootstrapCreate,
     BootstrapTokenOut,
     ComputeOptionsOut,
     ElasticAgentCreate,
     MetricsSampleOut,
 )
+from api.schemas.page import Page
+from api.services import query_history
 from api.services.agent_access import ResolvedAgent, visible_tiers
 from api.services.agent_dispatch import (
     connected_agent_ids,
@@ -36,6 +40,8 @@ from api.services.agent_view import (
 from api.services.compute import pricing
 from api.services.compute import service as compute_service
 from api.services.permissions import Permission
+from api.services.query_failure import classify_failure
+from api.services.rbac import has_permission
 from api.services.runtimes import RuntimeRetired, image_for
 from duckhaven_shared.runtimes import RUNTIMES, Runtime
 from duckhaven_shared.runtimes import get as get_runtime
@@ -262,6 +268,106 @@ async def agent_monitoring(
             )
     return AgentMonitoringOut(
         **await build_monitoring(db, resolved.agent, window=window, start=start, end=end)
+    )
+
+
+@router.get("/{agent_id}/queries", response_model=Page[AgentQueryOut])
+async def agent_queries(
+    start: datetime,
+    end: datetime,
+    sort: query_history.AgentSortKey = "started_at",
+    dir: query_history.SortDir = "desc",
+    status_in: list[str] | None = Query(default=None, alias="status"),
+    cursor: str | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
+    resolved: ResolvedAgent = Depends(require_agent_tier("use")),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Page[AgentQueryOut]:
+    """Runs on this agent that were alive during a range, with what each cost.
+
+    "Alive during" rather than "started in": the same overlap the monitoring charts
+    use, so clicking a bucket lists exactly the runs that make up its bars,
+    including one that started before it. Sortable by what a run cost — wait,
+    duration, peak memory, CPU time, spill, bytes read — worst first, nulls last.
+
+    Spans workspaces, so it also needs the cross-workspace query permission the
+    global History view does; the agent tier alone would expose other workspaces'
+    SQL to anyone allowed to use a shared agent.
+    """
+    if not await has_permission(db, user, Permission.QUERIES_ADMIN):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    if status_in is not None:
+        unknown = sorted(set(status_in) - query_history.QUERY_STATUSES)
+        if unknown:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Unknown status: {', '.join(unknown)}",
+            )
+    agent_id = resolved.agent.id
+    sort_value = query_history.sort_expr(sort)
+    stmt = (
+        select(QueryRow, User.name, query_history.wait_expr(), sort_value)
+        .outerjoin(User, QueryRow.user_id == User.id)
+        .where(
+            sa.or_(
+                QueryRow.agent_id == agent_id,
+                sa.and_(QueryRow.agent_id.is_(None), QueryRow.requested_agent_id == agent_id),
+            ),
+            QueryRow.started_at < end,
+            sa.or_(QueryRow.finished_at.is_(None), QueryRow.finished_at >= start),
+            sa.or_(
+                QueryRow.origin.is_(None),
+                QueryRow.origin.not_in(query_history.HIDDEN_ORIGINS),
+            ),
+        )
+        .order_by(*query_history.order_by(sort, dir))
+    )
+    if status_in:
+        stmt = stmt.where(QueryRow.status.in_(status_in))
+    if cursor:
+        try:
+            anchor_value, anchor_id = query_history.decode_cursor(cursor, sort)
+        except query_history.InvalidCursor as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+            ) from exc
+        stmt = stmt.where(query_history.keyset_predicate(sort, dir, anchor_value, anchor_id))
+
+    rows = (await db.execute(stmt.limit(limit + 1))).all()
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    items = [_agent_query_out(query, user_name, wait_ms) for query, user_name, wait_ms, _ in rows]
+    next_cursor = (
+        query_history.encode_cursor(rows[-1][0].id, rows[-1][3]) if has_more and rows else None
+    )
+    return Page[AgentQueryOut](items=items, cursor=next_cursor, has_more=has_more)
+
+
+def _agent_query_out(query: QueryRow, user_name: str | None, wait_ms: int | None) -> AgentQueryOut:
+    summary = (
+        ((query.profile or {}).get("summary") or {}) if isinstance(query.profile, dict) else {}
+    )
+    return AgentQueryOut(
+        id=query.id,
+        workspace_id=query.workspace_id,
+        user_name=user_name,
+        sql=query.sql,
+        status=query.status,
+        origin=query.origin,
+        statement_type=query.statement_type,
+        started_at=query.started_at,
+        running_at=query.running_at,
+        finished_at=query.finished_at,
+        duration_ms=query.duration_ms,
+        wait_ms=wait_ms,
+        row_count=query.row_count,
+        error=query.error,
+        failure_reason=classify_failure(query.error) if query.status == "failed" else None,
+        peak_memory_bytes=summary.get("peak_memory_bytes"),
+        cpu_time_ms=summary.get("cpu_time_ms"),
+        spill_bytes=summary.get("spill_bytes"),
+        bytes_read=summary.get("bytes_read"),
     )
 
 

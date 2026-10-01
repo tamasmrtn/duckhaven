@@ -242,7 +242,7 @@ persistent **waiting to run** layer means the agent is saturated: raise the slot
 count (e.g. switch to `decaying_3`) only if per-query memory still suffices, or
 add another agent. The **Queries** chart on the same page separates saturation
 (`queue_full`, `queued_timeout`) from per-query problems like `out_of_memory`,
-and from mistakes in the SQL itself. See [Monitoring](monitoring.md).
+and from mistakes in the SQL itself. See [Agent monitoring](agent-monitoring.md).
 
 ---
 

@@ -118,7 +118,7 @@ Because that column is mutated in place — a restart reuses the same agent row 
 describes the agent *now*. Every transition is therefore also appended to a separate lifecycle
 trail, together with the reason it happened (`idle`, `max_lifetime`, `provisioning_timeout`,
 `restart`, `orphan`, `dead_row`). That trail is what the **Timeline** on the agent's
-[monitoring page](../operations/monitoring.md#per-agent-monitoring) is drawn from, and it is the
+[monitoring page](../operations/agent-monitoring.md#the-charts) is drawn from, and it is the
 only record that survives a restart — without it, an agent that has been torn down and brought
 back has no history at all.
 

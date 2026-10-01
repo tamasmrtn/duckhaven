@@ -79,7 +79,8 @@
 
 - [Operator runbook](https://tamasmrtn.github.io/duckhaven/operations/runbook/): Operational procedures for the single control-plane box plus its agents.
 - [Storage security & maintenance](https://tamasmrtn.github.io/duckhaven/operations/storage-maintenance/): Day-2 practice for external S3 and ADLS Gen2 backends: securing access, rotating trust, and routine upkeep.
-- [Monitoring](https://tamasmrtn.github.io/duckhaven/operations/monitoring/): Per-agent monitoring pages, the query audit trail, and Prometheus metrics.
+- [Monitoring](https://tamasmrtn.github.io/duckhaven/operations/monitoring/): The query history and audit log, Prometheus metrics, starter alert rules and a Grafana dashboard.
+- [Agent monitoring](https://tamasmrtn.github.io/duckhaven/operations/agent-monitoring/): An agent's Monitoring tab — live load, where its time went, the queries it ran and what they cost, CPU and memory — and exactly how each number is measured.
 - [Distributed tracing](https://tamasmrtn.github.io/duckhaven/operations/tracing/): DuckHaven emits OpenTelemetry traces alongside the Prometheus metrics.
 - [Scaling compute](https://tamasmrtn.github.io/duckhaven/operations/scaling/): DuckHaven scales compute horizontally: the control plane stays small (one box) while you add agents at the edge.
 - [HA failover runbook](https://tamasmrtn.github.io/duckhaven/operations/ha-failover/): Drills that prove the highly-available control plane survives the failures it is designed for.

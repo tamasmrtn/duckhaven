@@ -11,7 +11,7 @@ connectivity to them. Users then pick which agent runs each query.
 
 When to add one:
 
-- **Persistent queued count** in [Monitoring](monitoring.md) means an agent is saturated.
+- **Persistent queued count** in [Agent monitoring](agent-monitoring.md) means an agent is saturated.
 - **Heavier workloads** benefit from an agent with more RAM (a higher memory ceiling).
 - **Backend reach** — an agent must carry the extension a workspace's [storage backend](../concepts/storage-backends.md)
   needs (for example `azure` for ADLS).

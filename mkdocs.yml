@@ -155,6 +155,7 @@ nav:
       - Operator runbook: operations/runbook.md
       - Storage security & maintenance: operations/storage-maintenance.md
       - Monitoring: operations/monitoring.md
+      - Agent monitoring: operations/agent-monitoring.md
       - Distributed tracing: operations/tracing.md
       - Scaling compute: operations/scaling.md
       - HA failover runbook: operations/ha-failover.md

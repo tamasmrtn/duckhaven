@@ -54,7 +54,7 @@ Every 2 seconds an agent reports its CPU and memory use, how many queries it is 
 SQL sessions it holds idle. The Compute list shows those figures live for every connected agent. Each agent also has its
 own **Monitoring** page (Compute → *an agent*) covering up to a week: where its time went (busy, idle, starting, not
 running), the queries it finished by outcome, how many were running and waiting, and CPU and memory with their peaks —
-each chart leading to the queries behind it. See [Monitoring](../operations/monitoring.md#per-agent-monitoring).
+each chart leading to the queries behind it. See [Agent monitoring](../operations/agent-monitoring.md).
 
 The Compute page opens on the **active** agents — running, or on their way up or down — with **Stopped** (terminated,
 failed, or an offline operator-run host) and **All** one click away, and a search by name or host. A fleet that has

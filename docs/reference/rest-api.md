@@ -575,7 +575,7 @@ Every agent object carries `access_tier` (the requesting caller's tier) and `acc
 
 ### Agent monitoring
 
-The two endpoints behind an agent's [Monitoring tab](../operations/monitoring.md#per-agent-monitoring):
+The two endpoints behind an agent's [Monitoring tab](../operations/agent-monitoring.md):
 
 | Method & path | Purpose |
 |---|---|

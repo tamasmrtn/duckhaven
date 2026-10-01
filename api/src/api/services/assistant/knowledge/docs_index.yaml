@@ -241,7 +241,13 @@ pages:
 - path: operations/monitoring.md
   title: Monitoring
   section: Operations
-  summary: Per-agent monitoring pages, the query audit trail, and Prometheus metrics.
+  summary: The query history and audit log, Prometheus metrics, starter alert rules and a Grafana
+    dashboard.
+- path: operations/agent-monitoring.md
+  title: Agent monitoring
+  section: Operations
+  summary: An agent's Monitoring tab — live load, where its time went, the queries it ran and what
+    they cost, CPU and memory — and exactly how each number is measured.
 - path: operations/tracing.md
   title: Distributed tracing
   section: Operations

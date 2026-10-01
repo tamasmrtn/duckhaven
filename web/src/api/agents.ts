@@ -1,4 +1,5 @@
 import { get, post, put, patch, del } from "./client";
+import type { Page } from "./client";
 import type {
   Agent,
   AgentAccess,
@@ -6,12 +7,23 @@ import type {
   AgentGrant,
   AgentGrantUpsert,
   AgentMonitoring,
+  AgentQuery,
+  AgentQuerySort,
   BootstrapToken,
   ComputeOptions,
   CreateElasticAgentBody,
-  MonitoringWindow,
+  MonitoringRange,
   Runtime,
 } from "@/types/agent";
+
+export interface AgentQueriesParams {
+  start: string;
+  end: string;
+  sort: AgentQuerySort;
+  dir: "asc" | "desc";
+  cursor?: string;
+  limit?: number;
+}
 
 export const agentsApi = {
   list: () => get<Agent[]>("/agents"),
@@ -23,8 +35,28 @@ export const agentsApi = {
   // One request per window change: the series share a bucket grid, so fetching
   // them separately would let a slow response leave two charts describing
   // different stretches of time.
-  monitoring: (id: string, window: MonitoringWindow) =>
-    get<AgentMonitoring>(`/admin/agents/${id}/monitoring?window=${window}`),
+  monitoring: (id: string, range: MonitoringRange) => {
+    const qs = new URLSearchParams(
+      "window" in range
+        ? { window: range.window }
+        : { start: range.start, end: range.end },
+    );
+    return get<AgentMonitoring>(`/admin/agents/${id}/monitoring?${qs}`);
+  },
+
+  // The runs alive during a range, with what each cost; the same overlap the
+  // charts use, so a clicked bucket lists exactly the runs behind its bars.
+  queries: (id: string, params: AgentQueriesParams) => {
+    const qs = new URLSearchParams({
+      start: params.start,
+      end: params.end,
+      sort: params.sort,
+      dir: params.dir,
+      limit: String(params.limit ?? 50),
+    });
+    if (params.cursor) qs.set("cursor", params.cursor);
+    return get<Page<AgentQuery>>(`/admin/agents/${id}/queries?${qs}`);
+  },
 
   // The snippet's image is the chosen runtime's; omitted means the default.
   bootstrap: (runtimeId?: string) =>

@@ -4,11 +4,19 @@ Neither ``os.cpu_count()`` nor ``psutil`` honors cgroup limits -- inside a
 constrained container both report the host. So when cgroup v2 is present we read
 its limits/usage directly for container-accurate numbers, and fall back to psutil
 on bare metal (or non-Linux).
+
+What a sample can and cannot see. CPU is a counter (``usage_usec``), so its delta
+over the interval is exact however short the work was. Memory is a level, and a
+level read every couple of seconds misses anything shorter than the gap: a 1.5 s
+spike to 15 % was seen in only half of the measured cases. So memory's *peak* is
+tracked between samples -- a light 250 ms poll plus the kernel's own
+``memory.peak`` -- and reported alongside the instantaneous reading.
 """
 
 import logging
 import os
 import platform
+import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -64,16 +72,38 @@ def _read_cgroup_memory_limit(base: Path) -> int | None:
     return limit if limit > 0 else None
 
 
-def _read_memory_usage(base: Path) -> tuple[int, int] | None:
-    """``(current_bytes, limit_bytes)`` from cgroup v2, or ``None`` if unlimited."""
-    limit = _read_cgroup_memory_limit(base)
-    if limit is None:
-        return None
+def _read_int(path: Path) -> int | None:
+    """A single-integer cgroup file, or ``None`` when absent or unreadable."""
     try:
-        current = int((base / "memory.current").read_text().strip())
+        return int(path.read_text().strip())
+    except OSError, ValueError:
+        return None
+
+
+def _read_memory_current(base: Path) -> int | None:
+    """This cgroup's memory use in bytes, limit or no limit.
+
+    Reading it regardless of ``memory.max`` is what keeps an unlimited container
+    reporting its *own* usage rather than the whole host's.
+    """
+    return _read_int(base / "memory.current")
+
+
+def _read_oom_kills(base: Path) -> int | None:
+    """Cumulative OOM kills in this cgroup, from ``memory.events``."""
+    try:
+        text = (base / "memory.events").read_text()
     except OSError:
         return None
-    return current, limit
+    for line in text.splitlines():
+        if line.startswith("oom_kill "):
+            return int(line.split()[1])
+    return None
+
+
+def _process_rss() -> int:
+    """Bare-metal fallback for the memory level: this process's resident set."""
+    return psutil.Process().memory_info().rss
 
 
 def _cpu_model() -> str | None:
@@ -115,23 +145,102 @@ def cpu_capability(base: Path = _CGROUP_BASE) -> dict[str, object]:
     }
 
 
+class MemoryPeak:
+    """The highest memory level since the last ``take()``, not just at sample instants.
+
+    Two sources, because neither is enough alone. A daemon thread polls the level
+    every ``poll_interval_s``, which catches any spike longer than the poll. The
+    kernel's ``memory.peak`` is exact but lifetime-scoped and, with the cgroup
+    filesystem mounted read-only as containers normally are, cannot be reset -- yet
+    whenever it *rises* between two takes, that new value was reached inside the
+    interval, so it is taken as-is.
+    """
+
+    def __init__(self, base: Path, poll_interval_s: float, *, start_thread: bool = True) -> None:
+        self._base = base
+        self._lock = threading.Lock()
+        self._max: int | None = None
+        self._last_lifetime = _read_int(base / "memory.peak")
+        if start_thread and poll_interval_s > 0:
+            thread = threading.Thread(
+                target=self._poll_forever,
+                args=(poll_interval_s,),
+                name="memory-peak-poll",
+                daemon=True,
+            )
+            thread.start()
+
+    def current(self) -> int:
+        """The memory level right now: the cgroup's, else this process's."""
+        level = _read_memory_current(self._base)
+        return level if level is not None else _process_rss()
+
+    def poll_once(self) -> None:
+        level = self.current()
+        with self._lock:
+            self._max = level if self._max is None else max(self._max, level)
+
+    def _poll_forever(self, interval_s: float) -> None:
+        while True:
+            try:
+                self.poll_once()
+            except Exception:  # noqa: BLE001 - a failed read must not end the poll
+                logger.debug("Memory peak poll failed", exc_info=True)
+            time.sleep(interval_s)
+
+    def take(self) -> int:
+        """Return the interval's peak and start the next interval."""
+        level = self.current()
+        with self._lock:
+            peak = level if self._max is None else max(self._max, level)
+            self._max = None
+        lifetime = _read_int(self._base / "memory.peak")
+        if lifetime is not None and self._last_lifetime is not None:
+            if lifetime > self._last_lifetime:
+                peak = max(peak, lifetime)
+        if lifetime is not None:
+            self._last_lifetime = lifetime
+        return peak
+
+
 class MetricsSampler:
     """Stateful sampler: computes CPU%/memory% between successive ``sample()`` calls.
 
     CPU% uses the cgroup ``usage_usec`` delta over wall time divided by the
     effective core count; if cgroup data is unavailable it falls back to
-    ``psutil.cpu_percent``. Memory% uses ``memory.current / memory.max`` with a
-    host-memory fallback.
+    ``psutil.cpu_percent``. Memory% is this cgroup's ``memory.current`` over the
+    effective memory (its limit, else host RAM); on bare metal the level is the
+    process's resident set. Each sample also carries the interval's memory peak
+    (see :class:`MemoryPeak`) and OOM kills.
+
+    One sampler lives for the agent's lifetime; :meth:`rebase` is called on each
+    reconnect so the first sample after an outage does not span it.
     """
 
-    def __init__(self, base: Path = _CGROUP_BASE) -> None:
+    def __init__(
+        self,
+        base: Path = _CGROUP_BASE,
+        *,
+        memory_poll_interval_s: float = 0.25,
+    ) -> None:
         self._base = base
         self._cores = effective_cores(base)
         self._memory_bytes = effective_memory_bytes(base)
+        self._memory_peak = MemoryPeak(
+            base, memory_poll_interval_s, start_thread=memory_poll_interval_s > 0
+        )
         self._last_usage_usec = _read_cpu_usage_usec(base)
+        self._last_oom_kills = _read_oom_kills(base)
         self._last_ts = time.monotonic()
         # Prime psutil so its first delta-based reading (the fallback path) is real.
         psutil.cpu_percent(interval=None)
+
+    def rebase(self) -> None:
+        """Start a fresh interval now, discarding whatever accrued since the last sample."""
+        self._last_usage_usec = _read_cpu_usage_usec(self._base)
+        self._last_oom_kills = _read_oom_kills(self._base)
+        self._last_ts = time.monotonic()
+        self._memory_peak.take()
 
     def sample(
         self,
@@ -142,25 +251,42 @@ class MetricsSampler:
         session_count: int = 0,
         growth_waiting: int = 0,
         estimates_abandoned: int = 0,
+        executing_queries: int | None = None,
+        idle_sessions: int | None = None,
     ) -> MetricsSample:
         # Resource percentages are sampled here; the admission counts/profile and
         # held-session count are supplied by the caller (channel) so this stays a
         # pure resource sampler.
+        now = time.monotonic()
+        interval_s = now - self._last_ts
+        usage = _read_cpu_usage_usec(self._base)
+        oom_kills = _read_oom_kills(self._base)
+        oom_delta = (
+            max(0, oom_kills - self._last_oom_kills)
+            if oom_kills is not None and self._last_oom_kills is not None
+            else None
+        )
+        self._last_oom_kills = oom_kills
         return MetricsSample(
-            cpu_percent=self._cpu_percent(),
-            memory_percent=self._memory_percent(),
+            cpu_percent=self._cpu_percent(usage, now),
+            memory_percent=self._percent_of_memory(self._memory_peak.current()),
+            memory_peak_percent=self._percent_of_memory(self._memory_peak.take()),
             running_queries=running_queries,
             queued_queries=queued_queries,
             active_profile=active_profile,
             session_count=session_count,
             growth_waiting=growth_waiting,
             estimates_abandoned=estimates_abandoned,
+            executing_queries=executing_queries,
+            idle_sessions=idle_sessions,
+            interval_s=round(interval_s, 3),
+            oom_kills=oom_delta,
+            cpu_seconds_total=round(usage / 1_000_000, 3) if usage is not None else None,
+            oom_kills_total=oom_kills,
             sampled_at=datetime.now(tz=UTC),
         )
 
-    def _cpu_percent(self) -> float:
-        usage = _read_cpu_usage_usec(self._base)
-        now = time.monotonic()
+    def _cpu_percent(self, usage: int | None, now: float) -> float:
         if usage is None or self._last_usage_usec is None:
             self._last_ts = now
             return round(psutil.cpu_percent(interval=None), 1)
@@ -173,9 +299,5 @@ class MetricsSampler:
         pct = busy_us / (wall_us * self._cores) * 100
         return round(max(0.0, min(100.0, pct)), 1)
 
-    def _memory_percent(self) -> float:
-        mem = _read_memory_usage(self._base)
-        if mem is None:
-            return round(psutil.virtual_memory().percent, 1)
-        current, _limit = mem
-        return round(max(0.0, min(100.0, current / self._memory_bytes * 100)), 1)
+    def _percent_of_memory(self, level: int) -> float:
+        return round(max(0.0, min(100.0, level / self._memory_bytes * 100)), 1)

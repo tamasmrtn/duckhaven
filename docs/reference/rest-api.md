@@ -549,7 +549,7 @@ agent — `use` < `operate` < `admin` — rather than by the global `agents:mana
 
 | Tier required | Endpoints |
 |---|---|
-| `use` | `GET /api/admin/agents/{agent_id}`, `GET /api/admin/agents/{agent_id}/monitoring` |
+| `use` | `GET /api/admin/agents/{agent_id}`, `GET /api/admin/agents/{agent_id}/monitoring`, `GET /api/admin/agents/{agent_id}/queries` (which also needs the cross-workspace query permission) |
 | `operate` | `POST …/{id}/restart`, `POST …/{id}/terminate`, `POST …/{id}/disconnect`, `DELETE …/{id}/credential` |
 | `admin` | `DELETE /api/admin/agents/{agent_id}`, and the access endpoints below |
 
@@ -572,6 +572,15 @@ Every agent object carries `access_tier` (the requesting caller's tier) and `acc
 | `PATCH /api/admin/agents/{agent_id}/access-mode` | Body: `{"access_mode": "open" \| "restricted"}`. Returns the full access payload. |
 | `PUT /api/admin/agents/{agent_id}/grants` | Upsert a grant. Body: `{"user_id"` **or** `"workspace_id", "tier"}`. **201** on insert, **200** on update. **422** if neither or both principals are given, or if a workspace is granted `admin`. |
 | `DELETE /api/admin/agents/{agent_id}/grants/{grant_id}` | Revoke a grant. **204**. |
+
+### Agent monitoring
+
+The two endpoints behind an agent's [Monitoring tab](../operations/agent-monitoring.md):
+
+| Method & path | Purpose |
+|---|---|
+| `GET /api/admin/agents/{agent_id}/monitoring` | Every series for one range on a shared bucket grid: flat `buckets`, lifecycle `spans` and a `summary`. Takes `window` (`1h`, `3h`, `8h`, `12h`, `24h`, `3d`, `7d`; default `8h`, ending now) **or** `start` and `end` (a zoomed range, at least 5 minutes, clamped to now and to retention). **422** for both at once, an unknown window, only one of `start`/`end`, or too narrow a range. |
+| `GET /api/admin/agents/{agent_id}/queries` | The runs that were running or waiting during `start`–`end` (both required), as a paged collection. `sort` is `started_at`, `duration`, `wait`, `peak_memory`, `cpu_time`, `spill` or `bytes_read`, with `dir`; runs without a value sort last either way. Optional `status`, `cursor`, `limit` (≤ 200). Needs the `use` tier **and** the cross-workspace query permission, since it lists other workspaces' SQL. |
 
 ## Waiting for compute
 

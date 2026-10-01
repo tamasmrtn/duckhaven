@@ -60,3 +60,19 @@ def test_agent_capabilities_protocol_features_default_empty():
         {"duckdb_version": "1.1.0", "extensions": ["httpfs"], "memory_limit_gb": 8.0, "cores": 4}
     )
     assert legacy.protocol_features == []
+
+
+def test_an_older_agents_metrics_sample_parses_with_new_fields_unmeasured():
+    """Fields newer agents measure default to None — "not measured" — never to zero,
+    so an older agent can't read as having had no memory spike or no OOM kill."""
+    from duckhaven_shared.schemas import MetricsSample
+
+    sample = MetricsSample.model_validate(
+        {"cpu_percent": 12.5, "memory_percent": 40.0, "sampled_at": "2026-09-30T07:00:00Z"}
+    )
+    assert sample.memory_peak_percent is None
+    assert sample.executing_queries is None
+    assert sample.idle_sessions is None
+    assert sample.oom_kills is None
+    assert sample.interval_s is None
+    assert sample.cpu_seconds_total is None

@@ -15,6 +15,13 @@ function makeSamples(seed: number) {
       running_queries: Math.max(0, Math.round(1 + Math.sin((i + seed) / 5))),
       queued_queries: seed > 2 ? Math.max(0, Math.round(Math.sin(i / 6))) : 0,
       active_profile: "decaying_3",
+      session_count: 1,
+      growth_waiting: 0,
+      executing_queries: Math.max(0, Math.round(Math.sin((i + seed) / 5))),
+      idle_sessions: 1,
+      memory_peak_percent: Math.round(
+        Math.max(5, Math.min(98, 55 + wave / 2 + seed * 3)),
+      ),
       sampled_at: new Date(t).toISOString(),
     };
   });

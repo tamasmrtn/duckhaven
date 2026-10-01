@@ -173,6 +173,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         reaper_task = asyncio.create_task(reaper_loop(async_session_factory))
 
+    # Unconditional: static agents need their lifecycle trail closed too, and this
+    # loop owns the metrics/lifecycle retention purge.
+    from api.services.agent_presence import presence_loop
+
+    presence_task = asyncio.create_task(presence_loop(async_session_factory))
+
     compute_reaper_task: asyncio.Task | None = None
     if settings.elastic_compute_enabled:
         from api.services.compute.reaper import reaper_loop as compute_reaper_loop
@@ -191,6 +197,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             migration_task,
             reaper_task,
             compute_reaper_task,
+            presence_task,
         ):
             if task is not None:
                 task.cancel()

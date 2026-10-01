@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from api.config import settings
 from api.models.agent import Agent
 from api.services.agent_registry import registry
+from api.services.agent_telemetry import record_lifecycle_event
 
 logger = logging.getLogger(__name__)
 
@@ -51,14 +52,20 @@ async def claim_agent_owner(db: AsyncSession, agent_id: uuid.UUID) -> None:
     await db.commit()
 
 
-async def release_agent_owner(db: AsyncSession, agent_id: uuid.UUID) -> None:
-    """Clear ownership so no replica is considered to hold the socket anymore."""
-    await db.execute(
+async def release_agent_owner(db: AsyncSession, agent_id: uuid.UUID) -> bool:
+    """Clear ownership so no replica is considered to hold the socket anymore.
+
+    Only this replica's own claim is cleared. An agent that has already reconnected
+    to another replica belongs to that replica now, and a late teardown here must
+    not mark it unavailable. Returns whether this replica still owned it.
+    """
+    released = await db.execute(
         sa.update(Agent)
-        .where(Agent.id == agent_id)
+        .where(Agent.id == agent_id, Agent.owner_id == settings.replica_id)
         .values(owner_id=None, owner_url=None, status="unavailable")
     )
     await db.commit()
+    return released.rowcount == 1
 
 
 async def connected_agent_ids(db: AsyncSession) -> set[str]:
@@ -161,18 +168,42 @@ async def drain_local_agents(session_factory: async_sessionmaker[AsyncSession]) 
     Called on graceful shutdown: closing with 1012 (Service Restart) prompts each
     agent to reconnect to a live replica immediately, and clearing ownership means
     no query is routed to this dying replica in the meantime.
+
+    Each drained agent gets a ``disconnected`` (reason ``replica_shutdown``) here,
+    because the lifespan does not wait for the socket handlers' own teardown, which
+    is the only other place one is written.
     """
     ids = [uuid.UUID(a) for a in registry.connected_ids()]
     for agent_id in ids:
         await registry.close(agent_id)
     if ids:
         async with session_factory() as db:
-            await db.execute(
-                sa.update(Agent)
-                .where(Agent.id.in_(ids))
-                .values(owner_id=None, owner_url=None, status="unavailable")
-            )
+            owned = (
+                await db.execute(
+                    sa.update(Agent)
+                    .where(Agent.id.in_(ids), Agent.owner_id == settings.replica_id)
+                    .values(owner_id=None, owner_url=None, status="unavailable")
+                    .returning(Agent.id)
+                )
+            ).scalars()
+            for agent_id in owned:
+                record_lifecycle_event(db, agent_id, "disconnected", reason="replica_shutdown")
             await db.commit()
+
+
+async def _fetch_peer_metrics(owner_url: str, agent_id) -> list[dict]:
+    """One agent's live samples from the peer replica that holds its socket."""
+    url = f"{owner_url.rstrip('/')}/internal/agents/{agent_id}/metrics"
+    try:
+        async with httpx.AsyncClient(timeout=_FORWARD_TIMEOUT_S) as client:
+            resp = await client.get(
+                url, headers={"X-Internal-Secret": settings.internal_api_secret}
+            )
+        if resp.status_code == 200:
+            return resp.json().get("metrics") or []
+    except httpx.HTTPError as exc:
+        logger.warning("Metrics fetch for agent %s failed: %s", agent_id, exc)
+    return []
 
 
 async def gather_agent_metrics(db: AsyncSession) -> dict[str, list[dict]]:
@@ -198,16 +229,30 @@ async def gather_agent_metrics(db: AsyncSession) -> dict[str, list[dict]]:
         )
     ).all()
     for agent_id, owner_url in peers:
-        url = f"{owner_url.rstrip('/')}/internal/agents/{agent_id}/metrics"
-        try:
-            async with httpx.AsyncClient(timeout=_FORWARD_TIMEOUT_S) as client:
-                resp = await client.get(
-                    url, headers={"X-Internal-Secret": settings.internal_api_secret}
-                )
-            if resp.status_code == 200:
-                samples = resp.json().get("metrics") or []
-                if samples:
-                    buffers[str(agent_id)] = samples
-        except httpx.HTTPError as exc:
-            logger.warning("Metrics fetch for agent %s failed: %s", agent_id, exc)
+        samples = await _fetch_peer_metrics(owner_url, agent_id)
+        if samples:
+            buffers[str(agent_id)] = samples
     return buffers
+
+
+async def agent_recent_samples(db: AsyncSession, agent_id: uuid.UUID) -> list[dict]:
+    """One agent's live samples (the last few minutes at full resolution), wherever
+    its socket is held. Empty when it is not connected or its owner can't be asked."""
+    local = registry.recent_metrics().get(str(agent_id))
+    if local is not None:
+        return local
+    if not settings.internal_api_secret:
+        return []
+    cutoff = datetime.now(tz=UTC) - timedelta(seconds=settings.agent_presence_ttl_s)
+    owner_url = (
+        await db.execute(
+            sa.select(Agent.owner_url).where(
+                Agent.id == agent_id,
+                Agent.owner_url.is_not(None),
+                Agent.owner_url != settings.replica_internal_url,
+                Agent.last_ping_at.is_not(None),
+                Agent.last_ping_at >= cutoff,
+            )
+        )
+    ).scalar_one_or_none()
+    return await _fetch_peer_metrics(owner_url, agent_id) if owner_url else []

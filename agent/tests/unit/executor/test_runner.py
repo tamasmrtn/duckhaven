@@ -614,6 +614,14 @@ def test_select_captures_normalized_profile(tmp_path):
     assert profile["tree"]["type"]  # operator tree present
 
 
+def test_one_shot_profile_carries_the_admission_wait(tmp_path):
+    """The dispatch path's measured queue wait lands in the query's own profile."""
+    stats = _run(
+        "SELECT 1 AS x", tmp_path / "out.parquet", enable_profiling=True, admission_wait_ms=250.0
+    )
+    assert stats["profile"]["summary"]["admission_wait_ms"] == 250.0
+
+
 def test_profiling_disabled_yields_null_profile(tmp_path):
     result_path = tmp_path / "out.parquet"
     stats = _run("SELECT 1 AS x", result_path, enable_profiling=False)

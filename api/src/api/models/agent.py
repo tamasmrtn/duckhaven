@@ -135,7 +135,9 @@ class AgentMetricsMinute(Base):
     Both an average and a max are kept for each resource, because they answer
     different questions: the average is what the agent cost you, the max is what
     made a query slow. Queue depths keep only the max — a peak of 1 queued query
-    matters, an average of 0.3 does not.
+    matters, an average of 0.3 does not. ``mem_max`` is the peak the agent tracked
+    *between* samples when it reports one (``memory_peak_percent``), and the highest
+    sampled level from an older agent.
 
     ``running_max``/``queued_max`` are the agent's *own* admission-queue depth. The
     control plane cannot derive them: a query parked in the agent's executor deque
@@ -161,3 +163,7 @@ class AgentMetricsMinute(Base):
     # same minute after an ownership handoff can merge a weighted mean rather than
     # overwrite one partial minute with another.
     sample_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Seconds of the minute the samples actually span, and OOM kills during it.
+    # NULL from an agent too old to report them: "not measured", never zero.
+    covered_s: Mapped[float | None] = mapped_column(Float, nullable=True)
+    oom_kills: Mapped[int | None] = mapped_column(Integer, nullable=True)

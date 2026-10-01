@@ -4,6 +4,7 @@ import {
   formatAbsoluteTimestamp,
   relativeMinuteTicks,
   formatClockTick,
+  formatWindowTick,
   windowTicks,
   formatDuration,
 } from '@/features/admin/metricsTime'
@@ -93,10 +94,33 @@ describe('windowed axes', () => {
     }
   })
 
+  it('keeps multi-day windows readable with half-day and day ticks', () => {
+    const start = Date.parse('2026-07-28T06:07:00Z')
+    for (const [days, max] of [[3, 7], [7, 8]] as const) {
+      const ticks = windowTicks(start, start + days * 86_400_000)
+      expect(ticks.length).toBeGreaterThanOrEqual(5)
+      expect(ticks.length).toBeLessThanOrEqual(max)
+    }
+  })
+
+  it('aligns day ticks to local midnight and labels them with the date', () => {
+    const start = new Date(2026, 6, 28, 6, 7).getTime()
+    const ticks = windowTicks(start, start + 7 * 86_400_000)
+    for (const t of ticks) {
+      const d = new Date(t)
+      expect([d.getHours(), d.getMinutes()]).toEqual([0, 0])
+    }
+    // A bare clock time is ambiguous across a week; a midnight tick says the day.
+    expect(formatWindowTick(ticks[0], 7 * 86_400_000)).not.toMatch(/\d{2}:\d{2}/)
+    expect(formatWindowTick(ticks[0], 3_600_000)).toMatch(/\d{2}:\d{2}/)
+  })
+
   it('formats durations compactly', () => {
     expect(formatDuration(30)).toBe('30s')
     expect(formatDuration(2700)).toBe('45m')
     expect(formatDuration(22320)).toBe('6h 12m')
     expect(formatDuration(7200)).toBe('2h')
+    // A sub-second wait must not read as nothing.
+    expect(formatDuration(0.4)).toBe('0.4s')
   })
 })

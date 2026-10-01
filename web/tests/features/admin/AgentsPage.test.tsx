@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { fireEvent, screen, waitFor } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { server } from '@tests/mock/server'
@@ -17,6 +17,49 @@ describe('AgentsPage', () => {
     for (const agent of AGENTS) {
       expect(screen.getByText(agent.name)).toBeInTheDocument()
     }
+  })
+
+  it('shows each connected agent’s live CPU, memory and load in the list', async () => {
+    server.use(
+      http.get('/api/admin/agents/metrics', () =>
+        HttpResponse.json([
+          {
+            agent_id: 'ag-1',
+            name: 'agent-a',
+            samples: [10, 70, 42].map((cpu, i) => ({
+              cpu_percent: cpu,
+              memory_percent: 55,
+              running_queries: 3,
+              queued_queries: 1,
+              active_profile: 'auto',
+              executing_queries: 2,
+              idle_sessions: 1,
+              sampled_at: new Date(Date.now() - (2 - i) * 2000).toISOString(),
+            })),
+          },
+        ]),
+      ),
+    )
+    renderWithProviders({ initialRoute: AGENTS_ROUTE })
+
+    const row = (await screen.findByText('agent-a')).closest('tr')!
+    const cpu = await within(row).findByRole('img', { name: /CPU over the last few minutes/ })
+    // The line's label carries what a sighted reader gets from its shape.
+    expect(cpu).toHaveAccessibleName(/now 42%, peak 70%/)
+    expect(within(row).getByText('55%')).toBeInTheDocument()
+    // Executing, not running_queries: the idle held connection is not counted.
+    const cells = within(row).getAllByRole('cell')
+    expect(cells[4]).toHaveTextContent('2')
+    expect(cells[5]).toHaveTextContent('1')
+  })
+
+  it('shows "—" for an agent that is not reporting', async () => {
+    server.use(http.get('/api/admin/agents/metrics', () => HttpResponse.json([])))
+    renderWithProviders({ initialRoute: AGENTS_ROUTE })
+
+    const row = (await screen.findByText('agent-a')).closest('tr')!
+    const cells = within(row).getAllByRole('cell')
+    for (const i of [2, 3, 4, 5]) expect(cells[i]).toHaveTextContent('—')
   })
 
   it('titles the page and counts the fleet', async () => {

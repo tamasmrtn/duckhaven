@@ -68,6 +68,7 @@ async def run_query(
     enable_profiling: bool = True,
     disabled_filesystems: str | None = None,
     lock_config: bool = False,
+    admission_wait_ms: float = 0.0,
 ) -> dict[str, Any]:
     loop = asyncio.get_running_loop()
     # In the `auto` profile the connection is opened+attached before admission
@@ -94,6 +95,7 @@ async def run_query(
             trace_headers=trace_headers,
             disabled_filesystems=disabled_filesystems,
             lock_config=lock_config,
+            admission_wait_ms=admission_wait_ms,
         )
 
     def _interrupt() -> None:

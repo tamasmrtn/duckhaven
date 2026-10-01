@@ -204,18 +204,27 @@ async def handle_agent_frame(db: AsyncSession, frame: Frame, polaris=None) -> No
         # First queued -> running transition: record how long the query waited in
         # the agent's admission queue before it started executing.
         query = await db.get(Query, query_id)
-        first_transition = query is not None and query.status == "queued"
-        if first_transition and query.origin is None:
+        # A late frame (the reaper already failed the row) must never bring a
+        # terminal query back to life.
+        if query is None or query.status not in ("queued", "running"):
+            return
+        if query.status == "queued" and query.origin is None:
             started = query.started_at
             if started.tzinfo is None:
                 started = started.replace(tzinfo=UTC)
             record_query_queue_wait((datetime.now(tz=UTC) - started).total_seconds())
         values: dict = {"status": "running", "progress": progress or None}
-        # Persisted for every origin, unlike the histogram above (interactive only):
-        # a scheduled or session run's queue wait is just as worth showing.
-        if first_transition:
+        # The first progress frame is when execution started. Persisted for every
+        # origin, unlike the histogram above (interactive only). A session statement
+        # is already "running" once its receipt is acked, before it gets the session
+        # lock, so it is the missing running_at, not the status, that marks it.
+        if query.running_at is None:
             values["running_at"] = datetime.now(tz=UTC)
-        await db.execute(sa.update(Query).where(Query.id == query_id).values(**values))
+        await db.execute(
+            sa.update(Query)
+            .where(Query.id == query_id, Query.status.in_(("queued", "running")))
+            .values(**values)
+        )
         await db.commit()
         return
     if frame.type == FrameType.QUERY_DONE:
@@ -253,6 +262,7 @@ async def handle_agent_frame(db: AsyncSession, frame: Frame, polaris=None) -> No
                 status_val,
                 frame.payload.get("duration_ms"),
                 frame.payload.get("result_bytes"),
+                frame.payload.get("error"),
             )
             if status_val == "failed":
                 record_query_queue_rejection(frame.payload.get("error"))

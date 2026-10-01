@@ -22,12 +22,7 @@ from api.config import settings
 from api.models.agent import Agent, AgentMetricsMinute
 from api.models.query import Query
 from api.models.workspace import Workspace
-from api.services.agent_monitoring import (
-    ACTIVITY_QUERY,
-    ACTIVITY_READY,
-    build_grid,
-    build_monitoring,
-)
+from api.services.agent_monitoring import build_monitoring
 from api.services.agent_telemetry import (
     accumulate,
     flush_minute,
@@ -142,55 +137,56 @@ async def test_purge_takes_and_releases_the_advisory_lock(db_session, agent, mon
 
 
 async def test_monitoring_aggregation_over_timestamptz(db_session, agent):
-    """Range filtering and bucketing across a real timestamptz column."""
-    grid = build_grid("1h")
-    record_lifecycle_event(db_session, agent.id, "connected")
+    """Range filtering and bucketing of the rollup across a real timestamptz column."""
+    now = datetime.now(tz=UTC)
+    record_lifecycle_event(db_session, agent.id, "connected", at=now - timedelta(hours=2))
     await db_session.commit()
-
-    for offset, running in ((2, 3), (5, 0)):
+    minute = (now - timedelta(minutes=10)).replace(second=0, microsecond=0)
+    for offset, cpu_max in ((0, 75.0), (3, 20.0)):
         db_session.add(
             AgentMetricsMinute(
                 agent_id=agent.id,
-                minute=grid.edges[offset],
+                minute=minute + timedelta(minutes=offset),
                 cpu_avg=40.0,
-                cpu_max=75.0,
+                cpu_max=cpu_max,
                 mem_avg=10.0,
                 mem_max=12.0,
-                running_max=running,
+                running_max=0,
                 queued_max=0,
                 session_max=0,
                 sample_count=30,
             )
         )
-    # A row just outside the window must not be picked up.
+    # A row just outside the range must not be picked up.
     db_session.add(
         AgentMetricsMinute(
             agent_id=agent.id,
-            minute=grid.start - timedelta(minutes=5),
+            minute=now - timedelta(hours=2),
             cpu_avg=99.0,
             cpu_max=99.0,
             mem_avg=99.0,
             mem_max=99.0,
-            running_max=99,
-            queued_max=99,
+            running_max=0,
+            queued_max=0,
             session_max=0,
             sample_count=30,
         )
     )
     await db_session.commit()
 
-    data = await build_monitoring(db_session, agent, "1h")
+    data = await build_monitoring(db_session, agent, window="1h", now=now)
 
-    assert data["peak_query_count"][2]["running"] == 3
-    assert data["utilization"][2]["cpu_max"] == 75.0
-    assert max(p["running"] for p in data["peak_query_count"]) == 3, "out-of-window row leaked in"
-    assert data["activity"][2]["state"] == ACTIVITY_QUERY
-    assert data["activity"][5]["state"] == ACTIVITY_READY
+    by_t = {b["t"]: b for b in data["buckets"]}
+    assert by_t[minute]["cpu_max"] == 75.0
+    assert data["summary"]["cpu_peak"] == 75.0, "out-of-range row leaked in"
+    assert data["summary"]["uptime_s"] == 3600
 
 
-async def test_query_charts_read_through_the_new_index(db_session, agent, workspace):
-    """Exercises the (agent_id, finished_at) range scan the charts depend on."""
-    grid = build_grid("1h")
+async def test_query_activity_over_timestamptz(db_session, agent, workspace):
+    """The overlap predicate and the parked-run branch of the UNION ALL on Postgres,
+    including a query that started before the range and one still running."""
+    now = datetime.now(tz=UTC)
+    record_lifecycle_event(db_session, agent.id, "connected", at=now - timedelta(hours=3))
     for i in range(5):
         db_session.add(
             Query(
@@ -199,13 +195,158 @@ async def test_query_charts_read_through_the_new_index(db_session, agent, worksp
                 sql="select 1",
                 status="failed" if i == 0 else "done",
                 error="queue full" if i == 0 else None,
-                started_at=grid.edges[1],
-                finished_at=grid.edges[1] + timedelta(seconds=1),
+                started_at=now - timedelta(minutes=30),
+                running_at=now - timedelta(minutes=30),
+                finished_at=now - timedelta(minutes=29),
+            )
+        )
+    db_session.add(
+        Query(
+            workspace_id=workspace.id,
+            agent_id=agent.id,
+            sql="select 1",
+            status="done",
+            started_at=now - timedelta(minutes=70),
+            running_at=now - timedelta(minutes=70),
+            finished_at=now - timedelta(minutes=50),
+        )
+    )
+    db_session.add(
+        Query(
+            workspace_id=workspace.id,
+            agent_id=agent.id,
+            sql="select 1",
+            status="running",
+            started_at=now - timedelta(minutes=2),
+            running_at=now - timedelta(minutes=2),
+        )
+    )
+    await db_session.commit()
+
+    data = await build_monitoring(db_session, agent, window="1h", now=now)
+    summary = data["summary"]
+    assert summary["finished"] == 6  # including the long run, which finished inside it
+    assert summary["failed_by_reason"] == {"queue_full": 1}
+    assert summary["peak_running"] == 5
+    # 10 min of the long run inside the range + 1 min of the five + 2 min in flight.
+    assert summary["busy_s"] == 13 * 60
+
+
+async def test_presence_sweep_and_lifecycle_purge_on_real_postgres(
+    db_session, pg_engine, agent, monkeypatch
+):
+    """The sweeper's leadership lock is exclusive and released, its backdated close
+    lands on a timestamptz column, and the lifecycle purge's correlated DELETE keeps
+    the seed event."""
+    import random
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.models.agent import AgentLifecycleEvent
+    from api.services import agent_presence
+
+    monkeypatch.setattr(agent_presence, "_PRESENCE_LOCK_KEY", random.randint(1, 2**31 - 1))
+    monkeypatch.setattr(settings, "agent_metrics_retention_hours", 24.0)
+    factory = async_sessionmaker(pg_engine, expire_on_commit=False)
+
+    async with agent_presence.presence_leadership(factory) as first:
+        async with agent_presence.presence_leadership(factory) as second:
+            assert first is True and second is False
+    async with agent_presence.presence_leadership(factory) as again:
+        assert again is True
+
+    now = datetime.now(tz=UTC)
+    stale = now - timedelta(hours=1)
+    agent.last_ping_at = stale
+    record_lifecycle_event(db_session, agent.id, "connected", at=now - timedelta(hours=72))
+    record_lifecycle_event(db_session, agent.id, "disconnected", at=now - timedelta(hours=60))
+    record_lifecycle_event(db_session, agent.id, "connected", at=now - timedelta(hours=2))
+    await db_session.commit()
+
+    assert await agent_presence.sweep_presence(db_session, now) == 1
+    await purge_expired_metrics(db_session)
+
+    rows = (
+        (await db_session.execute(select(AgentLifecycleEvent).order_by(AgentLifecycleEvent.at)))
+        .scalars()
+        .all()
+    )
+    assert [(r.event, r.reason) for r in rows] == [
+        ("disconnected", None),
+        ("connected", None),
+        ("disconnected", "presence_lost"),
+    ]
+    assert rows[-1].at == stale
+
+
+async def test_split_minute_merges_coverage_and_oom_kills_on_real_postgres(db_session, agent):
+    """The NULL-aware merge (coalesce + value) for the columns added in 0050."""
+    minute = "2026-07-28T10:00:"
+    for second, oom in (("02", None), ("30", 1), ("40", 2)):
+        payload = {
+            "sampled_at": f"{minute}{second}+00:00",
+            "cpu_percent": 1.0,
+            "memory_percent": 1.0,
+            "interval_s": 2.0,
+        }
+        if oom is not None:
+            payload["oom_kills"] = oom
+        accumulate(agent.id, payload)
+        await flush_minute(db_session, agent.id, take_pending(agent.id))
+
+    row = (await db_session.execute(select(AgentMetricsMinute))).scalar_one()
+    assert row.covered_s == 6.0
+    assert row.oom_kills == 3
+
+
+async def test_resource_sorts_compile_and_order_on_real_postgres(db_session, agent, workspace):
+    """The profile JSONB path, the BigInteger cast (peaks past 2 GiB) and the
+    nulls-last keyset for the per-agent query list."""
+    from api.services import query_history
+
+    now = datetime.now(tz=UTC)
+    for sql, peak in (("big", 5_000_000_000), ("none", None), ("small", 1_000)):
+        db_session.add(
+            Query(
+                workspace_id=workspace.id,
+                agent_id=agent.id,
+                sql=sql,
+                status="done",
+                started_at=now - timedelta(minutes=5),
+                running_at=now - timedelta(minutes=4),
+                finished_at=now - timedelta(minutes=3),
+                profile={"summary": {"peak_memory_bytes": peak}} if peak else None,
             )
         )
     await db_session.commit()
 
-    data = await build_monitoring(db_session, agent, "1h")
-    assert data["summary"]["completed"] == 5
-    assert data["summary"]["failed"] == 1
-    assert [(f["reason"], f["count"]) for f in data["failures"]] == [("queue_full", 1)]
+    value = query_history.sort_expr("peak_memory")
+    rows = (
+        await db_session.execute(
+            select(Query.sql, value, query_history.wait_expr())
+            .where(Query.agent_id == agent.id)
+            .order_by(*query_history.order_by("peak_memory", "desc"))
+        )
+    ).all()
+    assert [(r[0], r[1]) for r in rows] == [
+        ("big", 5_000_000_000),
+        ("small", 1_000),
+        ("none", None),
+    ]
+    assert {r[2] for r in rows} == {60_000}
+
+    # Resume after the first row with a keyset cursor, as the endpoint does.
+    after = query_history.keyset_predicate(
+        "peak_memory",
+        "desc",
+        5_000_000_000,
+        (await db_session.execute(select(Query.id).where(Query.sql == "big"))).scalar_one(),
+    )
+    rest = (
+        await db_session.execute(
+            select(Query.sql)
+            .where(Query.agent_id == agent.id, after)
+            .order_by(*query_history.order_by("peak_memory", "desc"))
+        )
+    ).scalars()
+    assert list(rest) == ["small", "none"]

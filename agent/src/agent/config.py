@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     # Cadence at which the agent pushes live CPU/memory utilization samples over
     # the control channel. Independent of (and finer than) capability heartbeats.
     metrics_sample_interval_s: float = 2.0
+    # How often, between samples, the agent re-reads its memory level to catch a
+    # spike that starts and ends inside one sample interval. 0 disables the poll,
+    # leaving only the kernel's memory.peak and the level at each sample.
+    metrics_memory_poll_interval_s: float = 0.25
     # Query admission / queueing (see agent.executor.admission). The concurrency
     # profile is the default slot ladder; users can switch it at runtime with the
     # worksheet `SET duckhaven_concurrency` command. Headroom is the fraction of

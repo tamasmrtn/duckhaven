@@ -203,3 +203,99 @@ async def test_purge_runs_at_most_hourly(db_session, agent, monkeypatch):
 
     assert await purge_expired_metrics(db_session) == 0
     assert (await db_session.execute(sa.select(AgentMetricsMinute))).first() is not None
+
+
+async def test_lifecycle_purge_keeps_each_agents_newest_expired_event(
+    db_session, agent, monkeypatch
+):
+    """The newest event before the cutoff is the monitoring timeline's seed: an
+    agent connected for a month has no event inside any window without it."""
+    monkeypatch.setattr(settings, "agent_metrics_retention_hours", 24.0)
+    now = datetime.now(tz=UTC)
+    for event, age_hours in (("connected", 72), ("disconnected", 60), ("connected", 48)):
+        record_lifecycle_event(db_session, agent.id, event, at=now - timedelta(hours=age_hours))
+    record_lifecycle_event(db_session, agent.id, "disconnected", at=now - timedelta(hours=2))
+    await db_session.commit()
+
+    await purge_expired_metrics(db_session)
+
+    rows = (
+        (await db_session.execute(sa.select(AgentLifecycleEvent).order_by(AgentLifecycleEvent.at)))
+        .scalars()
+        .all()
+    )
+    assert [r.event for r in rows] == ["connected", "disconnected"]
+    assert now - rows[0].at.replace(tzinfo=UTC) > timedelta(hours=47)
+
+
+async def test_lifecycle_purge_is_per_agent(db_session, agent, monkeypatch):
+    """One agent's newer events never make another agent's only seed expendable."""
+    monkeypatch.setattr(settings, "agent_metrics_retention_hours", 24.0)
+    other = Agent(name="other", status="healthy")
+    db_session.add(other)
+    await db_session.commit()
+    now = datetime.now(tz=UTC)
+    record_lifecycle_event(db_session, other.id, "connected", at=now - timedelta(hours=96))
+    record_lifecycle_event(db_session, agent.id, "connected", at=now - timedelta(hours=72))
+    record_lifecycle_event(db_session, agent.id, "disconnected", at=now - timedelta(hours=48))
+    await db_session.commit()
+
+    await purge_expired_metrics(db_session)
+
+    rows = (await db_session.execute(sa.select(AgentLifecycleEvent))).scalars().all()
+    assert sorted((str(r.agent_id), r.event) for r in rows) == sorted(
+        [(str(other.id), "connected"), (str(agent.id), "disconnected")]
+    )
+
+
+# ── Interval peaks, coverage and OOM kills ───────────────────────────────────
+
+
+async def test_mem_max_takes_the_peak_between_samples(db_session, agent):
+    base = "2026-07-28T10:00:"
+    accumulate(agent.id, {**sample(base + "02+00:00", mem=10.0), "memory_peak_percent": 64.0})
+    accumulate(agent.id, sample(base + "04+00:00", mem=12.0))
+    closed = accumulate(agent.id, sample("2026-07-28T10:01:00+00:00"))
+    assert closed.mem_max == 64.0
+    assert closed.mem_sum == 22.0  # the average still describes the level
+
+
+async def test_coverage_and_oom_kills_sum_and_persist(db_session, agent):
+    base = "2026-07-28T10:00:"
+    for second, oom in (("02", 0), ("04", 1), ("06", 1)):
+        accumulate(
+            agent.id,
+            {**sample(base + second + "+00:00"), "interval_s": 2.0, "oom_kills": oom},
+        )
+    closed = accumulate(agent.id, sample("2026-07-28T10:01:00+00:00"))
+    await flush_minute(db_session, agent.id, closed)
+
+    row = (await db_session.execute(sa.select(AgentMetricsMinute))).scalar_one()
+    assert row.covered_s == 6.0
+    assert row.oom_kills == 2
+
+
+async def test_an_older_agents_minute_leaves_the_new_columns_unmeasured(db_session, agent):
+    accumulate(agent.id, sample("2026-07-28T10:00:02+00:00"))
+    closed = accumulate(agent.id, sample("2026-07-28T10:01:00+00:00"))
+    await flush_minute(db_session, agent.id, closed)
+
+    row = (await db_session.execute(sa.select(AgentMetricsMinute))).scalar_one()
+    assert row.covered_s is None
+    assert row.oom_kills is None
+
+
+async def test_merging_a_split_minute_adds_coverage_and_oom_kills(db_session, agent):
+    """Two replicas each flushing part of one minute during an ownership handoff."""
+    minute = "2026-07-28T10:00:"
+    for second in ("02", "30"):
+        accumulate(
+            agent.id,
+            {**sample(minute + second + "+00:00"), "interval_s": 2.0, "oom_kills": 1},
+        )
+        await flush_minute(db_session, agent.id, take_pending(agent.id))
+
+    row = (await db_session.execute(sa.select(AgentMetricsMinute))).scalar_one()
+    assert row.covered_s == 4.0
+    assert row.oom_kills == 2
+    assert row.sample_count == 2

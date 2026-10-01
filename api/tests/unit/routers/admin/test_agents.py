@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
@@ -449,46 +450,73 @@ async def test_literal_paths_are_not_shadowed_by_the_id_route(admin_client: Asyn
     assert (await admin_client.get("/admin/agents/compute-options")).status_code == 200
 
 
-async def test_monitoring_returns_every_series_on_one_grid(admin_client: AsyncClient, db_session):
-    agent = Agent(name="mon-agent", status="healthy")
+async def _mon_agent(db_session, name: str) -> Agent:
+    agent = Agent(name=name, status="healthy")
     db_session.add(agent)
     await db_session.commit()
     await db_session.refresh(agent)
+    return agent
+
+
+async def test_monitoring_returns_every_series_on_one_grid(admin_client: AsyncClient, db_session):
+    agent = await _mon_agent(db_session, "mon-agent")
 
     resp = await admin_client.get(f"/admin/agents/{agent.id}/monitoring?window=1h")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["window"] == "1h"
+    assert data["preset"] == "1h"
     assert data["bucket_seconds"] == 60
-    # The shared grid is the point: charts stacked vertically must line up.
-    lengths = {
-        len(data["peak_query_count"]),
-        len(data["completed_query_count"]),
-        len(data["activity"]),
-        len(data["utilization"]),
-    }
-    assert lengths == {60}
-    assert data["summary"]["completed"] == 0
+    # One flat row per bucket is what keeps stacked charts aligned.
+    assert 60 <= len(data["buckets"]) <= 61
+    assert {"busy_s", "running_avg", "cpu_avg", "done"} <= set(data["buckets"][0])
+    assert data["summary"]["finished"] == 0
 
 
 async def test_monitoring_defaults_to_eight_hours(admin_client: AsyncClient, db_session):
-    agent = Agent(name="mon-default", status="healthy")
-    db_session.add(agent)
-    await db_session.commit()
-    await db_session.refresh(agent)
-
+    agent = await _mon_agent(db_session, "mon-default")
     resp = await admin_client.get(f"/admin/agents/{agent.id}/monitoring")
     assert resp.status_code == 200
-    assert resp.json()["window"] == "8h"
+    assert resp.json()["preset"] == "8h"
 
 
-async def test_monitoring_rejects_an_unknown_window(admin_client: AsyncClient, db_session):
-    agent = Agent(name="mon-bad-window", status="healthy")
-    db_session.add(agent)
-    await db_session.commit()
-    await db_session.refresh(agent)
-
+async def test_monitoring_offers_seven_days_at_two_hour_buckets(
+    admin_client: AsyncClient, db_session
+):
+    """Retention is a week, so the page can show one."""
+    agent = await _mon_agent(db_session, "mon-7d")
     resp = await admin_client.get(f"/admin/agents/{agent.id}/monitoring?window=7d")
+    assert resp.status_code == 200
+    assert resp.json()["bucket_seconds"] == 7200
+
+
+async def test_monitoring_accepts_a_zoomed_range(admin_client: AsyncClient, db_session):
+    agent = await _mon_agent(db_session, "mon-zoom")
+    end = datetime.now(tz=UTC).replace(microsecond=0) - timedelta(hours=1)
+    start = end - timedelta(minutes=30)
+    resp = await admin_client.get(
+        f"/admin/agents/{agent.id}/monitoring",
+        params={"start": start.isoformat(), "end": end.isoformat()},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["preset"] is None
+    assert data["bucket_seconds"] == 60
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"window": "2w"},
+        {"window": "1h", "start": "2026-09-30T10:00:00Z", "end": "2026-09-30T11:00:00Z"},
+        {"start": "2026-09-30T10:00:00Z"},
+        {"start": "2026-09-30T11:00:00Z", "end": "2026-09-30T10:00:00Z"},
+        {"start": "2026-09-30T10:00:00Z", "end": "2026-09-30T10:02:00Z"},
+    ],
+    ids=["unknown-window", "window-and-range", "start-only", "backwards", "too-narrow"],
+)
+async def test_monitoring_rejects_an_unusable_range(admin_client: AsyncClient, db_session, params):
+    agent = await _mon_agent(db_session, "mon-bad-range")
+    resp = await admin_client.get(f"/admin/agents/{agent.id}/monitoring", params=params)
     assert resp.status_code == 422
 
 
@@ -915,3 +943,179 @@ async def test_a_connected_agent_shows_healthy_before_its_row_catches_up(
         assert listed[str(agent.id)]["status"] == "healthy"
     finally:
         registry.unregister(agent.id)
+
+
+# ── Per-agent query list ─────────────────────────────────────────────────────
+
+
+@pytest.fixture
+async def ranked_agent(db_session, admin: User):
+    """An agent with runs of known cost inside the last hour, plus decoys."""
+    from conftest import seed_workspace
+
+    from api.models.query import Query as QueryRow
+
+    ws, _ = await seed_workspace(db_session, user_id=admin.id)
+    agent = Agent(name="ranked", status="healthy")
+    other = Agent(name="elsewhere", status="healthy")
+    db_session.add_all([agent, other])
+    await db_session.commit()
+    now = datetime.now(tz=UTC)
+
+    def run(target, *, sql, started_min, ran_min=None, finished_min=None, **kw):
+        profile = kw.pop("profile", None)
+        return QueryRow(
+            workspace_id=ws.id,
+            agent_id=None if kw.pop("parked", False) else target.id,
+            requested_agent_id=target.id,
+            sql=sql,
+            status=kw.pop("status", "done"),
+            started_at=now - timedelta(minutes=started_min),
+            running_at=None if ran_min is None else now - timedelta(minutes=ran_min),
+            finished_at=None if finished_min is None else now - timedelta(minutes=finished_min),
+            profile={"summary": profile} if profile else None,
+            **kw,
+        )
+
+    db_session.add_all(
+        [
+            run(
+                agent,
+                sql="big",
+                started_min=30,
+                ran_min=29,
+                finished_min=28,
+                profile={"peak_memory_bytes": 5_000_000_000, "cpu_time_ms": 900.0},
+            ),
+            run(
+                agent,
+                sql="small",
+                started_min=20,
+                ran_min=20,
+                finished_min=19,
+                profile={"peak_memory_bytes": 1_000, "cpu_time_ms": 5.0},
+            ),
+            run(agent, sql="no profile", started_min=15, ran_min=15, finished_min=14),
+            # Started before the range, finished inside it: still part of it.
+            run(
+                agent,
+                sql="spans the start",
+                started_min=90,
+                ran_min=90,
+                finished_min=50,
+                profile={"peak_memory_bytes": 2_000},
+            ),
+            run(
+                agent,
+                sql="failed typo",
+                started_min=10,
+                finished_min=10,
+                status="failed",
+                error="Parser Error: syntax error",
+            ),
+            run(
+                agent,
+                sql="parked",
+                started_min=5,
+                finished_min=4,
+                status="failed",
+                error="No compute became available",
+                parked=True,
+            ),
+            # Decoys.
+            run(agent, sql="finished before", started_min=200, ran_min=200, finished_min=180),
+            run(
+                agent,
+                sql="metadata probe",
+                started_min=10,
+                ran_min=10,
+                finished_min=9,
+                origin="metadata",
+            ),
+            run(other, sql="other agent", started_min=10, ran_min=10, finished_min=9),
+        ]
+    )
+    await db_session.commit()
+    start = (now - timedelta(hours=1)).isoformat()
+    return agent, {"start": start, "end": now.isoformat()}
+
+
+async def test_agent_queries_list_the_runs_alive_in_the_range(admin_client, ranked_agent):
+    agent, rng = ranked_agent
+    resp = await admin_client.get(f"/admin/agents/{agent.id}/queries", params=rng)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert [q["sql"] for q in body["items"]] == [
+        "parked",
+        "failed typo",
+        "no profile",
+        "small",
+        "big",
+        "spans the start",
+    ]
+    by_sql = {q["sql"]: q for q in body["items"]}
+    assert by_sql["big"]["peak_memory_bytes"] == 5_000_000_000
+    assert by_sql["big"]["wait_ms"] == 60_000
+    assert by_sql["failed typo"]["failure_reason"] == "sql_error"
+    assert by_sql["failed typo"]["error"] == "Parser Error: syntax error"
+    assert by_sql["parked"]["failure_reason"] == "no_compute"
+    assert by_sql["no profile"]["peak_memory_bytes"] is None
+
+
+@pytest.mark.parametrize("direction", ["desc", "asc"])
+async def test_agent_queries_sort_by_peak_memory_with_unknowns_last(
+    admin_client, ranked_agent, direction
+):
+    agent, rng = ranked_agent
+    resp = await admin_client.get(
+        f"/admin/agents/{agent.id}/queries",
+        params={**rng, "sort": "peak_memory", "dir": direction},
+    )
+    memories = [q["peak_memory_bytes"] for q in resp.json()["items"]]
+    known = [m for m in memories if m is not None]
+    assert known == sorted(known, reverse=direction == "desc")
+    assert memories[: len(known)] == known, "a run with no profile headed the list"
+
+
+async def test_agent_queries_page_without_repeating_or_skipping(admin_client, ranked_agent):
+    agent, rng = ranked_agent
+    seen, cursor = [], None
+    for _ in range(10):
+        params = {**rng, "sort": "cpu_time", "limit": 2}
+        if cursor:
+            params["cursor"] = cursor
+        body = (await admin_client.get(f"/admin/agents/{agent.id}/queries", params=params)).json()
+        seen += [q["id"] for q in body["items"]]
+        cursor = body["cursor"]
+        if not body["has_more"]:
+            break
+    assert len(seen) == len(set(seen)) == 6
+
+
+async def test_agent_queries_reject_a_bad_cursor(admin_client, ranked_agent):
+    agent, rng = ranked_agent
+    resp = await admin_client.get(
+        f"/admin/agents/{agent.id}/queries",
+        params={**rng, "sort": "wait", "cursor": "not-a-cursor"},
+    )
+    assert resp.status_code == 422
+
+
+async def test_agent_queries_need_cross_workspace_query_access(client, db_session):
+    """Other workspaces' SQL: the agent tier alone is not enough."""
+    from api.services.auth import hash_password
+
+    db_session.add_all(
+        [
+            User(email="m3@agents.local", password_hash=hash_password("pw"), name="M", role="user"),
+            agent := Agent(name="open-shared", status="healthy"),
+        ]
+    )
+    await db_session.commit()
+    await client.post("/auth/login", json={"email": "m3@agents.local", "password": "pw"})
+    now = datetime.now(tz=UTC)
+    resp = await client.get(
+        f"/admin/agents/{agent.id}/queries",
+        params={"start": (now - timedelta(hours=1)).isoformat(), "end": now.isoformat()},
+    )
+    assert resp.status_code == 403

@@ -23,6 +23,9 @@ ADMISSION_REJECTS = {
     "queued timeout": "queued_timeout",
 }
 
+# A failure caused by the query itself rather than the compute running it.
+SQL_ERROR = "sql_error"
+
 # Everything else, matched as a substring against the lowercased error because these
 # arrive wrapped in whatever prose the raising layer used.
 _SUBSTRING_REASONS = (
@@ -33,6 +36,18 @@ _SUBSTRING_REASONS = (
     ("out of memory", "out_of_memory"),
     # DuckDB's own phrasing when a query exceeds the configured memory limit.
     ("could not allocate", "out_of_memory"),
+    # DuckDB's error classes for a problem in the query itself, not in the compute
+    # running it: a typo, a missing table, a bad cast. Checked before "timeout" so an
+    # invalid-input error that happens to mention a timeout stays the user's. Kept
+    # apart because the fix is the author's, and on a real workload these dominate
+    # and would bury the failures an operator can act on.
+    ("parser error:", SQL_ERROR),
+    ("binder error:", SQL_ERROR),
+    ("catalog error:", SQL_ERROR),
+    ("conversion error:", SQL_ERROR),
+    ("invalid input error:", SQL_ERROR),
+    ("constraint error:", SQL_ERROR),
+    ("not implemented error:", SQL_ERROR),
     ("timeout", "timeout"),
     ("permission denied", "permission_denied"),
     ("not allowed", "permission_denied"),

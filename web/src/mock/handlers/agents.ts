@@ -6,6 +6,7 @@ import {
   RUNTIMES,
   agentRuntime,
 } from "../fixtures/agents";
+import { agentQueriesPage } from "../fixtures/agentQueries";
 import { makeEmptyMonitoring, makeMonitoring } from "../fixtures/monitoring";
 import { nextBootstrapToken } from "../lib/seed";
 import { httpError } from "../lib/errors";
@@ -15,6 +16,8 @@ import type {
   AgentAccessMode,
   AgentGrant,
   AgentGrantUpsert,
+  AgentQuerySort,
+  MonitoringRange,
   MonitoringWindow,
 } from "@/types/agent";
 import { MONITORING_WINDOWS } from "@/types/agent";
@@ -161,16 +164,47 @@ export const agentHandlers = [
   http.get("/api/admin/agents/:id/monitoring", ({ params, request }) => {
     const agent = AGENTS.find((a) => a.id === params.id);
     if (!agent) return httpError(404, "Agent not found");
-    const raw = new URL(request.url).searchParams.get("window") ?? "8h";
-    if (!MONITORING_WINDOWS.includes(raw as MonitoringWindow)) {
-      return httpError(422, `Unknown window '${raw}'`);
+    const q = new URL(request.url).searchParams;
+    const window = q.get("window");
+    const start = q.get("start");
+    const end = q.get("end");
+    // The same refusals as the API: a window or a range, never both; a range
+    // needs both ends and at least five minutes.
+    if (
+      window !== null &&
+      !MONITORING_WINDOWS.includes(window as MonitoringWindow)
+    ) {
+      return httpError(422, `Unknown window '${window}'`);
     }
-    const window = raw as MonitoringWindow;
+    if ((start === null) !== (end === null)) {
+      return httpError(422, "Give both start and end, or neither");
+    }
+    if (start !== null && end !== null) {
+      if (window !== null)
+        return httpError(422, "Give a window or a range, not both");
+      if (Date.parse(end) - Date.parse(start) < 5 * 60_000) {
+        return httpError(422, "A range must span at least 5 minutes");
+      }
+    }
+    const range: MonitoringRange =
+      start !== null && end !== null
+        ? { start, end }
+        : { window: (window ?? "8h") as MonitoringWindow };
     // An agent that never connected has nothing to show — the case the empty
     // state and the null-vs-zero rendering exist for.
     return HttpResponse.json(
-      agent.capabilities ? makeMonitoring(window) : makeEmptyMonitoring(window),
+      agent.capabilities ? makeMonitoring(range) : makeEmptyMonitoring(range),
     );
+  }),
+
+  http.get("/api/admin/agents/:id/queries", ({ params, request }) => {
+    const agent = AGENTS.find((a) => a.id === params.id);
+    if (!agent) return httpError(404, "Agent not found");
+    const q = new URL(request.url).searchParams;
+    if (!q.get("start") || !q.get("end"))
+      return httpError(422, "start and end are required");
+    const sort = (q.get("sort") ?? "started_at") as AgentQuerySort;
+    return HttpResponse.json(agentQueriesPage(agent.id, sort, q.get("cursor")));
   }),
 
   http.post("/api/admin/agents/:id/restart", ({ params }) => {

@@ -117,13 +117,15 @@ disconnect without being torn down):
 Because that column is mutated in place — a restart reuses the same agent row — it only ever
 describes the agent *now*. Every transition is therefore also appended to a separate lifecycle
 trail, together with the reason it happened (`idle`, `max_lifetime`, `provisioning_timeout`,
-`restart`, `orphan`, `dead_row`). That trail is what the **Agent activity** chart on the agent's
-[monitoring page](../operations/monitoring.md#per-agent-monitoring) is drawn from, and it is the
+`restart`, `orphan`, `dead_row`). That trail is what the **Timeline** on the agent's
+[monitoring page](../operations/agent-monitoring.md#the-charts) is drawn from, and it is the
 only record that survives a restart — without it, an agent that has been torn down and brought
 back has no history at all.
 
-The same trail is what lets the activity chart distinguish *not running* from *no data*: an agent
+The same trail is what lets the timeline distinguish *not running* from *no record*: an agent
 older than the trail has no recorded history, which is a weaker claim than knowing it was off.
+An agent that vanished without a clean disconnect is closed out at its last heartbeat
+(`presence_lost`), and one whose replica shut down is recorded as `replica_shutdown`.
 
 The `reason` values are the same strings the reaper counts by in
 `duckhaven_agents_reaped_total`, so a Prometheus alert and the UI cannot tell different stories

@@ -1,3 +1,4 @@
+import type { QueryStatus } from "./query";
 import type { CatalogKind } from "./catalog";
 import type { BackendKind } from "./storage-backend";
 
@@ -65,10 +66,20 @@ export interface AgentRuntime {
 export interface MetricsSample {
   cpu_percent: number;
   memory_percent: number;
+  // Every admission slot in use, including idle held SQL sessions.
   running_queries: number;
   queued_queries: number;
   active_profile: string;
   sampled_at: string;
+  session_count?: number;
+  growth_waiting?: number;
+  // Measured only by newer agents; null/absent means "not measured", never 0.
+  memory_peak_percent?: number | null;
+  // Statements actually executing: an idle held session is in idle_sessions.
+  executing_queries?: number | null;
+  idle_sessions?: number | null;
+  oom_kills?: number | null;
+  interval_s?: number | null;
 }
 
 export interface AgentMetrics {
@@ -169,71 +180,126 @@ export interface AgentGrantUpsert {
 }
 
 /** The look-back windows the monitoring page offers, shortest first. */
-export const MONITORING_WINDOWS = ["1h", "3h", "8h", "12h", "24h"] as const;
+export const MONITORING_WINDOWS = [
+  "1h",
+  "3h",
+  "8h",
+  "12h",
+  "24h",
+  "3d",
+  "7d",
+] as const;
 export type MonitoringWindow = (typeof MONITORING_WINDOWS)[number];
 
-/**
- * What the agent was doing during one bucket.
- *
- * `unknown` is not `down`: it means no lifecycle trail covers that bucket (an
- * agent older than the trail), where claiming downtime would invent an outage.
- */
-export type ActivityState =
-  "down" | "starting" | "query" | "other" | "ready" | "unknown";
+/** A preset ending now, or an explicit (zoomed) range. */
+export type MonitoringRange =
+  { window: MonitoringWindow } | { start: string; end: string };
 
-export interface PeakQueryPoint {
-  t: string;
-  running: number;
-  queued: number;
-}
+/** Lifecycle state of a span of time; "unknown" is no record, not downtime. */
+export type LifecycleState = "up" | "starting" | "down" | "unknown";
 
-export interface CompletedQueryPoint {
+/** One bucket of every series. Flat, so every chart indexes the same row. */
+export interface MonitoringBucket {
   t: string;
-  per_minute: number;
-}
-
-export interface ActivityPoint {
-  t: string;
-  state: ActivityState;
-}
-
-export interface FailurePoint {
-  t: string;
-  reason: string;
-  count: number;
-}
-
-export interface UtilizationPoint {
-  t: string;
-  // All null for a bucket the agent reported nothing in, so the chart draws a
-  // gap rather than a line through a zero it never measured.
+  // Shorter than bucket_seconds for a bucket the range cuts (e.g. the one in
+  // progress now); `partial` says so.
+  seconds: number;
+  partial: boolean;
+  // Where the agent's time went; these sum to `seconds`.
+  busy_s: number;
+  idle_s: number;
+  starting_s: number;
+  down_s: number;
+  unknown_s: number;
+  // Average number of queries in each state over the bucket (Little's law).
+  running_avg: number;
+  queued_avg: number;
+  compute_wait_avg: number;
+  // Most queries running at any single instant in the bucket.
+  peak_running: number;
+  done: number;
+  cancelled: number;
+  failed: Record<string, number>;
+  wait_p95_ms: number | null;
+  wait_n: number;
+  // Sampled resources; null when the agent reported nothing (a gap, not 0).
   cpu_avg: number | null;
   cpu_max: number | null;
   mem_avg: number | null;
   mem_max: number | null;
+  oom_kills: number | null;
+  coverage: number | null;
+}
+
+export interface MonitoringSpan {
+  start: string;
+  end: string;
+  state: LifecycleState;
 }
 
 export interface MonitoringSummary {
   uptime_s: number;
-  // Share of connected time with query activity; null when never connected.
+  busy_s: number;
+  idle_s: number;
+  // Share of up time with a query running; null when never up.
   busy_ratio: number | null;
-  completed: number;
+  finished: number;
   failed: number;
-  idle_timeout_minutes: number | null;
+  cancelled: number;
+  failed_by_reason: Record<string, number>;
+  wait_p95_ms: number | null;
+  wait_n: number;
+  peak_running: number;
+  cpu_peak: number | null;
+  mem_peak: number | null;
+  resources_as_of: string | null;
 }
 
-/** Every series for one agent over one window, on a shared bucket grid. */
+/** Every series for one agent over one range, on a shared bucket grid. */
 export interface AgentMonitoring {
-  window: MonitoringWindow;
+  // The preset asked for; null for a custom (zoomed) range.
+  preset: MonitoringWindow | null;
+  range_start: string;
+  range_end: string;
   bucket_seconds: number;
-  start: string;
-  end: string;
-  peak_query_count: PeakQueryPoint[];
-  completed_query_count: CompletedQueryPoint[];
-  activity: ActivityPoint[];
-  failures: FailurePoint[];
-  utilization: UtilizationPoint[];
+  generated_at: string;
+  buckets: MonitoringBucket[];
+  spans: MonitoringSpan[];
   summary: MonitoringSummary;
+}
+
+export const AGENT_QUERY_SORTS = [
+  "started_at",
+  "duration",
+  "wait",
+  "peak_memory",
+  "cpu_time",
+  "spill",
+  "bytes_read",
+] as const;
+export type AgentQuerySort = (typeof AGENT_QUERY_SORTS)[number];
+
+/** One run on an agent with what it cost — the Monitoring tab's table. */
+export interface AgentQuery {
+  id: string;
+  workspace_id: string;
+  user_name: string | null;
+  sql: string;
+  status: QueryStatus;
+  origin: string | null;
+  statement_type: string | null;
+  started_at: string;
+  running_at: string | null;
+  finished_at: string | null;
+  duration_ms: number | null;
+  wait_ms: number | null;
+  row_count: number | null;
+  error: string | null;
+  failure_reason: string | null;
+  peak_memory_bytes: number | null;
+  cpu_time_ms: number | null;
+  spill_bytes: number | null;
+  bytes_read: number | null;
 }
 
 export interface ComputeOptions {

@@ -31,6 +31,7 @@ import {
   useCreateElasticAgent,
 } from "@/queries/agents";
 import { useMe } from "@/queries/auth";
+import { useAgentMetrics } from "@/queries/metrics";
 import { RuntimeBadge } from "@/components/app/RuntimeBadge";
 import {
   runtimeLabel,
@@ -41,6 +42,7 @@ import {
 } from "@/types/agent";
 import { cn, plural } from "@/utils";
 import { agentDotClass, formatCost, relativeTime } from "./agentFormat";
+import { CountCell, CpuCell, MemoryCell } from "./FleetColumns";
 
 type FleetFilter = "active" | "stopped" | "all";
 
@@ -550,6 +552,13 @@ export function AgentsPage() {
   const { data: computeOptions } = useComputeOptions();
   const currency = computeOptions?.currency ?? null;
   const { data: agents = [], isLoading } = useAdminAgents();
+  // The live 2-second buffer for every connected agent, across replicas: which
+  // agent is hot, without opening each one.
+  const { data: metrics = [] } = useAgentMetrics();
+  const liveSamples = useMemo(
+    () => new Map(metrics.map((m) => [m.agent_id, m.samples])),
+    [metrics],
+  );
   const [bootstrapOpen, setBootstrapOpen] = useState(false);
   const [computeOpen, setComputeOpen] = useState(false);
   const navigate = useNavigate();
@@ -685,6 +694,10 @@ export function AgentsPage() {
                 {[
                   "Status",
                   "Name",
+                  "CPU",
+                  "Memory",
+                  "Executing",
+                  "Queued",
                   "Runtime",
                   "Host",
                   "Extensions",
@@ -702,82 +715,98 @@ export function AgentsPage() {
               </tr>
             </thead>
             <tbody>
-              {shown.map((agent, i) => (
-                <tr
-                  key={agent.id}
-                  onClick={() =>
-                    navigate({
-                      to: "/$ws/compute/$agentId",
-                      params: { ws, agentId: agent.id },
-                    })
-                  }
-                  className={cn(
-                    "cursor-pointer border-b border-[var(--border-subtle)] hover:bg-accent/50",
-                    i % 2 === 0 ? "" : "bg-[var(--bg-surface)]/40",
-                  )}
-                >
-                  <td className="px-4 py-2">
-                    {(() => {
-                      // Convey the transitional lifecycle (e.g. "provisioning")
-                      // to assistive tech, not the raw socket status.
-                      const label =
-                        agent.lifecycle && agent.lifecycle !== "running"
-                          ? agent.lifecycle
-                          : agent.status;
-                      return (
-                        <span
-                          className={cn(
-                            "size-2.5 rounded-full inline-block",
-                            agentDotClass(agent),
-                          )}
-                          role="img"
-                          aria-label={label}
-                          title={label}
-                        />
-                      );
-                    })()}
-                  </td>
-                  <td className="px-4 py-2 font-medium">
-                    <span className="flex items-center gap-2">
-                      {agent.name}
-                      {agent.lifecycle && agent.lifecycle !== "running" && (
-                        <span className="rounded bg-[var(--bg-surface)] px-1.5 py-0.5 text-2xs font-normal text-text-tertiary">
-                          {agent.lifecycle}
-                        </span>
-                      )}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2 text-xs">
-                    <span className="flex items-center gap-1.5">
-                      <span className="font-mono">
-                        {runtimeLabel(agent) ?? "—"}
+              {shown.map((agent, i) => {
+                const samples = liveSamples.get(agent.id) ?? [];
+                const latest = samples[samples.length - 1];
+                return (
+                  <tr
+                    key={agent.id}
+                    onClick={() =>
+                      navigate({
+                        to: "/$ws/compute/$agentId",
+                        params: { ws, agentId: agent.id },
+                      })
+                    }
+                    className={cn(
+                      "cursor-pointer border-b border-[var(--border-subtle)] hover:bg-accent/50",
+                      i % 2 === 0 ? "" : "bg-[var(--bg-surface)]/40",
+                    )}
+                  >
+                    <td className="px-4 py-2">
+                      {(() => {
+                        // Convey the transitional lifecycle (e.g. "provisioning")
+                        // to assistive tech, not the raw socket status.
+                        const label =
+                          agent.lifecycle && agent.lifecycle !== "running"
+                            ? agent.lifecycle
+                            : agent.status;
+                        return (
+                          <span
+                            className={cn(
+                              "size-2.5 rounded-full inline-block",
+                              agentDotClass(agent),
+                            )}
+                            role="img"
+                            aria-label={label}
+                            title={label}
+                          />
+                        );
+                      })()}
+                    </td>
+                    <td className="px-4 py-2 font-medium">
+                      <span className="flex items-center gap-2">
+                        {agent.name}
+                        {agent.lifecycle && agent.lifecycle !== "running" && (
+                          <span className="rounded bg-[var(--bg-surface)] px-1.5 py-0.5 text-2xs font-normal text-text-tertiary">
+                            {agent.lifecycle}
+                          </span>
+                        )}
                       </span>
-                      <RuntimeBadge agent={agent} />
-                    </span>
-                  </td>
-                  <td className="px-4 py-2 text-xs text-text-secondary">
-                    {agent.capabilities?.host ?? "—"}
-                  </td>
-                  <td className="px-4 py-2 font-mono text-2xs text-text-tertiary max-w-[180px] truncate">
-                    {agent.capabilities?.extensions.join(", ") ?? "—"}
-                  </td>
-                  <td className="px-4 py-2 font-mono text-xs font-tabular">
-                    {agent.capabilities
-                      ? `${agent.capabilities.memory_limit_gb} GB`
-                      : agent.requested_memory_gb != null
-                        ? `${agent.requested_memory_gb} GB`
+                    </td>
+                    <td className="px-4 py-2">
+                      <CpuCell samples={samples} />
+                    </td>
+                    <td className="px-4 py-2">
+                      <MemoryCell sample={latest} />
+                    </td>
+                    <td className="px-4 py-2">
+                      <CountCell value={latest?.executing_queries} />
+                    </td>
+                    <td className="px-4 py-2">
+                      <CountCell value={latest?.queued_queries} />
+                    </td>
+                    <td className="px-4 py-2 text-xs">
+                      <span className="flex items-center gap-1.5">
+                        <span className="font-mono">
+                          {runtimeLabel(agent) ?? "—"}
+                        </span>
+                        <RuntimeBadge agent={agent} />
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-xs text-text-secondary">
+                      {agent.capabilities?.host ?? "—"}
+                    </td>
+                    <td className="px-4 py-2 font-mono text-2xs text-text-tertiary max-w-[180px] truncate">
+                      {agent.capabilities?.extensions.join(", ") ?? "—"}
+                    </td>
+                    <td className="px-4 py-2 font-mono text-xs font-tabular">
+                      {agent.capabilities
+                        ? `${agent.capabilities.memory_limit_gb} GB`
+                        : agent.requested_memory_gb != null
+                          ? `${agent.requested_memory_gb} GB`
+                          : "—"}
+                    </td>
+                    <td className="px-4 py-2 font-mono text-xs font-tabular">
+                      {agent.hourly_cost != null && currency != null
+                        ? formatCost(agent.hourly_cost, currency)
                         : "—"}
-                  </td>
-                  <td className="px-4 py-2 font-mono text-xs font-tabular">
-                    {agent.hourly_cost != null && currency != null
-                      ? formatCost(agent.hourly_cost, currency)
-                      : "—"}
-                  </td>
-                  <td className="px-4 py-2 font-mono text-2xs text-text-tertiary">
-                    {relativeTime(agent.last_ping_at)}
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="px-4 py-2 font-mono text-2xs text-text-tertiary">
+                      {relativeTime(agent.last_ping_at)}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}

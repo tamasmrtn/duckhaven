@@ -8,42 +8,22 @@
  * it is eyeballed, and the light and dark columns are separately validated rather
  * than one being an automatic flip of the other.
  *
- * Three families, because the charts do three different jobs:
+ * Two families, because the charts do two different jobs:
  *
- * - `QUEUE_DEPTH` — running vs queued. These *are* states, so they wear DuckHaven's
- *   status hues rather than series colors. Both steps are darkened from the
- *   `--status-*` tokens the pills use, purely to clear 3:1 against the chart
- *   surface: a 2px pill on white and a 40px bar fill have different contrast needs.
+ * - `ACTIVITY` (and `TIMELINE`, keyed by the API's states) — how busy the agent
+ *   was. Deliberately a single-hue ramp and not separate hues: idle → busy is an
+ *   *ordered* scale, so the order belongs in the lightness, where a reader sees it
+ *   without consulting the legend.
  *
- * - `ACTIVITY` — how busy the agent was. Deliberately a single-hue ramp and not
- *   four separate hues: idle → holding sessions → running queries is an *ordered*
- *   scale, so the order belongs in the lightness, where a reader sees it without
- *   consulting the legend. Four independent hues also failed outright — slate
- *   "ready" against blue "query" came out at ΔE 12.4, under the 15 floor, meaning
- *   full-colour readers could not reliably separate the two states this chart
- *   exists to contrast.
- *
- * - `SERIES` — nominal identity (failure reasons, CPU vs memory). The validated
- *   eight-slot categorical order, assigned by fixed index and never cycled.
+ * - `SERIES` — nominal identity, the validated eight-slot categorical order,
+ *   assigned by fixed index and never cycled. `LOAD`, `OUTCOME` and `RESOURCE`
+ *   are named picks from it, each validated in the order the chart stacks them.
  */
 
 export interface ChartColor {
   light: string;
   dark: string;
 }
-
-/**
- * Running vs queued depth. Status semantics, snapped for contrast on the surface.
- *
- * Every step is also kept clear of the `SERIES` slots below, so a status colour
- * can never impersonate a series in a reader's memory across two charts on the
- * same page. (That is what ruled out the otherwise-fine #d95926 for light:
- * it is the categorical slot-2 dark step.)
- */
-export const QUEUE_DEPTH = {
-  running: { light: "#c2410c", dark: "#ea580c" },
-  queued: { light: "#64748b", dark: "#7d8ea3" },
-} satisfies Record<string, ChartColor>;
 
 /**
  * Activity intensity, as one blue ramp.
@@ -54,7 +34,6 @@ export const QUEUE_DEPTH = {
  */
 export const ACTIVITY = {
   query: { light: "#17439e", dark: "#a5c9fb" },
-  other: { light: "#2b7ae4", dark: "#4b8ef0" },
   ready: { light: "#6aaef6", dark: "#2c5fa8" },
   // Provisioning is a transition, not a level of busyness, so it leaves the ramp
   // for the same amber the agent list already uses for in-transition lifecycles.
@@ -82,6 +61,56 @@ export const SERIES: ChartColor[] = [
 ];
 
 /**
+ * Where an agent's time went — the timeline strip. The activity ramp above, keyed
+ * by the exact states the API now reports (busy is the darkest/brightest step:
+ * the one this strip exists to show).
+ */
+export const TIMELINE = {
+  busy: ACTIVITY.query,
+  idle: ACTIVITY.ready,
+  starting: ACTIVITY.starting,
+  down: ACTIVITY.down,
+  unknown: ACTIVITY.unknown,
+} satisfies Record<string, ChartColor>;
+
+/**
+ * Average concurrency by state, stacked. Identity rather than status (these are
+ * shares of one quantity), so fixed categorical slots: 0 running, 3 waiting to
+ * run, 6 waiting for compute. Validated in stack order — the adjacent pairs are
+ * the ones a reader compares — light and dark, all checks passing; amber sits
+ * under 3:1 on the light surface, which the legend's values and the query table
+ * give the required text relief for.
+ */
+export const LOAD = {
+  running: SERIES[0],
+  queued: SERIES[3],
+  compute: SERIES[6],
+} satisfies Record<string, ChartColor>;
+
+/**
+ * Finished queries by outcome, stacked failures-first so the bars an operator
+ * acts on sit on the baseline where they read most accurately. The order also
+ * keeps red off amber, which failed the normal-vision floor (ΔE 13) in dark.
+ * Validated in that stack order, light and dark.
+ */
+export const OUTCOME = {
+  failed: SERIES[7],
+  cancelled: SERIES[6],
+  sql_error: SERIES[3],
+  done: SERIES[0],
+} satisfies Record<string, ChartColor>;
+
+/**
+ * CPU and memory each get a panel of their own, so each is a single series; they
+ * still take distinct slots, unused by the stacked panels, so a hue on this page
+ * never means two different things side by side.
+ */
+export const RESOURCE = {
+  cpu: SERIES[2],
+  memory: SERIES[4],
+} satisfies Record<string, ChartColor>;
+
+/**
  * Resolve a colour for the active theme.
  *
  * Recharts wants a concrete value for `fill`/`stroke` — it cannot take a
@@ -91,10 +120,4 @@ export const SERIES: ChartColor[] = [
  */
 export function resolve(color: ChartColor, dark: boolean): string {
   return dark ? color.dark : color.light;
-}
-
-/** Stable slot for a named series, so identity survives a changing series count. */
-export function seriesColor(index: number, dark: boolean): string {
-  // Past eight, a chart must fold to "Other" or facet rather than invent a hue.
-  return resolve(SERIES[index % SERIES.length], dark);
 }

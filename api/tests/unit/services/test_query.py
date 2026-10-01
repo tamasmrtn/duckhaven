@@ -100,6 +100,44 @@ async def test_progress_stamps_running_at_for_every_origin(db_session):
     assert query.running_at is not None
 
 
+async def test_progress_stamps_running_at_for_an_acked_session_statement(db_session, monkeypatch):
+    """A statement's receipt ack already set status 'running' before it took the
+    session lock. Its progress frame is what says it started executing; the queue
+    histogram keeps its meaning (only a queued -> running transition feeds it)."""
+    ws, _ = await _make_workspace(db_session)
+    query = Query(workspace_id=ws.id, sql="SELECT 1", status="running", origin="session")
+    db_session.add(query)
+    await db_session.commit()
+    recorded: list[float] = []
+    monkeypatch.setattr(query_service, "record_query_queue_wait", recorded.append)
+
+    await query_service.handle_agent_frame(
+        db_session,
+        Frame(type=FrameType.QUERY_PROGRESS, payload={"query_id": str(query.id)}),
+    )
+
+    await db_session.refresh(query)
+    assert query.running_at is not None
+    assert recorded == []
+
+
+@pytest.mark.parametrize("terminal", ["done", "failed", "cancelled"])
+async def test_a_late_progress_frame_never_resurrects_a_finished_query(db_session, terminal):
+    ws, _ = await _make_workspace(db_session)
+    query = Query(workspace_id=ws.id, sql="SELECT 1", status=terminal)
+    db_session.add(query)
+    await db_session.commit()
+
+    await query_service.handle_agent_frame(
+        db_session,
+        Frame(type=FrameType.QUERY_PROGRESS, payload={"query_id": str(query.id)}),
+    )
+
+    await db_session.refresh(query)
+    assert query.status == terminal
+    assert query.running_at is None
+
+
 async def test_a_second_progress_frame_does_not_move_running_at(db_session):
     ws, _ = await _make_workspace(db_session)
     query = await _queued_query(db_session, ws)

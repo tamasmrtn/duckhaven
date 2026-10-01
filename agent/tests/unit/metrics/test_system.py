@@ -107,3 +107,89 @@ def test_allocation_has_single_source_of_truth(tmp_path, monkeypatch):
     assert adm._budget == mem
     assert adm._slots[0].memory_bytes == mem
     assert adm._slots[0].threads == cores
+
+
+def _cgroup(tmp_path, *, current: int, limit: int = 1000, peak: int | None = None):
+    (tmp_path / "memory.max").write_text(f"{limit}\n")
+    (tmp_path / "memory.current").write_text(f"{current}\n")
+    if peak is not None:
+        (tmp_path / "memory.peak").write_text(f"{peak}\n")
+
+
+def test_memory_percent_uses_own_cgroup_when_unlimited(tmp_path, monkeypatch):
+    """No limit: the level is still this cgroup's own usage, over host RAM, never the
+    whole host's usage percentage."""
+
+    class FakeVM:
+        total = 4000
+        percent = 93.0  # what the host as a whole is using
+
+    monkeypatch.setattr(sysm.psutil, "virtual_memory", lambda: FakeVM())
+    (tmp_path / "memory.max").write_text("max\n")
+    (tmp_path / "memory.current").write_text("1000\n")
+    sampler = sysm.MetricsSampler(base=tmp_path, memory_poll_interval_s=0)
+    assert sampler.sample().memory_percent == 25.0
+
+
+def test_poll_catches_a_spike_between_samples(tmp_path):
+    """A spike that starts and ends inside one interval is the reason for the poll."""
+    _cgroup(tmp_path, current=100)
+    sampler = sysm.MetricsSampler(base=tmp_path, memory_poll_interval_s=0)
+    (tmp_path / "memory.current").write_text("800\n")
+    sampler._memory_peak.poll_once()
+    (tmp_path / "memory.current").write_text("100\n")
+
+    s = sampler.sample()
+    assert s.memory_percent == 10.0
+    assert s.memory_peak_percent == 80.0
+    # The next interval starts from scratch.
+    assert sampler.sample().memory_peak_percent == 10.0
+
+
+def test_a_rise_in_the_lifetime_peak_is_this_intervals_peak(tmp_path):
+    """memory.peak can't be reset on a read-only cgroupfs, but when it rises between
+    two samples the new value was reached inside the interval — exactly."""
+    _cgroup(tmp_path, current=100, peak=300)
+    sampler = sysm.MetricsSampler(base=tmp_path, memory_poll_interval_s=0)
+    (tmp_path / "memory.peak").write_text("950\n")
+    assert sampler.sample().memory_peak_percent == 95.0
+    # Unchanged lifetime peak says nothing about this interval.
+    assert sampler.sample().memory_peak_percent == 10.0
+
+
+def test_oom_kills_are_counted_per_interval_and_in_total(tmp_path):
+    _cgroup(tmp_path, current=100)
+    (tmp_path / "memory.events").write_text("low 0\nhigh 0\nmax 4\noom 1\noom_kill 1\n")
+    sampler = sysm.MetricsSampler(base=tmp_path, memory_poll_interval_s=0)
+    (tmp_path / "memory.events").write_text("low 0\nhigh 0\nmax 9\noom 3\noom_kill 3\n")
+    s = sampler.sample()
+    assert s.oom_kills == 2
+    assert s.oom_kills_total == 3
+    assert sampler.sample().oom_kills == 0
+
+
+def test_fields_it_cannot_measure_are_none_not_zero(tmp_path):
+    """Without cgroup files there is no OOM counter or CPU counter to report."""
+    s = sysm.MetricsSampler(base=tmp_path, memory_poll_interval_s=0).sample()
+    assert s.oom_kills is None
+    assert s.oom_kills_total is None
+    assert s.cpu_seconds_total is None
+    assert s.memory_peak_percent is not None  # the process level is always readable
+
+
+def test_interval_and_rebase(tmp_path, monkeypatch):
+    """The first sample after a reconnect covers only the time since it, not the outage."""
+    (tmp_path / "cpu.max").write_text("100000 100000")
+    (tmp_path / "cpu.stat").write_text("usage_usec 0\n")
+    ticks = iter([0.0, 100.0, 101.0, 101.0])
+    monkeypatch.setattr(sysm.time, "monotonic", lambda: next(ticks))
+    sampler = sysm.MetricsSampler(base=tmp_path, memory_poll_interval_s=0)
+
+    # 100 s disconnected, busy the whole time as far as the counter knows.
+    (tmp_path / "cpu.stat").write_text("usage_usec 100000000\n")
+    sampler.rebase()  # reads t=100
+    (tmp_path / "cpu.stat").write_text("usage_usec 100500000\n")
+    s = sampler.sample()  # reads t=101
+    assert s.interval_s == 1.0
+    assert s.cpu_percent == 50.0
+    assert s.cpu_seconds_total == 100.5

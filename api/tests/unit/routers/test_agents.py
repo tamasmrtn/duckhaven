@@ -1051,3 +1051,98 @@ async def test_a_reconnect_forgets_the_previous_report(ws_client, db_engine):
             assert (await db.get(Agent, agent_id)).capabilities is None
 
     await _connect_and_report(ws_client, "dh_sess_forget", None, on_auth=cleared)
+
+
+async def _seed_session_agent(factory, token: str, **agent_kwargs) -> uuid.UUID:
+    from api.models.user import Credential
+
+    async with factory() as db:
+        agent = Agent(name="trail-agent", status="unavailable", **agent_kwargs)
+        db.add(agent)
+        await db.flush()
+        db.add(Credential(agent_id=agent.id, kind="agent_session", token=token))
+        await db.commit()
+        return agent.id
+
+
+async def _trail(factory, agent_id) -> list[tuple[str, str | None]]:
+    from sqlalchemy import select
+
+    from api.models.agent import AgentLifecycleEvent
+
+    async with factory() as db:
+        rows = (
+            (
+                await db.execute(
+                    select(AgentLifecycleEvent)
+                    .where(AgentLifecycleEvent.agent_id == agent_id)
+                    .order_by(AgentLifecycleEvent.at)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    return [(r.event, r.reason) for r in rows]
+
+
+async def test_ws_reconnect_closes_a_run_its_crashed_replica_left_open(ws_client, db_engine):
+    """A replica that died with the socket never wrote 'disconnected'. The next
+    connect closes that run at its old watermark instead of bridging the outage."""
+    from datetime import datetime, timedelta
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.services.agent_telemetry import record_lifecycle_event
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    long_ago = datetime.now(tz=UTC) - timedelta(hours=3)
+    agent_id = await _seed_session_agent(factory, "dh_sess_trail", last_ping_at=long_ago)
+    async with factory() as db:
+        record_lifecycle_event(db, agent_id, "connected", at=long_ago - timedelta(hours=1))
+        await db.commit()
+
+    received = await _connect_once(ws_client, {"token": "dh_sess_trail", "result_port": 8001})
+    assert received.get("type") == "auth_ok"
+
+    assert await _trail(factory, agent_id) == [
+        ("connected", None),
+        ("disconnected", "presence_lost"),
+        ("connected", None),
+        ("disconnected", None),
+    ]
+
+
+async def test_ws_superseded_socket_teardown_leaves_the_newer_socket_alone(ws_client, db_engine):
+    """A fast reconnect registers the new socket before the old one's handler
+    finishes; the old teardown must not unregister, release or record anything."""
+    import asyncio
+
+    from httpx import AsyncClient
+    from httpx_ws import aconnect_ws
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.services.agent_registry import registry
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    agent_id = await _seed_session_agent(factory, "dh_sess_superseded")
+    newer = object()
+    try:
+        async with AsyncClient(transport=ws_client, base_url="http://test") as c:
+            async with aconnect_ws("http://test/agents/connect", c) as ws:
+                await ws.send_text(
+                    json.dumps(
+                        {
+                            "type": "auth",
+                            "payload": {"token": "dh_sess_superseded", "result_port": 8001},
+                        }
+                    )
+                )
+                await asyncio.wait_for(ws.receive_text(), timeout=5.0)
+                registry.register(agent_id, newer)  # type: ignore[arg-type]
+
+        assert registry.get(agent_id) is newer
+        assert await _trail(factory, agent_id) == [("connected", None)]
+        async with factory() as db:
+            assert (await db.get(Agent, agent_id)).status == "healthy"
+    finally:
+        registry.unregister(agent_id)

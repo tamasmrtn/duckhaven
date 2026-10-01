@@ -71,17 +71,48 @@ export function windowTicks(startMs: number, endMs: number): number[] {
           ? HOUR_MS
           : span <= 13 * HOUR_MS
             ? 2 * HOUR_MS
-            : 4 * HOUR_MS;
-  // Align to the step so labels land on round times (14:00, not 14:07).
+            : span <= 26 * HOUR_MS
+              ? 4 * HOUR_MS
+              : span <= 80 * HOUR_MS
+                ? 12 * HOUR_MS
+                : 24 * HOUR_MS;
   const ticks: number[] = [];
-  for (let t = Math.ceil(startMs / step) * step; t <= endMs; t += step) {
-    ticks.push(t);
+  if (step < HOUR_MS) {
+    // Align to the step so labels land on round times (14:00, not 14:07).
+    for (let t = Math.ceil(startMs / step) * step; t <= endMs; t += step) {
+      ticks.push(t);
+    }
+    return ticks;
+  }
+  // Hour steps and up align to the reader's own clock, so a day tick sits on
+  // their midnight rather than UTC's.
+  const stepHours = step / HOUR_MS;
+  const d = new Date(startMs);
+  d.setMinutes(0, 0, 0);
+  while (d.getTime() < startMs || d.getHours() % stepHours !== 0) {
+    d.setHours(d.getHours() + 1);
+  }
+  for (; d.getTime() <= endMs; d.setHours(d.getHours() + stepHours)) {
+    ticks.push(d.getTime());
   }
   return ticks;
 }
 
-// Compact wall-clock duration: "6h 12m", "45m", "30s".
+// A tick label for a window of `spanMs`: clock time, plus the date wherever a
+// multi-day window crosses midnight (a bare "14:00" is ambiguous across a week).
+export function formatWindowTick(ms: number, spanMs: number): string {
+  if (spanMs <= 26 * HOUR_MS) return formatClockTick(ms);
+  const d = new Date(ms);
+  return d.getHours() === 0 && d.getMinutes() === 0
+    ? formatBoundaryDay(ms)
+    : formatClockTick(ms);
+}
+
+// Compact wall-clock duration: "6h 12m", "45m", "30s", "0.4s". Under ten seconds
+// it keeps a decimal, so a sub-second wait doesn't read as "0s".
 export function formatDuration(seconds: number): string {
+  if (seconds < 10 && !Number.isInteger(seconds))
+    return `${seconds.toFixed(1)}s`;
   if (seconds < 60) return `${Math.round(seconds)}s`;
   const minutes = Math.round(seconds / 60);
   if (minutes < 60) return `${minutes}m`;

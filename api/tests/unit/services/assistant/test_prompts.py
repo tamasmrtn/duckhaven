@@ -294,7 +294,10 @@ def test_the_assembled_instructions_are_within_budget():
         )
     )
 
-    assert len(everything) <= 15_700
+    # Every docs page adds one resident `path — title` line to the index; the
+    # Agent monitoring page (split out of Monitoring, which had reached the
+    # read_doc_page cap) is one of them.
+    assert len(everything) <= 15_800
 
 
 def test_the_product_block_names_the_v1_scope_limits():

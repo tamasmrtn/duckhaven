@@ -1,79 +1,13 @@
 # Monitoring
 
-DuckHaven gives every [agent](../concepts/agents.md) its own monitoring page, and records a full query audit trail on
-the **History** page.
+DuckHaven gives every [agent](../concepts/agents.md) its own [monitoring page](agent-monitoring.md), records a full
+query audit trail on the **History** page, and exports Prometheus metrics for alerting.
 
 ## Per-agent monitoring
 
-Open **Compute** and click an agent to reach its detail page. The **Monitoring** tab answers the question an
-operator actually has when something felt slow or a bill looked wrong: *what was this agent doing, and when?*
-
-At the top, a row of **live statistics** — status, running queries, queued queries, and the agent's size — reads from
-the agent's own 2-second sampler, so it reflects the present moment rather than a rolled-up average.
-
-Below that, a **time range** control (1, 3, 8, 12, or 24 hours) governs every chart *and* the query list at the bottom
-of the page together. The bucket size adapts to the range, from one minute at 1 hour to ten minutes at 24, so each
-chart carries a comparable amount of detail whichever range you pick. The charts share a single time grid, which is
-what makes them readable as a stack: a spike in one lines up with the same instant in all the others.
-
-### The charts
-
-**Peak query count** shows the highest number of concurrent queries the agent reported in each bucket, split into
-*running* and *queued*. A persistently non-zero queued band means the agent is saturated: raise its slot count if
-per-query memory still allows, or add another agent — see [Scaling compute](scaling.md). The depths come from the
-agent's own admission queue, which is the only place that number exists; a query waiting in that queue is invisible to
-the control plane's own timestamps.
-
-**Completed query count** shows throughput as queries per minute, counting failed and cancelled runs alongside
-successful ones — a query that stopped running is a query that finished occupying a slot.
-
-**Agent activity** is the running/not-running timeline, banded by what the agent was doing:
-
-- **Query activity** — queries were running or queued.
-- **Other activity** — up, with no queries, but holding [SQL sessions](../concepts/sql-sessions.md) or fetching
-  results. This is the band that explains an agent that stays alive while apparently doing nothing.
-- **Ready** — up and idle. This is the time an idle timeout reclaims.
-- **Starting** — an elastic agent provisioning, not yet accepting work.
-- **Not running** — no agent.
-- **No data** — no lifecycle history covers this period. Deliberately distinct from *Not running*: an agent that
-  predates the lifecycle trail has no record, which is not the same as being known to have been off.
-
-Above the chart, a summary reads *"Up 6h 12m · 41% busy · idle timeout 20 min"*. Those three numbers are only
-meaningful together — a low busy share against a generous idle timeout is the clearest signal that an
-[elastic agent](../concepts/elastic-compute.md) is being paid for while idle.
-
-**Failures & rejections** breaks failed and cancelled runs down by cause — `queue_full`, `queued_timeout`,
-`out_of_memory`, `no_compute`, `dispatch_failed`, `timeout` — rather than reporting one undifferentiated failure count.
-The distinction matters because the fixes differ: queue rejections mean saturation, `no_compute` means elastic
-provisioning never produced an agent, and an out-of-memory failure means the query needs a bigger agent. The chart is
-hidden when nothing failed.
-
-**Utilization** plots CPU and memory across the window. Buckets the agent reported nothing in are drawn as gaps rather
-than zeros, so an outage never looks like an idle period.
-
-Finally, the **History** list shows the runs that happened on this agent inside the selected window. Hovering a
-duration splits it into queue wait and execution time — the difference between a slow query and a busy agent.
-
-### Where the data comes from
-
-Agents sample themselves every ~2 seconds, and those samples feed a short in-memory buffer for the live statistics.
-For the historical windows they are additionally rolled up to **one row per agent per minute** and stored in Postgres,
-alongside an append-only trail of agent lifecycle transitions. Both are retained for
-`AGENT_METRICS_RETENTION_HOURS` (default one week) — comfortably longer than the 24 hours the UI offers, so widening
-the range later does not require having planned for it.
-
-This is deliberately DuckHaven's own storage rather than the [Prometheus](#prometheus-metrics) or
-[tracing](tracing.md) pipelines below. Both of those are export-only and off by default; a built-in product page that
-renders blank unless you deployed a collector would be the wrong default. The *instrumentation* is shared, though —
-every durable row is written at the same point in the code that already emits the corresponding counter or span, and
-reuses its vocabulary, so a Grafana alert and this page can never disagree about why an agent went away.
-
-The query counts and failure breakdown are computed from the query records themselves, so they are exact rather than
-sampled, and they exclude the same internal queries the History page does.
-
-!!! note "Growth"
-    The rollup and lifecycle tables are bounded by the retention setting. The `queries` table that backs the query
-    charts and the audit log is **not** currently pruned — it grows for the life of the deployment.
+Every agent has its own **Monitoring** tab (**Compute** → *an agent*): what it is doing now, where its time went, the
+queries it ran and what each cost, and its CPU and memory, over up to a week. See
+[Agent monitoring](agent-monitoring.md) for what each chart shows and exactly how each number is measured.
 
 ## Query history and audit log
 
@@ -132,6 +66,7 @@ the conventional `_total` suffix in the exposition (e.g. `duckhaven_queries_tota
 |---|---|---|---|
 | `duckhaven_queries_submitted_total` | counter | `replica_id` | User queries accepted for dispatch (excludes internal/maintenance queries). |
 | `duckhaven_queries_total` | counter | `replica_id`, `status` | User queries reaching a terminal state (`done`/`failed`/`cancelled`). |
+| `duckhaven_query_failures_total` | counter | `replica_id`, `reason` | Failed user queries by classified cause. `sql_error` is a mistake in the query itself (parser, binder, catalog, conversion errors); the other reasons (`queue_full`, `out_of_memory`, `no_compute`, `timeout`, …) are the platform's. |
 | `duckhaven_query_duration_seconds` | histogram | `replica_id` | Duration of completed (`done`) user queries. |
 | `duckhaven_query_result_bytes` | histogram | `replica_id` | Result size of completed (`done`) user queries. |
 | `duckhaven_query_queue_wait_seconds` | histogram | `replica_id` | Time a user query waited in the agent admission queue before running. |
@@ -145,7 +80,12 @@ the conventional `_total` suffix in the exposition (e.g. `duckhaven_queries_tota
 | `duckhaven_agent_up` | gauge | `replica_id`, `agent_id`, `agent_name` | `1` for each agent with a recent sample owned by this replica. |
 | `duckhaven_agent_cpu_percent` | gauge | (same) | Agent CPU utilization. |
 | `duckhaven_agent_memory_percent` | gauge | (same) | Agent memory utilization. |
-| `duckhaven_agent_running_queries` | gauge | (same) | Queries running on the agent. |
+| `duckhaven_agent_running_queries` | gauge | (same) | Admission slots in use on the agent, **including idle held SQL sessions**. For "queries actually running" use `duckhaven_agent_executing_queries`. |
+| `duckhaven_agent_executing_queries` | gauge | (same) | Statements running on the agent right now; an idle held SQL session is not counted. Absent for agents too old to report it. |
+| `duckhaven_agent_idle_sessions` | gauge | (same) | Open SQL sessions on the agent that are not running a statement. |
+| `duckhaven_agent_memory_peak_percent` | gauge | (same) | Highest memory use reached during the agent's last 2-second sample interval, including spikes between samples. |
+| `duckhaven_agent_cpu_seconds_total` | counter | (same) | CPU time consumed by the agent's cgroup. `rate()` of it is exact CPU use over any window, however short the bursts inside it. |
+| `duckhaven_agent_oom_kills_total` | counter | (same) | Processes the kernel's OOM killer has killed in the agent's cgroup. As a counter, no scrape interval can miss one. |
 | `duckhaven_agent_queued_queries` | gauge | (same) | Queries queued on the agent. |
 | `duckhaven_agent_growth_waiting` | gauge | (same) | Statements parked waiting for memory to grow into — already admitted, unlike `queued_queries`. A steady non-zero value alongside near-zero `duckhaven_agent_cpu_percent` means statements are waiting on each other rather than on work, and is the signal to look at. |
 | `duckhaven_agent_estimates_abandoned` | gauge | (same) | Query-cost estimates the agent gave up on because DuckDB's planner stopped responding. Each one costs the agent a worker thread and a CPU core until it restarts, and the affected query is sized from a default rather than its real estimate — so this should stay flat. A rising value on one agent is a reason to restart it. |
@@ -237,11 +177,50 @@ Cardinality is the main operational risk, so labels are deliberately bounded:
   SQL text, query id, agent host/IP — any of these would grow unbounded on a long-lived
   deployment.
 
+### Starter alert rules
+
+DuckHaven has no alert engine of its own; alert on these from Prometheus. They alert on **symptoms** — users
+waiting, queries failing, agents running out of memory — rather than on causes such as high CPU, which the
+monitoring page is for. Tune the thresholds to your workload.
+
+```yaml
+groups:
+  - name: duckhaven
+    rules:
+      - alert: DuckHavenQueriesWaiting
+        # Interactive queries only: the queue-wait histogram is recorded when a worksheet or API query starts running.
+        expr: histogram_quantile(0.95, sum by (le) (rate(duckhaven_query_queue_wait_seconds_bucket[10m]))) > 10
+        for: 10m
+        annotations:
+          summary: "p95 wait before queries start running is above 10s: add an agent or a larger one"
+      - alert: DuckHavenPlatformFailures
+        # Leaves out queries that failed on their own SQL, and cancellations.
+        expr: |
+          sum(rate(duckhaven_query_failures_total{reason!="sql_error"}[15m]))
+            / sum(rate(duckhaven_queries_total[15m])) > 0.05
+        for: 15m
+        annotations:
+          summary: "More than 5% of queries are failing for reasons other than their own SQL"
+      - alert: DuckHavenAgentOOMKill
+        expr: increase(duckhaven_agent_oom_kills_total[15m]) > 0
+        annotations:
+          summary: "The kernel killed a process for memory on {{ $labels.agent_name }}"
+      - alert: DuckHavenEstimatesAbandoned
+        # A gauge that only rises until the agent restarts; each one costs a worker thread.
+        expr: delta(duckhaven_agent_estimates_abandoned[1h]) > 0
+        annotations:
+          summary: "{{ $labels.agent_name }} abandoned a query estimate; consider restarting it"
+      - alert: DuckHavenProvisioningFailing
+        expr: increase(duckhaven_agent_provisions_total{outcome="failure"}[30m]) > 0
+        annotations:
+          summary: "Elastic compute failed to start: queries waiting for it will not run"
+```
+
 ### Starter Grafana dashboard
 
 Import this minimal dashboard (Grafana → Dashboards → New → Import) and point it at your
 Prometheus data source. It covers query throughput, failure rate, latency, agent saturation,
-and open maintenance recommendations — extend it from there.
+out-of-memory kills, and open maintenance recommendations — extend it from there.
 
 ```json
 {
@@ -292,6 +271,22 @@ and open maintenance recommendations — extend it from there.
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
       "targets": [
         { "expr": "duckhaven_agent_queued_queries", "legendFormat": "{{agent_name}}" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Queries executing by agent",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "targets": [
+        { "expr": "duckhaven_agent_executing_queries", "legendFormat": "{{agent_name}}" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "OOM kills (24h)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "targets": [
+        { "expr": "sum(increase(duckhaven_agent_oom_kills_total[24h]))" }
       ]
     },
     {

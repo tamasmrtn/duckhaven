@@ -135,6 +135,17 @@ async def test_failed_query_counts_but_skips_histograms(db_session):
     ) == dur_before
 
 
+async def test_failures_are_counted_by_cause(db_session):
+    """A failure ratio for alerting can leave the users' own SQL mistakes out."""
+    q = await _make_query(db_session, origin=None)
+    before = _value("duckhaven_query_failures_total", {"replica_id": RID, "reason": "sql_error"})
+    frame = await _done_frame(q.id, status="failed")
+    frame.payload["error"] = "Catalog Error: Table with name nope does not exist!"
+    await query_service.handle_agent_frame(db_session, frame)
+    after = _value("duckhaven_query_failures_total", {"replica_id": RID, "reason": "sql_error"})
+    assert (after or 0) - (before or 0) == 1
+
+
 async def test_internal_queries_excluded(db_session):
     # Both sides are coerced the same way. A counter no test in this worker has
     # touched yet reads back as None rather than 0, so coercing only `before`
@@ -162,6 +173,52 @@ async def test_agent_gauges_from_local_registry(client: AsyncClient, db_session)
     assert _value("duckhaven_agent_running_queries", labels) == 2
     assert _value("duckhaven_agent_queued_queries", labels) == 3
     assert _value("duckhaven_agent_active_profile_info", {**labels, "profile": "decaying_3"}) == 1
+
+
+async def test_new_agent_measurements_are_exported(client: AsyncClient, db_session):
+    """Executing vs idle sessions, the interval memory peak, and cumulative CPU and
+    OOM counters — counters so no scrape interval can miss an event."""
+    agent = Agent(name="measured-agent", status="healthy")
+    db_session.add(agent)
+    await db_session.commit()
+    registry.register(agent.id, object())  # type: ignore[arg-type]
+    registry.record_metrics(
+        agent.id,
+        _sample(
+            executing_queries=1,
+            idle_sessions=2,
+            memory_peak_percent=71.5,
+            cpu_seconds_total=1234.5,
+            oom_kills_total=3,
+        ),
+    )
+
+    await client.get("/metrics")
+
+    labels = {"replica_id": RID, "agent_id": str(agent.id), "agent_name": "measured-agent"}
+    assert _value("duckhaven_agent_executing_queries", labels) == 1
+    assert _value("duckhaven_agent_idle_sessions", labels) == 2
+    assert _value("duckhaven_agent_memory_peak_percent", labels) == 71.5
+    assert _value("duckhaven_agent_cpu_seconds_total", labels) == 1234.5
+    assert _value("duckhaven_agent_oom_kills_total", labels) == 3
+
+
+async def test_an_older_agent_has_no_series_for_what_it_cannot_measure(
+    client: AsyncClient, db_session
+):
+    """Absent, not zero: a zero OOM counter would claim a measurement never taken."""
+    agent = Agent(name="old-agent", status="healthy")
+    db_session.add(agent)
+    await db_session.commit()
+    registry.register(agent.id, object())  # type: ignore[arg-type]
+    registry.record_metrics(agent.id, _sample())
+
+    await client.get("/metrics")
+
+    labels = {"replica_id": RID, "agent_id": str(agent.id), "agent_name": "old-agent"}
+    assert _value("duckhaven_agent_up", labels) == 1
+    assert _value("duckhaven_agent_executing_queries", labels) is None
+    assert _value("duckhaven_agent_oom_kills_total", labels) is None
 
 
 async def test_peer_owned_agents_not_reported(client: AsyncClient, db_session):

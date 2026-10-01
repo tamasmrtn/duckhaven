@@ -29,7 +29,7 @@ from prometheus_client import (
     Histogram,
     generate_latest,
 )
-from prometheus_client.core import GaugeMetricFamily
+from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
@@ -57,6 +57,12 @@ QUERIES_TOTAL = Counter(
     "duckhaven_queries",
     "User queries reaching a terminal state, by outcome.",
     ["replica_id", "status"],
+)
+QUERY_FAILURES = Counter(
+    "duckhaven_query_failures",
+    "User queries that failed, by classified cause (sql_error is the query's own "
+    "mistake; the rest are the platform's).",
+    ["replica_id", "reason"],
 )
 QUERY_DURATION = Histogram(
     "duckhaven_query_duration_seconds",
@@ -206,8 +212,15 @@ def record_query_submitted() -> None:
     QUERIES_SUBMITTED.labels(settings.replica_id).inc()
 
 
-def record_query_completion(status: str, duration_ms: int | None, result_bytes: int | None) -> None:
+def record_query_completion(
+    status: str,
+    duration_ms: int | None,
+    result_bytes: int | None,
+    error: str | None = None,
+) -> None:
     QUERIES_TOTAL.labels(settings.replica_id, status).inc()
+    if status == "failed":
+        QUERY_FAILURES.labels(settings.replica_id, classify_failure(error)).inc()
     if status != "done":
         return
     if duration_ms is not None:
@@ -414,7 +427,7 @@ _AGENT_LABELS = ["replica_id", "agent_id", "agent_name"]
 class _ScrapeCollector:
     """Yields the scrape-time gauge families from the latest snapshot."""
 
-    def collect(self) -> Iterator[GaugeMetricFamily]:
+    def collect(self) -> Iterator[GaugeMetricFamily | CounterMetricFamily]:
         snap = _snapshot
         yield from _agent_families(snap.agents)
         active = GaugeMetricFamily(
@@ -469,7 +482,9 @@ class _ScrapeCollector:
             yield samples
 
 
-def _agent_families(agents: list[dict]) -> Iterator[GaugeMetricFamily]:
+def _agent_families(
+    agents: list[dict],
+) -> Iterator[GaugeMetricFamily | CounterMetricFamily]:
     up = GaugeMetricFamily(
         "duckhaven_agent_up", "1 if the agent has a recent sample.", labels=_AGENT_LABELS
     )
@@ -510,6 +525,36 @@ def _agent_families(agents: list[dict]) -> Iterator[GaugeMetricFamily]:
         "being sized from the fallback bucket rather than their real estimate.",
         labels=_AGENT_LABELS,
     )
+    # From agents that measure them; an older agent's series are simply absent,
+    # which Prometheus reads as "no data" rather than as a zero.
+    executing = GaugeMetricFamily(
+        "duckhaven_agent_executing_queries",
+        "Queries running a statement on the agent right now. Unlike running_queries, "
+        "an idle held SQL session is not counted.",
+        labels=_AGENT_LABELS,
+    )
+    idle = GaugeMetricFamily(
+        "duckhaven_agent_idle_sessions",
+        "Open SQL sessions on the agent that are not running a statement.",
+        labels=_AGENT_LABELS,
+    )
+    mem_peak = GaugeMetricFamily(
+        "duckhaven_agent_memory_peak_percent",
+        "Highest memory use reached during the agent's last sample interval, "
+        "including spikes between samples.",
+        labels=_AGENT_LABELS,
+    )
+    cpu_seconds = CounterMetricFamily(
+        "duckhaven_agent_cpu_seconds",
+        "CPU time consumed by the agent's cgroup. rate() of it is exact CPU use "
+        "over any window, however short the bursts inside it.",
+        labels=_AGENT_LABELS,
+    )
+    oom_kills = CounterMetricFamily(
+        "duckhaven_agent_oom_kills",
+        "Processes the kernel's OOM killer has killed in the agent's cgroup.",
+        labels=_AGENT_LABELS,
+    )
     for a in agents:
         base = [settings.replica_id, a["agent_id"], a["agent_name"]]
         up.add_metric(base, 1)
@@ -521,7 +566,31 @@ def _agent_families(agents: list[dict]) -> Iterator[GaugeMetricFamily]:
         sessions.add_metric(base, a["session_count"])
         growth.add_metric(base, a["growth_waiting"])
         abandoned.add_metric(base, a["estimates_abandoned"])
-    yield from (up, cpu, mem, running, queued, profile, sessions, growth, abandoned)
+        for family, key in (
+            (executing, "executing_queries"),
+            (idle, "idle_sessions"),
+            (mem_peak, "memory_peak_percent"),
+            (cpu_seconds, "cpu_seconds_total"),
+            (oom_kills, "oom_kills_total"),
+        ):
+            if a.get(key) is not None:
+                family.add_metric(base, a[key])
+    yield from (
+        up,
+        cpu,
+        mem,
+        running,
+        queued,
+        profile,
+        sessions,
+        growth,
+        abandoned,
+        executing,
+        idle,
+        mem_peak,
+        cpu_seconds,
+        oom_kills,
+    )
 
 
 REGISTRY.register(_ScrapeCollector())
@@ -551,6 +620,11 @@ async def _collect_agents(db: AsyncSession) -> list[dict]:
                 "session_count": latest.get("session_count", 0),
                 "growth_waiting": latest.get("growth_waiting", 0),
                 "estimates_abandoned": latest.get("estimates_abandoned", 0),
+                "executing_queries": latest.get("executing_queries"),
+                "idle_sessions": latest.get("idle_sessions"),
+                "memory_peak_percent": latest.get("memory_peak_percent"),
+                "cpu_seconds_total": latest.get("cpu_seconds_total"),
+                "oom_kills_total": latest.get("oom_kills_total"),
             }
         )
     return out

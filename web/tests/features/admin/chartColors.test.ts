@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import {
   ACTIVITY,
-  QUEUE_DEPTH,
+  LOAD,
+  OUTCOME,
+  RESOURCE,
   SERIES,
+  TIMELINE,
   resolve,
-  seriesColor,
 } from '@/features/admin/monitoring/chartColors'
 
 // These lock in properties that were established by running the palette
@@ -20,7 +22,6 @@ describe('chart colors', () => {
     // its own surface.
     for (const color of [
       ...SERIES,
-      ...Object.values(QUEUE_DEPTH),
       ...Object.values(ACTIVITY),
     ]) {
       expect(color.light).toMatch(HEX)
@@ -41,25 +42,30 @@ describe('chart colors', () => {
     ])
   })
 
-  it('assigns a series its slot by index, never by rank', () => {
-    // A filter that changes how many series exist must not repaint the
-    // survivors, which would silently change what a colour means.
-    expect(seriesColor(0, false)).toBe(SERIES[0].light)
-    expect(seriesColor(2, false)).toBe(SERIES[2].light)
-    expect(seriesColor(2, true)).toBe(SERIES[2].dark)
+  it('draws every named group from the validated slots, never a new hue', () => {
+    // LOAD, OUTCOME and RESOURCE were validated as picks from SERIES in the order
+    // their charts stack them; a hex that is not a slot skipped that validation.
+    const slots = new Set(SERIES)
+    for (const group of [LOAD, OUTCOME, RESOURCE]) {
+      for (const color of Object.values(group)) expect(slots.has(color)).toBe(true)
+    }
   })
 
-  it('wraps rather than inventing a ninth hue', () => {
-    expect(seriesColor(8, false)).toBe(SERIES[0].light)
+  it('keeps red off amber in the outcome stack', () => {
+    // Adjacent failed/sql_error failed the normal-vision floor in dark mode.
+    const order = Object.values(OUTCOME)
+    const red = order.indexOf(SERIES[7])
+    const amber = order.indexOf(SERIES[3])
+    expect(Math.abs(red - amber)).toBeGreaterThan(1)
   })
 
   it('steps activity as one ordered ramp, not four unrelated hues', () => {
-    // Idle -> sessions -> queries is an ordered scale, so the order lives in the
-    // lightness where a reader sees it without the legend. Four separate hues
-    // failed outright: slate "ready" against blue "query" came out below the
-    // normal-vision separation floor.
+    // Idle -> busy is an ordered scale, so the order lives in the lightness where
+    // a reader sees it without the legend. Separate hues failed outright: slate
+    // "ready" against blue "query" came out below the normal-vision floor.
     const hue = (hex: string) => hex.slice(1, 3)
-    expect(new Set([ACTIVITY.query.light, ACTIVITY.other.light, ACTIVITY.ready.light]).size).toBe(3)
+    expect(TIMELINE.busy).toBe(ACTIVITY.query)
+    expect(TIMELINE.idle).toBe(ACTIVITY.ready)
     // Same family, increasing lightness as intensity falls.
     expect(hue(ACTIVITY.query.light) < hue(ACTIVITY.ready.light)).toBe(true)
   })
@@ -72,16 +78,8 @@ describe('chart colors', () => {
     expect(lum(ACTIVITY.query.dark)).toBeGreaterThan(lum(ACTIVITY.ready.dark))
   })
 
-  it('keeps queue depth on status hues, distinct from the series slots', () => {
-    // Running/queued are states, not "series 1 and 2"; a status colour must never
-    // impersonate a categorical slot.
-    const seriesHexes = new Set(SERIES.flatMap((s) => [s.light, s.dark]))
-    expect(seriesHexes.has(QUEUE_DEPTH.running.light)).toBe(false)
-    expect(seriesHexes.has(QUEUE_DEPTH.queued.light)).toBe(false)
-  })
-
   it('resolves by theme', () => {
-    expect(resolve(QUEUE_DEPTH.running, false)).toBe(QUEUE_DEPTH.running.light)
-    expect(resolve(QUEUE_DEPTH.running, true)).toBe(QUEUE_DEPTH.running.dark)
+    expect(resolve(LOAD.running, false)).toBe(LOAD.running.light)
+    expect(resolve(LOAD.running, true)).toBe(LOAD.running.dark)
   })
 })

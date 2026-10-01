@@ -2,7 +2,7 @@
 
 A **catalog** is a first-class, decoupled entity — a data domain with its own metadata store and
 [storage backend](storage-backends.md) — attached to one or more [workspaces](workspaces.md) (a many-to-many
-relationship, like Databricks' Unity Catalog).
+relationship).
 
 ## Catalog kinds
 

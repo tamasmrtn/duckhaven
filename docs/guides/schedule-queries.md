@@ -3,7 +3,7 @@
 Run a [saved query](saved-queries.md) automatically on a schedule — for example
 "every night at 02:00" — without leaving a worksheet open or wiring up an external
 cron job. This is DuckHaven's first step into unattended, scheduled execution
-(think of it as the single-task case of a Databricks-style *job*): one saved query,
+(think of it as a single-task *job*): one saved query,
 one cron schedule, with every execution recorded so you can see what ran and when.
 
 ## Add a schedule

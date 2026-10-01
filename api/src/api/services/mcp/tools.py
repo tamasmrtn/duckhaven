@@ -395,7 +395,7 @@ async def search_docs(query: str, limit: int = 5) -> dict:
     Use this for questions about DuckHaven itself — "how does time travel
     work?", "what storage backends are supported?", "can I schedule a query?" —
     rather than answering from general knowledge of other data platforms.
-    DuckHaven differs from Snowflake and Databricks in ways that matter, and a
+    DuckHaven differs from other data platforms in ways that matter, and a
     confident wrong answer about one of those differences is worse than none.
 
     Returns ranked matches, each with the page `path`, `title`, a one-line

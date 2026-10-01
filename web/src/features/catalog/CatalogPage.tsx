@@ -417,8 +417,8 @@ export function CatalogPage() {
       {/* The worksheet's top row, rebuilt: a title cell exactly as wide as the
           tree (where the worksheet has its Worksheets | Catalog switch), then
           the selected object's path (where it has its tabs). The tree sits at
-          the same place on both pages, as Databricks keeps its catalog panel
-          in the SQL editor and in Catalog Explorer. */}
+          the same place on both pages, so moving between them never shifts
+          it. */}
       <div className="flex h-9 shrink-0 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)]">
         <div className="flex w-[280px] shrink-0 items-center border-r border-[var(--border-subtle)] px-4">
           <h1 className="text-sm font-semibold">Catalog</h1>

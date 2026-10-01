@@ -95,7 +95,7 @@ platforms, and a confidently wrong answer is worse than none.
 ship inside the image, search is lexical rather than semantic, and an empty result is reported as "the documentation
 does not cover this" rather than improvised around. [Product knowledge](assistant.md#product-knowledge) covers all of
 that. They matter for the same reason too: an agent asked "how do I query this table as it was last Tuesday?" will
-otherwise answer from what it knows about Snowflake.
+otherwise answer from what it knows about other data platforms.
 
 Two things are specific to MCP. These tools are the one exception to the everything-goes-through-the-REST-API rule,
 and only because there is nothing for the exception to bypass: `docs/` is public content, identical to what the

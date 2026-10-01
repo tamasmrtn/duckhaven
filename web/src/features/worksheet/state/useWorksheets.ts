@@ -44,7 +44,7 @@ function storeActiveTab(ws: string, id: string): void {
 }
 
 /**
- * A new worksheet is named for when it was made (Snowsight's convention), so a
+ * A new worksheet is named for when it was made, so a
  * row of fresh tabs is never a row of identical "untitled"s.
  */
 export function timestampTitle(now = new Date()): string {

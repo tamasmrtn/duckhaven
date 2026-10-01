@@ -17,8 +17,7 @@ import type { Catalog } from "@/types/catalog";
 
 /**
  * The worksheet's active catalog, USEd for unqualified table names. Styled as
- * a context chip beside the compute agent, in the manner of the
- * catalog.schema chip in the Databricks editor.
+ * a context chip beside the compute agent.
  */
 export function CatalogSelect({
   catalogs,

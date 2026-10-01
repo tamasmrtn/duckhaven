@@ -37,7 +37,7 @@ interface WorksheetBrowserProps {
 
 /**
  * Every worksheet the user has, open or closed, and the workspace's shared
- * saved queries — a Snowsight-style list beside the editor, so closing a tab
+ * saved queries — a list beside the editor, so closing a tab
  * never means losing track of it.
  */
 export function WorksheetBrowser({

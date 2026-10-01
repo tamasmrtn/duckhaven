@@ -272,7 +272,7 @@ credentials at all — see below.
 To get bulk bytes *into* the stage, a client asks the API to presign them rather than handing out storage credentials.
 `POST /api/sql/sessions/{session_id}/staging-files` takes a list of file names and returns, per file, a short-lived
 presigned **`put_url`** (upload) and **`get_url`** (read) scoped to a key under that session's staging prefix, plus an
-`expires_at`. This models a Snowflake internal stage: the broker vends time-boxed, single-key access and bulk bytes flow
+`expires_at`. This works like an internal stage: the broker vends time-boxed, single-key access and bulk bytes flow
 directly between the client, the object store, and the agent — never through the control plane.
 
 A load then looks like:
@@ -392,7 +392,7 @@ clients are expected to lead their `User-Agent` with the calling application; th
 `duckhaven-sql-connector` rather than the workload, so audit rows written before that client fix are attributed to the
 connector, not the tool. This is deliberately server-captured rather than client-declared: the client cannot forge it,
 cannot forget to set it, and cannot leave a stale value behind after a failure. It is the same idea as PostgreSQL's
-`application_name` or Databricks' `client_application` column.
+`application_name`.
 
 Richer, client-supplied context — a dbt model name, a dlt load id — is **not** yet part of the contract. When it lands
 it will be an optional set of labels supplied once at session open, and it will live on the session row rather than

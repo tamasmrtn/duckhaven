@@ -28,9 +28,9 @@ Three forces shape every decision:
    internet. The chrome is small. There is one primary surface — the
    **worksheet** — and everything else is one click away from it.
 
-We're **not** trying to look like Databricks or Snowflake. Those products
-serve very different audiences (enterprise admins, BI analysts) and lean on
-heavy chrome — large left rails, multi-pane Genie/Copilot panels, dense
+We're **not** trying to look like the large hosted data platforms. Those
+products serve very different audiences (enterprise admins, BI analysts) and
+lean on heavy chrome — large left rails, multi-pane assistant panels, dense
 ribbon toolbars. We borrow their proven *patterns* (catalog tree on the
 left, tabbed worksheets, role/warehouse context selector in the worksheet
 header, results below the editor) but keep the surface area roughly half
@@ -38,7 +38,7 @@ the size.
 
 ### What we take from each reference
 
-| From Databricks SQL Editor | From Snowflake Snowsight | From DuckDB itself |
+| From hosted SQL editors | From hosted worksheet UIs | From DuckDB itself |
 |---|---|---|
 | Tabbed worksheets, command palette (Cmd/Ctrl-K) | Per-worksheet context bar (warehouse + role → here: **agent + workspace**) | Lemon yellow brand, railroad/junction motif |
 | Catalog browser permanently docked left | Worksheet explorer as a flat searchable list | Monospace identifiers, dark code blocks with syntax tokens |
@@ -144,7 +144,7 @@ durations, byte counts.
 
 ### 2.3 Spacing & Sizing
 
-4-pt grid. Density is closer to Linear than to Snowflake.
+4-pt grid. Density is closer to Linear than to a data warehouse console.
 
 | Token | px |
 |---|---|
@@ -299,8 +299,7 @@ expanded state is remembered per user.
 User menu (top-right): name, "Theme: light/dark/system", "Sign out".
 
 The yellow duck mark in the top-left **does not** navigate — clicking it
-opens the workspace switcher (Snowflake-style), the most common
-destination-change action.
+opens the workspace switcher, the most common destination-change action.
 
 ---
 
@@ -365,7 +364,7 @@ Notes:
   fetched on-demand.
 - **Status bar** is the persistent reminder of *which compute against
   which storage* the user is using. This is the answer to "wait, where am
-  I running this?" — a question Databricks/Snowflake users ask multiple
+  I running this?" — a question users of hosted warehouses ask multiple
   times a day.
 
 #### Engine selector (close-up)
@@ -431,8 +430,8 @@ Notes:
 - **Same frame as the worksheet.** The page opens with the worksheet's 36 px top row instead of a page header: a
   "Catalog" title cell exactly as wide as the tree (where the worksheet has its *Worksheets | Catalog* switch), then
   the selected object's path. The tree therefore sits at the same place on both pages, and the detail panes use the
-  worksheet's toolbar padding and its *Results | Profile* tab style, as Databricks keeps its catalog panel identical
-  in the SQL editor and in Catalog Explorer. Other top-level pages keep the page header and pill tabs.
+  worksheet's toolbar padding and its *Results | Profile* tab style, so moving between the two pages never shifts the
+  tree. Other top-level pages keep the page header and pill tabs.
 - **Breadcrumb is clickable** all the way up. ⌘-click to open in a new tab.
 - **No edit-schema form** — the pencil icon top-right opens "Rename / Drop".
   Column changes are offered as generated `ALTER TABLE` SQL dropped into a
@@ -708,8 +707,8 @@ evolves.
 
 1. **Q-UI-1.** Workspace switcher: surface storage backend kind as an
    icon (current sketch) or as a colored capsule? **Default: icon.**
-2. **Q-UI-2.** Show per-statement results stacked (Databricks-style) or
-   tabbed (Snowflake-style) when a script has multiple statements?
+2. **Q-UI-2.** Show per-statement results stacked or tabbed when a script has
+   multiple statements?
    **Default: tabbed.** Stacking gets noisy past two statements.
 3. **Q-UI-3.** Should the agent picker remember per-worksheet *or* per-
    workspace? **Resolved: per-worksheet**, stored on the server-side

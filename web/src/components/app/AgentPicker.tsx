@@ -289,7 +289,7 @@ export function AgentPicker({
             role="combobox"
             aria-expanded={open}
             aria-label="Compute agent"
-            className="h-8 max-w-[280px] justify-between gap-1.5 px-2.5 text-sm"
+            className="h-7 max-w-[280px] justify-between gap-1.5 px-2.5 text-sm"
           >
             {selected && selectedKind ? (
               <span className="flex min-w-0 items-center gap-1.5">

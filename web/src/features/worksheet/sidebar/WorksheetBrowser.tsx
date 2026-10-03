@@ -72,7 +72,7 @@ export function WorksheetBrowser({
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search worksheets…"
             aria-label="Search worksheets"
-            className="h-8 pl-7 text-xs"
+            className="h-7 pl-7 text-xs"
           />
         </div>
       </div>

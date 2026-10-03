@@ -78,7 +78,7 @@ export function SemanticPage() {
         actions={
           <Button
             size="sm"
-            className="h-8 gap-1.5 text-xs"
+            className="h-7 gap-1.5 text-xs"
             onClick={() => setOpen(true)}
           >
             <Plus className="size-3.5" />

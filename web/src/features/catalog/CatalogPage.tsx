@@ -177,7 +177,7 @@ function TableDetail({
             <Button
               variant="outline"
               size="sm"
-              className="h-8 gap-1.5 text-xs"
+              className="h-7 gap-1.5 text-xs"
               onClick={() =>
                 openInWorksheet(alterTemplate(schema, table, catalog))
               }
@@ -188,7 +188,7 @@ function TableDetail({
             <Button
               variant="outline"
               size="sm"
-              className="h-8 gap-1.5 text-xs"
+              className="h-7 gap-1.5 text-xs"
               onClick={() =>
                 openInWorksheet(selectTemplate(schema, table, catalog))
               }
@@ -199,7 +199,7 @@ function TableDetail({
             <Button
               variant="outline"
               size="sm"
-              className="h-8 gap-1.5 text-xs"
+              className="h-7 gap-1.5 text-xs"
               onClick={() => setDropOpen(true)}
             >
               <Trash2 className="size-3" />

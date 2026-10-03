@@ -600,7 +600,7 @@ export function AgentsPage() {
             <div className="flex items-center gap-2">
               <Button
                 size="sm"
-                className="h-8 text-xs"
+                className="h-7 text-xs"
                 onClick={() => setComputeOpen(true)}
               >
                 New compute
@@ -608,7 +608,7 @@ export function AgentsPage() {
               <Button
                 size="sm"
                 variant="outline"
-                className="h-8 text-xs"
+                className="h-7 text-xs"
                 onClick={() => setBootstrapOpen(true)}
               >
                 Generate bootstrap
@@ -640,7 +640,7 @@ export function AgentsPage() {
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search name or host…"
               aria-label="Search agents"
-              className="h-8 pl-7 text-xs"
+              className="h-7 pl-7 text-xs"
             />
           </div>
         </PageToolbar>
@@ -671,7 +671,7 @@ export function AgentsPage() {
               canManageFleet ? (
                 <Button
                   size="sm"
-                  className="h-8 text-xs"
+                  className="h-7 text-xs"
                   onClick={() => setBootstrapOpen(true)}
                 >
                   Generate bootstrap

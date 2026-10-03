@@ -16,7 +16,7 @@ const TabsList = React.forwardRef<
     ref={ref}
     // Tabs look like the Segmented control, so every set of options in the
     // app reads the same. Pass `h-7` for the compact size inside a pane.
-    className={cn(segmentGroupClass, "h-8", className)}
+    className={cn(segmentGroupClass, "h-7", className)}
     {...props}
   />
 ));

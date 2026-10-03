@@ -83,8 +83,9 @@ export function PageHeader({
 
 /**
  * The row of filters, search and view options under a page's header. It sits
- * on the page's 24px gutter, and its controls use the 32px size (`h-8`) of the
- * header's own buttons, so every page's second row reads the same.
+ * on the page's 24px gutter, and its controls use the app's 28px size (`h-7`),
+ * the same as the header's own buttons, so every page's second row reads the
+ * same.
  */
 export function PageToolbar({
   children,

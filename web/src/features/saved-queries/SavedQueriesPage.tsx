@@ -93,7 +93,7 @@ export function SavedQueriesPage() {
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search name or SQL…"
               aria-label="Search saved queries"
-              className="h-8 pl-7 text-xs"
+              className="h-7 pl-7 text-xs"
             />
           </div>
           <Segmented

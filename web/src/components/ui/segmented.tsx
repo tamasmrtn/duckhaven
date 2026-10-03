@@ -1,9 +1,7 @@
 import { cn } from "@/utils";
 
-// The one look for every set of options and tabs in the app (see tabs.tsx).
-// `md` is the page-level size, the height of the buttons and inputs beside it;
-// `sm` fits inside an editor pane's header row.
-export const SEGMENT_SIZES = { md: "h-8", sm: "h-7" } as const;
+// The one look for every set of options and tabs in the app (see tabs.tsx),
+// at the 28px (`h-7`) height of every other control.
 export const segmentGroupClass =
   "inline-flex items-center gap-0.5 rounded-md border border-[var(--border-subtle)] p-0.5";
 export const segmentItemClass =
@@ -27,7 +25,6 @@ export function Segmented<T extends string | number>({
   options,
   value,
   onChange,
-  size = "md",
   className,
 }: {
   label: string;
@@ -35,7 +32,6 @@ export function Segmented<T extends string | number>({
   options: { value: T; label: string }[];
   value: T;
   onChange: (v: T) => void;
-  size?: keyof typeof SEGMENT_SIZES;
   className?: string;
 }) {
   return (
@@ -48,7 +44,7 @@ export function Segmented<T extends string | number>({
       <div
         role="group"
         aria-label={label}
-        className={cn(segmentGroupClass, SEGMENT_SIZES[size])}
+        className={cn(segmentGroupClass, "h-7")}
       >
         {options.map((option) => (
           <button

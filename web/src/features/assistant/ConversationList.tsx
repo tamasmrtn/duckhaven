@@ -80,7 +80,7 @@ export function ConversationList({
             placeholder="Search conversations…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="mb-2 h-8 text-sm"
+            className="mb-2 h-7 text-sm"
             aria-label="Search conversations"
           />
           <div className="max-h-72 space-y-0.5 overflow-y-auto">

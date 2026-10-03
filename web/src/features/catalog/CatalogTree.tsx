@@ -872,7 +872,7 @@ export function CatalogTree({
             placeholder="Search catalogs, schemas, tables…"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            className="h-8 pr-7 text-sm"
+            className="h-7 pr-7 text-sm"
             aria-label="Search tables"
           />
           {searching && search.isFetching && (

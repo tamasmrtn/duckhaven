@@ -196,7 +196,7 @@ export function ManageWorkspacesDialog({
                   onValueChange={(v) => change(w.slug, v)}
                 >
                   <SelectTrigger
-                    className="h-8 w-32"
+                    className="h-7 w-32"
                     aria-label={`Role in ${w.name}`}
                   >
                     <SelectValue />
@@ -252,7 +252,7 @@ function UserRow({ user }: { user: User }) {
         }
       >
         <SelectTrigger
-          className="h-8 w-28"
+          className="h-7 w-28"
           aria-label={`Role for ${user.name}`}
         >
           <SelectValue />
@@ -270,7 +270,7 @@ function UserRow({ user }: { user: User }) {
           <Button
             variant="ghost"
             size="icon"
-            className="size-8"
+            className="size-7"
             aria-label={`Actions for ${user.name}`}
           >
             <MoreHorizontal className="size-4" />
@@ -315,7 +315,7 @@ export function UsersPage() {
         <p className="text-xs text-text-secondary">{users.length} users</p>
         <Button
           size="sm"
-          className="h-8 gap-1.5 text-xs"
+          className="h-7 gap-1.5 text-xs"
           onClick={() => setCreateOpen(true)}
         >
           <UserPlus className="size-3.5" />

@@ -336,7 +336,7 @@ function ServiceAccountRow({
         }
       >
         <SelectTrigger
-          className="h-8 w-28"
+          className="h-7 w-28"
           aria-label={`Role for ${account.name}`}
         >
           <SelectValue />
@@ -354,7 +354,7 @@ function ServiceAccountRow({
           <Button
             variant="ghost"
             size="icon"
-            className="size-8"
+            className="size-7"
             aria-label={`Actions for ${account.name}`}
           >
             <MoreHorizontal className="size-4" />
@@ -404,7 +404,7 @@ export function ServiceAccountsPage() {
         </p>
         <Button
           size="sm"
-          className="h-8 gap-1.5 text-xs"
+          className="h-7 gap-1.5 text-xs"
           onClick={() => setCreateOpen(true)}
         >
           <Bot className="size-3.5" />

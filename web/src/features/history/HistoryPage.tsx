@@ -297,7 +297,6 @@ export function HistoryPage() {
               <Segmented
                 label="filter by origin"
                 hideLabel
-                size="sm"
                 options={ORIGIN_OPTIONS}
                 value={search.origin ?? "all"}
                 onChange={(v) =>
@@ -334,7 +333,6 @@ export function HistoryPage() {
                 <Segmented
                   label="workspace scope"
                   hideLabel
-                  size="sm"
                   options={[
                     { value: "ws" as const, label: "This workspace" },
                     { value: "all" as const, label: "All workspaces" },

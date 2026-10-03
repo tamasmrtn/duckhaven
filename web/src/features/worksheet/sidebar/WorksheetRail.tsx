@@ -44,7 +44,6 @@ export function RailSwitch({
     <Segmented
       label="Sidebar"
       hideLabel
-      size="sm"
       value={view}
       onChange={onChange}
       options={[

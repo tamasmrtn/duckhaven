@@ -40,7 +40,7 @@ function CatalogAccessRow({ ws, catalog }: { ws: string; catalog: Catalog }) {
             })
           }
         >
-          <SelectTrigger className="h-8 w-36 text-xs">
+          <SelectTrigger className="h-7 w-36 text-xs">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

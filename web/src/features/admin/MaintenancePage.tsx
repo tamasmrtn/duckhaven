@@ -106,7 +106,7 @@ export function MaintenancePage() {
                 save({ scan_frequency: v as ScanFrequency })
               }
             >
-              <SelectTrigger className="h-8 w-36 text-xs">
+              <SelectTrigger className="h-7 w-36 text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

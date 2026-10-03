@@ -108,7 +108,7 @@ export function AgentQueriesTable({
             <Button
               variant="outline"
               size="sm"
-              className="h-8 text-xs"
+              className="h-7 text-xs"
               onClick={onClearBucket}
             >
               <X className="mr-1 size-3.5" />
@@ -120,7 +120,7 @@ export function AgentQueriesTable({
             onValueChange={(v) => onSort(v as AgentQuerySort)}
           >
             <SelectTrigger
-              className="h-8 w-40 text-xs"
+              className="h-7 w-40 text-xs"
               aria-label="sort queries"
             >
               <SelectValue />

@@ -503,7 +503,7 @@ export function AgentDetailPage() {
         defaultValue="monitoring"
         className="flex min-h-0 flex-1 flex-col gap-0"
       >
-        <TabsList className="m-4 mb-0 h-8 w-fit shrink-0">
+        <TabsList className="m-4 mb-0 h-7 w-fit shrink-0">
           <TabsTrigger value="monitoring" className="text-xs">
             Monitoring
           </TabsTrigger>

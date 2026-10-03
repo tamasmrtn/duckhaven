@@ -109,7 +109,7 @@ export function SaveQueryDialog({
               id="save-agent"
               value={agentId}
               onChange={(e) => setAgentId(e.target.value)}
-              className="h-8 w-full rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 text-sm text-text-primary"
+              className="h-7 w-full rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 text-sm text-text-primary"
             >
               <option value={NO_AGENT}>None — schedules pick one</option>
               {agents.map((a) => (

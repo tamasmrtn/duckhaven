@@ -13,7 +13,7 @@ Admins manage everyone else from **Admin → Users**.
 
 ### Add a local user
 
-**Admin → Users → Add user** creates a local (password) account: enter an email, name, temporary password, and a global
+**Admin → Users → New user** creates a local (password) account: enter an email, name, temporary password, and a global
 role (`admin` or `user`). Federated users do **not** need to be added here — they are provisioned automatically the
 first time they sign in through [SSO](connect-idp.md) or [LDAP](connect-ldap.md).
 

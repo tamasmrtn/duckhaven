@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { MoreHorizontal, UserPlus, Users } from "lucide-react";
+import { MoreHorizontal, Plus, Users } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -75,7 +75,7 @@ function CreateUserDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Add user</DialogTitle>
+          <DialogTitle>New user</DialogTitle>
           <DialogDescription>
             Create a local account. Federated (SSO/LDAP) users are provisioned
             automatically on first sign-in.
@@ -318,8 +318,8 @@ export function UsersPage() {
           className="h-7 gap-1.5 text-xs"
           onClick={() => setCreateOpen(true)}
         >
-          <UserPlus className="size-3.5" />
-          Add user
+          <Plus className="size-3.5" />
+          New user
         </Button>
       </PageToolbar>
 

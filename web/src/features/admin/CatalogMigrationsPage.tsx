@@ -108,6 +108,7 @@ export function CatalogMigrationsPage() {
                     </Button>
                     <Button
                       size="sm"
+                      variant="outline"
                       className="h-7 text-xs"
                       onClick={() => setDialogCatalog(c)}
                     >

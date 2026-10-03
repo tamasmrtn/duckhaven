@@ -14,6 +14,16 @@ async function migrateButtonForAcme() {
 }
 
 describe("CatalogMigrationsPage", () => {
+  // Regression: every row carried a dark primary "Migrate…" button; row
+  // actions are outline buttons, like the rest of the app.
+  it("draws the per-row Migrate action as an outline button", async () => {
+    renderWithProviders({ initialRoute: ROUTE });
+
+    const migrate = await migrateButtonForAcme();
+    expect(migrate).toHaveClass("border");
+    expect(migrate).not.toHaveClass("bg-primary");
+  });
+
   it("lists catalogs and excludes the current backend from the target picker", async () => {
     const user = userEvent.setup();
     renderWithProviders({ initialRoute: ROUTE });

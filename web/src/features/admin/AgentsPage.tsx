@@ -1,6 +1,14 @@
 import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { Copy, Cpu, Loader2, RefreshCw, Search, Server } from "lucide-react";
+import {
+  Copy,
+  Cpu,
+  Loader2,
+  Plus,
+  RefreshCw,
+  Search,
+  Server,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
@@ -600,9 +608,10 @@ export function AgentsPage() {
             <div className="flex items-center gap-2">
               <Button
                 size="sm"
-                className="h-7 text-xs"
+                className="h-7 gap-1.5 text-xs"
                 onClick={() => setComputeOpen(true)}
               >
+                <Plus className="size-3.5" />
                 New compute
               </Button>
               <Button

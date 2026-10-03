@@ -1,5 +1,12 @@
 import { useState } from "react";
-import { Bot, Copy, KeyRound, MoreHorizontal, RefreshCw } from "lucide-react";
+import {
+  Bot,
+  Copy,
+  KeyRound,
+  MoreHorizontal,
+  Plus,
+  RefreshCw,
+} from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -407,7 +414,7 @@ export function ServiceAccountsPage() {
           className="h-7 gap-1.5 text-xs"
           onClick={() => setCreateOpen(true)}
         >
-          <Bot className="size-3.5" />
+          <Plus className="size-3.5" />
           New service account
         </Button>
       </PageToolbar>

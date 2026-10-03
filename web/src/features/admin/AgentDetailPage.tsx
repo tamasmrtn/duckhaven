@@ -14,6 +14,7 @@ import {
 import { RuntimeBadge } from "@/components/app/RuntimeBadge";
 import { Banner } from "@/components/ui/banner";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/ui/page-header";
 import {
   Dialog,
   DialogContent,
@@ -480,30 +481,36 @@ export function AgentDetailPage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="flex items-center gap-3 border-b border-[var(--border-subtle)] px-6 py-3 shrink-0">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-7"
-          aria-label="back to agents"
-          onClick={() => navigate({ to: "/$ws/compute", params: { ws } })}
-        >
-          <ArrowLeft className="size-4" />
-        </Button>
-        {statusIcon[agent.status]}
-        <h2 className="text-md font-semibold">{agent.name}</h2>
-        {agent.lifecycle && agent.lifecycle !== "running" && (
-          <span className="rounded bg-[var(--bg-surface)] px-1.5 py-0.5 text-2xs text-text-tertiary">
-            {agent.lifecycle}
-          </span>
-        )}
-      </div>
+      <PageHeader
+        leading={
+          <>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="back to agents"
+              onClick={() => navigate({ to: "/$ws/compute", params: { ws } })}
+            >
+              <ArrowLeft className="size-4" />
+            </Button>
+            {statusIcon[agent.status]}
+          </>
+        }
+        title={agent.name}
+        badge={
+          agent.lifecycle &&
+          agent.lifecycle !== "running" && (
+            <span className="rounded bg-[var(--bg-canvas)] px-1.5 py-0.5 text-2xs text-text-tertiary">
+              {agent.lifecycle}
+            </span>
+          )
+        }
+      />
 
       <Tabs
         defaultValue="monitoring"
         className="flex min-h-0 flex-1 flex-col gap-0"
       >
-        <TabsList className="m-4 mb-0 h-7 w-fit shrink-0">
+        <TabsList className="mx-6 mt-4 mb-0 h-7 w-fit shrink-0">
           <TabsTrigger value="monitoring" className="text-xs">
             Monitoring
           </TabsTrigger>
@@ -520,20 +527,20 @@ export function AgentDetailPage() {
         </TabsList>
         <TabsContent
           value="monitoring"
-          className="mt-0 min-h-0 flex-1 overflow-auto p-4"
+          className="mt-0 min-h-0 flex-1 overflow-auto px-6 py-4"
         >
           <MonitoringTab ws={ws} agent={agent} />
         </TabsContent>
         <TabsContent
           value="overview"
-          className="mt-0 min-h-0 flex-1 overflow-auto p-4"
+          className="mt-0 min-h-0 flex-1 overflow-auto px-6 py-4"
         >
           <OverviewTab agent={agent} />
         </TabsContent>
         {agentTierAtLeast(agent, "admin") && (
           <TabsContent
             value="access"
-            className="mt-0 min-h-0 flex-1 overflow-auto p-4"
+            className="mt-0 min-h-0 flex-1 overflow-auto px-6 py-4"
           >
             <AgentAccessTab agent={agent} />
           </TabsContent>

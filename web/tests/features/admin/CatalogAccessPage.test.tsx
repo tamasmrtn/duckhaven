@@ -5,6 +5,12 @@ import { renderWithProviders } from "@tests/utils";
 const ROUTE = "/acme-analytics/admin/catalog-access";
 
 describe("CatalogAccessPage", () => {
+  it("counts the catalogs on the left of the toolbar", async () => {
+    renderWithProviders({ initialRoute: ROUTE });
+
+    expect(await screen.findByText(/^\d+ catalogs?$/)).toBeInTheDocument();
+  });
+
   it("lists the workspace catalogs with an access-mode control", async () => {
     renderWithProviders({ initialRoute: ROUTE });
 

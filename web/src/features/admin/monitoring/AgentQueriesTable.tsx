@@ -27,6 +27,7 @@ import { useAgentQueries } from "@/queries/agents";
 import type { AgentQuerySort } from "@/types/agent";
 import { AGENT_QUERY_SORTS } from "@/types/agent";
 import { formatBytes } from "@/utils";
+import { SectionLabel } from "@/components/ui/section-label";
 
 const SORT_LABEL: Record<AgentQuerySort, string> = {
   started_at: "Most recent",
@@ -93,9 +94,7 @@ export function AgentQueriesTable({
     >
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-subtle)] px-4 py-3">
         <div>
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
-            Query runs
-          </h3>
+          <SectionLabel>Query runs</SectionLabel>
           <p className="mt-0.5 text-2xs text-text-tertiary">
             {scope.bucket
               ? `Running or waiting during ${scope.bucket}.`
@@ -108,7 +107,7 @@ export function AgentQueriesTable({
             <Button
               variant="outline"
               size="sm"
-              className="h-8 text-xs"
+              className="h-7 text-xs"
               onClick={onClearBucket}
             >
               <X className="mr-1 size-3.5" />
@@ -120,7 +119,7 @@ export function AgentQueriesTable({
             onValueChange={(v) => onSort(v as AgentQuerySort)}
           >
             <SelectTrigger
-              className="h-8 w-40 text-xs"
+              className="h-7 w-40 text-xs"
               aria-label="sort queries"
             >
               <SelectValue />

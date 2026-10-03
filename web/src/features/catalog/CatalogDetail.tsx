@@ -10,6 +10,7 @@ import { totalTableSize } from "@/features/catalog/tableSize";
 import { formatBytes } from "@/utils";
 import type { BackendKind } from "@/types/storage-backend";
 import { catalogKindLabel, tableFormatLabel } from "./catalogKind";
+import { SectionLabel } from "@/components/ui/section-label";
 
 function fmtNum(n: number | null | undefined) {
   return n == null ? "—" : n.toLocaleString();
@@ -143,9 +144,7 @@ export function CatalogDetail({
         >
           <div className="space-y-5">
             <div>
-              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-text-secondary">
-                Catalog
-              </p>
+              <SectionLabel className="mb-1">Catalog</SectionLabel>
               <MetaRow label="Name" value={cat?.name ?? catalog} />
               <MetaRow label="Kind" value={catalogKindLabel(cat?.kind)} />
               <MetaRow
@@ -182,9 +181,7 @@ export function CatalogDetail({
             </div>
 
             <div>
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-secondary">
-                Data per schema
-              </p>
+              <SectionLabel className="mb-2">Data per schema</SectionLabel>
               <table className="w-full max-w-xl">
                 <thead>
                   <tr className="border-b border-[var(--border-subtle)] text-left">

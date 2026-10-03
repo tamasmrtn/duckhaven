@@ -3,6 +3,8 @@ import { Link, useParams } from "@tanstack/react-router";
 import { ArrowLeft } from "lucide-react";
 import { StatusPill } from "@/components/app/StatusPill";
 import { SqlPreview } from "@/components/app/SqlPreview";
+import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/ui/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useQuery_, useQueryProfile } from "@/queries/queries";
 import { ProfileSummary } from "@/features/worksheet/profile/ProfileSummary";
@@ -32,29 +34,28 @@ export function QueryProfilePage() {
 
   return (
     <div className="flex h-full flex-col">
-      {/* Header */}
-      <div className="flex items-center gap-3 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-2 shrink-0">
-        <Link
-          to="/$ws/history"
-          params={{ ws }}
-          className="flex items-center gap-1 text-xs text-text-secondary hover:text-text-primary"
-        >
-          <ArrowLeft className="size-4" />
-          History
-        </Link>
-        <span className="text-text-tertiary">·</span>
-        <span className="text-xs font-medium text-text-secondary shrink-0">
-          Query profile
-        </span>
-        {query && (
-          <div className="ml-auto">
+      <PageHeader
+        leading={
+          <Button variant="ghost" size="icon" asChild>
+            <Link
+              to="/$ws/history"
+              params={{ ws }}
+              aria-label="back to history"
+            >
+              <ArrowLeft className="size-4" />
+            </Link>
+          </Button>
+        }
+        title="Query profile"
+        badge={
+          query && (
             <StatusPill status={query.status} durationMs={query.duration_ms} />
-          </div>
-        )}
-      </div>
+          )
+        }
+      />
 
       {query && (
-        <div className="border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-2 shrink-0">
+        <div className="border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-2 shrink-0">
           <SqlPreview sql={query.sql} maxHeightClassName="max-h-32" />
         </div>
       )}
@@ -62,7 +63,7 @@ export function QueryProfilePage() {
       {!done ? (
         <Centered message="The profile is available once the query finishes." />
       ) : isLoading ? (
-        <div className="space-y-1 p-4">
+        <div className="space-y-1 px-6 py-4">
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-10 w-full animate-shimmer rounded" />
           ))}
@@ -71,7 +72,7 @@ export function QueryProfilePage() {
         <Centered message="No profile for this query (DDL/DML or profiling unavailable)." />
       ) : (
         <>
-          <ProfileSummary summary={profile.summary} />
+          <ProfileSummary summary={profile.summary} className="px-6" />
           <div className="flex min-h-0 flex-1">
             <div className="min-w-0 flex-1 overflow-hidden bg-[var(--bg-canvas)]">
               <ProfileGraph

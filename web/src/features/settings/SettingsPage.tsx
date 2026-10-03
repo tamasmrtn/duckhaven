@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Sun, Moon, Monitor } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { PageHeader } from "@/components/ui/page-header";
+import { PageHeader, PageToolbar } from "@/components/ui/page-header";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -24,20 +24,22 @@ export function SettingsPage() {
   return (
     <div className="flex h-full flex-col">
       <PageHeader title="Settings" />
-      <div className="flex-1 overflow-auto">
-        <Tabs defaultValue="workspace" className="p-6">
+      <Tabs defaultValue="workspace" className="flex min-h-0 flex-1 flex-col">
+        <PageToolbar>
           <TabsList>
             <TabsTrigger value="workspace">Workspace</TabsTrigger>
             <TabsTrigger value="account">Account</TabsTrigger>
           </TabsList>
-          <TabsContent value="workspace" className="mt-6 max-w-lg">
+        </PageToolbar>
+        <div className="flex-1 overflow-auto p-6">
+          <TabsContent value="workspace" className="mt-0 max-w-lg">
             <WorkspaceSettings ws={ws} />
           </TabsContent>
-          <TabsContent value="account" className="mt-6 max-w-lg">
+          <TabsContent value="account" className="mt-0 max-w-lg">
             <AccountSettings />
           </TabsContent>
-        </Tabs>
-      </div>
+        </div>
+      </Tabs>
     </div>
   );
 }

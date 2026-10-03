@@ -155,10 +155,10 @@ workspace [history and audit log](../operations/monitoring.md).
 ## Find an earlier run
 
 **History** lists the runs in your workspace. It opens on **your queries from the last 7 days** — where your attention
-usually is. The filter row says so rather than leaving you to infer it: the user picker shows your own name and the
-time control reads *Last 7 days*, and changing either widens the view. **Clear filters** returns everything to that
-default. If nothing matches, the empty state names the scope that is active, so an empty table is never ambiguous
-between "no history" and "narrow filter".
+usually is. The filters say so rather than leaving you to infer it: the user picker in the header shows your own name
+and the time control below it reads *Last 7 days*, and changing either widens the view. **Clear filters** returns
+everything to that default. If nothing matches, the empty state names the scope that is active, so an empty table is
+never ambiguous between "no history" and "narrow filter".
 
 A run that never reached its agent — because the agent had gone offline — is listed too, as failed with *Agent not
 connected*, so an error in a worksheet always has a matching entry here.

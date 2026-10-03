@@ -75,10 +75,9 @@ export function AdminLayout() {
     <div className="flex h-full flex-col">
       <PageHeader
         title="Admin"
-        description="Storage, users, service accounts and catalog access for this deployment, and lakehouse maintenance."
         secondaryRow={
           <nav
-            className={cn(segmentGroupClass, "mt-3 h-8")}
+            className={cn(segmentGroupClass, "mt-3 h-7")}
             aria-label="Admin sections"
           >
             {visibleTabs.map(({ segment, label }) => {

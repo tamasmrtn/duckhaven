@@ -1,5 +1,12 @@
 import { useState } from "react";
-import { Bot, Copy, KeyRound, MoreHorizontal, RefreshCw } from "lucide-react";
+import {
+  Bot,
+  Copy,
+  KeyRound,
+  MoreHorizontal,
+  Plus,
+  RefreshCw,
+} from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -41,6 +48,8 @@ import {
 } from "@/queries/service-accounts";
 import type { PatToken, ServiceAccount } from "@/types/service-account";
 import { ManageWorkspacesDialog } from "./UsersPage";
+import { SectionLabel } from "@/components/ui/section-label";
+import { plural } from "@/utils";
 
 const ROLES = ["admin", "user"];
 // Labels map to the API's `expires_in_days` (null = never).
@@ -245,9 +254,7 @@ function PatModal({
             <Separator />
 
             <div className="space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
-                Active tokens
-              </p>
+              <SectionLabel>Active tokens</SectionLabel>
               {isLoading ? (
                 <Skeleton className="h-10 w-full animate-shimmer rounded-md" />
               ) : pats.length === 0 ? (
@@ -336,7 +343,7 @@ function ServiceAccountRow({
         }
       >
         <SelectTrigger
-          className="h-8 w-28"
+          className="h-7 w-28"
           aria-label={`Role for ${account.name}`}
         >
           <SelectValue />
@@ -354,7 +361,7 @@ function ServiceAccountRow({
           <Button
             variant="ghost"
             size="icon"
-            className="size-8"
+            className="size-7"
             aria-label={`Actions for ${account.name}`}
           >
             <MoreHorizontal className="size-4" />
@@ -399,15 +406,15 @@ export function ServiceAccountsPage() {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <PageToolbar className="justify-between">
-        <p className="text-xs text-text-secondary">
-          {accounts.length} service accounts
+        <p className="text-xs text-text-secondary font-tabular">
+          {plural(accounts.length, "service account")}
         </p>
         <Button
           size="sm"
-          className="h-8 gap-1.5 text-xs"
+          className="h-7 gap-1.5 text-xs"
           onClick={() => setCreateOpen(true)}
         >
-          <Bot className="size-3.5" />
+          <Plus className="size-3.5" />
           New service account
         </Button>
       </PageToolbar>

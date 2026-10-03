@@ -14,6 +14,7 @@ import {
 import { RuntimeBadge } from "@/components/app/RuntimeBadge";
 import { Banner } from "@/components/ui/banner";
 import { Button } from "@/components/ui/button";
+import { PageHeader, PageToolbar } from "@/components/ui/page-header";
 import {
   Dialog,
   DialogContent,
@@ -51,6 +52,7 @@ import {
 import { AgentAccessTab } from "./AgentAccessTab";
 import { formatCost } from "./agentFormat";
 import { MonitoringTab } from "./monitoring/MonitoringTab";
+import { SectionLabel } from "@/components/ui/section-label";
 
 const statusIcon: Record<AgentStatus, React.ReactNode> = {
   healthy: <CheckCircle2 className="size-4 text-[var(--status-success)]" />,
@@ -184,9 +186,7 @@ function OverviewTab({ agent }: { agent: Agent }) {
       <div className="grid gap-4 md:grid-cols-2">
         {agent.provider && (
           <section className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-secondary">
-              Elastic compute
-            </p>
+            <SectionLabel className="mb-2">Elastic compute</SectionLabel>
             <div className="space-y-1 text-sm">
               <Field label="Lifecycle" value={agent.lifecycle ?? "—"} />
               {agent.runtime?.display_name && (
@@ -218,9 +218,7 @@ function OverviewTab({ agent }: { agent: Agent }) {
         )}
 
         <section className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-secondary">
-            Capabilities
-          </p>
+          <SectionLabel className="mb-2">Capabilities</SectionLabel>
           {agent.capabilities ? (
             <div className="space-y-1 text-sm">
               <Field
@@ -294,9 +292,7 @@ function OverviewTab({ agent }: { agent: Agent }) {
         </section>
 
         <section className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-secondary">
-            Last hour
-          </p>
+          <SectionLabel className="mb-2">Last hour</SectionLabel>
           <div className="space-y-1 text-sm">
             <Field label="Completed" value={recent?.summary.finished ?? "—"} />
             <Field
@@ -480,60 +476,68 @@ export function AgentDetailPage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="flex items-center gap-3 border-b border-[var(--border-subtle)] px-6 py-3 shrink-0">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-7"
-          aria-label="back to agents"
-          onClick={() => navigate({ to: "/$ws/compute", params: { ws } })}
-        >
-          <ArrowLeft className="size-4" />
-        </Button>
-        {statusIcon[agent.status]}
-        <h2 className="text-md font-semibold">{agent.name}</h2>
-        {agent.lifecycle && agent.lifecycle !== "running" && (
-          <span className="rounded bg-[var(--bg-surface)] px-1.5 py-0.5 text-2xs text-text-tertiary">
-            {agent.lifecycle}
-          </span>
-        )}
-      </div>
+      <PageHeader
+        leading={
+          <>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="back to agents"
+              onClick={() => navigate({ to: "/$ws/compute", params: { ws } })}
+            >
+              <ArrowLeft className="size-4" />
+            </Button>
+            {statusIcon[agent.status]}
+          </>
+        }
+        title={agent.name}
+        badge={
+          agent.lifecycle &&
+          agent.lifecycle !== "running" && (
+            <span className="rounded bg-[var(--bg-canvas)] px-1.5 py-0.5 text-2xs text-text-tertiary">
+              {agent.lifecycle}
+            </span>
+          )
+        }
+      />
 
       <Tabs
         defaultValue="monitoring"
         className="flex min-h-0 flex-1 flex-col gap-0"
       >
-        <TabsList className="m-4 mb-0 h-8 w-fit shrink-0">
-          <TabsTrigger value="monitoring" className="text-xs">
-            Monitoring
-          </TabsTrigger>
-          <TabsTrigger value="overview" className="text-xs">
-            Overview
-          </TabsTrigger>
-          {/* Only Tier 3 may read or change the ACL, so the tab is not offered
-              to anyone else rather than rendering a panel that 403s. */}
-          {agentTierAtLeast(agent, "admin") && (
-            <TabsTrigger value="access" className="text-xs">
-              Access
+        <PageToolbar>
+          <TabsList>
+            <TabsTrigger value="monitoring" className="text-xs">
+              Monitoring
             </TabsTrigger>
-          )}
-        </TabsList>
+            <TabsTrigger value="overview" className="text-xs">
+              Overview
+            </TabsTrigger>
+            {/* Only Tier 3 may read or change the ACL, so the tab is not offered
+                to anyone else rather than rendering a panel that 403s. */}
+            {agentTierAtLeast(agent, "admin") && (
+              <TabsTrigger value="access" className="text-xs">
+                Access
+              </TabsTrigger>
+            )}
+          </TabsList>
+        </PageToolbar>
         <TabsContent
           value="monitoring"
-          className="mt-0 min-h-0 flex-1 overflow-auto p-4"
+          className="mt-0 min-h-0 flex-1 overflow-auto p-6"
         >
           <MonitoringTab ws={ws} agent={agent} />
         </TabsContent>
         <TabsContent
           value="overview"
-          className="mt-0 min-h-0 flex-1 overflow-auto p-4"
+          className="mt-0 min-h-0 flex-1 overflow-auto p-6"
         >
           <OverviewTab agent={agent} />
         </TabsContent>
         {agentTierAtLeast(agent, "admin") && (
           <TabsContent
             value="access"
-            className="mt-0 min-h-0 flex-1 overflow-auto p-4"
+            className="mt-0 min-h-0 flex-1 overflow-auto p-6"
           >
             <AgentAccessTab agent={agent} />
           </TabsContent>

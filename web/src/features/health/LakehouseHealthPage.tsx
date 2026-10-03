@@ -14,6 +14,7 @@ import type { HealthBand, TableHealth } from "@/types/maintenance";
 import { HealthScoreGauge } from "./HealthScoreGauge";
 import { RecommendationCard } from "./RecommendationCard";
 import { BAND_COLOR, BAND_LABEL } from "./healthStyles";
+import { SectionLabel } from "@/components/ui/section-label";
 
 function ScoreBadge({
   score,
@@ -39,7 +40,7 @@ function TableRow({ ws, t }: { ws: string; t: TableHealth }) {
     <Link
       to="/$ws/catalog"
       params={{ ws }}
-      className="flex items-center justify-between border-b border-[var(--border-subtle)] px-4 py-2 hover:bg-accent/50"
+      className="flex items-center justify-between border-b border-[var(--border-subtle)] px-4 py-2 last:border-b-0 hover:bg-accent/50"
     >
       <div className="flex items-center gap-3">
         <ScoreBadge score={t.score} band={t.band} />
@@ -68,7 +69,7 @@ export function LakehouseHealthPage() {
     <div className="flex h-full flex-col overflow-hidden">
       <PageHeader
         title="Lakehouse health"
-        description="Continuous, explainable health scoring and maintenance recommendations."
+        description="Each table scored from the latest maintenance scan, with what to fix first."
       />
 
       <div className="flex-1 overflow-auto p-6">
@@ -125,11 +126,9 @@ export function LakehouseHealthPage() {
             </div>
 
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)]">
-                <p className="border-b border-[var(--border-subtle)] px-4 py-2 text-xs font-semibold uppercase tracking-wide text-text-secondary">
-                  Tables by health
-                </p>
-                <div>
+              <div className="space-y-3">
+                <SectionLabel>Tables by health</SectionLabel>
+                <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)]">
                   {health.tables.map((t) => (
                     <TableRow
                       key={`${t.schema_name}.${t.table_name}`}
@@ -141,9 +140,7 @@ export function LakehouseHealthPage() {
               </div>
 
               <div className="space-y-3">
-                <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
-                  Recommendations
-                </p>
+                <SectionLabel>Recommendations</SectionLabel>
                 {recommendations.length === 0 ? (
                   <p className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 text-sm text-text-tertiary">
                     No open recommendations. Your lakehouse looks well

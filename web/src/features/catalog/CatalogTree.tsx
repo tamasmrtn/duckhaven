@@ -63,6 +63,7 @@ import { formatTableSize } from "@/features/catalog/tableSize";
 import { cn, formatRowCount } from "@/utils";
 import type { Catalog, CatalogTable } from "@/types/catalog";
 import type { SearchResult } from "@/types/search";
+import { SectionLabel } from "@/components/ui/section-label";
 
 // Which nodes are expanded, shared by every node in one tree and remembered per
 // workspace in this browser. Everything starts collapsed: an expanded default
@@ -872,7 +873,7 @@ export function CatalogTree({
             placeholder="Search catalogs, schemas, tables…"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            className="h-8 pr-7 text-sm"
+            className="h-7 pr-7 text-sm"
             aria-label="Search tables"
           />
           {searching && search.isFetching && (
@@ -886,9 +887,7 @@ export function CatalogTree({
         <div className="flex-1 overflow-auto">
           <div className="mb-1 flex items-center justify-between gap-1 px-2 py-1">
             {workspaceName ? (
-              <span className="truncate text-xs font-semibold text-text-secondary uppercase tracking-wide">
-                {workspaceName}
-              </span>
+              <SectionLabel className="truncate">{workspaceName}</SectionLabel>
             ) : (
               <Skeleton className="h-3 w-24 animate-shimmer rounded" />
             )}

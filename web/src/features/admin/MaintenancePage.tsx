@@ -89,14 +89,30 @@ export function MaintenancePage() {
                 Periodically scan tables for health metrics and recommendations.
               </p>
             </div>
-            <Button
-              variant={policy.scan_enabled ? "default" : "outline"}
-              size="sm"
-              className="text-xs"
+            {/* A switch, not a button: this is a setting's state, and a dark
+                "Enabled" button read as an action to take. */}
+            <button
+              type="button"
+              role="switch"
+              aria-checked={policy.scan_enabled}
+              aria-label="Autonomous scanning"
               onClick={() => save({ scan_enabled: !policy.scan_enabled })}
+              className={cn(
+                "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                policy.scan_enabled
+                  ? "bg-primary"
+                  : "bg-[var(--border-strong)]",
+              )}
             >
-              {policy.scan_enabled ? "Enabled" : "Disabled"}
-            </Button>
+              <span
+                className={cn(
+                  "inline-block size-4 rounded-full bg-background shadow transition-transform",
+                  policy.scan_enabled
+                    ? "translate-x-[18px]"
+                    : "translate-x-0.5",
+                )}
+              />
+            </button>
           </div>
           <div className="mt-3 flex items-center gap-3">
             <span className="text-xs text-text-secondary">Frequency</span>
@@ -106,7 +122,7 @@ export function MaintenancePage() {
                 save({ scan_frequency: v as ScanFrequency })
               }
             >
-              <SelectTrigger className="h-8 w-36 text-xs">
+              <SelectTrigger className="h-7 w-36 text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

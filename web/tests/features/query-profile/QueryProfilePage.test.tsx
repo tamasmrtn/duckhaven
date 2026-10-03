@@ -10,6 +10,17 @@ import { server } from "@tests/mock/server";
 const ROUTE = "/acme-analytics/queries/q-1";
 
 describe("QueryProfilePage", () => {
+  it("uses the shared page header with a way back to History", async () => {
+    renderWithProviders({ initialRoute: ROUTE });
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Query profile" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /back to history/i }),
+    ).toHaveAttribute("href", "/acme-analytics/history");
+  });
+
   it("shows the query SQL panel and expands it in place, not in a dialog", async () => {
     const user = userEvent.setup();
     renderWithProviders({ initialRoute: ROUTE });

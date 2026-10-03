@@ -95,7 +95,7 @@ export function TopBar({
       <button
         type="button"
         onClick={onCommandPalette}
-        className="ml-2 hidden h-8 w-56 items-center gap-2 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 text-sm text-text-tertiary hover:border-[var(--border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)] md:flex"
+        className="ml-2 hidden h-7 w-56 items-center gap-2 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 text-sm text-text-tertiary hover:border-[var(--border-strong)] focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)] md:flex"
         aria-label="Open command palette"
       >
         <Search className="size-3.5" />
@@ -111,7 +111,7 @@ export function TopBar({
           variant="ghost"
           size="icon"
           className={cn(
-            "size-8",
+            "size-7",
             assistantOpen && "bg-accent text-[var(--brand-yellow)]",
           )}
           aria-label="Toggle AI assistant"
@@ -127,7 +127,7 @@ export function TopBar({
             <Button
               variant="ghost"
               size="icon"
-              className="size-8"
+              className="size-7"
               aria-label="Change theme"
             >
               {themeIcons[theme]}
@@ -161,7 +161,7 @@ export function TopBar({
             <Button
               variant="ghost"
               size="sm"
-              className="h-8 gap-2 px-2 text-sm"
+              className="h-7 gap-2 px-2 text-sm"
             >
               <User className="size-4" />
               <span className="hidden sm:inline">{me?.name ?? "Account"}</span>

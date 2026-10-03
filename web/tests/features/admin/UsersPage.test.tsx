@@ -35,7 +35,7 @@ describe("UsersPage", () => {
 
     expect(await screen.findByText("admin@admin.com")).toBeInTheDocument();
     expect(screen.getByText("Real Admin")).toBeInTheDocument();
-    expect(screen.getByText("1 users")).toBeInTheDocument();
+    expect(screen.getByText("1 user")).toBeInTheDocument();
     // The mock fixtures must not leak through.
     expect(
       screen.queryByText("marton@duckhaven.local"),
@@ -48,7 +48,7 @@ describe("UsersPage", () => {
     expect(await screen.findByText("No users yet")).toBeInTheDocument();
   });
 
-  it("creates a local user through the Add user dialog", async () => {
+  it("creates a local user through the New user dialog", async () => {
     let created: Record<string, unknown> | null = null;
     server.use(
       http.post("/api/admin/users", async ({ request }) => {
@@ -59,7 +59,7 @@ describe("UsersPage", () => {
     const user = userEvent.setup();
     renderWithProviders({ initialRoute: USERS_ROUTE });
 
-    await user.click(await screen.findByRole("button", { name: /add user/i }));
+    await user.click(await screen.findByRole("button", { name: /new user/i }));
     await user.type(screen.getByLabelText("Email"), "new@duckhaven.local");
     await user.type(screen.getByLabelText("Name"), "New Person");
     await user.type(screen.getByLabelText(/temporary password/i), "pw-12345");

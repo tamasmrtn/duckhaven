@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { MoreHorizontal, UserPlus, Users } from "lucide-react";
+import { MoreHorizontal, Plus, Users } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -39,6 +39,7 @@ import {
   useUserWorkspaces,
 } from "@/queries/users";
 import type { User } from "@/types/auth";
+import { plural } from "@/utils";
 
 const ROLES = ["admin", "user"];
 const WORKSPACE_ROLES = ["reader", "writer", "owner"];
@@ -75,7 +76,7 @@ function CreateUserDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Add user</DialogTitle>
+          <DialogTitle>New user</DialogTitle>
           <DialogDescription>
             Create a local account. Federated (SSO/LDAP) users are provisioned
             automatically on first sign-in.
@@ -196,7 +197,7 @@ export function ManageWorkspacesDialog({
                   onValueChange={(v) => change(w.slug, v)}
                 >
                   <SelectTrigger
-                    className="h-8 w-32"
+                    className="h-7 w-32"
                     aria-label={`Role in ${w.name}`}
                   >
                     <SelectValue />
@@ -252,7 +253,7 @@ function UserRow({ user }: { user: User }) {
         }
       >
         <SelectTrigger
-          className="h-8 w-28"
+          className="h-7 w-28"
           aria-label={`Role for ${user.name}`}
         >
           <SelectValue />
@@ -270,7 +271,7 @@ function UserRow({ user }: { user: User }) {
           <Button
             variant="ghost"
             size="icon"
-            className="size-8"
+            className="size-7"
             aria-label={`Actions for ${user.name}`}
           >
             <MoreHorizontal className="size-4" />
@@ -312,14 +313,16 @@ export function UsersPage() {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <PageToolbar className="justify-between">
-        <p className="text-xs text-text-secondary">{users.length} users</p>
+        <p className="text-xs text-text-secondary font-tabular">
+          {plural(users.length, "user")}
+        </p>
         <Button
           size="sm"
-          className="h-8 gap-1.5 text-xs"
+          className="h-7 gap-1.5 text-xs"
           onClick={() => setCreateOpen(true)}
         >
-          <UserPlus className="size-3.5" />
-          Add user
+          <Plus className="size-3.5" />
+          New user
         </Button>
       </PageToolbar>
 

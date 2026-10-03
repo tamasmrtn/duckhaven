@@ -62,11 +62,15 @@ describe('AgentsPage', () => {
     for (const i of [2, 3, 4, 5]) expect(cells[i]).toHaveTextContent('—')
   })
 
-  it('titles the page and counts the fleet', async () => {
+  // The counts live on the left of the toolbar, in the filter options; the
+  // header no longer repeats them as a description.
+  it('titles the page and counts the fleet in the toolbar', async () => {
     renderWithProviders({ initialRoute: AGENTS_ROUTE })
     expect(await screen.findByRole('heading', { name: 'Compute' })).toBeInTheDocument()
     const active = AGENTS.filter((a) => a.status !== 'unavailable').length
-    await screen.findByText(`${AGENTS.length} agents · ${active} active`)
+    expect(await screen.findByRole('button', { name: `Active (${active})` })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: `All (${AGENTS.length})` })).toBeInTheDocument()
+    expect(screen.queryByText(/agents · \d+ active/)).not.toBeInTheDocument()
   })
 
   it('opens on the active agents and keeps stopped ones one click away', async () => {

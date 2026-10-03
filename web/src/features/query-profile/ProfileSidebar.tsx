@@ -17,6 +17,7 @@ import {
   operatorIdentity,
   scanEffectiveness,
 } from "./operatorIdentity";
+import { SectionLabel } from "@/components/ui/section-label";
 
 function fmtMs(ms: number | null): string {
   if (ms == null) return "—";
@@ -33,9 +34,7 @@ function Section({
 }) {
   return (
     <div className="flex flex-col gap-2">
-      <h3 className="text-2xs font-semibold uppercase tracking-wide text-text-tertiary">
-        {title}
-      </h3>
+      <SectionLabel>{title}</SectionLabel>
       {children}
     </div>
   );
@@ -138,9 +137,7 @@ function ScanEffectiveness({ node }: { node: QueryProfileNode }) {
   if (eff == null) return null;
   return (
     <div className="mt-1 flex flex-col gap-1 border-t border-[var(--border-subtle)] pt-2">
-      <h4 className="text-2xs font-semibold uppercase tracking-wide text-text-tertiary">
-        Scan effectiveness
-      </h4>
+      <SectionLabel as="h4">Scan effectiveness</SectionLabel>
       {eff.filesRead != null && (
         <Row
           label="Files read"

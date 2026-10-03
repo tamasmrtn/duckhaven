@@ -39,7 +39,7 @@ export function CatalogSelect({
           aria-expanded={open}
           aria-label="Active catalog"
           title="Active catalog (USEd for unqualified table names)"
-          className="h-8 max-w-[220px] gap-1.5 px-2.5 text-sm"
+          className="h-7 max-w-[220px] gap-1.5 px-2.5 text-sm"
         >
           <Library className="size-3.5 shrink-0 text-text-secondary" />
           <span className="truncate">{current?.slug ?? "Catalog"}</span>

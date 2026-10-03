@@ -160,7 +160,7 @@ export function WorksheetToolbar(props: WorksheetToolbarProps) {
           <Button
             variant="ghost"
             size="icon"
-            className="size-8"
+            className="size-7"
             aria-label="Query settings"
           >
             <Settings2 className="size-4" />
@@ -196,7 +196,7 @@ export function WorksheetToolbar(props: WorksheetToolbarProps) {
           <Button
             variant="outline"
             size="sm"
-            className="h-8 gap-1.5 text-xs"
+            className="h-7 gap-1.5 text-xs"
             onClick={onCancel}
           >
             <Square className="size-3" />
@@ -205,7 +205,7 @@ export function WorksheetToolbar(props: WorksheetToolbarProps) {
         ) : (
           <Button
             size="sm"
-            className="h-8 gap-1.5 bg-[var(--brand-yellow)] text-black hover:bg-yellow-300 text-xs font-medium animate-run-pulse-trigger"
+            className="h-7 gap-1.5 bg-[var(--brand-yellow)] text-black hover:bg-yellow-300 text-xs font-medium animate-run-pulse-trigger"
             onClick={onRun}
             disabled={runDisabled}
             aria-label={
@@ -220,7 +220,7 @@ export function WorksheetToolbar(props: WorksheetToolbarProps) {
         <Button
           variant="ghost"
           size="sm"
-          className="h-8 text-xs"
+          className="h-7 text-xs"
           title="Save the selected expression as a metric"
           onClick={onSaveAsMetric}
         >
@@ -232,7 +232,7 @@ export function WorksheetToolbar(props: WorksheetToolbarProps) {
             <Button
               variant="ghost"
               size="sm"
-              className="h-8 rounded-r-none text-xs"
+              className="h-7 rounded-r-none text-xs"
               onClick={onSave}
               title={`Save to “${linkedName}” (⌘S)`}
             >
@@ -244,7 +244,7 @@ export function WorksheetToolbar(props: WorksheetToolbarProps) {
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-8 rounded-l-none px-1.5"
+                  className="h-7 rounded-l-none px-1.5"
                   aria-label="More save options"
                 >
                   <ChevronDown className="size-3.5" />
@@ -264,7 +264,7 @@ export function WorksheetToolbar(props: WorksheetToolbarProps) {
           <Button
             variant="ghost"
             size="sm"
-            className="h-8 text-xs"
+            className="h-7 text-xs"
             onClick={onSaveAs}
           >
             <Save className="size-3.5 mr-1" />

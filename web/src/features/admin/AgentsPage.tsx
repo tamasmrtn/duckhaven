@@ -1,6 +1,14 @@
 import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { Copy, Cpu, Loader2, RefreshCw, Search, Server } from "lucide-react";
+import {
+  Copy,
+  Cpu,
+  Loader2,
+  Plus,
+  RefreshCw,
+  Search,
+  Server,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
@@ -40,7 +48,7 @@ import {
   type BootstrapToken,
   type Runtime,
 } from "@/types/agent";
-import { cn, plural } from "@/utils";
+import { cn } from "@/utils";
 import { agentDotClass, formatCost, relativeTime } from "./agentFormat";
 import { CountCell, CpuCell, MemoryCell } from "./FleetColumns";
 
@@ -594,21 +602,21 @@ export function AgentsPage() {
     <div className="flex h-full flex-col overflow-hidden">
       <PageHeader
         title="Compute"
-        description={`${plural(agents.length, "agent")} · ${activeCount} active`}
         actions={
           canManageFleet && (
             <div className="flex items-center gap-2">
               <Button
                 size="sm"
-                className="h-8 text-xs"
+                className="h-7 gap-1.5 text-xs"
                 onClick={() => setComputeOpen(true)}
               >
+                <Plus className="size-3.5" />
                 New compute
               </Button>
               <Button
                 size="sm"
                 variant="outline"
-                className="h-8 text-xs"
+                className="h-7 text-xs"
                 onClick={() => setBootstrapOpen(true)}
               >
                 Generate bootstrap
@@ -640,7 +648,7 @@ export function AgentsPage() {
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search name or host…"
               aria-label="Search agents"
-              className="h-8 pl-7 text-xs"
+              className="h-7 pl-7 text-xs"
             />
           </div>
         </PageToolbar>
@@ -671,7 +679,7 @@ export function AgentsPage() {
               canManageFleet ? (
                 <Button
                   size="sm"
-                  className="h-8 text-xs"
+                  className="h-7 text-xs"
                   onClick={() => setBootstrapOpen(true)}
                 >
                   Generate bootstrap

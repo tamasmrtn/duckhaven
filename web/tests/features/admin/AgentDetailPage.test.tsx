@@ -11,6 +11,22 @@ const ELASTIC = '/acme-analytics/compute/ag-5'
 const STATIC = '/acme-analytics/compute/ag-1'
 
 describe('AgentDetailPage', () => {
+  it('puts its tabs in the toolbar row under the header', async () => {
+    renderWithProviders({ initialRoute: ELASTIC })
+
+    const tablist = await screen.findByRole('tablist')
+    expect(tablist.parentElement).toHaveClass('border-b')
+  })
+
+  it('titles the page with the agent name in the shared page header', async () => {
+    renderWithProviders({ initialRoute: ELASTIC })
+
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'warehouse-a' }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /back to agents/i })).toBeInTheDocument()
+  })
+
   it('opens on Monitoring — the tab the page exists for', async () => {
     renderWithProviders({ initialRoute: ELASTIC })
 

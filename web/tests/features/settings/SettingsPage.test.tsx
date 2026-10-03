@@ -9,6 +9,17 @@ import { CURRENT_USER } from '@/mock/fixtures/users'
 const ROUTE = '/acme-analytics/settings'
 
 describe('SettingsPage — Workspace tab', () => {
+  // Regression: the tabs sat in the page body, unlike every other page,
+  // which puts them in the toolbar row under the header.
+  it('puts the Workspace | Account tabs in the toolbar row', async () => {
+    renderWithProviders({ initialRoute: ROUTE })
+    await screen.findByLabelText('Name')
+
+    const toolbar = screen.getByRole('tablist').parentElement!
+    expect(toolbar).toHaveClass('border-b')
+    expect(within(toolbar).queryByLabelText('Name')).not.toBeInTheDocument()
+  })
+
   it('shows the current name and description, and saves an update', async () => {
     const user = userEvent.setup()
     renderWithProviders({ initialRoute: ROUTE })

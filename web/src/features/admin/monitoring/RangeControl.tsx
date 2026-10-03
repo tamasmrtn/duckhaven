@@ -58,7 +58,7 @@ export function RangeControl({
           value={window}
           onValueChange={(v) => onWindow(v as MonitoringWindow)}
         >
-          <SelectTrigger className="h-8 w-44 text-xs" aria-label="time range">
+          <SelectTrigger className="h-7 w-44 text-xs" aria-label="time range">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -79,7 +79,7 @@ export function RangeControl({
           <Button
             variant="outline"
             size="sm"
-            className="h-8 text-xs"
+            className="h-7 text-xs"
             onClick={onReset}
           >
             <RotateCcw className="mr-1 size-3.5" />

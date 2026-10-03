@@ -21,6 +21,7 @@ import { useCatalogs } from "@/queries/catalogs";
 import { useSetAccessMode } from "@/queries/grants";
 import type { AccessMode } from "@/types/grant";
 import type { Catalog } from "@/types/catalog";
+import { plural } from "@/utils";
 
 function CatalogAccessRow({ ws, catalog }: { ws: string; catalog: Catalog }) {
   const setMode = useSetAccessMode(ws, catalog.slug);
@@ -40,7 +41,7 @@ function CatalogAccessRow({ ws, catalog }: { ws: string; catalog: Catalog }) {
             })
           }
         >
-          <SelectTrigger className="h-8 w-36 text-xs">
+          <SelectTrigger className="h-7 w-36 text-xs">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -60,7 +61,10 @@ export function CatalogAccessPage() {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <PageToolbar>
-        <p className="text-xs text-text-secondary">
+        <p className="text-xs text-text-secondary font-tabular">
+          {plural(catalogs?.length ?? 0, "catalog")}
+        </p>
+        <p className="text-xs text-text-tertiary">
           Choose whether each catalog is <strong>open</strong> (the workspace
           role governs everything) or <strong>scoped</strong> (access is
           narrowed by per-object grants). Grants themselves are managed from the

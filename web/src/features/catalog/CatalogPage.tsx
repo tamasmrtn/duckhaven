@@ -38,6 +38,7 @@ import {
 } from "@/utils/recentlyViewed";
 import { objectPath } from "@/utils/objectPath";
 import type { CatalogTable } from "@/types/catalog";
+import { SectionLabel } from "@/components/ui/section-label";
 
 function formatNumber(n: number | null) {
   if (n == null) return "—";
@@ -177,7 +178,7 @@ function TableDetail({
             <Button
               variant="outline"
               size="sm"
-              className="h-8 gap-1.5 text-xs"
+              className="h-7 gap-1.5 text-xs"
               onClick={() =>
                 openInWorksheet(alterTemplate(schema, table, catalog))
               }
@@ -188,7 +189,7 @@ function TableDetail({
             <Button
               variant="outline"
               size="sm"
-              className="h-8 gap-1.5 text-xs"
+              className="h-7 gap-1.5 text-xs"
               onClick={() =>
                 openInWorksheet(selectTemplate(schema, table, catalog))
               }
@@ -199,7 +200,7 @@ function TableDetail({
             <Button
               variant="outline"
               size="sm"
-              className="h-8 gap-1.5 text-xs"
+              className="h-7 gap-1.5 text-xs"
               onClick={() => setDropOpen(true)}
             >
               <Trash2 className="size-3" />
@@ -213,9 +214,7 @@ function TableDetail({
         {/* Schema column */}
         <div className="w-80 shrink-0 border-r border-[var(--border-subtle)] overflow-auto">
           <div className="px-4 py-3">
-            <p className="mb-2 text-xs font-semibold text-text-secondary uppercase tracking-wide">
-              Schema
-            </p>
+            <SectionLabel className="mb-2">Schema</SectionLabel>
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[var(--border-subtle)]">
@@ -288,9 +287,7 @@ function TableDetail({
             className="mt-0 flex flex-1 flex-col overflow-hidden"
           >
             <div className="border-b border-t border-[var(--border-subtle)] px-4 py-2 shrink-0">
-              <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
-                Sample (LIMIT 20)
-              </p>
+              <SectionLabel>Sample (LIMIT 20)</SectionLabel>
             </div>
             <div className="flex-1 overflow-hidden">
               {sampleDenied ? (
@@ -479,9 +476,7 @@ export function CatalogPage() {
             <CatalogDetail ws={ws} catalog={catalog} />
           ) : recentlyViewed.length > 0 ? (
             <div className="flex h-full flex-col gap-2 overflow-auto p-4">
-              <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
-                Recently viewed
-              </p>
+              <SectionLabel>Recently viewed</SectionLabel>
               <div className="max-w-sm space-y-0.5">
                 {recentlyViewed.map((r) => (
                   <button

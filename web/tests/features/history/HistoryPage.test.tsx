@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { http, HttpResponse } from 'msw'
-import { screen, fireEvent, waitFor } from '@testing-library/react'
+import { screen, fireEvent, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { renderWithProviders } from '@tests/utils'
 import { server } from '@tests/mock/server'
@@ -433,6 +433,33 @@ describe('HistoryPage', () => {
     await user.click(screen.getByRole('button', { name: /refresh history/i }))
 
     await waitFor(() => expect(calls).toBe(2))
+  })
+
+  it('keeps who and where in the header, apart from the query filters', async () => {
+    renderWithProviders({ initialRoute: '/acme-analytics/history?user=all' })
+    await screen.findByText(/raw\.users/)
+
+    const header = screen
+      .getByRole('heading', { name: 'History' })
+      .closest('.border-b') as HTMLElement
+    const inHeader = within(header)
+    expect(inHeader.getByRole('combobox', { name: /filter by agent/i })).toBeInTheDocument()
+    expect(inHeader.getByRole('group', { name: 'filter by origin' })).toBeInTheDocument()
+    expect(inHeader.getByRole('button', { name: /refresh history/i })).toBeInTheDocument()
+    expect(inHeader.getByRole('combobox', { name: /filter by user/i })).toBeInTheDocument()
+    expect(inHeader.getByRole('group', { name: 'workspace scope' })).toBeInTheDocument()
+    expect(inHeader.queryByRole('textbox', { name: 'search SQL' })).not.toBeInTheDocument()
+  })
+
+  it('uses the compact 28px controls', async () => {
+    renderWithProviders({ initialRoute: '/acme-analytics/history?user=all' })
+    await screen.findByText(/raw\.users/)
+
+    expect(screen.getByRole('combobox', { name: /filter by agent/i })).toHaveClass('h-7')
+    expect(screen.getByRole('combobox', { name: /filter by user/i })).toHaveClass('h-7')
+    expect(screen.getByRole('group', { name: 'filter by origin' })).toHaveClass('h-7')
+    expect(screen.getByRole('textbox', { name: 'search SQL' })).toHaveClass('h-7')
+    expect(screen.getByRole('button', { name: 'time range' })).toHaveClass('h-7')
   })
 })
 

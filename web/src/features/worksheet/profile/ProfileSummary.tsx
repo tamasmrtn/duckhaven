@@ -1,5 +1,5 @@
 import type { QueryProfileSummary } from "@/types/query";
-import { formatBytes } from "@/utils";
+import { cn, formatBytes } from "@/utils";
 import { isSpilled } from "./highlights";
 
 function formatMs(ms: number): string {
@@ -20,9 +20,20 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function ProfileSummary({ summary }: { summary: QueryProfileSummary }) {
+export function ProfileSummary({
+  summary,
+  className,
+}: {
+  summary: QueryProfileSummary;
+  className?: string;
+}) {
   return (
-    <div className="flex flex-wrap items-start gap-x-6 gap-y-3 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-3">
+    <div
+      className={cn(
+        "flex flex-wrap items-start gap-x-6 gap-y-3 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-3",
+        className,
+      )}
+    >
       <Stat label="Latency" value={formatMs(summary.latency_ms)} />
       <Stat label="CPU time" value={formatMs(summary.cpu_time_ms)} />
       {/* Waiting versus working. These three overlap and do not partition

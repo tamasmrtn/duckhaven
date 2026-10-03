@@ -14,7 +14,7 @@ RUN npm run build
 # ── Builder ──────────────────────────────────────────────────────────────────
 # -dev keeps a shell for the build; runtime below is distroless. Pinned by
 # digest since :latest rebuilds continuously (tracked by Dependabot).
-FROM cgr.dev/chainguard/python:latest-dev@sha256:eb0d45dfc69fecb471d2eaee7a8eea281bf860578ef44cb85db1bfa8165c47fe AS builder
+FROM cgr.dev/chainguard/python:latest-dev@sha256:96cb9c155159daf6b21e70555f244081909ff161c5589112ddf308624c1a1c77 AS builder
 USER root
 
 # uv is a build-time tool — copy the pinned binary instead of pip-installing it.
@@ -48,7 +48,7 @@ RUN mkdir -p /app/rootfs/var/duckhaven/secrets
 # ── Runtime ──────────────────────────────────────────────────────────────────
 # Distroless: no shell, package manager, or apt/dpkg — the unfixable
 # OS-package CVEs the old purge-and-upgrade step chased don't exist here.
-FROM cgr.dev/chainguard/python:latest@sha256:565af762d7f3efedc4e60d7ac7815e41588211d3f5757be33d8303e915ee6c72 AS runtime
+FROM cgr.dev/chainguard/python:latest@sha256:1961420e5f93bd056d4b0b40eca12cdf01b3ed09177aa4d6ec71fab38cbf158f AS runtime
 
 # Release version, injected from the git tag by CI (docker/metadata-action).
 # Surfaced at GET /api/version and as OpenAPI info.version; defaults to a dev

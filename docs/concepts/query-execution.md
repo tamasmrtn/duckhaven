@@ -139,6 +139,9 @@ one replica dispatches a given due schedule.
 
 ## Results and profiles
 
+A read whose tables have not changed since an identical query ran may not run at all: the
+[result cache](result-cache.md) answers it from the earlier run's result, and nothing in this page happens for it.
+
 Results are materialized as Parquet **on the executing agent**; the control plane fetches and decodes pages on demand,
 so large results are never loaded whole. After each run the agent captures DuckDB's per-operator execution profile —
 see [Read query profiles](../guides/query-profiles.md). Queries can be cancelled mid-flight, and a wall-clock timeout is
@@ -172,5 +175,6 @@ rather than the query's.
 
 - [Agents](agents.md) — the compute a query is dispatched to.
 - [SQL sessions](sql-sessions.md) — the persistent-connection path for external tools.
+- [Result cache](result-cache.md) — when a repeated query is answered without running.
 - [Read query profiles](../guides/query-profiles.md) — reading what a run actually did.
 - [Scaling compute](../operations/scaling.md) — sizing and concurrency profiles.

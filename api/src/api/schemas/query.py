@@ -19,6 +19,10 @@ class QueryCreate(BaseModel):
     # The worksheet's active catalog (slug) — `USE`d for unqualified table names.
     # When omitted the workspace's default catalog is used.
     catalog: str | None = None
+    # Whether the run may be answered from the result cache when nothing it reads
+    # has changed since an identical query ran. False always executes ("re-run
+    # without cache"), and the result still refreshes the cache.
+    use_cache: bool = True
 
 
 class ColumnSchemaOut(BaseModel):
@@ -101,6 +105,15 @@ class QueryOut(BaseModel):
     # to call GET /queries/{id}/rows at all, which is otherwise mandatory just to
     # learn the result's column names.
     first_page: RowsPageOut | None = None
+    # What the result cache did with this run: "hit" (answered from an earlier run's
+    # result; nothing executed), "miss" (executed), "bypass" (the cache was off or
+    # could not decide in time) or "ineligible" (the query can never be cached).
+    # Null when the cache never looked, and for runs older than the cache.
+    cache_status: str | None = None
+    # Why, when the outcome needs a reason: e.g. "volatile_function", "opted_out".
+    cache_detail: str | None = None
+    # For a hit: the run whose result was served (and whose profile describes it).
+    result_source_query_id: uuid.UUID | None = None
     started_at: datetime
     # When the agent admitted the run and began executing it. With started_at
     # (submission) this splits the run's wall-clock into queue wait and execution,

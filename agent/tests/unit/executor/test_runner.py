@@ -1058,3 +1058,34 @@ def test_open_and_attach_enables_httpfs_connection_caching(monkeypatch):
     load_at = next(i for i, s in enumerate(executed) if s.strip() == "LOAD httpfs")
     set_at = next(i for i, s in enumerate(executed) if "httpfs_connection_caching" in s)
     assert set_at > load_at
+
+
+def test_attach_never_caps_iceberg_metadata_staleness():
+    """The result cache admits a result only if every table kept its version from
+    dispatch to completion, which assumes each statement reads the catalog's
+    current metadata. `MAX_TABLE_STALENESS` would let a connection reuse stale
+    table metadata and break that, so the attach must never set it."""
+    from agent.executor import runner
+
+    executed: list[str] = []
+
+    class _Conn:
+        def execute(self, sql, *args):
+            executed.append(str(sql))
+            return self
+
+    runner._attach_catalogs(
+        _Conn(),
+        catalogs=[
+            {
+                "slug": "lake",
+                "polaris_name": "lake",
+                "backend": {"kind": "s3"},
+                "default_schema": "analytics",
+            }
+        ],
+        active_catalog="lake",
+        polaris={"endpoint": "http://polaris", "client_id": "c", "client_secret": "s"},
+    )
+    assert any("ATTACH" in sql for sql in executed)
+    assert not any("MAX_TABLE_STALENESS" in sql.upper() for sql in executed)

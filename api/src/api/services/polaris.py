@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import OrderedDict
 from typing import Any, Literal, Self
 
 import httpx
@@ -32,6 +33,9 @@ logger = logging.getLogger(__name__)
 _TOKEN_SCOPE = "PRINCIPAL_ROLE:ALL"
 # Refresh the cached token once its remaining lifetime drops below this.
 _TOKEN_REFRESH_MARGIN_S = 60.0
+# Tables whose last LoadTable ETag is remembered for `load_table_version`. Only a
+# bound on memory: forgetting one costs a full response instead of a 304.
+_VERSION_ETAG_ENTRIES = 4096
 
 
 # --- Exceptions ---
@@ -106,6 +110,18 @@ class PolarisTable(_PolarisModel):
     # from the same LoadTableResult payload already fetched for this table —
     # no extra request. None for a table with no snapshots yet.
     current_snapshot_summary: dict[str, str] | None = None
+
+
+class PolarisTableVersion(_PolarisModel):
+    """The parts of a table's metadata that say which data a reader sees.
+
+    Read with ``snapshots=refs`` and an ETag, so checking an unchanged table costs
+    a 304 and no metadata payload."""
+
+    table_uuid: str | None = None
+    snapshot_id: int | None = None
+    schema_id: int | None = None
+    metadata_location: str | None = None
 
 
 class PolarisSnapshot(_PolarisModel):
@@ -190,6 +206,9 @@ class PolarisClient:
         self._token: str | None = None
         self._token_expiry: float = 0.0
         self._token_lock = asyncio.Lock()
+        self._version_etags: OrderedDict[tuple[str, str, str], tuple[str, PolarisTableVersion]] = (
+            OrderedDict()
+        )
 
     async def aclose(self) -> None:
         await self._http.aclose()
@@ -583,6 +602,47 @@ class PolarisClient:
         )
         self._raise_for_status(resp)
         return resp.json()
+
+    async def load_table_version(self, catalog: str, schema: str, name: str) -> PolarisTableVersion:
+        """Which snapshot and schema a reader of this table sees right now.
+
+        Asks for referenced snapshots only and sends the ETag of the last answer,
+        so an unchanged table is a 304 with no body (Polaris supports conditional
+        loads since 1.0). The ETag is the same whichever ``snapshots`` mode is
+        asked for, so the remembered answer must only ever come from this method.
+        """
+        key = (catalog, schema, name)
+        remembered = self._version_etags.get(key)
+        headers = await self._auth_headers()
+        if remembered is not None:
+            headers["If-None-Match"] = remembered[0]
+        resp = await self._send(
+            "load_table_version",
+            "GET",
+            f"{self.CATALOG_PATH}/{catalog}/namespaces/{schema}/tables/{name}",
+            params={"snapshots": "refs"},
+            headers=headers,
+        )
+        if resp.status_code == 304 and remembered is not None:
+            self._version_etags.move_to_end(key)
+            return remembered[1]
+        if not resp.is_success:
+            self._version_etags.pop(key, None)
+        self._raise_for_status(resp)
+        body = resp.json()
+        metadata = body.get("metadata") or {}
+        version = PolarisTableVersion(
+            table_uuid=metadata.get("table-uuid"),
+            snapshot_id=metadata.get("current-snapshot-id"),
+            schema_id=metadata.get("current-schema-id"),
+            metadata_location=body.get("metadata-location"),
+        )
+        if etag := resp.headers.get("etag"):
+            self._version_etags[key] = (etag, version)
+            self._version_etags.move_to_end(key)
+            while len(self._version_etags) > _VERSION_ETAG_ENTRIES:
+                self._version_etags.popitem(last=False)
+        return version
 
     async def list_snapshots(self, catalog: str, schema: str, name: str) -> list[PolarisSnapshot]:
         """Snapshot history for a table, newest first.

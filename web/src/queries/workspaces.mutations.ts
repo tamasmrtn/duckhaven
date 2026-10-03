@@ -4,8 +4,11 @@ import { workspacesApi } from "@/api/workspaces";
 export function useUpdateWorkspace(ws: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { name?: string; description?: string }) =>
-      workspacesApi.update(ws, data),
+    mutationFn: (data: {
+      name?: string;
+      description?: string;
+      result_cache_enabled?: boolean;
+    }) => workspacesApi.update(ws, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["workspaces"] });
       qc.invalidateQueries({ queryKey: ["workspace", ws] });

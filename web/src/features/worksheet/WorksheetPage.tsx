@@ -151,9 +151,13 @@ export function WorksheetPage() {
   const [metricSql, setMetricSql] = useState<string | null>(null);
   const updateSaved = useUpdateSavedQuery(ws);
 
-  function runText(text: string) {
+  function runText(text: string, opts?: { useCache?: boolean }) {
     if (!sheet || !resolution.agentId) return;
-    void run(sheet, text, { agentId: resolution.agentId, catalog });
+    void run(sheet, text, {
+      agentId: resolution.agentId,
+      catalog,
+      useCache: opts?.useCache,
+    });
   }
 
   async function saveLinked() {
@@ -489,6 +493,7 @@ export function WorksheetPage() {
               )
             }
             onSwitchAgent={() => setPickerOpen(true)}
+            onRerunWithoutCache={(sql) => runText(sql, { useCache: false })}
           />
         </div>
       </div>

@@ -111,6 +111,7 @@ nav:
       - Runtimes: concepts/runtimes.md
       - Storage backends: concepts/storage-backends.md
       - Query execution: concepts/query-execution.md
+      - Result cache: concepts/result-cache.md
       - SQL sessions: concepts/sql-sessions.md
       - Permissions: concepts/permissions.md
       - AI assistant: concepts/assistant.md

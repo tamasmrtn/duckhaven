@@ -230,6 +230,14 @@ async def handle_agent_frame(db: AsyncSession, frame: Frame, polaris=None) -> No
     if frame.type == FrameType.QUERY_DONE:
         status_val = frame.payload.get("status", "done")
         finished = datetime.now(tz=UTC)
+        statement = await db.get(Query, query_id)
+        if statement is not None and statement.origin == "session":
+            from api.services.result_cache.session import record_completion
+
+            # In the commit below, with the status: a client that sends its next
+            # statement as soon as it hears this one finished must already see the
+            # session state this one left behind.
+            await record_completion(db, statement, frame.payload)
         # A query fast enough to finish without ever emitting QUERY_PROGRESS has no
         # running_at yet. Back it out of the agent's own execution time so the
         # queued/running split stays honest instead of reporting the whole
@@ -274,6 +282,10 @@ async def handle_agent_frame(db: AsyncSession, frame: Frame, polaris=None) -> No
             from api.services.maintenance.apply import record_apply_result
 
             await record_apply_result(db, query, frame.payload)
+        if status_val == "done" and query is not None and query.cache_status == "miss":
+            from api.services.result_cache.service import schedule_admission
+
+            schedule_admission(query.id, polaris)
         if status_val == "done":
             await _upsert_table_stats(db, query_id, frame)
             health = frame.payload.get("health")
@@ -435,7 +447,40 @@ async def fetch_result_page(
 
     Assumes the caller has already established that ``query`` is done, belongs to a
     workspace the caller may read, and has a ``result_path``.
+
+    A result-cache hit ran nothing itself: its rows are the run it points at
+    (``result_source_query_id``), read from the cache entry when the entry holds
+    them, otherwise from the agent that produced them.
     """
+    total = query.row_count or 0
+    column_schema = query.result_schema
+    if query.result_source_query_id is not None:
+        from api.models.result_cache import ResultCacheEntry
+
+        inline = await db.scalar(
+            select(ResultCacheEntry.inline_parquet).where(
+                ResultCacheEntry.source_query_id == query.result_source_query_id,
+                ResultCacheEntry.inline_parquet.is_not(None),
+            )
+        )
+        if inline is not None:
+            started = time.monotonic()
+            rows, columns = decode_parquet_page(inline, limit, offset)
+            record_rows_decode(time.monotonic() - started)
+            next_offset = offset + limit
+            return RowsPageOut(
+                rows=rows,
+                columns=columns,
+                cursor=str(next_offset) if next_offset < total else None,
+                total=total,
+                column_schema=column_schema,
+            )
+        source = await db.get(Query, query.result_source_query_id)
+        if source is None or source.agent_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_410_GONE, detail="Result no longer available"
+            )
+        query = source
     agent = (await db.execute(select(Agent).where(Agent.id == query.agent_id))).scalar_one_or_none()
 
     if agent is not None and agent.provider is not None:
@@ -484,14 +529,13 @@ async def fetch_result_page(
     rows, columns = decode_parquet_page(upstream.content, limit, decode_offset)
     record_rows_decode(time.monotonic() - started)
 
-    total = query.row_count or 0
     next_offset = offset + limit
     return RowsPageOut(
         rows=rows,
         columns=columns,
         cursor=str(next_offset) if next_offset < total else None,
         total=total,
-        column_schema=query.result_schema,
+        column_schema=column_schema,
     )
 
 

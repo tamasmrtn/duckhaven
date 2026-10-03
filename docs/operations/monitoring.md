@@ -71,6 +71,12 @@ the conventional `_total` suffix in the exposition (e.g. `duckhaven_queries_tota
 | `duckhaven_query_result_bytes` | histogram | `replica_id` | Result size of completed (`done`) user queries. |
 | `duckhaven_query_queue_wait_seconds` | histogram | `replica_id` | Time a user query waited in the agent admission queue before running. |
 | `duckhaven_query_queue_rejected_total` | counter | `replica_id`, `reason` | User queries rejected by agent admission control (`reason`: `queue_full`/`queued_timeout`). |
+| `duckhaven_result_cache_lookups_total` | counter | `replica_id`, `outcome`, `reason` | [Result cache](../concepts/result-cache.md) lookups by `outcome` and the run's `cache_detail`; hits are not in `duckhaven_queries_total`. |
+| `duckhaven_result_cache_lookup_seconds` | histogram | `replica_id` | Time to decide whether a query is a hit. |
+| `duckhaven_result_cache_admissions_total` | counter | `replica_id`, `outcome`, `reason` | Finished runs `admitted` (`inline`/`agent`) or `refused` with a reason. |
+| `duckhaven_result_cache_revalidations_total` | counter | `replica_id`, `catalog_kind` | Hits served after compaction-only commits. |
+| `duckhaven_result_cache_evictions_total` | counter | `replica_id`, `reason` | Entries removed (`expired`/`stale`/`space`/`gone`/`replaced`). |
+| `duckhaven_result_cache_bytes` | gauge | `replica_id`, `storage` | Result bytes held, `inline` or `agent`. |
 | `duckhaven_http_requests_total` | counter | `replica_id`, `method`, `route`, `status` | REST API requests, keyed by route template. |
 | `duckhaven_http_request_duration_seconds` | histogram | `replica_id`, `method`, `route` | REST API request latency. |
 | `duckhaven_polaris_requests_total` | counter | `replica_id`, `operation`, `status` | Requests to Apache Polaris (Iceberg REST + management). `status` is the HTTP code, or `error` for transport failures. |

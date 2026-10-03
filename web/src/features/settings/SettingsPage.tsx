@@ -7,6 +7,7 @@ import { PageHeader, PageToolbar } from "@/components/ui/page-header";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/utils";
 import { ApiError } from "@/api/client";
 import { useMe } from "@/queries/auth";
@@ -118,6 +119,44 @@ function WorkspaceSettings({ ws }: { ws: string }) {
         >
           {update.isPending ? "Saving…" : "Save"}
         </Button>
+      </div>
+
+      <div className="space-y-2 border-t border-[var(--border-subtle)] pt-6">
+        <p className="text-sm font-medium text-text-primary">Result cache</p>
+        <div className="flex items-start gap-2">
+          <Checkbox
+            id="ws-result-cache"
+            checked={workspace.result_cache_enabled ?? true}
+            disabled={!isOwner || update.isPending}
+            onCheckedChange={async (checked) => {
+              try {
+                await update.mutateAsync({
+                  result_cache_enabled: checked === true,
+                });
+                toast.success(
+                  checked === true
+                    ? "Result cache turned on"
+                    : "Result cache turned off",
+                );
+              } catch (err) {
+                toast.error(
+                  err instanceof ApiError
+                    ? err.message
+                    : "Failed to update the result cache",
+                );
+              }
+            }}
+          />
+          <div className="space-y-1">
+            <Label htmlFor="ws-result-cache">
+              Answer repeated queries from the result cache
+            </Label>
+            <p className="text-xs text-text-tertiary">
+              A read is served from an earlier run's result when nothing it
+              reads has changed since. Turn this off to run every query.
+            </p>
+          </div>
+        </div>
       </div>
 
       <div className="space-y-2 border-t border-[var(--border-subtle)] pt-6">

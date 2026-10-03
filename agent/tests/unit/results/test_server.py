@@ -169,3 +169,18 @@ async def test_invalid_window_param_returns_400(client, results_dir):
         headers={"Authorization": f"Bearer {TOKEN}"},
     )
     assert resp.status_code == 400
+
+
+async def test_head_reports_whether_a_result_is_still_held(client, results_dir):
+    """The control plane's result cache probes with HEAD before serving a hit
+    whose rows live here, so it never hands out a result that is already gone."""
+    query_id, size = _write_result(results_dir, 3)
+    auth = {"Authorization": f"Bearer {TOKEN}"}
+    held = await client.head(f"/results/{query_id}.parquet", headers=auth)
+    assert held.status_code == 200
+    assert held.content == b""
+    assert int(held.headers["content-length"]) == size
+    gone = await client.head(f"/results/{uuid.uuid4()}.parquet", headers=auth)
+    assert gone.status_code == 404
+    unauthorized = await client.head(f"/results/{query_id}.parquet")
+    assert unauthorized.status_code == 401

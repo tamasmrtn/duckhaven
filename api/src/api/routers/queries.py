@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from api.config import settings
-from api.deps import get_current_user, get_db
+from api.deps import get_current_user, get_db, get_polaris_client
 from api.models.agent import Agent
 from api.models.query import Query, SavedQuery
 from api.models.user import User
@@ -37,7 +37,9 @@ from api.services.grants import GrantDenied
 from api.services.migration.service import workspace_has_active_migration
 from api.services.paging import paginate
 from api.services.permissions import Permission
+from api.services.polaris import PolarisClient
 from api.services.rbac import has_permission
+from api.services.result_cache import service as result_cache
 from api.services.runtimes import (
     AgentNotDispatchable,
     RuntimeRetired,
@@ -48,7 +50,9 @@ from api.services.sql_classify import STATEMENT_TYPES
 from api.services.sql_guard import SQLNotAllowed, assert_allowed, is_read_only
 from api.services.sql_sessions import service as sql_session_service
 from api.services.workspace import (
+    DEFAULT_SCHEMA,
     assert_workspace_member,
+    get_default_catalog,
     get_workspace,
     resolve_workspace_catalogs,
 )
@@ -66,13 +70,18 @@ async def create_query(
     body: QueryCreate,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    polaris: PolarisClient = Depends(get_polaris_client),
 ) -> Query:
     """Submit SQL for execution. Accepted, not completed: 202 with a query id.
 
     Dispatch picks a connected agent the caller may use, so 503 means no
     compatible compute is available rather than that the SQL was wrong. Poll
     `GET /queries/{query_id}` for status and read results from
-    `GET /queries/{query_id}/rows`."""
+    `GET /queries/{query_id}/rows`.
+
+    A read whose tables are unchanged since an identical query ran is answered
+    from the result cache instead: the 202 then carries a query that is already
+    `done`, with `cache_status` "hit". Send `use_cache: false` to always run."""
     workspace = await get_workspace(db, ws)
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
@@ -115,10 +124,17 @@ async def create_query(
     # Without it, pick the connected agent the server would choose — default
     # runtime first, never a beta one — so a caller that doesn't care which agent
     # runs its SQL (the assistant, a script) needn't pick one itself.
+    catalogs = await resolve_workspace_catalogs(db, workspace.id)
     if body.agent_id is None:
+        # The agent the server would choose, for the cache's context only: on the
+        # elastic path the pool picks again at dispatch time.
+        candidate = await query_service.pick_agent_for(db, workspace, principal_id=user.id)
+        cache = await _cache_lookup(db, workspace, catalogs, body, candidate, polaris)
+        if cache.hit:
+            return await _serve_cached(db, workspace, user, body, cache, catalogs, polaris)
         if settings.elastic_compute_enabled:
-            return await _create_elastic_query(db, workspace, user.id, body)
-        agent = await query_service.pick_agent_for(db, workspace, principal_id=user.id)
+            return await _create_elastic_query(db, workspace, user.id, body, cache)
+        agent = candidate
         if agent is None:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -134,13 +150,18 @@ async def create_query(
         # about the agent's state (and an invisible agent 404s exactly like a
         # missing one).
         await assert_agent_tier(db, user, agent, "use")
+        # Before the connectivity probe too: a cached result needs no agent, so a
+        # hit is answered even while the chosen agent is down or starting.
+        cache = await _cache_lookup(db, workspace, catalogs, body, agent, polaris)
+        if cache.hit:
+            return await _serve_cached(db, workspace, user, body, cache, catalogs, polaris)
     if not await is_agent_connected(db, body.agent_id):
         if (
             settings.elastic_compute_enabled
             and agent.provider is not None
             and agent.lifecycle in ("terminated", "failed")
         ):
-            return await _create_starting_query(db, workspace, user.id, body, agent)
+            return await _create_starting_query(db, workspace, user.id, body, agent, cache)
         failed = Query(
             workspace_id=workspace.id,
             agent_id=agent.id,
@@ -155,7 +176,7 @@ async def create_query(
     # Checked here, before a query row exists, so a refusal leaves nothing behind.
     # dispatch_query applies the same check on every other path.
     try:
-        assert_dispatchable(agent, await resolve_workspace_catalogs(db, workspace.id))
+        assert_dispatchable(agent, catalogs)
     except AgentNotDispatchable as exc:
         raise _not_dispatchable(exc) from None
 
@@ -167,6 +188,7 @@ async def create_query(
         user_id=user.id,
         sql=body.sql,
     )
+    cache.stamp(query)
     db.add(query)
     await db.flush()
     try:
@@ -186,6 +208,66 @@ async def create_query(
         # probe above and the send. Same answer as the probe, rather than a 500.
         raise await _agent_not_connected(db, query) from None
     return query
+
+
+async def _cache_lookup(
+    db: AsyncSession,
+    workspace,
+    catalogs,
+    body: QueryCreate,
+    agent: Agent | None,
+    polaris: PolarisClient,
+) -> result_cache.Lookup:
+    """Whether the result cache can answer this run, in the context the chosen (or
+    likely) agent would run it in: the catalog and schema it would `USE`, its
+    runtime and its time zone."""
+    if not catalogs:
+        return result_cache.Lookup(status=result_cache.BYPASS, detail="no_catalogs")
+    default = await get_default_catalog(db, workspace.id)
+    current = body.catalog or (default.slug if default is not None else catalogs[0].slug)
+    context = result_cache.context_for(
+        agent, current_catalog=current, current_schema=DEFAULT_SCHEMA
+    )
+    return await result_cache.lookup(
+        db,
+        workspace=workspace,
+        catalogs=catalogs,
+        sql=body.sql,
+        origin=None,
+        use_cache=body.use_cache,
+        context=context,
+        polaris=polaris,
+    )
+
+
+async def _serve_cached(
+    db: AsyncSession,
+    workspace,
+    user: User,
+    body: QueryCreate,
+    cache: result_cache.Lookup,
+    catalogs,
+    polaris: PolarisClient,
+) -> Query:
+    """Record an interactive run answered by the result cache: a finished query
+    row that points at the run whose result it reuses. Nothing is dispatched."""
+    await _stamp_saved_query_run(db, workspace, body.saved_query_id)
+    query = Query(
+        workspace_id=workspace.id,
+        user_id=user.id,
+        sql=body.sql,
+        timeout_s=body.timeout_s,
+        active_catalog=body.catalog,
+    )
+    try:
+        return await result_cache.serve_hit(
+            db, cache, query, principal_id=user.id, catalogs=catalogs, polaris=polaris
+        )
+    except GrantDenied as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": "grant_denied", "detail": str(exc)},
+        ) from exc
 
 
 def _not_dispatchable(exc: AgentNotDispatchable) -> HTTPException:
@@ -246,7 +328,12 @@ async def _stamp_saved_query_run(db: AsyncSession, workspace, saved_query_id) ->
 
 
 async def _create_starting_query(
-    db: AsyncSession, workspace, user_id: uuid.UUID, body: QueryCreate, agent: Agent
+    db: AsyncSession,
+    workspace,
+    user_id: uuid.UUID,
+    body: QueryCreate,
+    agent: Agent,
+    cache: result_cache.Lookup,
 ) -> Query:
     """Park a run for a named elastic agent and start that agent.
 
@@ -281,6 +368,7 @@ async def _create_starting_query(
         timeout_s=body.timeout_s,
         active_catalog=body.catalog,
     )
+    cache.stamp(query)
     db.add(query)
     # Commit before provisioning: on Docker the agent can register within a second,
     # and the binder can only claim a row it can see.
@@ -304,7 +392,11 @@ async def _create_starting_query(
 
 
 async def _create_elastic_query(
-    db: AsyncSession, workspace, user_id: uuid.UUID, body: QueryCreate
+    db: AsyncSession,
+    workspace,
+    user_id: uuid.UUID,
+    body: QueryCreate,
+    cache: result_cache.Lookup,
 ) -> Query:
     """Run against the elastic pool: dispatch now if a compatible agent is up,
     otherwise park the run ``queued`` and provision one (bound on registration)."""
@@ -327,6 +419,7 @@ async def _create_elastic_query(
         timeout_s=body.timeout_s,
         active_catalog=body.catalog,
     )
+    cache.stamp(query)
     db.add(query)
     await db.flush()
 
@@ -651,13 +744,17 @@ async def get_query_profile(
     """The normalized post-execution profile, or null when none was captured.
 
     Kept off ``QueryOut`` so list/history stay lean; the worksheet fetches it on
-    demand when a query is done.
-    """
+    demand when a query is done. A result-cache hit executed nothing, so it
+    answers with the profile of the run whose result it served
+    (``result_source_query_id``)."""
     result = await db.execute(select(Query).where(Query.id == query_id))
     query = result.scalar_one_or_none()
     if query is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     await assert_workspace_member(db, query.workspace_id, user.id)
+    if query.profile is None and query.result_source_query_id is not None:
+        source = await db.get(Query, query.result_source_query_id)
+        return source.profile if source is not None else None
     return query.profile
 
 
@@ -705,7 +802,8 @@ async def get_query_rows(
     # rather than a 404 so the UI shows a clean "ran, no rows" state.
     if query.result_path is None:
         return RowsPageOut(rows=[], columns=[], cursor=None, total=0, column_schema=None)
-    if query.agent_id is None:
+    # A result-cache hit has no agent of its own; its rows come from its source.
+    if query.agent_id is None and query.result_source_query_id is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No results available")
 
     trace.get_current_span().set_attribute(

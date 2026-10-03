@@ -30,6 +30,7 @@
 - [Runtimes](https://tamasmrtn.github.io/duckhaven/concepts/runtimes/): A runtime is the DuckDB an agent runs, together with the extensions baked into its image.
 - [Storage backends](https://tamasmrtn.github.io/duckhaven/concepts/storage-backends/): Where Iceberg data physically lives, and how credentials reach an agent.
 - [Query execution](https://tamasmrtn.github.io/duckhaven/concepts/query-execution/): Queueing, memory estimation, and concurrency.
+- [Result cache](https://tamasmrtn.github.io/duckhaven/concepts/result-cache/): Answering a repeated query from an earlier run's result while nothing it reads has changed.
 - [SQL sessions](https://tamasmrtn.github.io/duckhaven/concepts/sql-sessions/): Persistent connections for dbt, dlt and BI tools, brokered through the API.
 - [Permissions](https://tamasmrtn.github.io/duckhaven/concepts/permissions/): Per-workspace access control and audit trail.
 - [AI assistant](https://tamasmrtn.github.io/duckhaven/concepts/assistant/): The governed AI data assistant and how it enforces access.

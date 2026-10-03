@@ -43,9 +43,12 @@ export const workspaceHandlers = [
     const body = (await request.json()) as {
       name?: string;
       description?: string;
+      result_cache_enabled?: boolean;
     };
     if (body.name != null) ws.name = body.name;
     if (body.description != null) ws.description = body.description;
+    if (body.result_cache_enabled != null)
+      ws.result_cache_enabled = body.result_cache_enabled;
     return HttpResponse.json(ws);
   }),
 

@@ -33,8 +33,14 @@ from api.services.agent_access import tier_at_least, tier_for_principal
 from api.services.agent_dispatch import is_agent_connected
 from api.services.compute import service as compute_service
 from api.services.query import dispatch_query, pick_agent_for
+from api.services.result_cache import service as result_cache
 from api.services.runtimes import RuntimeRetired
 from api.services.scheduler.cron import next_run
+from api.services.workspace import (
+    DEFAULT_SCHEMA,
+    get_default_catalog,
+    resolve_workspace_catalogs,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +56,12 @@ async def run_cycle(
     session_factory: async_sessionmaker[AsyncSession],
     *,
     now: datetime | None = None,
+    polaris: Any = None,
 ) -> dict[str, Any]:
-    """Run one scheduler cycle: dispatch every schedule whose next run is due."""
+    """Run one scheduler cycle: dispatch every schedule whose next run is due.
+
+    ``polaris`` lets a run be answered from the result cache when its Iceberg
+    tables are unchanged; without it an Iceberg-reading run simply executes."""
     now = now or datetime.now(tz=UTC)
     async with session_factory() as db:
         due = (
@@ -70,7 +80,7 @@ async def run_cycle(
         dispatched = 0
         skipped = 0
         for schedule in due:
-            if await _dispatch_schedule(db, schedule, now):
+            if await _dispatch_schedule(db, schedule, now, polaris):
                 dispatched += 1
             else:
                 skipped += 1
@@ -78,7 +88,9 @@ async def run_cycle(
         return {"status": "ran", "due": len(due), "dispatched": dispatched, "skipped": skipped}
 
 
-async def _dispatch_schedule(db: AsyncSession, schedule: Schedule, now: datetime) -> bool:
+async def _dispatch_schedule(
+    db: AsyncSession, schedule: Schedule, now: datetime, polaris: Any = None
+) -> bool:
     """Dispatch one schedule. Returns True if a run was started, False if skipped.
 
     Always advances ``next_run_at`` so a slow or skipped tick never causes a
@@ -95,7 +107,7 @@ async def _dispatch_schedule(db: AsyncSession, schedule: Schedule, now: datetime
             return False
 
     if schedule.job_type == "saved_query":
-        query = await _run_saved_query(db, schedule, now)
+        query = await _run_saved_query(db, schedule, now, polaris)
     else:
         logger.warning(
             "Unknown schedule job_type %r; skipping schedule=%s", schedule.job_type, schedule.id
@@ -134,17 +146,50 @@ class _Resolution:
     starting: bool = False
 
 
-async def _run_saved_query(db: AsyncSession, schedule: Schedule, now: datetime) -> Query | None:
+async def _run_saved_query(
+    db: AsyncSession, schedule: Schedule, now: datetime, polaris: Any = None
+) -> Query | None:
     """Run the schedule's saved query verbatim, recorded as origin="scheduled".
 
     Returns the created ``Query`` (so the caller can stamp the schedule), or None
     if the target saved query no longer exists.
+
+    The result cache is asked first, before an agent is resolved: a run whose
+    tables have not changed since the last identical run is answered without
+    starting compute, which for an elastic agent torn down between runs is the
+    whole cost of the run.
     """
     saved = await db.get(SavedQuery, schedule.saved_query_id) if schedule.saved_query_id else None
     if saved is None:
         logger.warning("Schedule %s has no saved query; skipping", schedule.id)
         return None
     workspace = await db.get(Workspace, schedule.workspace_id)
+
+    cache = await _cache_lookup(db, schedule, saved, workspace, polaris)
+    if cache.hit:
+        query = Query(
+            workspace_id=schedule.workspace_id,
+            user_id=None,
+            sql=saved.sql,
+            origin="scheduled",
+            schedule_id=schedule.id,
+        )
+        try:
+            await result_cache.serve_hit(
+                db,
+                cache,
+                query,
+                principal_id=saved.updated_by,
+                catalogs=await resolve_workspace_catalogs(db, schedule.workspace_id),
+                polaris=polaris,
+            )
+        except ValueError as exc:  # GrantDenied: recorded like a refused dispatch
+            query.status = "failed"
+            query.error = str(exc)
+            query.finished_at = now
+            db.add(query)
+        saved.last_run_at = now
+        return query
 
     resolved = await _resolve_agent(db, schedule, saved, workspace)
     agent = resolved.agent
@@ -158,6 +203,7 @@ async def _run_saved_query(db: AsyncSession, schedule: Schedule, now: datetime) 
         origin="scheduled",
         schedule_id=schedule.id,
     )
+    cache.stamp(query)
     db.add(query)
     await db.flush()
 
@@ -187,6 +233,41 @@ async def _run_saved_query(db: AsyncSession, schedule: Schedule, now: datetime) 
 
     saved.last_run_at = now
     return query
+
+
+async def _cache_lookup(
+    db: AsyncSession,
+    schedule: Schedule,
+    saved: SavedQuery,
+    workspace: Workspace | None,
+    polaris: Any,
+) -> result_cache.Lookup:
+    """Whether the result cache can answer this run, keyed in the context of the
+    agent the run would use: the named one, or the one auto-pick would choose.
+    Read without side effects -- unlike ``_resolve_agent``, which may start one."""
+    if workspace is None:
+        return result_cache.Lookup(status=result_cache.BYPASS, detail="no_workspace")
+    catalogs = await resolve_workspace_catalogs(db, workspace.id)
+    if not catalogs:
+        return result_cache.Lookup(status=result_cache.BYPASS, detail="no_catalogs")
+    named = schedule.agent_id or saved.default_agent_id
+    agent = await db.get(Agent, named) if named is not None else await pick_agent_for(db, workspace)
+    default = await get_default_catalog(db, workspace.id)
+    context = result_cache.context_for(
+        agent,
+        current_catalog=default.slug if default is not None else catalogs[0].slug,
+        current_schema=DEFAULT_SCHEMA,
+    )
+    return await result_cache.lookup(
+        db,
+        workspace=workspace,
+        catalogs=catalogs,
+        sql=saved.sql,
+        origin="scheduled",
+        use_cache=True,
+        context=context,
+        polaris=polaris,
+    )
 
 
 async def _resolve_agent(
@@ -286,15 +367,19 @@ async def scheduler_leadership(
                 await db.commit()
 
 
-async def run_tick(session_factory: async_sessionmaker[AsyncSession]) -> dict[str, Any]:
+async def run_tick(
+    session_factory: async_sessionmaker[AsyncSession], polaris: Any = None
+) -> dict[str, Any]:
     """One scheduler tick: run a cycle only if this replica wins leadership."""
     async with scheduler_leadership(session_factory) as is_leader:
         if not is_leader:
             return {"status": "standby"}
-        return await run_cycle(session_factory)
+        return await run_cycle(session_factory, polaris=polaris)
 
 
-async def scheduler_loop(session_factory: async_sessionmaker[AsyncSession]) -> None:
+async def scheduler_loop(
+    session_factory: async_sessionmaker[AsyncSession], polaris: Any = None
+) -> None:
     """Background loop: wake on a fixed tick and dispatch due schedules.
 
     Each cycle is wrapped so one bad run never kills the loop. Leadership is elected
@@ -303,7 +388,7 @@ async def scheduler_loop(session_factory: async_sessionmaker[AsyncSession]) -> N
     logger.info("Scheduler started (tick %.0fs)", settings.scheduler_tick_s)
     while True:
         try:
-            result = await run_tick(session_factory)
+            result = await run_tick(session_factory, polaris)
             if result.get("status") == "ran" and result.get("dispatched"):
                 logger.info("Scheduler cycle: %s", result)
         except Exception as exc:  # noqa: BLE001 - the loop must survive any cycle failure

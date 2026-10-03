@@ -19,6 +19,7 @@ from api.services.polaris import (
     PolarisSchema,
     PolarisSnapshot,
     PolarisTable,
+    PolarisTableVersion,
     _columns_from_iceberg_schema,
 )
 
@@ -30,6 +31,10 @@ class FakePolaris:
         self.tables: dict[tuple[str, str, str], PolarisTable] = {}
         # Snapshot history per table, seeded by tests (newest-first like prod).
         self.snapshots: dict[tuple[str, str, str], list[PolarisSnapshot]] = {}
+        # What `load_table_version` reports per table; a seeded table without an
+        # entry reports a fixed version, so tests only seed what they vary.
+        self.versions: dict[tuple[str, str, str], PolarisTableVersion] = {}
+        self.version_loads: int = 0
         # Test knobs:
         self.fail_create_catalog: bool = False
         self.fail_create_schema: bool = False
@@ -168,6 +173,21 @@ class FakePolaris:
         if key not in self.tables:
             raise PolarisNotFoundError(f"{catalog}.{schema}.{name}")
         return self.snapshots.get(key, [])
+
+    async def load_table_version(self, catalog: str, schema: str, name: str) -> PolarisTableVersion:
+        self.version_loads += 1
+        key = (catalog, schema, name)
+        if key not in self.tables:
+            raise PolarisNotFoundError(f"{catalog}.{schema}.{name}")
+        return self.versions.get(
+            key,
+            PolarisTableVersion(
+                table_uuid=f"uuid-{name}",
+                snapshot_id=1,
+                schema_id=0,
+                metadata_location=f"s3://w/{name}/metadata/00001.metadata.json",
+            ),
+        )
 
     async def create_table(
         self,

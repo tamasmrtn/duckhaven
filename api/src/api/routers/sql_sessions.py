@@ -24,12 +24,13 @@ from fastapi import Query as QueryParam
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
-from api.deps import get_current_user, get_db
+from api.deps import get_current_user, get_db, get_polaris_client
 from api.metrics import record_sql_session_closed, record_statement_policy_rejection
 from api.models.agent import Agent
 from api.models.query import Query
 from api.models.sql_session import SqlSession
 from api.models.user import User
+from api.models.workspace import Workspace
 from api.schemas.page import Page
 from api.schemas.query import QueryOut
 from api.schemas.sql_session import (
@@ -51,8 +52,11 @@ from api.services.grants import GrantDenied, assert_query_access
 from api.services.migration.service import workspace_has_active_migration
 from api.services.paging import paginate
 from api.services.permissions import Permission
+from api.services.polaris import PolarisClient
 from api.services.query import pick_agent_for
 from api.services.rbac import has_permission
+from api.services.result_cache import service as result_cache
+from api.services.result_cache import session as session_cache
 from api.services.runtimes import (
     AgentNotDispatchable,
     RuntimeRetired,
@@ -262,6 +266,7 @@ async def open_session(
         active_catalog=active.slug,
         client_name=client_name,
         client_version=client_version,
+        use_cache=body.use_cache,
     )
     db.add(session)
     await db.flush()
@@ -518,6 +523,7 @@ async def run_statement(
     response: Response,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    polaris: PolarisClient = Depends(get_polaris_client),
 ) -> Query | QueryOut:
     """Run a statement on this session's DuckDB connection. 200 if it finished
     within `wait_timeout_s`, 202 with a query id if it is still running.
@@ -584,6 +590,38 @@ async def run_statement(
             detail={"error": "grant_denied", "detail": str(exc)},
         ) from exc
 
+    cache = await session_cache.lookup(
+        db,
+        session=session,
+        workspace=await db.get(Workspace, session.workspace_id),
+        catalogs=catalogs,
+        sql=body.sql,
+        use_cache=body.use_cache,
+        polaris=polaris,
+    )
+    if cache.hit:
+        hit = Query(
+            workspace_id=session.workspace_id,
+            user_id=session.user_id,
+            sql=body.sql,
+            origin="session",
+            statement_type=classify_parsed(parsed_statements),
+            session_id=session.id,
+            timeout_s=body.timeout_s,
+        )
+        session.last_active_at = datetime.now(tz=UTC)
+        try:
+            hit = await result_cache.serve_hit(
+                db, cache, hit, principal_id=session.user_id, catalogs=catalogs, polaris=polaris
+            )
+        except GrantDenied as exc:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"error": "grant_denied", "detail": str(exc)},
+            ) from exc
+        response.status_code = status.HTTP_200_OK
+        return await _with_first_page(db, hit, body)
+
     query = Query(
         workspace_id=session.workspace_id,
         agent_id=session.agent_id,
@@ -598,6 +636,7 @@ async def run_statement(
         # enforces the same budget around execution.
         timeout_s=body.timeout_s,
     )
+    cache.stamp(query)
     db.add(query)
     session.last_active_at = datetime.now(tz=UTC)
     # Commit before dispatching: STATEMENT_ACK is applied by a separate DB
@@ -631,6 +670,12 @@ async def run_statement(
         # and the client reads it exactly where it would have after polling.
         response.status_code = status.HTTP_200_OK
 
+    return await _with_first_page(db, query, body)
+
+
+async def _with_first_page(db: AsyncSession, query: Query, body: SqlStatementCreate):
+    """The statement's response, with its first page of rows inlined when it is
+    done, produced rows, and the caller did not opt out."""
     # On unless the caller opts out with 0: the round trip this removes is paid by
     # every client, including ones that will never send the field.
     first_page_limit = (

@@ -13,8 +13,14 @@ export const workspacesApi = {
   members: (ws: string) => get<WorkspaceMember[]>(`/workspaces/${ws}/members`),
 
   // Slug is not renameable — it is the routable /$ws/... segment.
-  update: (ws: string, data: { name?: string; description?: string }) =>
-    patch<Workspace>(`/workspaces/${ws}`, data),
+  update: (
+    ws: string,
+    data: {
+      name?: string;
+      description?: string;
+      result_cache_enabled?: boolean;
+    },
+  ) => patch<Workspace>(`/workspaces/${ws}`, data),
 
   remove: (ws: string) => del(`/workspaces/${ws}`),
 };

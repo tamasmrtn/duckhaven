@@ -506,16 +506,25 @@ async def _admission_refusal(db: AsyncSession, query: Query, polaris: Any) -> st
     if agent is None:
         return "agent_gone"
     # The run must really have happened in the context it was keyed under: an
-    # elastic run is keyed before its agent exists.
-    from api.services import runtimes as runtime_service
+    # elastic run is keyed before its agent exists, and a session statement in
+    # whatever context the session was in.
+    if query.origin == "session":
+        from api.models.sql_session import SqlSession
+        from api.services.result_cache.session import context_matches
 
-    timezone = (agent.capabilities or {}).get("timezone")
-    if timezone is None:
-        return "unknown_timezone"
-    if runtime_service.runtime_id_of(agent) != context.get("runtime_id") or timezone != context.get(
-        "timezone"
-    ):
-        return "context_mismatch"
+        session = await db.get(SqlSession, query.session_id) if query.session_id else None
+        if not context_matches(session, context):
+            return "context_mismatch"
+    else:
+        from api.services import runtimes as runtime_service
+
+        timezone = (agent.capabilities or {}).get("timezone")
+        if timezone is None:
+            return "unknown_timezone"
+        if runtime_service.runtime_id_of(agent) != context.get(
+            "runtime_id"
+        ) or timezone != context.get("timezone"):
+            return "context_mismatch"
 
     deps = [Dependency(**d) for d in recorded.get("deps") or []]
     from api.services.workspace import resolve_workspace_catalogs

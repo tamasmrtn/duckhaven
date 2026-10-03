@@ -26,6 +26,10 @@ class SqlSessionCreate(BaseModel):
     # Note "cancel" abandons the *row*, never the compute that is starting -- an
     # immediate retry lands on the agent still coming up.
     on_wait_timeout: Literal["cancel", "continue"] = "cancel"
+    # Whether this session's statements may be answered from the result cache. Only
+    # autocommit reads in a session that has created no temporary objects ever are;
+    # see docs/concepts/result-cache.md.
+    use_cache: bool = True
 
     @model_validator(mode="after")
     def _validate_wait(self) -> SqlSessionCreate:
@@ -50,6 +54,8 @@ class SqlSessionOut(BaseModel):
     runtime_id: str | None = None
     user_id: uuid.UUID | None = None
     active_catalog: str | None
+    # Whether the session's statements may be answered from the result cache.
+    use_cache: bool = True
     # Scoped object-storage prefix a load may COPY to/from (dlt staging).
     staging_uri: str | None
     error: str | None
@@ -104,6 +110,9 @@ class SqlStatementCreate(BaseModel):
     # default -- should say so: the page is serialized onto the same response the
     # completion wait exists to keep short.
     first_page_limit: int | None = Field(default=None, ge=0, le=MAX_FIRST_PAGE_LIMIT)
+    # False runs this statement even when a cached result would do. The session's
+    # own `use_cache` must also allow the cache for it to be used.
+    use_cache: bool = True
 
     @model_validator(mode="after")
     def _validate_wait(self) -> SqlStatementCreate:

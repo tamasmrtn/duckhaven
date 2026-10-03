@@ -230,6 +230,14 @@ async def handle_agent_frame(db: AsyncSession, frame: Frame, polaris=None) -> No
     if frame.type == FrameType.QUERY_DONE:
         status_val = frame.payload.get("status", "done")
         finished = datetime.now(tz=UTC)
+        statement = await db.get(Query, query_id)
+        if statement is not None and statement.origin == "session":
+            from api.services.result_cache.session import record_completion
+
+            # In the commit below, with the status: a client that sends its next
+            # statement as soon as it hears this one finished must already see the
+            # session state this one left behind.
+            await record_completion(db, statement, frame.payload)
         # A query fast enough to finish without ever emitting QUERY_PROGRESS has no
         # running_at yet. Back it out of the agent's own execution time so the
         # queued/running split stays honest instead of reporting the whole

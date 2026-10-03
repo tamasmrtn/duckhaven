@@ -8,6 +8,7 @@ import {
   snapshotByVersionTemplate,
 } from "@/features/catalog/worksheetSql";
 import type { TableSnapshot } from "@/types/catalog";
+import { SectionLabel } from "@/components/ui/section-label";
 
 function fmt(n: number | null): string {
   return n == null ? "—" : n.toLocaleString();
@@ -63,9 +64,7 @@ export function SnapshotHistoryPanel({
       {/* "Query as of…" — timestamp + relative-offset picks (snapshot-id pins
           live on each row below). */}
       <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border-subtle)] px-4 py-2 shrink-0">
-        <span className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
-          Query as of
-        </span>
+        <SectionLabel>Query as of</SectionLabel>
         <QueryAsOfTimestamp
           onQuery={(iso) =>
             onQuery(snapshotByTimestampTemplate(schema, table, iso, catalog))

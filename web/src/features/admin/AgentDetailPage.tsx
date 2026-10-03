@@ -52,6 +52,7 @@ import {
 import { AgentAccessTab } from "./AgentAccessTab";
 import { formatCost } from "./agentFormat";
 import { MonitoringTab } from "./monitoring/MonitoringTab";
+import { SectionLabel } from "@/components/ui/section-label";
 
 const statusIcon: Record<AgentStatus, React.ReactNode> = {
   healthy: <CheckCircle2 className="size-4 text-[var(--status-success)]" />,
@@ -185,9 +186,7 @@ function OverviewTab({ agent }: { agent: Agent }) {
       <div className="grid gap-4 md:grid-cols-2">
         {agent.provider && (
           <section className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-secondary">
-              Elastic compute
-            </p>
+            <SectionLabel className="mb-2">Elastic compute</SectionLabel>
             <div className="space-y-1 text-sm">
               <Field label="Lifecycle" value={agent.lifecycle ?? "—"} />
               {agent.runtime?.display_name && (
@@ -219,9 +218,7 @@ function OverviewTab({ agent }: { agent: Agent }) {
         )}
 
         <section className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-secondary">
-            Capabilities
-          </p>
+          <SectionLabel className="mb-2">Capabilities</SectionLabel>
           {agent.capabilities ? (
             <div className="space-y-1 text-sm">
               <Field
@@ -295,9 +292,7 @@ function OverviewTab({ agent }: { agent: Agent }) {
         </section>
 
         <section className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-secondary">
-            Last hour
-          </p>
+          <SectionLabel className="mb-2">Last hour</SectionLabel>
           <div className="space-y-1 text-sm">
             <Field label="Completed" value={recent?.summary.finished ?? "—"} />
             <Field

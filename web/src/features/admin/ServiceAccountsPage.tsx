@@ -48,6 +48,7 @@ import {
 } from "@/queries/service-accounts";
 import type { PatToken, ServiceAccount } from "@/types/service-account";
 import { ManageWorkspacesDialog } from "./UsersPage";
+import { SectionLabel } from "@/components/ui/section-label";
 
 const ROLES = ["admin", "user"];
 // Labels map to the API's `expires_in_days` (null = never).
@@ -252,9 +253,7 @@ function PatModal({
             <Separator />
 
             <div className="space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
-                Active tokens
-              </p>
+              <SectionLabel>Active tokens</SectionLabel>
               {isLoading ? (
                 <Skeleton className="h-10 w-full animate-shimmer rounded-md" />
               ) : pats.length === 0 ? (

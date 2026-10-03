@@ -10,6 +10,7 @@ import {
   totalTableSize,
 } from "@/features/catalog/tableSize";
 import { formatBytes } from "@/utils";
+import { SectionLabel } from "@/components/ui/section-label";
 
 function fmtNum(n: number | null | undefined) {
   return n == null ? "—" : n.toLocaleString();
@@ -83,9 +84,7 @@ export function SchemaDetail({
           value="details"
           className="mt-0 flex-1 overflow-auto border-t border-[var(--border-subtle)] p-4"
         >
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-secondary">
-            Data per table
-          </p>
+          <SectionLabel className="mb-2">Data per table</SectionLabel>
           <table className="w-full">
             <thead>
               <tr className="border-b border-[var(--border-subtle)] text-left">

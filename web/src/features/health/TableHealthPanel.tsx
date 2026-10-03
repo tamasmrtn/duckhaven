@@ -20,6 +20,7 @@ import { formatBytes } from "@/utils";
 import { HealthScoreGauge } from "./HealthScoreGauge";
 import { RecommendationCard } from "./RecommendationCard";
 import { BAND_COLOR } from "./healthStyles";
+import { SectionLabel } from "@/components/ui/section-label";
 
 const DIMENSION_LABEL: Record<string, string> = {
   fragmentation: "Fragmentation",
@@ -119,9 +120,7 @@ export function TableHealthPanel({
 
         {trend.length > 1 && (
           <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4">
-            <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-text-secondary">
-              Storage growth
-            </p>
+            <SectionLabel className="mb-3">Storage growth</SectionLabel>
             <div className="h-48" data-testid="growth-chart">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={trend}>
@@ -163,9 +162,7 @@ export function TableHealthPanel({
 
         {recommendations.length > 0 && (
           <div className="space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
-              Recommendations
-            </p>
+            <SectionLabel>Recommendations</SectionLabel>
             {recommendations.map((rec) => (
               <RecommendationCard
                 key={rec.id}

@@ -4,6 +4,7 @@ import {
   formatWindowTick,
   windowTicks,
 } from "../metricsTime";
+import { SectionLabel } from "@/components/ui/section-label";
 
 /**
  * Shared chrome for every chart on the monitoring page.
@@ -31,9 +32,7 @@ export function ChartFrame({
     <section className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4">
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <div>
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
-            {title}
-          </h3>
+          <SectionLabel>{title}</SectionLabel>
           {subtitle && (
             <p className="mt-0.5 text-2xs text-text-tertiary">{subtitle}</p>
           )}

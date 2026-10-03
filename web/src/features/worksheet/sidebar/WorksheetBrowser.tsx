@@ -24,6 +24,7 @@ import type { SavedQuery } from "@/types/saved-query";
 import type { Worksheet } from "@/types/worksheet";
 import { cn } from "@/utils";
 import { relativeTime } from "@/utils/relativeTime";
+import { SectionLabel } from "@/components/ui/section-label";
 
 interface WorksheetBrowserProps {
   ws: string;
@@ -240,11 +241,7 @@ export function WorksheetBrowser({
 }
 
 function SectionHeading({ children }: { children: React.ReactNode }) {
-  return (
-    <h3 className="px-2 pb-1 pt-3 text-2xs font-semibold uppercase tracking-wide text-text-tertiary">
-      {children}
-    </h3>
-  );
+  return <SectionLabel className="px-2 pb-1 pt-3">{children}</SectionLabel>;
 }
 
 function RenameDialog({

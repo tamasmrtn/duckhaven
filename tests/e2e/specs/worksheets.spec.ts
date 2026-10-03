@@ -27,7 +27,7 @@ test("each tab keeps its own results", async ({ page, worksheetPage }) => {
   expect(rows).toEqual([["42"]]);
 
   await worksheetPage.newTabButton.click();
-  await expect(page.getByText("No results yet.")).toBeVisible();
+  await expect(page.getByText("No results yet", { exact: true })).toBeVisible();
 
   await worksheetPage.worksheetTabs.nth(-2).click();
   await expect(page.locator("table tbody tr")).toHaveCount(1);

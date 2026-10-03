@@ -72,6 +72,20 @@ export function QueryProfilePage() {
         <Centered message="No profile for this query (DDL/DML or profiling unavailable)." />
       ) : (
         <>
+          {query?.cache_status === "hit" && query.result_source_query_id && (
+            <div className="border-b border-[var(--border-subtle)] bg-accent px-6 py-1.5 text-2xs text-text-secondary">
+              Served from the result cache: nothing ran for this query. This is
+              the profile of{" "}
+              <Link
+                to="/$ws/queries/$queryId"
+                params={{ ws, queryId: query.result_source_query_id }}
+                className="underline hover:text-text-primary"
+              >
+                the earlier run
+              </Link>{" "}
+              whose result it reused.
+            </div>
+          )}
           <ProfileSummary summary={profile.summary} className="px-6" />
           <div className="flex min-h-0 flex-1">
             <div className="min-w-0 flex-1 overflow-hidden bg-[var(--bg-canvas)]">

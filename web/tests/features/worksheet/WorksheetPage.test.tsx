@@ -66,7 +66,9 @@ describe("WorksheetPage tabs", () => {
     expect(
       await screen.findByRole("tab", { name: /events\.sql/ }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /funnel-draft/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: /funnel-draft/ }),
+    ).toBeInTheDocument();
     // A closed worksheet is not a tab.
     expect(screen.queryByRole("tab", { name: /retention scratch/ })).toBeNull();
   });
@@ -96,7 +98,9 @@ describe("WorksheetPage tabs", () => {
     await waitFor(() => expect(WORKSHEETS).toHaveLength(before + 1));
     const created = WORKSHEETS.at(-1)!;
     expect(created.title).not.toBe("untitled");
-    const tab = await screen.findByRole("tab", { name: new RegExp(created.title) });
+    const tab = await screen.findByRole("tab", {
+      name: new RegExp(created.title),
+    });
     await waitFor(() => expect(tab).toHaveAttribute("data-state", "active"));
   });
 
@@ -150,12 +154,16 @@ describe("WorksheetPage tabs", () => {
 
     await router.navigate({ to: "/acme-analytics/saved-queries" });
     await waitFor(() =>
-      expect(router.state.location.pathname).toBe("/acme-analytics/saved-queries"),
+      expect(router.state.location.pathname).toBe(
+        "/acme-analytics/saved-queries",
+      ),
     );
     await router.navigate({ to: "/acme-analytics/worksheets" });
 
     const funnelTab = await screen.findByRole("tab", { name: /funnel-draft/ });
-    await waitFor(() => expect(funnelTab).toHaveAttribute("data-state", "active"));
+    await waitFor(() =>
+      expect(funnelTab).toHaveAttribute("data-state", "active"),
+    );
   });
 
   it("opens a freshly created workspace with one new worksheet", async () => {
@@ -174,13 +182,16 @@ describe("WorksheetPage tabs", () => {
       http.get("/api/workspaces/qa-test-workspace/worksheets", () =>
         HttpResponse.json({ items: [], cursor: null, has_more: false }),
       ),
-      http.post("/api/workspaces/qa-test-workspace/worksheets", async ({ request }) => {
-        const body = (await request.json()) as { title: string };
-        return HttpResponse.json(
-          { ...sheet("wk-1"), id: "wk-qa", title: body.title, sql: "" },
-          { status: 201 },
-        );
-      }),
+      http.post(
+        "/api/workspaces/qa-test-workspace/worksheets",
+        async ({ request }) => {
+          const body = (await request.json()) as { title: string };
+          return HttpResponse.json(
+            { ...sheet("wk-1"), id: "wk-qa", title: body.title, sql: "" },
+            { status: 201 },
+          );
+        },
+      ),
     );
     renderWithProviders({ initialRoute: "/qa-test-workspace/worksheets" });
 
@@ -203,7 +214,10 @@ describe("WorksheetPage tabs", () => {
     expect(
       await screen.findByRole("tab", { name: /old local work/ }),
     ).toBeInTheDocument();
-    expect(WORKSHEETS.at(-1)).toMatchObject({ title: "old local work", sql: "SELECT 42" });
+    expect(WORKSHEETS.at(-1)).toMatchObject({
+      title: "old local work",
+      sql: "SELECT 42",
+    });
     expect(localStorage.getItem("dh-worksheets-acme-analytics")).toBeNull();
   });
 });
@@ -226,7 +240,9 @@ describe("WorksheetPage tab accessibility", () => {
     eventsTab.focus();
     await user.keyboard("{ArrowRight}");
     expect(funnelTab).toHaveFocus();
-    await waitFor(() => expect(funnelTab).toHaveAttribute("data-state", "active"));
+    await waitFor(() =>
+      expect(funnelTab).toHaveAttribute("data-state", "active"),
+    );
 
     const closeBtn = screen.getByLabelText("Close funnel-draft");
     closeBtn.focus();
@@ -307,7 +323,9 @@ describe("WorksheetPage autosave", () => {
     await user.clear(editor);
     await user.type(editor, "SELECT 1 -- keep me");
 
-    await router.navigate({ to: "/acme-analytics/catalog/acme_analytics/raw/events" });
+    await router.navigate({
+      to: "/acme-analytics/catalog/acme_analytics/raw/events",
+    });
 
     await waitFor(() => expect(sheet("wk-1").sql).toBe("SELECT 1 -- keep me"));
   });
@@ -322,12 +340,21 @@ describe("WorksheetPage autosave", () => {
 
     await user.type(editor, " -- mine");
 
-    const banner = await screen.findByText(/changed in another window/i, undefined, {
-      timeout: 3000,
-    });
+    const banner = await screen.findByText(
+      /changed in another window/i,
+      undefined,
+      {
+        timeout: 3000,
+      },
+    );
     expect(sheet("wk-1").sql).toBe("SELECT 'from elsewhere'");
 
-    await user.click(within(banner.closest("[role=alert]") as HTMLElement).getByRole("button", { name: "Load latest" }));
+    await user.click(
+      within(banner.closest("[role=alert]") as HTMLElement).getByRole(
+        "button",
+        { name: "Load latest" },
+      ),
+    );
     await waitFor(() =>
       expect(screen.getByRole("textbox", { name: "SQL editor" })).toHaveValue(
         "SELECT 'from elsewhere'",
@@ -350,11 +377,17 @@ describe("WorksheetPage run", () => {
       http.post("/api/workspaces/:ws/queries", async () => {
         postCount += 1;
         await delay(100);
-        return HttpResponse.json({ id: "q-dbl", status: "queued" }, { status: 202 });
+        return HttpResponse.json(
+          { id: "q-dbl", status: "queued" },
+          { status: 202 },
+        );
       }),
       http.get("/api/queries/q-dbl", () =>
         HttpResponse.json(
-          doneQuery("q-dbl", { status: "running", progress: { stage: "scanning" } }),
+          doneQuery("q-dbl", {
+            status: "running",
+            progress: { stage: "scanning" },
+          }),
         ),
       ),
     );
@@ -375,7 +408,10 @@ describe("WorksheetPage run", () => {
     server.use(
       http.post("/api/workspaces/:ws/queries", async ({ request }) => {
         body = (await request.json()) as Record<string, unknown>;
-        return HttpResponse.json({ id: "q-t", status: "queued" }, { status: 202 });
+        return HttpResponse.json(
+          { id: "q-t", status: "queued" },
+          { status: 202 },
+        );
       }),
     );
     const user = userEvent.setup();
@@ -386,13 +422,57 @@ describe("WorksheetPage run", () => {
     expect(body).not.toHaveProperty("timeout");
   });
 
+  it("marks a cached result and re-runs it without the cache on request", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    server.use(
+      http.post("/api/workspaces/:ws/queries", async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>;
+        bodies.push(body);
+        const id = bodies.length === 1 ? "q-hit" : "q-fresh";
+        return HttpResponse.json({ id, status: "done" }, { status: 202 });
+      }),
+      http.get("/api/queries/q-hit", () =>
+        HttpResponse.json(
+          doneQuery("q-hit", {
+            agent_id: null,
+            cache_status: "hit",
+            result_source_query_id: "q-source",
+          }),
+        ),
+      ),
+      http.get("/api/queries/q-fresh", () =>
+        HttpResponse.json(doneQuery("q-fresh", { cache_status: "bypass" })),
+      ),
+    );
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: WS_ROUTE });
+    await user.click(await screen.findByRole("button", { name: /run query/i }));
+
+    expect(await screen.findByText(/^Cached/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /from an earlier run/i }),
+    ).toHaveAttribute("href", expect.stringContaining("/queries/q-source"));
+    expect(bodies[0]).not.toHaveProperty("use_cache", false);
+
+    await user.click(
+      screen.getByRole("button", { name: /re-run without cache/i }),
+    );
+    await waitFor(() => expect(bodies).toHaveLength(2));
+    expect(bodies[1]).toMatchObject({ sql: "SELECT 1", use_cache: false });
+    await waitFor(() =>
+      expect(screen.queryByText(/^Cached/)).not.toBeInTheDocument(),
+    );
+  });
+
   it("disables Run and explains when there are no agents at all", async () => {
     server.use(http.get("/api/agents", () => HttpResponse.json([])));
     renderWithProviders({ initialRoute: WS_ROUTE });
 
     const runBtn = await screen.findByRole("button", { name: /run query/i });
     expect(runBtn).toBeDisabled();
-    expect(await screen.findByText(/no compute agents yet/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/no compute agents yet/i),
+    ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /add an agent/i })).toHaveAttribute(
       "href",
       "/acme-analytics/compute",
@@ -424,13 +504,17 @@ describe("WorksheetPage run", () => {
       ),
     );
     const { router } = renderWithProviders({ initialRoute: WS_ROUTE });
-    const picker = await screen.findByRole("combobox", { name: "Compute agent" });
+    const picker = await screen.findByRole("combobox", {
+      name: "Compute agent",
+    });
     await waitFor(() => expect(picker).toHaveTextContent("agent-a"));
 
     await router.navigate({ to: "/acme-analytics/saved-queries" });
     await router.navigate({ to: "/acme-analytics/worksheets" });
 
-    const again = await screen.findByRole("combobox", { name: "Compute agent" });
+    const again = await screen.findByRole("combobox", {
+      name: "Compute agent",
+    });
     await waitFor(() => expect(again).toHaveTextContent("agent-a"));
     expect(again).not.toHaveTextContent("agent-c");
   });
@@ -438,23 +522,25 @@ describe("WorksheetPage run", () => {
   it("remembers each worksheet's own agent", async () => {
     const user = userEvent.setup();
     renderWithProviders({ initialRoute: WS_ROUTE });
-    const picker = await screen.findByRole("combobox", { name: "Compute agent" });
+    const picker = await screen.findByRole("combobox", {
+      name: "Compute agent",
+    });
     await user.click(picker);
     await user.click(await screen.findByText("agent-b"));
     await waitFor(() => expect(sheet("wk-1").agent_id).toBe("ag-2"));
 
     await user.click(screen.getByRole("tab", { name: /funnel-draft/ }));
     await waitFor(() =>
-      expect(screen.getByRole("combobox", { name: "Compute agent" })).toHaveTextContent(
-        "agent-a",
-      ),
+      expect(
+        screen.getByRole("combobox", { name: "Compute agent" }),
+      ).toHaveTextContent("agent-a"),
     );
 
     await user.click(screen.getByRole("tab", { name: /events\.sql/ }));
     await waitFor(() =>
-      expect(screen.getByRole("combobox", { name: "Compute agent" })).toHaveTextContent(
-        "agent-b",
-      ),
+      expect(
+        screen.getByRole("combobox", { name: "Compute agent" }),
+      ).toHaveTextContent("agent-b"),
     );
   });
 
@@ -494,7 +580,10 @@ describe("WorksheetPage run", () => {
       ),
       http.get("/api/queries/q-down", () =>
         HttpResponse.json(
-          doneQuery("q-down", { status: "failed", error: "Agent not connected" }),
+          doneQuery("q-down", {
+            status: "failed",
+            error: "Agent not connected",
+          }),
         ),
       ),
     );
@@ -502,9 +591,13 @@ describe("WorksheetPage run", () => {
     renderWithProviders({ initialRoute: WS_ROUTE });
     await user.click(await screen.findByRole("button", { name: /run query/i }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Agent not connected");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Agent not connected",
+    );
     await user.click(screen.getByRole("button", { name: /switch agent/i }));
-    expect(await screen.findByPlaceholderText("Search agents…")).toBeInTheDocument();
+    expect(
+      await screen.findByPlaceholderText("Search agents…"),
+    ).toBeInTheDocument();
     // The failed run is the worksheet's last run, as History records it.
     await waitFor(() => expect(sheet("wk-1").last_query_id).toBe("q-down"));
   });
@@ -549,10 +642,16 @@ describe("WorksheetPage run", () => {
     await user.click(await screen.findByRole("button", { name: /run query/i }));
     await screen.findByRole("alert");
 
-    await user.click(screen.getByRole("button", { name: /fix with assistant/i }));
+    await user.click(
+      screen.getByRole("button", { name: /fix with assistant/i }),
+    );
 
-    const panel = await screen.findByRole("complementary", { name: "AI assistant" });
-    const composer = within(panel).getByLabelText("Message") as HTMLTextAreaElement;
+    const panel = await screen.findByRole("complementary", {
+      name: "AI assistant",
+    });
+    const composer = within(panel).getByLabelText(
+      "Message",
+    ) as HTMLTextAreaElement;
     expect(composer.value).toContain("Fix this query error");
     expect(composer.value).toContain("FROM raw.events");
     expect(composer.value).toContain("Disallowed statement type(s): SET");
@@ -566,7 +665,10 @@ describe("WorksheetPage run", () => {
       ),
       http.get("/api/queries/:id", () =>
         HttpResponse.json(
-          doneQuery("q-prog", { status: "running", progress: { stage: "scanning" } }),
+          doneQuery("q-prog", {
+            status: "running",
+            progress: { stage: "scanning" },
+          }),
         ),
       ),
     );
@@ -607,7 +709,10 @@ describe("WorksheetPage run", () => {
     server.use(
       http.post("/api/workspaces/:ws/queries", () => {
         posts += 1;
-        return HttpResponse.json({ id: `q-${posts}`, status: "queued" }, { status: 202 });
+        return HttpResponse.json(
+          { id: `q-${posts}`, status: "queued" },
+          { status: 202 },
+        );
       }),
       http.get("/api/queries/:id", ({ params }) =>
         HttpResponse.json(
@@ -657,7 +762,9 @@ describe("WorksheetPage results", () => {
     sheet("wk-1").last_query_id = "q-persisted";
     server.use(
       http.get("/api/queries/q-persisted", () =>
-        HttpResponse.json(doneQuery("q-persisted", { result_bytes: 2_097_152 })),
+        HttpResponse.json(
+          doneQuery("q-persisted", { result_bytes: 2_097_152 }),
+        ),
       ),
     );
     renderWithProviders({ initialRoute: WS_ROUTE });
@@ -669,7 +776,9 @@ describe("WorksheetPage results", () => {
   it("explains results that have expired on the agent", async () => {
     sheet("wk-1").last_query_id = "q-old";
     server.use(
-      http.get("/api/queries/q-old", () => HttpResponse.json(doneQuery("q-old"))),
+      http.get("/api/queries/q-old", () =>
+        HttpResponse.json(doneQuery("q-old")),
+      ),
       http.get("/api/queries/q-old/rows", () =>
         HttpResponse.json(
           { error: "gone", message: "Result expired", details: null },
@@ -715,7 +824,9 @@ describe("WorksheetPage catalog and worksheet rail", () => {
     await user.click(await screen.findByRole("button", { name: /^events/i }));
 
     expect(sheet("wk-1").sql).toBe(before);
-    expect(screen.getByRole("textbox", { name: "SQL editor" })).toHaveValue(before);
+    expect(screen.getByRole("textbox", { name: "SQL editor" })).toHaveValue(
+      before,
+    );
   });
 
   it("does not render information_schema view rows as disabled", async () => {
@@ -741,7 +852,9 @@ describe("WorksheetPage catalog and worksheet rail", () => {
     );
 
     const list = await screen.findByRole("list", { name: "My worksheets" });
-    await user.click(within(list).getByRole("button", { name: /^retention scratch/ }));
+    await user.click(
+      within(list).getByRole("button", { name: /^retention scratch/ }),
+    );
 
     const tab = await screen.findByRole("tab", { name: /retention scratch/ });
     await waitFor(() => expect(tab).toHaveAttribute("data-state", "active"));
@@ -758,10 +871,16 @@ describe("WorksheetPage catalog and worksheet rail", () => {
       ),
     );
 
-    const shared = await screen.findByRole("list", { name: "Shared saved queries" });
-    await user.click(within(shared).getByRole("button", { name: /Daily events/ }));
+    const shared = await screen.findByRole("list", {
+      name: "Shared saved queries",
+    });
+    await user.click(
+      within(shared).getByRole("button", { name: /Daily events/ }),
+    );
 
-    expect(await screen.findByRole("tab", { name: /Daily events/ })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("tab", { name: /Daily events/ }),
+    ).toBeInTheDocument();
     expect(WORKSHEETS.at(-1)).toMatchObject({
       title: "Daily events",
       saved_query_id: "sq-1",
@@ -782,7 +901,9 @@ describe("WorksheetPage sidebar layout", () => {
     expect(cell.parentElement).toContainElement(
       screen.getByRole("tab", { name: /events\.sql/ }),
     );
-    expect(cell.style.width).toBe(screen.getByTestId("worksheet-rail").style.width);
+    expect(cell.style.width).toBe(
+      screen.getByTestId("worksheet-rail").style.width,
+    );
     // The switch appears once, not again inside the sidebar.
     expect(screen.getAllByRole("group", { name: "Sidebar" })).toHaveLength(1);
   });
@@ -819,11 +940,15 @@ describe("WorksheetPage sidebar layout", () => {
         { name: "Worksheets" },
       ),
     );
-    expect(await screen.findByRole("list", { name: "My worksheets" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("list", { name: "My worksheets" }),
+    ).toBeInTheDocument();
     unmount();
 
     renderWithProviders({ initialRoute: WS_ROUTE });
-    expect(await screen.findByRole("list", { name: "My worksheets" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("list", { name: "My worksheets" }),
+    ).toBeInTheDocument();
   });
 });
 
@@ -849,7 +974,9 @@ describe("WorksheetPage responsive", () => {
   it("shows a sidebar drawer trigger on narrow screens", async () => {
     mockViewport(true);
     renderWithProviders({ initialRoute: WS_ROUTE });
-    expect(await screen.findByRole("button", { name: /show tables/i })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: /show tables/i }),
+    ).toBeInTheDocument();
   });
 
   it("keeps the sidebar switch inside the drawer on narrow screens", async () => {
@@ -881,7 +1008,9 @@ describe("WorksheetPage responsive", () => {
 
   it("wraps the results header row instead of clipping at narrow widths", async () => {
     renderWithProviders({ initialRoute: WS_ROUTE });
-    const resultsTabBtn = await screen.findByRole("tab", { name: /^results$/i });
+    const resultsTabBtn = await screen.findByRole("tab", {
+      name: /^results$/i,
+    });
     const header = resultsTabBtn.parentElement?.parentElement;
     expect(header?.className).toContain("flex-wrap");
   });
@@ -903,7 +1032,9 @@ describe("WorksheetPage save", () => {
     await user.click(within(dialog).getByRole("button", { name: /^save$/i }));
 
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(await screen.findByRole("tab", { name: /Daily report/ })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("tab", { name: /Daily report/ }),
+    ).toBeInTheDocument();
     const saved = SAVED_QUERIES.find((q) => q.name === "Daily report")!;
     await waitFor(() => expect(sheet("wk-1").saved_query_id).toBe(saved.id));
   });
@@ -921,10 +1052,16 @@ describe("WorksheetPage save", () => {
     await user.click(within(dialog).getByRole("button", { name: /^save$/i }));
 
     // Regression: saving used to overwrite a colleague's query by name silently.
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent(/already exists/);
-    expect(SAVED_QUERIES.find((q) => q.id === "sq-1")!.sql).not.toBe(sheet("wk-1").sql);
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      /already exists/,
+    );
+    expect(SAVED_QUERIES.find((q) => q.id === "sq-1")!.sql).not.toBe(
+      sheet("wk-1").sql,
+    );
 
-    await user.click(within(dialog).getByRole("button", { name: /^replace$/i }));
+    await user.click(
+      within(dialog).getByRole("button", { name: /^replace$/i }),
+    );
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
     await router.navigate({ to: "/acme-analytics/saved-queries" });
@@ -941,12 +1078,18 @@ describe("WorksheetPage save", () => {
     await user.click(screen.getByRole("button", { name: /^save$/i }));
 
     await waitFor(() =>
-      expect(SAVED_QUERIES.find((q) => q.id === "sq-2")!.sql).toBe(sheet("wk-2").sql),
+      expect(SAVED_QUERIES.find((q) => q.id === "sq-2")!.sql).toBe(
+        sheet("wk-2").sql,
+      ),
     );
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(toast.success).toHaveBeenCalledWith(expect.stringMatching(/Funnel overview/));
+    expect(toast.success).toHaveBeenCalledWith(
+      expect.stringMatching(/Funnel overview/),
+    );
     await waitFor(() =>
-      expect(within(funnel).queryByLabelText("unsaved changes to saved query")).toBeNull(),
+      expect(
+        within(funnel).queryByLabelText("unsaved changes to saved query"),
+      ).toBeNull(),
     );
   });
 
@@ -955,12 +1098,18 @@ describe("WorksheetPage save", () => {
     renderWithProviders({ initialRoute: `${WS_ROUTE}?tab=wk-2` });
     await screen.findByRole("tab", { name: /funnel-draft/ });
 
-    await user.click(screen.getByRole("button", { name: /more save options/i }));
-    await user.click(await screen.findByRole("menuitem", { name: /revert to saved/i }));
+    await user.click(
+      screen.getByRole("button", { name: /more save options/i }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: /revert to saved/i }),
+    );
 
     const saved = SAVED_QUERIES.find((q) => q.id === "sq-2")!.sql;
     await waitFor(() =>
-      expect(screen.getByRole("textbox", { name: "SQL editor" })).toHaveValue(saved),
+      expect(screen.getByRole("textbox", { name: "SQL editor" })).toHaveValue(
+        saved,
+      ),
     );
   });
 
@@ -989,7 +1138,9 @@ describe("save as metric", () => {
     const user = userEvent.setup();
     renderWithProviders({ initialRoute: WS_ROUTE });
 
-    await user.click(await screen.findByRole("button", { name: /save as metric/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /save as metric/i }),
+    );
 
     expect(toast.info).toHaveBeenCalledWith(
       expect.stringMatching(/select the expression first/i),
@@ -1001,7 +1152,9 @@ describe("WorksheetPage tab deep-linking", () => {
   it("activates the worksheet named by ?tab= on load", async () => {
     renderWithProviders({ initialRoute: `${WS_ROUTE}?tab=wk-2` });
     const funnelTab = await screen.findByRole("tab", { name: /funnel-draft/ });
-    await waitFor(() => expect(funnelTab).toHaveAttribute("data-state", "active"));
+    await waitFor(() =>
+      expect(funnelTab).toHaveAttribute("data-state", "active"),
+    );
   });
 
   it("updates the URL search param when the user switches tabs", async () => {
@@ -1016,7 +1169,9 @@ describe("WorksheetPage tab deep-linking", () => {
   it("falls back to the first tab when ?tab= names an unknown worksheet", async () => {
     renderWithProviders({ initialRoute: `${WS_ROUTE}?tab=does-not-exist` });
     const eventsTab = await screen.findByRole("tab", { name: /events\.sql/ });
-    await waitFor(() => expect(eventsTab).toHaveAttribute("data-state", "active"));
+    await waitFor(() =>
+      expect(eventsTab).toHaveAttribute("data-state", "active"),
+    );
   });
 
   it("reopens a closed worksheet named by ?tab=", async () => {
@@ -1025,5 +1180,4 @@ describe("WorksheetPage tab deep-linking", () => {
     await waitFor(() => expect(tab).toHaveAttribute("data-state", "active"));
     expect(sheet("wk-3").is_open).toBe(true);
   });
-
 });

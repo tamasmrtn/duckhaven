@@ -47,7 +47,7 @@ export function useRunWorksheet({
     async (
       sheet: Worksheet,
       text: string,
-      target: { agentId: string; catalog?: string },
+      target: { agentId: string; catalog?: string; useCache?: boolean },
     ) => {
       const statements = splitStatements(text);
       if (statements.length === 0 || !target.agentId) return;
@@ -68,6 +68,7 @@ export function useRunWorksheet({
               timeout: sheet.timeout_s ?? DEFAULT_TIMEOUT_S,
               savedQueryId: sheet.saved_query_id ?? undefined,
               catalog: target.catalog,
+              useCache: target.useCache,
             },
           });
           update(sheet.id, { queryId: result.id });

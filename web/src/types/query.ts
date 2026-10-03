@@ -31,6 +31,15 @@ export interface Query {
   error: string | null;
   progress?: Record<string, unknown> | null;
   started_at: string;
+  // What the result cache did with this run: "hit" (answered from an earlier
+  // run's result, nothing executed), "miss" (executed), "bypass" (the cache was
+  // off or could not decide in time) or "ineligible" (the query can never be
+  // cached). Absent when the cache never looked, and on older runs.
+  cache_status?: "hit" | "miss" | "bypass" | "ineligible" | null;
+  // Why, when the outcome needs a reason (e.g. "volatile_function").
+  cache_detail?: string | null;
+  // For a hit: the run whose result was served, and whose profile describes it.
+  result_source_query_id?: string | null;
   // When the agent admitted the run and started executing it. With started_at
   // (submission) this splits the wall-clock into queue wait and execution. Null
   // for a run that never started or one recorded before the column existed.

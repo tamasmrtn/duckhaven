@@ -16,9 +16,13 @@ function EmptyState({ message }: { message: string }) {
 export function ProfilePanel({
   queryId,
   enabled,
+  cached = false,
 }: {
   queryId: string | null;
   enabled: boolean;
+  // The run was answered by the result cache: the profile shown is the one of
+  // the run that produced the result.
+  cached?: boolean;
 }) {
   const { data: profile, isLoading } = useQueryProfile(queryId, enabled);
 
@@ -44,6 +48,12 @@ export function ProfilePanel({
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
+      {cached && (
+        <div className="border-b border-[var(--border-subtle)] bg-accent px-4 py-1.5 text-2xs text-text-secondary">
+          Served from the result cache: nothing ran for this query. This is the
+          profile of the earlier run whose result it reused.
+        </div>
+      )}
       <ProfileSummary summary={profile.summary} />
       {isSpilled(profile.summary) && (
         <div className="border-b border-[var(--border-subtle)] bg-[var(--status-failed)]/10 px-4 py-1.5 text-2xs text-[var(--status-failed)]">

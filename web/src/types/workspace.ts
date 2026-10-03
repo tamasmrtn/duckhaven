@@ -12,6 +12,8 @@ export interface Workspace {
   default_catalog: string | null;
   storage_backend_id: string | null;
   storage_backend_kind: BackendKind | null;
+  // Whether repeated queries may be answered from the result cache.
+  result_cache_enabled?: boolean;
   created_at: string;
 }
 

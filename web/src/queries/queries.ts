@@ -66,6 +66,7 @@ export function useDispatchQuery(ws: string) {
         timeout?: number;
         savedQueryId?: string;
         catalog?: string;
+        useCache?: boolean;
       };
     }) => queriesApi.dispatch(ws, sql, agentId, opts),
     onSuccess: ({ id }) => {

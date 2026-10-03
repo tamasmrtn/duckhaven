@@ -37,6 +37,7 @@ from api.services.catalog_backends import (
     CatalogSchemaInfo,
     CatalogTableInfo,
     SnapshotInfo,
+    TableVersion,
     WriteContext,
 )
 
@@ -74,6 +75,13 @@ _DUCKLAKE_TYPE_DISPLAY: dict[str, str] = {
     "date": "DATE",
     "blob": "BLOB",
 }
+
+# `ducklake_snapshot_changes` verbs that rewrite a table's files without changing
+# its data: flushing inlined rows to Parquet, merging small files, and rewriting
+# files to drop deleted rows. Verified against the DuckLake extension on DuckDB
+# 1.5.5; the catalog database stores these raw spellings (`ducklake_snapshots()`
+# shows friendlier names). Any other verb that names a table changes it.
+_DATA_EQUIVALENT_VERBS = frozenset({"inline_flush", "merge_adjacent", "rewrite_delete"})
 
 _TYPE_TO_DUCKDB: dict[str, str] = {
     "INTEGER": "INTEGER",
@@ -493,6 +501,113 @@ class DuckLakeCatalogBackend:
             )
             for r in rows
         ]
+
+    async def table_versions(
+        self, catalog: Catalog, tables: list[tuple[str, str]]
+    ) -> dict[tuple[str, str], TableVersion]:
+        """The newest catalog snapshot in which each table changed.
+
+        DuckLake snapshots are catalog-wide and their ids only grow, so the last
+        snapshot that touched a table identifies what a reader of it sees. A
+        change is any `ducklake_snapshot_changes` token naming the table's id
+        (`inserted_into_table:3`, `altered_table:3`, `inline_flush:3`, …), its
+        creation, or a column added, renamed or dropped. Unlike `list_snapshots`
+        this matches every verb, not only the inlined ones: an `ALTER` changes no
+        file and no table row, and leaves nothing but its token and the column
+        rows behind.
+        """
+        if not tables:
+            return {}
+        rows = await self._rows(
+            catalog,
+            "WITH refs AS ("
+            "  SELECT * FROM unnest(CAST(:schemas AS text[]), CAST(:names AS text[])) "
+            "  AS r(schema_name, table_name)"
+            "), tbl AS ("
+            "  SELECT r.schema_name, r.table_name, t.table_id, t.begin_snapshot "
+            "  FROM refs r "
+            "  JOIN {schema}.ducklake_schema sc "
+            "    ON sc.schema_name = r.schema_name AND sc.end_snapshot IS NULL "
+            "  JOIN {schema}.ducklake_table t "
+            "    ON t.schema_id = sc.schema_id AND t.table_name = r.table_name "
+            "    AND t.end_snapshot IS NULL"
+            ") "
+            "SELECT tbl.schema_name, tbl.table_name, tbl.table_id, GREATEST("
+            "  tbl.begin_snapshot,"
+            "  COALESCE((SELECT max(c.snapshot_id) "
+            "    FROM {schema}.ducklake_snapshot_changes c "
+            "    WHERE EXISTS (SELECT 1 FROM unnest(string_to_array(c.changes_made, ',')) "
+            "      AS tok WHERE split_part(tok, ':', 2) = tbl.table_id::text)), 0),"
+            "  COALESCE((SELECT max(GREATEST(col.begin_snapshot, "
+            "    COALESCE(col.end_snapshot, 0))) "
+            "    FROM {schema}.ducklake_column col WHERE col.table_id = tbl.table_id), 0)"
+            ") FROM tbl",
+            {"schemas": [t[0] for t in tables], "names": [t[1] for t in tables]},
+            operation="table_versions",
+        )
+        versions: dict[tuple[str, str], TableVersion] = {}
+        for schema, name, table_id, last_change in rows:
+            identity = f"{table_id}:{last_change}"
+            versions[(schema, name)] = TableVersion(content_id=identity, version_token=identity)
+        return versions
+
+    async def data_equivalent(
+        self, catalog: Catalog, schema: str, name: str, old: TableVersion, new: TableVersion
+    ) -> bool:
+        """Every commit that touched the table since ``old`` only rewrote files.
+
+        Fails closed: a different table id, a column change, or a commit that
+        touched the table without leaving a recognised token all count as a
+        change.
+        """
+        old_table, old_snapshot = (int(p) for p in old.content_id.split(":"))
+        new_table, new_snapshot = (int(p) for p in new.content_id.split(":"))
+        if old_table != new_table or new_snapshot <= old_snapshot:
+            return False
+        rows = await self._rows(
+            catalog,
+            "SELECT c.snapshot_id, split_part(tok, ':', 1) "
+            "FROM {schema}.ducklake_snapshot_changes c, "
+            "  unnest(string_to_array(c.changes_made, ',')) AS tok "
+            "WHERE c.snapshot_id > :old AND c.snapshot_id <= :new "
+            "AND split_part(tok, ':', 2) = :table_id "
+            "UNION ALL "
+            "SELECT col.begin_snapshot, 'column' FROM {schema}.ducklake_column col "
+            "WHERE col.table_id = :table_id_int "
+            "AND (col.begin_snapshot > :old AND col.begin_snapshot <= :new "
+            "  OR col.end_snapshot > :old AND col.end_snapshot <= :new)",
+            {
+                "old": old_snapshot,
+                "new": new_snapshot,
+                "table_id": str(new_table),
+                "table_id_int": new_table,
+            },
+            operation="data_equivalent",
+        )
+        if not rows:
+            return False
+        # The newest change must be accounted for, or something we do not see a
+        # token for moved the version.
+        if max(int(r[0]) for r in rows) != new_snapshot:
+            return False
+        return all(verb in _DATA_EQUIVALENT_VERBS for _, verb in rows)
+
+    async def routines_version(self, catalog: Catalog) -> str | None:
+        """The newest snapshot that created, replaced or dropped a macro.
+
+        A DuckLake catalog stores macros, and one named like a built-in (a macro
+        `upper`) wins over it for every query run with the catalog current. A
+        catalog from before macro support has no `ducklake_macro` table, which
+        reads as no macros.
+        """
+        rows = await self._rows(
+            catalog,
+            "SELECT coalesce(max(GREATEST(begin_snapshot, coalesce(end_snapshot, 0))), 0) "
+            "FROM {schema}.ducklake_macro",
+            {},
+            operation="routines_version",
+        )
+        return f"macros:{rows[0][0] if rows else 0}"
 
     # --- Metadata writes (dispatched to an agent) ---------------------------
     # origin="metadata" keeps these out of the user's query history.

@@ -6,6 +6,7 @@ questions of either catalog kind.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 
 from api.services.catalog_backends import (
@@ -18,6 +19,7 @@ from api.services.catalog_backends import (
     CatalogSchemaInfo,
     CatalogTableInfo,
     SnapshotInfo,
+    TableVersion,
     WriteContext,
 )
 from api.services.polaris import (
@@ -62,6 +64,27 @@ def column_for_iceberg(spec: ColumnSpec, field_id: int) -> dict[str, object]:
         "required": not spec.nullable,
         "type": _TYPE_TO_ICEBERG[spec.type],
     }
+
+
+# The Iceberg snapshot operation that rewrites files without changing the table's
+# data -- compaction, a format change, relocating files (Iceberg spec, "Snapshots").
+_DATA_EQUIVALENT_OPERATION = "replace"
+
+
+def _content_id(table_uuid: str | None, snapshot_id: int | None, schema_id: int | None) -> str:
+    """Identity of what a reader sees. The schema id is part of it because an
+    `ALTER TABLE` commits a new schema without a new snapshot; the table uuid,
+    because a dropped and recreated table restarts its snapshot history."""
+    return f"{table_uuid}:{snapshot_id}:{schema_id}"
+
+
+def _parse_content_id(content_id: str) -> tuple[str, int | None, int | None]:
+    table_uuid, snapshot_id, schema_id = content_id.split(":")
+    return (
+        table_uuid,
+        None if snapshot_id == "None" else int(snapshot_id),
+        None if schema_id == "None" else int(schema_id),
+    )
 
 
 def _translate(exc: PolarisError) -> CatalogBackendError:
@@ -208,3 +231,55 @@ class PolarisCatalogBackend:
         except PolarisError as exc:
             raise _translate(exc) from exc
         return [SnapshotInfo.model_validate(s.model_dump()) for s in snapshots]
+
+    async def table_versions(
+        self, catalog: Catalog, tables: list[tuple[str, str]]
+    ) -> dict[tuple[str, str], TableVersion]:
+        async def one(schema: str, name: str) -> TableVersion | None:
+            try:
+                v = await self._polaris.load_table_version(catalog.polaris_name, schema, name)
+            except PolarisNotFoundError:
+                # Not a table: missing, or an Iceberg view (a separate endpoint).
+                return None
+            except PolarisError as exc:
+                raise _translate(exc) from exc
+            if v.metadata_location is None:
+                raise CatalogBackendUnavailable(
+                    f"Polaris returned no metadata location for {schema}.{name}"
+                )
+            return TableVersion(
+                content_id=_content_id(v.table_uuid, v.snapshot_id, v.schema_id),
+                version_token=v.metadata_location,
+            )
+
+        found = await asyncio.gather(*(one(schema, name) for schema, name in tables))
+        return {ref: v for ref, v in zip(tables, found, strict=True) if v is not None}
+
+    async def data_equivalent(
+        self, catalog: Catalog, schema: str, name: str, old: TableVersion, new: TableVersion
+    ) -> bool:
+        """Walk back from the new snapshot to the old one; every commit between
+        them must be a `replace`. A table whose old snapshot is not an ancestor of
+        the new one (rolled back, replaced, recreated) is never equivalent."""
+        old_uuid, old_snapshot, old_schema = _parse_content_id(old.content_id)
+        new_uuid, new_snapshot, new_schema = _parse_content_id(new.content_id)
+        if old_uuid != new_uuid or old_schema != new_schema:
+            return False
+        if old_snapshot is None or new_snapshot is None:
+            return False
+        try:
+            snapshots = await self._polaris.list_snapshots(catalog.polaris_name, schema, name)
+        except PolarisError as exc:
+            raise _translate(exc) from exc
+        by_id = {s.snapshot_id: s for s in snapshots}
+        current: int | None = new_snapshot
+        while current != old_snapshot:
+            snapshot = by_id.get(current) if current is not None else None
+            if snapshot is None or snapshot.operation != _DATA_EQUIVALENT_OPERATION:
+                return False
+            current = snapshot.parent_snapshot_id
+        return True
+
+    async def routines_version(self, catalog: Catalog) -> str | None:
+        # An Iceberg REST catalog stores no functions DuckDB could call.
+        return None

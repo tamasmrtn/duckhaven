@@ -101,6 +101,24 @@ class SnapshotInfo(_Info):
 
 
 @dataclass(frozen=True)
+class TableVersion:
+    """What a cached query result depends on in one table, in two strengths.
+
+    ``content_id`` changes whenever the rows or the columns a reader sees may have
+    changed. A cached result stays valid while it is equal, and a change is
+    checked with ``CatalogBackend.data_equivalent`` before the result is dropped,
+    because compaction-style commits change it without changing any data.
+
+    ``version_token`` changes on *every* commit to the table and never takes an
+    old value again. It is what the result cache compares before and after a run
+    to prove nothing committed while the query was reading.
+    """
+
+    content_id: str
+    version_token: str
+
+
+@dataclass(frozen=True)
 class CatalogCapabilities:
     """What a catalog kind can do, surfaced so the UI never switches on `kind`."""
 
@@ -177,6 +195,32 @@ class CatalogBackend(Protocol):
     async def list_snapshots(
         self, catalog: Catalog, schema: str, name: str
     ) -> list[SnapshotInfo]: ...
+
+    async def table_versions(
+        self, catalog: Catalog, tables: list[tuple[str, str]]
+    ) -> dict[tuple[str, str], TableVersion]:
+        """The current version of each ``(schema, table)``.
+
+        A name that is not a table — missing, or a view — is absent from the
+        result rather than raising, so the caller decides what absence means.
+        """
+        ...
+
+    async def data_equivalent(
+        self, catalog: Catalog, schema: str, name: str, old: TableVersion, new: TableVersion
+    ) -> bool:
+        """True when every commit between ``old`` and ``new`` left the data a
+        reader sees unchanged (compaction, a flush of inlined rows). False when in
+        doubt."""
+        ...
+
+    async def routines_version(self, catalog: Catalog) -> str | None:
+        """A token that changes whenever a function stored in the catalog is
+        created, replaced or dropped, or ``None`` for a kind that stores none.
+
+        Needed because such a function can shadow a built-in of the same name for
+        every query that runs with this catalog current."""
+        ...
 
 
 def backend_for(catalog: Catalog, *, polaris: PolarisClient | None = None) -> CatalogBackend:

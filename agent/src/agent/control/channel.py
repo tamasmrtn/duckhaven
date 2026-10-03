@@ -182,6 +182,21 @@ def _get_capabilities() -> AgentCapabilities:
     )
 
 
+def _session_context(conn) -> dict[str, str] | None:
+    """The catalog, schema and time zone a held connection currently resolves
+    unqualified names and TIMESTAMPTZ values in. None if it cannot be read, which
+    the control plane treats as "unknown" and stops caching the session."""
+    try:
+        row = conn.execute(
+            "SELECT current_database(), current_schema(), current_setting('TimeZone')"
+        ).fetchone()
+    except Exception:  # noqa: BLE001 - best-effort, see docstring
+        return None
+    if row is None:
+        return None
+    return {"catalog": str(row[0]), "schema": str(row[1]), "timezone": str(row[2])}
+
+
 async def _send_statement_ack(ws, statement_id: str) -> None:
     """Acknowledge receipt of an EXEC_STATEMENT. Receipt only — not success."""
     ack = Frame(type=FrameType.STATEMENT_ACK, payload={"query_id": statement_id})
@@ -905,6 +920,16 @@ async def _handle_exec_statement(
             # and a statement that failed measured nothing worth remembering.
             if estimate_key is not None and peak_is_this_statements:
                 _record_grant_feedback(estimate_key, stats["profile"])
+            # What the connection now resolves names and reads values in. The
+            # control plane's result cache keys a session's next statements on it;
+            # reported here, by the engine, so a `USE` that failed half-way can
+            # never be mistaken for one that moved. Same guarded pool as the schema
+            # refresh above: read inside the lock, before anything else can run.
+            context = await _estimate_under_timeout(
+                lambda: _session_context(state.conn),
+                lambda: state.conn,
+                what=f"session_context {state.session_id}",
+            )
         done_payload: dict[str, object] = {
             "query_id": statement_id,
             "status": "done",
@@ -915,6 +940,8 @@ async def _handle_exec_statement(
             "profile": stats["profile"],
             "result_schema": stats["result_schema"],
         }
+        if context is not None:
+            done_payload["session_context"] = context
         await ws.send(Frame(type=FrameType.QUERY_DONE, payload=done_payload).model_dump_json())
     except StatementAbandoned as exc:
         # The lock has already been released (the `async with` block above

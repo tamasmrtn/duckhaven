@@ -3,8 +3,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, Text, func, true
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from api.db.base import Base
@@ -70,6 +70,19 @@ class SqlSession(Base):
     client_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     active_catalog: Mapped[str | None] = mapped_column(String(255), nullable=True)
     staging_uri: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    # Whether this session's statements may be answered from the result cache; the
+    # client chooses at open.
+    use_cache: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
+    )
+    # What the result cache needs to know about the held connection, kept current
+    # as statements finish: the catalog, schema and time zone unqualified names and
+    # values resolve against, whether a transaction is open, and whether the
+    # session created anything (a temp table, a macro, a variable) that can change
+    # what a query means. See `services/result_cache/session.py`. JSONB on Postgres.
+    cache_state: Mapped[dict | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=True
+    )
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

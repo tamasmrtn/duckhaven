@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, func, true
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -17,6 +17,11 @@ class Workspace(Base):
     slug: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    # Whether repeated queries may be answered from the result cache. On unless an
+    # owner turns it off; the deployment-wide RESULT_CACHE_ENABLED overrides it.
+    result_cache_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

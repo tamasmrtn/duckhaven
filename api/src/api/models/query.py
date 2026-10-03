@@ -92,6 +92,26 @@ class Query(Base):
     # during a cold start — still resolves names the way the user meant, rather than
     # falling back to the workspace default. Null means "no preference recorded".
     active_catalog: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # What the result cache did with this run: `hit` (answered from an earlier
+    # run's result, nothing executed), `miss` (executed, and offered to the cache
+    # when it finished), `bypass` (the cache was off or could not decide in time)
+    # or `ineligible` (the query can never be cached). Null for statements the
+    # cache never looked at, and for rows older than the cache.
+    cache_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Why, for anything but a plain hit or miss: a reason slug such as
+    # `volatile_function`, `changed_during_run` or `lookup_timeout`.
+    cache_detail: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    cache_key_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # For a miss: every table's version as it was before dispatch, compared again
+    # when the run finishes so a result is never cached if anything committed while
+    # it was reading. JSONB on Postgres.
+    cache_versions: Mapped[list | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=True
+    )
+    # For a hit: the run whose result this one is. Rows are read from there.
+    result_source_query_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("queries.id", ondelete="SET NULL"), nullable=True
+    )
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

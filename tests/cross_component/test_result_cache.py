@@ -161,10 +161,19 @@ async def test_a_small_result_is_served_after_its_agent_stops(
     known = {a["id"] for a in (await api_client.get("/api/agents")).json()}
     proc = spawn_agent()
     extra = None
+    # An agent is healthy as soon as it authenticates, but its extensions arrive in
+    # a later AGENT_STATUS frame; dispatching before then is agent_incompatible.
     for _ in range(120):
         agents = (await api_client.get("/api/agents")).json()
         extra = next(
-            (a for a in agents if a["id"] not in known and a.get("status") == "healthy"), None
+            (
+                a
+                for a in agents
+                if a["id"] not in known
+                and a.get("status") == "healthy"
+                and "httpfs" in (a.get("capabilities") or {}).get("extensions", [])
+            ),
+            None,
         )
         if extra is not None:
             break

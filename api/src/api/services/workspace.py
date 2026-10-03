@@ -164,6 +164,7 @@ async def update_workspace(
     *,
     name: str | None,
     description: str | None | _Unset = UNSET,
+    result_cache_enabled: bool | None = None,
 ) -> Workspace:
     """Rename and/or re-describe a workspace. Slug is not renameable here — it
     is the routable `/$ws/...` segment, and rescoping it risks breaking
@@ -177,6 +178,8 @@ async def update_workspace(
         workspace.name = name
     if description is not UNSET:
         workspace.description = description
+    if result_cache_enabled is not None:
+        workspace.result_cache_enabled = result_cache_enabled
     await db.commit()
     await db.refresh(workspace)
     return workspace

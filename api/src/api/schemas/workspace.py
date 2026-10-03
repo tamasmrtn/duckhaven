@@ -22,11 +22,15 @@ class WorkspaceOut(BaseModel):
     default_catalog: str | None = None
     storage_backend_id: uuid.UUID | None = None
     storage_backend_kind: str | None = None
+    # Whether repeated queries may be answered from the result cache.
+    result_cache_enabled: bool = True
 
 
 class WorkspaceUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
+    # Owner only. Turning it off stops lookups at once; existing entries expire.
+    result_cache_enabled: bool | None = None
 
 
 class MemberOut(BaseModel):

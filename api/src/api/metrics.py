@@ -26,6 +26,7 @@ from prometheus_client import (
     CONTENT_TYPE_LATEST,
     REGISTRY,
     Counter,
+    Gauge,
     Histogram,
     generate_latest,
 )
@@ -204,6 +205,41 @@ LINEAGE_COLUMN_SKIPS = Counter(
     ["replica_id", "reason"],
 )
 
+# The result cache. A hit is a completed query that never ran, so it is counted
+# here and *not* in duckhaven_queries_submitted / duckhaven_queries or the
+# duration histogram: those describe work an agent did.
+RESULT_CACHE_LOOKUPS = Counter(
+    "duckhaven_result_cache_lookups",
+    "Queries the result cache looked at, by outcome (hit/miss/bypass/ineligible) and reason.",
+    ["replica_id", "outcome", "reason"],
+)
+RESULT_CACHE_LOOKUP_SECONDS = Histogram(
+    "duckhaven_result_cache_lookup_seconds",
+    "Time spent deciding whether a query is a cache hit, before it runs or is served.",
+    ["replica_id"],
+    buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1),
+)
+RESULT_CACHE_ADMISSIONS = Counter(
+    "duckhaven_result_cache_admissions",
+    "Finished misses offered to the result cache, by outcome and reason.",
+    ["replica_id", "outcome", "reason"],
+)
+RESULT_CACHE_REVALIDATIONS = Counter(
+    "duckhaven_result_cache_revalidations",
+    "Hits served after a table changed only by compaction-style commits.",
+    ["replica_id", "catalog_kind"],
+)
+RESULT_CACHE_EVICTIONS = Counter(
+    "duckhaven_result_cache_evictions",
+    "Result cache entries removed, by reason (expired/stale/space/gone/replaced).",
+    ["replica_id", "reason"],
+)
+RESULT_CACHE_BYTES = Gauge(
+    "duckhaven_result_cache_bytes",
+    "Result bytes held by the result cache, by where they are stored (inline/agent).",
+    ["replica_id", "storage"],
+)
+
 
 # ── Inline instrumentation helpers (called from the query service) ────────────
 
@@ -277,6 +313,28 @@ def record_sql_session_opened() -> None:
 
 def record_sql_session_closed(reason: str) -> None:
     SQL_SESSIONS_CLOSED.labels(settings.replica_id, reason).inc()
+
+
+def record_result_cache_lookup(outcome: str, reason: str | None, seconds: float) -> None:
+    RESULT_CACHE_LOOKUPS.labels(settings.replica_id, outcome, reason or "").inc()
+    RESULT_CACHE_LOOKUP_SECONDS.labels(settings.replica_id).observe(seconds)
+
+
+def record_result_cache_admission(outcome: str, reason: str | None) -> None:
+    RESULT_CACHE_ADMISSIONS.labels(settings.replica_id, outcome, reason or "").inc()
+
+
+def record_result_cache_revalidation(catalog_kind: str) -> None:
+    RESULT_CACHE_REVALIDATIONS.labels(settings.replica_id, catalog_kind).inc()
+
+
+def record_result_cache_eviction(reason: str, count: int = 1) -> None:
+    if count:
+        RESULT_CACHE_EVICTIONS.labels(settings.replica_id, reason).inc(count)
+
+
+def set_result_cache_bytes(storage: str, value: int) -> None:
+    RESULT_CACHE_BYTES.labels(settings.replica_id, storage).set(value)
 
 
 def record_sql_statement(status: str) -> None:

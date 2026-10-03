@@ -68,6 +68,9 @@ async def seed_workspace(
 
 # Disable secure cookies in tests (plain HTTP transport)
 settings.cookie_secure = False
+# The result cache is on by default in production. Off here so tests that run the
+# same SQL twice keep exercising dispatch; the cache's own tests turn it on.
+settings.result_cache_enabled = False
 
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 

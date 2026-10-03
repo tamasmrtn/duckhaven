@@ -102,10 +102,10 @@ class Query(Base):
     # `volatile_function`, `changed_during_run` or `lookup_timeout`.
     cache_detail: Mapped[str | None] = mapped_column(String(64), nullable=True)
     cache_key_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    # For a miss: every table's version as it was before dispatch, compared again
-    # when the run finishes so a result is never cached if anything committed while
-    # it was reading. JSONB on Postgres.
-    cache_versions: Mapped[list | None] = mapped_column(
+    # For a miss: the context it was keyed in and every table's version as it was
+    # before dispatch, compared again when the run finishes so a result is never
+    # cached if anything committed while it was reading. JSONB on Postgres.
+    cache_versions: Mapped[dict | None] = mapped_column(
         JSON().with_variant(JSONB, "postgresql"), nullable=True
     )
     # For a hit: the run whose result this one is. Rows are read from there.

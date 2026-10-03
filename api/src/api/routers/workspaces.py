@@ -47,6 +47,7 @@ async def _workspace_out(db: AsyncSession, workspace: Workspace) -> WorkspaceOut
         default_catalog=default.slug if default is not None else None,
         storage_backend_id=default.storage_backend_id if default is not None else None,
         storage_backend_kind=(default.storage_backend.kind if default is not None else None),
+        result_cache_enabled=workspace.result_cache_enabled,
     )
 
 
@@ -113,7 +114,8 @@ async def update_workspace(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> WorkspaceOut:
-    """Rename a workspace or change its description.
+    """Rename a workspace, change its description, or turn its result cache on or
+    off.
 
     A partial update: an omitted field is left alone, and an explicit ``null``
     description clears it. The slug is immutable -- it addresses the workspace."""
@@ -123,7 +125,13 @@ async def update_workspace(
     # Identity edits are gated at the same tier as membership management.
     await assert_workspace_member(db, workspace.id, user.id, min_role="owner")
     description = body.description if "description" in body.model_fields_set else UNSET
-    workspace = await apply_workspace_update(db, workspace, name=body.name, description=description)
+    workspace = await apply_workspace_update(
+        db,
+        workspace,
+        name=body.name,
+        description=description,
+        result_cache_enabled=body.result_cache_enabled,
+    )
     return await _workspace_out(db, workspace)
 
 

@@ -157,7 +157,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if settings.scheduler_enabled:
         from api.services.scheduler.scanner import scheduler_loop
 
-        scheduler_task = asyncio.create_task(scheduler_loop(async_session_factory))
+        scheduler_task = asyncio.create_task(
+            scheduler_loop(async_session_factory, app.state.polaris_client)
+        )
 
     migration_task: asyncio.Task | None = None
     if settings.migration_runner_enabled:

@@ -49,6 +49,7 @@ import {
 import type { PatToken, ServiceAccount } from "@/types/service-account";
 import { ManageWorkspacesDialog } from "./UsersPage";
 import { SectionLabel } from "@/components/ui/section-label";
+import { plural } from "@/utils";
 
 const ROLES = ["admin", "user"];
 // Labels map to the API's `expires_in_days` (null = never).
@@ -405,8 +406,8 @@ export function ServiceAccountsPage() {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <PageToolbar className="justify-between">
-        <p className="text-xs text-text-secondary">
-          {accounts.length} service accounts
+        <p className="text-xs text-text-secondary font-tabular">
+          {plural(accounts.length, "service account")}
         </p>
         <Button
           size="sm"

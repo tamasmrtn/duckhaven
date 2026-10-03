@@ -48,7 +48,7 @@ import {
   type BootstrapToken,
   type Runtime,
 } from "@/types/agent";
-import { cn, plural } from "@/utils";
+import { cn } from "@/utils";
 import { agentDotClass, formatCost, relativeTime } from "./agentFormat";
 import { CountCell, CpuCell, MemoryCell } from "./FleetColumns";
 
@@ -602,7 +602,6 @@ export function AgentsPage() {
     <div className="flex h-full flex-col overflow-hidden">
       <PageHeader
         title="Compute"
-        description={`${plural(agents.length, "agent")} · ${activeCount} active`}
         actions={
           canManageFleet && (
             <div className="flex items-center gap-2">

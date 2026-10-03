@@ -35,6 +35,7 @@ import {
   type MigrationStatus,
 } from "@/types/catalog-migration";
 import type { Catalog } from "@/types/catalog";
+import { plural } from "@/utils";
 
 const BADGE_VARIANT: Record<
   MigrationStatus,
@@ -66,7 +67,10 @@ export function CatalogMigrationsPage() {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <PageToolbar>
-        <p className="text-xs text-text-secondary">
+        <p className="text-xs text-text-secondary font-tabular">
+          {plural(catalogs?.length ?? 0, "catalog")}
+        </p>
+        <p className="text-xs text-text-tertiary">
           Move a catalog's data to a different storage backend. The catalog
           stays read-only (writes are rejected) until the migration finishes and
           cuts over automatically.

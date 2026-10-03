@@ -69,7 +69,7 @@ export function LakehouseHealthPage() {
     <div className="flex h-full flex-col overflow-hidden">
       <PageHeader
         title="Lakehouse health"
-        description="Continuous, explainable health scoring and maintenance recommendations."
+        description="Each table scored from the latest maintenance scan, with what to fix first."
       />
 
       <div className="flex-1 overflow-auto p-6">

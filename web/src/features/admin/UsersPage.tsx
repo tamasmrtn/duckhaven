@@ -39,6 +39,7 @@ import {
   useUserWorkspaces,
 } from "@/queries/users";
 import type { User } from "@/types/auth";
+import { plural } from "@/utils";
 
 const ROLES = ["admin", "user"];
 const WORKSPACE_ROLES = ["reader", "writer", "owner"];
@@ -312,7 +313,9 @@ export function UsersPage() {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <PageToolbar className="justify-between">
-        <p className="text-xs text-text-secondary">{users.length} users</p>
+        <p className="text-xs text-text-secondary font-tabular">
+          {plural(users.length, "user")}
+        </p>
         <Button
           size="sm"
           className="h-7 gap-1.5 text-xs"

@@ -35,7 +35,7 @@ describe("UsersPage", () => {
 
     expect(await screen.findByText("admin@admin.com")).toBeInTheDocument();
     expect(screen.getByText("Real Admin")).toBeInTheDocument();
-    expect(screen.getByText("1 users")).toBeInTheDocument();
+    expect(screen.getByText("1 user")).toBeInTheDocument();
     // The mock fixtures must not leak through.
     expect(
       screen.queryByText("marton@duckhaven.local"),

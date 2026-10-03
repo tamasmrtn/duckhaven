@@ -14,6 +14,12 @@ async function migrateButtonForAcme() {
 }
 
 describe("CatalogMigrationsPage", () => {
+  it("counts the catalogs on the left of the toolbar", async () => {
+    renderWithProviders({ initialRoute: ROUTE });
+
+    expect(await screen.findByText(/^\d+ catalogs?$/)).toBeInTheDocument();
+  });
+
   // Regression: every row carried a dark primary "Migrate…" button; row
   // actions are outline buttons, like the rest of the app.
   it("draws the per-row Migrate action as an outline button", async () => {

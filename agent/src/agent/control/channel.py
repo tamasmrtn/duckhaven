@@ -43,6 +43,7 @@ from agent.metrics.system import (
     effective_cores,
     effective_memory_bytes,
 )
+from agent.results import retention
 from duckhaven_shared import runtimes
 from duckhaven_shared.concurrency import BUCKET_FRACTIONS
 from duckhaven_shared.protocol import Frame, FrameType
@@ -155,6 +156,12 @@ def _get_capabilities() -> AgentCapabilities:
             "SELECT extension_name FROM duckdb_extensions() WHERE loaded"
         ).fetchall()
     ]
+    try:
+        # What a fresh connection -- like every one a query runs on -- reads
+        # TIMESTAMPTZ values in. The control plane's result cache keys on it.
+        timezone = str(conn.execute("SELECT current_setting('TimeZone')").fetchone()[0])
+    except Exception:  # noqa: BLE001 - best-effort: an unknown zone only disables caching
+        timezone = None
     conn.close()
     cpu = cpu_capability()
     return AgentCapabilities(
@@ -171,6 +178,7 @@ def _get_capabilities() -> AgentCapabilities:
         agent_version=runtime.APP_VERSION,
         platform=runtime.PLATFORM,
         sandbox=sandbox_state(settings.sandbox_lock_configuration),
+        timezone=timezone,
     )
 
 
@@ -1365,6 +1373,18 @@ async def _consume(ws, results_dir: Path, admission: Admission) -> None:
 
         elif msg.type == FrameType.CLOSE_SESSION:
             _spawn(_handle_close_session(ws, msg.payload, admission))
+
+        elif msg.type == FrameType.RETAIN_RESULT:
+            # The control plane's result cache serves rows from this file: keep it
+            # past the retention window until the entry's own expiry.
+            retention.retain(
+                results_dir,
+                str(msg.payload.get("query_id", "")),
+                float(msg.payload.get("retain_until") or 0),
+            )
+
+        elif msg.type == FrameType.RELEASE_RESULT:
+            retention.release(results_dir, str(msg.payload.get("query_id", "")))
 
         else:
             logger.warning("Ignoring unhandled frame type: %s", msg.type)

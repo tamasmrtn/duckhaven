@@ -2833,3 +2833,62 @@ async def test_a_huge_estimate_cannot_require_the_whole_agent():
     elastic = ch_module._elastic_target(admission, req.memory_bytes)
     ceiling = int(ch_module.settings.elastic_ceiling_fraction * budget)
     assert req.memory_bytes + elastic == ceiling
+
+
+class _FrameFeedWS:
+    """Feeds a fixed list of frames to `_consume`."""
+
+    def __init__(self, frames: list[Frame]) -> None:
+        self._msgs = [f.model_dump_json() for f in frames]
+        self.sent: list[str] = []
+
+    async def send(self, msg):
+        self.sent.append(msg)
+
+    async def __aiter__(self):
+        for msg in self._msgs:
+            yield msg
+
+
+async def test_retain_and_release_frames_manage_the_result_sidecar(tmp_path):
+    """The control plane's result cache keeps a result file past retention while
+    it serves rows from it, and lets go when the entry goes."""
+    import time
+
+    import agent.control.channel as ch_module
+
+    query_id = str(uuid.uuid4())
+    (tmp_path / f"{query_id}.parquet").write_bytes(b"PAR1")
+    until = time.time() + 3600
+    await ch_module._consume(
+        _FrameFeedWS(
+            [
+                Frame(
+                    type=FrameType.RETAIN_RESULT,
+                    payload={"query_id": query_id, "retain_until": until},
+                )
+            ]
+        ),
+        tmp_path,
+        _admission(),
+    )
+    sidecar = tmp_path / f"{query_id}.retain"
+    assert float(sidecar.read_text()) == until
+
+    await ch_module._consume(
+        _FrameFeedWS([Frame(type=FrameType.RELEASE_RESULT, payload={"query_id": query_id})]),
+        tmp_path,
+        _admission(),
+    )
+    assert not sidecar.exists()
+
+
+def test_get_capabilities_reports_the_time_zone():
+    """Part of what a cached result depends on; read off a fresh connection, as
+    every query's own connection is."""
+    import duckdb
+
+    import agent.control.channel as ch_module
+
+    expected = duckdb.connect().execute("SELECT current_setting('TimeZone')").fetchone()[0]
+    assert ch_module._get_capabilities().timezone == expected

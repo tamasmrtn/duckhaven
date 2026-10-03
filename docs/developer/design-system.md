@@ -160,17 +160,14 @@ durations, byte counts.
 Standard surface paddings: card body `space-4`, modal body `space-6`,
 panel header `space-3 space-4`. Section gap inside a panel: `space-6`.
 
-Component sizes (touch-target floor 32×32 on desktop — DuckHaven has no
-mobile/tablet target):
+Component sizes (touch-target floor 28×28 on desktop — DuckHaven has no
+mobile/tablet target). Every control is 28 px, and the `Button`, `Input` and
+`Select` primitives default to it, so a page never sets a height of its own:
 
 | | Height | Padding-x |
 |---|---|---|
-| Button (default) | 32 | 12 |
-| Button (compact, inline in toolbars) | 28 | 8 |
-| Input | 32 | 10 |
-| Select / agent picker | 32 | 10 |
-| Tab / segmented option group | 32 | 10 |
-| Tab / segmented option group inside an editor pane | 28 | 10 |
+| Button, input, select, agent picker | 28 | 12 |
+| Tab / segmented option group | 28 | 10 |
 | Top bar | 48 | 16 |
 | Status bar (worksheet bottom) | 28 | 12 |
 
@@ -179,15 +176,20 @@ mobile/tablet target):
 Every page outside the two editor pages (Worksheets, Catalog) is built from the same three rows, so moving between
 pages never shifts the title, the controls or the columns:
 
-1. **Header** (`PageHeader`): the title, a one-line description under it on every page, and the page's own actions at
-   the right as 32 px buttons. Admin adds its section nav as a row beneath.
-2. **Toolbar** (`PageToolbar`): filters, search and view tabs, on the page's 24 px gutter, every control 32 px tall.
+1. **Header** (`PageHeader`): the title and the page's own actions at the right. A one-line description goes under the
+   title only when the title alone does not explain the page, and never carries counts. Detail pages put their back
+   button and status in the header's `leading` and `badge` slots. Admin adds its section nav as a row beneath, because
+   its sections share one header.
+2. **Toolbar** (`PageToolbar`): page-level tabs, filters and search, on the page's 24 px gutter. A count ("16 backends")
+   sits at its left; an Admin section's actions sit at its right.
 3. **Content**: cards and forms get `p-6`. A table runs edge to edge, and its `table-gutter` class puts its first and
    last columns on the same 24 px gutter, so the title, the toolbar and the table's first column share one left edge.
 
-Tabs and segmented options are one control with one look (`Segmented`, and `Tabs`, which borrows its classes): 32 px on
-a page, 28 px inside an editor pane (the worksheet's Results | Profile, the catalog detail tabs, the sidebar switch).
-Empty-state titles are phrases without a closing full stop.
+Tabs and segmented options are one control with one look (`Segmented`, and `Tabs`, which borrows its classes). A
+create button reads "New …" with a plus icon, a page has one primary button, row actions are outline buttons, and an
+on/off setting is a switch. The small-caps heading over a section ("Schema", "Timeline") is always `SectionLabel`; the
+smaller tertiary label above a single value (a KPI tile, a profile stat) is a different element. Empty-state titles are
+phrases without a closing full stop.
 
 ### 2.4 Radius, Borders, Elevation
 

@@ -181,6 +181,25 @@ advisory lock, like the scheduler, so leave it enabled everywhere.
 | `SQL_STATEMENT_FIRST_PAGE_LIMIT` | `200` | Result rows returned on the statement response itself, sparing a client the second call to `GET /queries/{id}/rows` — which is otherwise unavoidable, since the column names arrive with the rows. `0` disables it deployment-wide; a request may ask for its own number or opt out. Bounded because a statement response is not a bulk transport: a larger result pages from the first page as usual. See [Getting the rows with the answer](../concepts/sql-sessions.md#getting-the-rows-with-the-answer). |
 | `SQL_STATEMENT_MAX_WAIT_TIMEOUT_S` | `60` | Ceiling on what a client may request via `wait_timeout_s`, on the statement call and on `GET /queries/{id}`. Bounds how long a caller can make the API hold a request open. |
 
+### Result cache
+
+Tunes the [result cache](../concepts/result-cache.md), which answers a repeated read from an earlier run's result while
+nothing it reads has changed. Its expiry loop is leader-elected via a Postgres advisory lock, like the scheduler, so
+every replica runs it safely.
+
+| Variable | Default | Description |
+|---|---|---|
+| `RESULT_CACHE_ENABLED` | `true` | Master switch. `false` turns the cache off for every workspace, whatever each one's own setting; existing entries are left to expire. |
+| `RESULT_CACHE_LOOKUP_TIMEOUT_S` | `1.0` | Budget for deciding whether a query is a hit — mostly asking the catalogs for table versions. Past it the query runs as if there were no cache (`cache_status` `bypass`). Also bounds the same check when a result is admitted. |
+| `RESULT_CACHE_INLINE_MAX_BYTES` | `1048576` (1 MiB) | Results up to this size are copied into the control plane's database, so a hit needs no running agent. Larger ones stay on the agent that ran the query. |
+| `RESULT_CACHE_INLINE_WORKSPACE_MAX_BYTES` | `268435456` (256 MiB) | Ceiling on one workspace's copied results. Past it the entries least worth keeping are evicted first. |
+| `RESULT_CACHE_INLINE_TOTAL_MAX_BYTES` | `2147483648` (2 GiB) | The same ceiling across all workspaces. |
+| `RESULT_CACHE_TTL_HOURS` | `24` | An entry not hit for this long expires; every hit restarts the clock. |
+| `RESULT_CACHE_MAX_AGE_HOURS` | `168` (7 days) | No entry outlives this, however often it is hit. |
+| `RESULT_CACHE_MIN_LEASE_S` | `600` | An entry younger than this is never evicted for space: it has not yet had the chance to be hit. |
+| `RESULT_CACHE_ASSUMED_TIMEZONE` | `UTC` | The time zone assumed for a run whose agent is not chosen yet (the elastic pool with nothing running). A wrong guess only costs a miss: entries record the zone they were computed in. |
+| `RESULT_CACHE_SWEEP_INTERVAL_S` | `300` | How often (seconds) the expiry loop removes expired entries and releases their agent files. |
+
 ### Agent images and runtimes
 
 Which agent image runs where. Every [runtime](../concepts/runtimes.md) is its own image,
@@ -380,4 +399,5 @@ Operator-set ceilings that per-query requests cannot exceed — see the
 |---|---|---|
 | `SESSION_MAX_BUCKET_FRACTION` | `0.333` | Ceiling on what one statement may **require** at admission (not on what it may use — free budget is still offered on top). Bounds how few statements can run at once. |
 | `MAX_TIMEOUT_S` | `600` | Hard upper bound on a query's wall-clock timeout. |
-| `RESULT_RETENTION_HOURS` | `24` | How long materialized result Parquet files are kept before the retention sweep removes them. |
+| `RESULT_RETENTION_HOURS` | `24` | How long materialized result Parquet files are kept before the retention sweep removes them. A file the [result cache](../concepts/result-cache.md) serves rows from is kept past it, until its entry expires. |
+| `RESULT_CACHE_MAX_BYTES` | `10737418240` (10 GiB) | Ceiling on result files kept past `RESULT_RETENTION_HOURS` for the [result cache](../concepts/result-cache.md). Past it, the files retained longest ago are deleted first and the cache simply misses for those queries. |

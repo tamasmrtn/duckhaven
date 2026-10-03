@@ -74,6 +74,10 @@ pages:
   title: Query execution
   section: Concepts
   summary: Queueing, memory estimation, and concurrency.
+- path: concepts/result-cache.md
+  title: Result cache
+  section: Concepts
+  summary: Answering a repeated query from an earlier run's result while nothing it reads has changed.
 - path: concepts/sql-sessions.md
   title: SQL sessions
   section: Concepts

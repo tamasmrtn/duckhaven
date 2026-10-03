@@ -181,6 +181,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     presence_task = asyncio.create_task(presence_loop(async_session_factory))
 
+    # Unconditional: a deployment that turns the cache off still has entries to
+    # expire and agent files to release.
+    from api.services.result_cache.sweeper import sweeper_loop
+
+    result_cache_task = asyncio.create_task(sweeper_loop(async_session_factory))
+
     compute_reaper_task: asyncio.Task | None = None
     if settings.elastic_compute_enabled:
         from api.services.compute.reaper import reaper_loop as compute_reaper_loop
@@ -200,11 +206,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             reaper_task,
             compute_reaper_task,
             presence_task,
+            result_cache_task,
         ):
             if task is not None:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
+        from api.services.result_cache.service import drain_admissions
+
+        await drain_admissions()
         await app.state.polaris_client.aclose()
         await dispose_ducklake_engine()
 

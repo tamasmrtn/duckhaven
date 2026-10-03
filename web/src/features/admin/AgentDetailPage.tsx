@@ -14,7 +14,7 @@ import {
 import { RuntimeBadge } from "@/components/app/RuntimeBadge";
 import { Banner } from "@/components/ui/banner";
 import { Button } from "@/components/ui/button";
-import { PageHeader } from "@/components/ui/page-header";
+import { PageHeader, PageToolbar } from "@/components/ui/page-header";
 import {
   Dialog,
   DialogContent,
@@ -505,37 +505,39 @@ export function AgentDetailPage() {
         defaultValue="monitoring"
         className="flex min-h-0 flex-1 flex-col gap-0"
       >
-        <TabsList className="mx-6 mt-4 mb-0 h-7 w-fit shrink-0">
-          <TabsTrigger value="monitoring" className="text-xs">
-            Monitoring
-          </TabsTrigger>
-          <TabsTrigger value="overview" className="text-xs">
-            Overview
-          </TabsTrigger>
-          {/* Only Tier 3 may read or change the ACL, so the tab is not offered
-              to anyone else rather than rendering a panel that 403s. */}
-          {agentTierAtLeast(agent, "admin") && (
-            <TabsTrigger value="access" className="text-xs">
-              Access
+        <PageToolbar>
+          <TabsList>
+            <TabsTrigger value="monitoring" className="text-xs">
+              Monitoring
             </TabsTrigger>
-          )}
-        </TabsList>
+            <TabsTrigger value="overview" className="text-xs">
+              Overview
+            </TabsTrigger>
+            {/* Only Tier 3 may read or change the ACL, so the tab is not offered
+                to anyone else rather than rendering a panel that 403s. */}
+            {agentTierAtLeast(agent, "admin") && (
+              <TabsTrigger value="access" className="text-xs">
+                Access
+              </TabsTrigger>
+            )}
+          </TabsList>
+        </PageToolbar>
         <TabsContent
           value="monitoring"
-          className="mt-0 min-h-0 flex-1 overflow-auto px-6 py-4"
+          className="mt-0 min-h-0 flex-1 overflow-auto p-6"
         >
           <MonitoringTab ws={ws} agent={agent} />
         </TabsContent>
         <TabsContent
           value="overview"
-          className="mt-0 min-h-0 flex-1 overflow-auto px-6 py-4"
+          className="mt-0 min-h-0 flex-1 overflow-auto p-6"
         >
           <OverviewTab agent={agent} />
         </TabsContent>
         {agentTierAtLeast(agent, "admin") && (
           <TabsContent
             value="access"
-            className="mt-0 min-h-0 flex-1 overflow-auto px-6 py-4"
+            className="mt-0 min-h-0 flex-1 overflow-auto p-6"
           >
             <AgentAccessTab agent={agent} />
           </TabsContent>

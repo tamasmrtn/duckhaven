@@ -6,6 +6,13 @@ const SALES = "/acme-analytics/semantic/sales";
 const MARKETING = "/acme-analytics/semantic/marketing";
 
 describe("SemanticModelDetail", () => {
+  it("puts its tabs in the toolbar row under the header", async () => {
+    renderWithProviders({ initialRoute: SALES });
+
+    const tablist = await screen.findByRole("tablist");
+    expect(tablist.parentElement).toHaveClass("border-b");
+  });
+
   it("shows what a metric actually computes", async () => {
     renderWithProviders({ initialRoute: SALES });
 

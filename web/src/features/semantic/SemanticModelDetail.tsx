@@ -3,7 +3,7 @@ import { useParams } from "@tanstack/react-router";
 import { CheckCircle2, Plus, Ruler, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { PageHeader } from "@/components/ui/page-header";
+import { PageHeader, PageToolbar } from "@/components/ui/page-header";
 import { Banner } from "@/components/ui/banner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -157,25 +157,8 @@ export function SemanticModelDetail() {
         }
       />
 
-      {imported && (
-        <Banner className="mx-6 mt-3">
-          Imported from <strong>{model.provider}</strong>. Edit it at the source
-          and import again — a model has one owner, which is what keeps the two
-          from disagreeing.
-        </Banner>
-      )}
-
-      {model.status !== "published" && (
-        <Banner className="mx-6 mt-3">
-          This model is a {model.status}. The assistant will not use its
-          definitions until an owner publishes it.
-        </Banner>
-      )}
-
-      {publishError && <Banner className="mx-6 mt-3">{publishError}</Banner>}
-
       <Tabs defaultValue="metrics" className="flex min-h-0 flex-1 flex-col">
-        <div className="flex items-center justify-between px-6 pt-3">
+        <PageToolbar className="justify-between">
           <TabsList>
             <TabsTrigger value="metrics">Metrics</TabsTrigger>
             <TabsTrigger value="dimensions">Dimensions</TabsTrigger>
@@ -234,11 +217,28 @@ export function SemanticModelDetail() {
               </Button>
             </div>
           )}
-        </div>
+        </PageToolbar>
+
+        {imported && (
+          <Banner className="mx-6 mt-3">
+            Imported from <strong>{model.provider}</strong>. Edit it at the
+            source and import again — a model has one owner, which is what keeps
+            the two from disagreeing.
+          </Banner>
+        )}
+
+        {model.status !== "published" && (
+          <Banner className="mx-6 mt-3">
+            This model is a {model.status}. The assistant will not use its
+            definitions until an owner publishes it.
+          </Banner>
+        )}
+
+        {publishError && <Banner className="mx-6 mt-3">{publishError}</Banner>}
 
         <TabsContent
           value="metrics"
-          className="min-h-0 flex-1 overflow-auto px-6 py-4"
+          className="mt-0 min-h-0 flex-1 overflow-auto p-6"
         >
           {model.metrics.length === 0 ? (
             <EmptyState
@@ -331,7 +331,7 @@ export function SemanticModelDetail() {
 
         <TabsContent
           value="dimensions"
-          className="min-h-0 flex-1 overflow-auto px-6 py-4"
+          className="mt-0 min-h-0 flex-1 overflow-auto p-6"
         >
           <div className="space-y-2">
             {model.dimensions.map((dim) => (
@@ -390,7 +390,7 @@ export function SemanticModelDetail() {
 
         <TabsContent
           value="datasets"
-          className="min-h-0 flex-1 overflow-auto px-6 py-4"
+          className="mt-0 min-h-0 flex-1 overflow-auto p-6"
         >
           <div className="space-y-2">
             {model.datasets.map((ds) => (
@@ -428,7 +428,7 @@ export function SemanticModelDetail() {
 
         <TabsContent
           value="relationships"
-          className="min-h-0 flex-1 overflow-auto px-6 py-4"
+          className="mt-0 min-h-0 flex-1 overflow-auto p-6"
         >
           {model.relationships.length === 0 ? (
             <EmptyState

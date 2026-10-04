@@ -17,7 +17,10 @@ statement mean something else there:
 - **The binding context.** `USE` and `SET TimeZone` move the catalog, schema and
   time zone a statement resolves in. Those do not taint: the agent reports the
   context the connection is in after every statement, and it becomes part of the
-  key exactly as for a one-shot query.
+  key exactly as for a one-shot query. A statement that can move the context but
+  comes back without that report leaves it *unknown*, and the cache steps aside
+  until a later statement reports it: keeping the previous context would key the
+  next lookup on a schema the session has left.
 
 The state lives on the `sql_sessions` row (Postgres is the state of record, so
 any replica can serve the next statement) and is updated in the same transaction
@@ -84,7 +87,13 @@ def reduce(state: dict, sql: str, *, succeeded: bool, reported: dict | None) -> 
     except Exception:  # noqa: BLE001 - unparseable: assume the worst
         _taint(new, "unparsed")
         return new
+    moves_context = False
     for stmt in statements:
+        if isinstance(stmt, exp.Use) or (
+            isinstance(stmt, exp.Set)
+            and any(_setting_name(i) in _CONTEXT_SETTINGS for i in stmt.expressions)
+        ):
+            moves_context = True
         if isinstance(stmt, exp.Transaction):
             if succeeded:
                 new["in_txn"] = True
@@ -111,6 +120,10 @@ def reduce(state: dict, sql: str, *, succeeded: bool, reported: dict | None) -> 
         new["catalog"] = reported.get("catalog", new.get("catalog"))
         new["schema"] = reported.get("schema", new.get("schema"))
         new["timezone"] = reported.get("timezone", new.get("timezone"))
+    elif moves_context and succeeded:
+        # Where it went is not known: look nothing up until a report says.
+        new["catalog"] = None
+        new["schema"] = None
     return new
 
 

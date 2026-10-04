@@ -34,6 +34,11 @@ class AgentCapabilities(BaseModel):
     # Whether the DuckDB configuration lock really applies on this engine:
     # "verified", "failed", or "disabled" by the operator. None from older agents.
     sandbox: Literal["verified", "failed", "disabled"] | None = None
+    # DuckDB's TimeZone setting on a fresh connection (an IANA name such as "UTC").
+    # Part of what a cached result depends on: TIMESTAMPTZ values and date
+    # arithmetic on them read differently in another zone. None from older agents,
+    # whose results the cache therefore never keeps.
+    timezone: str | None = None
 
 
 class CatalogAttach(BaseModel):

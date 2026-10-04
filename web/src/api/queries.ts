@@ -12,7 +12,12 @@ export const queriesApi = {
     ws: string,
     sql: string,
     agentId: string,
-    opts?: { timeout?: number; savedQueryId?: string; catalog?: string },
+    opts?: {
+      timeout?: number;
+      savedQueryId?: string;
+      catalog?: string;
+      useCache?: boolean;
+    },
   ) =>
     post<Query>(`/workspaces/${ws}/queries`, {
       sql,
@@ -22,6 +27,8 @@ export const queriesApi = {
       saved_query_id: opts?.savedQueryId,
       // The worksheet's active catalog — USEd for unqualified table names.
       catalog: opts?.catalog,
+      // False always executes, even when an earlier identical run could answer.
+      use_cache: opts?.useCache,
     }),
 
   listForWorkspace: (

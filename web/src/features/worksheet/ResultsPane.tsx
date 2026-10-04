@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { Link } from "@tanstack/react-router";
-import { ArrowRightLeft } from "lucide-react";
+import { ArrowRightLeft, RotateCw, Zap } from "lucide-react";
 import { ApiError } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/app/StatusPill";
@@ -44,6 +44,8 @@ interface ResultsPaneProps {
   onForgetLastQuery: () => void;
   onFixWithAssistant: (error: string) => void;
   onSwitchAgent: () => void;
+  // Run the given SQL again, bypassing the result cache.
+  onRerunWithoutCache: (sql: string) => void;
 }
 
 /** The results and profile of the active worksheet's latest run. */
@@ -55,6 +57,7 @@ export function ResultsPane({
   onForgetLastQuery,
   onFixWithAssistant,
   onSwitchAgent,
+  onRerunWithoutCache,
 }: ResultsPaneProps) {
   const queryId =
     runtime.queryId === undefined ? sheet.last_query_id : runtime.queryId;
@@ -75,6 +78,10 @@ export function ResultsPane({
     dispatchError?.code === "unavailable" || resultError === NOT_CONNECTED;
   const stale =
     queryData?.status === "done" && resultsAreStale(sheet.sql, queryData.sql);
+  const cachedFrom =
+    queryData?.cache_status === "hit"
+      ? (queryData.result_source_query_id ?? null)
+      : null;
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden border-t border-[var(--border-subtle)]">
@@ -132,6 +139,38 @@ export function ResultsPane({
               )}
           </>
         )}
+        {queryData?.cache_status === "hit" && (
+          <>
+            <span
+              className="inline-flex items-center gap-1 rounded bg-accent px-1.5 py-0.5 text-2xs text-text-secondary"
+              title="Nothing this query reads has changed since an identical query ran, so its result was served without running it again."
+            >
+              <Zap className="size-3" />
+              Cached
+              {cachedFrom && (
+                <>
+                  {" · "}
+                  <Link
+                    to="/$ws/queries/$queryId"
+                    params={{ ws, queryId: cachedFrom }}
+                    className="hover:text-text-primary hover:underline"
+                  >
+                    from an earlier run
+                  </Link>
+                </>
+              )}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 gap-1 px-1.5 text-2xs"
+              onClick={() => onRerunWithoutCache(queryData.sql)}
+            >
+              <RotateCw className="size-3" />
+              Re-run without cache
+            </Button>
+          </>
+        )}
         {stale && (
           <span
             className="rounded bg-accent px-1.5 py-0.5 text-2xs text-text-secondary"
@@ -158,6 +197,7 @@ export function ResultsPane({
           <ProfilePanel
             queryId={queryId ?? null}
             enabled={queryData?.status === "done"}
+            cached={cachedFrom !== null}
           />
         ) : (
           <ResultsTable

@@ -266,6 +266,35 @@ class Settings(BaseSettings):
     # is not a bulk transport -- a result larger than this pages from here as usual.
     sql_statement_first_page_limit: int = 200
 
+    # ── Result cache ──────────────────────────────────────────────────────────
+    # A repeated read is answered from an earlier run's result while every table
+    # it read is unchanged (docs/concepts/result-cache.md). On by default; turning
+    # this off overrides every workspace's own toggle.
+    result_cache_enabled: bool = True
+    # Budget for deciding whether a query is a hit: parsing it, asking the catalogs
+    # for table versions, reading the entry. Past it the query simply runs, as it
+    # would without the cache.
+    result_cache_lookup_timeout_s: float = 1.0
+    # Results up to this size are copied into Postgres, so a hit needs no running
+    # agent; larger ones stay in the agent's result file.
+    result_cache_inline_max_bytes: int = 1024 * 1024
+    # Ceilings on inline result bytes, per workspace and in total. Past them the
+    # entries least worth keeping go first.
+    result_cache_inline_workspace_max_bytes: int = 256 * 1024 * 1024
+    result_cache_inline_total_max_bytes: int = 2 * 1024 * 1024 * 1024
+    # An entry not hit for this long expires; each hit restarts the clock.
+    result_cache_ttl_hours: float = 24.0
+    # No entry outlives this, however often it is hit.
+    result_cache_max_age_hours: float = 168.0
+    # An entry younger than this is never evicted for space: it has not had the
+    # chance to prove whether it is worth keeping.
+    result_cache_min_lease_s: float = 600.0
+    # The time zone assumed for a run whose agent is not chosen yet (the elastic
+    # pool, an auto-picked agent that is not connected). A different real time zone
+    # only costs a miss: entries record the zone they were computed in.
+    result_cache_assumed_timezone: str = "UTC"
+    result_cache_sweep_interval_s: float = 300.0
+
     # ── Elastic compute (scale-to-zero agents) ────────────────────────────────
     # OFF by default: an operator enables it to let the control plane provision
     # agents on demand and terminate them when idle. The reaper is a leader-elected

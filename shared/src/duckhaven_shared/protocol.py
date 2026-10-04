@@ -40,6 +40,14 @@ class FrameType(StrEnum):
     # reaper only applies that deadline to agents advertising the "statement_ack"
     # protocol feature (see AgentCapabilities.protocol_features).
     STATEMENT_ACK = "statement_ack"
+    # Result cache (control plane -> agent). RETAIN_RESULT asks the agent to keep a
+    # query's result file past its retention window, until `retain_until` (epoch
+    # seconds), because a cache entry serves rows from it; RELEASE_RESULT ends that.
+    # Both keyed by `query_id`. An agent too old to know them ignores the frame,
+    # and its normal retention removes the file: the cache then finds the file
+    # gone and drops the entry, so the worst case is a miss.
+    RETAIN_RESULT = "retain_result"
+    RELEASE_RESULT = "release_result"
 
 
 class Frame(BaseModel):

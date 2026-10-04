@@ -69,6 +69,7 @@ async def main() -> None:
             results_dir,
             settings.result_retention_hours,
             settings.retention_sweep_interval_s,
+            settings.result_cache_max_bytes,
         ),
     )
 

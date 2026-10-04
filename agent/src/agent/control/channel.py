@@ -43,6 +43,7 @@ from agent.metrics.system import (
     effective_cores,
     effective_memory_bytes,
 )
+from agent.results import retention
 from duckhaven_shared import runtimes
 from duckhaven_shared.concurrency import BUCKET_FRACTIONS
 from duckhaven_shared.protocol import Frame, FrameType
@@ -155,6 +156,12 @@ def _get_capabilities() -> AgentCapabilities:
             "SELECT extension_name FROM duckdb_extensions() WHERE loaded"
         ).fetchall()
     ]
+    try:
+        # What a fresh connection -- like every one a query runs on -- reads
+        # TIMESTAMPTZ values in. The control plane's result cache keys on it.
+        timezone = str(conn.execute("SELECT current_setting('TimeZone')").fetchone()[0])
+    except Exception:  # noqa: BLE001 - best-effort: an unknown zone only disables caching
+        timezone = None
     conn.close()
     cpu = cpu_capability()
     return AgentCapabilities(
@@ -171,7 +178,23 @@ def _get_capabilities() -> AgentCapabilities:
         agent_version=runtime.APP_VERSION,
         platform=runtime.PLATFORM,
         sandbox=sandbox_state(settings.sandbox_lock_configuration),
+        timezone=timezone,
     )
+
+
+def _session_context(conn) -> dict[str, str] | None:
+    """The catalog, schema and time zone a held connection currently resolves
+    unqualified names and TIMESTAMPTZ values in. None if it cannot be read, which
+    the control plane treats as "unknown" and stops caching the session."""
+    try:
+        row = conn.execute(
+            "SELECT current_database(), current_schema(), current_setting('TimeZone')"
+        ).fetchone()
+    except Exception:  # noqa: BLE001 - best-effort, see docstring
+        return None
+    if row is None:
+        return None
+    return {"catalog": str(row[0]), "schema": str(row[1]), "timezone": str(row[2])}
 
 
 async def _send_statement_ack(ws, statement_id: str) -> None:
@@ -897,6 +920,16 @@ async def _handle_exec_statement(
             # and a statement that failed measured nothing worth remembering.
             if estimate_key is not None and peak_is_this_statements:
                 _record_grant_feedback(estimate_key, stats["profile"])
+            # What the connection now resolves names and reads values in. The
+            # control plane's result cache keys a session's next statements on it;
+            # reported here, by the engine, so a `USE` that failed half-way can
+            # never be mistaken for one that moved. Same guarded pool as the schema
+            # refresh above: read inside the lock, before anything else can run.
+            context = await _estimate_under_timeout(
+                lambda: _session_context(state.conn),
+                lambda: state.conn,
+                what=f"session_context {state.session_id}",
+            )
         done_payload: dict[str, object] = {
             "query_id": statement_id,
             "status": "done",
@@ -907,6 +940,8 @@ async def _handle_exec_statement(
             "profile": stats["profile"],
             "result_schema": stats["result_schema"],
         }
+        if context is not None:
+            done_payload["session_context"] = context
         await ws.send(Frame(type=FrameType.QUERY_DONE, payload=done_payload).model_dump_json())
     except StatementAbandoned as exc:
         # The lock has already been released (the `async with` block above
@@ -1365,6 +1400,18 @@ async def _consume(ws, results_dir: Path, admission: Admission) -> None:
 
         elif msg.type == FrameType.CLOSE_SESSION:
             _spawn(_handle_close_session(ws, msg.payload, admission))
+
+        elif msg.type == FrameType.RETAIN_RESULT:
+            # The control plane's result cache serves rows from this file: keep it
+            # past the retention window until the entry's own expiry.
+            retention.retain(
+                results_dir,
+                str(msg.payload.get("query_id", "")),
+                float(msg.payload.get("retain_until") or 0),
+            )
+
+        elif msg.type == FrameType.RELEASE_RESULT:
+            retention.release(results_dir, str(msg.payload.get("query_id", "")))
 
         else:
             logger.warning("Ignoring unhandled frame type: %s", msg.type)

@@ -412,6 +412,13 @@ whatever it had in flight — is likewise admin-only.
 Sessions and their statements are kept for as long as the rows are: there is **no** retention sweep for them today, so
 plan for the table to grow with your session volume.
 
+## The result cache
+
+A read in a session can be answered from the [result cache](result-cache.md) like any other, but only outside a
+transaction and only until the session creates something session-local — a temporary table, view or macro, a
+`search_path`, an extra `ATTACH`. See [In SQL sessions](result-cache.md#in-sql-sessions) for why, and open the session
+with `use_cache: false` to turn it off for that session.
+
 ## Not this
 
 Sessions are for tool connections, not a second interactive UI: the DuckHaven worksheet still uses the one-shot query
@@ -420,6 +427,7 @@ path. Sessions also do not add cross-agent transactions — each session is one 
 ## Related
 
 - [Query execution](query-execution.md) — the one-shot path sessions sit alongside.
+- [Result cache](result-cache.md) — which session reads may be answered without running.
 - [Elastic compute](elastic-compute.md) — starting compute for a session that finds none.
 - [Read the session audit trail](../guides/session-audit.md) — the Connections screen.
 - [Configuration](../reference/configuration.md#sql-sessions) — every setting named on this page.

@@ -7,15 +7,20 @@ import { server } from "@tests/mock/server";
 import { ProfilePanel } from "@/features/worksheet/profile/ProfilePanel";
 import { SAMPLE_PROFILE } from "@/mock/fixtures/queries";
 
-function renderPanel(queryId = "q-1", enabled = true) {
+function renderPanel(queryId = "q-1", enabled = true, cached = false) {
   const { wrapper } = createWrapper();
-  return render(<ProfilePanel queryId={queryId} enabled={enabled} />, { wrapper });
+  return render(
+    <ProfilePanel queryId={queryId} enabled={enabled} cached={cached} />,
+    { wrapper },
+  );
 }
 
 describe("ProfilePanel", () => {
   it("renders the summary strip and operator tree from a profile", async () => {
     server.use(
-      http.get("/api/queries/:id/profile", () => HttpResponse.json(SAMPLE_PROFILE)),
+      http.get("/api/queries/:id/profile", () =>
+        HttpResponse.json(SAMPLE_PROFILE),
+      ),
     );
     renderPanel();
 
@@ -28,7 +33,9 @@ describe("ProfilePanel", () => {
 
   it("flags spill and scan blow-up inefficiencies", async () => {
     server.use(
-      http.get("/api/queries/:id/profile", () => HttpResponse.json(SAMPLE_PROFILE)),
+      http.get("/api/queries/:id/profile", () =>
+        HttpResponse.json(SAMPLE_PROFILE),
+      ),
     );
     renderPanel();
 
@@ -40,7 +47,9 @@ describe("ProfilePanel", () => {
 
   it("collapses and expands a node's children", async () => {
     server.use(
-      http.get("/api/queries/:id/profile", () => HttpResponse.json(SAMPLE_PROFILE)),
+      http.get("/api/queries/:id/profile", () =>
+        HttpResponse.json(SAMPLE_PROFILE),
+      ),
     );
     const user = userEvent.setup();
     renderPanel();
@@ -56,9 +65,13 @@ describe("ProfilePanel", () => {
   });
 
   it("shows a no-profile state when the profile is null", async () => {
-    server.use(http.get("/api/queries/:id/profile", () => HttpResponse.json(null)));
+    server.use(
+      http.get("/api/queries/:id/profile", () => HttpResponse.json(null)),
+    );
     renderPanel();
-    expect(await screen.findByText(/No profile for this query/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/No profile for this query/i),
+    ).toBeInTheDocument();
   });
 
   it("shows a waiting state until the query is done", () => {
@@ -72,11 +85,38 @@ describe("ProfilePanel", () => {
     // 1,000,000 rows counted once per participating thread. Showing the raw
     // figure tells the reader the scan read twice what it actually did.
     server.use(
-      http.get("/api/queries/:id/profile", () => HttpResponse.json(SAMPLE_PROFILE)),
+      http.get("/api/queries/:id/profile", () =>
+        HttpResponse.json(SAMPLE_PROFILE),
+      ),
     );
     renderPanel();
 
     expect(await screen.findByText(/1,000,000 → 1,000/)).toBeInTheDocument();
     expect(screen.queryByText(/2,000,000/)).not.toBeInTheDocument();
+  });
+
+  it("says a cached run's profile belongs to the run it reused", async () => {
+    server.use(
+      http.get("/api/queries/:id/profile", () =>
+        HttpResponse.json(SAMPLE_PROFILE),
+      ),
+    );
+    renderPanel("q-hit", true, true);
+    expect(
+      await screen.findByText(/Served from the result cache/i),
+    ).toBeInTheDocument();
+  });
+
+  it("shows no cache note for a run that executed", async () => {
+    server.use(
+      http.get("/api/queries/:id/profile", () =>
+        HttpResponse.json(SAMPLE_PROFILE),
+      ),
+    );
+    renderPanel();
+    await screen.findByText("Latency");
+    expect(
+      screen.queryByText(/Served from the result cache/i),
+    ).not.toBeInTheDocument();
   });
 });

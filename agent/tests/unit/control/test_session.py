@@ -722,3 +722,34 @@ async def test_push_metrics_counts_a_statement_running_on_a_session(monkeypatch)
 
     assert seen["executing_queries"] == 1
     assert seen["idle_sessions"] == 0
+
+
+async def test_a_statement_reports_the_context_it_leaves_the_session_in(tmp_path):
+    """The control plane's result cache keys a session's later statements on the
+    catalog, schema and time zone the connection resolves in, as the engine
+    reports them after each statement."""
+    import agent.control.channel as ch
+
+    admission = _admission()
+    await ch._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
+    state = session.get("s1")
+    state.conn.execute("CREATE SCHEMA other")
+
+    ws = _FakeWS()
+    await ch._handle_exec_statement(
+        ws,
+        {"session_id": "s1", "query_id": "stmt1", "sql": "USE memory.other"},
+        tmp_path,
+        admission,
+    )
+    context = _last(ws).payload["session_context"]
+    assert (context["catalog"], context["schema"]) == ("memory", "other")
+
+    ws2 = _FakeWS()
+    await ch._handle_exec_statement(
+        ws2,
+        {"session_id": "s1", "query_id": "stmt2", "sql": "SET TimeZone = 'Europe/Budapest'"},
+        tmp_path,
+        admission,
+    )
+    assert _last(ws2).payload["session_context"]["timezone"] == "Europe/Budapest"

@@ -296,6 +296,24 @@ The field is **additive** — `columns` still carries the names-only list it alw
 - the query ran on an agent older than this feature. The control plane reports nothing rather than deriving types from
   the result Parquet, whose writer is lossy.
 
+## Result cache fields
+
+A read can be answered from the [result cache](../concepts/result-cache.md) instead of running. Requests opt out with
+`use_cache: false` on `POST /api/workspaces/{workspace}/queries`, on a session statement, or (for a whole session) on
+`POST /api/workspaces/{workspace}/sql/sessions`. `PATCH /api/workspaces/{workspace}` takes `result_cache_enabled`
+(owner only).
+
+Every query carries what the cache did with it:
+
+| Field | Meaning |
+|---|---|
+| `cache_status` | `hit` (answered from an earlier run; nothing executed), `miss` (executed and offered to the cache), `bypass` (the cache was off or could not decide in time), `ineligible` (the query can never be cached), or `null` when the cache never looked. |
+| `cache_detail` | Why, when there is a reason — a slug such as `volatile_function`, `opted_out` or `changed_during_run`. |
+| `result_source_query_id` | For a hit, the run whose result was served. `GET /api/queries/{query_id}/rows` and `/profile` of the hit answer with that run's rows and profile. |
+
+A hit is created already `done`, so `POST /api/workspaces/{workspace}/queries` still answers **202**, but with a
+finished query; its `agent_id` is `null` because no agent ran it.
+
 ## Query history
 
 `GET /api/workspaces/{workspace}/queries` is the reference implementation of the

@@ -21,6 +21,7 @@ from api.models.maintenance import (
 )
 from api.models.query import Query, SavedQuery
 from api.models.rbac import Role, RolePermission
+from api.models.result_cache import ResultCacheEntry
 from api.models.semantic import (
     SemanticDataset,
     SemanticDimension,
@@ -55,6 +56,7 @@ __all__ = [
     "MaintenancePolicy",
     "MaintenanceRecommendation",
     "Query",
+    "ResultCacheEntry",
     "Role",
     "RolePermission",
     "SavedQuery",

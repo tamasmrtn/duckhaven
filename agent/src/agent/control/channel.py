@@ -31,8 +31,10 @@ from agent.executor.estimate_cache import EstimateCache, EstimateKey
 from agent.executor.estimator import bucket_for, estimate_memory_bytes
 from agent.executor.grant_feedback import GrantFeedback
 from agent.executor.runner import (
+    AttachMissing,
     _is_single_select,
     apply_memory_limit,
+    attach_catalog,
     is_cheap_statement,
     open_and_attach,
     sandbox_state,
@@ -119,7 +121,7 @@ _session_open_executor = _make_pool_getter("dh-open")
 
 # Control-plane protocol features this agent implements, advertised so the API can
 # gate on them without a version number (see duckhaven_shared.schemas).
-_PROTOCOL_FEATURES = ["statement_ack"]
+_PROTOCOL_FEATURES = ["statement_ack", "on_demand_attach"]
 
 
 def _spawn(coro) -> asyncio.Task:
@@ -211,6 +213,87 @@ async def _send_failed(ws, query_id: str, error: str) -> None:
         payload={"query_id": query_id, "status": "failed", "error": error},
     )
     await ws.send(done.model_dump_json())
+
+
+# CATALOG_REQUESTs awaiting the control plane's answer, by request id.
+_catalog_requests: dict[str, asyncio.Future] = {}
+# How long a statement waits for a catalog it turned out to need. The control
+# plane answers from its own database, so this only runs out when it is gone.
+_CATALOG_REQUEST_TIMEOUT_S = 10.0
+
+
+async def _request_catalog(ws, query_id: str, slug: str) -> dict | None:
+    """Ask the control plane for a catalog's attach descriptor; None if refused."""
+    request_id = str(uuid.uuid4())
+    answer: asyncio.Future = asyncio.get_running_loop().create_future()
+    _catalog_requests[request_id] = answer
+    try:
+        frame = Frame(
+            type=FrameType.CATALOG_REQUEST,
+            payload={"request_id": request_id, "query_id": query_id, "catalog": slug},
+        )
+        await ws.send(frame.model_dump_json())
+        payload = await asyncio.wait_for(answer, _CATALOG_REQUEST_TIMEOUT_S)
+    except TimeoutError:
+        logger.warning("No answer for catalog %s (query %s)", slug, query_id)
+        return None
+    finally:
+        _catalog_requests.pop(request_id, None)
+    if payload.get("error"):
+        logger.info("Catalog %s refused for query %s: %s", slug, query_id, payload["error"])
+    return payload.get("catalog")
+
+
+def _resolve_catalog_request(payload: dict) -> None:
+    answer = _catalog_requests.get(str(payload.get("request_id", "")))
+    if answer is not None and not answer.done():
+        answer.set_result(payload)
+
+
+def _attach_missing_for(
+    ws, query_id: str, workspace_catalogs: frozenset[str] | None, polaris: dict
+) -> AttachMissing | None:
+    """How a statement attaches a catalog it needs but was not sent.
+
+    None unless the control plane dispatched on demand, which it signals by
+    sending the workspace's catalog slugs: an older control plane has already
+    attached them all and has no CATALOG_REQUEST handler. Only those slugs are
+    asked for, so a misspelt schema costs no round trip. Runs on the worker
+    thread executing the statement, which blocks on the answer.
+    """
+    if workspace_catalogs is None:
+        return None
+    loop = asyncio.get_running_loop()
+
+    def attach(conn, name: str) -> bool:
+        if name not in workspace_catalogs:
+            return False
+        request = asyncio.run_coroutine_threadsafe(_request_catalog(ws, query_id, name), loop)
+        try:
+            descriptor = request.result(timeout=_CATALOG_REQUEST_TIMEOUT_S + 1)
+        except Exception as exc:  # noqa: BLE001 - the statement's own error stands
+            logger.warning("Requesting catalog %s failed: %s", name, exc)
+            return False
+        if descriptor is None:
+            return False
+        attach_catalog(conn, descriptor, polaris=polaris)
+        return True
+
+    return attach
+
+
+def _workspace_catalogs(payload: dict) -> frozenset[str] | None:
+    slugs = payload.get("workspace_catalogs")
+    return None if slugs is None else frozenset(str(s).lower() for s in slugs)
+
+
+def _preload(payload: dict) -> dict[str, list[str]]:
+    """`open_and_attach` kwargs preparing every kind the workspace has."""
+    preload = payload.get("preload") or {}
+    return {
+        "preload_catalog_kinds": list(preload.get("catalog_kinds") or []),
+        "preload_backend_kinds": list(preload.get("backend_kinds") or []),
+    }
 
 
 # Estimates outlive the session that produced them: they depend on the SQL and
@@ -518,6 +601,7 @@ async def _handle_open_session(ws, payload: dict, admission: Admission) -> None:
     session_id = payload["session_id"]
     catalogs = payload.get("catalogs") or []
     active_catalog = payload.get("active_catalog")
+    workspace_catalogs = _workspace_catalogs(payload)
     # Polaris connection info is vended by the API in the frame (the session
     # credential seam); fall back to agent config for older control planes.
     polaris = payload.get("polaris") or {
@@ -568,6 +652,7 @@ async def _handle_open_session(ws, payload: dict, admission: Admission) -> None:
                 trace_headers=trace_headers,
                 disabled_filesystems=settings.sandbox_disabled_filesystems,
                 lock_config=settings.sandbox_lock_configuration,
+                **_preload(payload),
             )
             # The session's idle slice. Each statement resizes from here to its
             # own required floor plus whatever cache the agent can spare, and
@@ -607,8 +692,10 @@ async def _handle_open_session(ws, payload: dict, admission: Admission) -> None:
             reservation=reservation,
             opened_at=opened_at,
             last_active_at=opened_at,
-            catalogs=frozenset(c["slug"] for c in catalogs),
+            catalogs=workspace_catalogs or frozenset(c["slug"] for c in catalogs),
             schema=str(active.get("default_schema") or ""),
+            workspace_catalogs=workspace_catalogs,
+            polaris=polaris,
         )
         session.register(state)
         await _send_session_opened(ws, session_id, "open")
@@ -843,6 +930,24 @@ def _record_grant_feedback(key: EstimateKey, profile: dict | None) -> None:
     )
 
 
+async def _attach_for_statement(state, descriptors: list[dict]) -> None:
+    """Attach the statement's catalogs the session does not have yet.
+
+    Best-effort, like the attach at open: a catalog that fails here fails the
+    statement that reads it with DuckDB's own error, not every statement. On
+    the open pool because a DuckLake attach is a Postgres round trip.
+    """
+
+    def _attach() -> None:
+        for descriptor in descriptors:
+            try:
+                attach_catalog(state.conn, descriptor, polaris=state.polaris)
+            except Exception as exc:  # noqa: BLE001 - see docstring
+                logger.warning("ATTACH failed for catalog %s: %s", descriptor.get("slug"), exc)
+
+    await asyncio.get_running_loop().run_in_executor(_session_open_executor(), _attach)
+
+
 async def _handle_exec_statement(
     ws, payload: dict, results_dir: Path, admission: Admission
 ) -> None:
@@ -871,6 +976,10 @@ async def _handle_exec_statement(
     result_path = results_dir / f"{statement_id}.parquet"
     try:
         async with state.lock:
+            # The catalogs this statement names that the session has not attached
+            # yet. Before the estimate, which has to bind against them too.
+            if descriptors := payload.get("catalogs"):
+                await _attach_for_statement(state, descriptors)
             # Inside the lock: the size applies to this statement only, and the
             # session runs one statement at a time.
             estimate_key = await _resize_for_statement(state, sql, admission, timeout_s)
@@ -911,6 +1020,9 @@ async def _handle_exec_statement(
                     enable_profiling=settings.profiling_enabled,
                     watermarks=state.watermarks,
                     admission_wait_ms=state.admission_wait_ms,
+                    attach_missing=_attach_missing_for(
+                        ws, statement_id, state.workspace_catalogs, state.polaris
+                    ),
                 )
             except StatementAbandoned:
                 # The executor worker never returned -- it may still be running
@@ -1074,6 +1186,10 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
     health_for = payload.get("health_for")
     maintain_for = payload.get("maintain_for")
     result_path = results_dir / f"{query_id}.parquet"
+    # On-demand attach: `catalogs` holds only what the statement names, and the
+    # rest of the workspace is prepared for and fetched if a view needs it.
+    preload = _preload(payload)
+    attach_missing = _attach_missing_for(ws, query_id, _workspace_catalogs(payload), polaris)
 
     # Admission gate: wait in the FIFO queue until the agent has capacity. While
     # queued we send no QUERY_PROGRESS, so the control plane keeps the query in
@@ -1093,6 +1209,7 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
                 polaris=polaris,
                 disabled_filesystems=settings.sandbox_disabled_filesystems,
                 lock_config=settings.sandbox_lock_configuration,
+                **preload,
             )
             wait_started = time.monotonic()
             reservation: Reservation = await admission.acquire(_build_request(estimate, admission))
@@ -1163,6 +1280,8 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
             disabled_filesystems=settings.sandbox_disabled_filesystems,
             lock_config=settings.sandbox_lock_configuration,
             admission_wait_ms=admission_wait_ms,
+            attach_missing=attach_missing,
+            **preload,
         )
         done_payload: dict[str, object] = {
             "query_id": query_id,
@@ -1434,6 +1553,9 @@ async def _consume(ws, results_dir: Path, admission: Admission) -> None:
 
         elif msg.type == FrameType.RELEASE_RESULT:
             retention.release(results_dir, str(msg.payload.get("query_id", "")))
+
+        elif msg.type == FrameType.CATALOG_RESPONSE:
+            _resolve_catalog_request(msg.payload)
 
         else:
             logger.warning("Ignoring unhandled frame type: %s", msg.type)

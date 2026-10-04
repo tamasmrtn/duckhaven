@@ -53,8 +53,16 @@ class SessionState:
     # the estimate cache key: `analytics`, `sf10` and `sf100` all have a
     # `lineitem`, so an estimate is only reusable within the same catalog set and
     # schema. `schema` is refreshed after any statement that can change it.
+    # The workspace's catalogs, not the ones attached so far: under on-demand
+    # attach those grow during the session, and would change the key with them.
     catalogs: frozenset[str] = field(default_factory=frozenset)
     schema: str = ""
+    # Set when the control plane attaches on demand: every catalog slug the
+    # workspace has, which a statement may ask for, and the Polaris block to
+    # attach the Iceberg ones with. None from an older control plane, which
+    # attached them all at open.
+    workspace_catalogs: frozenset[str] | None = None
+    polaris: dict = field(default_factory=dict)
     # How long the last statement spent waiting for budget before it could run,
     # surfaced in its profile as `admission_wait_ms`. Reset per statement.
     admission_wait_ms: float = 0.0

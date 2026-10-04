@@ -100,7 +100,9 @@ change what a statement means. A session statement is served from the cache only
 
 `USE` and `SET TimeZone` do *not* stop caching. After every statement the agent reports the catalog, schema and time
 zone the connection is in, and the next statement is keyed in that context — exactly like a one-shot query, so a
-session and the worksheet share entries for the same query.
+session and the worksheet share entries for the same query. If a statement that can move the context ever comes back
+without that report, the context counts as unknown: the session's statements run without the cache (`unknown_context`)
+until a later statement reports it again, rather than being looked up in the context the session has left.
 
 ## Where results are kept, and for how long
 

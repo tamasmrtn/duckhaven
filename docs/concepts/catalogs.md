@@ -99,6 +99,13 @@ attaches it. For a DuckLake catalog there is no such vendor, so DuckHaven mints 
 with the query. Either way nothing long-lived is written to an agent. See
 [Storage backends](storage-backends.md) and [DuckLake](ducklake.md).
 
+An Iceberg catalog also carries a fallback credential minted the DuckLake way, scoped to that catalog's storage
+location. The agent's Iceberg reader replaces a table's vended credential every time a statement reads the table, so a
+statement that reads one table twice briefly has none, and a file read landing in that gap would fail and take the agent
+process down with it. The fallback is what such a read finds instead. While the vended credential exists it always takes
+precedence, because it is scoped to the table. For an external store the fallback is minted in the background and
+cached, so it never delays a query; the first query after it expires runs without it.
+
 ## Related
 
 - [Tables & Iceberg](tables.md) — what lives inside an Iceberg catalog.

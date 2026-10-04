@@ -1,8 +1,10 @@
 import asyncio
 import contextlib
 import threading
+import time
 import uuid
 
+import duckdb
 import pytest
 import websockets
 from opentelemetry import trace
@@ -1086,6 +1088,99 @@ async def test_auto_estimate_failure_falls_back_without_dropping(tmp_path, monke
     assert captured["memory_bytes"] >= int(admission.budget_bytes * (1 / 3))
     done = Frame.model_validate_json(ws.sent[-1])
     assert done.payload["status"] == "done"
+
+
+async def test_a_slow_attach_does_not_count_against_the_estimate_timeout(tmp_path, monkeypatch):
+    """Attach time grows with the workspace's catalogs (about 60 ms per DuckLake
+    catalog). Counted against the EXPLAIN budget, a 32-catalog workspace timed
+    out every estimate, attached each query twice, and lost a worker each time
+    until the agent stopped estimating for everyone."""
+    import agent.control.channel as ch_module
+
+    monkeypatch.setattr(ch_module.settings, "explain_timeout_s", 0.05)
+    opened: list[object] = []
+
+    def _slow_open(**kwargs):
+        time.sleep(0.3)  # far past the EXPLAIN budget
+        conn = duckdb.connect()
+        opened.append(conn)
+        return conn
+
+    estimated: list[object] = []
+    monkeypatch.setattr(ch_module, "open_and_attach", _slow_open)
+    monkeypatch.setattr(
+        ch_module, "estimate_memory_bytes", lambda conn, sql, **k: estimated.append(conn) or 1
+    )
+    captured: dict[str, object] = {}
+
+    async def fake_run_query(sql, result_path, timeout_s, **kwargs):
+        captured["conn"] = kwargs.get("conn")
+        result_path.write_bytes(b"PAR1fake")
+        return {"row_count": 0, "duration_ms": 0, "wrote_result": True, "profile": None}
+
+    monkeypatch.setattr(ch_module, "run_query", fake_run_query)
+    admission = _admission(profile="auto", floor_bytes=1, ceiling_fraction=1.0)
+
+    await ch_module._handle_dispatch(
+        _FakeWS(), {"query_id": "q", "sql": "SELECT 1"}, tmp_path, admission
+    )
+
+    assert len(opened) == 1
+    assert estimated == opened, "the estimate did not run on the opened connection"
+    assert captured["conn"] is opened[0], "the runner did not reuse the opened connection"
+    assert ch_module._estimates_abandoned == 0
+    assert ch_module._estimates_in_flight == 0
+    opened[0].close()
+
+
+async def _until(predicate, timeout_s: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout_s
+    while not predicate():
+        assert time.monotonic() < deadline, "condition never became true"
+        await asyncio.sleep(0.01)
+
+
+async def test_a_slow_estimate_hands_its_worker_back_when_it_finishes(monkeypatch):
+    """Only a worker that never returns is lost. Counting every timed-out estimate
+    as lost for good turned a few slow plans into estimation switched off for the
+    rest of the agent's life."""
+    import agent.control.channel as ch_module
+
+    monkeypatch.setattr(ch_module.settings, "explain_timeout_s", 0.05)
+    release = threading.Event()
+    try:
+        result = await ch_module._estimate_under_timeout(
+            lambda: release.wait(timeout=30) and 1, lambda: None, what="test"
+        )
+        assert result is None
+        assert ch_module._estimates_abandoned == 1
+        assert ch_module._estimates_in_flight == 1, "the still-running worker was not counted"
+    finally:
+        release.set()
+    await _until(lambda: ch_module._estimates_in_flight == 0)
+    assert ch_module._estimates_abandoned == 1, "the cumulative metric must not go down"
+
+
+async def test_a_cancelled_estimate_hands_its_worker_back_when_it_finishes(monkeypatch):
+    """A cancelled caller (the query was cancelled) leaves the thread running; its
+    worker is free again once that thread returns, not before and not never."""
+    import agent.control.channel as ch_module
+
+    release = threading.Event()
+    task = asyncio.create_task(
+        ch_module._estimate_under_timeout(
+            lambda: release.wait(timeout=30) and 1, lambda: None, what="test"
+        )
+    )
+    try:
+        await _until(lambda: ch_module._estimates_in_flight == 1)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        assert ch_module._estimates_in_flight == 1
+    finally:
+        release.set()
+    await _until(lambda: ch_module._estimates_in_flight == 0)
 
 
 async def test_static_profile_opens_no_estimate_connection(tmp_path, monkeypatch):

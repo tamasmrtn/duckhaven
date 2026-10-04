@@ -51,8 +51,11 @@ memory it always did. It only stops one query's guess from serializing the agent
 
 Estimates are remembered across sessions, keyed by the query text together with the catalogs and schema it binds
 against, so the same query is planned once rather than once per session. Estimating is also bounded: if DuckDB takes
-too long to plan a query, the agent stops waiting and sizes it from a default instead. That costs the agent a little
-capacity, so it is reported as `duckhaven_agent_estimates_abandoned` in [monitoring](../operations/monitoring.md).
+too long to plan a query, the agent stops waiting and sizes it from a default instead. The bound covers planning
+only. Opening the connection and attaching the workspace's catalogs comes first and is not counted, because it grows
+with the number of catalogs rather than with the query. A plan that was merely slow gives its worker back when it
+finishes; one that never finishes keeps it, which costs the agent a little capacity, so every abandoned estimate is
+reported as `duckhaven_agent_estimates_abandoned` in [monitoring](../operations/monitoring.md).
 
 #### Learning from what a query actually used
 

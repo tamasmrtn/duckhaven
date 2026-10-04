@@ -186,21 +186,6 @@ def _get_capabilities() -> AgentCapabilities:
     )
 
 
-def _session_context(conn) -> dict[str, str] | None:
-    """The catalog, schema and time zone a held connection currently resolves
-    unqualified names and TIMESTAMPTZ values in. None if it cannot be read, which
-    the control plane treats as "unknown" and stops caching the session."""
-    try:
-        row = conn.execute(
-            "SELECT current_database(), current_schema(), current_setting('TimeZone')"
-        ).fetchone()
-    except Exception:  # noqa: BLE001 - best-effort, see docstring
-        return None
-    if row is None:
-        return None
-    return {"catalog": str(row[0]), "schema": str(row[1]), "timezone": str(row[2])}
-
-
 async def _send_statement_ack(ws, statement_id: str) -> None:
     """Acknowledge receipt of an EXEC_STATEMENT. Receipt only — not success."""
     ack = Frame(type=FrameType.STATEMENT_ACK, payload={"query_id": statement_id})
@@ -1036,34 +1021,23 @@ async def _handle_exec_statement(
             finally:
                 if not abandoned:
                     await _shrink_to_baseline(state, admission)
-                    if is_cheap_statement(sql):
-                        # `USE` moves what unqualified names bind to, and that is
-                        # part of the estimate cache key. Only cheap statements can
-                        # move it, so this costs one metadata read per `USE`, not
-                        # per statement. Routed through the same pool-capacity/
-                        # timeout guard every other estimate-pool job uses: a bare
-                        # `run_in_executor` here can queue behind workers abandoned
-                        # by a spinning planner and hang forever, holding this
-                        # session's lock the whole time.
-                        await _estimate_under_timeout(
-                            state.refresh_schema,
-                            lambda: state.conn,
-                            what=f"refresh_schema {state.session_id}",
-                        )
             # Only on the success path: `stats` is unbound if the statement raised,
             # and a statement that failed measured nothing worth remembering.
             if estimate_key is not None and peak_is_this_statements:
                 _record_grant_feedback(estimate_key, stats["profile"])
-            # What the connection now resolves names and reads values in. The
-            # control plane's result cache keys a session's next statements on it;
-            # reported here, by the engine, so a `USE` that failed half-way can
-            # never be mistaken for one that moved. Same guarded pool as the schema
-            # refresh above: read inside the lock, before anything else can run.
-            context = await _estimate_under_timeout(
-                lambda: _session_context(state.conn),
-                lambda: state.conn,
-                what=f"session_context {state.session_id}",
-            )
+            # What the connection now resolves names and reads values in, read by
+            # the runner on the statement's own thread (see run_statement_sync).
+            # The control plane's result cache keys a session's next statements on
+            # it; reported by the engine, so a `USE` that failed half-way can never
+            # be mistaken for one that moved. It used to be a separate job behind
+            # the estimate pool's capacity guard, which a burst of sessions filled:
+            # the report was then left out and the next lookup keyed on a stale
+            # schema.
+            context = stats.get("session_context")
+            if context is not None:
+                # `USE` moves what unqualified names bind to, which is part of the
+                # estimate cache key.
+                state.schema = context["schema"]
         done_payload: dict[str, object] = {
             "query_id": statement_id,
             "status": "done",

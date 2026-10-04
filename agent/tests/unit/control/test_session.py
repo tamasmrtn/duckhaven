@@ -553,38 +553,57 @@ async def test_teardown_unhooks_reclaim_targeting_before_interrupting(tmp_path):
     )
 
 
-# ── the post-statement schema refresh must never hang a session ──────────────
+# ── the session context is reported by the statement's own thread ────────────
 #
-# A bare `run_in_executor` call for `refresh_schema` had no bound: once enough
-# EXPLAINs had spun and been abandoned to exhaust the estimate pool, it would
-# queue behind workers that never return -- inside the session's own lock, so
-# the session (and any CLOSE_SESSION on it) hung forever. Routed through the
-# same capacity/timeout guard every other estimate-pool job uses, it must
-# instead skip the refresh once the pool is exhausted.
+# It used to be a separate job behind the estimate pool's capacity guard (a bare
+# `run_in_executor` could queue forever behind abandoned planners, inside the
+# session lock). A burst of sessions filled that pool, the read was skipped, the
+# report left out of QUERY_DONE, and the control plane keyed the session's next
+# cache lookup on a schema it had left (REPORT_RESULT_CACHE_V2.md, finding 2).
 
 
-async def test_refresh_schema_runs_after_a_use_statement(tmp_path):
+async def _exec(ws, admission, tmp_path, sql, query_id="stmt1"):
+    import agent.control.channel as ch
+
+    await asyncio.wait_for(
+        ch._handle_exec_statement(
+            ws, {"session_id": "s1", "query_id": query_id, "sql": sql}, tmp_path, admission
+        ),
+        timeout=5,
+    )
+    return _last(ws)
+
+
+async def test_a_use_is_reported_and_moves_the_estimate_schema(tmp_path):
     import agent.control.channel as ch
 
     admission = _admission()
     await ch._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
-    state = session.get("s1")
+    await _exec(_FakeWS(), admission, tmp_path, "CREATE SCHEMA other", "stmt0")
 
-    called = []
-    state.refresh_schema = lambda: called.append(1)
+    done = await _exec(_FakeWS(), admission, tmp_path, "USE other")
 
-    ws = _FakeWS()
-    await asyncio.wait_for(
-        ch._handle_exec_statement(
-            ws,
-            {"session_id": "s1", "query_id": "stmt1", "sql": "SET threads=2"},
-            tmp_path,
-            admission,
-        ),
-        timeout=5,
-    )
-    assert _last(ws).payload["status"] == "done"
-    assert called, "did not refresh schema after a cheap (SET) statement"
+    assert done.payload["status"] == "done"
+    assert done.payload["session_context"]["schema"] == "other"
+    assert session.get("s1").schema == "other"
+
+
+async def test_the_context_is_reported_even_when_the_estimate_pool_is_exhausted(
+    tmp_path, monkeypatch
+):
+    import agent.control.channel as ch
+
+    admission = _admission()
+    await ch._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
+    await _exec(_FakeWS(), admission, tmp_path, "CREATE SCHEMA other", "stmt0")
+    # Every estimate-pool worker busy, as under a 22-session burst.
+    monkeypatch.setattr(ch, "_estimates_in_flight", max(2, ch.effective_cores()))
+
+    done = await _exec(_FakeWS(), admission, tmp_path, "USE other")
+
+    assert done.payload["status"] == "done"
+    assert done.payload["session_context"]["schema"] == "other"
+    assert session.get("s1").schema == "other"
 
 
 class _NeverTouchConn:
@@ -642,35 +661,6 @@ async def test_abandoned_statement_discards_the_session_without_shrinking_it(tmp
 
     assert _last(ws).payload["status"] == "failed"
     assert session.get("s1") is None, "poisoned session was left reusable"
-
-
-async def test_refresh_schema_is_skipped_not_hung_when_the_estimate_pool_is_exhausted(
-    tmp_path, monkeypatch
-):
-    import agent.control.channel as ch
-
-    admission = _admission()
-    await ch._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
-    state = session.get("s1")
-
-    called = []
-    state.refresh_schema = lambda: called.append(1)
-    # Every estimate-pool worker already lost to an abandoned planner.
-    monkeypatch.setattr(ch, "_estimates_in_flight", max(2, ch.effective_cores()))
-
-    ws = _FakeWS()
-    await asyncio.wait_for(
-        ch._handle_exec_statement(
-            ws,
-            {"session_id": "s1", "query_id": "stmt1", "sql": "SET threads=2"},
-            tmp_path,
-            admission,
-        ),
-        timeout=5,
-    )
-
-    assert _last(ws).payload["status"] == "done"
-    assert not called, "refreshed schema despite the estimate pool being exhausted"
 
 
 async def test_push_metrics_counts_an_idle_held_session_as_idle_not_executing(monkeypatch):

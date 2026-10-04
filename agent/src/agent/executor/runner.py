@@ -1799,7 +1799,7 @@ def run_statement_sync(
     statement rather than to the heaviest one that ran before it. It is mutated
     in place; see `_apply_watermarks`.
     """
-    return _run_one_statement(
+    result = _run_one_statement(
         conn,
         sql,
         result_path,
@@ -1810,3 +1810,24 @@ def run_statement_sync(
         admission_wait_ms=admission_wait_ms,
         attach_missing=attach_missing,
     )
+    # Read here, on the thread that ran the statement and before the session can
+    # run another: a separately scheduled read could be skipped or queued under
+    # load, and the control plane would key the session's next cache lookup on a
+    # context it has left.
+    result["session_context"] = session_context(conn)
+    return result
+
+
+def session_context(conn: duckdb.DuckDBPyConnection) -> dict[str, str] | None:
+    """The catalog, schema and time zone a held connection currently resolves
+    unqualified names and TIMESTAMPTZ values in. None if it cannot be read, which
+    the control plane treats as "unknown" and stops caching the session."""
+    try:
+        row = conn.execute(
+            "SELECT current_database(), current_schema(), current_setting('TimeZone')"
+        ).fetchone()
+    except Exception:  # noqa: BLE001 - best-effort, see docstring
+        return None
+    if row is None:
+        return None
+    return {"catalog": str(row[0]), "schema": str(row[1]), "timezone": str(row[2])}

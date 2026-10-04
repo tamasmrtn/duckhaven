@@ -52,7 +52,7 @@ class SessionState:
     # What this connection's unqualified names bind against, and therefore part of
     # the estimate cache key: `analytics`, `sf10` and `sf100` all have a
     # `lineitem`, so an estimate is only reusable within the same catalog set and
-    # schema. `schema` is refreshed after any statement that can change it.
+    # schema. `schema` is updated from the context each statement reports.
     # The workspace's catalogs, not the ones attached so far: under on-demand
     # attach those grow during the session, and would change the key with them.
     catalogs: frozenset[str] = field(default_factory=frozenset)
@@ -118,19 +118,6 @@ class SessionState:
         """
         async with self.lock:
             await self.apply_resize(total_bytes)
-
-    def refresh_schema(self) -> None:
-        """Re-read the connection's current schema after something may have moved it.
-
-        `USE` is the only statement that changes it, and it is cheap, so this runs
-        after those rather than before every estimate."""
-        try:
-            row = self.conn.execute("SELECT current_schema()").fetchone()
-        except Exception as exc:  # noqa: BLE001 - a stale schema only costs a cache miss
-            logger.warning("Reading current_schema for session %s failed: %s", self.session_id, exc)
-            return
-        if row:
-            self.schema = str(row[0])
 
 
 _sessions: dict[str, SessionState] = {}

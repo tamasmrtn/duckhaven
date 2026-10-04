@@ -47,6 +47,7 @@ from api.models.query import Query
 from api.models.result_cache import ResultCacheEntry
 from api.models.workspace import Workspace
 from api.services.catalog_backends import CatalogBackendError, TableVersion, backend_for
+from api.services.catalog_refs import statement_catalogs
 from api.services.result_cache.eligibility import Ineligible, TableRef, analyze, resolve
 from api.services.result_cache.key import AttachedCatalog, CacheContext, cache_key
 
@@ -346,7 +347,10 @@ async def _lookup(
         workspace_id=workspace.id,
         canonical=analysis.canonical,
         context=context,
-        attached=_attached(catalogs),
+        # What this statement's connection attaches, not the whole workspace:
+        # binding or unbinding a catalog the query never names cannot change
+        # its result, and so no longer drops every entry in the workspace.
+        attached=_attached(statement_catalogs(sql, catalogs, context.current_catalog)),
     )
     miss = Lookup(status=MISS, key_hash=key_hash, context=context, deps=deps)
     entry = await db.scalar(

@@ -2,9 +2,9 @@
 
 Two runs may share a result when they are the same query (the same DuckDB parse
 tree) asked in the same context: the same workspace, the same catalog and schema
-for unqualified names, the same set of attached catalogs, and the same engine
-settings that can change a value without changing the data — the DuckDB runtime
-and the session time zone.
+for unqualified names, the same catalogs attached for it (the ones it names, see
+`catalog_refs`), and the same engine settings that can change a value without
+changing the data — the DuckDB runtime and the session time zone.
 
 Table versions are deliberately *not* part of the key. They are stored on the
 entry and compared on every lookup, so a query keeps one entry whose versions
@@ -21,7 +21,8 @@ from dataclasses import asdict, dataclass
 
 # Bumped whenever what goes into the key changes meaning, so an upgrade never
 # reads entries written under different rules.
-KEY_VERSION = 1
+# 2: `attached` holds the catalogs the statement names, not every workspace catalog.
+KEY_VERSION = 2
 
 
 @dataclass(frozen=True)

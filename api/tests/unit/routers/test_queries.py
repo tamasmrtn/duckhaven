@@ -213,24 +213,28 @@ async def test_create_query_dispatches(
     # Dispatch payload carries the workspace's catalog descriptors (each with its
     # backend) and the active catalog; the agent attaches them all.
     assert frame["payload"]["active_catalog"] == "test_ws"
-    assert frame["payload"]["catalogs"] == [
-        {
-            "slug": "test_ws",
-            "kind": "iceberg_polaris",
-            "polaris_name": "test-ws",
-            "backend": {"kind": "object_store", "root_uri": "/tmp/test"},
-            "default_schema": "analytics",
-        }
-    ]
+    [catalog] = frame["payload"]["catalogs"]
+    # The Iceberg fallback secret (see test_catalog_attach_payload), scoped to the
+    # catalog's own location.
+    storage = catalog.pop("storage")
+    assert storage["scope"].endswith("/test-ws/")
+    assert catalog == {
+        "slug": "test_ws",
+        "kind": "iceberg_polaris",
+        "polaris_name": "test-ws",
+        "backend": {"kind": "object_store", "root_uri": "/tmp/test"},
+        "default_schema": "analytics",
+    }
     assert "storage_credentials" not in frame["payload"]
 
 
 async def test_dispatch_payload_carries_backend_and_no_credentials(
     authed_client: AsyncClient, db_session, user: User, connected_agent
 ):
-    """For an Iceberg catalog: the descriptor, but no credentials and no catalog
-    endpoint — the agent attaches Polaris from its config, which vends storage
-    creds. The blocks are populated per kind, and Iceberg keeps carrying none."""
+    """For an Iceberg catalog on an external store: the descriptor, but no
+    credentials and no catalog endpoint — the agent attaches Polaris from its
+    config, which vends storage creds. The fallback secret's credential is minted
+    in the background, never on dispatch, so this first dispatch carries none."""
     import json
 
     agent, mock_ws = connected_agent

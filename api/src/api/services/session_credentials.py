@@ -20,6 +20,7 @@ plus the statement policy that a ``COPY`` may only touch it).
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -30,6 +31,8 @@ from api.models import Catalog
 from api.models.catalog import KIND_DUCKLAKE
 from api.models.storage_backend import StorageBackend
 from api.services.workspace import DEFAULT_SCHEMA, polaris_storage
+
+logger = logging.getLogger(__name__)
 
 DUCKLAKE_CREDENTIAL_TTL = timedelta(hours=1)
 
@@ -246,11 +249,79 @@ async def _storage_block(catalog: Catalog, data_path: str) -> dict[str, object]:
     return block
 
 
+def iceberg_location(catalog: Catalog) -> str:
+    """Where an Iceberg catalog's tables live: ``<backend base>/<polaris name>/``,
+    the base location `ensure_polaris_catalog` gives the Polaris catalog."""
+    backend = catalog.storage_backend
+    _, base, _ = polaris_storage(backend.kind, backend.root_uri or "", backend.config)
+    base = base.rstrip("/")
+    if not base or not catalog.polaris_name:
+        raise ValueError(f"Iceberg catalog {catalog.slug} has no storage location")
+    return f"{base}/{catalog.polaris_name}/"
+
+
+# Background mints of Iceberg fallback credentials, one per catalog at a time.
+_fallback_mints: dict[uuid.UUID, asyncio.Task] = {}
+
+
+def _start_fallback_mint(catalog: Catalog, location: str) -> None:
+    if catalog.id in _fallback_mints:
+        return
+    # A detached copy: the ORM row may be expired by the time the thread reads it.
+    source = catalog.storage_backend
+    backend = StorageBackend(kind=source.kind, config=dict(source.config or {}))
+    catalog_id = catalog.id
+
+    async def mint() -> None:
+        try:
+            block = await asyncio.to_thread(build_storage_block, backend, location)
+            _storage_cache[catalog_id] = (time.monotonic() + _STORAGE_CACHE_TTL_S, block)
+        except Exception as exc:  # noqa: BLE001 - the fallback is best-effort
+            logger.warning("Could not mint fallback storage for catalog %s: %s", catalog_id, exc)
+        finally:
+            _fallback_mints.pop(catalog_id, None)
+
+    _fallback_mints[catalog_id] = asyncio.get_running_loop().create_task(mint())
+
+
+def _iceberg_fallback_storage(catalog: Catalog) -> dict[str, object] | None:
+    """A storage credential for an Iceberg catalog's whole location, or None.
+
+    The agent reads Iceberg tables with credentials Polaris vends per table, which
+    the Iceberg extension keeps in a secret it *replaces* every time a statement
+    binds that table. A statement that reads a table twice (TPC-H q18's
+    `lineitem`, q07's `nation`) replaces it while the first scan may already be
+    reading manifests, and a read that lands in the gap finds no secret, goes to
+    the default S3 endpoint, and fails on a DuckDB thread nothing catches: the
+    agent process aborts. This secret, scoped to the catalog (shorter than the
+    vended one's table scope, so it never wins while that exists), is what such a
+    read finds instead. The agent can already obtain any table's credentials
+    through Polaris, so it grants nothing new.
+
+    Never waits on a mint: the bundled store's key is at hand, and an external
+    store's credential comes from the cache or is minted in the background,
+    leaving this dispatch without a fallback rather than slower.
+    """
+    try:
+        location = iceberg_location(catalog)
+    except Exception:  # noqa: BLE001 - the fallback must never fail a dispatch
+        return None
+    backend = catalog.storage_backend
+    if backend.kind == "object_store":
+        return build_storage_block(backend, location)
+    cached = _storage_cache.get(catalog.id)
+    if cached is not None and time.monotonic() < cached[0]:
+        return cached[1]
+    _start_fallback_mint(catalog, location)
+    return None
+
+
 async def build_catalog_attach(catalog: Catalog) -> dict[str, object]:
     """Everything an agent needs to ATTACH one catalog, for both dispatch paths.
 
-    Iceberg entries carry no credentials (Polaris vends them); DuckLake entries
-    carry a Postgres block and a scoped storage block.
+    Iceberg entries carry only a fallback storage block (Polaris vends the real
+    credentials; see `_iceberg_fallback_storage`); DuckLake entries carry a
+    Postgres block and a scoped storage block.
     """
     entry: dict[str, object] = {
         "slug": catalog.slug,
@@ -263,6 +334,8 @@ async def build_catalog_attach(catalog: Catalog) -> dict[str, object]:
         "default_schema": DEFAULT_SCHEMA,
     }
     if catalog.kind != KIND_DUCKLAKE:
+        if (fallback := _iceberg_fallback_storage(catalog)) is not None:
+            entry["storage"] = fallback
         return entry
 
     data_path = ducklake_data_path(catalog)

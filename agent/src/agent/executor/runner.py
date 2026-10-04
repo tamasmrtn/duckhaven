@@ -941,8 +941,9 @@ def _option_now_matches(
 def _create_storage_secret(
     conn: duckdb.DuckDBPyConnection, slug: str, store: dict[str, Any]
 ) -> None:
-    """The object-store secret for a DuckLake catalog, SCOPEd to its own prefix
-    so it cannot serve another catalog attached to the same connection.
+    """The object-store secret for a catalog (a DuckLake catalog's data, or an
+    Iceberg catalog's fallback), SCOPEd to its own prefix so it cannot serve
+    another catalog attached to the same connection.
     """
     name = _storage_secret(slug)
     if store.get("type") == "azure":
@@ -992,6 +993,14 @@ def _attach_one(conn: duckdb.DuckDBPyConnection, cat: dict[str, Any], endpoint: 
     if cat.get("kind") == KIND_DUCKLAKE:
         _attach_ducklake(conn, cat)
         return
+    if store := cat.get("storage"):
+        # A fallback for the moment the Iceberg extension is replacing a table's
+        # vended-credential secret (it does on every bind of the table, so twice in
+        # a statement that reads it twice): a manifest read landing in that gap
+        # would otherwise find no secret, go to the default S3 endpoint, and fail
+        # on a thread nothing catches, aborting the agent. Scoped to the catalog,
+        # shorter than the vended secret's table scope, so it never wins over it.
+        _create_storage_secret(conn, cat["slug"], store)
     backend_kind = (cat.get("backend") or {}).get("kind")
     delegation = "vended_credentials" if backend_kind in _VENDED_BACKENDS else "none"
     # ATTACH takes no bind parameters; inline as quoted, escaped literals.

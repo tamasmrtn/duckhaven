@@ -41,13 +41,75 @@ def _clean_cache():
 
 
 @pytest.mark.asyncio
-async def test_iceberg_carries_no_credentials():
-    """Polaris vends on attach, so the control plane mints nothing."""
+async def test_iceberg_carries_only_a_fallback_scoped_to_the_catalog():
+    """Polaris vends the real credentials. The fallback covers the moment the
+    Iceberg extension is replacing a table's vended secret, which aborted the agent
+    (REPORT_RESULT_CACHE_V2.md, finding 1); scoped to the catalog, it reaches no
+    other catalog's data."""
     entry = await build_catalog_attach(_catalog(KIND_ICEBERG_POLARIS))
     assert entry["kind"] == KIND_ICEBERG_POLARIS
     assert entry["polaris_name"] == "raw"
     assert "meta" not in entry
+    assert entry["storage"]["type"] == "s3"
+    assert entry["storage"]["scope"] == f"s3://{settings.s3_bucket}/raw/"
+
+
+def _external_iceberg() -> Catalog:
+    cat = _catalog(KIND_ICEBERG_POLARIS)
+    cat.storage_backend = StorageBackend(
+        kind="s3",
+        name="ext",
+        root_uri="s3://ext-bucket/lake",
+        config={"role_arn": "arn:x", "region": "eu-west-1"},
+    )
+    return cat
+
+
+@pytest.mark.asyncio
+async def test_an_external_fallback_never_holds_up_dispatch(monkeypatch):
+    """Minting an external credential is an STS round trip. The first dispatch goes
+    without the fallback while it mints in the background; later ones carry it."""
+    import api.services.session_credentials as sc
+
+    minted: list[str] = []
+
+    def fake_mint(backend, location):
+        minted.append(location)
+        return {"type": "s3", "scope": location}
+
+    monkeypatch.setattr(sc, "build_storage_block", fake_mint)
+    cat = _external_iceberg()
+
+    first = await build_catalog_attach(cat)
+    assert "storage" not in first
+    await sc._fallback_mints[cat.id]
+
+    second = await build_catalog_attach(cat)
+    assert second["storage"] == {"type": "s3", "scope": "s3://ext-bucket/lake/raw/"}
+    assert minted == ["s3://ext-bucket/lake/raw/"]
+
+
+@pytest.mark.asyncio
+async def test_a_backend_it_cannot_place_leaves_the_fallback_out():
+    cat = _external_iceberg()
+    cat.storage_backend.config = {"role_arn": "arn:x"}  # no region: the location cannot be built
+    entry = await build_catalog_attach(cat)
+    assert entry["polaris_name"] == "raw"
     assert "storage" not in entry
+
+
+@pytest.mark.asyncio
+async def test_a_failed_fallback_mint_leaves_the_fallback_out(monkeypatch):
+    import api.services.session_credentials as sc
+
+    def broken(backend, location):
+        raise RuntimeError("sts unavailable")
+
+    monkeypatch.setattr(sc, "build_storage_block", broken)
+    cat = _external_iceberg()
+    await build_catalog_attach(cat)
+    await sc._fallback_mints.get(cat.id) or None
+    assert "storage" not in await build_catalog_attach(cat)
 
 
 @pytest.mark.asyncio

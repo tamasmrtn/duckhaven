@@ -39,9 +39,12 @@ credentials.
 
 ## Querying across catalogs
 
-When a query runs, the agent attaches **every catalog bound to the workspace**, each under its slug alias, and `USE`s
-the active catalog. So unqualified names resolve against the active catalog, and a query can join across catalogs with
-fully-qualified `catalog.schema.table` references:
+When a query runs, the agent attaches the catalogs it uses, each under its slug alias, and `USE`s the active catalog.
+Every catalog bound to the workspace is reachable, but only the ones a query names are attached, so a workspace with
+many catalogs does not slow down a query that reads one of them (see
+[which catalogs a query attaches](query-execution.md#which-catalogs-a-query-attaches)). Unqualified names resolve
+against the active catalog, and a query can join across catalogs with fully-qualified `catalog.schema.table`
+references:
 
 ```sql
 SELECT *

@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import logging
 import platform
 import random
@@ -108,10 +109,11 @@ def _make_pool_getter(prefix: str) -> Callable[[], ThreadPoolExecutor]:
     return get
 
 
-# The pool session opens run on. Opens would otherwise land on the
-# interpreter's default pool, shared with query execution and with the
-# ``conn.close()`` in session teardown — so a burst of opens can queue ahead
-# of the very closes that would free capacity for them.
+# The pool connection opens run on: session opens, and the one-shot open the
+# `auto` profile estimates on. Opens would otherwise land on the interpreter's
+# default pool, shared with query execution and with the ``conn.close()`` in
+# session teardown — so a burst of opens can queue ahead of the very closes
+# that would free capacity for them.
 _session_open_executor = _make_pool_getter("dh-open")
 
 
@@ -227,11 +229,13 @@ _grants = GrantFeedback(
 )
 
 # Estimates currently occupying a worker in that pool, including any abandoned by
-# a timeout — an abandoned one never returns, so the counter only goes back down
-# for estimates that actually finished.
+# a timeout. The counter goes back down when the worker actually returns, so an
+# estimate that was merely slow gives its worker back; one stuck in a spinning
+# planner never does.
 _estimates_in_flight = 0
-# Estimates given up on. Reported in METRICS_SAMPLE; each one is also a thread and
-# a core lost until the agent restarts, so a rising number is worth alerting on.
+# Estimates given up on, cumulative. Reported in METRICS_SAMPLE; one stuck for
+# good is a thread and a core lost until the agent restarts, so a rising number
+# is worth alerting on.
 _estimates_abandoned = 0
 # One-shot queries past admission and executing. The admission count also holds
 # every open SQL session's reservation, idle or not, so it cannot say how many
@@ -250,8 +254,16 @@ _estimate_pool = _make_pool_getter("dh-estimate")
 
 
 def _estimate_capacity() -> int:
-    """Workers in the estimate pool that are not lost to abandoned work."""
+    """Workers in the estimate pool not busy, abandoned work still running included."""
     return max(2, effective_cores()) - _estimates_in_flight
+
+
+def _estimate_worker_returned(fut: asyncio.Future) -> None:
+    """Hand an estimate's worker back once its thread really has returned."""
+    global _estimates_in_flight
+    _estimates_in_flight -= 1
+    if not fut.cancelled():
+        fut.exception()  # retrieved, so an abandoned failure is not logged as unhandled
 
 
 async def _estimate_under_timeout(work, get_conn, *, what: str) -> int | None:
@@ -270,21 +282,23 @@ async def _estimate_under_timeout(work, get_conn, *, what: str) -> int | None:
     the work and returns. The estimate is then simply unestimable and the caller
     falls back to its default bucket, which is what that bucket is for.
 
-    The abandoned worker never comes back, so estimates run on their own pool and
-    stop being attempted once it is used up — see ``_estimate_pool``.
+    An abandoned worker is counted as busy until its thread returns, which for a
+    spinning planner is never, so estimates run on their own pool and stop being
+    attempted once it is used up — see ``_estimate_pool``. One that was merely
+    slow hands its worker back when it finishes.
 
-    ``get_conn`` is a callable rather than a connection because the one-shot path
-    opens its connection *inside* ``work``, so there is nothing to interrupt until
-    that has happened.
+    ``work`` must be the estimate alone. Anything slow before it, such as opening
+    and attaching the connection, would count against the timeout and abandon a
+    worker that was never stuck.
     """
     global _estimates_in_flight, _estimates_abandoned
 
     if _estimate_capacity() <= 0:
         logger.warning(
-            "Skipping the estimate for %s: %d estimate workers are lost to spinning "
-            "planners; falling back",
+            "Skipping the estimate for %s: all %d estimate workers are busy, some "
+            "possibly with spinning planners; falling back",
             what,
-            _estimates_abandoned,
+            _estimates_in_flight,
         )
         return None
 
@@ -303,16 +317,13 @@ async def _estimate_under_timeout(work, get_conn, *, what: str) -> int | None:
             pass
 
     handle = loop.call_later(settings.explain_timeout_s, _interrupt)
+    fut = loop.run_in_executor(_estimate_pool(), work)
     _estimates_in_flight += 1
-    finished = False
     try:
-        # `wait_for`, not a bare await: the executor future is the only thing that
-        # can be abandoned, because the thread behind it cannot be stopped.
-        result = await asyncio.wait_for(
-            loop.run_in_executor(_estimate_pool(), work), settings.explain_timeout_s
-        )
-        finished = True
-        return result
+        # `wait_for`, not a bare await, because the thread cannot be stopped and
+        # so the wait is the only thing that can be abandoned. `shield` keeps the
+        # executor future alive past the timeout so the callback above still fires.
+        return await asyncio.wait_for(asyncio.shield(fut), settings.explain_timeout_s)
     except TimeoutError:
         _estimates_abandoned += 1
         logger.warning(
@@ -324,39 +335,50 @@ async def _estimate_under_timeout(work, get_conn, *, what: str) -> int | None:
         )
         return None
     except Exception as exc:  # noqa: BLE001 - estimation must never drop a statement
-        finished = True
         logger.warning("Estimate failed for %s: %s", what, exc)
         return None
     finally:
         running = False
         handle.cancel()
-        if finished:
+        if fut.done():
             _estimates_in_flight -= 1
+        else:
+            # Abandoned by the timeout or a cancelled caller: the thread keeps
+            # running, and its worker is only free again once that thread returns.
+            fut.add_done_callback(_estimate_worker_returned)
 
 
 async def _prepare_and_estimate(sql: str, **attach_kwargs) -> tuple[object | None, int | None]:
     """Open+attach a connection and estimate peak memory (best-effort, `auto`).
 
-    Runs on a thread executor with a short EXPLAIN timeout enforced via
-    `conn.interrupt()`. Returns `(conn|None, estimate|None)`; the estimator
-    swallows an interrupted EXPLAIN as `None`. Never raises into dispatch.
+    The open runs first, on the connection-open pool and outside the EXPLAIN
+    timeout: attach time grows with the workspace's catalogs (about 60 ms per
+    DuckLake catalog), and counting it against a 2 s planning budget abandoned
+    estimate workers that were never stuck and attached every such query twice.
+    Only the EXPLAIN is bounded. Returns `(conn|None, estimate|None)`; a failed
+    open returns no connection and leaves `run_query` to open its own. Never
+    raises into dispatch.
     """
-    conn_box: dict[str, object] = {}
     # Captured here (event-loop thread, inside handle_dispatch's span) and
     # passed in: run_in_executor does not propagate contextvars to the worker
-    # thread, so trace.get_current_span() would see nothing if called from
-    # inside _work.
+    # thread, so trace.get_current_span() would see nothing inside the open.
     trace_headers = inject_trace_context()
-
-    def _work() -> int | None:
-        conn = open_and_attach(**attach_kwargs, trace_headers=trace_headers)
-        conn_box["conn"] = conn
-        return estimate_memory_bytes(conn, sql, safety=settings.estimate_safety_multiplier)
+    loop = asyncio.get_running_loop()
+    try:
+        conn = await loop.run_in_executor(
+            _session_open_executor(),
+            functools.partial(open_and_attach, **attach_kwargs, trace_headers=trace_headers),
+        )
+    except Exception as exc:  # noqa: BLE001 - run_query opens again and reports it
+        logger.warning("Opening the connection to estimate on failed: %s", exc)
+        return None, None
 
     estimate = await _estimate_under_timeout(
-        _work, lambda: conn_box.get("conn"), what="one-shot query"
+        lambda: estimate_memory_bytes(conn, sql, safety=settings.estimate_safety_multiplier),
+        lambda: conn,
+        what="one-shot query",
     )
-    return conn_box.get("conn"), estimate
+    return conn, estimate
 
 
 def _build_request(estimate: int | None, admission: Admission) -> ReservationRequest:

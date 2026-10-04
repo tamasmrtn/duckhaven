@@ -34,7 +34,7 @@ from api.models.table_metadata import TableMetadata
 from api.models.user import Credential
 from api.models.workspace import Workspace
 from api.schemas.query import RowsPageOut
-from api.services import agent_access, session_credentials
+from api.services import agent_access
 from api.services import grants as grant_service
 from api.services import runtimes as runtime_service
 from api.services.agent_capabilities import agent_supports_catalog
@@ -43,6 +43,7 @@ from api.services.agent_dispatch import (
     is_agent_connected,
     send_to_agent,
 )
+from api.services.catalog_refs import dispatch_catalogs, statement_catalogs
 from api.services.migration.service import workspace_has_active_migration
 from api.services.sql_guard import is_read_only
 from api.services.workspace import (
@@ -131,8 +132,7 @@ async def dispatch_query(
     runtime_service.assert_dispatchable(agent, catalogs)
     query.runtime_id = runtime_service.runtime_id_of(agent)
 
-    # Eager multi-attach: the agent ATTACHes every catalog bound to the
-    # workspace under its slug and `USE`s the active one.
+    # The agent ATTACHes catalogs under their slugs and `USE`s the active one.
     if active_catalog is None:
         default = await get_default_catalog(db, workspace.id)
         active_catalog = default.slug if default is not None else catalogs[0].slug
@@ -152,8 +152,12 @@ async def dispatch_query(
         "sql": query.sql,
         "timeout_s": timeout_s,
         "active_catalog": active_catalog,
-        "catalogs": [await session_credentials.build_catalog_attach(c) for c in catalogs],
     }
+    # Only the catalogs the statement can name, for an agent that fetches the
+    # rest on demand. Internal probes name their table's catalog explicitly.
+    probed = [t["catalog"] for t in (stats_for, health_for, maintain_for) if t and t.get("catalog")]
+    attach = statement_catalogs(query.sql, catalogs, active_catalog, also=probed)
+    payload.update(await dispatch_catalogs(agent, catalogs, attach))
     if stats_for is not None:
         # Ask the agent to also compute true table stats for this table.
         payload["stats_for"] = stats_for

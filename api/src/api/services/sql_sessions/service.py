@@ -25,7 +25,9 @@ from api.models.catalog import Catalog
 from api.models.query import Query
 from api.models.sql_session import SqlSession
 from api.services import runtimes as runtime_service
+from api.services.agent_capabilities import agent_supports_feature
 from api.services.agent_dispatch import send_to_agent
+from api.services.catalog_refs import ON_DEMAND_ATTACH, dispatch_catalogs, statement_catalogs
 from api.services.session_credentials import build_catalog_attach, build_polaris_block
 from duckhaven_shared.protocol import Frame, FrameType
 from duckhaven_shared.telemetry import inject_trace_context
@@ -61,10 +63,13 @@ async def dispatch_open_session(
     # Committed now: the open call re-reads the row while it waits for the ack.
     session.runtime_id = runtime_service.runtime_id_of(agent)
     await db.commit()
+    # An agent that attaches on demand opens with the active catalog alone; each
+    # statement brings the others it names (see `dispatch_exec_statement`).
+    active = [c for c in catalogs if c.slug == session.active_catalog]
     payload: dict[str, object] = {
         "session_id": str(session.id),
         "active_catalog": session.active_catalog,
-        "catalogs": await _catalog_descriptors(catalogs),
+        **(await dispatch_catalogs(agent, catalogs, active)),
         "polaris": build_polaris_block(),
     }
     with _tracer.start_as_current_span(
@@ -83,16 +88,28 @@ async def dispatch_open_session(
 
 
 async def dispatch_exec_statement(
-    db: AsyncSession, session: SqlSession, query: Query, timeout_s: float
+    db: AsyncSession,
+    session: SqlSession,
+    query: Query,
+    timeout_s: float,
+    catalogs: list[Catalog],
 ) -> bool:
     """Run one statement on the session's held connection. Completion comes back as
-    an ordinary QUERY_DONE keyed by ``query.id`` (handled by query.handle_agent_frame)."""
+    an ordinary QUERY_DONE keyed by ``query.id`` (handled by query.handle_agent_frame).
+
+    ``catalogs`` is the workspace's. For an agent that attaches on demand the
+    frame carries the ones the statement names, every time: the agent skips those
+    the session already has, so nothing here tracks what it has attached."""
     payload: dict[str, object] = {
         "session_id": str(session.id),
         "query_id": str(query.id),
         "sql": query.sql,
         "timeout_s": timeout_s,
     }
+    agent = await db.get(Agent, session.agent_id)
+    if agent_supports_feature(agent.capabilities if agent else None, ON_DEMAND_ATTACH):
+        named = statement_catalogs(query.sql, catalogs, session.active_catalog)
+        payload["catalogs"] = await _catalog_descriptors(named)
     with _tracer.start_as_current_span(
         "exec_statement",
         kind=trace.SpanKind.PRODUCER,

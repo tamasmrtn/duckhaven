@@ -578,8 +578,8 @@ def _agent_families(
     abandoned = GaugeMetricFamily(
         "duckhaven_agent_estimates_abandoned",
         "EXPLAIN estimates the agent gave up on because DuckDB's planner spun and "
-        "ignored the interrupt. Each one costs a worker thread and a core until the "
-        "agent restarts, so this should stay flat; a rising value means queries are "
+        "ignored the interrupt. One that never returns costs a worker thread and a "
+        "core until the agent restarts, so this should stay flat; a rising value means queries are "
         "being sized from the fallback bucket rather than their real estimate.",
         labels=_AGENT_LABELS,
     )

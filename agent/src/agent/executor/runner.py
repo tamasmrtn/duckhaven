@@ -16,7 +16,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -973,6 +973,71 @@ def _create_storage_secret(
     )
 
 
+def _create_iceberg_secret(conn: duckdb.DuckDBPyConnection, polaris: dict[str, Any]) -> None:
+    endpoint = str(polaris.get("endpoint", "")).rstrip("/")
+    _create_secret(
+        conn,
+        f"CREATE SECRET {_ICEBERG_SECRET}",
+        "TYPE ICEBERG",
+        {
+            "CLIENT_ID": polaris["client_id"],
+            "CLIENT_SECRET": polaris["client_secret"],
+            "OAUTH2_SERVER_URI": f"{endpoint}/api/catalog/v1/oauth/tokens",
+        },
+    )
+
+
+def _attach_one(conn: duckdb.DuckDBPyConnection, cat: dict[str, Any], endpoint: str) -> None:
+    """ATTACH one catalog under its slug. Raises on failure."""
+    if cat.get("kind") == KIND_DUCKLAKE:
+        _attach_ducklake(conn, cat)
+        return
+    backend_kind = (cat.get("backend") or {}).get("kind")
+    delegation = "vended_credentials" if backend_kind in _VENDED_BACKENDS else "none"
+    # ATTACH takes no bind parameters; inline as quoted, escaped literals.
+    cat_endpoint = f"{endpoint}/api/catalog".replace("'", "''")
+    wh = str(cat["polaris_name"]).replace("'", "''")
+    alias = cat["slug"].replace('"', '""')
+    # PURGE_REQUESTED: the catalog's drop-with-purge flag only allows a
+    # purge, and DuckDB otherwise drops with purgeRequested=false, which
+    # leaves every data and metadata file on object storage.
+    conn.execute(
+        f"ATTACH '{wh}' AS \"{alias}\" "
+        f"(TYPE ICEBERG, SECRET {_ICEBERG_SECRET}, ENDPOINT '{cat_endpoint}', "
+        f"ACCESS_DELEGATION_MODE '{delegation}', PURGE_REQUESTED true)"
+    )
+
+
+def is_attached(conn: duckdb.DuckDBPyConnection, slug: str) -> bool:
+    row = conn.execute(
+        "SELECT count(*) FROM duckdb_databases() WHERE database_name = ?", [slug]
+    ).fetchone()
+    return bool(row and row[0])
+
+
+def attach_catalog(
+    conn: duckdb.DuckDBPyConnection, cat: dict[str, Any], *, polaris: dict[str, Any]
+) -> bool:
+    """ATTACH one more catalog to an open, possibly sandboxed connection.
+
+    For catalogs a statement needs that the connection was not opened with. It
+    works after the configuration lock (verified on 1.5.5: `CREATE SECRET` and
+    `ATTACH` are not configuration), provided `open_and_attach` loaded the
+    catalog kind's extensions first. Idempotent: an attached slug is left alone.
+    Returns False if it was already attached; raises if the attach fails.
+    """
+    if is_attached(conn, cat["slug"]):
+        return False
+    if cat.get("kind") != KIND_DUCKLAKE:
+        exists = conn.execute(
+            "SELECT count(*) FROM duckdb_secrets() WHERE name = ?", [_ICEBERG_SECRET]
+        ).fetchone()
+        if not (exists and exists[0]):
+            _create_iceberg_secret(conn, polaris)
+    _attach_one(conn, cat, str(polaris.get("endpoint", "")).rstrip("/"))
+    return True
+
+
 def _attach_catalogs(
     conn: duckdb.DuckDBPyConnection,
     *,
@@ -981,7 +1046,7 @@ def _attach_catalogs(
     polaris: dict[str, Any],
     trace_headers: dict[str, str] | None = None,
 ) -> None:
-    """ATTACH every catalog bound to the workspace (multi-attach), by kind.
+    """ATTACH the given catalogs (multi-attach), by kind.
 
     Each catalog is attached under its slug alias so SQL can address
     `catalog.schema.table` and join across catalogs and kinds. The active
@@ -1003,37 +1068,12 @@ def _attach_catalogs(
             {"EXTRA_HTTP_HEADERS": trace_headers, "SCOPE": endpoint},
         )
     if has_iceberg:
-        _create_secret(
-            conn,
-            f"CREATE SECRET {_ICEBERG_SECRET}",
-            "TYPE ICEBERG",
-            {
-                "CLIENT_ID": polaris["client_id"],
-                "CLIENT_SECRET": polaris["client_secret"],
-                "OAUTH2_SERVER_URI": f"{endpoint}/api/catalog/v1/oauth/tokens",
-            },
-        )
-    # ATTACH takes no bind parameters; inline as quoted, escaped literals.
-    cat_endpoint = f"{endpoint}/api/catalog".replace("'", "''")
+        _create_iceberg_secret(conn, polaris)
     active = None
     for cat in catalogs:
         slug = cat["slug"]
-        backend_kind = (cat.get("backend") or {}).get("kind")
         try:
-            if cat.get("kind") == KIND_DUCKLAKE:
-                _attach_ducklake(conn, cat)
-            else:
-                delegation = "vended_credentials" if backend_kind in _VENDED_BACKENDS else "none"
-                wh = str(cat["polaris_name"]).replace("'", "''")
-                alias = slug.replace('"', '""')
-                # PURGE_REQUESTED: the catalog's drop-with-purge flag only allows a
-                # purge, and DuckDB otherwise drops with purgeRequested=false, which
-                # leaves every data and metadata file on object storage.
-                conn.execute(
-                    f"ATTACH '{wh}' AS \"{alias}\" "
-                    f"(TYPE ICEBERG, SECRET {_ICEBERG_SECRET}, ENDPOINT '{cat_endpoint}', "
-                    f"ACCESS_DELEGATION_MODE '{delegation}', PURGE_REQUESTED true)"
-                )
+            _attach_one(conn, cat, endpoint)
         except Exception as exc:  # noqa: BLE001 - one bad catalog must not fail the query
             logger.warning("ATTACH failed for catalog %s: %s", slug, exc)
             continue
@@ -1198,9 +1238,18 @@ def open_and_attach(
     trace_headers: dict[str, str] | None = None,
     disabled_filesystems: str | None = None,
     lock_config: bool = False,
+    preload_catalog_kinds: Iterable[str] = (),
+    preload_backend_kinds: Iterable[str] = (),
 ) -> duckdb.DuckDBPyConnection:
-    """Open a DuckDB connection, load the storage IO extensions, and ATTACH every
-    catalog bound to the workspace so table names bind.
+    """Open a DuckDB connection, load the storage IO extensions, and ATTACH the
+    given catalogs so table names bind.
+
+    `preload_catalog_kinds`/`preload_backend_kinds` are the kinds of every catalog
+    the workspace has, including the ones not attached now, so `attach_catalog`
+    can add them later. Their extensions and settings must be in place before
+    the sandbox: `SET` is refused once the configuration is locked, and `LOAD` and
+    the first `CREATE SECRET` touch the local filesystem, which the optional
+    `disabled_filesystems` latch can switch off (all verified on 1.5.5).
 
     Loads the union of IO extensions across the catalogs' backends (a workspace
     may mix S3 and ADLS catalogs). Shared by the cost estimator (pre-execution
@@ -1216,6 +1265,7 @@ def open_and_attach(
     conn = duckdb.connect()
     catalogs = catalogs or []
     backend_kinds = {(cat.get("backend") or {}).get("kind") for cat in catalogs}
+    backend_kinds |= set(preload_backend_kinds)
     for kind in backend_kinds:
         if (io_ext := _BACKEND_IO_EXTENSION.get(kind or "")) is not None:
             if _safe_install_load(conn, io_ext) and io_ext == "httpfs":
@@ -1227,6 +1277,7 @@ def open_and_attach(
         _configure_external_tls(conn, azure="adls_gen2" in backend_kinds)
 
     catalog_kinds = {cat.get("kind", "iceberg_polaris") for cat in catalogs}
+    catalog_kinds |= set(preload_catalog_kinds)
     loaded: set[str] = set()
     for catalog_kind in catalog_kinds:
         for ext in _CATALOG_KIND_EXTENSIONS.get(catalog_kind, ()):
@@ -1257,6 +1308,10 @@ def open_and_attach(
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Catalog ATTACH failed: %s", exc)
+    if preload_catalog_kinds:
+        # Initialises secret storage, which reads the local filesystem, while it
+        # still can: a later `attach_catalog` creates its secrets after the latch.
+        conn.execute("SELECT count(*) FROM duckdb_secrets()").fetchone()
     # Apply the sandbox last: the IO extensions are loaded and catalogs are
     # attached, so disabling a filesystem (and locking the configuration) here
     # only constrains subsequent user-statement access, not the trusted
@@ -1341,7 +1396,83 @@ def _apply_watermarks(summary: dict[str, Any], watermarks: dict[str, int]) -> No
         watermarks[key] = max(previous, raw)
 
 
+# How DuckDB 1.5.5 names a catalog a statement needs but the connection has not
+# attached, per statement shape. The last one also fires for a schema that does
+# not exist, which is why a name is only acted on when it is a workspace catalog.
+_MISSING_CATALOG_PATTERNS = (
+    re.compile(r'Catalog "([^"]+)" does not exist'),
+    re.compile(r"Catalog with name (\S+) does not exist"),
+    re.compile(r'Failed to find attached database "([^"]+)"'),
+    re.compile(r'No catalog \+ schema named "([^".]+)\.'),
+    re.compile(r'because schema "([^"]+)" does not exist'),
+)
+
+# Attach a catalog a statement turned out to need: (connection, slug) -> attached.
+AttachMissing = Callable[[duckdb.DuckDBPyConnection, str], bool]
+
+
+def missing_catalog(exc: Exception) -> str | None:
+    """The catalog ``exc`` says is not attached, lower-cased, or None."""
+    msg = str(exc)
+    for pattern in _MISSING_CATALOG_PATTERNS:
+        if match := pattern.search(msg):
+            return match.group(1).lower()
+    return None
+
+
+def _is_one_statement(sql: str) -> bool:
+    try:
+        return len(duckdb.extract_statements(sql)) == 1
+    except Exception:  # noqa: BLE001 - a parse failure surfaces when executed
+        return False
+
+
 def _run_one_statement(
+    conn: duckdb.DuckDBPyConnection,
+    sql: str,
+    result_path: Path,
+    *,
+    memory_bytes: int,
+    threads: int,
+    enable_profiling: bool,
+    watermarks: dict[str, int] | None = None,
+    admission_wait_ms: float = 0.0,
+    attach_missing: AttachMissing | None = None,
+) -> dict[str, Any]:
+    """Run one statement, attaching any catalog it turns out to need.
+
+    The control plane attaches the catalogs a statement names, but a view or a
+    macro can read a catalog its caller never names. That fails at bind time,
+    before anything has run, so the statement is retried once per catalog after
+    `attach_missing` attaches it. Only for a single statement: a script's earlier
+    statements have already run by the time a later one fails to bind.
+    """
+    asked: set[str] = set()
+    while True:
+        try:
+            return _run_statement_once(
+                conn,
+                sql,
+                result_path,
+                memory_bytes=memory_bytes,
+                threads=threads,
+                enable_profiling=enable_profiling,
+                watermarks=watermarks,
+                admission_wait_ms=admission_wait_ms,
+            )
+        except duckdb.Error as exc:
+            name = missing_catalog(exc)
+            if attach_missing is None or name is None or name in asked:
+                raise
+            if not _is_one_statement(sql):
+                raise
+            asked.add(name)
+            if not attach_missing(conn, name):
+                raise
+            logger.info("Attached catalog %s on demand; retrying the statement", name)
+
+
+def _run_statement_once(
     conn: duckdb.DuckDBPyConnection,
     sql: str,
     result_path: Path,
@@ -1486,6 +1617,9 @@ def run_query_sync(
     disabled_filesystems: str | None = None,
     lock_config: bool = False,
     admission_wait_ms: float = 0.0,
+    preload_catalog_kinds: Iterable[str] = (),
+    preload_backend_kinds: Iterable[str] = (),
+    attach_missing: AttachMissing | None = None,
 ) -> dict[str, Any]:
     """Run a query through DuckDB.
 
@@ -1507,6 +1641,9 @@ def run_query_sync(
       `interrupt()` it on timeout/cancel (G-D2-a).
     - `trace_headers`: forwarded to `open_and_attach` when this call opens its
       own connection (ignored when `conn` is already attached).
+    - `preload_*_kinds`: forwarded to `open_and_attach`; see there.
+    - `attach_missing`: attaches a catalog the statement needs but `catalogs`
+      did not include; see `_run_one_statement`.
     """
 
     def _open_fresh() -> duckdb.DuckDBPyConnection:
@@ -1517,6 +1654,8 @@ def run_query_sync(
             trace_headers=trace_headers,
             disabled_filesystems=disabled_filesystems,
             lock_config=lock_config,
+            preload_catalog_kinds=preload_catalog_kinds,
+            preload_backend_kinds=preload_backend_kinds,
         )
         if on_connect is not None:
             on_connect(c)
@@ -1541,6 +1680,7 @@ def run_query_sync(
             threads=threads,
             enable_profiling=enable_profiling,
             admission_wait_ms=admission_wait_ms,
+            attach_missing=attach_missing,
         )
 
         if maintain_for:
@@ -1639,6 +1779,7 @@ def run_statement_sync(
     enable_profiling: bool = True,
     watermarks: dict[str, int] | None = None,
     admission_wait_ms: float = 0.0,
+    attach_missing: AttachMissing | None = None,
 ) -> dict[str, Any]:
     """Run one statement on a held SQL-session connection.
 
@@ -1667,4 +1808,5 @@ def run_statement_sync(
         enable_profiling=enable_profiling,
         watermarks=watermarks,
         admission_wait_ms=admission_wait_ms,
+        attach_missing=attach_missing,
     )

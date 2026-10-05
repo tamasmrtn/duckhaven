@@ -315,3 +315,32 @@ def test_a_catalog_with_no_options_block_attaches_cleanly():
 
     assert "ATTACH" in conn.sql_text()
     assert not [c for c in conn.calls if "set_option" in c[0]]
+
+
+def test_an_iceberg_catalog_gets_its_fallback_secret_before_attaching(monkeypatch):
+    """The Iceberg extension replaces a table's vended secret on every bind, and a
+    manifest read landing in that gap found no secret, went to the default S3
+    endpoint and aborted the agent (REPORT_RESULT_CACHE_V2.md, finding 1). The
+    catalog-scoped fallback is what such a read finds instead."""
+    monkeypatch.setattr(runtime, "SECRET_BIND_PARAMETERS", True)
+    conn = FakeConn()
+    cat = _iceberg_catalog()
+    cat["storage"] = {**_ducklake_catalog()["storage"], "scope": "s3://warehouse/ice/"}
+
+    runner._attach_catalogs(conn, catalogs=[cat], active_catalog="ice", polaris=_POLARIS)
+
+    sqls = [sql for sql, _ in conn.calls]
+    secret_at = next(i for i, sql in enumerate(sqls) if "dh_dl_store_ice" in sql)
+    attach_at = next(i for i, sql in enumerate(sqls) if sql.startswith("ATTACH 'ice'"))
+    assert secret_at < attach_at
+    assert "s3://warehouse/ice/" in [str(p) for p in conn.calls[secret_at][1]]
+    # Vending stays on: the fallback only covers its gaps.
+    assert "ACCESS_DELEGATION_MODE 'vended_credentials'" in sqls[attach_at]
+
+
+def test_an_iceberg_catalog_without_a_fallback_attaches_as_before():
+    conn = FakeConn()
+    runner._attach_catalogs(
+        conn, catalogs=[_iceberg_catalog()], active_catalog="ice", polaris=_POLARIS
+    )
+    assert "dh_dl_store_ice" not in conn.sql_text()

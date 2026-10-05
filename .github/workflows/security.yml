@@ -26,6 +26,9 @@ jobs:
           format: sarif
           output: trivy-api.sarif
           severity: CRITICAL,HIGH
+          # Without this the action drops the severity filter for SARIF and
+          # uploads every finding, MEDIUM and LOW included.
+          limit-severities-for-sarif: true
           exit-code: '0'
       - uses: github/codeql-action/upload-sarif@v4.38.2
         with:
@@ -70,8 +73,41 @@ jobs:
           format: sarif
           output: trivy-agent.sarif
           severity: CRITICAL,HIGH
+          limit-severities-for-sarif: true
           exit-code: '0'
       - uses: github/codeql-action/upload-sarif@v4.38.2
         with:
           sarif_file: trivy-agent.sarif
           category: trivy-agent-${{ matrix.runtime }}
+
+  # The jobs above scan what main would ship. Self-hosters run the published
+  # release tags, which are never rebuilt, so a fix that is only on main still
+  # leaves them exposed. The unsuffixed agent tag is the default runtime's.
+  trivy-release:
+    name: Scan released duckhaven-${{ matrix.image }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [api, agent]
+    steps:
+      - uses: actions/checkout@v7
+      - id: release
+        run: echo "version=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName | sed 's/^v//')" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ghcr.io/${{ github.repository_owner }}/duckhaven-${{ matrix.image }}:${{ steps.release.outputs.version }}
+          format: sarif
+          output: trivy-release.sarif
+          severity: CRITICAL,HIGH
+          limit-severities-for-sarif: true
+          exit-code: '0'
+      - uses: github/codeql-action/upload-sarif@v4.38.2
+        with:
+          sarif_file: trivy-release.sarif
+          category: trivy-${{ matrix.image }}-release

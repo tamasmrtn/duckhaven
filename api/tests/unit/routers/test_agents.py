@@ -1146,3 +1146,60 @@ async def test_ws_superseded_socket_teardown_leaves_the_newer_socket_alone(ws_cl
             assert (await db.get(Agent, agent_id)).status == "healthy"
     finally:
         registry.unregister(agent_id)
+
+
+async def test_ws_catalog_request_is_answered_on_the_same_socket(ws_client, db_engine):
+    """An agent asking for a catalog its running statement needs gets the attach
+    descriptor back on its own socket (on-demand attach)."""
+    import asyncio
+
+    from conftest import seed_workspace
+    from httpx_ws import aconnect_ws
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.models.query import Query
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    token = "dh_boot_catreq"
+    await _add_bootstrap(factory, token)
+    async with factory() as db:
+        user = User(
+            email="cr@test.local", password_hash=hash_password("pw"), name="CR", role="user"
+        )
+        db.add(user)
+        await db.commit()
+        ws_row, catalog = await seed_workspace(db, user_id=user.id, slug="cr-ws")
+
+    async with AsyncClient(transport=ws_client, base_url="http://test") as c:
+        async with aconnect_ws("http://test/agents/connect", c) as ws:
+            await ws.send_text(
+                json.dumps({"type": "auth", "payload": {"token": token, "result_port": 8001}})
+            )
+            auth_ok = json.loads(await asyncio.wait_for(ws.receive_text(), timeout=5.0))
+            agent_id = uuid.UUID(auth_ok["payload"]["agent_id"])
+            # Let the handler finish its post-auth writes: SQLite takes one writer.
+            await asyncio.sleep(0.2)
+            async with factory() as db:
+                query = Query(
+                    workspace_id=ws_row.id, agent_id=agent_id, sql="SELECT 1", status="running"
+                )
+                db.add(query)
+                await db.commit()
+
+            await ws.send_text(
+                json.dumps(
+                    {
+                        "type": "catalog_request",
+                        "payload": {
+                            "request_id": "r1",
+                            "query_id": str(query.id),
+                            "catalog": catalog.slug,
+                        },
+                    }
+                )
+            )
+            answer = json.loads(await asyncio.wait_for(ws.receive_text(), timeout=5.0))
+
+    assert answer["type"] == "catalog_response"
+    assert answer["payload"]["request_id"] == "r1"
+    assert answer["payload"]["catalog"]["slug"] == catalog.slug

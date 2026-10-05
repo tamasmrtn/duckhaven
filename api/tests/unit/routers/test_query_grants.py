@@ -318,3 +318,27 @@ async def test_open_mode_dispatch_needs_no_grant(authed_client, db_session, user
     ws, _cat = await seed_workspace(db_session, user_id=user.id, slug="open-ws")
     resp = await _run(authed_client, ws, connected_agent, "SELECT * FROM analytics.leads")
     assert resp.status_code == 202
+
+
+@pytest.mark.parametrize("sql", ["SELECT * FROM sales.leads", "SELECT * FROM SALES.leads"])
+async def test_two_part_name_into_a_scoped_catalog_needs_a_grant(
+    authed_client, mixed_ws, connected_agent, sql
+):
+    """DuckDB binds `sales.leads` to the `sales` catalog's `main` schema when
+    `sales` is an attached catalog. Read only as schema `sales` of the open active
+    catalog, it was let through without a grant on the scoped catalog."""
+    ws, _open_cat, _scoped = mixed_ws
+    resp = await _run(authed_client, ws, connected_agent, sql)
+    assert resp.status_code == 403
+    assert resp.json()["error"] == "grant_denied"
+    assert "sales.main.leads" in str(resp.json())
+
+
+async def test_two_part_name_into_a_scoped_catalog_allowed_with_its_grant(
+    authed_client, mixed_ws, connected_agent, db_session, user
+):
+    ws, _open_cat, scoped = mixed_ws
+    _grant(db_session, user, scoped, "reader", schema="main", table="leads")
+    await db_session.commit()
+    resp = await _run(authed_client, ws, connected_agent, "SELECT * FROM sales.leads")
+    assert resp.status_code == 202

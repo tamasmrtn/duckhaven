@@ -13,6 +13,36 @@ control plane and an [agent](agents.md).
    and reports back.
 5. The browser polls for status, then pages result rows on demand.
 
+## Which catalogs a query attaches
+
+A workspace can bind many [catalogs](catalogs.md), but a query only attaches the ones it can use: the catalogs its SQL
+names, plus the active catalog for unqualified names. This matters because attaching is not free. Each DuckLake
+catalog costs about 60 ms and holds a Postgres connection open for as long as the query runs, so a workspace with 32
+DuckLake catalogs used to spend two seconds attaching them before even `SELECT 1` could start. Now a query's cost
+depends on the catalogs it reads, not on how many the workspace has.
+
+How the control plane decides:
+
+- **Any catalog name in the SQL counts.** The control plane looks for each catalog's name anywhere in the statement,
+  including inside strings and quoted identifiers, so `USE sales`, `CALL lake.merge_adjacent_files()`,
+  `ducklake_snapshots('lake')` and `query('SELECT … FROM sales.s.t')` all attach the catalog they mention. A word that
+  only happens to match a catalog's name attaches it needlessly; that costs time, never correctness.
+- **Listing statements attach everything.** `information_schema`, `pg_catalog`, the `duckdb_*()` functions, `SHOW` and
+  the listing `PRAGMA`s describe every attached catalog, so they still attach the whole workspace and list all of it.
+- **Views and macros are attached when DuckDB finds them.** A view in one catalog can read another catalog that the
+  query never names. When that happens, the agent asks the control plane for the missing catalog, attaches it, and runs
+  the statement again. The control plane only hands over a catalog bound to the query's workspace. For a catalog in
+  [scoped](permissions.md#scoped-access) mode, it also requires that whoever runs the query can read **the whole
+  catalog**, because the agent cannot say which table the view reads.
+
+!!! note "Scripts must name the catalogs their views read"
+    The retry only applies to a single statement. In a multi-statement script, the earlier statements have already run
+    when a later one fails, so the script fails instead. Name the catalog somewhere in the script (a comment is
+    enough), or run the statement on its own.
+
+[SQL sessions](sql-sessions.md#lifecycle) attach the same way, one statement at a time. Agents built before this
+behaviour advertise no support for it, so the control plane keeps attaching every catalog for them.
+
 ## The SQL allowlist
 
 Only data statements (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `MERGE`) and catalog DDL (`CREATE`, `ALTER`, `DROP`) reach
@@ -51,8 +81,11 @@ memory it always did. It only stops one query's guess from serializing the agent
 
 Estimates are remembered across sessions, keyed by the query text together with the catalogs and schema it binds
 against, so the same query is planned once rather than once per session. Estimating is also bounded: if DuckDB takes
-too long to plan a query, the agent stops waiting and sizes it from a default instead. That costs the agent a little
-capacity, so it is reported as `duckhaven_agent_estimates_abandoned` in [monitoring](../operations/monitoring.md).
+too long to plan a query, the agent stops waiting and sizes it from a default instead. The bound covers planning
+only. Opening the connection and attaching the workspace's catalogs comes first and is not counted, because it grows
+with the number of catalogs rather than with the query. A plan that was merely slow gives its worker back when it
+finishes; one that never finishes keeps it, which costs the agent a little capacity, so every abandoned estimate is
+reported as `duckhaven_agent_estimates_abandoned` in [monitoring](../operations/monitoring.md).
 
 #### Learning from what a query actually used
 

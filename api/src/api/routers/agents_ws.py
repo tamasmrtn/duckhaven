@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import secrets
@@ -122,6 +123,24 @@ async def _on_first_report(db: AsyncSession, agent_id: uuid.UUID) -> None:
     # from the pool binder: those match a pool key, these match the agent a
     # schedule explicitly names.
     await bind_scheduled_work(db, agent_row)
+
+
+# In-flight CATALOG_REQUEST answers, held so they are not collected mid-flight.
+_catalog_answers: set[asyncio.Task] = set()
+
+
+async def _answer_catalog_request(ws: WebSocket, session_factory, agent_id, payload: dict) -> None:
+    from api.services.catalog_requests import answer_catalog_request
+
+    try:
+        async with session_factory() as db:
+            answer = await answer_catalog_request(db, agent_id, payload)
+        frame = Frame(type=FrameType.CATALOG_RESPONSE, payload=answer)
+        await ws.send_text(frame.model_dump_json())
+    except Exception:
+        # The agent gives up on its own timeout and the statement fails with
+        # DuckDB's error, so a lost answer costs that statement only.
+        logger.exception("Failed to answer a catalog request from agent %s", agent_id)
 
 
 @router.websocket("/agents/connect")
@@ -415,6 +434,16 @@ async def agent_connect(
 
                     async with session_factory() as db:
                         await handle_statement_ack(db, msg_frame)
+
+                elif msg_frame.type == FrameType.CATALOG_REQUEST:
+                    # A task, so a cold credential mint for the catalog cannot hold
+                    # up this agent's other frames. The answer goes back on this
+                    # socket: the request came in on it.
+                    task = asyncio.create_task(
+                        _answer_catalog_request(ws, session_factory, agent_id, msg_frame.payload)
+                    )
+                    _catalog_answers.add(task)
+                    task.add_done_callback(_catalog_answers.discard)
             except WebSocketDisconnect:
                 raise
             except Exception:

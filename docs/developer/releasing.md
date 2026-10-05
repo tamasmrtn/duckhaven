@@ -76,6 +76,15 @@ gh release view v0.3.0
 
 Confirm the images appear under the repository's GHCR packages.
 
+## Releasing a security fix
+
+Release images are never rebuilt, so a dependency or base-image fix merged to `main` does not reach anyone
+running a release until the next tag. The weekly security scan watches the latest release's images for exactly
+this reason: an open alert in the `trivy-api-release` or `trivy-agent-release` code scanning category that no
+longer shows up for `main` is fixed but unreleased. If it matters, cut a patch release (`fix:` → patch) rather
+than waiting for the next minor. See
+[Vulnerability scanning and dependency updates](development.md#vulnerability-scanning-and-dependency-updates).
+
 ## Consuming a release
 
 Self-hosters pin a release via `DUCKHAVEN_IMAGE_TAG` in `.env`. See

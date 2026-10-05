@@ -21,9 +21,12 @@ This page names the settings that shape a session's behaviour but not their valu
 ## Lifecycle
 
 1. **Open** — `POST /api/workspaces/{workspace}/sql/sessions`. The API picks the agent (an explicit `agent_id`, or an
-   auto-picked compatible one), tells it to open and attach a DuckDB connection to the workspace's catalogs, and returns
-   a `session_id` once the agent acknowledges. The session **pins** that agent: every later statement routes to it. When
-   no agent is up and [elastic compute](elastic-compute.md) is enabled, the open starts one first — see
+   auto-picked compatible one), tells it to open a DuckDB connection with the session's active catalog attached, and
+   returns a `session_id` once the agent acknowledges. The workspace's other catalogs are attached the first time a
+   statement names one, and stay attached for the rest of the session (see
+   [which catalogs a query attaches](query-execution.md#which-catalogs-a-query-attaches)), so opening a session costs
+   the same however many catalogs the workspace has. The session **pins** that agent: every later statement routes to
+   it. When no agent is up and [elastic compute](elastic-compute.md) is enabled, the open starts one first — see
    [Cold start](#cold-start).
 2. **Run statements** — `POST /api/sql/sessions/{session_id}/statements`. Each statement is checked against the
    [statement policy](#statement-policy) and the caller's [permissions](permissions.md), then dispatched to the held
@@ -334,6 +337,9 @@ sandbox with `SET`: `disabled_filesystems`, `enable_external_access`, `secret_di
 `home_directory`, `custom_extension_repository`, and `allow_unsigned_extensions` all become read-only for the life of
 the connection, as does the lock itself. A small exception list keeps writable only what the agent needs afterwards —
 the per-statement memory/thread slice, the profiler, and the `SET timezone` the statement policy admits.
+
+Catalogs a later statement needs are attached after the lock. That works because attaching is not configuration, and
+because the agent loads the extensions and applies the settings of every catalog kind in the workspace before it locks.
 
 The lock is checked, not assumed. DuckDB rejects the whole exception list if it names one setting the engine doesn't
 have, and the lock is then never applied. That happened in practice: DuckDB 2.0 renamed the profiler's setting. So

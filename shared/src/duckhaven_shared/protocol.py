@@ -48,6 +48,16 @@ class FrameType(StrEnum):
     # gone and drops the entry, so the worst case is a miss.
     RETAIN_RESULT = "retain_result"
     RELEASE_RESULT = "release_result"
+    # On-demand attach. The control plane sends only the catalogs a statement
+    # names; when one turns out to need another (a view or macro reading it), the
+    # agent asks with CATALOG_REQUEST `{request_id, query_id, catalog}` and the
+    # control plane answers CATALOG_RESPONSE `{request_id, catalog, error}`, where
+    # `catalog` is the attach descriptor, or null when the catalog is not in the
+    # query's workspace or the principal may not reach it. Only sent by agents
+    # advertising the "on_demand_attach" protocol feature, and only for work that
+    # the control plane dispatched that way.
+    CATALOG_REQUEST = "catalog_request"
+    CATALOG_RESPONSE = "catalog_response"
 
 
 class Frame(BaseModel):

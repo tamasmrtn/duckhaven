@@ -8,6 +8,10 @@ updates:
     labels:
       - dependencies
       - python
+    allow:
+      # The default (direct) never touches lockfile-only packages, which is how
+      # anyio, cryptography and pyasn1 sat on vulnerable versions for months.
+      - dependency-type: "all"
     ignore:
       # DuckDB's line is the default runtime (duckhaven_shared.runtimes), moved
       # deliberately with the manifest and the API; patch releases still flow.

@@ -647,7 +647,9 @@ async def run_statement(
     # `queued` until QUERY_DONE arrives.
     await db.commit()
 
-    if not await session_service.dispatch_exec_statement(db, session, query, body.timeout_s):
+    if not await session_service.dispatch_exec_statement(
+        db, session, query, body.timeout_s, catalogs
+    ):
         query.status = "failed"
         query.error = "agent not connected"
         query.finished_at = datetime.now(tz=UTC)

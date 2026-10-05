@@ -214,7 +214,7 @@ async def test_truncate_statement_is_accepted(
     unknown statement type even though the one-shot path already allowed it."""
     session = await _open_session_row(db_session, workspace, agent, user)
 
-    async def fake_exec(db, sess, query, timeout_s):
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
         return True
 
     monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
@@ -253,7 +253,7 @@ async def test_introspection_statements_are_accepted(
     """
     session = await _open_session_row(db_session, workspace, agent, user)
 
-    async def fake_exec(db, sess, query, timeout_s):
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
         return True
 
     monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
@@ -309,7 +309,7 @@ async def test_statement_success_creates_session_query(
 ):
     session = await _open_session_row(db_session, workspace, agent, user)
 
-    async def fake_exec(db, sess, query, timeout_s):
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
         return True
 
     monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
@@ -331,7 +331,7 @@ async def test_statement_persists_its_timeout_budget(
     off the row."""
     session = await _open_session_row(db_session, workspace, agent, user)
 
-    async def fake_exec(db, sess, query, timeout_s):
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
         return True
 
     monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
@@ -349,7 +349,7 @@ async def test_statement_persists_the_default_timeout_budget(
 ):
     session = await _open_session_row(db_session, workspace, agent, user)
 
-    async def fake_exec(db, sess, query, timeout_s):
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
         return True
 
     monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
@@ -369,7 +369,7 @@ async def test_statement_dispatch_failure_marks_the_row_failed(
     503 *and* leave the row in a terminal state, not a dangling queued one."""
     session = await _open_session_row(db_session, workspace, agent, user)
 
-    async def fake_exec(db, sess, query, timeout_s):
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
         return False
 
     monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
@@ -509,7 +509,7 @@ async def test_read_parquet_of_own_staging_get_url_is_admitted(
 
     session = await _open_session_row(db_session, workspace, agent, user)
 
-    async def fake_exec(db, sess, query, timeout_s):
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
         return True
 
     monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
@@ -1091,7 +1091,7 @@ async def test_statement_wait_returns_200_when_it_finishes_in_time(
     already happened."""
     session = await _open_session_row(db_session, workspace, agent, user)
 
-    async def fake_exec(db, sess, query, timeout_s):
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
         # Stand in for the agent's QUERY_DONE, which in production is applied by
         # the websocket receive loop in its own DB session.
         query.status = "done"
@@ -1119,7 +1119,7 @@ async def test_statement_wait_expiry_returns_202_still_running(
     handed back for the client to poll, exactly as before the wait existed."""
     session = await _open_session_row(db_session, workspace, agent, user)
 
-    async def fake_exec(db, sess, query, timeout_s):
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
         return True
 
     monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
@@ -1141,7 +1141,7 @@ async def test_statement_wait_zero_answers_immediately(
     arm for measuring the change."""
     session = await _open_session_row(db_session, workspace, agent, user)
 
-    async def fake_exec(db, sess, query, timeout_s):
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
         return True
 
     monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
@@ -1176,7 +1176,7 @@ async def test_statement_wait_returns_200_for_a_failed_statement(
     answering 202 would send it back to poll a statement that is already over."""
     session = await _open_session_row(db_session, workspace, agent, user)
 
-    async def fake_exec(db, sess, query, timeout_s):
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
         query.status = "failed"
         query.error = "Binder Error: boom"
         await db.commit()
@@ -1204,7 +1204,7 @@ async def test_statement_inlines_the_first_page_when_asked(
 
     session = await _open_session_row(db_session, workspace, agent, user)
 
-    async def fake_exec(db, sess, query, timeout_s):
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
         query.status = "done"
         query.row_count = 1
         query.result_path = "/results/x.parquet"
@@ -1242,7 +1242,7 @@ async def test_statement_inlines_the_first_page_by_default(
     session = await _open_session_row(db_session, workspace, agent, user)
     asked: list[int] = []
 
-    async def fake_exec(db, sess, query, timeout_s):
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
         query.status = "done"
         query.row_count = 1
         query.result_path = "/results/x.parquet"
@@ -1275,7 +1275,7 @@ async def test_first_page_limit_zero_opts_out(
 
     session = await _open_session_row(db_session, workspace, agent, user)
 
-    async def fake_exec(db, sess, query, timeout_s):
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
         query.status = "done"
         query.result_path = "/results/x.parquet"
         await db.commit()
@@ -1308,7 +1308,7 @@ async def test_statement_still_succeeds_when_the_first_page_cannot_be_fetched(
 
     session = await _open_session_row(db_session, workspace, agent, user)
 
-    async def fake_exec(db, sess, query, timeout_s):
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
         query.status = "done"
         query.result_path = "/results/x.parquet"
         await db.commit()
@@ -1339,7 +1339,7 @@ async def test_statement_does_not_inline_a_page_for_ddl(
 
     session = await _open_session_row(db_session, workspace, agent, user)
 
-    async def fake_exec(db, sess, query, timeout_s):
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
         query.status = "done"
         query.result_path = None
         await db.commit()

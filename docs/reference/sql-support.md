@@ -28,7 +28,9 @@ the data, not just to the schema.
 
 ### Addressing catalogs
 
-Every catalog attached to the workspace is available in a query. Unqualified names (`schema.table`) resolve against the
+Every catalog attached to the workspace is available in a query, and only the ones a query names are attached for it
+(see [which catalogs a query attaches](../concepts/query-execution.md#which-catalogs-a-query-attaches)). Unqualified
+names (`schema.table`) resolve against the
 worksheet's **active catalog**; reference another catalog — or join across catalogs — with a fully-qualified
 `catalog.schema.table`:
 

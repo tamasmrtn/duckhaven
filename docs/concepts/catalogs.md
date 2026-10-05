@@ -39,9 +39,12 @@ credentials.
 
 ## Querying across catalogs
 
-When a query runs, the agent attaches **every catalog bound to the workspace**, each under its slug alias, and `USE`s
-the active catalog. So unqualified names resolve against the active catalog, and a query can join across catalogs with
-fully-qualified `catalog.schema.table` references:
+When a query runs, the agent attaches the catalogs it uses, each under its slug alias, and `USE`s the active catalog.
+Every catalog bound to the workspace is reachable, but only the ones a query names are attached, so a workspace with
+many catalogs does not slow down a query that reads one of them (see
+[which catalogs a query attaches](query-execution.md#which-catalogs-a-query-attaches)). Unqualified names resolve
+against the active catalog, and a query can join across catalogs with fully-qualified `catalog.schema.table`
+references:
 
 ```sql
 SELECT *
@@ -95,6 +98,13 @@ For an Iceberg catalog, Polaris vends short-lived, connection-scoped storage cre
 attaches it. For a DuckLake catalog there is no such vendor, so DuckHaven mints the credentials itself and sends them
 with the query. Either way nothing long-lived is written to an agent. See
 [Storage backends](storage-backends.md) and [DuckLake](ducklake.md).
+
+An Iceberg catalog also carries a fallback credential minted the DuckLake way, scoped to that catalog's storage
+location. The agent's Iceberg reader replaces a table's vended credential every time a statement reads the table, so a
+statement that reads one table twice briefly has none, and a file read landing in that gap would fail and take the agent
+process down with it. The fallback is what such a read finds instead. While the vended credential exists it always takes
+precedence, because it is scoped to the table. For an external store the fallback is minted in the background and
+cached, so it never delays a query; the first query after it expires runs without it.
 
 ## Related
 

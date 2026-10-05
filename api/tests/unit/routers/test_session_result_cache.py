@@ -95,6 +95,23 @@ def test_the_reported_context_is_adopted() -> None:
     assert (state["catalog"], state["schema"], state["timezone"]) == ("lake", "s", "Asia/Tokyo")
 
 
+@pytest.mark.parametrize(
+    "sql", ["USE test_ws.other", "SET schema = 'other'", "SET TimeZone = 'Europe/Budapest'"]
+)
+def test_a_context_move_without_a_report_leaves_the_context_unknown(sql: str) -> None:
+    """An agent under load could leave the report out. Keeping the old context
+    would key the next lookup on a schema the session has left."""
+    state = reduce(CLEAN, sql, succeeded=True, reported=None)
+    assert state["catalog"] is None
+    assert not state["tainted"]
+    # The next report restores it.
+    assert reduce(state, "SELECT 1", succeeded=True, reported=CONTEXT)["catalog"] == "test_ws"
+
+
+def test_a_read_without_a_report_keeps_the_context() -> None:
+    assert reduce(CLEAN, "SELECT 1", succeeded=True, reported=None)["schema"] == "analytics"
+
+
 def test_a_failed_script_taints_but_a_failed_read_does_not() -> None:
     assert reduce(CLEAN, "BEGIN; USE other; SELECT nope", succeeded=False, reported=None)["tainted"]
     assert not reduce(CLEAN, "SELECT * FROM missing", succeeded=False, reported=None)["tainted"]
@@ -301,6 +318,21 @@ async def test_a_use_keys_later_statements_in_the_new_context(
     # `events` now means test_ws.other.events, which is not a table.
     again = await _statement(authed_client, session)
     assert (again["cache_status"], again["cache_detail"]) == ("ineligible", "not_a_table")
+
+
+async def test_a_use_reported_without_its_context_bypasses_the_next_lookup(
+    authed_client, setup, sessions, fake_polaris
+):
+    """Found in the v2 benchmark: a burst kept the agent from reporting where a
+    `USE` went, and the next statement was looked up in the schema the session had
+    left. It must not be looked up at all until the context is known again."""
+    _, session, _ = setup
+    first = await _statement(authed_client, session)
+    await _done(sessions, fake_polaris, first["id"])
+    moved = await _statement(authed_client, session, "USE test_ws.other")
+    await _done(sessions, fake_polaris, moved["id"], context=None)
+    again = await _statement(authed_client, session)
+    assert (again["cache_status"], again["cache_detail"]) == ("bypass", "unknown_context")
 
 
 async def test_a_statement_still_running_holds_back_the_next(authed_client, setup):

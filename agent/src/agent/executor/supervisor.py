@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -6,7 +7,7 @@ from typing import Any
 import duckdb
 from opentelemetry import trace
 
-from agent.executor.runner import run_query_sync, run_statement_sync
+from agent.executor.runner import AttachMissing, run_query_sync, run_statement_sync
 from agent.metrics.system import effective_cores
 from duckhaven_shared.telemetry import inject_trace_context
 
@@ -69,6 +70,9 @@ async def run_query(
     disabled_filesystems: str | None = None,
     lock_config: bool = False,
     admission_wait_ms: float = 0.0,
+    preload_catalog_kinds: Iterable[str] = (),
+    preload_backend_kinds: Iterable[str] = (),
+    attach_missing: AttachMissing | None = None,
 ) -> dict[str, Any]:
     loop = asyncio.get_running_loop()
     # In the `auto` profile the connection is opened+attached before admission
@@ -96,6 +100,9 @@ async def run_query(
             disabled_filesystems=disabled_filesystems,
             lock_config=lock_config,
             admission_wait_ms=admission_wait_ms,
+            preload_catalog_kinds=preload_catalog_kinds,
+            preload_backend_kinds=preload_backend_kinds,
+            attach_missing=attach_missing,
         )
 
     def _interrupt() -> None:
@@ -154,6 +161,7 @@ async def run_statement(
     enable_profiling: bool = True,
     watermarks: dict[str, int] | None = None,
     admission_wait_ms: float = 0.0,
+    attach_missing: AttachMissing | None = None,
 ) -> dict[str, Any]:
     """Run one statement on a held SQL-session connection with a wall-clock
     timeout (and cancellation) enforced via DuckDB's thread-safe `interrupt()`,
@@ -177,6 +185,7 @@ async def run_statement(
             enable_profiling=enable_profiling,
             watermarks=watermarks,
             admission_wait_ms=admission_wait_ms,
+            attach_missing=attach_missing,
         )
 
     def _interrupt() -> None:

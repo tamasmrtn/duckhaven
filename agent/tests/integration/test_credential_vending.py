@@ -80,3 +80,73 @@ async def test_invalid_polaris_credentials_fail_attach(
             conn.execute("SELECT * FROM events").fetchall()
     finally:
         conn.close()
+
+
+@pytest.mark.parametrize("with_fallback", [False, True])
+async def test_the_fallback_secret_covers_a_replaced_vended_secret(
+    polaris_s3_catalog, polaris_base_url, polaris_creds, with_fallback
+) -> None:
+    """The Iceberg extension replaces a table's vended secret on every bind of the
+    table, so a statement that reads it twice has a moment with no secret. A read
+    landing there went to the default S3 endpoint and, on a DuckDB background
+    thread, aborted the agent (REPORT_RESULT_CACHE_V2.md, finding 1).
+
+    Recreated deterministically: drop the vended secret, then read a data file.
+    Without the catalog's fallback secret that is the crash's own error; with it,
+    the read succeeds. Runs the production attach path end to end.
+    """
+    import os
+    from urllib.parse import urlparse
+
+    from agent.executor import runner
+
+    catalog, ns = polaris_s3_catalog
+    endpoint = urlparse(os.environ.get("POLARIS_S3_ENDPOINT", "http://127.0.0.1:9000"))
+    descriptor = {
+        "slug": "lake",
+        "kind": "iceberg_polaris",
+        "polaris_name": catalog,
+        "backend": {"kind": "object_store"},
+        "default_schema": ns,
+    }
+    if with_fallback:
+        descriptor["storage"] = {
+            "type": "s3",
+            "scope": os.environ["POLARIS_S3_BUCKET"].rstrip("/") + "/",
+            "key_id": os.getenv("OBJECT_STORE_ACCESS_KEY", "duckhaven"),
+            "secret": os.getenv("OBJECT_STORE_SECRET_KEY", "duckhaven"),
+            "region": os.getenv("POLARIS_S3_REGION", "us-east-1"),
+            "endpoint": endpoint.netloc,
+            "url_style": "path",
+            "use_ssl": endpoint.scheme == "https",
+        }
+    polaris = {
+        "endpoint": polaris_base_url,
+        "client_id": polaris_creds[0],
+        "client_secret": polaris_creds[1],
+    }
+    conn = runner.open_and_attach(
+        catalogs=[descriptor], active_catalog="lake", polaris=polaris, lock_config=True
+    )
+    try:
+        conn.execute(f"INSERT INTO lake.\"{ns}\".events VALUES (1, 'fallback')")
+        conn.execute("BEGIN")
+        path = conn.execute(
+            f'SELECT file_path FROM iceberg_metadata(lake."{ns}".events) '
+            "WHERE manifest_content = 'DATA' LIMIT 1"
+        ).fetchone()[0]
+        vended = conn.execute(
+            "SELECT name FROM duckdb_secrets() WHERE name LIKE '__internal_ic_%'"
+        ).fetchall()
+        assert vended, "no vended secret to remove: the test would prove nothing"
+        for (name,) in vended:
+            conn.execute(f'DROP TEMPORARY SECRET "{name}"')
+
+        read = f"SELECT count(*) FROM read_parquet('{path}')"
+        if with_fallback:
+            assert conn.execute(read).fetchone()[0] >= 1
+        else:
+            with pytest.raises(duckdb.Error):
+                conn.execute(read).fetchone()
+    finally:
+        conn.close()

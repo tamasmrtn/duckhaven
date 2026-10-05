@@ -499,3 +499,46 @@ async def test_hits_are_recorded_in_history_with_their_source(
     by_id = {q["id"]: q for q in history}
     assert by_id[hit["id"]]["cache_status"] == "hit"
     assert by_id[hit["id"]]["result_source_query_id"] == first["id"]
+
+
+async def test_binding_an_unrelated_catalog_keeps_the_entry(
+    authed_client, workspace, connected, sessions, fake_polaris, user
+):
+    """The key holds the catalogs the query attaches, the ones it names, so a
+    catalog it never mentions coming or going leaves its result alone."""
+    from api.models.catalog import Catalog
+    from api.models.storage_backend import StorageBackend
+
+    agent, _ws = connected
+    _set_version(fake_polaris, 1)
+    first = await _run(authed_client, workspace, agent)
+    await _finish(sessions, fake_polaris, first["id"])
+
+    async with sessions() as db:
+        backend = StorageBackend(
+            kind="object_store", name="other-store", root_uri="/tmp/o", created_by=user.id
+        )
+        db.add(backend)
+        await db.flush()
+        other = Catalog(
+            slug="other",
+            name="other",
+            polaris_name="other",
+            storage_backend_id=backend.id,
+            created_by=user.id,
+        )
+        db.add(other)
+        await db.flush()
+        db.add(
+            WorkspaceCatalog(
+                workspace_id=workspace.id,
+                catalog_id=other.id,
+                is_default=False,
+                attached_by=user.id,
+            )
+        )
+        await db.commit()
+
+    second = await _run(authed_client, workspace, agent)
+    assert second["cache_status"] == "hit"
+    assert second["result_source_query_id"] == first["id"]

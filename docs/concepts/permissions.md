@@ -112,7 +112,14 @@ Two rules keep resolution predictable:
 Enforcement happens at the same API boundary as workspace roles — for both the REST
 browsing endpoints and raw SQL (interactive *and* scheduled). A query that joins
 several tables is rejected before it runs if the principal lacks at least `reader`
-on **any** referenced table. Denied objects return a 404 (not a 403) at the leaf, so
+on **any** referenced table. A two-part name such as `sales.leads` is ambiguous: it is
+the `sales` schema of the active catalog, unless a catalog called `sales` is attached,
+in which case the engine reads `sales.main.leads`. Because the check cannot know which
+one the engine will pick, it requires access to both. A view can also read a scoped catalog
+that the query never names. The agent then has to fetch that catalog while the query runs,
+and gets it only if the principal can read the whole catalog (see
+[which catalogs a query attaches](query-execution.md#which-catalogs-a-query-attaches)).
+Denied objects return a 404 (not a 403) at the leaf, so
 a restricted table is indistinguishable from one that does not exist. Grants apply
 equally to human members and [service accounts](../guides/service-accounts.md), and
 are managed from the **catalog view** — right-click a catalog, schema, or table (or

@@ -19,9 +19,10 @@ A run is served from the cache when all of these hold:
 
 - **It is the same query** — the same statement as DuckDB parses it, so whitespace, comments and keyword case don't
   matter, but literals, aliases and identifiers do — run in the same workspace.
-- **It would run in the same context**: the same catalog and schema for unqualified table names, the same set of
-  attached catalogs, the same DuckDB [runtime](runtimes.md), and the same time zone (which decides how `TIMESTAMPTZ`
-  values read).
+- **It would run in the same context**: the same catalog and schema for unqualified table names, the same catalogs
+  attached for it (the ones it names; see [what a query attaches](query-execution.md#which-catalogs-a-query-attaches)),
+  the same DuckDB [runtime](runtimes.md), and the same time zone (which decides how `TIMESTAMPTZ` values read).
+  Binding a catalog the query never mentions to the workspace, or removing one, leaves its result in the cache.
 - **Every table it reads is unchanged** since the run whose result is kept, or changed only by commits that rewrote
   files without changing the data (see [Compaction does not invalidate](#compaction-does-not-invalidate)).
 - **The caller may read those tables.** The cache is shared by everyone in the workspace, but the right to read a table
@@ -99,7 +100,9 @@ change what a statement means. A session statement is served from the cache only
 
 `USE` and `SET TimeZone` do *not* stop caching. After every statement the agent reports the catalog, schema and time
 zone the connection is in, and the next statement is keyed in that context — exactly like a one-shot query, so a
-session and the worksheet share entries for the same query.
+session and the worksheet share entries for the same query. If a statement that can move the context ever comes back
+without that report, the context counts as unknown: the session's statements run without the cache (`unknown_context`)
+until a later statement reports it again, rather than being looked up in the context the session has left.
 
 ## Where results are kept, and for how long
 

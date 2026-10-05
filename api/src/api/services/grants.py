@@ -502,20 +502,47 @@ async def assert_query_access(
     for ref in extract_table_refs(sql):
         if is_exempt_ref(ref.catalog, ref.schema):
             continue
-        cat = by_slug.get(ref.catalog or active_catalog)
-        if cat is None:
-            raise GrantDenied(f"Query references unknown catalog '{ref.catalog or active_catalog}'")
-        if cat.id not in scoped_ids:
-            continue  # open catalog — unrestricted
-        if principal_id is None:
-            raise GrantDenied("A scoped catalog requires an authenticated principal")
-        schema = ref.schema or DEFAULT_SCHEMA
         if ref.is_target:
             need = "writer"
         elif ref.is_metadata_only:
             need = "metadata"
         else:
             need = "reader"
-        tier = await node_tier(db, workspace_id, cat, principal_id, schema, ref.table)
-        if tier_rank(tier) < TIER_SCALE[need]:
-            raise GrantDenied(f"Not authorized ({need}) on {cat.slug}.{schema}.{ref.table}")
+        for slug, schema in _ref_readings(ref, active_catalog, by_slug, DEFAULT_SCHEMA):
+            cat = by_slug.get(slug)
+            if cat is None:
+                raise GrantDenied(f"Query references unknown catalog '{slug}'")
+            if cat.id not in scoped_ids:
+                continue  # open catalog — unrestricted
+            if principal_id is None:
+                raise GrantDenied("A scoped catalog requires an authenticated principal")
+            tier = await node_tier(db, workspace_id, cat, principal_id, schema, ref.table)
+            if tier_rank(tier) < TIER_SCALE[need]:
+                raise GrantDenied(f"Not authorized ({need}) on {cat.slug}.{schema}.{ref.table}")
+
+
+# The schema DuckDB binds a two-part `catalog.table` to: the catalog's own default,
+# not DuckHaven's `analytics`.
+_CATALOG_DEFAULT_SCHEMA = "main"
+
+
+def _ref_readings(
+    ref: TableRef, active_catalog: str, by_slug: dict[str, Catalog], default_schema: str
+) -> list[tuple[str, str]]:
+    """Every ``(catalog, schema)`` a ref can bind to, all of which must be allowed.
+
+    A two-part ``x.t`` is schema ``x`` in the active catalog, unless ``x`` names an
+    attached catalog: DuckDB then binds it to ``x.main.t``, and raises an ambiguity
+    error only when both exist. Checking just the schema reading let ``scoped.t``
+    read a scoped catalog's ``main`` schema from an open active catalog, so both
+    readings are checked: the statement can only ever reach one of them.
+    """
+    if ref.catalog:
+        return [(ref.catalog, ref.schema or default_schema)]
+    if ref.schema is None:
+        return [(active_catalog, default_schema)]
+    readings = [(active_catalog, ref.schema)]
+    catalog = next((s for s in by_slug if s.lower() == ref.schema.lower()), None)
+    if catalog is not None:
+        readings.append((catalog, _CATALOG_DEFAULT_SCHEMA))
+    return readings

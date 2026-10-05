@@ -155,6 +155,30 @@ BuildKit walks the whole tree and the build stalls before it runs a single step.
 If you add a large generated directory to the repository, add it to
 `.dockerignore` too.
 
+### Vulnerability scanning and dependency updates
+
+Distroless takes care of the operating-system layer, but every image still ships a full Python virtualenv,
+and most of what is in it are packages DuckHaven never names itself: they come in as dependencies of
+dependencies and appear only in `uv.lock`. Keeping those current is the part that needs machinery:
+
+- **Dependabot security updates.** The repository's dependency graph reads `uv.lock`, so GitHub raises a
+  Dependabot alert for any locked package with a published advisory, transitive ones included, and
+  Dependabot opens a pull request that moves just that package to the fixed version.
+- **Dependabot version updates** cover all uv dependencies, not only the ones in a `pyproject.toml`
+  (`dependency-type: all` in `.github/dependabot.yml`). Minor and patch bumps arrive together in one weekly
+  grouped pull request; major bumps come one at a time. Without this, a package that is only in the lockfile
+  stays on whatever version was first resolved.
+- **Chainguard base images** are pinned by digest, and Dependabot bumps those digests weekly, which is how
+  operating-system fixes (zlib, the Python interpreter) reach the images.
+- **A weekly Trivy scan** (`.github/workflows/security.yml`) builds both images from `main` and also scans the
+  images of the latest release as published on GHCR. HIGH and CRITICAL findings land in the repository's
+  code scanning alerts, under one category per image (`trivy-api`, `trivy-agent-<runtime>`,
+  `trivy-api-release`, `trivy-agent-release`).
+
+Published release tags are never rebuilt. A fix merged to `main` reaches `:latest` straight away, but someone
+running `:0.8.0` keeps the vulnerable image until a new release is cut. That is what the `-release` scan
+categories show: an alert that is open there and not in the `main` categories is fixed but unreleased.
+
 ## Project Structure
 
 ```

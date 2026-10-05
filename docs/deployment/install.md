@@ -41,6 +41,12 @@ routes you to the setup screen — paste the token, pick admin credentials,
 submit. The token is consumed (deleted) after the admin is created and is not
 regenerated on subsequent boots.
 
+The UI is self-contained: the browser loads everything it needs, the SQL editor
+included, from DuckHaven itself, so users' browsers need no internet access.
+Releases up to 0.8 fetched the SQL editor from `cdn.jsdelivr.net` at runtime
+instead; on a network without internet access their worksheets never got past
+"Loading editor…".
+
 To start over, wipe the stack:
 
 ```bash

@@ -4,6 +4,7 @@ import { useIsDark } from "@/hooks/useIsDark";
 import { activeStatement } from "./statements";
 import { computeHunks } from "./diffHunks";
 import { registerSqlProviders, setActiveEditor } from "./completion/provider";
+import { useMonacoReady } from "./monacoLoader";
 
 // Above this many hunks, skip per-hunk view zones (still show the added-line
 // decorations) — a very large AI rewrite shouldn't render dozens of view
@@ -108,6 +109,7 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
     const decorationsRef = useRef<string[]>([]);
     const zoneIdsRef = useRef<string[]>([]);
     const isDark = useIsDark();
+    const monacoReady = useMonacoReady();
 
     // Monaco command callbacks are captured once at mount, so route onRun/onSave
     // through refs to always call the latest handler, not a stale closure.
@@ -303,6 +305,14 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
       });
     };
 
+    const loadingPlaceholder = (
+      <div className="flex h-full items-center justify-center bg-[var(--bg-canvas)] text-text-secondary text-sm">
+        Loading editor…
+      </div>
+    );
+
+    if (!monacoReady) return loadingPlaceholder;
+
     return (
       <Editor
         height="100%"
@@ -343,11 +353,7 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
           // literal "$0" final-tabstop marker into the text).
           dropIntoEditor: { enabled: false },
         }}
-        loading={
-          <div className="flex h-full items-center justify-center bg-[var(--bg-canvas)] text-text-secondary text-sm">
-            Loading editor…
-          </div>
-        }
+        loading={loadingPlaceholder}
       />
     );
   },

@@ -17,6 +17,13 @@ vi.mock('@monaco-editor/react', () => ({
   default: () => null,
 }))
 
+// ...and report the bundled Monaco as already loaded, so the editor mounts at
+// once instead of importing monaco-editor into jsdom.
+vi.mock('@/features/worksheet/monacoLoader', () => ({
+  loadMonaco: () => Promise.resolve(),
+  useMonacoReady: () => true,
+}))
+
 // Radix menus rely on Pointer Capture + scrollIntoView, unimplemented in jsdom.
 if (!Element.prototype.hasPointerCapture) {
   Element.prototype.hasPointerCapture = () => false

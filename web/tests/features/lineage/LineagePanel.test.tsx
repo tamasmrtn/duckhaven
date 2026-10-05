@@ -145,7 +145,10 @@ describe("LineagePanel", () => {
     );
     renderWithProviders({ initialRoute: TABLE_ROUTE });
     await openLineageTab();
-    await userEvent.click(screen.getByRole("button", { name: "Downstream" }));
+    // The direction toggle renders only once the first lineage fetch resolves.
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Downstream" }),
+    );
 
     expect(await screen.findByText(/No downstream lineage/i)).toBeVisible();
     expect(screen.queryByText(/No lineage recorded/i)).toBeNull();

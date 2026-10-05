@@ -15,7 +15,7 @@ import App from "./App";
 async function prepare() {
   if (import.meta.env.DEV) {
     const { worker } = await import("./mock/browser");
-    await worker.start({ onUnhandledRequest: "bypass" });
+    await worker.start({ onUnhandledFrame: "bypass" });
   }
 }
 

@@ -3,7 +3,7 @@ import { beforeAll, afterEach, afterAll, vi } from 'vitest'
 import { server } from './mock/server'
 import { resetMockState } from '@/mock/reset'
 
-beforeAll(() => server.listen({ onUnhandledRequest: 'warn' }))
+beforeAll(() => server.listen({ onUnhandledFrame: 'warn' }))
 afterEach(() => {
   server.resetHandlers()
   resetMockState()

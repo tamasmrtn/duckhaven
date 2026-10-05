@@ -769,7 +769,7 @@ requires-dist = [
     { name = "opentelemetry-instrumentation-sqlalchemy", specifier = ">=0.57b0" },
     { name = "opentelemetry-sdk", specifier = ">=1.36" },
     { name = "prometheus-client", specifier = ">=0.20" },
-    { name = "pydantic-ai-slim", extras = ["anthropic", "mistral", "openai"], specifier = ">=2.52.0" },
+    { name = "pydantic-ai-slim", extras = ["anthropic", "mistral", "openai"], specifier = ">=2.53.0" },
     { name = "pydantic-settings", specifier = ">=2.0" },
     { name = "pytz", specifier = ">=2026.4" },
     { name = "pyyaml", specifier = ">=6.0" },

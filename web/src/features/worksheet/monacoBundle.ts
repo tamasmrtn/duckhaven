@@ -12,4 +12,8 @@ self.MonacoEnvironment = {
   getWorker: () => new EditorWorker(),
 };
 
+// The CDN build always defined window.monaco, and the E2E suite drives the
+// editor through it (tests/e2e/helpers.ts), so the bundled build keeps it.
+Object.assign(window, { monaco });
+
 export { monaco };

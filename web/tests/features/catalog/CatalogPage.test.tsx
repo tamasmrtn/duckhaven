@@ -1,5 +1,11 @@
 import { describe, it, expect, afterEach, beforeEach } from "vitest";
-import { screen, waitFor, within, fireEvent } from "@testing-library/react";
+import {
+  screen,
+  waitFor,
+  within,
+  fireEvent,
+  configure,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@tests/mock/server";
@@ -8,6 +14,12 @@ import { recordRecentlyViewed } from "@/utils/recentlyViewed";
 import { WORKSHEETS } from "@/mock/fixtures/worksheets";
 
 const CATALOG_ROUTE = "/acme-analytics/catalog";
+
+// These tests render the whole app and wait for the catalog tree's request
+// waterfall; even on a fast machine the first lookup takes 0.7–1s, so under a
+// loaded CI runner it overruns find*'s default 1000ms window. Same headroom as
+// CatalogTree.test.tsx.
+configure({ asyncUtilTimeout: 3000 });
 
 describe("CatalogPage", () => {
   // The tree starts collapsed and remembers what was opened: begin with the

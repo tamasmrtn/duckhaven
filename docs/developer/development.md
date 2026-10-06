@@ -203,8 +203,6 @@ docs/         Architecture, design, and deployment docs
 | `make format` | Auto-format all code |
 | `make migrate` | Run Alembic migrations |
 | `make compose-up` | Start Docker Compose stack |
-| `make compose-logs` | Tail control plane logs |
-| `make compose-pull` | Pull the latest published images |
 | `make clean` | Remove caches, coverage, dist, node_modules |
 
 ## Writing Tests

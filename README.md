@@ -14,8 +14,8 @@ could run its own lakehouse instead of Snowflake's or Databricks'.
 
 DuckHaven exists to prove that case: sovereignty over your own data, built
 entirely on open source, self-hosted end to end. It gives a team collaborative
-browser worksheets, a governed Apache Iceberg catalog via Apache Polaris,
-compute that scales to zero between runs, scheduled queries, SSO, fine-grained
+browser worksheets, a governed lakehouse catalog — Apache Iceberg via Apache
+Polaris, or DuckLake on Postgres — compute that scales to zero between runs, scheduled queries, SSO, fine-grained
 access grants, machine identities, and a governed AI data assistant — all in
 one Docker Compose deploy.
 
@@ -69,6 +69,13 @@ trail — with data sovereignty, network privacy, and no SaaS lock-in.
   DuckDB's optimizer plan (`EXPLAIN`), so cheap queries pack in while heavy ones
   reserve more (and queue when the agent is busy). The agent never oversubscribes
   its memory budget.
+- **Result cache** — A query that repeats an earlier run, with nothing it reads
+  having changed since, is answered from that run's kept result instead of being
+  dispatched to an agent. It is never stale: each table's catalog is asked
+  whether it changed before every hit, so writes from Spark, PyIceberg or dlt
+  are caught too, and the caller's grants are still checked. On by default;
+  switch it off per deployment, workspace, SQL session or run. See
+  [docs/concepts/result-cache.md](docs/concepts/result-cache.md).
 - **Query profiles** — After a query runs, inspect a per-operator profile: an
   interactive operator graph with rows in → out, bytes, and timing per step,
   plus automatic flags for spills to disk, scan blow-ups, and bad cardinality
@@ -216,13 +223,15 @@ return results.
 ```mermaid
 flowchart TB
     Browser["Browser (Tailscale)"] --> API["duckhaven-api (FastAPI)"]
-    API --> Postgres["Postgres (app state)"]
-    API --> Polaris["Apache Polaris (governance)"]
+    API --> Postgres["Postgres (app state + DuckLake metadata)"]
+    API -.-> Polaris["Apache Polaris (Iceberg catalogs only)"]
     API --> WS["WebSocket (agent control)"]
     WS --> Agent1["duckhaven-agent (DuckDB)"]
     WS --> Agent2["duckhaven-agent (DuckDB)"]
     Agent1 --> Storage["Storage backend (Object storage / S3 / ADLS)"]
     Agent2 --> Storage
+    Agent1 -.-> Postgres
+    Agent2 -.-> Postgres
 ```
 
 **Key design choices:**
@@ -298,24 +307,27 @@ cutting a new release see [docs/developer/releasing.md](docs/developer/releasing
 
 The full shipped feature set is above. Here's what's actively being worked on:
 
+- **DuckDB 2.0 runtime** — Agents already ship one image per DuckDB line and
+  you pick the runtime in the UI; 2.0 joins as an opt-in beta runtime once it is
+  released, so you can try it without moving anyone else's queries.
 - **Plugin Store** - A governed store of plugins for DuckHaven to allow users install tools of their liking
 - **Helm chart** - For the kubernetes users
 - **Terraform modules for AWS & GCP**
-- **Performance** — closing the gaps in query planning, per-query memory
-  sizing, and result delivery that show up under real, larger-than-toy
-  workloads.
 - **Notebook UI** — a notebook-style surface alongside worksheets, for
   exploratory and narrative analysis rather than one query at a time.
 - **Improved lakehouse health** — deeper maintenance-advisor checks and more
-  actionable remediation, beyond today's compaction and snapshot-expiry
-  advisories.
+  actionable remediation for Iceberg catalogs, beyond today's compaction and
+  snapshot-expiry advisories.
+- **Iceberg → DuckLake conversion** — Exporting DuckLake to Iceberg works today;
+  the reverse waits on an upstream fix
+  ([duckdb/ducklake#1278](https://github.com/duckdb/ducklake/issues/1278)).
 
 Also hardening in flight: finishing the Polaris `storageConfigInfo` credential
 wiring (role ARN / tenant) so external S3 / ADLS Gen 2 backends are
 production-ready outside the opt-in integration tests.
 
-See [docs/concepts/architecture.md](docs/concepts/architecture.md) §13 for the
-full technical-debt and gap tracker.
+See [docs/concepts/architecture.md](docs/concepts/architecture.md) for the
+architectural decisions.
 
 ## Contributing
 

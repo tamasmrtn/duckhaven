@@ -1,22 +1,19 @@
-.PHONY: install install-web dev dev-api dev-web \
+.PHONY: install dev-api dev-web \
         test test-api test-agent test-web test-deploy test-shared \
         test-integration test-integration-api test-integration-agent \
         test-cross-component test-e2e \
-        polaris-dev polaris-dev-s3 polaris-dev-down \
+        polaris-dev polaris-dev-down \
         localstack-dev localstack-dev-down \
         idp-dev idp-dev-down \
         lint format docs-index eval-synth eval-judged eval-compare \
         migrate migrate-new migrate-down \
-        compose-up compose-down compose-logs compose-pull \
+        compose-up compose-down \
         runtimes-lock build-agent \
         clean
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
 install:
 	uv sync --all-packages
-	cd web && npm install
-
-install-web:
 	cd web && npm install
 
 # ── Development ───────────────────────────────────────────────────────────────
@@ -27,10 +24,6 @@ dev-api:
 
 dev-web:
 	cd web && npm run dev
-
-dev:
-	$(MAKE) compose-up
-	$(MAKE) dev-web
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 test: test-api test-agent test-web test-deploy test-shared
@@ -134,17 +127,13 @@ polaris-dev:
 	@echo "  POLARIS_S3_BUCKET=s3://$(POLARIS_S3_BUCKET) POLARIS_S3_ENDPOINT=http://localhost:9000 \\"
 	@echo "  POLARIS_S3_ENDPOINT_INTERNAL=http://dh-objectstore-dev:9000 make test-integration"
 
-# Backwards-compatible alias for the now-default object-store + S3 stack.
-polaris-dev-s3: polaris-dev
-
 polaris-dev-down:
 	docker rm -f dh-polaris-dev dh-objectstore-dev >/dev/null 2>&1 || true
 
 # ── LocalStack (S3 + STS) for the external assume-role health/vending tests ───
 # The bundled store has no STS, so the external `s3` path (Polaris assumes an
 # IAM role to vend creds) can only be exercised against LocalStack or real AWS.
-# This brings
-# up LocalStack and seeds a role + bucket; point `make polaris-dev` at it by
+# This brings up LocalStack and seeds a role + bucket; point `make polaris-dev` at it by
 # setting POLARIS_S3_ENDPOINT(_INTERNAL) to the LocalStack URL, then run the
 # tests with the printed DH_TEST_S3_* env. See docs/operations/storage-maintenance.md.
 # Azure ADLS has no offline emulator for Entra credential vending (Azurite
@@ -298,12 +287,6 @@ compose-up:
 
 compose-down:
 	cd deploy && docker compose down
-
-compose-logs:
-	cd deploy && docker compose logs -f
-
-compose-pull:
-	cd deploy && docker compose pull
 
 # ── Agent runtimes ────────────────────────────────────────────────────────────
 # A runtime is one agent image per DuckDB line (duckhaven_shared.runtimes). The

@@ -9,7 +9,14 @@ from __future__ import annotations
 
 import pytest
 
-from api.services.sql_denylist import ForeignAccessDenied, check_sql
+from api.services.sql_denylist import (
+    CREDENTIAL_FUNCTIONS,
+    ENGINE_WRITE_FUNCTIONS,
+    SQL_STRING_FUNCTIONS,
+    SQL_STRING_TABLE_MACROS,
+    ForeignAccessDenied,
+    check_sql,
+)
 from api.services.sql_guard import SQLNotAllowed, assert_allowed
 from api.services.statement_policy import StatementNotAllowed, assert_statement_allowed
 
@@ -68,6 +75,13 @@ ALLOWED = [
     "SELECT * FROM raw.table_changes('t', 1, 2)",
     # A table whose name begins with the prefix is not a function.
     "SELECT * FROM analytics.ducklake_report",
+    # The aggregate shares a name with a denied table macro.
+    "SELECT histogram(amount) FROM raw.s.t",
+    "SELECT histogram(amount, [10, 20]) FROM raw.s.t",
+    # Denied names as data or columns, not calls.
+    "SELECT query, query_table FROM raw.s.t",
+    "SELECT 'query_table' AS harmless",
+    "SELECT * FROM raw.s.query",
 ]
 
 
@@ -178,3 +192,69 @@ def test_copy_from_database_is_refused_by_both_statement_gates():
     # Denied on the COPY target, before the grant layer sees its bogus
     # `TableRef(table="DATABASE")`.
     assert exc.value.rule == "copy_path"
+
+
+# --- Functions a static check cannot see past -------------------------------
+# They take SQL or a table name inside a string, return credentials, or change
+# shared engine state. Denied in every workspace, by both statement gates.
+
+_BY_RULE = {
+    "sql_string_function": SQL_STRING_FUNCTIONS,
+    "credential_function": CREDENTIAL_FUNCTIONS,
+    "engine_write_function": ENGINE_WRITE_FUNCTIONS,
+}
+
+FUNCTION_DENIALS = [
+    (f"SELECT * FROM {name}('x')", rule)
+    for rule, names in _BY_RULE.items()
+    for name in sorted(names)
+] + [
+    # The table macros, wherever a table function goes.
+    *[
+        (f"SELECT * FROM {name}('raw.s.t', amount)", "sql_string_function")
+        for name in sorted(SQL_STRING_TABLE_MACROS)
+    ],
+    ("SELECT * FROM histogram(raw.s.t, amount) AS h", "sql_string_function"),
+    ("SELECT * FROM raw.s.u, histogram_values('raw.s.t', amount)", "sql_string_function"),
+    # Spelling must not matter: quoted, qualified, upper-case.
+    ("SELECT * FROM \"query_table\"('raw.s.t')", "sql_string_function"),
+    ("SELECT * FROM main.query_table('raw.s.t')", "sql_string_function"),
+    ("SELECT * FROM system.main.query('SELECT 1')", "sql_string_function"),
+    ("SELECT * FROM QUERY_TABLE('raw.s.t')", "sql_string_function"),
+    # Nor may nesting.
+    ("WITH q AS (SELECT * FROM query('SELECT 1')) SELECT * FROM q", "sql_string_function"),
+    ("INSERT INTO t SELECT * FROM query_table('raw.s.t')", "sql_string_function"),
+    ("SELECT (SELECT count(*) FROM duckdb_secrets())", "credential_function"),
+    ("SELECT * FROM raw.merge_adjacent_files()", "engine_write_function"),
+]
+
+
+@pytest.mark.parametrize(("sql", "rule"), FUNCTION_DENIALS)
+def test_functions_past_a_static_check_are_denied(sql: str, rule: str) -> None:
+    with pytest.raises(ForeignAccessDenied) as exc:
+        check_sql(sql)
+    assert exc.value.rule == rule
+    with pytest.raises(SQLNotAllowed):
+        assert_allowed(sql)
+    with pytest.raises(StatementNotAllowed) as policy:
+        assert_statement_allowed(sql, staging_prefixes=_STAGING, managed_catalogs=_MANAGED)
+    assert policy.value.rule == rule
+
+
+def test_the_foreign_database_list_covers_the_postgres_extras() -> None:
+    for sql in (
+        "SELECT * FROM postgres_attach('dbname=x')",
+        "SELECT * FROM postgres_configure_pool(max_connections => 1)",
+        "SELECT * FROM pg_clear_cache()",
+    ):
+        with pytest.raises(ForeignAccessDenied) as exc:
+            check_sql(sql)
+        assert exc.value.rule == "foreign_database_function"
+
+
+def test_unparseable_sql_is_denied_on_a_call_not_a_word() -> None:
+    """The lexical fallback must not refuse every broken statement saying `query`."""
+    with pytest.raises(ForeignAccessDenied) as exc:
+        check_sql("SELECT * FROM \"query\" ('SELECT 1') ((( unbalanced")
+    assert exc.value.rule == "sql_string_function"
+    check_sql("SELECT query FROM t ((( unbalanced")

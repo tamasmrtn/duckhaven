@@ -46,6 +46,10 @@ DENIED = [
     "SELECT * FROM ducklake_some_future_verb('raw')",
     # Case must not be an escape.
     "SELECT * FROM POSTGRES_QUERY('m', 'SELECT 1')",
+    # Neither may quoting or qualifying the name.
+    "SELECT * FROM \"postgres_query\"('m', 'SELECT 1')",
+    "SELECT * FROM \"ducklake_merge_adjacent_files\"('raw')",
+    "SELECT * FROM main.postgres_query('m', 'SELECT 1')",
     "SELECT * FROM __DUCKLAKE_METADATA_RAW.cat_raw.ducklake_table",
 ]
 

@@ -24,7 +24,7 @@ import posixpath
 import sqlglot
 from sqlglot import exp
 
-from api.services.sql_denylist import ForeignAccessDenied
+from api.services.sql_denylist import ForeignAccessDenied, function_name
 from api.services.sql_denylist import check_statement as check_denylist
 
 # SET names dbt/dlt legitimately need. Everything else is denied — crucially
@@ -192,10 +192,8 @@ def _check_file_functions(stmt: exp.Expression, staging_prefixes: list[str]) -> 
         name: str | None = None
         if isinstance(node, exp.ReadParquet | exp.ReadCSV):
             name = "read_parquet" if isinstance(node, exp.ReadParquet) else "read_csv"
-        elif isinstance(node, exp.Anonymous) and isinstance(node.this, str):
-            candidate = node.this.lower()
-            if candidate in _FILE_FUNCTION_NAMES:
-                name = candidate
+        elif function_name(node) in _FILE_FUNCTION_NAMES:
+            name = function_name(node)
         if name is None:
             continue
         paths = _paths_from_arg(_positional_path_arg(node))
@@ -249,8 +247,8 @@ def _pragma_name(stmt: exp.Pragma) -> str | None:
     node = stmt.this
     if isinstance(node, exp.EQ):
         node = node.this
-    if isinstance(node, exp.Anonymous) and isinstance(node.this, str):
-        return node.this.lower()
+    if isinstance(node, exp.Anonymous):
+        return function_name(node)
     if isinstance(node, exp.Column):
         return node.name.lower()
     return None

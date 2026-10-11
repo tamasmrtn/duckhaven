@@ -48,6 +48,18 @@ DUCKLAKE_FUNCTION_PREFIX = "ducklake_"
 DENIED_COMMAND_HEADS = frozenset({"checkpoint"})
 
 
+def function_name(node: exp.Expression) -> str | None:
+    """The lower-cased name of a call sqlglot has no typed node for, else ``None``.
+
+    Every gate reads names through this. ``node.this`` is a ``str`` for
+    ``f()`` but an ``Identifier`` for ``"f"()``, and DuckDB runs both, so a
+    check on ``this`` alone let the quoted spelling through.
+    """
+    if isinstance(node, exp.Anonymous):
+        return node.name.lower()
+    return None
+
+
 class ForeignAccessDenied(Exception):
     """A statement reaches a foreign database or DuckLake's internal metadata."""
 
@@ -107,9 +119,7 @@ def check_statement(stmt: exp.Expression) -> None:
             raise _deny_command(word)
 
     for node in stmt.find_all(exp.Anonymous):
-        if not isinstance(node.this, str):
-            continue
-        name = node.this.lower()
+        name = function_name(node)
         if name in DENIED_FUNCTIONS:
             raise _deny_function(name)
         if name.startswith(DUCKLAKE_FUNCTION_PREFIX):

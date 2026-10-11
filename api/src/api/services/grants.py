@@ -34,6 +34,7 @@ from sqlglot import exp
 from api.models.catalog import Catalog, WorkspaceCatalog
 from api.models.catalog_grant import CatalogGrant
 from api.models.workspace import WorkspaceMember
+from api.services.sql_denylist import function_name
 
 # Grantable tiers, low → high. `owner` is intentionally absent (workspace role).
 TIER_SCALE: dict[str, int] = {"metadata": 0, "reader": 1, "writer": 2}
@@ -434,14 +435,14 @@ def metadata_enumeration_reason(sql: str, scoped_slugs: list[str] | None = None)
                 # `system.information_schema.tables` spelling.
                 return f"`{table.db}.{table.name}` cannot be queried. {hint}"
         for fn in stmt.find_all(exp.Anonymous):
-            if isinstance(fn.this, str) and fn.this.lower() in _CATALOG_META_FUNCTIONS:
-                return f"`{fn.this}()` cannot be called. {hint}"
+            if function_name(fn) in _CATALOG_META_FUNCTIONS:
+                return f"`{fn.name}()` cannot be called. {hint}"
         if isinstance(stmt, exp.Show):
             return f"`SHOW` cannot be used. {hint}"
         if isinstance(stmt, exp.Pragma):
             node = stmt.this
-            if isinstance(node, exp.Anonymous) and isinstance(node.this, str):
-                name = node.this.lower()
+            if isinstance(node, exp.Anonymous):
+                name = function_name(node) or ""
             elif isinstance(node, exp.Column):
                 name = node.name.lower()
             else:

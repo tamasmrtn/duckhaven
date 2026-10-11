@@ -259,6 +259,9 @@ def test_row_reading_refs_are_not_metadata_only(sql):
         # Names one table, but only as a string literal — there is no `exp.Table`
         # to resolve a tier against, so it would read any table's columns unchecked.
         "PRAGMA table_info('cat.s.t')",
+        # Quoting the name is the same call.
+        'SELECT * FROM "duckdb_tables"()',
+        "PRAGMA \"table_info\"('cat.s.t')",
         # Any statement in a multi-statement body is enough.
         "SELECT 1; SELECT * FROM duckdb_tables()",
     ],

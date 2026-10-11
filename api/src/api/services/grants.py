@@ -361,6 +361,50 @@ _CATALOG_META_FUNCTIONS = frozenset(
         "duckdb_schemas",
         "duckdb_databases",
         "duckdb_constraints",
+        "duckdb_indexes",
+        "duckdb_sequences",
+        "duckdb_dependencies",
+        # Lists the files the agent has cached, whose paths spell out table names.
+        "duckdb_external_file_cache",
+        # Not `duckdb_functions` / `duckdb_keywords` / `duckdb_types`: those list
+        # no catalog objects, and editor autocomplete (`services/sql_metadata.py`)
+        # runs them through this same check.
+    }
+)
+
+# Table functions that name their table only as a string literal. Like `PRAGMA
+# table_info` below, the parser sees no `exp.Table`, so there is no object to
+# resolve a tier against, and the string could name any table at all.
+_STRING_NAMED_FUNCTIONS = frozenset(
+    {
+        "pragma_table_info",
+        "pragma_show",
+        "pragma_storage_info",
+        "pragma_metadata_info",
+        "iceberg_metadata",
+        "iceberg_snapshots",
+        "iceberg_column_stats",
+        "iceberg_partition_stats",
+        "iceberg_table_properties",
+        "iceberg_schema_properties",
+    }
+)
+
+# DuckLake's read-only catalog methods (`cat.snapshots()`). They report on the
+# whole catalog, and they also resolve unqualified, or under any schema, against
+# the active DuckLake catalog, so the qualifier does not say which catalog they
+# read. Matched only where a table function goes, by name.
+_DUCKLAKE_READ_METHODS = frozenset(
+    {
+        "snapshots",
+        "table_info",
+        "table_changes",
+        "table_insertions",
+        "table_deletions",
+        "current_snapshot",
+        "last_committed_snapshot",
+        "options",
+        "settings",
     }
 )
 
@@ -370,7 +414,17 @@ _CATALOG_META_FUNCTIONS = frozenset(
 # against — it would read any table's columns unchecked. `DESCRIBE` is the
 # equivalent that *is* checkable, which is why it stays allowed. `PRAGMA version`
 # touches no catalog object at all and is unaffected.
-_UNCHECKABLE_PRAGMAS = frozenset({"show_tables", "database_list", "table_info"})
+_UNCHECKABLE_PRAGMAS = frozenset(
+    {
+        "show_tables",
+        "show_tables_expanded",
+        "database_list",
+        "table_info",
+        "show",
+        "storage_info",
+        "metadata_info",
+    }
+)
 
 _ENUMERATION_HINT = (
     "Enumerating metadata is not available in a scoped catalog because the engine "
@@ -378,6 +432,27 @@ _ENUMERATION_HINT = (
     "workspace catalog API instead, and use DESCRIBE <catalog>.<schema>.<table> "
     "for column detail."
 )
+
+
+_STRING_NAMED_HINT = (
+    "It names its table only as a text string, which a grant cannot be checked "
+    "against, so it is not available in a workspace with a scoped catalog. Use "
+    "DESCRIBE <catalog>.<schema>.<table> for column detail, and the catalog "
+    "browser's History tab for snapshots."
+)
+
+_DUCKLAKE_METHOD_HINT = (
+    "DuckLake's catalog methods report on a whole catalog, which grants cannot "
+    "narrow, so they are not available in a workspace with a scoped catalog. Use "
+    "the catalog browser's History tab for snapshots."
+)
+
+
+def _scoped_cause(scoped_slugs: list[str]) -> str:
+    named = ", ".join(f"`{slug}`" for slug in scoped_slugs)
+    noun = "Catalog" if len(scoped_slugs) == 1 else "Catalogs"
+    verb = "is" if len(scoped_slugs) == 1 else "are"
+    return f"{noun} {named} {verb} attached in scoped mode"
 
 
 def _enumeration_hint(scoped_slugs: list[str] | None) -> str:
@@ -388,13 +463,14 @@ def _enumeration_hint(scoped_slugs: list[str] | None) -> str:
     """
     if not scoped_slugs:
         return _ENUMERATION_HINT
-    named = ", ".join(f"`{slug}`" for slug in scoped_slugs)
-    noun = "Catalog" if len(scoped_slugs) == 1 else "Catalogs"
-    verb = "is" if len(scoped_slugs) == 1 else "are"
     return (
-        f"{_ENUMERATION_HINT} {noun} {named} {verb} attached in scoped mode, which "
-        "disables engine-side enumeration for every catalog in this workspace."
+        f"{_ENUMERATION_HINT} {_scoped_cause(scoped_slugs)}, which disables "
+        "engine-side enumeration for every catalog in this workspace."
     )
+
+
+def _with_cause(hint: str, scoped_slugs: list[str] | None) -> str:
+    return f"{hint} {_scoped_cause(scoped_slugs)}." if scoped_slugs else hint
 
 
 def metadata_enumeration_reason(sql: str, scoped_slugs: list[str] | None = None) -> str | None:
@@ -435,8 +511,19 @@ def metadata_enumeration_reason(sql: str, scoped_slugs: list[str] | None = None)
                 # `system.information_schema.tables` spelling.
                 return f"`{table.db}.{table.name}` cannot be queried. {hint}"
         for fn in stmt.find_all(exp.Anonymous):
-            if function_name(fn) in _CATALOG_META_FUNCTIONS:
+            name = function_name(fn)
+            if name in _CATALOG_META_FUNCTIONS:
                 return f"`{fn.name}()` cannot be called. {hint}"
+            if name in _STRING_NAMED_FUNCTIONS:
+                return (
+                    f"`{fn.name}()` cannot be called. "
+                    f"{_with_cause(_STRING_NAMED_HINT, scoped_slugs)}"
+                )
+            if name in _DUCKLAKE_READ_METHODS and isinstance(fn.parent, exp.Table):
+                return (
+                    f"`{fn.name}()` cannot be called. "
+                    f"{_with_cause(_DUCKLAKE_METHOD_HINT, scoped_slugs)}"
+                )
         if isinstance(stmt, exp.Show):
             return f"`SHOW` cannot be used. {hint}"
         if isinstance(stmt, exp.Pragma):

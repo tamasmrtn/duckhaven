@@ -259,6 +259,13 @@ def test_row_reading_refs_are_not_metadata_only(sql):
         # Names one table, but only as a string literal — there is no `exp.Table`
         # to resolve a tier against, so it would read any table's columns unchecked.
         "PRAGMA table_info('cat.s.t')",
+        "SELECT * FROM duckdb_indexes()",
+        "SELECT * FROM duckdb_sequences()",
+        "SELECT * FROM duckdb_dependencies()",
+        "SELECT * FROM duckdb_external_file_cache()",
+        "PRAGMA show_tables_expanded",
+        "PRAGMA storage_info('cat.s.t')",
+        "PRAGMA metadata_info",
         # Quoting the name is the same call.
         'SELECT * FROM "duckdb_tables"()',
         "PRAGMA \"table_info\"('cat.s.t')",
@@ -283,6 +290,10 @@ def test_metadata_enumeration_is_rejected(sql):
         "PRAGMA version",
         "SELECT * FROM cat.s.t",
         "SELECT * FROM cat.s.t JOIN cat.s.u ON t.id = u.id",
+        # Names shared with the refused functions, used as columns or tables.
+        "SELECT snapshots, settings FROM cat.s.t",
+        "SELECT * FROM cat.s.settings",
+        "SELECT * FROM cat.s.table_info",
     ],
 )
 def test_ordinary_statements_are_not_enumeration(sql):
@@ -292,3 +303,64 @@ def test_ordinary_statements_are_not_enumeration(sql):
 def test_enumeration_check_fails_closed_on_unparseable_sql():
     with pytest.raises(GrantDenied):
         metadata_enumeration_reason("SELECT FROM WHERE ) (")
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        # These name their table only as a string, so there is no object to check.
+        "SELECT * FROM pragma_table_info('cat.s.t')",
+        "SELECT * FROM pragma_show('cat.s.t')",
+        "SELECT * FROM pragma_storage_info('cat.s.t')",
+        "SELECT * FROM pragma_metadata_info('cat')",
+        "SELECT * FROM iceberg_metadata('cat.s.t')",
+        "SELECT * FROM iceberg_snapshots('cat.s.t')",
+        "SELECT * FROM iceberg_column_stats('cat.s.t')",
+        "SELECT * FROM iceberg_partition_stats('cat.s.t')",
+        "SELECT * FROM iceberg_table_properties('cat.s.t')",
+        "SELECT * FROM iceberg_schema_properties('cat.s')",
+        "SELECT * FROM \"pragma_table_info\"('cat.s.t')",
+        "SELECT * FROM main.iceberg_snapshots('cat.s.t')",
+        "WITH x AS (SELECT * FROM pragma_show('cat.s.t')) SELECT * FROM x",
+    ],
+)
+def test_string_named_functions_are_rejected(sql):
+    reason = metadata_enumeration_reason(sql)
+    assert reason is not None
+    assert "DESCRIBE" in reason
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM cat.snapshots()",
+        "SELECT * FROM cat.table_info()",
+        "SELECT * FROM cat.table_changes('t', 0, 3)",
+        "SELECT * FROM cat.table_insertions('s', 't', 0, 3)",
+        "SELECT * FROM cat.table_deletions('s', 't', 0, 3)",
+        "SELECT * FROM cat.current_snapshot()",
+        "SELECT * FROM cat.last_committed_snapshot()",
+        "SELECT * FROM cat.options()",
+        # They also resolve unqualified, or under a schema, against the active
+        # DuckLake catalog, so the qualifier cannot tell which catalog they read.
+        "SELECT * FROM snapshots()",
+        "SELECT * FROM s.table_changes('t', 0, 3)",
+        'SELECT * FROM "cat"."snapshots"()',
+    ],
+)
+def test_ducklake_catalog_methods_are_rejected(sql):
+    reason = metadata_enumeration_reason(sql)
+    assert reason is not None
+    assert "History" in reason
+
+
+def test_a_ducklake_method_spelling_sqlglot_cannot_parse_fails_closed():
+    """`cat.settings()` does not parse; an unparseable statement is refused."""
+    with pytest.raises(GrantDenied):
+        metadata_enumeration_reason("SELECT * FROM cat.settings()")
+
+
+def test_string_named_rejection_names_the_scoped_catalog():
+    reason = metadata_enumeration_reason("SELECT * FROM iceberg_snapshots('x.s.t')", ["hr"])
+    assert reason is not None
+    assert "`hr` is attached in scoped mode" in reason

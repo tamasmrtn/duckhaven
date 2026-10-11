@@ -441,6 +441,27 @@ async def test_skip_if_previous_run_still_running(session_factory):
         assert _naive(sched.next_run_at) == _NEXT
 
 
+async def test_a_run_the_sql_guard_refuses_is_failed_without_dispatch(session_factory):
+    """A schedule is not a way round the guard a worksheet passes. Checked at run
+    time, so SQL edited after the schedule was made is caught too."""
+    async with session_factory() as db:
+        schedule, _agent, ws_obj = await _seed(db, next_run_at=_PAST)
+        saved = await db.get(SavedQuery, schedule.saved_query_id)
+        saved.sql = "SELECT * FROM query_table('analytics.secret')"
+        await db.commit()
+
+    await run_cycle(session_factory, now=_NOW)
+
+    async with session_factory() as db:
+        q = (await db.execute(select(Query).where(Query.origin == "scheduled"))).scalar_one()
+        assert q.status == "failed"
+        assert "not permitted" in (q.error or "")
+        assert q.agent_id is None
+        sched = await db.get(Schedule, schedule.id)
+        assert _naive(sched.next_run_at) == _NEXT
+    assert ws_obj is not None and ws_obj.sent == []
+
+
 async def test_offline_agent_records_failed_run(session_factory):
     async with session_factory() as db:
         # An explicit agent that is NOT connected -> fail fast.

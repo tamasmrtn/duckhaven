@@ -16,13 +16,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user, get_db
-from api.models.query import Query, Schedule
+from api.models.query import Query, SavedQuery, Schedule
 from api.models.user import User
 from api.schemas.page import Page
 from api.schemas.query import QueryOut, ScheduleCreate, ScheduleOut, ScheduleUpdate
 from api.services.agent_access import assert_can_assign_agent
 from api.services.paging import paginate
 from api.services.scheduler.cron import next_run, validate_cron
+from api.services.sql_guard import SQLNotAllowed, assert_allowed
 from api.services.workspace import assert_workspace_member, get_workspace
 
 router = APIRouter()
@@ -42,6 +43,24 @@ def _validate_cron_or_422(expr: str) -> None:
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from exc
+
+
+async def _assert_schedulable_or_422(db: AsyncSession, saved_query_id: uuid.UUID) -> None:
+    """Refuse up front SQL the scheduler would refuse on every run.
+
+    Only feedback: the scheduler checks again each run, because the saved SQL
+    can change after the schedule is made.
+    """
+    saved = await db.get(SavedQuery, saved_query_id)
+    if saved is None:
+        return
+    try:
+        assert_allowed(saved.sql)
+    except SQLNotAllowed as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"error": "sql_not_allowed", "detail": str(exc)},
         ) from exc
 
 
@@ -101,6 +120,8 @@ async def create_schedule(
     creator -- so revoking their access stops the runs too."""
     workspace = await _require_workspace(db, ws, user, min_role="writer")
     _validate_cron_or_422(body.cron)
+    if body.enabled:
+        await _assert_schedulable_or_422(db, body.saved_query_id)
     # You may only point a schedule at an agent you could run on yourself. This is
     # the fast feedback path; the same check runs again at dispatch against the
     # schedule's creator, so revoking access later stops the runs too.
@@ -150,6 +171,8 @@ async def update_schedule(
         _validate_cron_or_422(fields["cron"])
     if "agent_id" in fields:
         await assert_can_assign_agent(db, user, fields["agent_id"])
+    if fields.get("enabled") and schedule.saved_query_id is not None:
+        await _assert_schedulable_or_422(db, schedule.saved_query_id)
     for key, value in fields.items():
         setattr(schedule, key, value)
     # Recompute the next run when the cadence changes or the schedule is (re)enabled.

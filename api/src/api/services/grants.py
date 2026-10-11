@@ -35,6 +35,7 @@ from api.models.catalog import Catalog, WorkspaceCatalog
 from api.models.catalog_grant import CatalogGrant
 from api.models.workspace import WorkspaceMember
 from api.services.sql_denylist import function_name
+from api.services.statement_policy import StatementNotAllowed, check_file_reads
 
 # Grantable tiers, low → high. `owner` is intentionally absent (workspace role).
 TIER_SCALE: dict[str, int] = {"metadata": 0, "reader": 1, "writer": 2}
@@ -539,6 +540,38 @@ def metadata_enumeration_reason(sql: str, scoped_slugs: list[str] | None = None)
     return None
 
 
+_FILE_READ_HINT = (
+    "Reading files directly is not available in a workspace with a scoped catalog: "
+    "a file read goes round the table grants. Query the catalog's tables instead; "
+    "a SQL session may still read its own staging prefix."
+)
+
+
+def file_read_reason(
+    sql: str, staging_prefixes: list[str], scoped_slugs: list[str] | None = None
+) -> str | None:
+    """Why ``sql`` reads a file or URL outside ``staging_prefixes``, else ``None``.
+
+    Consulted, like :func:`metadata_enumeration_reason`, whenever any attachment
+    is scoped. The agent holds the storage secret of every catalog a statement
+    attaches, so a direct read of a scoped table's data file returns its rows
+    with no table reference for a grant to check. Only a SQL session has
+    prefixes to allow; every other path passes none, so every read is refused.
+    """
+    try:
+        statements = sqlglot.parse(sql, read="duckdb")
+    except Exception as exc:  # sqlglot.errors.ParseError et al - fail closed
+        raise GrantDenied(f"Could not parse SQL for grant check: {exc}") from exc
+    for stmt in statements:
+        if stmt is None:
+            continue
+        try:
+            check_file_reads(stmt, staging_prefixes)
+        except StatementNotAllowed:
+            return _with_cause(_FILE_READ_HINT, scoped_slugs)
+    return None
+
+
 def is_exempt_ref(catalog: str | None, schema: str | None) -> bool:
     """True for the built-in discovery surfaces (system catalog / info schema)."""
     return (catalog in SYSTEM_CATALOGS) or (schema in METADATA_SCHEMAS)
@@ -551,6 +584,8 @@ async def assert_query_access(
     sql: str,
     active_catalog: str,
     catalogs: list[Catalog],
+    *,
+    staging_prefixes: list[str] | None = None,
 ) -> None:
     """Reject a query before dispatch if the principal lacks tier on any object.
 
@@ -563,6 +598,10 @@ async def assert_query_access(
     both interactive and scheduled dispatch — the shared chokepoint. It is a
     **no-op** when no attached catalog is scoped, so open workspaces never even
     parse the SQL and keep today's behavior byte-for-byte.
+
+    In such a workspace, files and URLs are readable only under
+    ``staging_prefixes``, which only a SQL session passes
+    (:func:`file_read_reason`).
 
     Raises :class:`GrantDenied` (a ``ValueError``) on any shortfall, an
     unresolvable/unattached catalog reference, an unparseable statement, or a
@@ -584,6 +623,8 @@ async def assert_query_access(
     # scoped catalogs so that denial is explicable from an open one.
     scoped_slugs = sorted(c.slug for c in catalogs if c.id in scoped_ids)
     if (reason := metadata_enumeration_reason(sql, scoped_slugs)) is not None:
+        raise GrantDenied(reason)
+    if (reason := file_read_reason(sql, staging_prefixes or [], scoped_slugs)) is not None:
         raise GrantDenied(reason)
 
     by_slug = {c.slug: c for c in catalogs}

@@ -405,3 +405,35 @@ async def test_internal_sql_still_passes_the_scoped_check(scoped_ws, db_session,
     ]
     for sql in internal:
         await grant_service.assert_query_access(db_session, ws.id, user.id, sql, cat.slug, [cat])
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM read_parquet('s3://warehouse/test-cat/analytics/leads/data/x.parquet')",
+        "SELECT * FROM 's3://warehouse/test-cat/analytics/leads/data/x.parquet'",
+        "SELECT * FROM read_text('s3://warehouse/anything')",
+        "SELECT * FROM iceberg_scan('s3://warehouse/test-cat/analytics/leads')",
+        "SELECT * FROM \"glob\"('s3://warehouse/*')",
+    ],
+)
+async def test_direct_file_reads_denied_in_a_scoped_workspace(
+    authed_client, scoped_ws, connected_agent, db_session, user, sql
+):
+    """A data file read directly has no table reference to check a grant on."""
+    ws, cat = scoped_ws
+    _grant(db_session, user, cat, "reader", table="leads")
+    await db_session.commit()
+    resp = await _run(authed_client, ws, connected_agent, sql)
+    assert resp.status_code == 403
+    assert resp.json()["error"] == "grant_denied"
+
+
+async def test_direct_file_reads_still_work_in_an_open_workspace(
+    authed_client, db_session, user, connected_agent
+):
+    ws, _cat = await seed_workspace(db_session, user_id=user.id, slug="open-files-ws")
+    resp = await _run(
+        authed_client, ws, connected_agent, "SELECT * FROM read_parquet('s3://warehouse/x.parquet')"
+    )
+    assert resp.status_code == 202

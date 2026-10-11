@@ -9,6 +9,7 @@ from api.services.grants import (
     GrantDenied,
     access_tier,
     extract_table_refs,
+    file_read_reason,
     is_exempt_ref,
     metadata_enumeration_reason,
     schema_visible,
@@ -364,3 +365,44 @@ def test_string_named_rejection_names_the_scoped_catalog():
     reason = metadata_enumeration_reason("SELECT * FROM iceberg_snapshots('x.s.t')", ["hr"])
     assert reason is not None
     assert "`hr` is attached in scoped mode" in reason
+
+
+_SESSION_STAGING = ["s3://warehouse/cat/_staging/sess-1/"]
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM read_parquet('s3://warehouse/cat/s/t/data/x.parquet')",
+        "SELECT * FROM 's3://warehouse/cat/s/t/data/x.parquet'",
+        "SELECT * FROM read_csv('s3://warehouse/x.csv')",
+        "SELECT * FROM read_duckdb('s3://warehouse/x.duckdb')",
+        "SELECT * FROM iceberg_scan('s3://warehouse/cat/s/t')",
+        "SELECT * FROM \"glob\"('s3://warehouse/*')",
+        "SELECT 1; SELECT * FROM read_text('s3://warehouse/x')",
+    ],
+)
+def test_file_reads_are_refused_without_a_staging_prefix(sql):
+    reason = file_read_reason(sql, [])
+    assert reason is not None
+    assert "staging prefix" in reason
+
+
+def test_a_session_may_read_its_own_staging():
+    sql = "SELECT * FROM read_parquet('s3://warehouse/cat/_staging/sess-1/in.parquet')"
+    assert file_read_reason(sql, _SESSION_STAGING) is None
+    other = "SELECT * FROM read_parquet('s3://warehouse/cat/s/t/data/x.parquet')"
+    assert file_read_reason(other, _SESSION_STAGING) is not None
+
+
+@pytest.mark.parametrize(
+    "sql",
+    ["SELECT * FROM cat.s.t", "SELECT 's3://warehouse/x' AS url", "SELECT * FROM range(3)"],
+)
+def test_statements_without_a_file_read_pass(sql):
+    assert file_read_reason(sql, []) is None
+
+
+def test_file_read_check_fails_closed_on_unparseable_sql():
+    with pytest.raises(GrantDenied):
+        file_read_reason("SELECT FROM WHERE ) (", [])

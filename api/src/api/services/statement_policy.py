@@ -221,6 +221,16 @@ def _check_file_functions(stmt: exp.Expression, staging_prefixes: list[str]) -> 
                 )
 
 
+def check_file_reads(stmt: exp.Expression, staging_prefixes: list[str]) -> None:
+    """Raise ``StatementNotAllowed`` if ``stmt`` reads a file or URL outside staging.
+
+    Shared with the grant check, which applies it with no prefixes at all in a
+    workspace holding a scoped catalog.
+    """
+    _check_file_functions(stmt, staging_prefixes)
+    _check_replacement_scans(stmt, staging_prefixes)
+
+
 def _check_set(stmt: exp.Set) -> None:
     for item in stmt.expressions:
         column = item.find(exp.Column)
@@ -291,8 +301,7 @@ def _check_statement(
     # File-reading functions and bare-path replacement scans are checked in every
     # statement type (a SELECT/INSERT can embed read_parquet('s3://…') or
     # FROM 'http://…').
-    _check_file_functions(stmt, staging_prefixes)
-    _check_replacement_scans(stmt, staging_prefixes)
+    check_file_reads(stmt, staging_prefixes)
     # Shared with sql_guard so the gates cannot drift.
     try:
         check_denylist(stmt)

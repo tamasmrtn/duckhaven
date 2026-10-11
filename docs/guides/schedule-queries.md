@@ -51,6 +51,10 @@ few behaviors worth knowing:
   replay the missed runs; it simply runs at the next scheduled time.
 - **No retries.** A failed run waits for its next scheduled tick. There is no
   separate retry or backoff.
+- **The same SQL checks as a worksheet.** Each run's SQL is checked when it runs,
+  exactly as if you had run it by hand, because a saved query can be edited after
+  it is scheduled. A run the checks refuse is recorded as failed with the reason,
+  and a schedule for such a query cannot be created or enabled in the first place.
 
 ### If the chosen agent is down
 

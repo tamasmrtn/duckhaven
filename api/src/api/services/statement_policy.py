@@ -44,6 +44,8 @@ _FILE_FUNCTION_NAMES = {
     "read_ndjson",
     "read_ndjson_auto",
     "read_ndjson_objects",
+    "read_json_objects",
+    "read_json_objects_auto",
     "read_text",
     "read_blob",
     "read_parquet",
@@ -55,6 +57,15 @@ _FILE_FUNCTION_NAMES = {
     "sniff_csv",
     "parquet_metadata",
     "parquet_schema",
+    "parquet_file_metadata",
+    "parquet_full_metadata",
+    "parquet_kv_metadata",
+    "parquet_bloom_probe",
+    # Readers from other extensions the agent loads (avro, postgres), and a
+    # DuckDB database file read as a table.
+    "read_avro",
+    "read_postgres_binary",
+    "read_duckdb",
     # Table-format scanners that take a location instead of a catalog relation.
     "iceberg_scan",
     "delta_scan",

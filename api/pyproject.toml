@@ -3,9 +3,9 @@ name = "duckhaven-api"
 version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
-    "fastapi>=0.142.2",
+    "fastapi>=0.142.4",
     "uvicorn[standard]>=0.54.0",
-    "sqlalchemy[asyncio]>=2.1.1",
+    "sqlalchemy[asyncio]>=2.1.4",
     "alembic>=1.20.0",
     "asyncpg>=0.29",
     "bcrypt>=4.0",
@@ -43,7 +43,7 @@ dependencies = [
     # transitively today via other tooling; declared explicitly because the import
     # path is a runtime feature, not a dev convenience.
     "pyyaml>=6.0",
-    "pydantic-ai-slim[anthropic,mistral,openai]>=2.53.0",
+    "pydantic-ai-slim[anthropic,mistral,openai]>=2.54.0",
     # Official Model Context Protocol SDK, for the governed MCP server mounted at
     # /mcp (see api/src/api/services/mcp/). Only the server half is used; the
     # client half and its httpx2 dependency come along with the distribution.

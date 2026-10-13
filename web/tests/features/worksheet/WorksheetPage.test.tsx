@@ -147,6 +147,18 @@ describe("WorksheetPage tabs", () => {
     await waitFor(() => expect(sheet("wk-2").title).toBe("my analysis"));
   });
 
+  it("keeps renaming when the rename input is clicked", async () => {
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: WS_ROUTE });
+    await user.dblClick(await screen.findByRole("tab", { name: /funnel-draft/ }));
+
+    const input = screen.getByRole("textbox", { name: "Rename worksheet" });
+    await user.click(input);
+
+    expect(input).toBeInTheDocument();
+    expect(input).toHaveFocus();
+  });
+
   it("restores the active tab after navigating away and back", async () => {
     const user = userEvent.setup();
     const { router } = renderWithProviders({ initialRoute: WS_ROUTE });

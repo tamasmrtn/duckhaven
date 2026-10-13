@@ -67,7 +67,9 @@ WHERE catalog_name = 'analytics';
     is open, and even with a `table_catalog` filter. The same rejection covers every other way of asking the engine to
     enumerate: the `info_schema` spelling, any `SHOW` statement, the `duckdb_tables()` / `duckdb_schemas()` /
     `duckdb_columns()` / `duckdb_views()` / `duckdb_databases()` / `duckdb_constraints()` family, and
-    `PRAGMA show_tables` / `database_list` / `table_info`. See
+    `PRAGMA show_tables` / `show_tables_expanded` / `database_list` / `table_info`. Functions that name their table
+    only as a text string (`pragma_table_info()`, `iceberg_snapshots()` and the like), DuckLake's catalog methods
+    (`lake.snapshots()`), and direct file reads are rejected there too. See
     [Discovering objects in a scoped catalog](../concepts/permissions.md#discovering-objects-in-a-scoped-catalog).
 
 ### Columns and types: use `DESCRIBE`
@@ -141,7 +143,10 @@ SELECT * FROM iceberg_snapshots('analytics.analytics.events');
 SELECT * FROM iceberg_metadata('analytics.analytics.events');
 ```
 
-See [Snapshots & time travel](../guides/snapshots-time-travel.md) for more on snapshot history.
+See [Snapshots & time travel](../guides/snapshots-time-travel.md) for more on snapshot history. These functions name
+their table only as a string, which a grant cannot be checked against, so they are rejected in a workspace with a
+[scoped catalog](../concepts/permissions.md#discovering-objects-in-a-scoped-catalog); the catalog browser's
+**History** tab shows the same snapshot list there.
 
 ## Rejected statements
 
@@ -152,6 +157,21 @@ and transaction control.
 
 This includes the configuration-setting form of `PRAGMA` — `PRAGMA <name> = <value>`, which DuckDB treats as a `SET` —
 since it could widen the per-query sandbox. The read-only `PRAGMA`s that return rows are allowed, as described above.
+
+### Rejected functions
+
+Some functions are rejected in every workspace, inside any statement, on worksheets, SQL sessions and schedules alike:
+
+- **Functions that run SQL, or read a table, named inside a text string**: `query()`, `query_table()`,
+  `json_execute_serialized_sql()`, `duckdb_table_sample()`, and the `histogram()` / `histogram_values()` table functions
+  (the `histogram()` aggregate is unaffected). DuckHaven checks permissions against the tables a statement names, and
+  it cannot see a table named inside a string. Name the table in the query itself instead.
+- **Functions that expose storage credentials**, such as `duckdb_secrets()` and `iceberg_load_table_response()`.
+- **Functions that change a catalog, or the query engine every user of an agent shares**, outside DuckHaven's control:
+  `checkpoint()`, the Iceberg property setters, DuckLake's `merge_adjacent_files()` and `set_option()` catalog methods,
+  and the logging and profiling switches.
+- **Functions that reach another database**, such as `postgres_query()`, and DuckLake's `ducklake_*` maintenance
+  functions, as before.
 
 ## Time-travel syntax
 

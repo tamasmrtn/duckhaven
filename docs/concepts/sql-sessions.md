@@ -250,9 +250,12 @@ still enforced entirely at the API, per statement:
   `timezone`), `COPY` **to or from the session's staging prefix only**, and `ATTACH` of the workspace's own managed
   catalog. `TRUNCATE` is DuckDB's alias for `DELETE FROM` without a `WHERE` (dbt's seed reset emits it), and is
   authorized as a write against its target — see [SQL support](../reference/sql-support.md).
-- **Rejected:** `COPY` or `read_parquet`/`read_csv` to a local file, an arbitrary URL, or any object-store path outside
-  the staging prefix; arbitrary `INSTALL`/`LOAD`; `ATTACH` of anything else; and any `SET` that could widen the sandbox
-  (memory, external access, filesystem allowlists). Anything the parser can't classify is rejected.
+- **Rejected:** `COPY`, or any file-reading table function (`read_parquet`, `read_csv`, `read_json`, `glob`, the
+  Parquet metadata readers, and the rest), against a local file, an arbitrary URL, or any object-store path outside the
+  staging prefix; arbitrary `INSTALL`/`LOAD`; `ATTACH` of anything else; any `SET` that could widen the sandbox
+  (memory, external access, filesystem allowlists); and the
+  [functions rejected everywhere](../reference/sql-support.md#rejected-functions). Anything the parser can't classify
+  is rejected.
 
 This is what keeps a broadened SQL surface from becoming an open one: a session gets a bigger box, not an unbounded box,
 and every rejection is counted for monitoring.

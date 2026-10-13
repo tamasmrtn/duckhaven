@@ -73,6 +73,51 @@ async def test_create_schedule_invalid_cron_422(
     assert resp.status_code == 422
 
 
+@pytest_asyncio.fixture
+async def refused_saved_query(db_session, workspace: Workspace, user: User):
+    sq = SavedQuery(
+        workspace_id=workspace.id,
+        name="refused",
+        sql="SELECT * FROM query_table('analytics.secret')",
+        created_by=user.id,
+    )
+    db_session.add(sq)
+    await db_session.commit()
+    await db_session.refresh(sq)
+    return sq
+
+
+async def test_scheduling_sql_the_guard_refuses_is_422(
+    authed_client: AsyncClient, workspace: Workspace, refused_saved_query: SavedQuery
+):
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/schedules",
+        json={"saved_query_id": str(refused_saved_query.id), "cron": "0 2 * * *"},
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"] == "sql_not_allowed"
+
+
+async def test_enabling_a_schedule_of_refused_sql_is_422(
+    authed_client: AsyncClient, workspace: Workspace, refused_saved_query: SavedQuery
+):
+    """A disabled schedule can be made, since it never runs; enabling it cannot."""
+    created = await authed_client.post(
+        f"/workspaces/{workspace.slug}/schedules",
+        json={
+            "saved_query_id": str(refused_saved_query.id),
+            "cron": "0 2 * * *",
+            "enabled": False,
+        },
+    )
+    assert created.status_code == 201
+    resp = await authed_client.patch(
+        f"/workspaces/{workspace.slug}/schedules/{created.json()['id']}", json={"enabled": True}
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"] == "sql_not_allowed"
+
+
 async def test_update_schedule_recomputes_next_run(
     authed_client: AsyncClient, workspace: Workspace, saved_query: SavedQuery
 ):

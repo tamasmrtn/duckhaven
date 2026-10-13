@@ -34,6 +34,8 @@ from sqlglot import exp
 from api.models.catalog import Catalog, WorkspaceCatalog
 from api.models.catalog_grant import CatalogGrant
 from api.models.workspace import WorkspaceMember
+from api.services.sql_denylist import function_name
+from api.services.statement_policy import StatementNotAllowed, check_file_reads
 
 # Grantable tiers, low → high. `owner` is intentionally absent (workspace role).
 TIER_SCALE: dict[str, int] = {"metadata": 0, "reader": 1, "writer": 2}
@@ -360,6 +362,50 @@ _CATALOG_META_FUNCTIONS = frozenset(
         "duckdb_schemas",
         "duckdb_databases",
         "duckdb_constraints",
+        "duckdb_indexes",
+        "duckdb_sequences",
+        "duckdb_dependencies",
+        # Lists the files the agent has cached, whose paths spell out table names.
+        "duckdb_external_file_cache",
+        # Not `duckdb_functions` / `duckdb_keywords` / `duckdb_types`: those list
+        # no catalog objects, and editor autocomplete (`services/sql_metadata.py`)
+        # runs them through this same check.
+    }
+)
+
+# Table functions that name their table only as a string literal. Like `PRAGMA
+# table_info` below, the parser sees no `exp.Table`, so there is no object to
+# resolve a tier against, and the string could name any table at all.
+_STRING_NAMED_FUNCTIONS = frozenset(
+    {
+        "pragma_table_info",
+        "pragma_show",
+        "pragma_storage_info",
+        "pragma_metadata_info",
+        "iceberg_metadata",
+        "iceberg_snapshots",
+        "iceberg_column_stats",
+        "iceberg_partition_stats",
+        "iceberg_table_properties",
+        "iceberg_schema_properties",
+    }
+)
+
+# DuckLake's read-only catalog methods (`cat.snapshots()`). They report on the
+# whole catalog, and they also resolve unqualified, or under any schema, against
+# the active DuckLake catalog, so the qualifier does not say which catalog they
+# read. Matched only where a table function goes, by name.
+_DUCKLAKE_READ_METHODS = frozenset(
+    {
+        "snapshots",
+        "table_info",
+        "table_changes",
+        "table_insertions",
+        "table_deletions",
+        "current_snapshot",
+        "last_committed_snapshot",
+        "options",
+        "settings",
     }
 )
 
@@ -369,7 +415,17 @@ _CATALOG_META_FUNCTIONS = frozenset(
 # against — it would read any table's columns unchecked. `DESCRIBE` is the
 # equivalent that *is* checkable, which is why it stays allowed. `PRAGMA version`
 # touches no catalog object at all and is unaffected.
-_UNCHECKABLE_PRAGMAS = frozenset({"show_tables", "database_list", "table_info"})
+_UNCHECKABLE_PRAGMAS = frozenset(
+    {
+        "show_tables",
+        "show_tables_expanded",
+        "database_list",
+        "table_info",
+        "show",
+        "storage_info",
+        "metadata_info",
+    }
+)
 
 _ENUMERATION_HINT = (
     "Enumerating metadata is not available in a scoped catalog because the engine "
@@ -377,6 +433,27 @@ _ENUMERATION_HINT = (
     "workspace catalog API instead, and use DESCRIBE <catalog>.<schema>.<table> "
     "for column detail."
 )
+
+
+_STRING_NAMED_HINT = (
+    "It names its table only as a text string, which a grant cannot be checked "
+    "against, so it is not available in a workspace with a scoped catalog. Use "
+    "DESCRIBE <catalog>.<schema>.<table> for column detail, and the catalog "
+    "browser's History tab for snapshots."
+)
+
+_DUCKLAKE_METHOD_HINT = (
+    "DuckLake's catalog methods report on a whole catalog, which grants cannot "
+    "narrow, so they are not available in a workspace with a scoped catalog. Use "
+    "the catalog browser's History tab for snapshots."
+)
+
+
+def _scoped_cause(scoped_slugs: list[str]) -> str:
+    named = ", ".join(f"`{slug}`" for slug in scoped_slugs)
+    noun = "Catalog" if len(scoped_slugs) == 1 else "Catalogs"
+    verb = "is" if len(scoped_slugs) == 1 else "are"
+    return f"{noun} {named} {verb} attached in scoped mode"
 
 
 def _enumeration_hint(scoped_slugs: list[str] | None) -> str:
@@ -387,13 +464,14 @@ def _enumeration_hint(scoped_slugs: list[str] | None) -> str:
     """
     if not scoped_slugs:
         return _ENUMERATION_HINT
-    named = ", ".join(f"`{slug}`" for slug in scoped_slugs)
-    noun = "Catalog" if len(scoped_slugs) == 1 else "Catalogs"
-    verb = "is" if len(scoped_slugs) == 1 else "are"
     return (
-        f"{_ENUMERATION_HINT} {noun} {named} {verb} attached in scoped mode, which "
-        "disables engine-side enumeration for every catalog in this workspace."
+        f"{_ENUMERATION_HINT} {_scoped_cause(scoped_slugs)}, which disables "
+        "engine-side enumeration for every catalog in this workspace."
     )
+
+
+def _with_cause(hint: str, scoped_slugs: list[str] | None) -> str:
+    return f"{hint} {_scoped_cause(scoped_slugs)}." if scoped_slugs else hint
 
 
 def metadata_enumeration_reason(sql: str, scoped_slugs: list[str] | None = None) -> str | None:
@@ -434,20 +512,63 @@ def metadata_enumeration_reason(sql: str, scoped_slugs: list[str] | None = None)
                 # `system.information_schema.tables` spelling.
                 return f"`{table.db}.{table.name}` cannot be queried. {hint}"
         for fn in stmt.find_all(exp.Anonymous):
-            if isinstance(fn.this, str) and fn.this.lower() in _CATALOG_META_FUNCTIONS:
-                return f"`{fn.this}()` cannot be called. {hint}"
+            name = function_name(fn)
+            if name in _CATALOG_META_FUNCTIONS:
+                return f"`{fn.name}()` cannot be called. {hint}"
+            if name in _STRING_NAMED_FUNCTIONS:
+                return (
+                    f"`{fn.name}()` cannot be called. "
+                    f"{_with_cause(_STRING_NAMED_HINT, scoped_slugs)}"
+                )
+            if name in _DUCKLAKE_READ_METHODS and isinstance(fn.parent, exp.Table):
+                return (
+                    f"`{fn.name}()` cannot be called. "
+                    f"{_with_cause(_DUCKLAKE_METHOD_HINT, scoped_slugs)}"
+                )
         if isinstance(stmt, exp.Show):
             return f"`SHOW` cannot be used. {hint}"
         if isinstance(stmt, exp.Pragma):
             node = stmt.this
-            if isinstance(node, exp.Anonymous) and isinstance(node.this, str):
-                name = node.this.lower()
+            if isinstance(node, exp.Anonymous):
+                name = function_name(node) or ""
             elif isinstance(node, exp.Column):
                 name = node.name.lower()
             else:
                 name = ""
             if name in _UNCHECKABLE_PRAGMAS:
                 return f"`PRAGMA {name}` cannot be used. {hint}"
+    return None
+
+
+_FILE_READ_HINT = (
+    "Reading files directly is not available in a workspace with a scoped catalog: "
+    "a file read goes round the table grants. Query the catalog's tables instead; "
+    "a SQL session may still read its own staging prefix."
+)
+
+
+def file_read_reason(
+    sql: str, staging_prefixes: list[str], scoped_slugs: list[str] | None = None
+) -> str | None:
+    """Why ``sql`` reads a file or URL outside ``staging_prefixes``, else ``None``.
+
+    Consulted, like :func:`metadata_enumeration_reason`, whenever any attachment
+    is scoped. The agent holds the storage secret of every catalog a statement
+    attaches, so a direct read of a scoped table's data file returns its rows
+    with no table reference for a grant to check. Only a SQL session has
+    prefixes to allow; every other path passes none, so every read is refused.
+    """
+    try:
+        statements = sqlglot.parse(sql, read="duckdb")
+    except Exception as exc:  # sqlglot.errors.ParseError et al - fail closed
+        raise GrantDenied(f"Could not parse SQL for grant check: {exc}") from exc
+    for stmt in statements:
+        if stmt is None:
+            continue
+        try:
+            check_file_reads(stmt, staging_prefixes)
+        except StatementNotAllowed:
+            return _with_cause(_FILE_READ_HINT, scoped_slugs)
     return None
 
 
@@ -463,6 +584,8 @@ async def assert_query_access(
     sql: str,
     active_catalog: str,
     catalogs: list[Catalog],
+    *,
+    staging_prefixes: list[str] | None = None,
 ) -> None:
     """Reject a query before dispatch if the principal lacks tier on any object.
 
@@ -475,6 +598,10 @@ async def assert_query_access(
     both interactive and scheduled dispatch — the shared chokepoint. It is a
     **no-op** when no attached catalog is scoped, so open workspaces never even
     parse the SQL and keep today's behavior byte-for-byte.
+
+    In such a workspace, files and URLs are readable only under
+    ``staging_prefixes``, which only a SQL session passes
+    (:func:`file_read_reason`).
 
     Raises :class:`GrantDenied` (a ``ValueError``) on any shortfall, an
     unresolvable/unattached catalog reference, an unparseable statement, or a
@@ -496,6 +623,8 @@ async def assert_query_access(
     # scoped catalogs so that denial is explicable from an open one.
     scoped_slugs = sorted(c.slug for c in catalogs if c.id in scoped_ids)
     if (reason := metadata_enumeration_reason(sql, scoped_slugs)) is not None:
+        raise GrantDenied(reason)
+    if (reason := file_read_reason(sql, staging_prefixes or [], scoped_slugs)) is not None:
         raise GrantDenied(reason)
 
     by_slug = {c.slug: c for c in catalogs}

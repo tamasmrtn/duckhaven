@@ -24,8 +24,8 @@ depends on the catalogs it reads, not on how many the workspace has.
 How the control plane decides:
 
 - **Any catalog name in the SQL counts.** The control plane looks for each catalog's name anywhere in the statement,
-  including inside strings and quoted identifiers, so `USE sales`, `CALL lake.merge_adjacent_files()`,
-  `ducklake_snapshots('lake')` and `query('SELECT … FROM sales.s.t')` all attach the catalog they mention. A word that
+  including inside strings and quoted identifiers, so `USE sales`, `CALL lake.merge_adjacent_files()` and
+  `ducklake_snapshots('lake')` all attach the catalog they mention. A word that
   only happens to match a catalog's name attaches it needlessly; that costs time, never correctness.
 - **Listing statements attach everything.** `information_schema`, `pg_catalog`, the `duckdb_*()` functions, `SHOW` and
   the listing `PRAGMA`s describe every attached catalog, so they still attach the whole workspace and list all of it.

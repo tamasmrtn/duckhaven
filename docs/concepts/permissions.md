@@ -136,10 +136,15 @@ What you cannot do in a scoped catalog is ask the query engine to *enumerate* ob
 
 - `information_schema.tables`, `information_schema.schemata`, `information_schema.columns` (and the
   `system.information_schema.…` spelling of the same views)
-- the `duckdb_tables()`, `duckdb_schemas()`, `duckdb_columns()`, `duckdb_views()` family
-- `SHOW TABLES` / `SHOW ALL TABLES`, `PRAGMA show_tables`, `PRAGMA database_list`
-- `PRAGMA table_info(…)` — it names its table only as a text string, which DuckHaven cannot resolve to an object to
-  check a grant against; `DESCRIBE` is the equivalent that can be checked
+- the `duckdb_tables()`, `duckdb_schemas()`, `duckdb_columns()`, `duckdb_views()` family, along with
+  `duckdb_indexes()`, `duckdb_sequences()` and `duckdb_dependencies()`
+- `SHOW TABLES` / `SHOW ALL TABLES`, `PRAGMA show_tables`, `PRAGMA show_tables_expanded`, `PRAGMA database_list`
+- `PRAGMA table_info(…)`, and every function that names its table only as a text string: `pragma_table_info()`,
+  `pragma_show()`, `pragma_storage_info()`, and the `iceberg_snapshots()` / `iceberg_metadata()` family. DuckHaven
+  checks grants against the tables a statement names, and a name inside a string is not one it can resolve. `DESCRIBE`
+  is the equivalent that can be checked, and the catalog browser's **History** tab shows a table's snapshots
+- DuckLake's catalog methods, such as `lake.snapshots()` and `lake.table_changes(…)`, which report on a whole catalog
+  rather than one table
 
 The reason is mechanical: DuckDB computes these across *every* catalog attached to the worksheet and offers no way to
 filter their rows, so allowing them would reveal the names of tables you have not been granted — the very thing scoped
@@ -159,7 +164,7 @@ refused `information_schema.tables`. This is deliberate — the alternative leak
 the error message names the scoped catalog responsible, so a denial from an open catalog is explicable.
 
 Nothing else changes for the open catalogs: querying their rows, `DESCRIBE`, and the catalog tree all keep working
-exactly as before. Only the unfilterable listings go away.
+exactly as before. Only the unfilterable listings, and [direct file reads](#files-are-read-through-tables), go away.
 
 !!! tip "Give scoped catalogs their own workspace"
     If tools in a workspace rely on `information_schema` — dbt and most BI connectors do — attach the scoped catalog to
@@ -173,6 +178,14 @@ exactly as before. Only the unfilterable listings go away.
     unaffected either way: `information_schema.columns`
     [does not work for Iceberg tables](../reference/sql-support.md#columns-and-types-use-describe) regardless of access
     mode, so any tool that works against DuckHaven at all is already using `DESCRIBE` for that.
+
+#### Files are read through tables
+
+DuckDB can read a file directly — `read_parquet('s3://…')`, `read_csv(…)`, or a quoted path in `FROM` — instead of a
+table. Such a read names no table, so there is nothing to check a grant against, yet the files under a scoped catalog
+*are* its tables' data. So in a workspace with a scoped catalog, a query reads data only through tables. The one
+exception is a [SQL session](sql-sessions.md), which may still read files under its own staging prefix: that is how dbt
+and dlt load data, and the prefix is private to the session. Workspaces with no scoped catalog are unaffected.
 
 ## Per-agent access
 

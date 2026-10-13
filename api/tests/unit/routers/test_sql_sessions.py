@@ -539,6 +539,39 @@ async def test_read_parquet_of_foreign_url_is_rejected(
     assert resp.json()["error"] == "statement_not_allowed"
 
 
+async def test_a_scoped_workspace_still_reads_its_own_staging(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    """The grant check refuses file reads once a catalog is scoped, except under
+    the session's own staging prefix, which the router must hand it."""
+    from sqlalchemy import update
+
+    from api.config import settings as cfg
+    from api.models.catalog import WorkspaceCatalog
+
+    await db_session.execute(
+        update(WorkspaceCatalog)
+        .where(WorkspaceCatalog.workspace_id == workspace.id)
+        .values(access_mode="scoped")
+    )
+    await db_session.commit()
+    session = await _open_session_row(db_session, workspace, agent, user)
+
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
+        return True
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+    url = (
+        f"{cfg.s3_endpoint_internal}/{cfg.s3_bucket}/tmp/test/_staging/"
+        f"{session.id}/o.parquet?X-Amz-Signature=abc"
+    )
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements",
+        json={"sql": f"SELECT * FROM read_parquet('{url}')"},
+    )
+    assert resp.status_code == 202, resp.text
+
+
 # ── Audit surface: close reason, client identity, list, statement timeline ────
 
 

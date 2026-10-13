@@ -9,6 +9,20 @@ _STAGING = ["s3://warehouse/analytics/_staging/sess-1/"]
 _MANAGED = {"sales", "analytics"}
 
 
+# Readers that once went unchecked because they were missing from the list.
+_NEWLY_CONFINED = (
+    "read_duckdb",
+    "read_avro",
+    "read_postgres_binary",
+    "read_json_objects",
+    "read_json_objects_auto",
+    "parquet_file_metadata",
+    "parquet_full_metadata",
+    "parquet_kv_metadata",
+    "parquet_bloom_probe",
+)
+
+
 def _check(sql: str) -> None:
     assert_statement_allowed(sql, staging_prefixes=_STAGING, managed_catalogs=_MANAGED)
 
@@ -31,6 +45,11 @@ ALLOWED = [
     "COPY t TO 's3://warehouse/analytics/_staging/sess-1/out.parquet' (FORMAT PARQUET)",
     "COPY t FROM 's3://warehouse/analytics/_staging/sess-1/in.parquet' (FORMAT PARQUET)",
     "SELECT * FROM read_parquet('s3://warehouse/analytics/_staging/sess-1/x.parquet')",
+    # Every file reader is confined the same way, and staging is still allowed.
+    *(
+        f"SELECT * FROM {name}('s3://warehouse/analytics/_staging/sess-1/x')"
+        for name in _NEWLY_CONFINED
+    ),
     "ATTACH 'sales' AS sales (TYPE ICEBERG)",
     # A URL-looking string as data (not a file arg) is fine.
     "SELECT 'http://not-a-file' AS c",
@@ -50,6 +69,8 @@ ALLOWED = [
     "PRAGMA table_info('sales.analytics.orders')",
     "PRAGMA database_list",
     "PRAGMA show_tables",
+    # A quoted name is the same pragma, read the same way.
+    "PRAGMA \"table_info\"('sales.analytics.orders')",
     # TRUNCATE is DuckDB's alias for DELETE FROM without a WHERE; dbt's seed
     # reset emits it. Both the `TABLE` and the bare form parse to TruncateTable.
     "TRUNCATE TABLE sales.analytics.orders",
@@ -71,6 +92,10 @@ DENIED = [
     ("SELECT * FROM read_csv('s3://other/x.csv')", "read_path"),
     ("SELECT * FROM read_json_auto('/tmp/x.json')", "read_path"),
     ("SELECT * FROM glob('/**')", "read_path"),
+    *((f"SELECT * FROM {name}('s3://other/x')", "read_path") for name in _NEWLY_CONFINED),
+    # Quoting the name must not turn the path check off.
+    ("SELECT * FROM \"glob\"('s3://other/*')", "read_path"),
+    ("SELECT * FROM \"read_json_auto\"('/tmp/x.json')", "read_path"),
     # sqlglot reports no table for this form while DuckDB truncates one named
     # `database`, so the grant check would never see the object.
     ("TRUNCATE DATABASE d", "truncate_database"),

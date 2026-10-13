@@ -13,8 +13,11 @@ from api.models.catalog import Catalog, WorkspaceCatalog
 from api.models.catalog_grant import CatalogGrant
 from api.models.storage_backend import StorageBackend
 from api.models.user import User
+from api.services import grants as grant_service
+from api.services import sql_metadata
 from api.services.agent_registry import registry
 from api.services.auth import hash_password
+from api.services.maintenance.verbs import APPLICABLE_KINDS, render
 
 
 class MockWebSocket:
@@ -341,4 +344,96 @@ async def test_two_part_name_into_a_scoped_catalog_allowed_with_its_grant(
     _grant(db_session, user, scoped, "reader", schema="main", table="leads")
     await db_session.commit()
     resp = await _run(authed_client, ws, connected_agent, "SELECT * FROM sales.leads")
+    assert resp.status_code == 202
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM pragma_table_info('test-cat.analytics.leads')",
+        "SELECT * FROM iceberg_snapshots('test-cat.analytics.leads')",
+        "SELECT * FROM snapshots()",
+    ],
+)
+async def test_string_named_readers_denied_even_with_a_grant(
+    authed_client, scoped_ws, connected_agent, db_session, user, sql
+):
+    """The string could name any table, so a grant on one does not admit them."""
+    ws, cat = scoped_ws
+    _grant(db_session, user, cat, "reader", table="leads")
+    await db_session.commit()
+    resp = await _run(authed_client, ws, connected_agent, sql)
+    assert resp.status_code == 403
+    assert resp.json()["error"] == "grant_denied"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM iceberg_snapshots('test-cat.analytics.leads')",
+        "SELECT * FROM lake.snapshots()",
+    ],
+)
+async def test_string_named_readers_still_work_in_an_open_workspace(
+    authed_client, db_session, user, connected_agent, sql
+):
+    ws, _cat = await seed_workspace(db_session, user_id=user.id, slug="open-readers-ws")
+    resp = await _run(authed_client, ws, connected_agent, sql)
+    assert resp.status_code == 202
+
+
+async def test_internal_sql_still_passes_the_scoped_check(scoped_ws, db_session, user):
+    """What the platform itself dispatches must not trip the scoped refusals:
+    editor autocomplete, maintenance apply, and the stats and sample probes."""
+    ws, cat = scoped_ws
+    _grant(db_session, user, cat, "reader", table="leads")
+    await db_session.commit()
+    internal = [
+        sql_metadata._FUNCTIONS_SQL,
+        sql_metadata._KEYWORDS_SQL,
+        sql_metadata._TYPES_SQL,
+        *(
+            ";\n".join(
+                render(kind, catalog=cat.slug, schema="analytics", table="leads", retention_days=7)
+            )
+            for kind in sorted(APPLICABLE_KINDS)
+        ),
+        "SELECT 1",
+        f'SELECT * FROM "{cat.slug}"."analytics"."leads" LIMIT 100',
+        f'DESCRIBE "{cat.slug}"."analytics"."leads"',
+        f'SELECT * FROM (DESCRIBE "{cat.slug}"."analytics"."leads")',
+    ]
+    for sql in internal:
+        await grant_service.assert_query_access(db_session, ws.id, user.id, sql, cat.slug, [cat])
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM read_parquet('s3://warehouse/test-cat/analytics/leads/data/x.parquet')",
+        "SELECT * FROM 's3://warehouse/test-cat/analytics/leads/data/x.parquet'",
+        "SELECT * FROM read_text('s3://warehouse/anything')",
+        "SELECT * FROM iceberg_scan('s3://warehouse/test-cat/analytics/leads')",
+        "SELECT * FROM \"glob\"('s3://warehouse/*')",
+    ],
+)
+async def test_direct_file_reads_denied_in_a_scoped_workspace(
+    authed_client, scoped_ws, connected_agent, db_session, user, sql
+):
+    """A data file read directly has no table reference to check a grant on."""
+    ws, cat = scoped_ws
+    _grant(db_session, user, cat, "reader", table="leads")
+    await db_session.commit()
+    resp = await _run(authed_client, ws, connected_agent, sql)
+    assert resp.status_code == 403
+    assert resp.json()["error"] == "grant_denied"
+
+
+async def test_direct_file_reads_still_work_in_an_open_workspace(
+    authed_client, db_session, user, connected_agent
+):
+    ws, _cat = await seed_workspace(db_session, user_id=user.id, slug="open-files-ws")
+    resp = await _run(
+        authed_client, ws, connected_agent, "SELECT * FROM read_parquet('s3://warehouse/x.parquet')"
+    )
     assert resp.status_code == 202

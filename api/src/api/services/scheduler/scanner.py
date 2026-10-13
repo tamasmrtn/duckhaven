@@ -36,6 +36,7 @@ from api.services.query import dispatch_query, pick_agent_for
 from api.services.result_cache import service as result_cache
 from api.services.runtimes import RuntimeRetired
 from api.services.scheduler.cron import next_run
+from api.services.sql_guard import SQLNotAllowed, assert_allowed
 from api.services.workspace import (
     DEFAULT_SCHEMA,
     get_default_catalog,
@@ -164,6 +165,26 @@ async def _run_saved_query(
         logger.warning("Schedule %s has no saved query; skipping", schedule.id)
         return None
     workspace = await db.get(Workspace, schedule.workspace_id)
+
+    # A worksheet's SQL passes `sql_guard` before anything else, and a schedule
+    # must not be a way round it. Checked on every run: the saved SQL can change
+    # after the schedule is made.
+    try:
+        assert_allowed(saved.sql)
+    except SQLNotAllowed as exc:
+        query = Query(
+            workspace_id=schedule.workspace_id,
+            user_id=None,
+            sql=saved.sql,
+            status="failed",
+            error=str(exc),
+            finished_at=now,
+            origin="scheduled",
+            schedule_id=schedule.id,
+        )
+        db.add(query)
+        saved.last_run_at = now
+        return query
 
     cache = await _cache_lookup(db, schedule, saved, workspace, polaris)
     if cache.hit:

@@ -582,7 +582,13 @@ async def run_statement(
     # Per-statement authorization (scoped catalogs); no-op for open workspaces.
     try:
         await assert_query_access(
-            db, session.workspace_id, session.user_id, body.sql, session.active_catalog, catalogs
+            db,
+            session.workspace_id,
+            session.user_id,
+            body.sql,
+            session.active_catalog,
+            catalogs,
+            staging_prefixes=prefixes,
         )
     except GrantDenied as exc:
         raise HTTPException(

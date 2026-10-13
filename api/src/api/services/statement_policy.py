@@ -24,7 +24,7 @@ import posixpath
 import sqlglot
 from sqlglot import exp
 
-from api.services.sql_denylist import ForeignAccessDenied
+from api.services.sql_denylist import ForeignAccessDenied, function_name
 from api.services.sql_denylist import check_statement as check_denylist
 
 # SET names dbt/dlt legitimately need. Everything else is denied — crucially
@@ -44,6 +44,8 @@ _FILE_FUNCTION_NAMES = {
     "read_ndjson",
     "read_ndjson_auto",
     "read_ndjson_objects",
+    "read_json_objects",
+    "read_json_objects_auto",
     "read_text",
     "read_blob",
     "read_parquet",
@@ -55,6 +57,15 @@ _FILE_FUNCTION_NAMES = {
     "sniff_csv",
     "parquet_metadata",
     "parquet_schema",
+    "parquet_file_metadata",
+    "parquet_full_metadata",
+    "parquet_kv_metadata",
+    "parquet_bloom_probe",
+    # Readers from other extensions the agent loads (avro, postgres), and a
+    # DuckDB database file read as a table.
+    "read_avro",
+    "read_postgres_binary",
+    "read_duckdb",
     # Table-format scanners that take a location instead of a catalog relation.
     "iceberg_scan",
     "delta_scan",
@@ -192,10 +203,8 @@ def _check_file_functions(stmt: exp.Expression, staging_prefixes: list[str]) -> 
         name: str | None = None
         if isinstance(node, exp.ReadParquet | exp.ReadCSV):
             name = "read_parquet" if isinstance(node, exp.ReadParquet) else "read_csv"
-        elif isinstance(node, exp.Anonymous) and isinstance(node.this, str):
-            candidate = node.this.lower()
-            if candidate in _FILE_FUNCTION_NAMES:
-                name = candidate
+        elif function_name(node) in _FILE_FUNCTION_NAMES:
+            name = function_name(node)
         if name is None:
             continue
         paths = _paths_from_arg(_positional_path_arg(node))
@@ -210,6 +219,16 @@ def _check_file_functions(stmt: exp.Expression, staging_prefixes: list[str]) -> 
                     f"{name}() may only read from the staging prefix, not {path!r}",
                     "read_path",
                 )
+
+
+def check_file_reads(stmt: exp.Expression, staging_prefixes: list[str]) -> None:
+    """Raise ``StatementNotAllowed`` if ``stmt`` reads a file or URL outside staging.
+
+    Shared with the grant check, which applies it with no prefixes at all in a
+    workspace holding a scoped catalog.
+    """
+    _check_file_functions(stmt, staging_prefixes)
+    _check_replacement_scans(stmt, staging_prefixes)
 
 
 def _check_set(stmt: exp.Set) -> None:
@@ -249,8 +268,8 @@ def _pragma_name(stmt: exp.Pragma) -> str | None:
     node = stmt.this
     if isinstance(node, exp.EQ):
         node = node.this
-    if isinstance(node, exp.Anonymous) and isinstance(node.this, str):
-        return node.this.lower()
+    if isinstance(node, exp.Anonymous):
+        return function_name(node)
     if isinstance(node, exp.Column):
         return node.name.lower()
     return None
@@ -282,8 +301,7 @@ def _check_statement(
     # File-reading functions and bare-path replacement scans are checked in every
     # statement type (a SELECT/INSERT can embed read_parquet('s3://…') or
     # FROM 'http://…').
-    _check_file_functions(stmt, staging_prefixes)
-    _check_replacement_scans(stmt, staging_prefixes)
+    check_file_reads(stmt, staging_prefixes)
     # Shared with sql_guard so the gates cannot drift.
     try:
         check_denylist(stmt)

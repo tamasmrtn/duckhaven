@@ -83,6 +83,9 @@ export function WorksheetTabs({
                         e.stopPropagation();
                       }}
                       // Don't let clicks bubble to the tab trigger while editing.
+                      // The trigger focuses itself on mousedown, which would
+                      // blur the input and end the rename.
+                      onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => e.stopPropagation()}
                       autoFocus
                       aria-label="Rename worksheet"

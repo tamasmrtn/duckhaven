@@ -552,13 +552,7 @@ async def run_statement(
 
     catalogs = await resolve_workspace_catalogs(db, session.workspace_id)
     managed = {c.slug for c in catalogs} | {c.polaris_name for c in catalogs}
-    # Admit both the object-storage staging prefix (COPY / s3:// reads) and its
-    # HTTPS form so a staged `read_parquet('<presigned get_url>')` is allowed,
-    # while arbitrary local-FS / external URLs still reject.
-    prefixes = session_credentials.staging_prefixes(session.staging_uri)
-    active = next((c for c in catalogs if c.slug == session.active_catalog), None)
-    if active is not None:
-        prefixes = prefixes + staging_presign.staging_read_prefixes(active, session.id)
+    prefixes = session_service.staging_prefixes(session, catalogs)
 
     # Capability-scoped statement policy (the session path's relaxed I8).
     try:
@@ -623,6 +617,8 @@ async def run_statement(
             statement_type=classify_parsed(parsed_statements),
             session_id=session.id,
             timeout_s=body.timeout_s,
+            active_catalog=context[0] if context else None,
+            active_schema=context[1] if context else None,
         )
         session.last_active_at = datetime.now(tz=UTC)
         try:
@@ -650,6 +646,10 @@ async def run_statement(
         # Persisted so the reaper can bound this statement server-side; the agent
         # enforces the same budget around execution.
         timeout_s=body.timeout_s,
+        # Where unqualified names resolve, so reading the result re-checks grants
+        # there. Null when unknown: only fully qualified names passed the check.
+        active_catalog=context[0] if context else None,
+        active_schema=context[1] if context else None,
     )
     cache.stamp(query)
     db.add(query)

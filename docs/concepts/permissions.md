@@ -193,6 +193,19 @@ table. Such a read names no table, so there is nothing to check a grant against,
 exception is a [SQL session](sql-sessions.md), which may still read files under its own staging prefix: that is how dbt
 and dlt load data, and the prefix is private to the session. Workspaces with no scoped catalog are unaffected.
 
+#### Reading a result needs the same grants as running its query
+
+A query's result holds the data it read, so opening a result is checked like running the query. When you page through
+a result's rows or open its profile, whether you ran the query or a colleague did, DuckHaven checks your current grants
+against every table the query read, in the catalog and schema it resolved names in. Without them the result is refused
+with a 403. This applies to the query's author too: a revoked grant also closes results run before the revocation.
+
+Results of a session's staged-file reads are readable only by the session's author. A result from a session whose
+current context was unknown (see
+[Grants follow the session's context](sql-sessions.md#grants-follow-the-sessions-context))
+can be read only if its SQL names its tables fully qualified. In a workspace with no scoped catalog, any member can open
+any result, as before.
+
 ## Per-agent access
 
 Scoped access answers "which *data* may this person reach". Per-agent access answers a different question: "which

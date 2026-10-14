@@ -91,7 +91,13 @@ class Query(Base):
     # Recorded so a run dispatched later than its request — an elastic pool run parked
     # during a cold start — still resolves names the way the user meant, rather than
     # falling back to the workspace default. Null means "no preference recorded".
+    # Once dispatched (or served from the cache) it holds the catalog the run
+    # actually resolved names in, which reading the result re-checks grants against.
     active_catalog: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # The schema unqualified names resolved in. Set for session statements, whose
+    # session can `USE` another schema; null means the workspace default schema,
+    # which is where every one-shot run resolves.
+    active_schema: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # What the result cache did with this run: `hit` (answered from an earlier
     # run's result, nothing executed), `miss` (executed, and offered to the cache
     # when it finished), `bypass` (the cache was off or could not decide in time)

@@ -1362,6 +1362,79 @@ def _capture_profile(conn: duckdb.DuckDBPyConnection, profile_path: Path) -> dic
         return None
 
 
+# The type an exact HUGEINT/UHUGEINT is written as. Parquet has no 128-bit
+# integer: left alone, DuckDB's writer turns these into DOUBLE and every value
+# past 2^53 (most `sum(BIGINT)` results are HUGEINT) is silently rounded.
+_EXACT_WIDE_INTEGER = "DECIMAL(38,0)"
+
+
+def _quote_identifier(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+def _exact_type(t: duckdb.DuckDBPyType) -> str | None:
+    """The type to write a column of type ``t`` as so no HUGEINT or UHUGEINT in
+    it, at any depth, loses precision; ``None`` when it needs no change.
+
+    Rebuilt from the type's structure rather than by editing its spelling: a
+    struct field may itself be named HUGEINT, and DuckDB prints it unquoted.
+    """
+    tid = t.id
+    if tid in ("hugeint", "uhugeint"):
+        return _EXACT_WIDE_INTEGER
+    if tid in ("list", "array"):
+        inner = _exact_type(t.children[0][1])
+        if inner is None:
+            return None
+        return f"{inner}[]" if tid == "list" else f"{inner}[{t.children[1][1]}]"
+    if tid in ("struct", "union"):
+        # A union's first child is its unnamed tag, not a member.
+        members = [(n, c) for n, c in t.children if not (tid == "union" and n == "")]
+        exact = [_exact_type(c) for _, c in members]
+        if all(e is None for e in exact):
+            return None
+        fields = ", ".join(
+            f"{_quote_identifier(n)} {e if e is not None else c}"
+            for (n, c), e in zip(members, exact, strict=True)
+        )
+        return f"{tid.upper()}({fields})"
+    if tid == "map":
+        (_, key), (_, value) = t.children
+        exact_key, exact_value = _exact_type(key), _exact_type(value)
+        if exact_key is None and exact_value is None:
+            return None
+        return f"MAP({exact_key or key}, {exact_value or value})"
+    return None
+
+
+def _write_result(rel: duckdb.DuckDBPyRelation, result_path: Path) -> None:
+    """Materialize ``rel`` to Parquet with every HUGEINT/UHUGEINT kept exact.
+
+    Columns are cast by position (``#n``), which keeps duplicate and oddly
+    quoted names intact. A value past DECIMAL(38,0)'s 38 digits cannot be kept
+    exactly: the query fails with how to get it back instead of being rounded.
+    """
+    exact = [_exact_type(t) for t in rel.types]
+    if all(e is None for e in exact):
+        rel.write_parquet(str(result_path))
+        return
+    projection = ", ".join(
+        (f"CAST(#{i} AS {e})" if e is not None else f"#{i}") + f" AS {_quote_identifier(name)}"
+        for i, (name, e) in enumerate(zip(rel.columns, exact, strict=True), start=1)
+    )
+    try:
+        rel.project(projection).write_parquet(str(result_path))
+    except duckdb.ConversionException as exc:
+        if _EXACT_WIDE_INTEGER not in str(exc):
+            raise
+        result_path.unlink(missing_ok=True)
+        raise duckdb.ConversionException(
+            "A HUGEINT value has more than 38 digits, which a query result cannot keep "
+            "exactly. CAST that column to VARCHAR to return it as text. "
+            f"(DuckDB: {exc})"
+        ) from exc
+
+
 def _result_schema(rel: duckdb.DuckDBPyRelation) -> list[dict[str, str]] | None:
     """``[{"name", "type"}, ...]`` for a materialized result, or ``None``.
 
@@ -1542,13 +1615,13 @@ def _run_statement_once(
             # streams it through the identical `BATCH_COPY_TO_FILE` operator, so the
             # Parquet output and the captured profile are unchanged for a SELECT.
             rel = conn.sql(sql)
-            rel.write_parquet(str(result_path))
+            _write_result(rel, result_path)
             duration_ms = int((time.monotonic() - start) * 1000)
             # The relation's own types, read before the Parquet hop: the writer
-            # is lossy (HUGEINT -> DOUBLE, ENUM -> VARCHAR, INTEGER[2] -> INTEGER[],
-            # BIT -> VARCHAR), so the control plane cannot recover these from the
-            # file it proxies. This is the only place the query's real result
-            # types exist.
+            # is lossy (ENUM -> VARCHAR, INTEGER[2] -> INTEGER[], BIT -> VARCHAR;
+            # HUGEINT is written as DECIMAL(38,0)), so the control plane cannot
+            # recover these from the file it proxies. This is the only place the
+            # query's real result types exist.
             result_schema = _result_schema(rel)
             if enable_profiling:
                 conn.execute("PRAGMA disable_profiling")

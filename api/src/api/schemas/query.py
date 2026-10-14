@@ -50,8 +50,8 @@ class RowsPageOut(BaseModel):
     total: int
     # The columns' types, as the executing agent reported them. Additive: `columns`
     # keeps its names-only shape for clients already in the field. Null for DDL/DML
-    # and for runs by an agent older than this field. Values are still JSON-encoded,
-    # so DECIMAL and HUGEINT arrive as floats regardless of what this says.
+    # and for runs by an agent older than this field. Values of DECIMAL and every
+    # 64-bit-or-wider integer type arrive as JSON strings, which keep them exact.
     column_schema: list[ColumnSchemaOut] | None = None
 
 

@@ -26,7 +26,7 @@ router = APIRouter()
 
 # API contract version — bump only on a breaking change to the API contract,
 # not per release (the release/build version is settings.app_version).
-API_VERSION = 2
+API_VERSION = 3
 
 
 class VersionOut(BaseModel):

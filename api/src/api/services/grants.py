@@ -323,8 +323,15 @@ def extract_table_refs(sql: str) -> list[TableRef]:
         # Tables under a DESCRIBE, by identity. Collected from anywhere in the
         # tree rather than only the top level, so `SELECT … FROM (DESCRIBE t)` —
         # the form dlt and dbt emit — is recognized as well as a bare `DESCRIBE t`.
-        # Deliberately not SUMMARIZE: that one scans the rows.
-        described = {id(t) for d in stmt.find_all(exp.Describe) for t in d.find_all(exp.Table)}
+        # Deliberately not SUMMARIZE: that one scans the rows. Nor a described
+        # PIVOT: a pivot without an `IN` list reads the pivoted column's values to
+        # name its output columns, so describing it returns data, not just shape.
+        described = {
+            id(t)
+            for d in stmt.find_all(exp.Describe)
+            if d.find(exp.Pivot) is None
+            for t in d.find_all(exp.Table)
+        }
         for t in stmt.find_all(exp.Table):
             cat = t.catalog or None
             schema = t.db or None

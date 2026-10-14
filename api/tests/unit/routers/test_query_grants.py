@@ -316,6 +316,31 @@ async def test_summarize_still_needs_reader(
     assert resp.status_code == 403
 
 
+_DESCRIBED_PIVOT = "DESCRIBE PIVOT analytics.leads ON status USING count(*)"
+
+
+async def test_described_pivot_still_needs_reader(
+    authed_client, scoped_ws, connected_agent, db_session, user
+):
+    """A PIVOT's output columns are named after values in the table, so the
+    metadata tier must not describe one; `reader` can."""
+    ws, cat = scoped_ws
+    _grant(db_session, user, cat, "metadata", table="leads")
+    await db_session.commit()
+    resp = await _run(authed_client, ws, connected_agent, _DESCRIBED_PIVOT)
+    assert resp.status_code == 403
+
+
+async def test_described_pivot_runs_with_reader(
+    authed_client, scoped_ws, connected_agent, db_session, user
+):
+    ws, cat = scoped_ws
+    _grant(db_session, user, cat, "reader", table="leads")
+    await db_session.commit()
+    resp = await _run(authed_client, ws, connected_agent, _DESCRIBED_PIVOT)
+    assert resp.status_code == 202
+
+
 async def test_open_mode_dispatch_needs_no_grant(authed_client, db_session, user, connected_agent):
     # A catalog left in default `open` mode dispatches without any grant.
     ws, _cat = await seed_workspace(db_session, user_id=user.id, slug="open-ws")

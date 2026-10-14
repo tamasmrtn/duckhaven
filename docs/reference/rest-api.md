@@ -296,6 +296,16 @@ The field is **additive** — `columns` still carries the names-only list it alw
 - the query ran on an agent older than this feature. The control plane reports nothing rather than deriving types from
   the result Parquet, whose writer is lossy.
 
+## Reading results
+
+`GET /api/queries/{query_id}/rows` and `GET /api/queries/{query_id}/profile` answer **403 `grant_denied`** when the
+caller's current grants would not let them run the query. In a workspace with a scoped catalog, reading a result is
+checked like running its SQL, for every caller including the one who ran it. See
+[Reading results in Permissions][reading-results].
+Workspaces with no scoped catalog behave as before: any member can read any result in the workspace.
+
+[reading-results]: ../concepts/permissions.md#reading-a-result-needs-the-same-grants-as-running-its-query
+
 ## Result cache fields
 
 A read can be answered from the [result cache](../concepts/result-cache.md) instead of running. Requests opt out with

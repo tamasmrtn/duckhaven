@@ -278,6 +278,17 @@ def _not_dispatchable(exc: AgentNotDispatchable) -> HTTPException:
     )
 
 
+async def _assert_result_access(db: AsyncSession, query: Query, user: User) -> None:
+    """403 unless the caller's grants still cover what ``query`` read."""
+    try:
+        await query_service.assert_result_access(db, query, user.id)
+    except GrantDenied as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": "grant_denied", "detail": str(exc)},
+        ) from exc
+
+
 def _runtime_retired(exc: RuntimeRetired) -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_409_CONFLICT,
@@ -752,10 +763,15 @@ async def get_query_profile(
     if query is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     await assert_workspace_member(db, query.workspace_id, user.id)
-    if query.profile is None and query.result_source_query_id is not None:
+    profile = query.profile
+    if profile is None and query.result_source_query_id is not None:
         source = await db.get(Query, query.result_source_query_id)
-        return source.profile if source is not None else None
-    return query.profile
+        profile = source.profile if source is not None else None
+    if profile is not None:
+        # A profile can carry values from the data (dynamic filter bounds), so it
+        # is guarded like the rows it was captured with.
+        await _assert_result_access(db, query, user)
+    return profile
 
 
 @router.delete("/queries/{query_id}", status_code=204)
@@ -805,6 +821,7 @@ async def get_query_rows(
     # A result-cache hit has no agent of its own; its rows come from its source.
     if query.agent_id is None and query.result_source_query_id is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No results available")
+    await _assert_result_access(db, query, user)
 
     trace.get_current_span().set_attribute(
         "duckhaven.result_schema", query.result_schema is not None

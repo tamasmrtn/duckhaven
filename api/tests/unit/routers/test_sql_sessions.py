@@ -663,6 +663,52 @@ async def test_an_unknown_context_refuses_unqualified_names(
     assert "not known" in resp.json()["message"]
 
 
+async def test_only_the_author_reads_a_staged_file_result(
+    authed_client, db_session, scoped_session, user, monkeypatch
+):
+    """Staged files are the session author's; their results stay readable by the
+    author and nobody else in a scoped workspace."""
+    from api.config import settings as cfg
+    from api.schemas.query import RowsPageOut
+    from api.services import query as query_service
+
+    async def fake_page(db, query, *, limit, offset=0):
+        return RowsPageOut(rows=[], columns=[], cursor=None, total=0)
+
+    monkeypatch.setattr(query_service, "fetch_result_page", fake_page)
+    other = User(email="o@sessions.local", password_hash=hash_password("pw"), name="O")
+    db_session.add(other)
+    await db_session.commit()
+    url = (
+        f"{cfg.s3_endpoint_internal}/{cfg.s3_bucket}/tmp/test/_staging/"
+        f"{scoped_session.id}/o.parquet?X-Amz-Signature=abc"
+    )
+    rows = []
+    for author in (user, other):
+        q = _statement(scoped_session, f"SELECT * FROM read_parquet('{url}')")
+        q.user_id = author.id
+        q.result_path = "/var/duckhaven-agent/results/x.parquet"
+        q.active_catalog, q.active_schema = "test_ws", "analytics"
+        db_session.add(q)
+        rows.append(q)
+    await db_session.commit()
+    mine, theirs = rows
+    assert (await authed_client.get(f"/queries/{mine.id}/rows")).status_code == 200
+    assert (await authed_client.get(f"/queries/{theirs.id}/rows")).status_code == 403
+
+
+async def test_a_statement_records_where_its_names_resolved(
+    authed_client, db_session, scoped_session
+):
+    scoped_session.cache_state = _state(schema="analytics")
+    await db_session.commit()
+    resp = await _run_in(authed_client, scoped_session, "SELECT * FROM t")
+    assert resp.status_code == 202, resp.text
+    row = await db_session.get(Query, uuid.UUID(resp.json()["id"]))
+    await db_session.refresh(row)
+    assert (row.active_catalog, row.active_schema) == ("test_ws", "analytics")
+
+
 # ── Audit surface: close reason, client identity, list, statement timeline ────
 
 

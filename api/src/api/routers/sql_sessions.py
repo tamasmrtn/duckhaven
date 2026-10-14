@@ -539,6 +539,11 @@ async def run_statement(
     `GET /queries/{id}` as before — it is never cancelled for outrunning a wait."""
     _require_enabled()
     session = await _load_session(db, session_id, user)
+    # Lock the session row until this statement is committed. The grant check
+    # below resolves unqualified names in the context left by the statements
+    # before it; a concurrent submit on the same session (say, a USE) must be
+    # visible to that check, not land between the check and this dispatch.
+    await db.refresh(session, with_for_update=True)
     if session.status != "open":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -580,14 +585,18 @@ async def run_statement(
         )
 
     # Per-statement authorization (scoped catalogs); no-op for open workspaces.
+    # Unqualified names are checked where the session will actually resolve them,
+    # which a USE or SET can have moved away from the catalog it opened on.
+    context = await session_service.name_context(db, session, catalogs[0].slug if catalogs else "")
     try:
         await assert_query_access(
             db,
             session.workspace_id,
             session.user_id,
             body.sql,
-            session.active_catalog,
+            context[0] if context else None,
             catalogs,
+            active_schema=context[1] if context else None,
             staging_prefixes=prefixes,
         )
     except GrantDenied as exc:

@@ -418,6 +418,7 @@ async def serve_hit(
         query.sql,
         result.context.current_catalog,
         catalogs,
+        active_schema=result.context.current_schema,
     )
     now = datetime.now(tz=UTC)
     query.status = "done"

@@ -117,6 +117,28 @@ def test_a_failed_script_taints_but_a_failed_read_does_not() -> None:
     assert not reduce(CLEAN, "SELECT * FROM missing", succeeded=False, reported=None)["tainted"]
 
 
+def test_a_failed_script_that_moved_the_context_leaves_it_unknown() -> None:
+    """The USE before the failing statement may have taken effect."""
+    state = reduce(CLEAN, "USE other.s; SELECT nope", succeeded=False, reported=None)
+    assert state["catalog"] is None
+
+
+def test_a_search_path_is_remembered_until_use_or_set_schema_replaces_it() -> None:
+    """The reported context names only the path's first entry, so the grant check
+    must know a search path is in force until something replaces it."""
+    state = reduce(CLEAN, "SET search_path = 'a.b,c.d'", succeeded=True, reported=CONTEXT)
+    assert state["search_path"] is True
+    assert reduce(state, "SELECT 1", succeeded=True, reported=CONTEXT)["search_path"] is True
+    assert reduce(state, "USE a.b", succeeded=True, reported=CONTEXT)["search_path"] is False
+    assert (
+        reduce(state, "SET schema = 'b'", succeeded=True, reported=CONTEXT)["search_path"] is False
+    )
+    # A failed replacement may not have run; a failed SET search_path may have.
+    assert reduce(state, "USE a.b; SELECT nope", succeeded=False, reported=None)["search_path"]
+    failed = reduce(CLEAN, "SET search_path = 'a.b'; SELECT nope", succeeded=False, reported=None)
+    assert failed["search_path"] is True
+
+
 # --- The statement route ------------------------------------------------------
 
 

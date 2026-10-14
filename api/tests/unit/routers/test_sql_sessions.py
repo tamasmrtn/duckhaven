@@ -572,6 +572,97 @@ async def test_a_scoped_workspace_still_reads_its_own_staging(
     assert resp.status_code == 202, resp.text
 
 
+# ── Grants follow the session's current catalog and schema ───────────────────
+
+
+@pytest_asyncio.fixture
+async def scoped_session(db_session, workspace, agent, user, enabled, monkeypatch):
+    """A scoped workspace where the user may read the `analytics` schema only."""
+    from sqlalchemy import select, update
+
+    from api.models.catalog import Catalog, WorkspaceCatalog
+    from api.models.catalog_grant import CatalogGrant
+
+    await db_session.execute(
+        update(WorkspaceCatalog)
+        .where(WorkspaceCatalog.workspace_id == workspace.id)
+        .values(access_mode="scoped")
+    )
+    cat = (await db_session.execute(select(Catalog).where(Catalog.slug == "test_ws"))).scalar_one()
+    db_session.add(
+        CatalogGrant(user_id=user.id, catalog_id=cat.id, schema_name="analytics", tier="reader")
+    )
+    await db_session.commit()
+
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
+        return True
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+    return await _open_session_row(db_session, workspace, agent, user)
+
+
+async def _run_in(client, session, sql):
+    return await client.post(f"/sql/sessions/{session.id}/statements", json={"sql": sql})
+
+
+def _state(**overrides):
+    return {
+        "catalog": "test_ws",
+        "schema": "analytics",
+        "timezone": "UTC",
+        "in_txn": False,
+        "tainted": False,
+        "tainted_reason": None,
+        "search_path": False,
+        **overrides,
+    }
+
+
+async def test_a_fresh_session_checks_its_open_catalog(authed_client, scoped_session):
+    resp = await _run_in(authed_client, scoped_session, "SELECT * FROM t")
+    assert resp.status_code == 202, resp.text
+
+
+async def test_a_reported_use_moves_where_names_are_checked(
+    authed_client, db_session, scoped_session
+):
+    """After the agent reports `USE test_ws.secret`, an unqualified `t` is
+    `secret.t`, which the analytics-only grant does not cover."""
+    scoped_session.cache_state = _state(schema="secret")
+    await db_session.commit()
+    resp = await _run_in(authed_client, scoped_session, "SELECT * FROM t")
+    assert resp.status_code == 403
+    assert "secret.t" in resp.json()["message"]
+    resp = await _run_in(authed_client, scoped_session, "SELECT * FROM test_ws.analytics.t")
+    assert resp.status_code == 202, resp.text
+
+
+async def test_a_use_still_in_flight_makes_the_context_unknown(
+    authed_client, db_session, scoped_session
+):
+    """The next statement runs after the queued USE on the same connection."""
+    db_session.add(_statement(scoped_session, "USE test_ws.secret", status="running"))
+    await db_session.commit()
+    resp = await _run_in(authed_client, scoped_session, "SELECT * FROM t")
+    assert resp.status_code == 403
+    assert "not known" in resp.json()["message"]
+    resp = await _run_in(authed_client, scoped_session, "SELECT * FROM test_ws.analytics.t")
+    assert resp.status_code == 202, resp.text
+
+
+@pytest.mark.parametrize(
+    "state", [{"search_path": True}, {"catalog": None, "schema": None}], ids=["path", "unknown"]
+)
+async def test_an_unknown_context_refuses_unqualified_names(
+    authed_client, db_session, scoped_session, state
+):
+    scoped_session.cache_state = _state(**state)
+    await db_session.commit()
+    resp = await _run_in(authed_client, scoped_session, "SELECT * FROM t")
+    assert resp.status_code == 403
+    assert "not known" in resp.json()["message"]
+
+
 # ── Audit surface: close reason, client identity, list, statement timeline ────
 
 

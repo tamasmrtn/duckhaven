@@ -41,6 +41,10 @@ class _Materialization:
     the runner materializes the result grid (and so where a stale storage
     credential surfaces)."""
 
+    # No column needs the exact-integer cast, so the relation is written as is.
+    columns: list[str] = []
+    types: list[Any] = []
+
     def __init__(self, on_write, error: Exception | None = None) -> None:
         self._on_write = on_write
         self._error = error

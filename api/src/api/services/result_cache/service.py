@@ -49,7 +49,13 @@ from api.models.workspace import Workspace
 from api.services.catalog_backends import CatalogBackendError, TableVersion, backend_for
 from api.services.catalog_refs import statement_catalogs
 from api.services.result_cache.eligibility import Ineligible, TableRef, analyze, resolve
-from api.services.result_cache.key import AttachedCatalog, CacheContext, cache_key
+from api.services.result_cache.key import (
+    EXACT_FORMAT,
+    LOSSY_FORMAT,
+    AttachedCatalog,
+    CacheContext,
+    cache_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +137,16 @@ def enabled_for(workspace: Workspace, *, use_cache: bool) -> str | None:
     return None
 
 
+def result_format_of(agent: Agent | None) -> str:
+    """How ``agent`` writes result files. With no agent chosen yet, assume a
+    current one: an elastic agent is provisioned from this release's image."""
+    from api.services.agent_capabilities import agent_supports_feature
+
+    if agent is None or agent_supports_feature(agent.capabilities, "exact_hugeint"):
+        return EXACT_FORMAT
+    return LOSSY_FORMAT
+
+
 def context_for(agent: Agent | None, *, current_catalog: str, current_schema: str) -> CacheContext:
     """The context a run on ``agent`` would execute in; with no agent chosen yet,
     the deployment default runtime and the assumed time zone. Getting it wrong
@@ -144,6 +160,7 @@ def context_for(agent: Agent | None, *, current_catalog: str, current_schema: st
         current_schema=current_schema,
         runtime_id=runtime or settings.default_runtime,
         timezone=timezone or settings.result_cache_assumed_timezone,
+        result_format=result_format_of(agent),
     )
 
 
@@ -512,6 +529,10 @@ async def _admission_refusal(db: AsyncSession, query: Query, polaris: Any) -> st
     agent = await db.get(Agent, query.agent_id)
     if agent is None:
         return "agent_gone"
+    # Older agents write HUGEINT as DOUBLE; such a result must not be served to
+    # a lookup keyed for an exact one (an elastic run is keyed before its agent).
+    if result_format_of(agent) != context.get("result_format", LOSSY_FORMAT):
+        return "context_mismatch"
     # The run must really have happened in the context it was keyed under: an
     # elastic run is keyed before its agent exists, and a session statement in
     # whatever context the session was in.

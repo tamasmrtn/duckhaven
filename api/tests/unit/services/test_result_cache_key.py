@@ -34,6 +34,8 @@ def test_every_part_of_the_context_changes_the_key() -> None:
         ("current_schema", "s"),
         ("runtime_id", "2.0"),
         ("timezone", "Europe/Budapest"),
+        # Older agents write HUGEINT as DOUBLE: never share entries with exact ones.
+        ("result_format", "lossy"),
     ]:
         assert _key(context=dataclasses.replace(CONTEXT, **{field: value})) != base
     # A storage-migration cutover moves the catalog to another backend.
@@ -46,3 +48,16 @@ def test_every_part_of_the_context_changes_the_key() -> None:
 def test_the_attached_order_does_not_matter() -> None:
     two = [AttachedCatalog("id-2", "c2", "ducklake", None), *ATTACHED]
     assert _key(attached=two) == _key(attached=list(reversed(two)))
+
+
+def test_the_result_format_follows_the_agents_feature() -> None:
+    from types import SimpleNamespace
+
+    from api.services.result_cache.service import result_format_of
+
+    exact = SimpleNamespace(capabilities={"protocol_features": ["exact_hugeint"]})
+    older = SimpleNamespace(capabilities={"protocol_features": ["statement_ack"]})
+    assert result_format_of(exact) == "exact"
+    assert result_format_of(older) == "lossy"
+    # Not chosen yet (an elastic run before its agent exists): this release's image.
+    assert result_format_of(None) == "exact"

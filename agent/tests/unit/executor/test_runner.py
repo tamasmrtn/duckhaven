@@ -76,8 +76,9 @@ def test_result_schema_reports_duckdb_type_spellings(tmp_path):
 def test_result_schema_survives_the_lossy_parquet_write(tmp_path):
     """The types come off the relation, not the Parquet file.
 
-    DuckDB's Parquet writer degrades these four (HUGEINT loses its values too),
-    so a schema derived from the materialized file would report the wrong type.
+    DuckDB's Parquet writer degrades these four (HUGEINT is kept exact, but as
+    DECIMAL(38,0)), so a schema derived from the materialized file would report
+    the wrong type.
     """
     result_path = tmp_path / "out.parquet"
     stats = _run(
@@ -98,9 +99,89 @@ def test_result_schema_survives_the_lossy_parquet_write(tmp_path):
     try:
         readback = conn.sql(f"SELECT * FROM read_parquet('{result_path}')")
         # What the API would have derived instead, had it read the file.
-        assert [str(t) for t in readback.types] == ["DOUBLE", "VARCHAR", "INTEGER[]", "VARCHAR"]
+        assert [str(t) for t in readback.types] == [
+            "DECIMAL(38,0)",
+            "VARCHAR",
+            "INTEGER[]",
+            "VARCHAR",
+        ]
     finally:
         conn.close()
+
+
+def _read_back(result_path):
+    import duckdb
+
+    conn = duckdb.connect()
+    try:
+        rel = conn.sql(f"SELECT * FROM read_parquet('{result_path}')")
+        return rel.columns, [str(t) for t in rel.types], rel.fetchall()
+    finally:
+        conn.close()
+
+
+def test_wide_integers_are_written_exactly(tmp_path):
+    """Parquet has no 128-bit integer; the default writer rounds HUGEINT through
+    DOUBLE. `sum(BIGINT)` is HUGEINT, so this is every large aggregate."""
+    from decimal import Decimal
+
+    result_path = tmp_path / "out.parquet"
+    stats = _run(
+        "SELECT sum(x) AS total, 12345678901234567890123::HUGEINT AS h, "
+        "18446744073709551617::UHUGEINT AS u "
+        "FROM (VALUES (9007199254740993::BIGINT), (1::BIGINT)) t(x)",
+        result_path,
+    )
+    _, types, rows = _read_back(result_path)
+    assert types == ["DECIMAL(38,0)"] * 3
+    assert rows == [
+        (Decimal(9007199254740994), Decimal("12345678901234567890123"), Decimal(2**64 + 1))
+    ]
+    assert [c["type"] for c in stats["result_schema"]] == ["HUGEINT", "HUGEINT", "UHUGEINT"]
+
+
+def test_nested_wide_integers_are_written_exactly(tmp_path):
+    from decimal import Decimal
+
+    result_path = tmp_path / "out.parquet"
+    _run(
+        "SELECT [12345678901234567890123::HUGEINT] AS l, "
+        "{'x': 2::HUGEINT, 'HUGEINT': 'y'} AS s, MAP {1::HUGEINT: 2::UHUGEINT} AS m",
+        result_path,
+    )
+    _, types, rows = _read_back(result_path)
+    # The struct field named HUGEINT is a name, not a type: it keeps its VARCHAR.
+    assert types == [
+        "DECIMAL(38,0)[]",
+        "STRUCT(x DECIMAL(38,0), HUGEINT VARCHAR)",
+        "MAP(DECIMAL(38,0), DECIMAL(38,0))",
+    ]
+    assert rows == [
+        (
+            [Decimal("12345678901234567890123")],
+            {"x": Decimal(2), "HUGEINT": "y"},
+            {Decimal(1): Decimal(2)},
+        )
+    ]
+
+
+def test_odd_and_duplicate_names_survive_the_exact_write(tmp_path):
+    result_path = tmp_path / "out.parquet"
+    stats = _run('SELECT 1::HUGEINT AS "we""ird.x", 2::HUGEINT AS a, 3 AS a', result_path)
+    columns, _, rows = _read_back(result_path)
+    assert columns[0] == 'we"ird.x'
+    assert rows == [(1, 2, 3)]
+    assert [c["name"] for c in stats["result_schema"]] == ['we"ird.x', "a", "a"]
+
+
+def test_a_hugeint_past_38_digits_fails_and_leaves_no_file(tmp_path):
+    """Rounding silently is what this replaced; failing says how to get the value."""
+    import duckdb
+
+    result_path = tmp_path / "out.parquet"
+    with pytest.raises(duckdb.ConversionException, match="CAST that column to VARCHAR"):
+        _run("SELECT 170141183460469231731687303715884105727::HUGEINT AS big", result_path)
+    assert not result_path.exists()
 
 
 def test_result_schema_capture_failure_degrades_to_none():

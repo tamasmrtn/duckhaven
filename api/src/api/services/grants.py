@@ -309,50 +309,61 @@ def extract_table_refs(sql: str) -> list[TableRef]:
     :class:`GrantDenied` on a parse failure (fail-closed): an unparseable query
     is never allowed through a scoped catalog.
     """
+    return [ref for stmt in _parse_statements(sql) for ref in statement_refs(stmt)]
+
+
+def _parse_statements(sql: str) -> list[exp.Expression]:
     try:
         statements = sqlglot.parse(sql, read="duckdb")
     except Exception as exc:  # sqlglot.errors.ParseError et al
         raise GrantDenied(f"Could not parse SQL for grant check: {exc}") from exc
+    return [stmt for stmt in statements if stmt is not None]
 
+
+def statement_refs(stmt: exp.Expression) -> list[TableRef]:
+    """The table refs one parsed statement touches.
+
+    A ``USE`` has none: its target is where later names resolve, not a table it
+    reads, and :func:`assert_query_access` follows it as a change of context.
+    """
+    if isinstance(stmt, exp.Use):
+        return []
     refs: list[TableRef] = []
-    for stmt in statements:
-        if stmt is None:
+    cte_names = {c.alias_or_name for c in stmt.find_all(exp.CTE)}
+    targets = target_tables(stmt)
+    # Tables under a DESCRIBE, by identity. Collected from anywhere in the
+    # tree rather than only the top level, so `SELECT … FROM (DESCRIBE t)` —
+    # the form dlt and dbt emit — is recognized as well as a bare `DESCRIBE t`.
+    # Deliberately not SUMMARIZE: that one scans the rows. Nor a described
+    # PIVOT: a pivot without an `IN` list reads the pivoted column's values to
+    # name its output columns, so describing it returns data, not just shape.
+    described = {
+        id(t)
+        for d in stmt.find_all(exp.Describe)
+        if d.find(exp.Pivot) is None
+        for t in d.find_all(exp.Table)
+    }
+    for t in stmt.find_all(exp.Table):
+        cat = t.catalog or None
+        schema = t.db or None
+        # Table *functions* (duckdb_functions(), read_parquet(...), range(...))
+        # parse as a Table with an empty name — they are not catalog objects,
+        # so there is nothing to grant-check.
+        if not t.name:
             continue
-        cte_names = {c.alias_or_name for c in stmt.find_all(exp.CTE)}
-        targets = target_tables(stmt)
-        # Tables under a DESCRIBE, by identity. Collected from anywhere in the
-        # tree rather than only the top level, so `SELECT … FROM (DESCRIBE t)` —
-        # the form dlt and dbt emit — is recognized as well as a bare `DESCRIBE t`.
-        # Deliberately not SUMMARIZE: that one scans the rows. Nor a described
-        # PIVOT: a pivot without an `IN` list reads the pivoted column's values to
-        # name its output columns, so describing it returns data, not just shape.
-        described = {
-            id(t)
-            for d in stmt.find_all(exp.Describe)
-            if d.find(exp.Pivot) is None
-            for t in d.find_all(exp.Table)
-        }
-        for t in stmt.find_all(exp.Table):
-            cat = t.catalog or None
-            schema = t.db or None
-            # Table *functions* (duckdb_functions(), read_parquet(...), range(...))
-            # parse as a Table with an empty name — they are not catalog objects,
-            # so there is nothing to grant-check.
-            if not t.name:
-                continue
-            # An unqualified name matching a CTE alias is not a real table.
-            if cat is None and schema is None and t.name in cte_names:
-                continue
-            is_target = any(t is x for x in targets)
-            refs.append(
-                TableRef(
-                    catalog=cat,
-                    schema=schema,
-                    table=t.name,
-                    is_target=is_target,
-                    is_metadata_only=id(t) in described,
-                )
+        # An unqualified name matching a CTE alias is not a real table.
+        if cat is None and schema is None and t.name in cte_names:
+            continue
+        is_target = any(t is x for x in targets)
+        refs.append(
+            TableRef(
+                catalog=cat,
+                schema=schema,
+                table=t.name,
+                is_target=is_target,
+                is_metadata_only=id(t) in described,
             )
+        )
     return refs
 
 
@@ -589,9 +600,10 @@ async def assert_query_access(
     workspace_id: uuid.UUID,
     principal_id: uuid.UUID | None,
     sql: str,
-    active_catalog: str,
+    active_catalog: str | None,
     catalogs: list[Catalog],
     *,
+    active_schema: str | None = None,
     staging_prefixes: list[str] | None = None,
 ) -> None:
     """Reject a query before dispatch if the principal lacks tier on any object.
@@ -609,6 +621,13 @@ async def assert_query_access(
     In such a workspace, files and URLs are readable only under
     ``staging_prefixes``, which only a SQL session passes
     (:func:`file_read_reason`).
+
+    Unqualified names resolve in ``active_catalog``.``active_schema`` (the
+    workspace default schema when ``active_schema`` is omitted), followed through
+    the script: a ``USE``, ``SET schema`` or ``SET search_path`` moves where the
+    statements after it resolve. ``active_catalog=None`` means the caller does not
+    know where names resolve (a session whose context is unknown); a name that
+    would need it is then refused rather than checked against a guess.
 
     Raises :class:`GrantDenied` (a ``ValueError``) on any shortfall, an
     unresolvable/unattached catalog reference, an unparseable statement, or a
@@ -635,26 +654,68 @@ async def assert_query_access(
         raise GrantDenied(reason)
 
     by_slug = {c.slug: c for c in catalogs}
-    for ref in extract_table_refs(sql):
-        if is_exempt_ref(ref.catalog, ref.schema):
-            continue
-        if ref.is_target:
-            need = "writer"
-        elif ref.is_metadata_only:
-            need = "metadata"
-        else:
-            need = "reader"
-        for slug, schema in _ref_readings(ref, active_catalog, by_slug, DEFAULT_SCHEMA):
-            cat = by_slug.get(slug)
-            if cat is None:
-                raise GrantDenied(f"Query references unknown catalog '{slug}'")
-            if cat.id not in scoped_ids:
-                continue  # open catalog — unrestricted
-            if principal_id is None:
-                raise GrantDenied("A scoped catalog requires an authenticated principal")
-            tier = await node_tier(db, workspace_id, cat, principal_id, schema, ref.table)
-            if tier_rank(tier) < TIER_SCALE[need]:
-                raise GrantDenied(f"Not authorized ({need}) on {cat.slug}.{schema}.{ref.table}")
+    context: tuple[str, str] | None = (
+        None if active_catalog is None else (active_catalog, active_schema or DEFAULT_SCHEMA)
+    )
+    for stmt in _parse_statements(sql):
+        for ref in statement_refs(stmt):
+            if is_exempt_ref(ref.catalog, ref.schema):
+                continue
+            if ref.is_target:
+                need = "writer"
+            elif ref.is_metadata_only:
+                need = "metadata"
+            else:
+                need = "reader"
+            for slug, schema in _ref_readings(ref, context, by_slug, DEFAULT_SCHEMA):
+                cat = by_slug.get(slug)
+                if cat is None:
+                    raise GrantDenied(f"Query references unknown catalog '{slug}'")
+                if cat.id not in scoped_ids:
+                    continue  # open catalog — unrestricted
+                if principal_id is None:
+                    raise GrantDenied("A scoped catalog requires an authenticated principal")
+                tier = await node_tier(db, workspace_id, cat, principal_id, schema, ref.table)
+                if tier_rank(tier) < TIER_SCALE[need]:
+                    raise GrantDenied(f"Not authorized ({need}) on {cat.slug}.{schema}.{ref.table}")
+        context = context_after(stmt, context)
+
+
+# Settings that move where unqualified names resolve. The session statement policy
+# admits both (`statement_policy._ALLOWED_SET_NAMES`).
+_NAME_SETTINGS = frozenset({"schema", "search_path"})
+
+UNKNOWN_CONTEXT_MESSAGE = (
+    "The session's current catalog and schema are not known after a USE, SET schema "
+    "or SET search_path, so unqualified table names cannot be checked against your "
+    "grants. Qualify them as catalog.schema.table, or run USE catalog.schema."
+)
+
+
+def context_after(stmt: exp.Expression, context: tuple[str, str] | None) -> tuple[str, str] | None:
+    """Where unqualified names resolve once ``stmt`` has run.
+
+    Only ``USE catalog.schema`` names its destination exactly. A one-part ``USE``
+    may be a catalog or a schema, ``SET schema`` depends on the current catalog,
+    and ``SET search_path`` widens resolution to several schemas at once — all of
+    them leave the context unknown until the engine reports where it went.
+    """
+    if isinstance(stmt, exp.Use):
+        target = stmt.this
+        if isinstance(target, exp.Table) and target.db and target.name:
+            return (target.db, target.name)
+        return None
+    if isinstance(stmt, exp.Set) and any(
+        setting_name(item) in _NAME_SETTINGS for item in stmt.expressions
+    ):
+        return None
+    return context
+
+
+def setting_name(item: exp.Expression) -> str:
+    """The lower-cased name a ``SET`` item assigns (``SET search_path = …``)."""
+    column = item.find(exp.Column)
+    return column.name.lower() if column is not None else ""
 
 
 # The schema DuckDB binds a two-part `catalog.table` to: the catalog's own default,
@@ -663,7 +724,10 @@ _CATALOG_DEFAULT_SCHEMA = "main"
 
 
 def _ref_readings(
-    ref: TableRef, active_catalog: str, by_slug: dict[str, Catalog], default_schema: str
+    ref: TableRef,
+    context: tuple[str, str] | None,
+    by_slug: dict[str, Catalog],
+    default_schema: str,
 ) -> list[tuple[str, str]]:
     """Every ``(catalog, schema)`` a ref can bind to, all of which must be allowed.
 
@@ -672,11 +736,17 @@ def _ref_readings(
     error only when both exist. Checking just the schema reading let ``scoped.t``
     read a scoped catalog's ``main`` schema from an open active catalog, so both
     readings are checked: the statement can only ever reach one of them.
+
+    Any reading that needs the active catalog fails closed when ``context`` is
+    unknown.
     """
     if ref.catalog:
         return [(ref.catalog, ref.schema or default_schema)]
+    if context is None:
+        raise GrantDenied(UNKNOWN_CONTEXT_MESSAGE)
+    active_catalog, active_schema = context
     if ref.schema is None:
-        return [(active_catalog, default_schema)]
+        return [(active_catalog, active_schema)]
     readings = [(active_catalog, ref.schema)]
     catalog = next((s for s in by_slug if s.lower() == ref.schema.lower()), None)
     if catalog is not None:

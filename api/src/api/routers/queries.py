@@ -5,6 +5,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
 from fastapi import Query as QueryParam
+from fastapi.responses import StreamingResponse
 from opentelemetry import trace
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
@@ -28,7 +29,7 @@ from api.schemas.query import (
     SqlMetadataOut,
 )
 from api.services import query as query_service
-from api.services import query_history
+from api.services import query_history, result_stream
 from api.services import sql_metadata as sql_metadata_service
 from api.services.agent_access import assert_agent_tier, assert_can_assign_agent
 from api.services.agent_dispatch import is_agent_connected, send_to_agent
@@ -829,6 +830,66 @@ async def get_query_rows(
     return await query_service.fetch_result_page(
         db, query, limit=limit, offset=int(cursor) if cursor and cursor.isdigit() else 0
     )
+
+
+@router.get(
+    "/queries/{query_id}/result",
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "description": "The whole result, as an Arrow IPC stream or a Parquet file.",
+            "content": {
+                result_stream.ARROW_MEDIA_TYPE: {"schema": {"type": "string", "format": "binary"}},
+                result_stream.PARQUET_MEDIA_TYPE: {
+                    "schema": {"type": "string", "format": "binary"}
+                },
+            },
+        },
+        204: {"description": "The statement produced no result grid (DDL or DML)."},
+        410: {"description": "The result file has been swept by retention."},
+        502: {"description": "The agent holding the result answered with an error."},
+    },
+)
+async def get_query_result(
+    query_id: uuid.UUID,
+    format: Annotated[
+        Literal["arrow", "parquet"],
+        QueryParam(description="`arrow` for an Arrow IPC stream, `parquet` for the file as is."),
+    ] = "arrow",
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Response:
+    """A finished query's whole result in a columnar format.
+
+    Exact where JSON is not: every value keeps its type (DECIMAL as decimal,
+    64-bit and wider integers as integers), and the result streams in one response
+    instead of 1000-row pages. `column_schema` on the query names each column's
+    DuckDB type. Guarded exactly like `/rows`."""
+    result = await db.execute(select(Query).where(Query.id == query_id))
+    query = result.scalar_one_or_none()
+    if query is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    await assert_workspace_member(db, query.workspace_id, user.id)
+    if query.status != "done":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Query not done")
+    if query.result_path is None:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    if query.agent_id is None and query.result_source_query_id is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No results available")
+    await _assert_result_access(db, query, user)
+
+    source = await query_service.resolve_result_source(db, query)
+    if format == "parquet":
+        body, headers = await result_stream.open_parquet(source)
+        media_type = result_stream.PARQUET_MEDIA_TYPE
+    else:
+        body, headers = await result_stream.open_arrow(source), {}
+        media_type = result_stream.ARROW_MEDIA_TYPE
+    # The body streams after this returns, and FastAPI keeps the request's database
+    # session open until the response is sent: end its transaction now so a long
+    # download does not hold a pooled connection.
+    await db.commit()
+    return StreamingResponse(body, media_type=media_type, headers=headers)
 
 
 @router.get("/workspaces/{workspace}/saved-queries", response_model=Page[SavedQueryOut])

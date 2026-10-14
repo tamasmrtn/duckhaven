@@ -296,7 +296,7 @@ exactly when it must not be handed a stack trace.
 `GET /api/version` returns the contract version:
 
 ```json
-{ "version": "1.4.0", "api_version": 2 }
+{ "version": "1.4.0", "api_version": 3 }
 ```
 
 `api_version` is a single integer, bumped **only** when a change breaks the contract on the

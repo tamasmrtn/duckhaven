@@ -131,7 +131,8 @@ async def test_paginate_thousand_rows(api_client, workspace, healthy_agent) -> N
     assert len(pages) == 10, f"expected 10 pages, got {len(pages)}"
     assert all(len(p["rows"]) == 100 for p in pages)
     assert pages[-1]["cursor"] is None
-    assert collected == list(range(1000))
+    # range() is BIGINT, sent as exact strings (api_version 3).
+    assert collected == [str(i) for i in range(1000)]
 
 
 async def test_sql_metadata_from_live_agent(api_client, workspace, healthy_agent) -> None:
@@ -180,4 +181,4 @@ async def test_table_write_then_read(api_client, workspace, catalog, healthy_age
     select = await _run(api_client, workspace, agent_id, "SELECT k, v FROM kv ORDER BY k")
     assert select["status"] == "done", select
     rows = (await api_client.get(f"/api/queries/{select['id']}/rows")).json()
-    assert rows["rows"] == [{"k": "a", "v": 1}, {"k": "b", "v": 2}]
+    assert rows["rows"] == [{"k": "a", "v": "1"}, {"k": "b", "v": "2"}]

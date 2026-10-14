@@ -121,7 +121,7 @@ async def test_a_session_attaches_only_what_its_statements_name(
         named = await _exec(
             api_client, session_id, f"SELECT count(*) AS n FROM {lakes[0]}.analytics.t"
         )
-        assert await _rows(api_client, named) == [{"n": 10}]
+        assert await _rows(api_client, named) == [{"n": "10"}]
         held = await _connections(lakes)
         assert held[lakes[0]] == 1
         assert sum(held.values()) == 1, held
@@ -146,7 +146,7 @@ async def test_a_join_across_catalogs_attaches_both(
         f"SELECT count(*) AS n FROM {lakes[0]}.analytics.t a "
         f"JOIN {lakes[3]}.analytics.t b USING (i)",
     )
-    assert await _rows(api_client, joined) == [{"n": 10}]
+    assert await _rows(api_client, joined) == [{"n": "10"}]
 
 
 async def test_a_view_reaches_a_catalog_the_query_never_names(

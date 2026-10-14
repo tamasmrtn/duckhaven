@@ -34,12 +34,15 @@ export function seededCell(
   switch (col.type.toUpperCase()) {
     case "UUID":
       return `${col.name}-${String(i).padStart(8, "0")}`;
+    // The API sends BIGINT and DECIMAL as strings, which JSON can carry exactly.
     case "BIGINT":
+      return String(i * 1000 + col.name.length);
     case "INTEGER":
       return i * 1000 + col.name.length;
     case "DOUBLE":
-    case "DECIMAL":
       return +(((i * 37) % 1000) / 7).toFixed(2);
+    case "DECIMAL":
+      return (((i * 37) % 1000) / 7).toFixed(2);
     case "BOOLEAN":
       return i % 2 === 0;
     case "TIMESTAMP":

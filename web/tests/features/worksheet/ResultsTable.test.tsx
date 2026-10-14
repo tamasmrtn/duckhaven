@@ -217,6 +217,38 @@ describe('ResultsTable sorting', () => {
     expect(bodyRowValues()).toEqual(['3', '1', '2'])
   })
 
+  it('sorts exact numbers sent as strings by value, not as text', () => {
+    // api_version 3 sends DECIMAL and BIGINT as strings: "10" must follow "9".
+    render(
+      <ResultsTable
+        columns={['n', 'amt']}
+        rows={[
+          { n: '10', amt: '1.25' },
+          { n: '9', amt: '-3.5' },
+          { n: '9007199254740993', amt: '1.5' },
+          { n: null, amt: null },
+        ]}
+        total={4}
+        columnSchema={[
+          { name: 'n', type: 'BIGINT' },
+          { name: 'amt', type: 'DECIMAL(10,2)' },
+        ]}
+      />,
+    )
+    const column = (i: number) =>
+      screen
+        .getAllByRole('row')
+        .slice(1)
+        .map((row) => row.querySelectorAll('td')[i].textContent)
+
+    // String-valued columns sort ascending on the first click.
+    fireEvent.click(screen.getByRole('button', { name: 'n' }))
+    expect(column(0)).toEqual(['NULL', '9', '10', '9007199254740993'])
+
+    fireEvent.click(screen.getByRole('button', { name: 'amt' }))
+    expect(column(1)).toEqual(['NULL', '-3.5', '1.25', '1.5'])
+  })
+
   it('copies rows in the active sort order, not the pre-sort fetch order', () => {
     render(
       <ResultsTable

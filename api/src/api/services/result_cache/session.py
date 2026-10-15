@@ -188,8 +188,8 @@ async def lookup(
     if await _busy(db, session.id):
         return service.Lookup(status=service.BYPASS, detail="session_busy")
     state = session.cache_state
+    agent = await db.get(Agent, session.agent_id) if session.agent_id is not None else None
     if state is None:
-        agent = await db.get(Agent, session.agent_id) if session.agent_id is not None else None
         default = catalogs[0].slug if catalogs else ""
         state = initial_state(session, agent, default)
     if state.get("in_txn"):
@@ -203,6 +203,7 @@ async def lookup(
         current_schema=state["schema"],
         runtime_id=session.runtime_id or settings.default_runtime,
         timezone=state["timezone"],
+        result_format=service.result_format_of(agent),
     )
     return await service.lookup(
         db,

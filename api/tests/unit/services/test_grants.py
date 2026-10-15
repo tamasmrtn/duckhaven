@@ -228,6 +228,24 @@ def test_describe_ref_is_metadata_only(sql):
     assert refs[0].is_target is False
 
 
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "DESCRIBE PIVOT cat.s.t ON a USING sum(b)",
+        "DESCRIBE SELECT * FROM (PIVOT cat.s.t ON a USING sum(b))",
+        "SELECT * FROM (DESCRIBE (PIVOT cat.s.t ON a USING sum(b)))",
+        "DESCRIBE SELECT * FROM cat.s.t PIVOT (sum(b) FOR a IN (1, 2))",
+        "DESCRIBE UNPIVOT cat.s.t ON a, b INTO NAME k VALUE v",
+    ],
+)
+def test_described_pivot_is_not_metadata_only(sql):
+    """A PIVOT names its output columns after values it reads from the table, so
+    describing one returns data. Every pivot form under a DESCRIBE keeps needing
+    `reader`, not just the `metadata` tier."""
+    refs = extract_table_refs(sql)
+    assert [(r.table, r.is_metadata_only) for r in refs] == [("t", False)]
+
+
 @pytest.mark.parametrize("sql", ["SUMMARIZE cat.s.t", "SELECT * FROM cat.s.t"])
 def test_row_reading_refs_are_not_metadata_only(sql):
     """SUMMARIZE scans the rows to compute its statistics, so it must keep

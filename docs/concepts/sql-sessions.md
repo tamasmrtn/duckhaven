@@ -260,6 +260,26 @@ still enforced entirely at the API, per statement:
 This is what keeps a broadened SQL surface from becoming an open one: a session gets a bigger box, not an unbounded box,
 and every rejection is counted for monitoring.
 
+### Grants follow the session's context
+
+In a workspace with a [scoped catalog](permissions.md#scoped-access), each statement's table names are checked against
+your grants. An unqualified name like `events` is checked in the catalog and schema the session will actually resolve
+it in. That is where the session opened until a statement moves it: `USE sales.raw` means a later `SELECT * FROM
+events` is checked as `sales.raw.events`. Within one script, a `USE catalog.schema` moves the check for the
+statements after it in the same way.
+
+Sometimes DuckHaven cannot know where an unqualified name will resolve:
+
+- after `SET search_path`, which lets one name resolve in several schemas, until a `USE` or `SET schema` replaces the
+  path;
+- while a statement that can move the context is still queued or running;
+- after a one-part `USE x` or a `SET schema` in the same script, which only the engine can resolve;
+- after a context move the agent did not report.
+
+In those cases a statement with an unqualified table name is refused with an explanation, rather than checked against
+a guess. Fully qualified names (`catalog.schema.table`) always work, and the next `USE catalog.schema` or reported
+context restores the normal check. Workspaces without a scoped catalog are unaffected.
+
 ## Staging and credentials
 
 Bulk data does **not** flow through the API. A bulk load stages Parquet to the workspace's object storage and then

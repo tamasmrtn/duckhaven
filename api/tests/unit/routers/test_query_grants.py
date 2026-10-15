@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 import pytest_asyncio
 from conftest import seed_workspace
@@ -462,3 +464,274 @@ async def test_direct_file_reads_still_work_in_an_open_workspace(
         authed_client, ws, connected_agent, "SELECT * FROM read_parquet('s3://warehouse/x.parquet')"
     )
     assert resp.status_code == 202
+
+
+# --- Names resolve where the statement runs, not where the session opened -----
+
+
+async def _check(db_session, ws, user, cat, sql, *, catalog="__cat__", schema=None):
+    await grant_service.assert_query_access(
+        db_session,
+        ws.id,
+        user.id,
+        sql,
+        cat.slug if catalog == "__cat__" else catalog,
+        [cat],
+        active_schema=schema,
+    )
+
+
+async def test_a_use_moves_where_later_statements_are_checked(scoped_ws, db_session, user):
+    """`USE` followed by an unqualified name reads the new schema, so that is the
+    one the grant must cover."""
+    ws, cat = scoped_ws
+    _grant(db_session, user, cat, "reader")  # the whole `analytics` schema
+    await db_session.commit()
+    await _check(db_session, ws, user, cat, "SELECT * FROM t")
+    with pytest.raises(grant_service.GrantDenied, match=r"secret\.t"):
+        await _check(db_session, ws, user, cat, f"USE {cat.slug}.secret; SELECT * FROM t")
+
+
+async def test_a_use_target_is_not_read_as_a_table(scoped_ws, db_session, user):
+    """`USE x` names where later names resolve; it reads nothing, so a schema
+    grant elsewhere cannot be what lets it through."""
+    ws, cat = scoped_ws
+    await _check(db_session, ws, user, cat, f"USE {cat.slug}.secret")
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    ["USE secret", "SET schema = 'secret'", "SET search_path = 'test_cat.secret'"],
+)
+async def test_an_inexact_context_move_refuses_unqualified_names(
+    scoped_ws, db_session, user, prefix
+):
+    """A one-part USE, SET schema and SET search_path leave where names resolve
+    unknown to the check, so it refuses rather than guesses."""
+    ws, cat = scoped_ws
+    _grant(db_session, user, cat, "reader")
+    await db_session.commit()
+    with pytest.raises(grant_service.GrantDenied, match="not known"):
+        await _check(db_session, ws, user, cat, f"{prefix}; SELECT * FROM t")
+
+
+async def test_an_unknown_context_still_allows_fully_qualified_names(scoped_ws, db_session, user):
+    ws, cat = scoped_ws
+    _grant(db_session, user, cat, "reader")
+    await db_session.commit()
+    await _check(db_session, ws, user, cat, f"SELECT * FROM {cat.slug}.analytics.t", catalog=None)
+    with pytest.raises(grant_service.GrantDenied, match="not known"):
+        await _check(db_session, ws, user, cat, "SELECT * FROM t", catalog=None)
+
+
+async def test_the_session_schema_is_where_unqualified_names_are_checked(
+    scoped_ws, db_session, user
+):
+    ws, cat = scoped_ws
+    _grant(db_session, user, cat, "reader")  # `analytics` only
+    await db_session.commit()
+    with pytest.raises(grant_service.GrantDenied, match=r"secret\.t"):
+        await _check(db_session, ws, user, cat, "SELECT * FROM t", schema="secret")
+
+
+async def test_an_open_workspace_ignores_the_session_context(db_session, user):
+    ws, cat = await seed_workspace(db_session, user_id=user.id, slug="open-ctx-ws")
+    await _check(db_session, ws, user, cat, "SET search_path = 'x.y'; SELECT * FROM t")
+    await _check(db_session, ws, user, cat, "SELECT * FROM t", catalog=None)
+
+
+# --- Reading a result needs the grants running its query would ---------------
+
+
+@pytest_asyncio.fixture
+async def colleague(db_session):
+    u = User(email="c@grants.local", password_hash=hash_password("pw"), name="C", role="user")
+    db_session.add(u)
+    await db_session.commit()
+    await db_session.refresh(u)
+    return u
+
+
+@pytest.fixture
+def served_rows(monkeypatch):
+    """Stand in for the agent fetch: the access check runs before it."""
+    from api.schemas.query import RowsPageOut
+    from api.services import query as query_service
+
+    async def fake_page(db, query, *, limit, offset=0):
+        return RowsPageOut(rows=[{"x": 1}], columns=["x"], cursor=None, total=1)
+
+    monkeypatch.setattr(query_service, "fetch_result_page", fake_page)
+
+
+async def _finished(db_session, ws, author, sql, agent=None, **fields):
+    from api.models.query import Query
+
+    q = Query(
+        workspace_id=ws.id,
+        agent_id=agent.id if agent is not None else None,
+        user_id=author.id,
+        sql=sql,
+        status="done",
+        result_path="/var/duckhaven-agent/results/x.parquet",
+        row_count=1,
+        profile={"summary": {"rows_returned": 1}},
+        **fields,
+    )
+    db_session.add(q)
+    await db_session.commit()
+    await db_session.refresh(q)
+    return q
+
+
+async def test_a_colleagues_result_needs_a_grant_in_a_scoped_catalog(
+    authed_client, scoped_ws, connected_agent, db_session, colleague, served_rows
+):
+    """Before, any member could read any result by id. Now the reader needs the
+    grants the query's SQL needs, whoever ran it."""
+    ws, cat = scoped_ws
+    q = await _finished(
+        db_session,
+        ws,
+        colleague,
+        "SELECT * FROM analytics.leads",
+        connected_agent,
+        active_catalog=cat.slug,
+    )
+    rows = await authed_client.get(f"/queries/{q.id}/rows")
+    assert rows.status_code == 403
+    assert rows.json()["error"] == "grant_denied"
+    assert (await authed_client.get(f"/queries/{q.id}/profile")).status_code == 403
+
+
+async def test_a_grant_lets_the_result_be_read(
+    authed_client, scoped_ws, connected_agent, db_session, user, colleague, served_rows
+):
+    ws, cat = scoped_ws
+    _grant(db_session, user, cat, "reader", table="leads")
+    await db_session.commit()
+    q = await _finished(
+        db_session,
+        ws,
+        colleague,
+        "SELECT * FROM analytics.leads",
+        connected_agent,
+        active_catalog=cat.slug,
+    )
+    assert (await authed_client.get(f"/queries/{q.id}/rows")).status_code == 200
+    assert (await authed_client.get(f"/queries/{q.id}/profile")).status_code == 200
+
+
+async def test_the_author_is_rechecked_too(
+    authed_client, scoped_ws, connected_agent, db_session, user, served_rows
+):
+    """A revoked grant also stops re-reading results run before the revocation."""
+    ws, cat = scoped_ws
+    q = await _finished(
+        db_session,
+        ws,
+        user,
+        "SELECT * FROM analytics.leads",
+        connected_agent,
+        active_catalog=cat.slug,
+    )
+    assert (await authed_client.get(f"/queries/{q.id}/rows")).status_code == 403
+
+
+async def test_an_open_workspace_shares_results_with_every_member(
+    authed_client, db_session, user, colleague, connected_agent, served_rows
+):
+    ws, cat = await seed_workspace(db_session, user_id=user.id, slug="open-read-ws")
+    q = await _finished(db_session, ws, colleague, "SELECT * FROM analytics.leads", connected_agent)
+    assert (await authed_client.get(f"/queries/{q.id}/rows")).status_code == 200
+
+
+async def test_a_result_is_checked_in_the_catalog_it_ran_in(
+    authed_client, mixed_ws, connected_agent, db_session, user, colleague, served_rows
+):
+    """The same unqualified SQL reads an open table from one catalog and a
+    scoped one from another; the recorded catalog decides which is checked."""
+    ws, open_cat, scoped_cat = mixed_ws
+    in_open = await _finished(
+        db_session,
+        ws,
+        colleague,
+        "SELECT * FROM analytics.leads",
+        connected_agent,
+        active_catalog=open_cat.slug,
+    )
+    in_scoped = await _finished(
+        db_session,
+        ws,
+        colleague,
+        "SELECT * FROM analytics.leads",
+        connected_agent,
+        active_catalog=scoped_cat.slug,
+    )
+    assert (await authed_client.get(f"/queries/{in_open.id}/rows")).status_code == 200
+    assert (await authed_client.get(f"/queries/{in_scoped.id}/rows")).status_code == 403
+
+
+async def test_a_session_result_is_checked_in_the_schema_it_ran_in(
+    authed_client, scoped_ws, connected_agent, db_session, user, colleague, served_rows
+):
+    ws, cat = scoped_ws
+    _grant(db_session, user, cat, "reader")  # `analytics` only
+    await db_session.commit()
+    common = {"origin": "session", "active_catalog": cat.slug}
+    here = await _finished(
+        db_session,
+        ws,
+        colleague,
+        "SELECT * FROM leads",
+        connected_agent,
+        active_schema="analytics",
+        **common,
+    )
+    moved = await _finished(
+        db_session,
+        ws,
+        colleague,
+        "SELECT * FROM leads",
+        connected_agent,
+        active_schema="secret",
+        **common,
+    )
+    assert (await authed_client.get(f"/queries/{here.id}/rows")).status_code == 200
+    assert (await authed_client.get(f"/queries/{moved.id}/rows")).status_code == 403
+
+
+async def test_a_session_result_from_an_unknown_context_needs_qualified_names(
+    authed_client, scoped_ws, connected_agent, db_session, user, served_rows
+):
+    ws, cat = scoped_ws
+    _grant(db_session, user, cat, "reader")
+    await db_session.commit()
+    unqualified = await _finished(
+        db_session, ws, user, "SELECT * FROM leads", connected_agent, origin="session"
+    )
+    qualified = await _finished(
+        db_session,
+        ws,
+        user,
+        f"SELECT * FROM {cat.slug}.analytics.leads",
+        connected_agent,
+        origin="session",
+    )
+    assert (await authed_client.get(f"/queries/{unqualified.id}/rows")).status_code == 403
+    assert (await authed_client.get(f"/queries/{qualified.id}/rows")).status_code == 200
+
+
+async def test_dispatch_records_the_catalog_names_resolved_in(
+    authed_client, scoped_ws, connected_agent, db_session, user
+):
+    from api.models.query import Query
+
+    ws, cat = scoped_ws
+    _grant(db_session, user, cat, "reader", table="leads")
+    await db_session.commit()
+    resp = await _run(authed_client, ws, connected_agent, "SELECT * FROM analytics.leads")
+    assert resp.status_code == 202
+    row = await db_session.get(Query, uuid.UUID(resp.json()["id"]))
+    await db_session.refresh(row)
+    assert row.active_catalog == cat.slug

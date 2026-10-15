@@ -65,6 +65,7 @@ def initial_state(session: SqlSession, agent: Agent | None, default_catalog: str
         "in_txn": False,
         "tainted": False,
         "tainted_reason": None,
+        "search_path": False,
     }
 
 
@@ -94,6 +95,17 @@ def reduce(state: dict, sql: str, *, succeeded: bool, reported: dict | None) -> 
             and any(_setting_name(i) in _CONTEXT_SETTINGS for i in stmt.expressions)
         ):
             moves_context = True
+            if succeeded:
+                # USE and SET schema replace the search path with one schema.
+                new["search_path"] = False
+        if isinstance(stmt, exp.Set) and any(
+            _setting_name(i) == "search_path" for i in stmt.expressions
+        ):
+            # The reported catalog and schema keep naming the first entry while
+            # unqualified names also resolve in every other one, so the report
+            # cannot be trusted again until a USE or SET schema replaces the
+            # path. Set even when the script failed: how far it got is unknown.
+            new["search_path"] = True
         if isinstance(stmt, exp.Transaction):
             if succeeded:
                 new["in_txn"] = True
@@ -120,8 +132,10 @@ def reduce(state: dict, sql: str, *, succeeded: bool, reported: dict | None) -> 
         new["catalog"] = reported.get("catalog", new.get("catalog"))
         new["schema"] = reported.get("schema", new.get("schema"))
         new["timezone"] = reported.get("timezone", new.get("timezone"))
-    elif moves_context and succeeded:
-        # Where it went is not known: look nothing up until a report says.
+    elif moves_context:
+        # Where it went is not known: look nothing up until a report says. A
+        # failed script counts too: a USE before the failing statement may have
+        # taken effect.
         new["catalog"] = None
         new["schema"] = None
     return new
@@ -174,8 +188,8 @@ async def lookup(
     if await _busy(db, session.id):
         return service.Lookup(status=service.BYPASS, detail="session_busy")
     state = session.cache_state
+    agent = await db.get(Agent, session.agent_id) if session.agent_id is not None else None
     if state is None:
-        agent = await db.get(Agent, session.agent_id) if session.agent_id is not None else None
         default = catalogs[0].slug if catalogs else ""
         state = initial_state(session, agent, default)
     if state.get("in_txn"):
@@ -189,6 +203,7 @@ async def lookup(
         current_schema=state["schema"],
         runtime_id=session.runtime_id or settings.default_runtime,
         timezone=state["timezone"],
+        result_format=service.result_format_of(agent),
     )
     return await service.lookup(
         db,

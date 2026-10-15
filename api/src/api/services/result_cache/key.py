@@ -22,7 +22,15 @@ from dataclasses import asdict, dataclass
 # Bumped whenever what goes into the key changes meaning, so an upgrade never
 # reads entries written under different rules.
 # 2: `attached` holds the catalogs the statement names, not every workspace catalog.
-KEY_VERSION = 2
+# 3: the context carries `result_format`, so results written as DOUBLE by agents
+#    before exact HUGEINT are never served to a run expecting exact values.
+KEY_VERSION = 3
+
+# How an agent writes a result file. `exact` agents keep HUGEINT/UHUGEINT as
+# DECIMAL(38,0); `lossy` ones (older, without the `exact_hugeint` feature) let the
+# Parquet writer turn them into DOUBLE.
+EXACT_FORMAT = "exact"
+LOSSY_FORMAT = "lossy"
 
 
 @dataclass(frozen=True)
@@ -33,6 +41,7 @@ class CacheContext:
     current_schema: str
     runtime_id: str | None
     timezone: str
+    result_format: str = EXACT_FORMAT
 
 
 @dataclass(frozen=True)

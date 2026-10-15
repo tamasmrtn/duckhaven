@@ -193,16 +193,23 @@ The `type` is spelled exactly the way DuckDB itself prints a logical type — th
 parameterized and nested types such as `DECIMAL(38,10)`, `STRUCT(a INTEGER, b VARCHAR)`, `ENUM('e', 'f')` and
 `INTEGER[2]`, so a client can map a column without a second lookup.
 
-Capturing the types *before* materialization matters, because DuckDB's Parquet writer does not preserve all of them: a
-`HUGEINT` column becomes `DOUBLE` in the file, `ENUM` and `BIT` become `VARCHAR`, and a fixed-size `INTEGER[2]` becomes
-a variable-length `INTEGER[]`. Reading the types back out of the result file would therefore report the file's types
-rather than the query's.
+Capturing the types *before* materialization matters, because the result file does not preserve all of them: `ENUM`
+and `BIT` become `VARCHAR`, a fixed-size `INTEGER[2]` becomes a variable-length `INTEGER[]`, and `HUGEINT` and
+`UHUGEINT` are stored as `DECIMAL(38,0)`. Reading the types back out of the result file would therefore report the
+file's types rather than the query's.
 
-!!! note "Values are still JSON"
-    `column_schema` describes the types; the row values themselves are still JSON-encoded. `DECIMAL` and `HUGEINT`
-    values arrive as JSON numbers and lose precision at the extremes — the type tells you what the column *is*, but
-    exact decimal round-tripping is not yet available. `column_schema` is `null` for statements that produce no result
-    grid (DDL and DML) and for queries run by an agent older than this feature.
+`HUGEINT` matters more than it sounds: `sum()` over a `BIGINT` column returns one, so most large aggregates are
+`HUGEINT`. Parquet has no 128-bit integer, and DuckDB's writer would otherwise round these values through `DOUBLE`,
+losing every digit past the sixteenth. The agent writes them as `DECIMAL(38,0)` instead, at any depth in a list, struct
+or map, so every value up to 38 digits arrives exact. A value with more digits than that cannot be stored exactly, so
+the query fails and says so rather than return a rounded number; cast that column to `VARCHAR` to get it as text. An
+agent from before this release still rounds, and the [result cache](result-cache.md) never mixes the two.
+
+!!! note "Exact values in JSON"
+    Row values are JSON, so a `DECIMAL`, `BIGINT`, `UBIGINT`, `HUGEINT` or `UHUGEINT` value is sent as a string: a JSON
+    number cannot hold them exactly. Read the column's `column_schema` type to convert it, as described in
+    [Migrating to `api_version` 3](../reference/rest-api.md#migrating-to-api_version-3). `column_schema` is `null` for
+    statements that produce no result grid (DDL and DML) and for queries run by an agent older than this feature.
 
 ## Related
 

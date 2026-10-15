@@ -539,6 +539,11 @@ async def run_statement(
     `GET /queries/{id}` as before — it is never cancelled for outrunning a wait."""
     _require_enabled()
     session = await _load_session(db, session_id, user)
+    # Lock the session row until this statement is committed. The grant check
+    # below resolves unqualified names in the context left by the statements
+    # before it; a concurrent submit on the same session (say, a USE) must be
+    # visible to that check, not land between the check and this dispatch.
+    await db.refresh(session, with_for_update=True)
     if session.status != "open":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -547,13 +552,7 @@ async def run_statement(
 
     catalogs = await resolve_workspace_catalogs(db, session.workspace_id)
     managed = {c.slug for c in catalogs} | {c.polaris_name for c in catalogs}
-    # Admit both the object-storage staging prefix (COPY / s3:// reads) and its
-    # HTTPS form so a staged `read_parquet('<presigned get_url>')` is allowed,
-    # while arbitrary local-FS / external URLs still reject.
-    prefixes = session_credentials.staging_prefixes(session.staging_uri)
-    active = next((c for c in catalogs if c.slug == session.active_catalog), None)
-    if active is not None:
-        prefixes = prefixes + staging_presign.staging_read_prefixes(active, session.id)
+    prefixes = session_service.staging_prefixes(session, catalogs)
 
     # Capability-scoped statement policy (the session path's relaxed I8).
     try:
@@ -580,14 +579,18 @@ async def run_statement(
         )
 
     # Per-statement authorization (scoped catalogs); no-op for open workspaces.
+    # Unqualified names are checked where the session will actually resolve them,
+    # which a USE or SET can have moved away from the catalog it opened on.
+    context = await session_service.name_context(db, session, catalogs[0].slug if catalogs else "")
     try:
         await assert_query_access(
             db,
             session.workspace_id,
             session.user_id,
             body.sql,
-            session.active_catalog,
+            context[0] if context else None,
             catalogs,
+            active_schema=context[1] if context else None,
             staging_prefixes=prefixes,
         )
     except GrantDenied as exc:
@@ -614,6 +617,8 @@ async def run_statement(
             statement_type=classify_parsed(parsed_statements),
             session_id=session.id,
             timeout_s=body.timeout_s,
+            active_catalog=context[0] if context else None,
+            active_schema=context[1] if context else None,
         )
         session.last_active_at = datetime.now(tz=UTC)
         try:
@@ -641,6 +646,10 @@ async def run_statement(
         # Persisted so the reaper can bound this statement server-side; the agent
         # enforces the same budget around execution.
         timeout_s=body.timeout_s,
+        # Where unqualified names resolve, so reading the result re-checks grants
+        # there. Null when unknown: only fully qualified names passed the check.
+        active_catalog=context[0] if context else None,
+        active_schema=context[1] if context else None,
     )
     cache.stamp(query)
     db.add(query)

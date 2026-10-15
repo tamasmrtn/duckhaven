@@ -21,7 +21,9 @@ A run is served from the cache when all of these hold:
   matter, but literals, aliases and identifiers do — run in the same workspace.
 - **It would run in the same context**: the same catalog and schema for unqualified table names, the same catalogs
   attached for it (the ones it names; see [what a query attaches](query-execution.md#which-catalogs-a-query-attaches)),
-  the same DuckDB [runtime](runtimes.md), and the same time zone (which decides how `TIMESTAMPTZ` values read).
+  the same DuckDB [runtime](runtimes.md), the same time zone (which decides how `TIMESTAMPTZ` values read), and an
+  agent that writes results the same way (agents from before exact `HUGEINT` results round those values; see
+  [Column types](query-execution.md#column-types)).
   Binding a catalog the query never mentions to the workspace, or removing one, leaves its result in the cache.
 - **Every table it reads is unchanged** since the run whose result is kept, or changed only by commits that rewrote
   files without changing the data (see [Compaction does not invalidate](#compaction-does-not-invalidate)).

@@ -21,7 +21,7 @@ list.
 ```json
 {
   "version": "1.4.0",
-  "api_version": 2
+  "api_version": 3
 }
 ```
 
@@ -189,6 +189,36 @@ because a result grid is not a resource collection.
     DuckHaven has no public ingress; the API is reachable only on your private network (Tailscale recommended). The
     agent control channel is a separate WebSocket at `/agents/connect`, not part of this REST surface.
 
+## Migrating to `api_version` 3
+
+`api_version` moved from `2` to `3` for one change: **result values that JSON cannot carry exactly are now strings.**
+Check `GET /api/version` before relying on it.
+
+A JSON number is a 64-bit float in most readers, every browser included. It holds integers exactly only up to 2^53
+and no decimal fraction exactly, so `api_version` 2 rounded those values on the wire. Under `api_version` 3, every value
+of these types is sent as a string, wherever it appears in a result:
+
+| Column type | `api_version` 2 | `api_version` 3 |
+|---|---|---|
+| `DECIMAL(p,s)` | `12.5` (a float) | `"12.50"` (every digit, scale kept) |
+| `BIGINT`, `UBIGINT` | `9007199254740992` (rounded past 2^53) | `"9007199254740993"` |
+| `HUGEINT`, `UHUGEINT` | a float | `"12345678901234567890123"` |
+
+This applies to `GET /api/queries/{query_id}/rows`, the `first_page` of a SQL statement, and table samples. It follows
+the column's type, not the value, so a column always has one JSON shape. `count(*)` and `sum()` over integers return
+`BIGINT` or `HUGEINT`, so their results are strings too. Nested values follow the same rule: a `DECIMAL` inside a list,
+struct or map is a string as well. `column_schema` tells you each column's type, which is what a client converts by.
+
+Clients:
+
+- `duckhaven-sql-connector` converts every value by its column type from the release after 0.7.0. That release reads
+  both versions the same way, so upgrade the connector (and `dbt-duckhaven`/`dlt-duckhaven`, which use it) **before**
+  the server.
+- `dh` prints these values the same way in table and CSV output. With `--format json` they are strings, which keeps them
+  exact; scripts that read `dh` JSON should convert them.
+- Your own code: convert by `column_schema` instead of by the value's JSON type. Parse integer types to an integer
+  type that holds 64 bits or more (for example `BigInt` in JavaScript) and decimals with a decimal type.
+
 ## Migrating to `api_version` 2
 
 `api_version` moved from `1` to `2`. Check it at `GET /api/version` before assuming any of the below. Everything here
@@ -295,6 +325,16 @@ The field is **additive** — `columns` still carries the names-only list it alw
 - the statement produced no result grid (DDL and DML), and
 - the query ran on an agent older than this feature. The control plane reports nothing rather than deriving types from
   the result Parquet, whose writer is lossy.
+
+## Reading results
+
+`GET /api/queries/{query_id}/rows` and `GET /api/queries/{query_id}/profile` answer **403 `grant_denied`** when the
+caller's current grants would not let them run the query. In a workspace with a scoped catalog, reading a result is
+checked like running its SQL, for every caller including the one who ran it. See
+[Reading results in Permissions][reading-results].
+Workspaces with no scoped catalog behave as before: any member can read any result in the workspace.
+
+[reading-results]: ../concepts/permissions.md#reading-a-result-needs-the-same-grants-as-running-its-query
 
 ## Result cache fields
 

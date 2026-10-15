@@ -89,7 +89,7 @@ This needs only the `use` tier: sending work is dispatch, not a lifecycle operat
 Restarting an agent deliberately, with no work to justify it, still needs `operate`; see
 [Per-agent access](permissions.md#per-agent-access).
 
-**A [SQL session](sql-sessions.md)** — how dbt, dlt and BI tools connect — is the one case
+**A [SQL session](sql-sessions.md)** — how dbt, dlt and other Python DB-API clients connect — is the one case
 that cannot simply park and answer, because a session open is *synchronous*: it has to hand
 back something the caller can immediately run statements on. It therefore blocks while
 compute starts, and the caller chooses how that wait ends — see

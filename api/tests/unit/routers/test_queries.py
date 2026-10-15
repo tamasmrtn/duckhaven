@@ -1147,7 +1147,7 @@ async def test_get_query_rows_far_page_requests_window_only(
     assert captured["row_offset"] == 9000
     assert captured["row_limit"] == 5
     body = resp.json()
-    assert [r["n"] for r in body["rows"]] == [9000, 9001, 9002, 9003, 9004]
+    assert [r["n"] for r in body["rows"]] == ["9000", "9001", "9002", "9003", "9004"]
     assert body["total"] == 10_000
     assert body["cursor"] == "9005"
 
@@ -1172,7 +1172,7 @@ async def test_get_query_rows_fallback_when_agent_does_not_slice(
     resp = await authed_client.get(f"/queries/{query.id}/rows?limit=3&cursor=4")
     assert resp.status_code == 200
     body = resp.json()
-    assert [r["n"] for r in body["rows"]] == [4, 5, 6]
+    assert [r["n"] for r in body["rows"]] == ["4", "5", "6"]
 
 
 async def test_get_query_rows_swept_result_returns_410(

@@ -115,7 +115,10 @@ several tables is rejected before it runs if the principal lacks at least `reade
 on **any** referenced table. A two-part name such as `sales.leads` is ambiguous: it is
 the `sales` schema of the active catalog, unless a catalog called `sales` is attached,
 in which case the engine reads `sales.main.leads`. Because the check cannot know which
-one the engine will pick, it requires access to both. A view can also read a scoped catalog
+one the engine will pick, it requires access to both. In a [SQL session](sql-sessions.md), an
+unqualified name is checked in the catalog and schema the session is currently in, which a `USE` or `SET` can
+have moved (see [Grants follow the session's context](sql-sessions.md#grants-follow-the-sessions-context)). A view
+can also read a scoped catalog
 that the query never names. The agent then has to fetch that catalog while the query runs,
 and gets it only if the principal can read the whole catalog (see
 [which catalogs a query attaches](query-execution.md#which-catalogs-a-query-attaches)).
@@ -189,6 +192,19 @@ table. Such a read names no table, so there is nothing to check a grant against,
 *are* its tables' data. So in a workspace with a scoped catalog, a query reads data only through tables. The one
 exception is a [SQL session](sql-sessions.md), which may still read files under its own staging prefix: that is how dbt
 and dlt load data, and the prefix is private to the session. Workspaces with no scoped catalog are unaffected.
+
+#### Reading a result needs the same grants as running its query
+
+A query's result holds the data it read, so opening a result is checked like running the query. When you page through
+a result's rows or open its profile, whether you ran the query or a colleague did, DuckHaven checks your current grants
+against every table the query read, in the catalog and schema it resolved names in. Without them the result is refused
+with a 403. This applies to the query's author too: a revoked grant also closes results run before the revocation.
+
+Results of a session's staged-file reads are readable only by the session's author. A result from a session whose
+current context was unknown (see
+[Grants follow the session's context](sql-sessions.md#grants-follow-the-sessions-context))
+can be read only if its SQL names its tables fully qualified. In a workspace with no scoped catalog, any member can open
+any result, as before.
 
 ## Per-agent access
 

@@ -35,13 +35,38 @@ def test_decode_parquet_page_paginates():
     content = _parquet_bytes("SELECT * FROM range(5) t(n)")
     rows, columns = query_service.decode_parquet_page(content, limit=2, offset=2)
     assert columns == ["n"]
-    assert rows == [{"n": 2}, {"n": 3}]
+    # range() is BIGINT, which JSON cannot carry exactly past 2^53: a string.
+    assert rows == [{"n": "2"}, {"n": "3"}]
 
 
 def test_decode_parquet_page_json_coerces_types():
     content = _parquet_bytes("SELECT DATE '2026-01-02' AS d, 1.5::DECIMAL(4,2) AS amt")
     rows, _ = query_service.decode_parquet_page(content, limit=10, offset=0)
-    assert rows == [{"d": "2026-01-02", "amt": 1.5}]
+    assert rows == [{"d": "2026-01-02", "amt": "1.50"}]
+
+
+def test_decode_parquet_page_sends_wide_numbers_as_exact_strings():
+    """By type, at any depth: a column keeps one JSON shape whatever its values."""
+    content = _parquet_bytes(
+        "SELECT 9007199254740993::BIGINT AS big, 1::BIGINT AS small, "
+        "18446744073709551615::UBIGINT AS ubig, 123456789012345678.123::DECIMAL(38,3) AS dec, "
+        "12345678901234567890123::DECIMAL(38,0) AS wide, 7::INTEGER AS i, 0.5::DOUBLE AS f, "
+        "[1::BIGINT, NULL] AS l, {'a': 2.25::DECIMAL(5,2), 'b': 3} AS s, "
+        "MAP {1::BIGINT: 4.5::DECIMAL(3,1)} AS m"
+    )
+    [row], _ = query_service.decode_parquet_page(content, limit=10, offset=0)
+    assert row == {
+        "big": "9007199254740993",
+        "small": "1",
+        "ubig": "18446744073709551615",
+        "dec": "123456789012345678.123",
+        "wide": "12345678901234567890123",
+        "i": 7,
+        "f": 0.5,
+        "l": ["1", None],
+        "s": {"a": "2.25", "b": 3},
+        "m": {"1": "4.5"},
+    }
 
 
 def test_decode_parquet_page_handles_timestamptz():

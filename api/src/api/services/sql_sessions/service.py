@@ -16,6 +16,7 @@ import uuid
 from datetime import UTC, datetime
 
 import sqlalchemy as sa
+import sqlglot
 from opentelemetry import trace
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -45,6 +46,69 @@ _STATEMENT_PENDING = ("queued", "running")
 
 async def _catalog_descriptors(catalogs: list[Catalog]) -> list[dict[str, object]]:
     return [await build_catalog_attach(c) for c in catalogs]
+
+
+def staging_prefixes(session: SqlSession, catalogs: list[Catalog]) -> list[str]:
+    """The locations a session's statements may read and write files under.
+
+    Both the object-storage staging prefix (COPY / s3:// reads) and its HTTPS form,
+    so a staged ``read_parquet('<presigned get_url>')`` is allowed, while arbitrary
+    local-FS and external URLs still reject.
+    """
+    from api.services import session_credentials, staging_presign
+
+    prefixes = session_credentials.staging_prefixes(session.staging_uri)
+    active = next((c for c in catalogs if c.slug == session.active_catalog), None)
+    if active is not None:
+        prefixes = prefixes + staging_presign.staging_read_prefixes(active, session.id)
+    return prefixes
+
+
+async def name_context(
+    db: AsyncSession, session: SqlSession, default_catalog: str
+) -> tuple[str, str] | None:
+    """The ``(catalog, schema)`` the session's next statement resolves unqualified
+    names in, or ``None`` when that is not known.
+
+    Read from the context the agent reported after the last statement finished.
+    It is unknown while a statement that can move it is still queued or running
+    (the next statement runs after it on the same connection), after a
+    ``SET search_path`` (the report names only the path's first entry), and after
+    a context move the agent did not report. Callers lock the session row first,
+    so a concurrent submit cannot slip in between this read and the dispatch.
+    """
+    from api.services.grants import context_after
+    from api.services.workspace import DEFAULT_SCHEMA
+
+    state = session.cache_state
+    if state is None:
+        context: tuple[str, str] | None = (
+            session.active_catalog or default_catalog,
+            DEFAULT_SCHEMA,
+        )
+    elif state.get("search_path") or not state.get("catalog") or not state.get("schema"):
+        return None
+    else:
+        context = (state["catalog"], state["schema"])
+
+    in_flight = (
+        await db.scalars(
+            sa.select(Query.sql).where(
+                Query.session_id == session.id, Query.status.in_(_STATEMENT_PENDING)
+            )
+        )
+    ).all()
+    for sql in in_flight:
+        try:
+            statements = [s for s in sqlglot.parse(sql, read="duckdb") if s is not None]
+        except Exception:  # noqa: BLE001 - unparseable: it may move the context
+            return None
+        probe = context
+        for stmt in statements:
+            probe = context_after(stmt, probe)
+        if probe != context:
+            return None
+    return context
 
 
 async def dispatch_open_session(

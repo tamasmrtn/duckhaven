@@ -30,6 +30,7 @@ from api.metrics import (
 from api.models.agent import Agent
 from api.models.catalog import Catalog
 from api.models.query import Query
+from api.models.sql_session import SqlSession
 from api.models.table_metadata import TableMetadata
 from api.models.user import Credential
 from api.models.workspace import Workspace
@@ -136,6 +137,9 @@ async def dispatch_query(
     if active_catalog is None:
         default = await get_default_catalog(db, workspace.id)
         active_catalog = default.slug if default is not None else catalogs[0].slug
+    # Recorded so reading the result later re-checks grants where names resolved,
+    # not wherever the workspace default happens to point by then.
+    query.active_catalog = active_catalog
 
     # Scoped-catalog grant check: reject before dispatch if the principal lacks
     # tier on any referenced object. No-op unless a catalog is in scoped mode.
@@ -434,6 +438,44 @@ async def proxy_rows(
         record_rows_proxy(time.perf_counter() - started)
 
 
+async def assert_result_access(db: AsyncSession, query: Query, user_id: uuid.UUID) -> None:
+    """Refuse a query's result to anyone who could not run that query now.
+
+    A result holds the data its SQL read, so reading it needs the grants running
+    it would: the scoped-catalog check is repeated for the reader, in the catalog
+    and schema the run resolved names in, whoever ran it first. As at dispatch it
+    is a no-op in a workspace without a scoped catalog, where any member can still
+    open a colleague's result from History. Raises :class:`GrantDenied`.
+    """
+    from api.services.sql_sessions import service as sql_session_service
+
+    catalogs = await resolve_workspace_catalogs(db, query.workspace_id)
+    catalog, schema = query.active_catalog, query.active_schema
+    prefixes: list[str] | None = None
+    if query.origin == "session":
+        # A null catalog means the session's context was unknown when it ran,
+        # and only fully qualified names got through; the check refuses the rest.
+        if query.session_id is not None and user_id == query.user_id:
+            session = await db.get(SqlSession, query.session_id)
+            if session is not None:
+                # The author may read results of their own staged files, as at submit.
+                prefixes = sql_session_service.staging_prefixes(session, catalogs)
+    elif catalog is None and catalogs:
+        # Rows from before the catalog was recorded resolved in the default.
+        default = await get_default_catalog(db, query.workspace_id)
+        catalog = default.slug if default is not None else catalogs[0].slug
+    await grant_service.assert_query_access(
+        db,
+        query.workspace_id,
+        user_id,
+        query.sql,
+        catalog,
+        catalogs,
+        active_schema=schema,
+        staging_prefixes=prefixes,
+    )
+
+
 async def fetch_result_page(
     db: AsyncSession, query: Query, *, limit: int, offset: int = 0
 ) -> RowsPageOut:
@@ -554,17 +596,44 @@ async def agent_session_token(db: AsyncSession, agent_id: uuid.UUID) -> str | No
     return cred.token if cred is not None else None
 
 
+# Types whose values JSON cannot carry exactly. A JSON number is a double in most
+# readers (every browser among them), which holds integers only up to 2^53 and no
+# decimal fraction exactly, so values of these types are sent as strings. By type,
+# not by value: a column keeps one JSON shape whatever its values are.
+_EXACT_AS_TEXT = frozenset({"decimal", "bigint", "ubigint", "hugeint", "uhugeint"})
+
+
 def _json_safe(value: Any) -> Any:
     """Coerce a DuckDB cell to a JSON-encodable value for RowsPageOut."""
     if isinstance(value, datetime | dt.date):
         return value.isoformat()
     if isinstance(value, Decimal):
-        return float(value)
+        return str(value)
     if isinstance(value, bytes | bytearray | memoryview):
         return bytes(value).hex()
     if isinstance(value, uuid.UUID):
         return str(value)
     return value
+
+
+def _json_value(value: Any, value_type: duckdb.DuckDBPyType | None) -> Any:
+    """A cell as JSON, following its DuckDB type into lists, structs and maps so a
+    nested DECIMAL or BIGINT is sent exactly too."""
+    if value is None:
+        return None
+    tid = value_type.id if value_type is not None else None
+    if tid in _EXACT_AS_TEXT:
+        return str(value)
+    if tid in ("list", "array"):
+        element = value_type.children[0][1]
+        return [_json_value(v, element) for v in value]
+    if tid == "struct" and isinstance(value, dict):
+        members = dict(value_type.children)
+        return {k: _json_value(v, members.get(k)) for k, v in value.items()}
+    if tid == "map" and isinstance(value, dict):
+        (_, key_type), (_, item_type) = value_type.children
+        return {_json_value(k, key_type): _json_value(v, item_type) for k, v in value.items()}
+    return _json_safe(value)
 
 
 def decode_parquet_page(
@@ -581,8 +650,12 @@ def decode_parquet_page(
                 "SELECT * FROM read_parquet(?) LIMIT ? OFFSET ?", [path, limit, offset]
             )
             columns = [d[0] for d in cur.description]
+            types = [d[1] for d in cur.description]
             rows = [
-                {col: _json_safe(val) for col, val in zip(columns, record, strict=True)}
+                {
+                    col: _json_value(val, typ)
+                    for col, val, typ in zip(columns, record, types, strict=True)
+                }
                 for record in cur.fetchall()
             ]
             return rows, columns

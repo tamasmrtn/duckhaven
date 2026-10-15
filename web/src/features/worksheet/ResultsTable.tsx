@@ -80,10 +80,50 @@ const tableFeatureSet = tableFeatures({
   sortedRowModel: createSortedRowModel(),
 });
 
-function downloadCsv(columns: string[], rows: QueryRow[]) {
+const INTEGER_TEXT = /^-?\d+$/;
+
+/**
+ * Orders two numeric cells. Wide integers and decimals arrive as strings (JSON
+ * cannot carry them exactly), so they are compared as numbers, not as text where
+ * "10" < "9"; integer strings are compared exactly via BigInt. Nulls sort first.
+ */
+export function compareNumeric(a: unknown, b: unknown): number {
+  const aNull = a === null || a === undefined;
+  const bNull = b === null || b === undefined;
+  if (aNull || bNull) return aNull === bNull ? 0 : aNull ? -1 : 1;
+  if (
+    typeof a === "string" &&
+    typeof b === "string" &&
+    INTEGER_TEXT.test(a) &&
+    INTEGER_TEXT.test(b)
+  ) {
+    const x = BigInt(a);
+    const y = BigInt(b);
+    return x === y ? 0 : x < y ? -1 : 1;
+  }
+  const x = Number(a);
+  const y = Number(b);
+  return x === y ? 0 : x < y ? -1 : 1;
+}
+
+function downloadCsv(
+  columns: string[],
+  rows: QueryRow[],
+  numeric: Set<string>,
+) {
   const header = columns.join(",");
   const body = rows
-    .map((row) => columns.map((c) => JSON.stringify(row[c] ?? "")).join(","))
+    .map((row) =>
+      columns
+        .map((c) => {
+          const value = row[c];
+          // Numbers stay unquoted, including those sent as exact strings.
+          if (numeric.has(c) && value !== null && value !== undefined)
+            return String(value);
+          return JSON.stringify(value ?? "");
+        })
+        .join(","),
+    )
     .join("\n");
   const csv = `${header}\n${body}`;
   const blob = new Blob([csv], { type: "text/csv" });
@@ -135,6 +175,12 @@ export function ResultsTable({
     (col) => ({
       accessorKey: col,
       header: col,
+      ...(numeric.has(col)
+        ? {
+            sortFn: (rowA, rowB, columnId) =>
+              compareNumeric(rowA.getValue(columnId), rowB.getValue(columnId)),
+          }
+        : {}),
       cell: ({ getValue }) => {
         const raw = getValue();
         const display = cellDisplay(raw);
@@ -265,7 +311,7 @@ export function ResultsTable({
             variant="ghost"
             size="sm"
             className="h-7 gap-1 text-xs"
-            onClick={() => downloadCsv(columns, sortedRows)}
+            onClick={() => downloadCsv(columns, sortedRows, numeric)}
           >
             <Download className="size-3" />
             Download CSV

@@ -356,6 +356,37 @@ placeholders the statement uses.
   **503 `compute_starting`** with `Retry-After`; retrying lands on the agent that is starting.
 - Describes do not appear in History and record no lineage.
 
+## Workspace metadata
+
+`GET /api/workspaces/{workspace}/metadata` returns everything you may see in a workspace as one tree: catalogs (with
+their kind and access mode), schemas, tables, and with `columns=true` each table's columns. It is what a driver or BI
+gateway answers its catalog listings from.
+
+```json
+{
+  "catalogs": [{
+    "name": "warehouse", "kind": "iceberg_polaris", "access_mode": "scoped",
+    "schemas": [{ "name": "sales", "tables": [{
+      "name": "orders", "table_type": "MANAGED",
+      "columns": [{ "name": "id", "type": "BIGINT", "nullable": false }]
+    }]}]
+  }]
+}
+```
+
+- **Filtered by grant.** In a scoped catalog you see only what you hold a tier on, exactly as in the catalog tree.
+- **Narrowed by `catalog`, `schema` and `table`.** An unknown `catalog` is a 404. A catalog whose listing fails is
+  left out rather than failing the report.
+- **Names need no compute.** They come from each catalog's metastore.
+- **Columns come from the engine.** With `columns=true` an agent runs `DESCRIBE` on each table, about a hundred to a
+  query, so types arrive in DuckDB's spelling (`BIGINT`, not Iceberg's `long`). A table that cannot be described, for
+  example one dropped since it was listed, has `columns: null`.
+- **Columns are capped.** At most `METADATA_COLUMNS_MAX_TABLES` tables (1000) per request; more is
+  **422 `too_many_tables`**.
+- **Columns may start compute.** With no agent connected and elastic compute on, this `GET` starts compute and waits,
+  answering **503 `compute_starting`** with `Retry-After` if it is not up in time, as
+  [describing a query](#describing-a-query) does.
+
 ## Result column types
 
 `GET /api/queries/{query_id}` and `GET /api/queries/{query_id}/rows` both return a **`column_schema`** field

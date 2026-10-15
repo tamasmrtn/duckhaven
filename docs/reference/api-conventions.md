@@ -195,6 +195,11 @@ resource collection. Do not reshape it to match.
 diagnostics, with no cursor. Search is truncated by `limit`, not walked — a cursor that never
 advances would be a lie, and `has_more` is what tells a caller to narrow the query instead.
 
+**The workspace metadata report is a tree, not a page**: `GET /workspaces/{workspace}/metadata` returns one
+`{"catalogs": [...]}` object with schemas and tables nested inside. It is bounded by what the workspace attaches and
+filtered by `catalog`, `schema` and `table`; with `columns=true` it refuses more than `METADATA_COLUMNS_MAX_TABLES`
+tables instead of paging them.
+
 `limit` is `default=100, ge=1, le=1000` unless a per-endpoint cost justifies otherwise, and
 the justification goes in the handler docstring.
 

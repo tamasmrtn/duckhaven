@@ -7,7 +7,13 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from api.config import settings
-from api.schemas.query import PARAMETERS_DESCRIPTION, ParameterValue
+from api.schemas.query import (
+    PARAMETERS_DESCRIPTION,
+    TAGS_DESCRIPTION,
+    ParameterValue,
+    Tags,
+    check_tag_count,
+)
 
 
 class SqlSessionCreate(BaseModel):
@@ -117,9 +123,11 @@ class SqlStatementCreate(BaseModel):
     parameters: list[ParameterValue] | dict[str, ParameterValue] | None = Field(
         default=None, description=PARAMETERS_DESCRIPTION
     )
+    tags: Tags | None = Field(default=None, description=TAGS_DESCRIPTION)
 
     @model_validator(mode="after")
     def _validate_wait(self) -> SqlStatementCreate:
+        check_tag_count(self.tags)
         if (
             self.wait_timeout_s is not None
             and self.wait_timeout_s > settings.sql_statement_max_wait_timeout_s

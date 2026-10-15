@@ -98,6 +98,15 @@ class Query(Base):
     # session can `USE` another schema; null means the workspace default schema,
     # which is where every one-shot run resolves.
     active_schema: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Who sent the run: the first product token of the caller's User-Agent
+    # (`dbt-duckhaven/1.2.0`), or the session's for a session statement. Null for
+    # the web app and for runs the platform starts itself.
+    client_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    client_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Free-form key/value labels the caller attached (a dbt model, a dashboard).
+    tags: Mapped[dict | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=True
+    )
     # What the result cache did with this run: `hit` (answered from an earlier
     # run's result, nothing executed), `miss` (executed, and offered to the cache
     # when it finished), `bypass` (the cache was off or could not decide in time)

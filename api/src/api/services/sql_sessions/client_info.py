@@ -42,6 +42,8 @@ def parse_user_agent(user_agent: str | None) -> tuple[str | None, str | None]:
     name, _, version = token.partition("/")
     name = name.strip()
     version = version.strip()
-    if not name:
+    # Every browser leads with "Mozilla/5.0": that is the web app, not a client
+    # worth naming on each of its runs.
+    if not name or name == "Mozilla":
         return None, None
     return name[:_MAX_NAME], version[:_MAX_VERSION] or None

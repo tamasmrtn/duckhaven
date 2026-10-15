@@ -277,6 +277,56 @@ describe("HistoryPage", () => {
     );
   });
 
+  it("names the tool that sent a run, and shows its tags", async () => {
+    const run = (id: string, extra: object) => ({
+      id,
+      workspace_id: "137f7947-0000-4000-8000-000000000001",
+      agent_id: "ag-1",
+      user_id: "u-1",
+      status: "done",
+      row_count: 1,
+      duration_ms: 5,
+      error: null,
+      progress: null,
+      started_at: "2026-05-15T10:00:00Z",
+      finished_at: "2026-05-15T10:00:00.005Z",
+      ...extra,
+    });
+    server.use(
+      http.get("/api/workspaces/:ws/queries", () =>
+        HttpResponse.json({
+          items: [
+            run("q-tool", {
+              sql: "SELECT from_superset",
+              client_name: "superset",
+              client_version: "5.0.1",
+              tags: { dashboard: "sales" },
+            }),
+            run("q-web", { sql: "SELECT from_the_web_app" }),
+          ],
+          cursor: null,
+          has_more: false,
+        }),
+      ),
+    );
+    renderWithProviders({ initialRoute: "/acme-analytics/history" });
+    await screen.findByText("SELECT from_superset");
+    expect(
+      screen.getByRole("columnheader", { name: "Client" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("superset")).toBeInTheDocument();
+    expect(screen.getByText("5.0.1")).toBeInTheDocument();
+    expect(screen.getByText("dashboard=sales")).toBeInTheDocument();
+  });
+
+  it("leaves the Client column out when no run in view came from a tool", async () => {
+    renderWithProviders({ initialRoute: "/acme-analytics/history?user=all" });
+    await screen.findByText(/raw\.users/);
+    expect(
+      screen.queryByRole("columnheader", { name: "Client" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("hides the cross-workspace toggle from non-admins", async () => {
     server.use(
       http.get("/api/me", () =>

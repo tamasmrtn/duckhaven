@@ -1,5 +1,6 @@
 import uuid
 
+import pytest
 import pytest_asyncio
 from conftest import seed_workspace
 from httpx import AsyncClient
@@ -2707,4 +2708,44 @@ async def test_the_wait_is_capped(authed_client, workspace, connected_agent):
     agent, _ws = connected_agent
     too_long = settings.sql_statement_max_wait_timeout_s + 1
     resp = await _submit(authed_client, workspace, agent, wait_timeout_s=too_long)
+    assert resp.status_code == 422
+
+
+# --- who sent a run, and why ---------------------------------------------------
+
+
+async def test_a_run_records_its_client_and_tags(authed_client, workspace, connected_agent):
+    agent, _ws = connected_agent
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(agent.id), "tags": {"dbt.model": "orders"}},
+        headers={"User-Agent": "superset/5.0.1 (linux)"},
+    )
+    body = resp.json()
+    assert (body["client_name"], body["client_version"]) == ("superset", "5.0.1")
+    assert body["tags"] == {"dbt.model": "orders"}
+    listed = (await authed_client.get(f"/queries/{body['id']}")).json()
+    assert listed["tags"] == {"dbt.model": "orders"}
+
+
+async def test_the_web_app_is_not_named_as_a_client(authed_client, workspace, connected_agent):
+    agent, _ws = connected_agent
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(agent.id)},
+        headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) Firefox/140.0"},
+    )
+    assert resp.json()["client_name"] is None
+
+
+@pytest.mark.parametrize(
+    "tags",
+    [{"has space": "x"}, {"k": "v" * 257}, {f"k{i}": "v" for i in range(21)}],
+)
+async def test_tags_outside_the_limits_are_a_422(authed_client, workspace, connected_agent, tags):
+    agent, _ws = connected_agent
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(agent.id), "tags": tags},
+    )
     assert resp.status_code == 422

@@ -80,6 +80,8 @@ anything from it. Two additions connect the two views:
 
 ## What this does not tell you yet
 
-Attribution stops at the tool. DuckHaven records that `dbt-duckhaven 1.2.0` opened a session and what SQL it ran, but
-not which dbt model or invocation produced a given statement — the client cannot yet attach that context. Until it
-can, the session boundary is the unit of attribution: one session is one client's run.
+Attribution stops at the tool unless the tool says more. DuckHaven records that `dbt-duckhaven 1.2.0` opened a session
+and what SQL it ran, and every statement carries the session's client. Which dbt model or invocation produced a given
+statement is known only if the client attaches it as a **tag** (`"tags": {"dbt.model": "orders"}` on the statement),
+which History shows beneath the SQL. The DuckHaven clients do not send tags yet, so for now the session boundary is the
+unit of attribution: one session is one client's run.

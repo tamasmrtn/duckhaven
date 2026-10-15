@@ -258,6 +258,9 @@ export function HistoryPage() {
   // Only worth a column when something in view actually belongs to a session,
   // so the ordinary history table keeps its existing shape.
   const anySession = rows.some((q) => q.session_id);
+  // Likewise the tool that sent each run: shown only when some run in view came
+  // from one (the web app's own runs carry none).
+  const anyClient = rows.some((q) => q.client_name);
 
   const columns: { label: string; sort?: SortKey }[] = all
     ? [
@@ -276,6 +279,7 @@ export function HistoryPage() {
         { label: "Agent" },
         { label: "User" },
         ...(anySession ? [{ label: "Connection" }] : []),
+        ...(anyClient ? [{ label: "Client" }] : []),
         { label: "Rows" },
         { label: "Duration", sort: "duration" as SortKey },
         { label: "Started", sort: "started_at" as SortKey },
@@ -505,6 +509,22 @@ export function HistoryPage() {
                           >
                             {shortId(q.session_id)}
                           </button>
+                        ) : (
+                          <span className="text-text-tertiary">—</span>
+                        )}
+                      </TableCell>
+                    )}
+                    {!all && anyClient && (
+                      <TableCell className="px-4 py-2 font-mono text-xs text-text-secondary">
+                        {q.client_name ? (
+                          <>
+                            {q.client_name}
+                            {q.client_version && (
+                              <span className="ml-1 text-text-tertiary">
+                                {q.client_version}
+                              </span>
+                            )}
+                          </>
                         ) : (
                           <span className="text-text-tertiary">—</span>
                         )}

@@ -310,6 +310,17 @@ field: values for placeholders in `sql`, as a list or an object. See
 **422 `invalid_parameters`** answer when they do not fit. The field is optional and additive. A server older than
 this feature ignores it, and the statement then fails because its placeholders have no values.
 
+## Client and tags
+
+Every query records **who sent it**: `client_name` and `client_version` on `QueryOut`, read from the first product token
+of the request's `User-Agent` (`dbt-duckhaven/1.2.0 (linux)` gives `dbt-duckhaven` and `1.2.0`). A SQL session statement
+takes its session's client. A browser's `User-Agent` records nothing, since every web-app run would otherwise read
+`Mozilla`. Lead your `User-Agent` with your own tool's name to be recognised.
+
+`POST /api/workspaces/{workspace}/queries` and `POST /api/sql/sessions/{session_id}/statements` also take **`tags`**:
+an object of free-form labels recorded on the run and returned as `tags`. At most 20 tags; keys are letters, digits and
+`_ . : -` up to 64 characters, values up to 256 characters. Anything else is a **422**.
+
 ## Result column types
 
 `GET /api/queries/{query_id}` and `GET /api/queries/{query_id}/rows` both return a **`column_schema`** field

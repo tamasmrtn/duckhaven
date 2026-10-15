@@ -22,6 +22,12 @@ export interface Query {
   // Set when the run is a statement inside a SQL session (origin="session");
   // maps a statement to the workload it belonged to.
   session_id?: string | null;
+  // The tool that sent the run (from its User-Agent; a session statement takes
+  // its session's). Absent for the web app and for runs the platform starts.
+  client_name?: string | null;
+  client_version?: string | null;
+  // Labels the caller attached to the run.
+  tags?: Record<string, string> | null;
   // The runtime (DuckDB line, e.g. "1.5") of the agent that ran it, recorded at
   // dispatch. Absent before dispatch and on runs older than the field.
   runtime_id?: string | null;

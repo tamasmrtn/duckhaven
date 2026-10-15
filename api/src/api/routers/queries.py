@@ -3,7 +3,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response, status
 from fastapi import Query as QueryParam
 from fastapi.responses import StreamingResponse
 from opentelemetry import trace
@@ -50,6 +50,7 @@ from api.services.runtimes import (
 from api.services.sql_classify import STATEMENT_TYPES
 from api.services.sql_guard import SQLNotAllowed, assert_allowed, is_read_only
 from api.services.sql_sessions import service as sql_session_service
+from api.services.sql_sessions.client_info import parse_user_agent
 from api.services.workspace import (
     DEFAULT_SCHEMA,
     assert_workspace_member,
@@ -74,6 +75,7 @@ router = APIRouter()
 async def create_query(
     ws: Annotated[str, Path(alias="workspace")],
     body: QueryCreate,
+    request: Request,
     response: Response,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -93,6 +95,11 @@ async def create_query(
     Send `wait_timeout_s` to block until the run finishes, up to that many seconds:
     the answer is then 200 with the finished query, or 202 if it is still going."""
     query = await _submit_query(ws, body, db, user, polaris)
+    # Who sent it and why, stamped once here rather than on each way a run can
+    # start. Committed before any wait, which re-reads the row.
+    query.client_name, query.client_version = parse_user_agent(request.headers.get("user-agent"))
+    query.tags = body.tags
+    await db.commit()
     if body.wait_timeout_s is not None:
         if body.wait_timeout_s > 0 and query.status in ("queued", "running"):
             await sql_session_service.await_query_done(db, query, body.wait_timeout_s)

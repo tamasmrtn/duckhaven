@@ -163,6 +163,11 @@ never ambiguous between "no history" and "narrow filter".
 A run that never reached its agent — because the agent had gone offline — is listed too, as failed with *Agent not
 connected*, so an error in a worksheet always has a matching entry here.
 
+Runs sent by a tool rather than the web app say which tool. A **Client** column appears once such a run is in view,
+naming the tool and its version from its `User-Agent`: `superset 5.0.1`, `dbt-duckhaven 1.2.0`,
+`duckhaven-assistant`. A tool can also attach **tags** to a run, free-form `key=value` labels such as the dbt model or
+dashboard it was for, shown beneath the SQL. Your own worksheet runs carry neither.
+
 The list is paged. **Load more** appends the next page and the count tells you how many rows you are looking at —
 DuckHaven does not claim a total it has not counted, because counting every row behind a filtered page is a second
 pass over the whole table for a number that goes stale the moment somebody runs a query.

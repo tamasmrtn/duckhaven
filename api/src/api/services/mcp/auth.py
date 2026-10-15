@@ -133,7 +133,11 @@ class PatAuthMiddleware:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=api_app),
             base_url=LOOPBACK_BASE_URL,
-            headers={"Authorization": f"Bearer {token}"},
+            # Named so History shows these runs as the MCP server's, not as httpx's.
+            headers={
+                "Authorization": f"Bearer {token}",
+                "User-Agent": f"duckhaven-mcp/{settings.app_version}",
+            },
             timeout=settings.mcp_query_timeout_s + 30.0,
         ) as client:
             me = await client.get("/me")

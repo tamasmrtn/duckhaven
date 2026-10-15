@@ -232,6 +232,12 @@ async def test_a_repeated_query_is_answered_without_running(
     # Inline rows are served from Postgres; the agent is not asked.
     assert len(agent_results) == served_before
 
+    # The hit records the context it was keyed in, which reading it re-checks.
+    async with sessions() as db:
+        hit = await db.get(Query, uuid.UUID(second["id"]))
+        catalog = workspace.slug.replace("-", "_")  # seed_workspace's catalog slug
+        assert (hit.active_catalog, hit.active_schema) == (catalog, "analytics")
+
 
 async def test_layout_and_comments_do_not_split_the_entry(
     authed_client, workspace, connected, sessions, fake_polaris

@@ -432,6 +432,8 @@ async def serve_hit(
     query.result_bytes = entry.result_bytes
     query.result_schema = entry.result_schema
     query.result_path = f"cache:{entry.source_query_id}"
+    query.active_catalog = result.context.current_catalog
+    query.active_schema = result.context.current_schema
     query.duration_ms = int(result.elapsed_s * 1000)
     query.running_at = now
     query.finished_at = now

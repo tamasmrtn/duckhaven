@@ -48,6 +48,22 @@ async def _catalog_descriptors(catalogs: list[Catalog]) -> list[dict[str, object
     return [await build_catalog_attach(c) for c in catalogs]
 
 
+def staging_prefixes(session: SqlSession, catalogs: list[Catalog]) -> list[str]:
+    """The locations a session's statements may read and write files under.
+
+    Both the object-storage staging prefix (COPY / s3:// reads) and its HTTPS form,
+    so a staged ``read_parquet('<presigned get_url>')`` is allowed, while arbitrary
+    local-FS and external URLs still reject.
+    """
+    from api.services import session_credentials, staging_presign
+
+    prefixes = session_credentials.staging_prefixes(session.staging_uri)
+    active = next((c for c in catalogs if c.slug == session.active_catalog), None)
+    if active is not None:
+        prefixes = prefixes + staging_presign.staging_read_prefixes(active, session.id)
+    return prefixes
+
+
 async def name_context(
     db: AsyncSession, session: SqlSession, default_catalog: str
 ) -> tuple[str, str] | None:

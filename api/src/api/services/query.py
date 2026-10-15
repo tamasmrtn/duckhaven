@@ -30,6 +30,7 @@ from api.metrics import (
 from api.models.agent import Agent
 from api.models.catalog import Catalog
 from api.models.query import Query
+from api.models.sql_session import SqlSession
 from api.models.table_metadata import TableMetadata
 from api.models.user import Credential
 from api.models.workspace import Workspace
@@ -136,6 +137,9 @@ async def dispatch_query(
     if active_catalog is None:
         default = await get_default_catalog(db, workspace.id)
         active_catalog = default.slug if default is not None else catalogs[0].slug
+    # Recorded so reading the result later re-checks grants where names resolved,
+    # not wherever the workspace default happens to point by then.
+    query.active_catalog = active_catalog
 
     # Scoped-catalog grant check: reject before dispatch if the principal lacks
     # tier on any referenced object. No-op unless a catalog is in scoped mode.
@@ -432,6 +436,44 @@ async def proxy_rows(
             return await client.get(url, params=params, headers=headers)
     finally:
         record_rows_proxy(time.perf_counter() - started)
+
+
+async def assert_result_access(db: AsyncSession, query: Query, user_id: uuid.UUID) -> None:
+    """Refuse a query's result to anyone who could not run that query now.
+
+    A result holds the data its SQL read, so reading it needs the grants running
+    it would: the scoped-catalog check is repeated for the reader, in the catalog
+    and schema the run resolved names in, whoever ran it first. As at dispatch it
+    is a no-op in a workspace without a scoped catalog, where any member can still
+    open a colleague's result from History. Raises :class:`GrantDenied`.
+    """
+    from api.services.sql_sessions import service as sql_session_service
+
+    catalogs = await resolve_workspace_catalogs(db, query.workspace_id)
+    catalog, schema = query.active_catalog, query.active_schema
+    prefixes: list[str] | None = None
+    if query.origin == "session":
+        # A null catalog means the session's context was unknown when it ran,
+        # and only fully qualified names got through; the check refuses the rest.
+        if query.session_id is not None and user_id == query.user_id:
+            session = await db.get(SqlSession, query.session_id)
+            if session is not None:
+                # The author may read results of their own staged files, as at submit.
+                prefixes = sql_session_service.staging_prefixes(session, catalogs)
+    elif catalog is None and catalogs:
+        # Rows from before the catalog was recorded resolved in the default.
+        default = await get_default_catalog(db, query.workspace_id)
+        catalog = default.slug if default is not None else catalogs[0].slug
+    await grant_service.assert_query_access(
+        db,
+        query.workspace_id,
+        user_id,
+        query.sql,
+        catalog,
+        catalogs,
+        active_schema=schema,
+        staging_prefixes=prefixes,
+    )
 
 
 async def fetch_result_page(

@@ -2,7 +2,14 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Any
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    model_validator,
+)
 
 
 class TypedParameter(BaseModel):
@@ -50,6 +57,25 @@ class QueryCreate(BaseModel):
     parameters: list[ParameterValue] | dict[str, ParameterValue] | None = Field(
         default=None, description=PARAMETERS_DESCRIPTION
     )
+    # How long the call may block waiting for the run to finish. Omitted, it never
+    # blocks and always answers 202, as before the field existed; sent, the answer
+    # is 200 when the run finished within it and 202 otherwise. A run that outlasts
+    # the wait keeps running and is polled as usual. Capped by
+    # sql_statement_max_wait_timeout_s, the same budget SQL statements have.
+    wait_timeout_s: float | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _validate_wait(self) -> QueryCreate:
+        from api.config import settings
+
+        if (
+            self.wait_timeout_s is not None
+            and self.wait_timeout_s > settings.sql_statement_max_wait_timeout_s
+        ):
+            raise ValueError(
+                f"wait_timeout_s must be at most {settings.sql_statement_max_wait_timeout_s}"
+            )
+        return self
 
 
 class ColumnSchemaOut(BaseModel):

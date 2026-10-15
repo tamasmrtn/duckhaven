@@ -65,10 +65,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.post("/workspaces/{workspace}/queries", status_code=202, response_model=QueryOut)
+@router.post(
+    "/workspaces/{workspace}/queries",
+    status_code=202,
+    response_model=QueryOut,
+    responses={200: {"model": QueryOut, "description": "Finished within `wait_timeout_s`."}},
+)
 async def create_query(
     ws: Annotated[str, Path(alias="workspace")],
     body: QueryCreate,
+    response: Response,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
     polaris: PolarisClient = Depends(get_polaris_client),
@@ -82,7 +88,27 @@ async def create_query(
 
     A read whose tables are unchanged since an identical query ran is answered
     from the result cache instead: the 202 then carries a query that is already
-    `done`, with `cache_status` "hit". Send `use_cache: false` to always run."""
+    `done`, with `cache_status` "hit". Send `use_cache: false` to always run.
+
+    Send `wait_timeout_s` to block until the run finishes, up to that many seconds:
+    the answer is then 200 with the finished query, or 202 if it is still going."""
+    query = await _submit_query(ws, body, db, user, polaris)
+    if body.wait_timeout_s is not None:
+        if body.wait_timeout_s > 0 and query.status in ("queued", "running"):
+            await sql_session_service.await_query_done(db, query, body.wait_timeout_s)
+        if query.status not in ("queued", "running"):
+            response.status_code = status.HTTP_200_OK
+    return query
+
+
+async def _submit_query(
+    ws: str,
+    body: QueryCreate,
+    db: AsyncSession,
+    user: User,
+    polaris: PolarisClient,
+) -> Query:
+    """Everything `create_query` does short of waiting for the run."""
     workspace = await get_workspace(db, ws)
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")

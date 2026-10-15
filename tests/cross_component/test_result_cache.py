@@ -76,12 +76,12 @@ async def test_a_repeated_read_is_served_until_its_table_changes(
     assert first["cache_status"] == "miss"
     hit = await _until_hit(api_client, workspace, agent, sql)
     assert hit["agent_id"] is None
-    assert await _rows(api_client, hit["id"]) == [{"n": 10}]
+    assert await _rows(api_client, hit["id"]) == [{"n": "10"}]
 
     await _run(api_client, workspace, agent, f"INSERT INTO {catalog}.analytics.{table} VALUES (99)")
     after = await _run(api_client, workspace, agent, sql)
     assert after["cache_status"] == "miss"
-    assert await _rows(api_client, after["id"]) == [{"n": 11}]
+    assert await _rows(api_client, after["id"]) == [{"n": "11"}]
 
 
 async def test_a_write_by_another_engine_is_never_served_stale(
@@ -111,7 +111,7 @@ async def test_a_write_by_another_engine_is_never_served_stale(
 
     after = await _run(api_client, workspace, agent, sql)
     assert after["cache_status"] == "miss"
-    assert await _rows(api_client, after["id"]) == [{"n": 12}]
+    assert await _rows(api_client, after["id"]) == [{"n": "12"}]
 
 
 async def test_a_schema_change_is_never_served_stale(
@@ -131,7 +131,7 @@ async def test_a_schema_change_is_never_served_stale(
     )
     after = await _run(api_client, workspace, agent, sql)
     assert after["cache_status"] == "miss"
-    assert await _rows(api_client, after["id"]) == [{"id": 0, "extra": None}]
+    assert await _rows(api_client, after["id"]) == [{"id": "0", "extra": None}]
 
 
 async def test_volatile_and_opted_out_runs_execute(
@@ -187,7 +187,7 @@ async def test_a_small_result_is_served_after_its_agent_stops(
 
     hit = await _run(api_client, workspace, extra["id"], sql)
     assert hit["cache_status"] == "hit"
-    assert await _rows(api_client, hit["id"]) == [{"n": 10}]
+    assert await _rows(api_client, hit["id"]) == [{"n": "10"}]
 
 
 # --- SQL sessions --------------------------------------------------------------
@@ -257,13 +257,13 @@ async def test_ducklake_reads_are_cached_until_the_table_changes(
         sql = f"SELECT count(*) AS n FROM {slug}.analytics.t"
         await _run(api_client, workspace, agent, sql)
         hit = await _until_hit(api_client, workspace, agent, sql)
-        assert await _rows(api_client, hit["id"]) == [{"n": 5}]
+        assert await _rows(api_client, hit["id"]) == [{"n": "5"}]
 
         # Small enough to be inlined in the catalog database: still a change.
         await _run(api_client, workspace, agent, f"INSERT INTO {slug}.analytics.t VALUES (7)")
         after = await _run(api_client, workspace, agent, sql)
         assert after["cache_status"] == "miss"
-        assert await _rows(api_client, after["id"]) == [{"n": 6}]
+        assert await _rows(api_client, after["id"]) == [{"n": "6"}]
     finally:
         listed = (await api_client.get("/api/catalogs")).json()
         match = next((c for c in listed if c["slug"] == slug), None)

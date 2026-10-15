@@ -86,7 +86,7 @@ async def test_create_query_and_read_back(api_client, workspace, healthy_agent, 
     )
     assert counted["status"] == "done", counted
     rows = (await api_client.get(f"/api/queries/{counted['id']}/rows")).json()
-    assert rows["rows"] == [{"c": 5000}]
+    assert rows["rows"] == [{"c": "5000"}]
 
     # Visible to the control plane without an agent.
     listed = await api_client.get(
@@ -145,7 +145,7 @@ async def test_time_travel(api_client, workspace, healthy_agent, slug) -> None:
     )
     assert at["status"] == "done", at
     rows = (await api_client.get(f"/api/queries/{at['id']}/rows")).json()
-    assert rows["rows"] == [{"c": 1000}]
+    assert rows["rows"] == [{"c": "1000"}]
 
 
 async def test_schema_evolution(api_client, workspace, healthy_agent, slug) -> None:
@@ -245,7 +245,7 @@ async def test_iceberg_and_ducklake_join_in_one_query(
     )
     assert joined["status"] == "done", joined
     rows = (await api_client.get(f"/api/queries/{joined['id']}/rows")).json()
-    assert rows["rows"] == [{"c": 50}]
+    assert rows["rows"] == [{"c": "50"}]
 
 
 async def test_a_ducklake_catalog_works_in_a_held_sql_session(
@@ -291,7 +291,7 @@ async def test_a_ducklake_catalog_works_in_a_held_sql_session(
             await asyncio.sleep(0.5)
         assert body["status"] == "done", body
         rows = (await api_client.get(f"/api/queries/{query_id}/rows")).json()
-        assert rows["rows"] == [{"c": 500}]
+        assert rows["rows"] == [{"c": "500"}]
     finally:
         await api_client.delete(f"/api/sql/sessions/{session_id}")
 

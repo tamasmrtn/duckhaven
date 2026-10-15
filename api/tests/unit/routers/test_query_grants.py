@@ -462,3 +462,77 @@ async def test_direct_file_reads_still_work_in_an_open_workspace(
         authed_client, ws, connected_agent, "SELECT * FROM read_parquet('s3://warehouse/x.parquet')"
     )
     assert resp.status_code == 202
+
+
+# --- Names resolve where the statement runs, not where the session opened -----
+
+
+async def _check(db_session, ws, user, cat, sql, *, catalog="__cat__", schema=None):
+    await grant_service.assert_query_access(
+        db_session,
+        ws.id,
+        user.id,
+        sql,
+        cat.slug if catalog == "__cat__" else catalog,
+        [cat],
+        active_schema=schema,
+    )
+
+
+async def test_a_use_moves_where_later_statements_are_checked(scoped_ws, db_session, user):
+    """`USE` followed by an unqualified name reads the new schema, so that is the
+    one the grant must cover."""
+    ws, cat = scoped_ws
+    _grant(db_session, user, cat, "reader")  # the whole `analytics` schema
+    await db_session.commit()
+    await _check(db_session, ws, user, cat, "SELECT * FROM t")
+    with pytest.raises(grant_service.GrantDenied, match=r"secret\.t"):
+        await _check(db_session, ws, user, cat, f"USE {cat.slug}.secret; SELECT * FROM t")
+
+
+async def test_a_use_target_is_not_read_as_a_table(scoped_ws, db_session, user):
+    """`USE x` names where later names resolve; it reads nothing, so a schema
+    grant elsewhere cannot be what lets it through."""
+    ws, cat = scoped_ws
+    await _check(db_session, ws, user, cat, f"USE {cat.slug}.secret")
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    ["USE secret", "SET schema = 'secret'", "SET search_path = 'test_cat.secret'"],
+)
+async def test_an_inexact_context_move_refuses_unqualified_names(
+    scoped_ws, db_session, user, prefix
+):
+    """A one-part USE, SET schema and SET search_path leave where names resolve
+    unknown to the check, so it refuses rather than guesses."""
+    ws, cat = scoped_ws
+    _grant(db_session, user, cat, "reader")
+    await db_session.commit()
+    with pytest.raises(grant_service.GrantDenied, match="not known"):
+        await _check(db_session, ws, user, cat, f"{prefix}; SELECT * FROM t")
+
+
+async def test_an_unknown_context_still_allows_fully_qualified_names(scoped_ws, db_session, user):
+    ws, cat = scoped_ws
+    _grant(db_session, user, cat, "reader")
+    await db_session.commit()
+    await _check(db_session, ws, user, cat, f"SELECT * FROM {cat.slug}.analytics.t", catalog=None)
+    with pytest.raises(grant_service.GrantDenied, match="not known"):
+        await _check(db_session, ws, user, cat, "SELECT * FROM t", catalog=None)
+
+
+async def test_the_session_schema_is_where_unqualified_names_are_checked(
+    scoped_ws, db_session, user
+):
+    ws, cat = scoped_ws
+    _grant(db_session, user, cat, "reader")  # `analytics` only
+    await db_session.commit()
+    with pytest.raises(grant_service.GrantDenied, match=r"secret\.t"):
+        await _check(db_session, ws, user, cat, "SELECT * FROM t", schema="secret")
+
+
+async def test_an_open_workspace_ignores_the_session_context(db_session, user):
+    ws, cat = await seed_workspace(db_session, user_id=user.id, slug="open-ctx-ws")
+    await _check(db_session, ws, user, cat, "SET search_path = 'x.y'; SELECT * FROM t")
+    await _check(db_session, ws, user, cat, "SELECT * FROM t", catalog=None)

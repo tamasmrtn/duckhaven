@@ -302,6 +302,14 @@ send `?status=open` for the outstanding ones. `status` is repeatable everywhere 
 
 ---
 
+## Query parameters
+
+`POST /api/workspaces/{workspace}/queries` and `POST /api/sql/sessions/{session_id}/statements` accept a `parameters`
+field: values for placeholders in `sql`, as a list or an object. See
+[Query parameters](sql-support.md#query-parameters) for the placeholder styles, typed values, and the
+**422 `invalid_parameters`** answer when they do not fit. The field is optional and additive. A server older than
+this feature ignores it, and the statement then fails because its placeholders have no values.
+
 ## Result column types
 
 `GET /api/queries/{query_id}` and `GET /api/queries/{query_id}/rows` both return a **`column_schema`** field

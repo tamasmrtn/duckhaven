@@ -79,7 +79,7 @@ The run records why in `cache_detail`:
 | `table_function` | A table function that reads outside the catalog (`read_parquet`, `iceberg_scan`) or reports engine state (`duckdb_tables()`). `range`, `generate_series` and `unnest` are fine. |
 | `system_catalog` | DuckHaven's [system catalog](metadata.md) or `info_schema`, whose content changes without any table version. |
 | `not_a_table` | A view, or a name that is not a table. |
-| `sample`, `time_travel`, `parameter` | `USING SAMPLE` / `TABLESAMPLE`, `AT (VERSION => …)`, and prepared-statement parameters. |
+| `sample`, `time_travel`, `parameter` | `USING SAMPLE` / `TABLESAMPLE`, `AT (VERSION => …)`, and a placeholder sent without a value. [Query parameters](../reference/sql-support.md#query-parameters) are written into the SQL first, so a parameterized query is cached like any other. |
 | `ambiguous_name` | A two-part name `a.b` where `a` is both a catalog and a schema name. |
 
 `LIMIT` without `ORDER BY` **is** cached: any rows it returns are a correct answer, and so are the kept ones.

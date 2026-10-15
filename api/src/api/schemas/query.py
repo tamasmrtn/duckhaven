@@ -5,6 +5,30 @@ from typing import Annotated, Any
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, StringConstraints
 
 
+class TypedParameter(BaseModel):
+    """A parameter value with the DuckDB type to read it as, for values JSON cannot
+    say on its own: a DECIMAL, a DATE, a UUID, a list."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: str = Field(
+        description=(
+            "A DuckDB type: BOOLEAN, an integer type, FLOAT, DOUBLE, DECIMAL(p,s), "
+            "VARCHAR, BLOB (value base64-encoded), DATE, TIME, TIMESTAMP, TIMESTAMPTZ, "
+            "INTERVAL, UUID or JSON, optionally followed by [] for a list."
+        )
+    )
+    value: Any = Field(description="The value, as a string, number, boolean, null or array.")
+
+
+ParameterValue = TypedParameter | bool | int | float | str | None
+
+PARAMETERS_DESCRIPTION = (
+    "Values for the placeholders in `sql`, rendered into it as typed literals before "
+    "it runs: a list for `?`, `?1` or `$1`, an object for `$name`."
+)
+
+
 class QueryCreate(BaseModel):
     sql: str
     # A specific agent (the worksheet engine picker), or omitted to let the server
@@ -23,6 +47,9 @@ class QueryCreate(BaseModel):
     # has changed since an identical query ran. False always executes ("re-run
     # without cache"), and the result still refreshes the cache.
     use_cache: bool = True
+    parameters: list[ParameterValue] | dict[str, ParameterValue] | None = Field(
+        default=None, description=PARAMETERS_DESCRIPTION
+    )
 
 
 class ColumnSchemaOut(BaseModel):

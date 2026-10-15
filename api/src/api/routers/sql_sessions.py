@@ -43,7 +43,7 @@ from api.schemas.sql_session import (
     StagingFilesOut,
 )
 from api.services import query as query_service
-from api.services import session_credentials, staging_presign
+from api.services import session_credentials, sql_params, staging_presign
 from api.services import statement_policy as policy
 from api.services.agent_access import assert_agent_tier
 from api.services.agent_dispatch import is_agent_connected
@@ -549,6 +549,9 @@ async def run_statement(
             status_code=status.HTTP_409_CONFLICT,
             detail={"error": "session_not_open", "detail": f"session is {session.status}"},
         )
+    # Placeholder values become literals before the statement policy and grant
+    # check read the SQL, so they check exactly what runs.
+    body.sql = sql_params.render_for_request(body.sql, body.parameters)
 
     catalogs = await resolve_workspace_catalogs(db, session.workspace_id)
     managed = {c.slug for c in catalogs} | {c.polaris_name for c in catalogs}

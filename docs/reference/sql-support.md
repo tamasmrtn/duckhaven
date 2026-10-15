@@ -148,6 +148,42 @@ their table only as a string, which a grant cannot be checked against, so they a
 [scoped catalog](../concepts/permissions.md#discovering-objects-in-a-scoped-catalog); the catalog browser's
 **History** tab shows the same snapshot list there.
 
+## Query parameters
+
+A query can carry **placeholders** and send their values separately, the way a database driver does. That keeps
+quoting out of your own code: DuckHaven turns each value into a correctly typed and quoted literal.
+
+```json
+{
+  "sql": "SELECT * FROM sales.orders WHERE region = ? AND placed_at >= ?",
+  "parameters": ["EMEA", {"type": "DATE", "value": "2026-01-01"}]
+}
+```
+
+`parameters` works on `POST /api/workspaces/{workspace}/queries` and on SQL session statements. Four placeholder styles
+are accepted, one per statement:
+
+| Style | `parameters` | Example |
+|---|---|---|
+| `?` | a list, in order | `WHERE a = ? AND b = ?` |
+| `?1`, `?2` | a list, by position (reusable) | `WHERE a = ?1 OR b = ?1` |
+| `$1`, `$2` | a list, by position (reusable) | `WHERE a = $1` |
+| `$name` | an object | `WHERE region = $region` |
+
+A value is a JSON string, number, boolean or null, or an object `{"type": …, "value": …}` naming the DuckDB type to read
+it as. Use the object form for anything JSON has no type for: `DECIMAL(p,s)` (send the value as a string to keep every
+digit), `DATE`, `TIME`, `TIMESTAMP`, `TIMESTAMPTZ`, `INTERVAL`, `UUID`, `JSON`, `BLOB` (base64-encoded), or a list such
+as `BIGINT[]` with a JSON array as its value.
+
+The values are written into the SQL before anything checks it. The statement allowlist, your grants and the
+[result cache](../concepts/result-cache.md) all see the statement exactly as it runs, so a parameter cannot reach
+anything the same SQL with literals could not, and a repeated query with the same values is answered from the cache. The
+SQL recorded in History is this rendered statement.
+
+A request is refused with **422 `invalid_parameters`** when the parameters do not fit the statement: more than one
+statement, a mix of placeholder styles, a missing or unused value, a type outside the list above, or a placeholder in
+`ORDER BY` or `GROUP BY`, where DuckDB would read a value as a column position.
+
 ## Rejected statements
 
 Anything that could break out of the per-query sandbox is rejected, including:

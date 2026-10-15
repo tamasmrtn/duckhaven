@@ -500,7 +500,9 @@ async def bind_queued_work(db: AsyncSession, agent: Agent) -> int:
             await db.execute(
                 sa.select(Query).where(
                     Query.agent_id.is_(None),
-                    Query.origin == "elastic",
+                    # `describe`: a column lookup that started compute parks the
+                    # same way (query.run_internal_query).
+                    Query.origin.in_(("elastic", "describe")),
                     Query.status == "queued",
                 )
             )

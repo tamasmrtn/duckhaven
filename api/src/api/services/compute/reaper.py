@@ -196,7 +196,7 @@ async def _fail_stranded_queued(db: AsyncSession, now: datetime) -> int:
                     # by all the same causes. Only parked runs match -- a dispatched
                     # scheduled run carries its agent_id.
                     sa.or_(
-                        Query.origin.in_(("elastic", "scheduled")),
+                        Query.origin.in_(("elastic", "scheduled", "describe")),
                         # An interactive run submitted against a terminated agent
                         # parks the same way but keeps `origin` null, because that
                         # is how it was actually submitted.

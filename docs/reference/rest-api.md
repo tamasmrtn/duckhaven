@@ -324,6 +324,38 @@ keys are letters, digits and `_ . : -` up to 64 characters, values up to 256 cha
 Tags are stored as sent and not checked further, so treat them as the caller's claim. A server older than this feature
 ignores the field.
 
+## Describing a query
+
+`POST /api/workspaces/{workspace}/queries/describe` returns a query's result columns and their DuckDB types **without
+running it**. A driver or BI gateway needs this to report a result's shape before executing it. An agent binds the
+statement (`DESCRIBE <sql>`) but reads no rows, so the caller needs only the `metadata` tier on the tables it names.
+Reading the result of a `PIVOT` is the exception and needs `reader`.
+
+```json
+{ "sql": "SELECT region, sum(amount) AS total FROM sales.orders WHERE placed_at >= ?", "catalog": "warehouse" }
+```
+
+```json
+{
+  "statement_type": "select",
+  "columns": [{ "name": "region", "type": "VARCHAR" }, { "name": "total", "type": "DECIMAL(38,2)" }],
+  "parameter_names": ["1"]
+}
+```
+
+`parameters` is optional. A placeholder without a value is described as `NULL`; DuckDB types a bare `NULL` as `INTEGER`
+when nothing else in the query decides it, so pass the values when you have them. `parameter_names` lists the
+placeholders the statement uses.
+
+- A statement that returns no result grid (an `INSERT`, a `CREATE`) answers with `columns: null` and no agent is used.
+- `DESCRIBE`, `SHOW`, `SUMMARIZE` and `PRAGMA` statements, several statements, and a `PIVOT` without an `IN` list
+  (which DuckDB plans as two statements) answer **422 `not_describable`**. So does a statement that does not bind, with
+  the engine's reason.
+- With no agent connected and [elastic compute](../concepts/elastic-compute.md) on, compute is started and the call
+  waits up to `wait_timeout_s` (default `SQL_SESSION_WAIT_TIMEOUT_S`). If compute is not up by then it answers
+  **503 `compute_starting`** with `Retry-After`; retrying lands on the agent that is starting.
+- Describes do not appear in History and record no lineage.
+
 ## Result column types
 
 `GET /api/queries/{query_id}` and `GET /api/queries/{query_id}/rows` both return a **`column_schema`** field

@@ -58,7 +58,7 @@ QUERY_STATUSES: frozenset[str] = frozenset({"queued", "running", "done", "failed
 # Deliberately *not* excluded: origin="session". Those are dbt and dlt
 # statements — real user work that happens not to have been typed into a
 # worksheet.
-HIDDEN_ORIGINS: tuple[str, ...] = ("sample", "metadata", "maintenance")
+HIDDEN_ORIGINS: tuple[str, ...] = ("sample", "metadata", "maintenance", "describe")
 
 # A full UUID, or the leading part of one. The UI truncates ids through
 # `shortId` to 8 characters, so people paste prefixes.

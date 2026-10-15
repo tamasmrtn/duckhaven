@@ -176,9 +176,13 @@ A read whose tables have not changed since an identical query ran may not run at
 [result cache](result-cache.md) answers it from the earlier run's result, and nothing in this page happens for it.
 
 Results are materialized as Parquet **on the executing agent**; the control plane fetches and decodes pages on demand,
-so large results are never loaded whole. After each run the agent captures DuckDB's per-operator execution profile —
-see [Read query profiles](../guides/query-profiles.md). Queries can be cancelled mid-flight, and a wall-clock timeout is
-enforced agent-side.
+so large results are never loaded whole. A client that wants the whole result at once, exactly typed, can read it as an
+Arrow stream or as the Parquet file itself instead of JSON pages (see
+[Whole results as Arrow or Parquet][whole-results]). After each run the agent captures DuckDB's per-operator
+execution profile — see [Read query profiles](../guides/query-profiles.md). Queries can be cancelled mid-flight, and a
+wall-clock timeout is enforced agent-side.
+
+[whole-results]: ../reference/rest-api.md#whole-results-as-arrow-or-parquet
 
 ### Column types
 

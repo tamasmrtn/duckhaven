@@ -328,13 +328,46 @@ The field is **additive** — `columns` still carries the names-only list it alw
 
 ## Reading results
 
-`GET /api/queries/{query_id}/rows` and `GET /api/queries/{query_id}/profile` answer **403 `grant_denied`** when the
+`GET /api/queries/{query_id}/rows`, `/result` and `/profile` answer **403 `grant_denied`** when the
 caller's current grants would not let them run the query. In a workspace with a scoped catalog, reading a result is
 checked like running its SQL, for every caller including the one who ran it. See
 [Reading results in Permissions][reading-results].
 Workspaces with no scoped catalog behave as before: any member can read any result in the workspace.
 
 [reading-results]: ../concepts/permissions.md#reading-a-result-needs-the-same-grants-as-running-its-query
+
+## Whole results as Arrow or Parquet
+
+`GET /api/queries/{query_id}/result` returns a finished query's **entire result in one response**, in a columnar format
+instead of JSON pages:
+
+| `format` | Media type | What you get |
+|---|---|---|
+| `arrow` (default) | `application/vnd.apache.arrow.stream` | An [Arrow IPC stream](https://arrow.apache.org/docs/format/Columnar.html#ipc-streaming-format), re-encoded batch by batch |
+| `parquet` | `application/vnd.apache.parquet` | The result file the agent wrote, byte for byte |
+
+Use it for anything larger than a page or two, and wherever exact values matter. Every value keeps its type: `DECIMAL`
+stays decimal and 64-bit integers stay integers, with no JSON rounding and no strings to convert. `HUGEINT` and
+`UHUGEINT` columns arrive as `DECIMAL(38,0)`. Parquet has no 128-bit integer; the query's
+`column_schema` still names the real type. In Python:
+
+```python
+import httpx, pyarrow as pa
+
+resp = httpx.get(f"{base}/api/queries/{query_id}/result", headers={"Authorization": f"Bearer {token}"})
+table = pa.ipc.open_stream(resp.content).read_all()
+```
+
+It answers like `/rows`:
+
+- **409** while the query is still running.
+- **204** for a statement with no result grid (DDL and DML).
+- **410** once retention has swept the result.
+- **403** when your grants would not let you run the query (see [Reading results](#reading-results)).
+
+Errors are decided before the body starts, so a response that begins with 200 is a whole result. An `INTERVAL` column
+arrives in Arrow as Parquet's raw 12-byte interval (months, days, milliseconds), because there is no lossless mapping to
+an Arrow type.
 
 ## Result cache fields
 

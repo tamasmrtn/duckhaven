@@ -6,6 +6,7 @@ import os
 import tempfile
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -476,30 +477,37 @@ async def assert_result_access(db: AsyncSession, query: Query, user_id: uuid.UUI
     )
 
 
-async def fetch_result_page(
-    db: AsyncSession, query: Query, *, limit: int, offset: int = 0
-) -> RowsPageOut:
-    """One page of a finished query's rows, fetched from the agent holding them.
+@dataclass
+class ResultSource:
+    """Where a finished query's result Parquet can be read from.
 
-    Extracted from the rows route so the statement endpoint can serve the *first*
-    page inline, saving a client round trip, without either path drifting from the
-    other: both call this, so retention 410s, the elastic address resolution and
-    the old-agent offset fallback behave identically wherever rows come from.
+    ``inline`` holds the bytes of a result-cache entry kept in Postgres; otherwise
+    the file is on ``agent``, named after ``query`` (the run that produced it, which
+    for a cache hit is not the hit itself), read with ``token``.
+    """
 
-    Results live on the agent, not the control plane, so this is a proxied fetch and
-    it can fail for reasons the query itself did not — the agent reaped, its result
-    swept by retention. Those surface as HTTPException, which the rows route returns
-    as-is and the statement route treats as "no inline page, let the client ask".
+    query: Query
+    inline: bytes | None = None
+    agent: Agent | None = None
+    token: str | None = None
 
-    Assumes the caller has already established that ``query`` is done, belongs to a
-    workspace the caller may read, and has a ``result_path``.
+    @property
+    def url(self) -> str:
+        assert self.agent is not None
+        return (
+            f"http://{self.agent.result_host}:{self.agent.result_port}"
+            f"/results/{self.query.id}.parquet"
+        )
+
+
+async def resolve_result_source(db: AsyncSession, query: Query) -> ResultSource:
+    """Find where ``query``'s result can be read, or raise the HTTPException that
+    says why it cannot (410 when it is gone, 503 when its agent is unreachable).
 
     A result-cache hit ran nothing itself: its rows are the run it points at
     (``result_source_query_id``), read from the cache entry when the entry holds
     them, otherwise from the agent that produced them.
     """
-    total = query.row_count or 0
-    column_schema = query.result_schema
     if query.result_source_query_id is not None:
         from api.models.result_cache import ResultCacheEntry
 
@@ -510,17 +518,7 @@ async def fetch_result_page(
             )
         )
         if inline is not None:
-            started = time.monotonic()
-            rows, columns = decode_parquet_page(inline, limit, offset)
-            record_rows_decode(time.monotonic() - started)
-            next_offset = offset + limit
-            return RowsPageOut(
-                rows=rows,
-                columns=columns,
-                cursor=str(next_offset) if next_offset < total else None,
-                total=total,
-                column_schema=column_schema,
-            )
+            return ResultSource(query=query, inline=inline)
         source = await db.get(Query, query.result_source_query_id)
         if source is None or source.agent_id is None:
             raise HTTPException(
@@ -550,22 +548,93 @@ async def fetch_result_page(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Agent result endpoint unavailable",
         )
-
     token = await agent_session_token(db, query.agent_id)
+    return ResultSource(query=query, agent=agent, token=token)
+
+
+def _raise_for_upstream(status_code: int) -> None:
+    if status_code == 404:
+        # The result file was swept by retention while the user was paging.
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="Result no longer available")
+    if status_code != 200:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to fetch results from agent"
+        )
+
+
+async def open_result_stream(source: ResultSource) -> tuple[httpx.AsyncClient, httpx.Response]:
+    """Open the agent's whole result file as a stream. The caller closes both.
+
+    Raises the HTTPException a failed read maps to, having closed what it opened.
+    No read timeout: a large result legitimately takes a while to stream.
+    """
+    headers = {"Authorization": f"Bearer {source.token}"} if source.token else {}
+    client = httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=None))
     try:
-        upstream = await proxy_rows(agent, query, row_offset=offset, row_limit=limit, token=token)
+        response = await client.send(
+            client.build_request("GET", source.url, headers=headers), stream=True
+        )
+    except httpx.HTTPError as exc:
+        await client.aclose()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Agent result endpoint unavailable",
+        ) from exc
+    try:
+        _raise_for_upstream(response.status_code)
+    except HTTPException:
+        await response.aclose()
+        await client.aclose()
+        raise
+    return client, response
+
+
+async def fetch_result_page(
+    db: AsyncSession, query: Query, *, limit: int, offset: int = 0
+) -> RowsPageOut:
+    """One page of a finished query's rows, fetched from the agent holding them.
+
+    Extracted from the rows route so the statement endpoint can serve the *first*
+    page inline, saving a client round trip, without either path drifting from the
+    other: both call this, so retention 410s, the elastic address resolution and
+    the old-agent offset fallback behave identically wherever rows come from.
+
+    Results live on the agent, not the control plane, so this is a proxied fetch and
+    it can fail for reasons the query itself did not — the agent reaped, its result
+    swept by retention. Those surface as HTTPException, which the rows route returns
+    as-is and the statement route treats as "no inline page, let the client ask".
+
+    Assumes the caller has already established that ``query`` is done, belongs to a
+    workspace the caller may read, and has a ``result_path``.
+
+    See :func:`resolve_result_source` for where a cache hit's rows come from.
+    """
+    total = query.row_count or 0
+    column_schema = query.result_schema
+    source = await resolve_result_source(db, query)
+    if source.inline is not None:
+        started = time.monotonic()
+        rows, columns = decode_parquet_page(source.inline, limit, offset)
+        record_rows_decode(time.monotonic() - started)
+        next_offset = offset + limit
+        return RowsPageOut(
+            rows=rows,
+            columns=columns,
+            cursor=str(next_offset) if next_offset < total else None,
+            total=total,
+            column_schema=column_schema,
+        )
+
+    try:
+        upstream = await proxy_rows(
+            source.agent, source.query, row_offset=offset, row_limit=limit, token=source.token
+        )
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Agent result endpoint unavailable",
         ) from exc
-    if upstream.status_code == 404:
-        # The result file was swept by retention while the user was paging.
-        raise HTTPException(status_code=status.HTTP_410_GONE, detail="Result no longer available")
-    if upstream.status_code != 200:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to fetch results from agent"
-        )
+    _raise_for_upstream(upstream.status_code)
 
     # When the agent sliced the window (X-DH-Row-Offset present) the body already
     # starts at the requested rows, so decode at offset 0. An older agent that

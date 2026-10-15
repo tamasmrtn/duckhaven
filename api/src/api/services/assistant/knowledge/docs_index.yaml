@@ -81,7 +81,8 @@ pages:
 - path: concepts/sql-sessions.md
   title: SQL sessions
   section: Concepts
-  summary: Persistent connections for dbt, dlt and BI tools, brokered through the API.
+  summary: Persistent connections for dbt, dlt and other Python DB-API clients, brokered through the
+    API.
 - path: concepts/permissions.md
   title: Permissions
   section: Concepts

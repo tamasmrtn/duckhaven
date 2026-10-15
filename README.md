@@ -160,7 +160,7 @@ trail — with data sovereignty, network privacy, and no SaaS lock-in.
   either way.
 - **SQL sessions (opt-in)** — A persistent, connection-scoped DuckDB session
   (temp relations, `USE`, multi-statement transactions) for external tools that
-  expect a warehouse-style connection — dbt, dlt, BI tools — brokered entirely
+  expect a warehouse-style connection — dbt, dlt, Python DB-API clients — brokered entirely
   through the API so the agent stays outbound-only. Backed by a broader
   statement policy than one-shot queries; requires the hardened agent image.
 - **Prometheus metrics** — An optional `/metrics` endpoint exposes query, agent,

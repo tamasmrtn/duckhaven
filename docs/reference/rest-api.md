@@ -719,6 +719,11 @@ a client learns of completion when it happens rather than on its next poll.
 and its error is on the row). **202** means it is still running; poll `GET /api/queries/{query_id}`
 as before. A statement is never cancelled for outliving the wait.
 
+`POST /api/workspaces/{workspace}/queries` takes the same `wait_timeout_s` in its body, but there it is **opt-in**:
+omitted, the call never blocks and answers **202** as it always has. Sent, it answers **200** with the finished query
+when the run ends within the wait (a result-cache hit always has), and **202** otherwise. One request then submits a
+query and learns its outcome, with no polling.
+
 `GET /api/queries/{query_id}` accepts the same `wait_timeout_s` as a **query parameter**, for a
 client following a statement that outran the budget on submit. It is opt-in and defaults to `0`
 there — that route also serves the worksheet's status polling and the audit history, and neither

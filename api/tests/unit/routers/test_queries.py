@@ -2642,3 +2642,69 @@ async def test_parameters_that_do_not_fit_are_a_422(authed_client, workspace, co
     )
     assert resp.status_code == 422
     assert resp.json()["error"] == "invalid_parameters"
+
+
+# --- waiting for a one-shot run ------------------------------------------------
+
+
+async def _submit(authed_client, workspace, agent, **extra):
+    return await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(agent.id), **extra},
+    )
+
+
+async def test_a_run_that_finishes_within_the_wait_answers_200(
+    authed_client, workspace, connected_agent, monkeypatch
+):
+    from api.services.sql_sessions import service as sql_session_service
+
+    waited = []
+
+    async def finishes(db, query, wait_s):
+        waited.append(wait_s)
+        query.status = "done"
+
+    monkeypatch.setattr(sql_session_service, "await_query_done", finishes)
+    agent, _ws = connected_agent
+    resp = await _submit(authed_client, workspace, agent, wait_timeout_s=5)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "done"
+    assert waited == [5]
+
+
+async def test_a_run_still_going_when_the_wait_ends_answers_202(
+    authed_client, workspace, connected_agent, monkeypatch
+):
+    from api.services.sql_sessions import service as sql_session_service
+
+    async def still_running(db, query, wait_s):
+        return None
+
+    monkeypatch.setattr(sql_session_service, "await_query_done", still_running)
+    agent, _ws = connected_agent
+    resp = await _submit(authed_client, workspace, agent, wait_timeout_s=1)
+    assert resp.status_code == 202
+    assert resp.json()["status"] == "queued"
+
+
+async def test_without_the_field_nothing_waits(
+    authed_client, workspace, connected_agent, monkeypatch
+):
+    from api.services.sql_sessions import service as sql_session_service
+
+    async def must_not_wait(db, query, wait_s):
+        raise AssertionError("waited without being asked to")
+
+    monkeypatch.setattr(sql_session_service, "await_query_done", must_not_wait)
+    agent, _ws = connected_agent
+    assert (await _submit(authed_client, workspace, agent)).status_code == 202
+
+
+async def test_the_wait_is_capped(authed_client, workspace, connected_agent):
+    from api.config import settings
+
+    agent, _ws = connected_agent
+    too_long = settings.sql_statement_max_wait_timeout_s + 1
+    resp = await _submit(authed_client, workspace, agent, wait_timeout_s=too_long)
+    assert resp.status_code == 422
